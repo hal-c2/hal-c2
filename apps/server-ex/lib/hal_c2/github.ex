@@ -3,10 +3,12 @@ defmodule HalC2.GitHub do
   The one way the MC runs `gh`. Pull requests, issues, the branch status, commit
   messages, repository lookups and plugins all call `gh/3`, so every call that reaches
   GitHub's API passes `HalC2.GitHub.Limits`: while the budget it spends is used up for
-  the account it is made as (`account/1`),
-  the call is refused without asking GitHub, and the first call to meet a limit asks
-  GitHub when it resets (`gh api rate_limit`, which costs nothing). What the user asked
-  for (`asked/1`) goes through a pause.
+  the account it is made as (`account/1`), the call is refused without asking GitHub.
+  A `gh api` call shows GitHub's own numbers (`--include`): the `Retry-After` or reset
+  of a limit it meets sets the pause, and the quota left after it answers keeps a
+  tenth back for what the user asks for. A limit met without them (`gh pr`, `gh issue` and the rest show no headers) asks
+  GitHub when it resets (`gh api rate_limit`, which costs nothing). What the user
+  asked for (`asked/1`) goes through a pause.
 
   Failures are `{:error, {reason, detail}}` with `reason` one of `:missing`,
   `:unauthenticated`, `:rate_limited`, `:not_found` or `:failed`. The executable is
@@ -73,26 +75,93 @@ defmodule HalC2.GitHub do
       {:paused, until} ->
         {:error, {:rate_limited, paused(host, until)}}
 
+      {:reserved, until} ->
+        {:error, {:rate_limited, reserved(host, until)}}
+
       :ok ->
-        case run(path, cwd, args, opts) do
-          {:error, {:rate_limited, _}} ->
-            {scope, reset} = budget(path, cwd, host, bucket)
+        case answer(path, cwd, args, opts) do
+          {{:error, {:rate_limited, _}}, head} ->
+            {scope, reset} = resume(head, bucket, now()) || budget(path, cwd, host, bucket)
             until = Limits.limited(account, scope, now(), reset)
             {:error, {:rate_limited, paused(host, until)}}
 
-          {:ok, _} = ok ->
-            Limits.answered(account, bucket, now())
+          {{:ok, _} = ok, head} ->
+            Limits.answered(account, bucket, now(), quota(head, bucket))
             ok
 
-          error ->
+          {error, _} ->
             error
         end
     end
   end
 
-  defp paused(host, until) do
-    resets = DateTime.from_unix!(until, :millisecond) |> Calendar.strftime("%H:%M:%S UTC")
-    "#{host}'s API rate limit was reached; calls are paused until it resets at #{resets}."
+  defp paused(host, until),
+    do: "#{host}'s API rate limit was reached; calls are paused until it resets at #{at(until)}."
+
+  defp reserved(host, until),
+    do:
+      "#{host}'s API quota is nearly used up; background reads wait until it resets at " <>
+        "#{at(until)}, keeping the rest for what you ask for."
+
+  defp at(ms), do: DateTime.from_unix!(ms, :millisecond) |> Calendar.strftime("%H:%M:%S UTC")
+
+  # What GitHub's own headers say of a limit: `{scope, when calls may resume}` from its
+  # `Retry-After` (on the whole account unless the bucket is spent), else from the
+  # reset of a spent bucket; nil when they say neither.
+  defp resume(nil, _bucket, _now), do: nil
+
+  defp resume(head, bucket, now) do
+    spent? = head.headers["x-ratelimit-remaining"] == "0"
+    scope = if spent?, do: bucket, else: :all
+    reset = integer(head.headers["x-ratelimit-reset"])
+
+    cond do
+      at = retry_at(head.headers["retry-after"], now) -> {scope, at}
+      spent? and is_integer(reset) and reset * 1_000 > now -> {scope, reset * 1_000}
+      true -> nil
+    end
+  end
+
+  # What is left of the bucket an answer spent, as `HalC2.GitHub.Limits` keeps it.
+  defp quota(nil, _bucket), do: nil
+
+  defp quota(%{headers: headers}, bucket) do
+    with resource when resource in [nil, bucket] <- headers["x-ratelimit-resource"],
+         remaining when is_integer(remaining) <- integer(headers["x-ratelimit-remaining"]),
+         limit when is_integer(limit) <- integer(headers["x-ratelimit-limit"]),
+         reset when is_integer(reset) <- integer(headers["x-ratelimit-reset"]) do
+      %{remaining: remaining, limit: limit, reset: reset * 1_000}
+    else
+      _ -> nil
+    end
+  end
+
+  @months ~w(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
+
+  # `Retry-After` is seconds, or an HTTP date.
+  defp retry_at(nil, _now), do: nil
+
+  defp retry_at(value, now) do
+    with nil <- integer(value),
+         [_, day, month, year, time] <-
+           Regex.run(~r/^\w{3}, (\d{2}) (\w{3}) (\d{4}) (\d\d:\d\d:\d\d) GMT$/, value),
+         index when is_integer(index) <- Enum.find_index(@months, &(&1 == month)),
+         month = String.pad_leading("#{index + 1}", 2, "0"),
+         {:ok, at, _} <- DateTime.from_iso8601("#{year}-#{month}-#{day}T#{time}Z") do
+      DateTime.to_unix(at, :millisecond)
+    else
+      seconds when is_integer(seconds) -> now + seconds * 1_000
+      _ -> nil
+    end
+  end
+
+  defp integer(nil), do: nil
+
+  defp integer(text) do
+    case Integer.parse(String.trim(text)) do
+      {n, ""} -> n
+      _ -> nil
+    end
   end
 
   # Which budget ran out: the bucket, until its reset, when it has nothing left;
@@ -262,6 +331,18 @@ defmodule HalC2.GitHub do
   defp system_ms, do: System.system_time(:millisecond)
 
   defp run(path, cwd, args, opts) do
+    {result, _head} = answer(path, cwd, args, opts)
+    result
+  end
+
+  # `{result, head}`. A `gh api` call is made with `--include`, so GitHub's status and
+  # headers (its rate limit numbers among them) come ahead of the body; head is them,
+  # `%{status: 403, headers: %{"lowercase name" => value}}`, and the result has only
+  # the body. `gh pr`, `gh issue` and the rest show no headers: their head is nil.
+  defp answer(path, cwd, args, opts) do
+    include? = include?(args)
+    args = if include?, do: args ++ ["--include"], else: args
+
     exile =
       [stderr: :consume, ignore_epipe: true, env: [{"GH_PROMPT_DISABLED", "1"}]] ++
         if(cwd && File.dir?(cwd), do: [cd: cwd], else: []) ++
@@ -290,26 +371,66 @@ defmodule HalC2.GitHub do
       end)
 
     case Task.yield(task, opts[:timeout] || @timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {_, _, size, {:status, 0}}} when size > max ->
-        {:error, {:too_large, "gh answered with more than #{max} bytes."}}
+      {:ok, {out, err, size, status}} ->
+        {head, out} = if include?, do: head(IO.iodata_to_binary(out)), else: {nil, out}
 
-      {:ok, {out, _, _, {:status, 0}}} ->
-        {:ok, IO.iodata_to_binary(out)}
+        result =
+          case status do
+            {:status, 0} when size > max ->
+              {:error, {:too_large, "gh answered with more than #{max} bytes."}}
 
-      {:ok, {out, err, _, _}} ->
-        {:error, failure(IO.iodata_to_binary(err), IO.iodata_to_binary(out))}
+            {:status, 0} ->
+              {:ok, IO.iodata_to_binary(out)}
+
+            _ ->
+              {:error, failure(IO.iodata_to_binary(err), IO.iodata_to_binary(out), head)}
+          end
+
+        {result, head}
 
       nil ->
-        {:error, {:failed, "gh did not answer in time."}}
+        {{:error, {:failed, "gh did not answer in time."}}, nil}
     end
   rescue
-    error -> {:error, {:failed, Exception.message(error)}}
+    error -> {{:error, {:failed, Exception.message(error)}}, nil}
   end
+
+  # `--paginate` would print a head per page, and `--silent` none.
+  defp include?(["api" | rest]),
+    do: not Enum.any?(rest, &(&1 in ~w(--include -i --paginate --silent)))
+
+  defp include?(_args), do: false
+
+  defp head("HTTP/" <> _ = out) do
+    [head, body] =
+      case String.split(out, ~r/\r?\n\r?\n/, parts: 2) do
+        [head, body] -> [head, body]
+        [head] -> [head, ""]
+      end
+
+    [status | lines] = String.split(head, ~r/\r?\n/)
+
+    headers =
+      for line <- lines,
+          [name, value] <- [String.split(line, ":", parts: 2)],
+          into: %{},
+          do: {String.downcase(String.trim(name)), String.trim(value)}
+
+    status =
+      case String.split(status, " ") do
+        [_, code | _] -> integer(code)
+        _ -> nil
+      end
+
+    {%{status: status, headers: headers}, body}
+  end
+
+  defp head(out), do: {nil, out}
 
   # gh's own messages, auth trouble, a rate limit or a missing object, are matched only on
   # stderr: a GraphQL answer with `errors` still prints its body, user-written titles
   # and comments included, on stdout.
-  defp failure(err, out) do
+  defp failure(err, out, head) do
     told = String.downcase(err)
 
     detail =
@@ -327,13 +448,7 @@ defmodule HalC2.GitHub do
       ]) ->
         {:unauthenticated, detail}
 
-      String.contains?(told, [
-        "api rate limit",
-        "secondary rate limit",
-        "rate limit exceeded",
-        "http 429",
-        "abuse detection"
-      ]) ->
+      limited?(told, head) ->
         {:rate_limited, detail}
 
       String.contains?(told, ["http 404", "could not resolve to a pullrequest", "not found"]) ->
@@ -342,6 +457,22 @@ defmodule HalC2.GitHub do
       true ->
         {:failed, detail}
     end
+  end
+
+  # A 403 is a limit only when GitHub says so: in its text, or by a `Retry-After` or no
+  # quota left. Without them it is a plain refusal, which pauses nothing.
+  defp limited?(told, head) do
+    String.contains?(told, [
+      "api rate limit",
+      "secondary rate limit",
+      "rate limit exceeded",
+      "http 429",
+      "abuse detection"
+    ]) or
+      match?(%{status: 429}, head) or
+      (match?(%{status: 403}, head) and
+         (head.headers["x-ratelimit-remaining"] == "0" or
+            Map.has_key?(head.headers, "retry-after")))
   end
 
   # `gh api` puts GitHub's message and each of its `errors` on a line of their own,

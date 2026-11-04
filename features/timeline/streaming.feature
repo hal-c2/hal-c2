@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13060 (Run a shell command from a reply in the thread terminal)
+#   https://github.com/pingdotgg/t3code/pull/13504 (section titles held until their text)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (hidden items)
 #   packages/contracts/src/orchestrationV2.ts (message.updated, run.created, run.updated, ResponseStreamingMode)
@@ -36,6 +37,21 @@ Feature: Streaming the agent's reply
     When the agent writes a reply of three paragraphs
     Then each paragraph appears once it is finished
     And an unfinished code block is held back until it closes
+
+  # A section title is an ATX heading or a line of only bold text. It is held until the text
+  # under it arrives, so a title never sits alone while the paragraph below it is written.
+  @mc @backlog
+  Scenario: A section title in paragraph streaming waits for the text under it
+    Given the project streams responses by paragraph
+    When the agent writes a section title and pauses before its paragraph
+    Then the title does not appear on its own
+    And the title appears with the first lines of its paragraph
+
+  @mc @backlog
+  Scenario: A held section title appears when the turn ends
+    Given the project streams responses by paragraph
+    When the agent writes a section title and then finishes the turn
+    Then the title appears
 
   @mc
   Scenario: Turn streaming holds the reply until the turn reaches a boundary

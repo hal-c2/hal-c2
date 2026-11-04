@@ -5,8 +5,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch clauses, @thread_updates)
 #   apps/server-ex/lib/hal_c2/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
-#   Counts: 47 commands (37 aligned, 0 backlog, 10 dropped);
-#   41 version 2 events (all aligned); 32 version 1 events (all aligned).
+#   Counts: 48 commands (37 aligned, 1 backlog, 10 dropped);
+#   42 version 2 events (41 aligned, 1 backlog); 32 version 1 events (all aligned).
 #   The MC stores whole-entity changes as patches keyed by entity kind, so an event
 #   is aligned when the MC records the same entity change and streams it to clients.
 #   Shared domain: mc/orchestration/ holds what each command does to a thread.
@@ -65,6 +65,18 @@ Feature: Command and event parity with the TypeScript server
       | thread.fork                     | dispatch      |
       | thread.merge_back               | dispatch      |
       | provider.switch                 | thread update |
+
+  # thread.auto-settle.set (https://github.com/pingdotgg/t3code/pull/11846) is new; the MC does not
+  # handle it yet. Its event is thread.auto-settle-set below.
+  @mc @backlog
+  Scenario Outline: The MC handles the <command> command
+    When the client dispatches <command>
+    Then the MC accepts it through its <kind> path
+    And clients following the thread see the resulting change
+
+    Examples: 1 new command
+      | command                | kind     |
+      | thread.auto-settle.set | dispatch |
 
   # These commands are sent by the TypeScript server's own workers, never by a client. The
   # MC does the same work in-process or over MCP, so it answers that the command is not supported.
@@ -136,6 +148,13 @@ Feature: Command and event parity with the TypeScript server
       | thread.unsnoozed                | thread           | a patch on the thread entity                           |
       | thread.visited                  | thread           | a quiet patch on the thread                            |
       | turn-item.updated               | turn-item        | a patch on the turn-item entity                        |
+
+  @mc @backlog
+  Scenario: The MC records the change a thread.auto-settle-set event carries
+    Given the TypeScript server logged thread.auto-settle-set for an entity
+    When the MC records the same change
+    Then it stores a patch on the thread entity
+    And streams it to clients following the thread
 
   @mc
   Scenario: A re-emitted entity with no change is dropped

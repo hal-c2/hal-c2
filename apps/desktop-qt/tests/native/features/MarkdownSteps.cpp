@@ -9,9 +9,13 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QQuickItem>
+#include <QQuickTextDocument>
 #include <QRectF>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 
 #include <memory>
 
@@ -20,7 +24,9 @@
 #include "FakeFiles.h"
 #include "Harness.h"
 #include "Mermaid.h"
+#include "SettingsController.h"
 #include "Stream.h"
+#include "ThemeController.h"
 #include "World.h"
 
 namespace {
@@ -41,6 +47,11 @@ struct Seen {
   QPointer<QQuickItem> item;
   std::shared_ptr<QSignalSpy> redraws;
   int segments = 0;
+  // The code block's colours: its fence, and the colours it had before.
+  QString fence;
+  QList<QColor> colours;
+  std::shared_ptr<QSignalSpy> readings;
+  std::shared_ptr<QSignalSpy> colouring;
 };
 
 // Items named `name` under `item`, in the order they are drawn. From the
@@ -221,6 +232,69 @@ QObject* openTextMenu(World& world, QQuickItem* edit) {
   return menu;
 }
 
+// Code in a language, and a word it starts with that the language colours.
+struct Sample {
+  QString code;
+  QString keyword;
+};
+
+Sample sample(const QString& fence) {
+  if (fence == u"py") return {QStringLiteral("def refund(order):\n    return order.total"), QStringLiteral("def")};
+  if (fence == u"exs") return {QStringLiteral("defmodule Cart do\n  def total(cart), do: 0\nend"), QStringLiteral("defmodule")};
+  if (fence == u"qml") return {QStringLiteral("import QtQuick\n\nItem {\n  id: root\n}"), QStringLiteral("import")};
+  return {kSource, QStringLiteral("const")};
+}
+
+QTextDocument* documentOf(QQuickItem* code) {
+  auto* quick = code->property("textDocument").value<QQuickTextDocument*>();
+  return quick ? quick->textDocument() : nullptr;
+}
+
+// The colour the highlighter gave a line's first character, or an invalid
+// colour where it gave none. The block's lines are one paragraph, split by
+// line separators, which toPlainText reads as line breaks.
+QColor lineColour(QQuickItem* code, int line) {
+  QTextDocument* document = documentOf(code);
+  const QString text = document->toPlainText();
+  int at = 0;
+  for (int n = 0; n < line; ++n) {
+    at = text.indexOf(QLatin1Char('\n'), at);
+    if (at < 0) return {};
+    ++at;
+  }
+  if (at >= text.size()) return {};
+  const QTextBlock block = document->findBlock(at);
+  for (const QTextLayout::FormatRange& range : block.layout()->formats()) {
+    if (range.start == at - block.position() && range.length > 0 && range.format.foreground().style() != Qt::NoBrush) return range.format.foreground().color();
+  }
+  return {};
+}
+
+int colouredRanges(QQuickItem* code) {
+  int count = 0;
+  for (QTextBlock block = documentOf(code)->begin(); block.isValid(); block = block.next()) count += block.layout()->formats().size();
+  return count;
+}
+
+QObject* highlighterOf(QQuickItem* message) {
+  QObject* found = one(message, QStringLiteral("codeText"))->findChild<QObject*>(QStringLiteral("codeHighlighter"));
+  expect(found, QStringLiteral("the code block has no highlighter"));
+  return found;
+}
+
+// The newest reply's code block once its highlighter has read what it will.
+QQuickItem* readCode(World& world) {
+  QQuickItem* message = reply(world, 1);
+  QObject* highlighter = highlighterOf(message);
+  world.waitFor([&] { return !highlighter->property("reading").toBool(); }, QStringLiteral("the code to be read"));
+  return one(message, QStringLiteral("codeText"));
+}
+
+const QHash<QString, QString> kLanguages{{QStringLiteral("TypeScript"), QStringLiteral("ts")},
+                                         {QStringLiteral("Python"), QStringLiteral("py")},
+                                         {QStringLiteral("Elixir"), QStringLiteral("exs")},
+                                         {QStringLiteral("QML"), QStringLiteral("qml")}};
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -242,6 +316,81 @@ const Steps steps([] {
     expect(plain(one(message, QStringLiteral("codeText"))) == kSource, QStringLiteral("the code block reads \"%1\"").arg(plain(one(message, QStringLiteral("codeText")))));
     expect(one(message, QStringLiteral("codeLabel"))->property("text").toString() == QLatin1String("ts"), QStringLiteral("the code block is not labelled ts"));
     expect(within(message, QStringLiteral("tableCell")).size() == 6, QStringLiteral("the table has %1 cells").arg(within(message, QStringLiteral("tableCell")).size()));
+  });
+
+  // Code colours (CodeHighlighter), from the fence's language.
+  step(QStringLiteral("the agent's reply has a code block whose fence reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<Seen>().fence = c[0];
+    answer(world, QStringLiteral("```") + c[0] + QLatin1Char('\n') + sample(c[0]).code + QStringLiteral("\n```"));
+  });
+  step(QStringLiteral("the user reads the reply"), [](World& world, const Captures&, const Table&) { reply(world); });
+  step(QStringLiteral("the code block is shown coloured as (TypeScript|Python|Elixir|QML)"), [](World& world, const Captures& c, const Table&) {
+    const QString fence = kLanguages.value(c[0]);
+    expect(world.mc.part<Seen>().fence == fence, QStringLiteral("the fence reads \"%1\"").arg(world.mc.part<Seen>().fence));
+    QQuickItem* code = readCode(world);
+    expect(highlighterOf(reply(world))->property("coloured").toBool(), QStringLiteral("the code is not coloured"));
+    expect(plain(code).startsWith(sample(fence).keyword) && lineColour(code, 0).isValid(),
+           QStringLiteral("\"%1\" is not coloured in \"%2\"").arg(sample(fence).keyword, plain(code)));
+  });
+  step(QStringLiteral("the code block is shown as plain text"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* code = readCode(world);
+    expect(plain(code) == kSource, QStringLiteral("the code reads \"%1\"").arg(plain(code)));
+    expect(!highlighterOf(reply(world))->property("coloured").toBool() && colouredRanges(code) == 0,
+           QStringLiteral("the code has %1 coloured runs").arg(colouredRanges(code)));
+  });
+
+  step(QStringLiteral("the agent is writing a code block whose fence reads \"ts\""), [](World& world, const Captures&, const Table&) {
+    startWriting(world, QStringLiteral("Totals:\n\n```ts\nconst a = 1;\nconst b = 2;\nconst c = 3;\n"));
+  });
+  step(QStringLiteral("its first three lines are coloured"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    QQuickItem* code = one(message, QStringLiteral("codeText"));
+    QObject* highlighter = highlighterOf(message);
+    world.waitFor([&] { return lineColour(code, 0).isValid() && lineColour(code, 1).isValid() && lineColour(code, 2).isValid(); },
+                  [&] { return QStringLiteral("three coloured lines in \"%1\"").arg(plain(code)); });
+    Seen& seen = world.mc.part<Seen>();
+    seen.item = code;
+    seen.colours = {lineColour(code, 0), lineColour(code, 1), lineColour(code, 2)};
+    seen.colouring = std::make_shared<QSignalSpy>(highlighter, SIGNAL(colouredChanged()));
+  });
+  step(QStringLiteral("the agent adds a fourth line"), [](World& world, const Captures&, const Table&) {
+    write(world, QStringLiteral("const d = 4;"));
+  });
+  step(QStringLiteral("the first three lines stay coloured while the new line waits to be coloured"), [](World& world, const Captures&, const Table&) {
+    Seen& seen = world.mc.part<Seen>();
+    QQuickItem* code = seen.item.data();
+    expect(code && one(reply(world, 2), QStringLiteral("codeText")) == code, QStringLiteral("the code block was drawn anew"));
+    world.waitFor([&] { return plain(code).endsWith(QLatin1String("const d = 4;")); }, [&] { return QStringLiteral("the fourth line; the code reads \"%1\"").arg(plain(code)); });
+    QObject* highlighter = highlighterOf(reply(world, 2));
+    world.waitFor([&] { return !highlighter->property("reading").toBool(); }, QStringLiteral("the code to be read"));
+    const QList<QColor> now{lineColour(code, 0), lineColour(code, 1), lineColour(code, 2)};
+    expect(now == seen.colours, QStringLiteral("the first three lines changed colour"));
+    expect(!lineColour(code, 3).isValid(), QStringLiteral("the line being written is coloured"));
+  });
+  step(QStringLiteral("the block does not flash back to plain text"), [](World& world, const Captures&, const Table&) {
+    expect(world.mc.part<Seen>().colouring->isEmpty(), QStringLiteral("the block went plain and coloured again %1 times").arg(world.mc.part<Seen>().colouring->size()));
+  });
+
+  step(QStringLiteral("the user switches the app from light to dark"), [](World& world, const Captures&, const Table&) {
+    auto* themes = world.native().controller<ThemeController>();
+    expect(world.theme().appearance() == QLatin1String("light"), QStringLiteral("the app is drawn %1").arg(world.theme().appearance()));
+    QQuickItem* code = readCode(world);
+    Seen& seen = world.mc.part<Seen>();
+    seen.item = code;
+    seen.colours = {lineColour(code, 0)};
+    seen.readings = std::make_shared<QSignalSpy>(highlighterOf(reply(world)), SIGNAL(readingChanged()));
+    expect(themes->setMode(QStringLiteral("dark")), world.native().controller<SettingsController>()->deviceError());
+    world.waitFor([&] { return world.theme().appearance() == QLatin1String("dark"); }, QStringLiteral("the app to be drawn dark"));
+  });
+  step(QStringLiteral("the code block is coloured for the dark theme"), [](World& world, const Captures&, const Table&) {
+    Seen& seen = world.mc.part<Seen>();
+    QQuickItem* code = seen.item.data();
+    expect(code, QStringLiteral("the code block was drawn anew"));
+    world.waitFor([&] { return lineColour(code, 0).isValid() && lineColour(code, 0) != seen.colours.constFirst(); },
+                  [&] { return QStringLiteral("\"const\" in another colour than %1; it is %2").arg(seen.colours.constFirst().name(), lineColour(code, 0).name()); });
+  });
+  step(QStringLiteral("its code was not read again"), [](World& world, const Captures&, const Table&) {
+    expect(world.mc.part<Seen>().readings->isEmpty(), QStringLiteral("the code was read %1 times").arg(world.mc.part<Seen>().readings->size() / 2));
   });
 
   // Code blocks.

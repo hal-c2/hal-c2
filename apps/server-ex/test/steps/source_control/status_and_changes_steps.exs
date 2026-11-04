@@ -312,6 +312,26 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
 
   defp pass(context, ms), do: :atomics.add(context.clock, 1, ms)
 
+  # Discovery has handled every message it was sent and has no run of its own queued.
+  # Each round trip lets it handle one more message; a run it keeps queueing for itself
+  # fails here, with what it still has, rather than as a timeout.
+  defp discovery_idle(rounds \\ 100) do
+    pid = Process.whereis(HalC2.PullRequests.Discovery)
+    state = :sys.get_state(pid)
+    {:message_queue_len, queued} = Process.info(pid, :message_queue_len)
+
+    cond do
+      state.pending == %{} and queued == 0 ->
+        :ok
+
+      rounds > 0 ->
+        discovery_idle(rounds - 1)
+
+      true ->
+        flunk("Discovery never went idle: #{queued} queued, pending #{inspect(state.pending)}")
+    end
+  end
+
   defp asked(context, branch), do: length(World.cli_calls(context, "--head #{branch}"))
 
   # The watcher's automatic fetch runs now; the pull request it holds afterwards.
@@ -436,6 +456,11 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     # The sidebar row Discovery reads is written behind the command.
     HalC2.Streams.flush_shell(World.thread_id(context, thread))
     :ok = HalC2.PullRequests.Discovery.sweep()
+    # The branch change also queued a run of Discovery's own behind the sweep, which may
+    # read the row from before the sweep's write and ask GitHub to confirm it: it ends
+    # before the count, with the sweep's row in the shell, rather than during the status.
+    HalC2.Streams.flush_shell(World.thread_id(context, thread))
+    discovery_idle()
     assert %{"number" => 42} = World.thread(context, thread)["branchPullRequest"]
     Map.put(context, :asked_before, asked(context, branch))
   end

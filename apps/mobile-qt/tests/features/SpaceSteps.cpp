@@ -3459,8 +3459,14 @@ const Steps steps([] {
   step(S("its text is shown in a fixed-width face, coloured for that language where the surface can"), [drawnPart](World& world, const Captures&, const Table&) {
     QQuickItem* box = drawnPart(world, code, S("markdownCode"));
     expect(box->property("code").toString() == code, S("the code reads \"%1\"").arg(box->property("code").toString()));
-    const QFont font = named(box, S("codeText"))->property("font").value<QFont>();
+    QQuickItem* codeText = named(box, S("codeText"));
+    const QFont font = codeText->property("font").value<QFont>();
     expect(QFontInfo(font).fixedPitch(), S("the code is in %1, not a fixed-width face").arg(QFontInfo(font).family()));
+    // The phone links the desktop's highlighter (timeline/markdown.feature).
+    QObject* highlighter = codeText->findChild<QObject*>(S("codeHighlighter"));
+    expect(highlighter, S("the code block has no highlighter"));
+    world.waitFor([&] { return highlighter->property("coloured").toBool(); },
+                  [&] { return S("the code to be coloured as %1").arg(highlighter->property("language").toString()); });
   });
   step(S("its language is named on it"), [drawnPart](World& world, const Captures&, const Table&) {
     const QString language = text(findBlock(world, code), QLatin1String("language"));

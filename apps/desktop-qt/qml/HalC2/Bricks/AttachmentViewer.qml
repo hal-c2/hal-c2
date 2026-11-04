@@ -6,8 +6,9 @@ import HalC2.Shell
 
 // An attachment opened to look at (`attachmentViewer`,
 // AttachmentViewerController): an image, Markdown, a table or a page rendered
-// or as its source, other text, or a note that it cannot be shown here. A
-// draft's can be taken off the draft from here; a sent one's can be saved.
+// or as its source, other text (coloured by the language its name says), or a
+// note that it cannot be shown here. A draft's can be taken off the draft from
+// here; a sent one's can be saved.
 Dialog {
     id: dialog
 
@@ -18,6 +19,7 @@ Dialog {
     property bool source: false
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
+    readonly property color surface: Theme.palette.color("surfaceOverlay", "#18181b")
 
     objectName: "attachmentViewer"
     parent: Overlay.overlay
@@ -192,14 +194,31 @@ Dialog {
             Component {
                 id: plain
 
-                Text {
+                // Coloured by the attachment's name (its extension picks the language).
+                TextEdit {
+                    id: plainText
+
+                    readonly property string problem: dialog.kind === "page" ? (dialog.attachment?.sourceProblem ?? "") : ""
+
                     objectName: "attachmentViewerText"
-                    text: dialog.kind === "page" ? (dialog.attachment?.sourceProblem ?? dialog.attachment?.source ?? "") : (dialog.attachment?.text ?? "")
-                    textFormat: Text.PlainText
+                    text: problem.length > 0 ? problem : dialog.kind === "page" ? (dialog.attachment?.source ?? "") : (dialog.attachment?.text ?? "")
+                    textFormat: TextEdit.PlainText
+                    // Drawn as a Text would be: a drag still scrolls, a click takes no focus.
+                    readOnly: true
+                    selectByMouse: false
+                    activeFocusOnPress: false
                     color: dialog.foreground
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
                     font.pixelSize: Theme.fontSizeCode
-                    wrapMode: Text.Wrap
+                    wrapMode: TextEdit.Wrap
+
+                    CodeHighlighter {
+                        objectName: "attachmentViewerHighlighter"
+                        document: plainText.textDocument
+                        // A note that the source could not be read is not code.
+                        path: plainText.problem.length > 0 ? "" : (dialog.attachment?.name ?? "")
+                        background: dialog.surface
+                    }
                 }
             }
         }

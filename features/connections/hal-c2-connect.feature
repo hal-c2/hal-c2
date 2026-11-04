@@ -1,5 +1,6 @@
 # Sources:
 #   docs/user/remote-access.md (HAL-C2 Connect, Manage or revoke access, HAL-C2 Connect troubleshooting)
+#   https://github.com/pingdotgg/t3code/pull/12006 (dropped: an update restart keeps the tunnel)
 #   docs/internals/hal-c2-connect.md (trusted broker, DPoP-bound mint, link outlives a connector, OAuth traps)
 #   docs/operations/connect-setup.md
 #   docs/user/background-service.md (signing out of HAL-C2 Connect leaves the service alone)
@@ -136,6 +137,15 @@ Feature: HAL-C2 Connect
     Given a linked MC
     When the MC upgrades itself
     Then its tunnel stays up throughout
+
+  # T3 Code's #12006 keeps the tunnel through a desktop-initiated update restart. HAL-C2 does not
+  # restart the MC for updates: it upgrades in place (see mc/platform/upgrades.feature), so the
+  # restart case this guards does not arise here.
+  @dropped @mc
+  Scenario: An update restart keeps the tunnel up
+    Given a linked MC with its tunnel up
+    When the MC restarts to install an update
+    Then its tunnel stays up through the restart
 
   @dropped @mc
   Scenario: A tunnel connector that exits is started again

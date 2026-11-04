@@ -22,6 +22,12 @@
 # A rule with "reviews" ({"path", "match", "login"}) answers `gh pr view --json` with its
 # "stdout" whose "reviews" are the bodies recorded at "path" by calls whose argv had
 # "match", each under "login": what GitHub has of the reviews posted to a pull request.
+# A rule with "head" ({"status": "HTTP/2.0 403 Forbidden", "headers": {name: value}})
+# answers nothing: the first one whose substrings match puts its status line and
+# headers ahead of the answer of a call made with --include, as `gh api --include`
+# does. A gh call with --include that no head rule matches gets "HTTP/2.0 200 OK" or,
+# when it fails, "HTTP/2.0 500 Internal Server Error", with no headers. (tea prints
+# its head to stderr, which its rules give themselves.)
 # Every call is appended to $FAKE_GH_LOG as a JSON line {"cmd", "args", "stdin", "cwd"}.
 import json, os, re, subprocess, sys, time
 from datetime import datetime
@@ -108,8 +114,19 @@ joined = " ".join(args)
 with open(os.environ["FAKE_GH_RULES"]) as f:
     rules = json.load(f)
 
+def matches(rule):
+    return rule.get("cmd", cmd) == cmd and all(s in joined for s in rule.get("args", [])) and all(s in stdin for s in rule.get("stdin", [])) and ("repository" not in rule or lists(rule["repository"], stdin))
+
+head = next((r["head"] for r in rules if "head" in r and matches(r)), None)
+
+def write_head(exit_code):
+    if "--include" not in args or (head is None and cmd != "gh"):
+        return
+    h = head or {"status": "HTTP/2.0 200 OK" if exit_code == 0 else "HTTP/2.0 500 Internal Server Error"}
+    sys.stdout.write(h["status"] + "\r\n" + "".join("%s: %s\r\n" % kv for kv in h.get("headers", {}).items()) + "\r\n")
+
 for rule in rules:
-    if rule.get("cmd", cmd) == cmd and all(s in joined for s in rule.get("args", [])) and all(s in stdin for s in rule.get("stdin", [])) and ("repository" not in rule or lists(rule["repository"], stdin)):
+    if "head" not in rule and matches(rule):
         if "run" in rule:
             subprocess.run(["/bin/sh", "-c", rule["run"]], check=True, stdout=sys.stderr)
         time.sleep(rule.get("sleep", 0))
@@ -123,6 +140,7 @@ for rule in rules:
         if "pulls" in rule:
             out = pulls(rule["pulls"], stdin)
         try:
+            write_head(rule.get("exit", 0))
             sys.stdout.write(out if isinstance(out, str) else json.dumps(out))
             sys.stderr.write(rule.get("stderr", ""))
             sys.stdout.flush()

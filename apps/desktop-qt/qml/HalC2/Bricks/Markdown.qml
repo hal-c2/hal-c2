@@ -774,6 +774,17 @@ Item {
                                         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                         onTapped: root.openTextMenu(codeText, point.position)
                                     }
+
+                                    // Coloured by its fence's language, in the
+                                    // theme its background is; while the reply
+                                    // writes it, only its finished lines.
+                                    CodeHighlighter {
+                                        objectName: "codeHighlighter"
+                                        document: codeText.textDocument
+                                        language: seg.language
+                                        background: block.color
+                                        streaming: root.streaming && seg.open
+                                    }
                                 }
                             }
 

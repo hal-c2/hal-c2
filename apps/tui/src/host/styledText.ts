@@ -8,7 +8,8 @@ import type { Palette } from "../theme.ts";
 // object with a `chunks` array, so the host pre-styles timeline lines and the
 // bricks stay dumb. Markdown goes through a small line formatter instead of
 // OpenTUI's Markdown renderable, whose syntax style and async code highlighting
-// cannot be driven from QML.
+// cannot be driven from QML; code is coloured here instead, from OpenTUI's
+// tree-sitter (`codeColours.ts`).
 
 export interface StyledText {
   readonly chunks: ReadonlyArray<TextChunk>;
@@ -323,8 +324,9 @@ function clipCells(text: string, width: number): string {
 /**
  * Markdown as styled lines, laid out like OpenTUI's Markdown renderable with
  * the TUI syntax style (theme.ts createTuiSyntaxStyle): headings bold in the
- * accent colour, list markers as written in bold accent, fenced code in the
- * code colour and set off by a blank line on each side, quotes behind a faint
+ * accent colour, list markers as written in bold accent, fenced code in its
+ * language's colours (`colours`), or the code colour until it is read, set off
+ * by a blank line on each side, quotes behind a faint
  * bar, rules and tables across `width`, inline emphasis, code spans and links.
  */
 export function markdownLines(
@@ -332,11 +334,23 @@ export function markdownLines(
   palette: Palette,
   width = 24,
   diagrams?: MarkdownDiagrams,
+  colours?: CodeColouring,
 ): StyledText[] {
-  return markdownBlockLines(markdown, palette, width, undefined, diagrams).map(
+  return markdownBlockLines(markdown, palette, width, undefined, diagrams, colours).map(
     (entry) => entry.text,
   );
 }
+
+/**
+ * The lines of a code block coloured as its fence's language (`codeColours.ts`): those read
+ * so far, or null to show it in the code colour.
+ */
+export type CodeColouring = (
+  info: string,
+  source: string,
+  closed: boolean,
+  palette: Palette,
+) => ReadonlyArray<ReadonlyArray<TextChunk>> | null;
 
 /** How Markdown shows its `mermaid` code blocks; without it they are code blocks. */
 export interface MarkdownDiagrams {
@@ -377,13 +391,17 @@ export interface MarkdownLine {
 
 const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
 
-/** `markdownLines` with each line's block; `collapsedTables` cuts those tables' cells to a line. */
+/**
+ * `markdownLines` with each line's block; `collapsedTables` cuts those tables' cells to a
+ * line, and `colours` colours code by its language.
+ */
 export function markdownBlockLines(
   markdown: string,
   palette: Palette,
   width = 24,
   collapsedTables: (index: number) => boolean = () => false,
   diagrams?: MarkdownDiagrams,
+  colours?: CodeColouring,
 ): MarkdownLine[] {
   const lines: MarkdownLine[] = [];
   const blankLast = () => lines.length === 0 || plainText(lines.at(-1)!.text) === "";
@@ -433,8 +451,11 @@ export function markdownBlockLines(
       });
       diagramCount += 1;
     } else {
+      // Its lines read so far in their language's colours, the rest in the code colour.
+      const coloured = colours?.(language, code.source, closed, palette);
       block.forEach((entry, offset) => {
-        lines[codeStart + offset] = { text: entry.text, code };
+        const parts = coloured?.[offset];
+        lines[codeStart + offset] = { text: parts?.length ? { chunks: parts } : entry.text, code };
       });
     }
     codeCount += 1;

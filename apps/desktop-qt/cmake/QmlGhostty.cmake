@@ -5,7 +5,8 @@
 #
 # The static library comes from qml-ghostty's scripts/build-libghostty-vt.sh
 # (Zig 0.15.2, downloaded if missing; Ghostty checkout and Zig cached under
-# ~/.cache/qml-ghostty). Set HAL_C2_GHOSTTY_VT_LIBRARY to use a prebuilt
+# ~/.cache/qml-ghostty), run through zig-macos-sdk.sh so that Zig can link
+# with current macOS SDKs. Set HAL_C2_GHOSTTY_VT_LIBRARY to use a prebuilt
 # libghostty-vt.a instead, and FETCHCONTENT_SOURCE_DIR_QML_GHOSTTY to build
 # from a local qml-ghostty checkout.
 #
@@ -59,6 +60,7 @@ else()
     message(STATUS "Building libghostty-vt ${_hal_c2_vt_revision} (first configure only)")
     execute_process(
       COMMAND "${CMAKE_COMMAND}" -E env "GHOSTTY_REVISION=${_hal_c2_vt_revision}"
+        bash "${CMAKE_CURRENT_LIST_DIR}/zig-macos-sdk.sh"
         bash "${qml_ghostty_SOURCE_DIR}/scripts/build-libghostty-vt.sh"
       COMMAND_ERROR_IS_FATAL ANY
     )

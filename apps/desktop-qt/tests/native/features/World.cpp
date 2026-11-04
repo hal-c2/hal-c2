@@ -104,6 +104,10 @@ ShellWindows& World::showWindows() {
 void World::closeWindow(NativeWindow* window) {
   ShellRuntime* runtime = showWindows().runtime(window);
   expect(runtime && runtime->window(), QStringLiteral("the window %1 is not on screen").arg(window->id()));
+  // A brick's engine draws the main window's controllers (its singletons are
+  // that window's): it goes with that window, as the window's own QML does,
+  // rather than outlive what it draws (heap corruption when it went later).
+  if (window == m_native->main()) brick.reset();
   runtime->window()->close();
   // The shell closes it once the window's own close is over.
   QCoreApplication::sendPostedEvents();

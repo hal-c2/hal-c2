@@ -2648,13 +2648,19 @@ const Steps steps([] {
   };
   step(QStringLiteral("the page %1 with a %1 code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], c[1]); });
   step(QStringLiteral("the page %1 with a code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], QString()); });
-  // Coloured as the brick colours a reply's code, which this does not hold it to.
+  // Coloured as the brick colours a reply's code (timeline/markdown.feature
+  // holds it to the languages and the theme).
   step(QStringLiteral("its text is shown in a fixed-width face, coloured for that language where the surface can"), [drawPage, drawnPart, monoFace](World& world, const Captures&, const Table&) {
     const std::unique_ptr<Brick> page = drawPage(world);
     QQuickItem* box = drawnPart(*page, world, kCode, QStringLiteral("markdownCode"));
     expect(box->property("code").toString() == kCode, QStringLiteral("the code reads %1").arg(show(box->property("code"))));
-    const QFont font = findEditor(box, QStringLiteral("codeText"))->property("font").value<QFont>();
+    QQuickItem* code = findEditor(box, QStringLiteral("codeText"));
+    const QFont font = code->property("font").value<QFont>();
     expect(font.family() == monoFace(world), QStringLiteral("the code is in %1, not %2").arg(font.family(), monoFace(world)));
+    QObject* highlighter = code->findChild<QObject*>(QStringLiteral("codeHighlighter"));
+    expect(highlighter, QStringLiteral("the code block has no highlighter"));
+    world.waitFor([&] { return highlighter->property("coloured").toBool(); },
+                  [&] { return QStringLiteral("the code to be coloured as %1").arg(highlighter->property("language").toString()); });
   });
   step(QStringLiteral("its language is named on it"), [drawPage, drawnPart](World& world, const Captures&, const Table&) {
     const std::unique_ptr<Brick> page = drawPage(world);

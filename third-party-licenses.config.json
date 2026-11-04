@@ -331,6 +331,79 @@
           ]
         }
       ]
+    },
+    {
+      "bundles": ["desktop-qt", "mobile-qt"],
+      "license": "MIT",
+      "name": "syntect",
+      "sourceUrl": "https://github.com/trishume/syntect",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2017 Tristan Hume, Keith Hall, Google Inc and other contributors"
+          ],
+          "preamble": ["The desktop and phone apps colour code by its language with syntect."]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt", "mobile-qt"],
+      "license": "MIT",
+      "name": "two-face",
+      "sourceUrl": "https://codeberg.org/CosmicHarper/two-face",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2023-2025 The `two-face` developers (https://codeberg.org/CosmicHarper/two-face)."
+          ],
+          "preamble": [
+            "The desktop and phone apps read code with the syntaxes two-face collects from the bat project; their own notices are listed under \"bat syntaxes\"."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt", "mobile-qt"],
+      "license": "Various (MIT, Apache-2.0, BSD)",
+      "name": "bat syntaxes",
+      "sourceUrl": "https://github.com/sharkdp/bat/tree/master/assets/syntaxes",
+      "noticeFiles": ["native/syntax/SYNTAXES-NOTICE.md"]
+    },
+    {
+      "bundles": ["desktop-qt", "mobile-qt"],
+      "license": "MIT",
+      "name": "Pierre themes",
+      "noticeFiles": ["native/syntax/themes/LICENSE-pierre"]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "BSD-2-Clause",
+      "name": "Oniguruma",
+      "sourceUrl": "https://github.com/kkos/oniguruma",
+      "generatedNotices": [
+        {
+          "licenseId": "BSD-2-Clause",
+          "copyrights": ["Copyright (c) 2002-2021 K.Kosako <kkosako0@gmail.com>"],
+          "preamble": [
+            "The desktop app reads code's syntax with the Oniguruma regular expression library."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["mobile-qt"],
+      "license": "MIT",
+      "name": "fancy-regex",
+      "sourceUrl": "https://github.com/fancy-regex/fancy-regex",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright 2015 The Fancy Regex Authors."],
+          "preamble": ["The phone app reads code's syntax with fancy-regex."]
+        }
+      ]
     }
   ],
   "packageOverrides": [

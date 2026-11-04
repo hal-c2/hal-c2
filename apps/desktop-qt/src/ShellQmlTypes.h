@@ -16,6 +16,7 @@
 #include "native/Browser.h"
 #include "native/CommandPaletteController.h"
 #include "native/CommandRegistry.h"
+#include "native/CodeHighlighter.h"
 #include "native/ComposerHighlighter.h"
 #include "native/DeviceScreen.h"
 #include "native/DeviceTools.h"
@@ -69,6 +70,7 @@ HAL_C2_SHELL_SINGLETON(Browser, Browser)
 
 HAL_C2_SHELL_TYPE(LocalTranscriber)
 HAL_C2_SHELL_TYPE(LocalFolderModel)
+HAL_C2_SHELL_TYPE(CodeHighlighter)
 HAL_C2_SHELL_TYPE(ComposerHighlighter)
 HAL_C2_SHELL_TYPE(DeviceScreen)
 HAL_C2_SHELL_TYPE(BrowserPage)

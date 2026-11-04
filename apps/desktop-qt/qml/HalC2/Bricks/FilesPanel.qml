@@ -7,8 +7,9 @@ import HalC2.Shell
 // The right panel's Files tab: the thread's workspace as the MC lists it,
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
 // expanded; typing searches the whole workspace. A file opens beside the
-// tree, one row per line, to read, edit or copy whole; an image shows as
-// itself, and other media play in it, or open in the browser where they cannot.
+// tree, one row per line coloured by its language, to read, edit or copy
+// whole; an image shows as itself, and other media play in it, or open in the
+// browser where they cannot.
 //
 //   FilesPanel { anchors.fill: parent; source: Panel.files }
 Rectangle {
@@ -739,11 +740,27 @@ Rectangle {
                         }
                     }
 
+                    // The lines are coloured for this panel's theme, and cut where a plain line is.
+                    Binding {
+                        target: lines.model
+                        property: "background"
+                        value: root.color
+                        when: lines.model !== null
+                    }
+                    Binding {
+                        target: lines.model
+                        property: "columnLimit"
+                        value: root.maxLineColumns
+                        when: lines.model !== null
+                    }
+
                     delegate: Item {
                         id: line
 
                         required property int number
                         required property string text
+                        // The line coloured by the file's language, or empty while it is plain.
+                        required property string styled
 
                         readonly property bool revealed: number === (root.source?.revealLine ?? 0)
                         width: lines.contentWidth
@@ -778,13 +795,14 @@ Rectangle {
                         Text {
                             id: body
 
+                            objectName: "fileLineText-" + line.number
                             x: lines.gutter
                             width: lines.wrap ? line.width - x - 8 : implicitWidth
-                            text: line.text.length > root.maxLineColumns ? line.text.slice(0, root.maxLineColumns) + "…" : line.text
+                            text: line.styled.length > 0 ? line.styled : line.text.length > root.maxLineColumns ? line.text.slice(0, root.maxLineColumns) + "…" : line.text
                             color: root.foreground
                             font.family: root.mono
                             font.pixelSize: Theme.fontSizeCode
-                            textFormat: Text.PlainText
+                            textFormat: line.styled.length > 0 ? Text.StyledText : Text.PlainText
                             wrapMode: lines.wrap ? Text.WrapAnywhere : Text.NoWrap
                             topPadding: 1
                             bottomPadding: 1

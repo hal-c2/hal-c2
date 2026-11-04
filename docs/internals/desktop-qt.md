@@ -143,7 +143,8 @@ bar row still use that brick.
 ## Setup
 
 Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
-`WebSockets` and `Sql` with its SQLite driver, Node (the host runs from TypeScript source).
+`WebSockets` and `Sql` with its SQLite driver, Node (the host runs from TypeScript source), and
+Rust's `cargo` for the code highlighter (`native/syntax`, linked in by `cmake/Syntax.cmake`).
 
 - macOS: `brew install qt` (6.11 at time of writing).
 - Linux: the distro's Qt 6 with its WebSockets module, or the official

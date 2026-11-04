@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13523 (one-click updates through `grok update`)
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel, background tasks and subagents)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok transcripts)
@@ -64,6 +65,27 @@ Feature: Grok
     Given the Grok instance has an xAI API key in its environment
     When the user opens the provider list
     Then Grok shows that it uses an xAI API key
+
+  # Grok's own installer owns the binary, so its own updater is the update command.
+  @backlog
+  Scenario: An outdated Grok is offered an update through Grok's own updater
+    Given Grok was installed by its own installer and a newer version is released
+    When the MC checks provider versions
+    Then Grok is reported behind the latest version with an update command
+
+  @backlog
+  Scenario: Updating Grok runs its updater against the home its instance uses
+    Given Grok was installed by its own installer and this Grok instance has its own Grok home
+    When the user updates Grok
+    Then Grok's updater runs against that home and not the default one
+    And Grok is reported current
+
+  # A binary that cannot be resolved is never handed to an updater it does not belong to.
+  @backlog
+  Scenario: A Grok binary that cannot be resolved is updated by hand
+    Given the Grok instance's executable cannot be resolved
+    When the MC checks provider versions
+    Then Grok is reported behind the latest version with no update command
 
   # Health states of GrokProvider.ts checkGrokProviderStatus.
   @backlog
