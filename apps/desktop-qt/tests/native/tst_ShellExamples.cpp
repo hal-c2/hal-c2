@@ -36,6 +36,13 @@ static QQuickItem* findVisualItemOfType(QQuickItem* parent, const char* type) {
   return nullptr;
 }
 
+// The route's centre: a layout of a shell's own draws it with CentreHost,
+// DefaultLayout (a DefaultShell's, as the folders example is) with ThreadArea.
+static QQuickItem* findCentre(QQuickItem* parent) {
+  auto* centre = findVisualItemOfType(parent, "CentreHost");
+  return centre ? centre : findVisualItemOfType(parent, "ThreadArea");
+}
+
 class ShellExamplesTest : public QObject {
   Q_OBJECT
 
@@ -144,7 +151,7 @@ private slots:
   // A thread or draft route draws its view in the centre (js/centreViews.js);
   // settings take the centre's place until they close.
   void threadRoutesDrawTheCentre(QQuickWindow* window) {
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     QVERIFY(centre->isVisible());
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
@@ -174,7 +181,7 @@ private slots:
   void rightPanelLeavesTheThreadRoom(QQuickWindow* window) {
     auto* panel = findVisualItemOfType(window->contentItem(), "RightPanel");
     QVERIFY(panel);
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     auto open = QJsonDocument::fromJson(R"({
       "isOpen":true,"tabs":[],"activeId":"","width":900,
@@ -189,13 +196,18 @@ private slots:
     // The thread's 360, less a card's border round the centre, once a
     // sidebar that folds for it has.
     QTRY_VERIFY2(centre->width() >= 356, qPrintable(QString::number(centre->width())));
-    QTRY_VERIFY(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width());
+    const auto where = [&] {
+      return QString("centre %1+%2, panel %3+%4, window %5")
+          .arg(centre->mapToScene(QPointF()).x()).arg(centre->width())
+          .arg(panel->mapToScene(QPointF()).x()).arg(panel->width()).arg(window->width());
+    };
+    QTRY_VERIFY2(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width(), qPrintable(where()));
   }
 
   // The usage route draws its chart inside the centre, and the day under the
   // pointer is read out without leaving the plot.
   void usageRouteDrawsTheChart(QQuickWindow* window) {
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     QVariantList days;
     for (int day = 0; day < 7; ++day) {
@@ -252,7 +264,7 @@ private slots:
   // the thread; back on Threads, and with the page gone, the shell is as it was.
   void pluginPagesHaveTabs(QQuickWindow* window) {
     auto* content = window->contentItem();
-    auto* centre = findVisualItemOfType(content, "CentreHost");
+    auto* centre = findCentre(content);
     QVERIFY(centre);
     QTRY_VERIFY(centre->isVisible());
     const QString key = QStringLiteral("code-review/reviews@1");
