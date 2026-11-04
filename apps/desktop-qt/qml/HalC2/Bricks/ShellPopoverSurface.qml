@@ -5,7 +5,8 @@ import HalC2.Shell
 // What popovers, menus, palettes and dialogs are drawn on: the overlay
 // surface with a strong hairline and one static shadow. Use it as a popup's
 // background; ShellPopover and ShellMenu already do. It is solid whatever the
-// glass opacity, which thins only the composer: a menu is read over anything.
+// glass opacity, which thins toasts and floating buttons: a menu is read over
+// anything.
 Item {
     id: surface
 

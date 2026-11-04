@@ -208,8 +208,8 @@ Feature: Appearance
       Then <effect>
 
       Examples:
-        | setting       | value | effect                                   |
-        | glass opacity | 50    | translucent surfaces are more see-through |
+        | setting       | value | effect                                           |
+        | glass opacity | 50    | toasts and floating buttons are more see-through |
 
       # Contrast runs from 50 to 200 (packages/contracts settings.ts), so 20 is not a
       # value the row can take, and below 100 it softens rather than sharpens.

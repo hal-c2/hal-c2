@@ -53,7 +53,7 @@ Feature: Shared controls follow the theme
     Given the glass opacity is set to 40 percent
     When a menu, the command palette, a picker or a dialog opens over the timeline
     Then it is drawn on the solid overlay colour, so nothing behind it shows through
-    And the glass opacity still thins the composer
+    And the glass opacity still thins toasts and floating buttons
 
   Scenario: A destructive confirm is a deep error fill under white text
     Given the dark base theme is applied, whose error red is light enough for text

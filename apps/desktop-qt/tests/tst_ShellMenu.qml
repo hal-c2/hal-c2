@@ -142,7 +142,7 @@ TestCase {
         Theme.colors = {};
     }
 
-    // The glass opacity thins surfaceOverlay for the composer; a menu stays solid.
+    // The glass opacity thins surfaceOverlay for toasts and floating buttons; a menu stays solid.
     function test_menus_are_opaque_whatever_the_glass() {
         Theme.colors = {
             surfaceOverlay: "#66101820"

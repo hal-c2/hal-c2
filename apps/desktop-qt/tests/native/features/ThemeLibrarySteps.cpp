@@ -730,10 +730,11 @@ const Steps steps([] {
     settings(world)->set(QStringLiteral("glassOpacity"), c[0].toInt());
     world.waitFor([&] { return settings(world)->setting(QStringLiteral("glassOpacity")).toInt() == c[0].toInt(); }, QStringLiteral("the glass opacity to be saved"));
   });
-  step(QStringLiteral("translucent surfaces are more see-through"), [](World& world, const Captures&, const Table&) {
+  // What toasts and floating buttons draw on; menus and dialogs draw it solid.
+  step(QStringLiteral("toasts and floating buttons are more see-through"), [](World& world, const Captures&, const Table&) {
     const double before = library(world).copyColors.value(QStringLiteral("overlay")).toDouble();
     const double now = world.theme().color(QStringLiteral("surfaceOverlay"), QColor()).alphaF();
-    expect(now < before && std::abs(now - 0.5) < 0.01, QStringLiteral("menus and dialogs were %1 solid and are now %2").arg(before).arg(now));
+    expect(now < before && std::abs(now - 0.5) < 0.01, QStringLiteral("toasts were %1 solid and are now %2").arg(before).arg(now));
   });
 });
 
