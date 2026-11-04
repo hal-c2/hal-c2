@@ -1627,7 +1627,7 @@ const Steps panelSteps([] {
     expect(model(world).count() == 0, describe(world));
   });
   step(QStringLiteral("the user can link one"), [](World& world, const Captures&, const Table&) {
-    world.brick->click(QStringLiteral("pullRequestsEmptyLink"));
+    world.brick->click(QStringLiteral("emptyStateAction"));  // the empty state's "Link pull request"
     world.sync();
     expect(model(world).linkOpen(), QStringLiteral("the link field is closed"));
   });

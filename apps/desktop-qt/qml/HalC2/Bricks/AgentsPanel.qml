@@ -35,16 +35,14 @@ Rectangle {
     objectName: "agentsPanel"
     color: Theme.palette.color("surface", "#0f0f11")
 
-    Text {
+    ShellEmptyState {
         objectName: "agentsEmpty"
         anchors.centerIn: parent
-        width: parent.width - 32
+        width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
         visible: list.count === 0
-        horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.Wrap
-        text: qsTr("No subagents, running commands or background work in this thread.")
-        color: root.muted
-        font.pixelSize: Theme.type.meta.size
+        iconName: "bot"
+        title: qsTr("No background work")
+        description: qsTr("Subagents, running commands and background work in this thread show here.")
     }
 
     ListView {
