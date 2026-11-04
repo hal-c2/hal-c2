@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13328
+#   https://github.com/pingdotgg/t3code/pull/13481 (the 0.156 floor and its support ranges)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
@@ -802,8 +803,8 @@ Feature: Codex
     When the MC checks Codex
     Then Codex's status is reported from the manifest the MC already has
 
-  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
-  # No range names a version until the policy adds one, so the in-range rows are unknown.
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited), supported or unknown.
+  # Prereleases and versions no range names stay unknown.
   Scenario Outline: The version Codex runs decides whether this HAL-C2 release supports it
     Given Codex version "<version>" is installed
     When the MC checks Codex
@@ -812,5 +813,21 @@ Feature: Codex
     Examples:
       | version         | status  |
       | 0.128.0         | broken  |
-      | 0.129.0         | unknown |
       | 0.129.0-alpha.1 | unknown |
+
+  # The floor follows T3 Code's Codex policy (its #13481). Below 0.149 Codex does not send
+  # Thread.projectId, so no session can start and the version is broken. 0.149 to 0.155 are
+  # outside the supported range.
+  @mc @backlog @plugin-codex
+  Scenario Outline: The Codex version sets its support level for this HAL-C2 release
+    Given Codex version "<version>" is installed
+    When the MC checks Codex
+    Then Codex is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version | status      |
+      | 0.129.0 | broken      |
+      | 0.148.0 | broken      |
+      | 0.149.0 | unsupported |
+      | 0.155.0 | unsupported |
+      | 0.156.0 | supported   |

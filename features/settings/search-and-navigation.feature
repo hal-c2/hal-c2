@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13516 (Escape in settings returns to the last main page)
 #   apps/web/src/components/settings/settingsSearch.ts
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts
 #   apps/web/src/components/settings/SettingsSidebarNav.tsx

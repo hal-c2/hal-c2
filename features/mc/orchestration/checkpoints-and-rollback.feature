@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13481 (Codex 0.156 rollback through thread/revert only)
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.captured, checkpoint-scope.created,
 #     checkpoint.rollback, checkpoint.rollback-requested, run.updated, provider-thread.updated)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
@@ -389,6 +390,15 @@ Feature: Checkpoints, diffs and rewinding
     Given a Codex thread whose history needs more than one page to rewind
     When the user rewinds it to an early run
     Then the command fails explaining the provider could not roll back
+    And no run is marked rolled back
+
+  # Codex 0.156 has no thread/rollback. A thread with legacy history (created before Codex 0.151)
+  # is refused by thread/revert, and the refusal reaches the user rather than falling back.
+  @mc @backlog @plugin-codex
+  Scenario: A Codex rollback that Codex refuses for legacy history is reported as a failure
+    Given a Codex thread created before Codex 0.151 with a run to rewind to
+    When the user rewinds it to that run
+    Then the command fails with Codex's reason for refusing the rollback
     And no run is marked rolled back
 
   # CodexAdapterV2.ts resolveCodexRollbackTurnCount.
