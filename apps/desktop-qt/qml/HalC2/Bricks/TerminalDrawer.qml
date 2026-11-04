@@ -6,8 +6,8 @@ import HalC2.Shell
 
 // The thread's terminal drawer: the shown group's terminals side by side or
 // stacked (TerminalSplits), fed by the `Terminals` controller's sessions on the
-// MC. Its actions sit over the terminal's corner; with more than one terminal,
-// a list beside the terminals names each group under them. Open flag, height, groups and the active
+// MC. Its actions sit above the terminals; with more than one terminal, a
+// list beside the terminals names each group under them. Open flag, height, groups and the active
 // one are the controller's; dragging the top edge hands the height back with
 // terminal.resize. The right panel's terminal tabs are not the drawer's. Not
 // animated: every frame of it would relayout the thread above (see RightPanel).
@@ -195,7 +195,11 @@ Item {
     TerminalSplits {
         id: stack
 
-        anchors.top: edgeLine.bottom
+        objectName: "terminalDrawerSplits"
+        // Under the actions, so they never cover the first line; beside the
+        // list, the actions sit over the list instead.
+        anchors.top: drawer.listShown ? edgeLine.bottom : actions.bottom
+        anchors.topMargin: drawer.listShown ? 0 : 2
         anchors.left: parent.left
         anchors.right: drawer.listShown ? terminalList.left : parent.right
         anchors.bottom: parent.bottom
@@ -206,16 +210,6 @@ Item {
         group: Terminals.activeGroup
         background: drawer.background
         foreground: drawer.foreground
-        scrollbarTopInset: drawer.listShown ? 0 : actions.y + actions.height + 2 - y
-    }
-
-    // Over the single terminal's corner, or over the list. On its own
-    // background, so the terminal's text under it does not show through.
-    Rectangle {
-        anchors.fill: actions
-        anchors.margins: -2
-        radius: 4
-        color: drawer.background
     }
 
     RowLayout {
