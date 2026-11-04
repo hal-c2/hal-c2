@@ -101,7 +101,8 @@ Rectangle {
 
     // Opens the overflow chip's menu: a row per folded chip in toolbar
     // order, a picker as a submenu of its choices and a toggle as a checked
-    // row. `chip`, when given, is the row the keyboard starts on.
+    // row reading On or Off. `chip`, when given, is the row the keyboard
+    // starts on.
     function openOverflow(chip) {
         if (overflowMenu !== null) {
             overflowMenu.close();
@@ -138,6 +139,7 @@ Rectangle {
                 const row = overflowItemComponent.createObject(null, {
                     objectName: "composerOverflow:" + item.objectName,
                     text: item.menuTitle,
+                    detail: item.checked ? qsTr("On") : qsTr("Off"),
                     current: item.checked
                 });
                 row.triggered.connect(() => item.flip());
@@ -525,9 +527,9 @@ Rectangle {
 
         // @file, $skill and /command suggestions, computed by the controller for the
         // caret it was last told about; they sit on the card's top edge.
+        // Inset by the card's padding, so it lines up with the prompt.
         Rectangle {
             Layout.fillWidth: true
-        // Inset by the card's padding, so it lines up with the prompt.
             Layout.leftMargin: Theme.space.md
             Layout.rightMargin: Theme.space.md
             visible: composer.suggesting
