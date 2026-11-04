@@ -28,8 +28,10 @@ Homebrew, and RPM Fusion's `ffmpeg-libs` on Fedora (`ffmpeg-free` may lack H.264
 
 The terminal drawer is [qml-ghostty](https://github.com/hal-c2/qml-ghostty), fetched at the
 revision pinned in `cmake/QmlGhostty.cmake`. The first configure builds its libghostty-vt from
-a Ghostty checkout with Zig 0.15.2 (both downloaded into `~/.cache/qml-ghostty`; needs `bash`,
-`curl`, `git` and `tar`), which takes a few minutes. Pass
+a Ghostty checkout with Zig 0.15.2 (mise's, or both downloaded into `~/.cache/qml-ghostty`;
+needs `bash`, `curl`, `git` and `tar`), which takes a few minutes. Zig 0.15 cannot link
+with current Apple SDKs on Apple silicon, so there the build runs Zig against a patched copy of
+a macOS 26 SDK, which must be installed (`cmake/zig-macos-sdk.sh` says why). Pass
 `-DHAL_C2_GHOSTTY_VT_LIBRARY=/path/to/libghostty-vt.a` to use one already built, or
 `-DFETCHCONTENT_SOURCE_DIR_QML_GHOSTTY=/path/to/qml-ghostty` to build against a local checkout.
 qml-ghostty's Ghostty pin must equal `native/libghostty-vt/VERSION`; configure stops if it does not.
