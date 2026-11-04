@@ -122,16 +122,21 @@ SettingsPage {
         property bool detailsOpen: false
         readonly property bool detailsShown: detailsOpen || tool.sourceControl.route?.target === "fetchInterval"
 
-        // The name and summary share a left column; the switch centres on both lines.
+        // The name and summary share a left column; the switch centres on
+        // the name's line, however many lines the summary takes.
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
                 spacing: Theme.space.sm
 
                 RowLayout {
+                    id: nameLine
+                    objectName: "nameLine"
+
                     Layout.fillWidth: true
                     spacing: Theme.space.sm
 
@@ -211,7 +216,8 @@ SettingsPage {
 
             ShellButton {
                 objectName: "details"
-                Layout.alignment: Qt.AlignVCenter
+                Layout.alignment: Qt.AlignTop
+                Layout.topMargin: Math.round((nameLine.implicitHeight - implicitHeight) / 2)
                 visible: tool.modelData.git
                 subtle: true
                 iconName: tool.detailsShown ? "chevron-up" : "chevron-down"
@@ -223,7 +229,8 @@ SettingsPage {
 
             ShellSwitch {
                 objectName: "availability"
-                Layout.alignment: Qt.AlignVCenter
+                Layout.alignment: Qt.AlignTop
+                Layout.topMargin: Math.round((nameLine.implicitHeight - implicitHeight) / 2)
                 visible: !tool.modelData.comingSoon
                 enabled: false
                 checked: tool.modelData.enabled
