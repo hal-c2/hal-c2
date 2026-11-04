@@ -102,21 +102,62 @@ const Steps steps([] {
     expect(width(world) == LayoutController::kSidebarMinWidth, show(world.state(QStringLiteral("layout"))));
   });
   step(QStringLiteral("the window becomes narrower than the sidebar allows"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("sidebar.resize"), QVariantMap{{QStringLiteral("width"), 340}});
-    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 780}});
+    world.bridge().dispatch(QStringLiteral("sidebar.resize"), QVariantMap{{QStringLiteral("width"), 440}});
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 880}});
   });
   step(QStringLiteral("the sidebar shrinks to fit"), [width](World& world, const Captures&, const Table&) {
     // The thread keeps its room; the list gets what is left.
-    expect(width(world) == 780 - LayoutController::kContentMinWidth, show(world.state(QStringLiteral("layout"))));
+    expect(width(world) == 880 - LayoutController::kContentMinWidth, show(world.state(QStringLiteral("layout"))));
     // And is its own width again in a window with room.
     world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 1280}});
-    expect(width(world) == 340, show(world.state(QStringLiteral("layout"))));
+    expect(width(world) == 440, show(world.state(QStringLiteral("layout"))));
   });
-  // A window with no room for the list at its minimum beside the thread: the
-  // layout then draws the list over the thread (tst_ShellWindow).
+  // A window with no room for the full list beside the thread keeps the
+  // rail there; its expand button (sidebar.toggle) draws the full list over
+  // the thread (tst_ShellWindow).
   const auto overlay = [](World& world) { return world.state(QStringLiteral("layout")).toMap().value(QStringLiteral("sidebarOverlay")).toBool(); };
-  step(QStringLiteral("the window becomes too narrow for the sidebar beside the thread"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), 640}});
+  const auto mode = [](World& world) { return world.state(QStringLiteral("layout")).toMap().value(QStringLiteral("sidebarMode")).toString(); };
+  const auto windowWidth = [](World& world, int to) {
+    world.waitFor([&world] { return world.state(QStringLiteral("layout")).isValid(); }, QStringLiteral("the shell publishes its layout"));
+    world.bridge().dispatch(QStringLiteral("layout.window"), QVariantMap{{QStringLiteral("width"), to}});
+  };
+  step(QStringLiteral("the window becomes too narrow for the sidebar beside the thread"), [windowWidth](World& world, const Captures&, const Table&) {
+    windowWidth(world, 640);
+  });
+  step(QStringLiteral("the sidebar is a rail of icons beside the thread"), [width, overlay, mode](World& world, const Captures&, const Table&) {
+    expect(mode(world) == QLatin1String("rail") && !overlay(world) && !collapsed(world) && width(world) == LayoutController::kRailWidth,
+           show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the window is (\\d+) wide"), [windowWidth](World& world, const Captures& c, const Table&) {
+    windowWidth(world, c[0].toInt());
+  });
+  step(QStringLiteral("the sidebar draws (two-line rows|one-line rows|a rail of icons)"), [mode](World& world, const Captures& c, const Table&) {
+    const QString want = c[0] == QLatin1String("two-line rows") ? QStringLiteral("full")
+                         : c[0] == QLatin1String("one-line rows") ? QStringLiteral("slim")
+                                                                  : QStringLiteral("rail");
+    expect(mode(world) == want, show(world.state(QStringLiteral("layout"))));
+  });
+  // ShellWindow says whether the interface font is monospaced with the
+  // window's width.
+  step(QStringLiteral("the interface font is (monospaced|proportional)"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&world] { return world.state(QStringLiteral("layout")).isValid(); }, QStringLiteral("the shell publishes its layout"));
+    world.bridge().dispatch(QStringLiteral("layout.window"),
+                            QVariantMap{{QStringLiteral("width"), 1280}, {QStringLiteral("monospace"), c[0] == QLatin1String("monospaced")}});
+  });
+  step(QStringLiteral("the sidebar is (\\d+) wide"), [width](World& world, const Captures& c, const Table&) {
+    expect(width(world) == c[0].toInt(), show(world.state(QStringLiteral("layout"))));
+  });
+  step(QStringLiteral("the sidebar is open"), [](World& world, const Captures&, const Table&) {
+    layout(world)->setSidebarCollapsed(false);
+    expectCollapsed(world, false);
+  });
+  step(QStringLiteral("the user makes the window (narrow and then wide again|wide)"), [windowWidth](World& world, const Captures&, const Table&) {
+    windowWidth(world, 800);
+    windowWidth(world, 1280);
+  });
+  step(QStringLiteral("the sidebar is still (open|hidden)"), [mode](World& world, const Captures& c, const Table&) {
+    expectCollapsed(world, c[0] == QLatin1String("hidden"));
+    if (c[0] == QLatin1String("open")) expect(mode(world) == QLatin1String("full"), show(world.state(QStringLiteral("layout"))));
   });
   step(QStringLiteral("the sidebar opens over the thread at its minimum width"), [width, overlay](World& world, const Captures&, const Table&) {
     expect(overlay(world) && !collapsed(world) && width(world) == LayoutController::kSidebarMinWidth,

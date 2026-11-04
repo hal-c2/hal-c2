@@ -27,6 +27,11 @@ Rectangle {
     // long press opens the row's menu, which holds every row action and Move
     // up and Move down. A mouse or trackpad arranges rows as ever.
     property bool touchRows: false
+    // How the rows draw (LayoutController's sidebarMode): "full" two-line
+    // rows, "slim" one line each (the slim setting a shell may pick), or
+    // "rail", a column of icons whose expand button shows the full list.
+    property string density: Shell.state.layout?.sidebarMode ?? "full"
+    readonly property bool rail: density === "rail"
     // The build the MC is (StageController): {label, artwork, pill}.
     readonly property var stage: Shell.state.stage ?? null
     property Window window: null
@@ -128,7 +133,10 @@ Rectangle {
     }
     Component.onCompleted: syncRows()
 
-    implicitWidth: 256
+    // LayoutController's default, 256 or 272 in a monospace interface, and
+    // the rail's 48, for a shell that sizes the list by its implicit width.
+    // Settings keep the full width: a shell sizes its sections by it.
+    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : Theme.monospace ? 272 : 256
     // The narrowest a layout shows it (LayoutController's kSidebarMinWidth).
     readonly property int minimumWidth: 208
     color: Theme.palette.color("sidebar", "#0a0a0a")
@@ -215,15 +223,68 @@ Rectangle {
         return out;
     }
 
+    // The rail: the way back to the full list, then search, a new thread and
+    // settings, for a window too narrow for the list beside the thread.
+    ColumnLayout {
+        objectName: "sidebarRail"
+        anchors.fill: parent
+        anchors.topMargin: Theme.space.sm
+        anchors.bottomMargin: Theme.space.sm
+        spacing: Theme.space.xs
+        visible: sidebar.rail
+
+        RailButton {
+            objectName: "railExpand"
+            iconName: "panel-left-open"
+            toolTip: qsTr("Show thread list")
+            Accessible.name: qsTr("Show thread list")
+            onClicked: Shell.dispatch("sidebar.toggle")
+        }
+
+        RailButton {
+            objectName: "railSearch"
+            visible: sidebar.showScope
+            iconName: "search"
+            toolTip: qsTr("Search")
+            Accessible.name: qsTr("Search")
+            onClicked: PaletteModel.show()
+        }
+
+        RailButton {
+            objectName: "railNewThread"
+            visible: sidebar.showScope
+            iconName: "square-pen"
+            toolTip: qsTr("New thread")
+            Accessible.name: qsTr("New thread")
+            onClicked: Shell.dispatch("thread.new", sidebar.model && sidebar.model.scopeProjectKey !== null ? {
+                projectKey: sidebar.model.scopeProjectKey
+            } : {})
+        }
+
+        Item {
+            Layout.fillHeight: true
+        }
+
+        RailButton {
+            objectName: "railSettings"
+            visible: sidebar.showFooter
+            iconName: "settings"
+            toolTip: qsTr("Settings")
+            Accessible.name: qsTr("Settings")
+            onClicked: Shell.dispatch("settings.open")
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.leftMargin: Math.min(0, sidebar.width - sidebar.minimumWidth)
         spacing: 0
+        visible: !sidebar.rail
 
         // Brand band: sidebar toggle and wordmark.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
+            Layout.preferredHeight: Theme.control.lg + Theme.space.lg + Theme.space.xs
             visible: sidebar.showBrand
 
             // A Nightly MC marks the band (StageController): a night sky, or
@@ -265,12 +326,12 @@ Rectangle {
             }
 
             ShellButton {
-                x: 12
-                y: 12
+                x: Theme.space.md
+                y: Theme.space.md
                 subtle: true
-                implicitHeight: 28
+                implicitHeight: Theme.control.md
                 iconName: "panel-left-close"
-                iconSize: 16
+                iconSize: Theme.icon.md
                 iconTint: sidebar.iconColor
                 Accessible.name: qsTr("Hide sidebar")
                 onClicked: Shell.dispatch("sidebar.toggle")
@@ -279,8 +340,8 @@ Rectangle {
             HalC2Wordmark {
                 id: wordmark
 
-                x: 52
-                size: 11
+                x: Theme.space.md + Theme.control.md + Theme.space.md
+                size: Theme.type.caption.size
                 dev: sidebar.stage !== null && sidebar.stage.artwork === "dev"
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -289,7 +350,7 @@ Rectangle {
                 objectName: "stagePill"
                 visible: sidebar.stage !== null && !!sidebar.stage.pill
                 anchors.left: wordmark.right
-                anchors.leftMargin: 8
+                anchors.leftMargin: Theme.space.sm
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -298,28 +359,28 @@ Rectangle {
         // stage's pill above the list, unless the shell marks it itself.
         StagePill {
             objectName: "stageBadge"
-            Layout.leftMargin: 12
-            Layout.topMargin: 8
+            Layout.leftMargin: Theme.space.md
+            Layout.topMargin: Theme.space.sm
             visible: sidebar.showStage && !sidebar.showBrand && sidebar.stage !== null && (!!sidebar.stage.artwork || !!sidebar.stage.pill)
         }
 
         // Search + new thread, scope + add project.
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.margins: 8
-            spacing: 4
+            Layout.margins: Theme.space.sm
+            spacing: Theme.space.xs
             visible: sidebar.showScope
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.space.xs
 
                 ShellButton {
                     Layout.fillWidth: true
-                    implicitHeight: 32
+                    implicitHeight: Theme.control.lg
                     subtle: true
                     iconName: "search"
-                    iconSize: 16
+                    iconSize: Theme.icon.md
                     iconTint: sidebar.muted
                     tint: sidebar.foreground
                     objectName: "search"
@@ -337,9 +398,9 @@ Rectangle {
 
                 ShellButton {
                     subtle: true
-                    implicitHeight: 32
+                    implicitHeight: Theme.control.lg
                     iconName: "square-pen"
-                    iconSize: 16
+                    iconSize: Theme.icon.md
                     iconTint: sidebar.iconColor
                     objectName: "newThread"
                     Accessible.name: qsTr("New thread")
@@ -351,19 +412,19 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.space.xs
 
                 ShellButton {
                     id: scopeButton
 
                     Layout.fillWidth: true
-                    implicitHeight: 32
-                    leftPadding: 9
+                    implicitHeight: Theme.control.lg
+                    leftPadding: Theme.space.sm
                     subtle: true
                     chevron: true
-                    chevronSize: 16
+                    chevronSize: Theme.icon.md
                     iconName: "folder"
-                    iconSize: 16
+                    iconSize: Theme.icon.md
                     iconTint: sidebar.muted
                     // Muted at full strength: dimmer, it falls below 4.5:1 on the sidebar.
                     tint: sidebar.muted
@@ -377,7 +438,7 @@ Rectangle {
                         id: scopeMenu
                         objectName: "scopeMenu"
 
-                        y: parent.height + 4
+                        y: parent.height + Theme.space.xs
                         width: Math.max(parent.width, 200)
 
                         ShellMenuItem {
@@ -423,9 +484,9 @@ Rectangle {
 
                 ShellButton {
                     subtle: true
-                    implicitHeight: 32
+                    implicitHeight: Theme.control.lg
                     iconName: "folder-plus"
-                    iconSize: 16
+                    iconSize: Theme.icon.md
                     iconTint: sidebar.iconColor
                     objectName: "addProject"
                     Accessible.name: qsTr("Add project")
@@ -617,10 +678,10 @@ Rectangle {
                 objectName: "dropLine"
                 parent: list
                 visible: list.dropLineY >= 0
-                x: 6
+                x: Theme.space.xs
                 y: list.dropLineY - 1
-                width: list.width - 12
-                height: 2
+                width: list.width - Theme.space.sm
+                height: Theme.space.xxs
                 radius: Theme.radiusPill
                 color: Theme.palette.color("focus", "#3b82f6")
             }
@@ -649,13 +710,13 @@ Rectangle {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.leftMargin: 9
-            Layout.rightMargin: 8
-            Layout.bottomMargin: 4
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.xs
             clip: true
             model: rowModel
             reuseItems: true
-            spacing: 1
+            spacing: Theme.space.xxs
             boundsBehavior: Flickable.StopAtBounds
             // A Tab stop while it has a row for the cursor: an empty list
             // would take the keyboard and show nowhere it went.
@@ -719,9 +780,10 @@ Rectangle {
                 width: ListView.view.width
                 // Pooled by `reuseItems`: hidden, but still a child of the list.
                 Accessible.ignored: !visible
-                implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "more" ? 32 : kind === "slim" ? 36 : 82
+                implicitHeight: kind === "header" ? Theme.control.lg + Theme.space.xs : kind === "divider" ? Theme.space.md : kind === "more" ? Theme.control.lg : rowLoader.item ? rowLoader.item.implicitHeight : 0
 
-                // Collapsible section header with a hairline (settled) or tint (snoozed).
+                // Collapsible section header: "Snoozed 1 ›", the chevron
+                // turning down while the shelf is open.
                 Item {
                     objectName: entry.kind === "header" ? "header:" + entry.modelData.key : ""
                     anchors.fill: parent
@@ -748,46 +810,36 @@ Rectangle {
                     }
 
                     RowLayout {
+                        readonly property color ink: headerHover.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : Theme.palette.color("inkTertiary", "#8b919e")
+
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
                         anchors.leftMargin: Theme.space.sm
                         anchors.rightMargin: Theme.space.sm
-                        anchors.bottomMargin: 4
-                        height: 20
-                        spacing: 8
+                        anchors.bottomMargin: Theme.space.xs
+                        height: Theme.icon.lg
+                        spacing: Theme.space.xs
 
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
-                            color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : headerHover.hovered ? sidebar.foreground : sidebar.muted
+                            color: parent.ink
                             font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                         }
 
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: 1
-                            color: Qt.alpha(sidebar.hairline, 0.6)
-                            visible: entry.kind === "header" && entry.modelData.key === "settled"
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                            visible: !(entry.kind === "header" && entry.modelData.key === "settled")
-                        }
-
                         Text {
                             objectName: "headerCount"
-                            visible: entry.kind === "header" && !entry.modelData.open
+                            visible: entry.kind === "header"
                             text: entry.kind === "header" ? entry.modelData.count : ""
-                            color: sidebar.muted
+                            color: parent.ink
                             font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellChevron {
                             direction: "down"
                             size: Theme.icon.sm
-                            color: Theme.palette.color("inkTertiary", "#8b919e")
+                            color: parent.ink
                             rotation: entry.kind === "header" && entry.modelData.open ? 0 : -90
                             Layout.alignment: Qt.AlignVCenter
 
@@ -797,6 +849,9 @@ Rectangle {
                                     easing.type: Easing.OutCubic
                                 }
                             }
+                        }
+                        Item {
+                            Layout.fillWidth: true
                         }
                     }
                 }
@@ -822,8 +877,8 @@ Rectangle {
 
                     Rectangle {
                         anchors.fill: parent
-                        anchors.topMargin: 2
-                        anchors.bottomMargin: 2
+                        anchors.topMargin: Theme.space.xxs
+                        anchors.bottomMargin: Theme.space.xxs
                         radius: Theme.radiusMd
                         color: moreHover.hovered ? Qt.alpha(sidebar.muted, 0.08) : "transparent"
                         border.width: entry.focused ? 1 : 0
@@ -852,14 +907,15 @@ Rectangle {
                 }
 
                 Loader {
+                    id: rowLoader
+
                     anchors.fill: parent
-                    anchors.topMargin: entry.kind === "thread" ? 2 : 0
-                    anchors.bottomMargin: entry.kind === "thread" ? 2 : 0
                     active: entry.kind === "thread" || entry.kind === "slim" || entry.kind === "draft"
 
                     sourceComponent: SidebarThreadRow {
                         objectName: "threadRow:" + entry.modelData.rowKey
-                        slim: entry.kind !== "thread"
+                        // Shelves and drafts are one line, and every row in a narrow window.
+                        slim: entry.kind !== "thread" || sidebar.density !== "full"
                         section: entry.modelData.section
                         focused: entry.focused
                         touch: sidebar.touchRows
@@ -872,6 +928,8 @@ Rectangle {
                             updatedAt: null
                         } : entry.thread
                         projectName: sidebar.projectNames[entry.thread.projectKey] ?? ""
+                        // A list scoped to one project does not repeat it on every row.
+                        projectInDetail: sidebar.model === null || sidebar.model.scopeProjectKey === null
                         projectIcon: sidebar.projectIcons[entry.thread.projectKey] ?? null
                         active: sidebar.model !== null && (entry.kind === "draft" ? entry.thread.draftId === sidebar.model.activeDraftId : entry.thread.key === sidebar.model.activeThreadKey)
                         onActivated: {
@@ -945,7 +1003,7 @@ Rectangle {
             Text {
                 objectName: "emptyText"
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: 24
+                y: Theme.space.xl
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
                 color: sidebar.muted
@@ -960,16 +1018,16 @@ Rectangle {
             vertical: true
             visible: shown.length > 0
             Layout.fillWidth: true
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
-            Layout.topMargin: 4
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.topMargin: Theme.space.xs
         }
 
         ProviderUpdateNotice {
             Layout.fillWidth: true
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
-            Layout.topMargin: 4
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.topMargin: Theme.space.xs
         }
 
         // The Intel build on an Apple Silicon Mac says to switch.
@@ -978,8 +1036,8 @@ Rectangle {
 
             objectName: "sidebarUpdateWarning"
             Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
+            Layout.leftMargin: Theme.space.md
+            Layout.rightMargin: Theme.space.md
             visible: sidebar.showFooter && warning !== null
             text: warning !== null ? warning.title + ". " + warning.description : ""
             color: Theme.palette.color("warning", "#fbbf24")
@@ -989,8 +1047,8 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 8
-            spacing: 4
+            Layout.margins: Theme.space.sm
+            spacing: Theme.space.xs
             visible: sidebar.showFooter
 
             FooterButton {
@@ -1036,8 +1094,17 @@ Rectangle {
 
     component FooterButton: ShellButton {
         subtle: true
-        implicitHeight: 32
-        iconSize: 16
+        implicitHeight: Theme.control.lg
+        iconSize: Theme.icon.md
+        iconTint: sidebar.iconColor
+    }
+
+    component RailButton: ShellButton {
+        Layout.alignment: Qt.AlignHCenter
+        subtle: true
+        implicitWidth: Theme.control.lg
+        implicitHeight: Theme.control.lg
+        iconSize: Theme.icon.md
         iconTint: sidebar.iconColor
     }
 }

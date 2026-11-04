@@ -91,17 +91,54 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the window becomes narrower than the sidebar allows
       Then the sidebar shrinks to fit
 
-    # The web's off-canvas sidebar (AppSidebarLayout.tsx): showing it over the thread is not
-    # remembered, so a window with room again has the sidebar it had.
+    # The web's off-canvas sidebar (AppSidebarLayout.tsx), kept as a rail of icons beside the
+    # thread whose expand button is the way back to the full list: opening it over the thread is
+    # not remembered, so a window with room again has the sidebar it had.
     @desktop
     Scenario: A window too narrow for the sidebar and the thread shows the sidebar over the thread
       Given the sidebar is shown
+      When the window becomes too narrow for the sidebar beside the thread
+      Then the sidebar is a rail of icons beside the thread
+      When the user asks to show the sidebar
+      Then the sidebar opens over the thread at its minimum width
+      When the user hides the thread list
+      Then the sidebar is a rail of icons beside the thread
+      When the window becomes wide again
+      Then the sidebar is back beside the thread
+
+    @desktop
+    Scenario: A hidden sidebar stays hidden in a narrow window
+      Given the sidebar is hidden
       When the window becomes too narrow for the sidebar beside the thread
       Then the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar opens over the thread at its minimum width
       When the window becomes wide again
-      Then the sidebar is back beside the thread
+      Then the sidebar is hidden
+
+    # Two-line rows need the room; a narrower window keeps one line a thread, and one too narrow
+    # for the list beside the thread keeps only the rail.
+    @desktop
+    Scenario Outline: The sidebar's rows follow the window's width
+      Given the sidebar is shown
+      When the window is <width> wide
+      Then the sidebar draws <rows>
+
+      Examples:
+        | width | rows            |
+        | 1280  | two-line rows   |
+        | 1100  | two-line rows   |
+        | 1000  | one-line rows   |
+        | 860   | one-line rows   |
+        | 800   | a rail of icons |
+
+    # A monospace face sets fewer characters in the same width.
+    @desktop
+    Scenario: A monospace interface font widens the sidebar
+      When the interface font is monospaced
+      Then the sidebar is 272 wide
+      When the interface font is proportional
+      Then the sidebar is 256 wide
 
     @desktop
     Scenario: Resetting the sidebar width
@@ -134,7 +171,7 @@ Feature: Layout: sidebar, header, right panel and drawer
         | sidebar's edge     |
         | right panel's edge |
 
-    @backlog @desktop
+    @desktop
     Scenario: Resizing the window does not hide or show the sidebar
       Given the sidebar is open
       When the user makes the window narrow and then wide again
