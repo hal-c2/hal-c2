@@ -15,6 +15,7 @@
 #include "FakeConfig.h"
 #include "FakeFiles.h"
 #include "FilesIdentity.h"
+#include "Stream.h"
 #include "Harness.h"
 #include "McClient.h"
 #include "NavigationController.h"
@@ -29,6 +30,8 @@ struct FakeIdentity {
   QJsonArray scopes{QStringLiteral("orchestration:read"), QStringLiteral("orchestration:operate")};
   // The environment the scenario's pickers are for.
   QString project;
+  // The MC's clock: a favicon is signed for an hour from it.
+  QDateTime at = stream::now();
 };
 
 const FakeMc::Extension extension([](FakeMc& mc) {
@@ -42,10 +45,13 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     }
     const QString path = resource.value(QLatin1String("path")).toString();
     const bool served = !path.isEmpty() && fakeFiles(mc).files.contains(path);
-    mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/api/assets/token/") +
+    // Signed later, a later address: "token-60m" an hour in.
+    const QDateTime at = mc.part<FakeIdentity>().at;
+    const QString token = at == stream::now() ? QStringLiteral("token") : QStringLiteral("token-%1m").arg(stream::now().secsTo(at) / 60);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/api/assets/%1/").arg(token) +
                                                                     (served ? QStringLiteral("v1-") + path.section(QLatin1Char('/'), -1)
                                                                             : QStringLiteral("project-favicon-missing"))},
-                                {QStringLiteral("expiresAt"), 1790000000000.0}});
+                                {QStringLiteral("expiresAt"), double(at.addSecs(3600).toMSecsSinceEpoch())}});
   });
   mc.onRaw(QStringLiteral("/api/auth/session"), [&mc](QTcpSocket* socket, const QByteArray& head) {
     socket->read(head.size());
@@ -289,6 +295,17 @@ const Steps steps([] {
   // The picker.
   step(QStringLiteral("the user sets? the icon of %1 to (.+)").arg(q), [](World& world, const Captures& c, const Table&) { pick(world, c[0], c[1]); });
   step(QStringLiteral("%1 shows (.+) everywhere it is listed").arg(q), [](World& world, const Captures& c, const Table&) { expectShown(world, c[0], c[1]); });
+  step(QStringLiteral("an hour passes"), [](World& world, const Captures&, const Table&) {
+    const QDateTime later = world.now().addSecs(3600);
+    world.mc.part<FakeIdentity>().at = later;
+    world.setTime(later);
+  });
+  step(QStringLiteral("%1 shows the image file %1 from a new address").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = world.mc.origin().toString() + QStringLiteral("/api/assets/token-60m/v1-") + c[1].section(QLatin1Char('/'), -1);
+    waitForIcon(world, c[0], [&](const QVariantMap& icon) { return icon.value(QStringLiteral("url")) == wanted; });
+    const QString shown = drawn(world, c[0]);
+    expect(shown == QStringLiteral("image ") + wanted, QStringLiteral("%1 is drawn as \"%2\"").arg(c[0], shown));
+  });
   step(QStringLiteral("the user resets the icon of %1").arg(q), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.brick->item(QStringLiteral("automatic"))->isVisible(); }, QStringLiteral("settings to offer the automatic icon"));
     world.brick->click(QStringLiteral("automatic"));
