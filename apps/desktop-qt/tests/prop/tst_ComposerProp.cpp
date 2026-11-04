@@ -4,8 +4,10 @@
 // permissions picked, sends and follow-ups while a turn runs, the stash, the
 // connection dropping and the app restarting, with sends in flight that the MC
 // did or did not get: each reaches the thread once or comes back to its draft,
-// unless a newer user message is in the thread by then. A model of another
-// provider than the thread's moves the thread to it before its message.
+// unless a newer user message is in the thread by then. A thread names no
+// provider until the MC records one, and a model of another provider than the
+// one it names moves the thread to it; a thread naming none is not moved. The
+// interaction mode picked goes before the message, and a provider change between.
 // A Space page's prompt keeps a draft of its own: plain words write a block,
 // and words starting with @agent ask an agent, which the MC takes, refuses or
 // holds; a refused ask keeps every word and image.
@@ -40,6 +42,7 @@ const QStringList kTexts{QString(), QStringLiteral("hello"), QStringLiteral("fix
 // Codex's two models, then Claude's.
 const QStringList kModels{QStringLiteral("gpt-a"), QStringLiteral("gpt-b"), QStringLiteral("claude-a")};
 const QStringList kRuntimeModes{QStringLiteral("approval-required"), QStringLiteral("auto"), QStringLiteral("full-access")};
+const QStringList kInteractionModes{QStringLiteral("default"), QStringLiteral("plan")};
 // Two pages of one Space, and what their prompts are given: a block's words, or an ask.
 const QStringList kPages{QStringLiteral("pg1"), QStringLiteral("pg2")};
 const QStringList kPageTexts{QStringLiteral("a note"), QStringLiteral("@agent tidy this"), QStringLiteral("@Agent"),
@@ -66,6 +69,7 @@ struct Target {
   int images = 0;
   QString model;  // picked, else the default
   int pending = 0;  // of a page's images, the first ones, those its ask on its way carries
+  QString interaction;  // the interaction mode picked, else the thread's
 };
 
 // A page's ask whose answer the MC holds; whether it will refuse it.
@@ -82,10 +86,11 @@ struct Send {
   int images = 0;
   QString model;
   QString delivery;  // auto, steer or queue
-  bool switches = false;  // its model is another provider's than the thread's when sent
+  bool switches = false;  // its model is another provider's than the one the thread names when sent
   bool refusedAtMc = false;  // what the MC holding it will answer
   bool superseded = false;   // a newer user message reached the thread since
   bool measured = false;     // the thread's messages were known while it was on its way
+  QString interaction;       // the interaction mode it sets first, when the thread has another
 };
 
 // A "Failed to send message" or "A prompt was not sent" toast; what its
@@ -119,8 +124,11 @@ struct Model {
   QList<Toast> toasts;
   QList<std::pair<QString, int>> stash;  // newest first: text, images
   QString lastModel;  // the model last sent with, a new thread's default
-  // Each thread's provider at the MC, Codex until a provider change reaches it.
-  QMap<QString, QString> providers;
+  // The model each thread names at the MC, none until one is recorded: a
+  // provider change that reached it, or the MC's own record.
+  QMap<QString, QString> recorded;
+  // Each thread's interaction mode at the MC, default until a change reaches it.
+  QMap<QString, QString> interactions;
   // The sends a restart or a drop cut off that the MC never got, by thread,
   // until the thread is open again.
   QMap<QString, QList<Send>> limbo;
@@ -156,12 +164,22 @@ struct Model {
   }
   bool isThread(const QString& target) const { return kThreads.contains(target); }
   bool isPage(const QString& target) const { return kPages.contains(target); }
-  QString provider(const QString& thread) const { return providers.value(thread, QStringLiteral("codex")); }
+  // The provider the thread names, if any.
+  QString provider(const QString& thread) const {
+    const QString model = recorded.value(thread);
+    return model.isEmpty() ? QString() : instanceOf(model);
+  }
   QString selected(const QString& target) const {
     const QString picked = targets.value(target).model;
     if (!picked.isEmpty()) return picked;
+    if (isThread(target) && !recorded.value(target).isEmpty()) return recorded.value(target);
     if (target == kDraft && !lastModel.isEmpty()) return lastModel;
     return kModels.first();
+  }
+  // The interaction mode the composer shows for a thread.
+  QString interaction(const QString& thread) const {
+    if (const QString mode = targets.value(thread).interaction; !mode.isEmpty()) return mode;
+    return interactions.value(thread, QStringLiteral("default"));
   }
   // The access the composer shows for a thread.
   QString runtime(const QString& thread) const {
@@ -170,11 +188,12 @@ struct Model {
   }
 };
 
+// A send's commands, in the order they go: its mode, a provider change, its message.
 QStringList commandsOf(const Send& send) {
   QStringList list;
-  if (send.switches) list.append(QStringLiteral("provider|") + instanceOf(send.model));
-  list.append(QStringList{QStringLiteral("message"), send.prompt.trimmed(), QString::number(send.images),
-                          send.model.isEmpty() ? kModels.first() : send.model, send.delivery}
+  if (!send.interaction.isEmpty()) list.append(QStringLiteral("interaction|") + send.interaction);
+  if (send.switches) list.append(QStringLiteral("provider|") + instanceOf(send.model) + u'|' + send.model);
+  list.append(QStringList{QStringLiteral("message"), send.prompt.trimmed(), QString::number(send.images), send.model, send.delivery}
                   .join(u'|'));
   return list;
 }
@@ -202,10 +221,12 @@ void answerPick(Model& m, const HeldPick& pick) {
   if (m.picked.value(pick.thread) == pick.mode) m.picked.remove(pick.thread);
 }
 
-// The MC carried out `commands` for the thread: a provider change moves it.
+// The MC carried out `commands` for the thread: a provider change moves it,
+// and a mode change sets its mode.
 void took(Model& m, const QString& thread, const QStringList& commands) {
   for (const QString& command : commands) {
-    if (command.startsWith(QLatin1String("provider|"))) m.providers[thread] = command.section(u'|', 1);
+    if (command.startsWith(QLatin1String("provider|"))) m.recorded[thread] = command.section(u'|', 2);
+    if (command.startsWith(QLatin1String("interaction|"))) m.interactions[thread] = command.section(u'|', 1);
   }
 }
 
@@ -368,9 +389,10 @@ QString png() {
   return encoded;
 }
 
-// The app as main.cpp wires it, on a fake MC with one project of three Codex
-// threads, Codex offering two models and Claude one, and a Space of two
-// pages whose agents run in that project; stores in a home of its own.
+// The app as main.cpp wires it, on a fake MC with one project of three
+// threads, each naming the model `recorded` gives it or none, Codex offering
+// two models and Claude one, both with plan mode, and a Space of two pages
+// whose agents run in that project; stores in a home of its own.
 struct Sut {
   QTemporaryDir home{QDir::tempPath() + QStringLiteral("/composer-XXXXXX")};
   FakeMc mc;
@@ -393,7 +415,7 @@ struct Sut {
   QStringList written;
   bool refusingAsks = false;
 
-  Sut() {
+  explicit Sut(const QMap<QString, QString>& recorded) {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
                                                  {QStringLiteral("id"), QStringLiteral("p1")},
                                                  {QStringLiteral("title"), QStringLiteral("Shop")},
@@ -402,7 +424,11 @@ struct Sut {
                                                  {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")},
                                                  {QStringLiteral("scripts"), QJsonArray()},
                                              });
-    for (const QString& id : kThreads) mc.threads.insert(id, row(id, false));
+    for (const QString& id : kThreads) {
+      QJsonObject thread = row(id);
+      if (const QString model = recorded.value(id); !model.isEmpty()) thread.insert(QStringLiteral("modelSelection"), selectionOf(model));
+      mc.threads.insert(id, thread);
+    }
     QJsonArray providers;
     for (const QString& instance : {QStringLiteral("codex"), QStringLiteral("claudeAgent")}) {
       QJsonArray models;
@@ -482,11 +508,22 @@ struct Sut {
       mc.threads.insert(thread, row);
       mc.sendRow(thread, row);
     });
+    // And an interaction mode change.
+    mc.effects.append([this](const QJsonObject& command) {
+      if (losing || command.value(QLatin1String("type")) != QLatin1String("thread.interaction-mode.set")) return;
+      const QString thread = command.value(QLatin1String("threadId")).toString();
+      QJsonObject row = mc.threads.value(thread);
+      row.insert(QStringLiteral("interactionMode"), command.value(QLatin1String("interactionMode")));
+      mc.threads.insert(thread, row);
+      mc.sendRow(thread, row);
+    });
     mc.effects.append([this](const QJsonObject& command) {
       if (losing || command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
       addMessage(command.value(QLatin1String("threadId")).toString(), command.value(QLatin1String("messageId")).toString());
     });
     start();
+    // Plan mode, a beta setting, kept on the device across restarts.
+    RC_ASSERT(native->controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true));
     draftId = native->controller<DraftController>()->start(mc.environmentId, QStringLiteral("p1"));
     open(QStringLiteral("t1"));
     settle(0);
@@ -547,19 +584,17 @@ struct Sut {
     bridge.reset();
   }
 
-  static QJsonObject row(const QString& id, bool running) {
-    QJsonObject thread{{QStringLiteral("id"), id},
-                       {QStringLiteral("projectId"), QStringLiteral("p1")},
-                       {QStringLiteral("title"), id},
-                       {QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")},
-                                                                     {QStringLiteral("model"), kModels.first()}}},
-                       {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
-                       {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
-    if (running) {
-      thread.insert(QStringLiteral("activeRunId"), QStringLiteral("run-") + id);
-      thread.insert(QStringLiteral("latestRunId"), QStringLiteral("run-") + id);
-    }
-    return thread;
+  static QJsonObject selectionOf(const QString& model) {
+    return {{QStringLiteral("instanceId"), instanceOf(model)}, {QStringLiteral("model"), model}};
+  }
+
+  // A thread that names no model, not running.
+  static QJsonObject row(const QString& id) {
+    return {{QStringLiteral("id"), id},
+            {QStringLiteral("projectId"), QStringLiteral("p1")},
+            {QStringLiteral("title"), id},
+            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
+            {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
   }
 
   // As World::start, then connected and every controller started.
@@ -674,9 +709,12 @@ struct Sut {
       const QString thread = command.value(QLatin1String("threadId")).toString();
       if (type == QLatin1String("thread.runtime-mode.set")) {
         byThread[thread].append(QStringLiteral("runtime|") + command.value(QLatin1String("runtimeMode")).toString());
+      } else if (type == QLatin1String("thread.interaction-mode.set")) {
+        byThread[thread].append(QStringLiteral("interaction|") + command.value(QLatin1String("interactionMode")).toString());
       } else if (type == QLatin1String("provider.switch")) {
-        byThread[thread].append(QStringLiteral("provider|") +
-                                command.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString());
+        const QJsonObject selection = command.value(QLatin1String("modelSelection")).toObject();
+        byThread[thread].append(QStringLiteral("provider|") + selection.value(QLatin1String("instanceId")).toString() + u'|' +
+                                selection.value(QLatin1String("model")).toString());
       } else if (type == QLatin1String("message.dispatch")) {
         const QJsonObject mode = command.value(QLatin1String("dispatchMode")).toObject();
         const QString delivery = mode.value(QLatin1String("type")) == QLatin1String("queue_after_active")
@@ -745,7 +783,10 @@ void verify(const Model& m, Sut& sut) {
   if (!m.isPage(m.open)) RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
   RC_ASSERT(sut.asked == m.asked);
   RC_ASSERT(sut.written == m.written);
-  if (m.isThread(m.open)) RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
+  if (m.isThread(m.open)) {
+    RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
+    RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == m.interaction(m.open));
+  }
   QList<bool> toasts;
   for (const Toast& toast : m.toasts) toasts.append(toast.restore);
   RC_ASSERT(sut.toasts() == toasts);
@@ -830,6 +871,46 @@ struct PickModel : Command {
   void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
 };
 
+// Plan or default for the open thread's next sends: it goes to the MC with the
+// next message, before it.
+struct PickInteraction : Command {
+  QString mode = pick(kInteractionModes);
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void apply(Model& m) const override {
+    if (mode != m.interaction(m.open)) m.targets[m.open].interaction = mode;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ")"; }
+};
+
+// The MC records a model for a thread after its sends, as it does when a run
+// starts on another provider than the one the thread names (orchestration.ex):
+// a thread that named none names one from then on.
+struct Recorded : Command {
+  QString thread = pick(kThreads);
+  QString model = pick(kModels);
+  // Not under a send on its way or cut off, nor with rows lagging.
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(!m.lagging && !m.queues.contains(thread) && !m.limbo.contains(thread));
+  }
+  void apply(Model& m) const override { m.recorded[thread] = model; }
+  void run(const Model& m0, Sut& sut) const override {
+    QJsonObject row = sut.mc.threads.value(thread);
+    row.insert(QStringLiteral("modelSelection"), Sut::selectionOf(model));
+    sut.mc.threads.insert(thread, row);
+    sut.mc.sendRow(thread, row);
+    RC_ASSERT(prop::until([&] {
+      const auto row = sut.native->store()->thread(keyOf(thread));
+      return row && row->modelSelection.value(QLatin1String("model")).toString() == model;
+    }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Recorded(" << thread.toStdString() << ", " << model.toStdString() << ")"; }
+};
+
 // The thread's access, which goes to the MC at once; one the composer already
 // shows changes nothing. Its answer can be held only among other access
 // changes: a held send's would race it for the toasts.
@@ -903,10 +984,16 @@ struct Submit : Command {
                              : alternate                  ? QStringLiteral("queue")
                                                           : QStringLiteral("steer");
     QList<Send>& queue = m.queues[m.open];
-    const QString model = target.model.isEmpty() ? kModels.first() : target.model;
-    queue.append({target.text, target.images, target.model, delivery, instanceOf(model) != m.provider(m.open)});
+    Send send{target.text, target.images, m.selected(m.open), delivery};
+    // Only a thread that names a provider is moved off it.
+    const QString provider = m.provider(m.open);
+    send.switches = !provider.isEmpty() && instanceOf(send.model) != provider;
+    if (const QString mode = m.interaction(m.open); mode != m.interactions.value(m.open, QStringLiteral("default"))) {
+      send.interaction = mode;
+    }
+    queue.append(send);
     if (m.loaded.contains(m.open)) measure(m, m.open);
-    m.lastModel = target.model.isEmpty() ? kModels.first() : target.model;
+    m.lastModel = send.model;
     // Newer than what a restart cut off.
     m.limbo.remove(m.open);
     target.text.clear();
@@ -1003,10 +1090,14 @@ struct SetRunning : Command {
     }
   }
   void run(const Model& m0, Sut& sut) const override {
-    // Only the run changes: the thread keeps the provider and access it moved to.
-    QJsonObject row = Sut::row(thread, on);
-    for (const QLatin1String field : {QLatin1String("modelSelection"), QLatin1String("runtimeMode")}) {
-      if (const QJsonValue value = sut.mc.threads.value(thread).value(field); !value.isUndefined()) row.insert(field, value);
+    // Only the run changes: the thread keeps its model, modes and access.
+    QJsonObject row = sut.mc.threads.value(thread);
+    for (const QString field : {QStringLiteral("activeRunId"), QStringLiteral("latestRunId")}) {
+      if (on) {
+        row.insert(field, QStringLiteral("run-") + thread);
+      } else {
+        row.remove(field);
+      }
     }
     sut.mc.threads.insert(thread, row);
     sut.mc.sendRow(thread, row);
@@ -1072,7 +1163,8 @@ struct Refuse : Command {
   bool on = *rc::gen::arbitrary<bool>();
   void apply(Model& m) const override { m.refusing = on; }
   void run(const Model& m0, Sut& sut) const override {
-    for (const QString type : {QStringLiteral("message.dispatch"), QStringLiteral("thread.runtime-mode.set"), QStringLiteral("provider.switch")}) {
+    for (const QString type : {QStringLiteral("message.dispatch"), QStringLiteral("thread.runtime-mode.set"),
+                               QStringLiteral("thread.interaction-mode.set"), QStringLiteral("provider.switch")}) {
       if (on) {
         sut.mc.refusals.insert(type, QStringLiteral("The thread is busy."));
       } else {
@@ -1266,6 +1358,13 @@ struct Load : Command {
   void show(std::ostream& os) const override { os << "Load"; }
 };
 
+// The model each thread names to start with, or none.
+QMap<QString, QString> recordedAtStart() {
+  QMap<QString, QString> recorded;
+  for (const QString& thread : kThreads) recorded.insert(thread, pick(QStringList{QString()} + kModels));
+  return recorded;
+}
+
 }  // namespace
 
 class ComposerProp : public QObject {
@@ -1274,16 +1373,19 @@ class ComposerProp : public QObject {
 private slots:
   void composerAcrossThreads() {
     QVERIFY(rc::check("each thread keeps its own draft through sends the MC accepts, refuses or holds", [] {
-      Sut sut;
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
       RC_ASSERT(!sut.draftId.isEmpty());
       Model model;
+      model.recorded = recorded;
       verify(model, sut);
       // Each restart starts the whole shell again: shorter runs keep a case quick.
       const auto commands = *rc::gen::scale(
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
-                                                   Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime, Submit,
-                                                   Submit, Submit, Stash, RestorePrompt, SetRunning, SetRunning, Hold, Refuse,
-                                                   AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow, Load>()));
+                                                   Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime,
+                                                   PickInteraction, Submit, Submit, Submit, Stash, RestorePrompt, SetRunning,
+                                                   SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow,
+                                                   Load, Recorded>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
@@ -1294,8 +1396,10 @@ private slots:
   // user message is there.
   void sendsCutOffByARestart() {
     QVERIFY(rc::check("a send cut off by a restart or a drop reaches the MC once or comes back, never lost or doubled", [] {
-      Sut sut;
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
       Model model;
+      model.recorded = recorded;
       verify(model, sut);
       // A thread open with the MC holding its answers, so sends are in flight.
       Open open;
@@ -1306,9 +1410,9 @@ private slots:
       Hold().apply(model);
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
-                                                   Open, Type, Attach, PickRuntime, Prompt, Prompt, Prompt, Submit, Hold, Hold, Refuse,
-                                                   AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart, Restart, Drop, Drop,
-                                                   Slow, Load>()));
+                                                   Open, Type, Attach, PickRuntime, PickInteraction, Prompt, Prompt, Prompt, Submit,
+                                                   Hold, Hold, Refuse, AnswerHeld, Elsewhere, Elsewhere, RestorePrompt, Restart,
+                                                   Restart, Drop, Drop, Slow, Load>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
@@ -1317,8 +1421,10 @@ private slots:
   // newer message from elsewhere once they are still drops them.
   void sendsWhileTheThreadLoads() {
     QVERIFY(rc::check("a send made while its thread loads is dropped by a newer message from elsewhere, else comes back", [] {
-      Sut sut;
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
       Model model;
+      model.recorded = recorded;
       verify(model, sut);
       // The MC holds its answers and is slow to send the thread opened, and
       // a prompt goes to it.
@@ -1341,18 +1447,22 @@ private slots:
     }));
   }
 
-  // The same, picking models and sending often: a thread moves to another
-  // provider only when it is not already on it, and only a provider change
-  // the MC carried out counts, refused, held or cut off as the send was.
+  // The same, picking models and modes and sending often, on threads that name
+  // no provider, one, or one the MC records after their sends: a thread moves
+  // to another provider only when it names one and the model is not its, a
+  // send's mode goes before its message, and only a provider change the MC
+  // carried out counts, refused, held or cut off as the send was.
   void providerChanges() {
-    QVERIFY(rc::check("a send moves its thread to the model's provider only when the thread is on another", [] {
-      Sut sut;
+    QVERIFY(rc::check("a send moves its thread to the model's provider only when the thread names another", [] {
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
       Model model;
+      model.recorded = recorded;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
-                                                   Open, PickModel, PickModel, PickModel, Prompt, Prompt, Prompt, SetRunning,
-                                                   Hold, AnswerHeld, Refuse, Restart, Drop>()));
+                                                   Open, PickModel, PickModel, PickModel, PickInteraction, Prompt, Prompt, Prompt,
+                                                   SetRunning, Hold, AnswerHeld, Refuse, Restart, Drop, Recorded, Recorded>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
@@ -1363,8 +1473,10 @@ private slots:
   // and a second ask waits for the first's answer.
   void pagePrompts() {
     QVERIFY(rc::check("each page's prompt keeps its own draft, and only an ask the MC took empties it", [] {
-      Sut sut;
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
       Model model;
+      model.recorded = recorded;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
@@ -1381,8 +1493,10 @@ private slots:
   // back to the thread's access still goes.
   void accessChanges() {
     QVERIFY(rc::check("a thread takes the access picked at once, and the composer shows what the thread has", [] {
-      Sut sut;
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
       Model model;
+      model.recorded = recorded;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
