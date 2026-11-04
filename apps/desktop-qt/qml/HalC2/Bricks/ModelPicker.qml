@@ -426,35 +426,6 @@ AbstractButton {
                             }
                         }
                     }
-
-                    // The selected-provider marker on the rail's edge.
-                    Rectangle {
-                        readonly property var target: control.showRail ? rail.buttonForAny(control.view) : null
-
-                        visible: target !== null
-                        x: railButtons.width - width
-                        y: target ? target.y + (target.height - height) / 2 : 0
-                        width: 3
-                        height: 20
-                        radius: Theme.radiusPill
-                        color: Theme.palette.color("accent", "#2563eb")
-
-                        Behavior on y {
-                            NumberAnimation {
-                                duration: 200
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-                    }
-                }
-
-                function buttonForAny(id) {
-                    for (let index = 0; index < railButtons.children.length; index += 1) {
-                        const child = railButtons.children[index];
-                        if (child.railId === id)
-                            return child;
-                    }
-                    return null;
                 }
             }
 
@@ -937,7 +908,8 @@ AbstractButton {
             anchors.fill: parent
             radius: Theme.radiusSm
             opacity: railButton.available ? 1 : 0.5
-            color: railButton.available && (railHover.hovered || railButton.activeFocus) ? Qt.tint(control.overlay, control.fade(control.foreground, 0.1)) : "transparent"
+            // The chosen provider is filled; hover and focus tint the rest.
+            color: railButton.selected ? Theme.palette.color("surfaceRaised", "#1c1f24") : railButton.available && (railHover.hovered || railButton.activeFocus) ? Qt.tint(control.overlay, control.fade(control.foreground, 0.1)) : "transparent"
         }
 
         TapHandler {
