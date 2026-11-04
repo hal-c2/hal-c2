@@ -4,7 +4,8 @@ import HalC2.Shell
 // A project's icon as `projectIcons` describes it (IdentityController): a
 // monogram tile, an emoji, a symbol in its colour, or an image the MC serves.
 // A project with no icon yet draws its name's first letter in a neutral tile
-// when given `name`, and nothing without it.
+// when given `name`, and nothing without it. An image that has not loaded
+// (yet, or at all) shows that letter until it does.
 //
 //   ProjectIcon { icon: Shell.state.projectIcons?.[projectKey] ?? null; name: projectName }
 Item {
@@ -25,14 +26,14 @@ Item {
     Rectangle {
         objectName: "projectIconMonogram"
         anchors.fill: parent
-        visible: root.kind === "monogram"
+        visible: root.kind === "monogram" || (root.kind === "image" && image.status !== Image.Ready && root.fallbackText.length > 0)
         radius: Theme.radiusXs
         color: Qt.alpha(root.tint, 0.14)
 
         Text {
             objectName: "projectIconMonogramText"
             anchors.centerIn: parent
-            text: root.icon ? (root.icon.text ?? "") : root.fallbackText
+            text: root.icon?.text ?? root.fallbackText
             color: root.tint
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
             font.pixelSize: Math.round(root.size * 0.5)
@@ -55,6 +56,7 @@ Item {
         color: root.tint
     }
     Image {
+        id: image
         objectName: "projectIconImage"
         anchors.fill: parent
         visible: root.kind === "image" && status === Image.Ready

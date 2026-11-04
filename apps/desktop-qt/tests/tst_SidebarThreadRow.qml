@@ -156,6 +156,10 @@ Item {
             compare(findChild(monogram, "projectIconMonogramText").text, "HC");
             row.projectIcon = null;
             compare(findChild(monogram, "projectIconMonogramText").text, "H");
+            row.projectIcon = { kind: "image", url: "file:///nonexistent/hal-c2-project-icon.png" };
+            tryCompare(findChild(mark, "projectIconImage"), "status", Image.Error);
+            verify(monogram.visible, "an image that cannot load leaves the initial");
+            compare(findChild(monogram, "projectIconMonogramText").text, "H");
         }
 
         function shown(item, name) {
