@@ -10,6 +10,18 @@ Menu {
     // Wide enough for its longest row, between the usual 200 and 360.
     implicitWidth: Math.max(200, Math.min(360, widest() + leftPadding + rightPadding))
 
+    // Whether any row has an icon: then rows without one keep its column
+    // empty, so every label starts at the same place.
+    readonly property bool hasIcons: {
+        for (let i = 0; i < count; ++i) {
+            const item = itemAt(i);
+            if (item && ((item.iconName ?? "").length > 0 || (item.badge ?? null) !== null)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function widest() {
         let widest = 0;
         for (let i = 0; i < count; ++i) {

@@ -140,4 +140,33 @@ TestCase {
         compare(selections(), [{requestId: "r1", id: null}]);
         compare(host.menu, null);
     }
+
+    function labelX(row) {
+        const label = findChild(row, "menuItemLabel");
+        return label.mapToItem(null, 0, 0).x;
+    }
+
+    // Rows without an icon (a submenu's, Snooze ›) line up with iconed ones.
+    function test_rows_without_icons_keep_the_icon_column() {
+        const host = open([
+            {id: "a", label: "Pin", icon: "pin"},
+            {id: "s", label: "Snooze", children: [{id: "s1", label: "In 1 hour"}]},
+            {id: "r", label: "Rename"}
+        ]);
+        const menu = host.menu;
+        tryVerify(() => menu.opened);
+        const iconed = () => labelX(menu.itemAt(0));
+        tryVerify(() => iconed() > menu.itemAt(0).mapToItem(null, 0, 0).x + menu.itemAt(0).leftPadding);
+        compare(labelX(menu.itemAt(1)), iconed());
+        compare(labelX(menu.itemAt(2)), iconed());
+    }
+
+    function test_a_menu_without_icons_has_no_icon_column() {
+        const host = open([{id: "a", label: "Pin"}, {id: "r", label: "Rename"}]);
+        const menu = host.menu;
+        tryVerify(() => menu.opened);
+        const row = menu.itemAt(0);
+        tryCompare(row.contentItem, "width", row.availableWidth);
+        compare(labelX(row) - row.mapToItem(null, 0, 0).x, row.leftPadding);
+    }
 }

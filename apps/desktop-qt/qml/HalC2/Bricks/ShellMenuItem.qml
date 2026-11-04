@@ -19,6 +19,8 @@ MenuItem {
     // A disabled row gets no hover, so a tooltip could never show it.
     property string reason: ""
 
+    readonly property bool hasIcon: badge !== null || iconName.length > 0
+
     implicitHeight: reason.length > 0 ? 28 + reasonText.contentHeight + 4 : 28
     leftPadding: 8
     rightPadding: 8
@@ -49,7 +51,15 @@ MenuItem {
                 Layout.alignment: Qt.AlignVCenter
             }
 
+            // The icon column, kept when other rows of the menu have icons.
+            Item {
+                visible: !control.hasIcon && control.menu !== null && control.menu.hasIcons === true
+                Layout.preferredWidth: 16
+                Layout.preferredHeight: 16
+            }
+
             Text {
+                objectName: "menuItemLabel"
                 text: control.text
                 font: control.font
                 color: control.destructive ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
@@ -95,7 +105,7 @@ MenuItem {
             objectName: "menuItemReason"
             visible: control.reason.length > 0
             Layout.fillWidth: true
-            Layout.leftMargin: control.badge !== null || control.iconName.length > 0 ? 24 : 0
+            Layout.leftMargin: control.hasIcon || control.menu !== null && control.menu.hasIcons === true ? 24 : 0
             Layout.bottomMargin: 4
             text: control.reason
             font.family: control.font.family
