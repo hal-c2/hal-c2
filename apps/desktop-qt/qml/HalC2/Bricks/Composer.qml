@@ -527,8 +527,9 @@ Rectangle {
         // caret it was last told about; they sit on the card's top edge.
         Rectangle {
             Layout.fillWidth: true
-            Layout.leftMargin: Theme.space.xl
-            Layout.rightMargin: Theme.space.xl
+        // Inset by the card's padding, so it lines up with the prompt.
+            Layout.leftMargin: Theme.space.md
+            Layout.rightMargin: Theme.space.md
             visible: composer.suggesting
             implicitHeight: !visible ? 0 : suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, Theme.control.md * 8) + Theme.space.xs * 2 : suggestionsEmpty.implicitHeight + Theme.space.xxl
             topLeftRadius: Theme.radiusXl
@@ -599,7 +600,7 @@ Rectangle {
                             text: suggestion.modelData.description
                             color: composer.muted
                             font.pixelSize: Theme.type.meta.size
-                            elide: Text.ElideMiddle
+                            elide: Text.ElideRight
                         }
                     }
                 }
