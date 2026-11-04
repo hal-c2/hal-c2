@@ -899,6 +899,15 @@ QVariantMap ThemeController::derive(const QString& canvasValue, const QString& a
   set("diffAdded", QColor(QStringLiteral("#22c55e")));
   set("diffRemoved", QColor(QStringLiteral("#ef4444")));
   colors.insert(QStringLiteral("destructive"), colors.value(QLatin1String("errorForeground")));
+  // A destructive button's fill: the error deepened until white text on it
+  // reads at 4.5:1, as ThemeStore::color derives it for a theme without one.
+  const QColor error = QColor(colors.value(QLatin1String("error")).toString()).toHsl();
+  QColor destructiveFill = error.toRgb();
+  for (double lightness = error.lightnessF(); error.isValid() && lightness > 0 && contrast(Qt::white, destructiveFill) < 4.5;) {
+    lightness = std::max(0.0, lightness - 0.01);
+    destructiveFill = QColor::fromHslF(std::max<float>(0, error.hslHueF()), error.hslSaturationF(), lightness).toRgb();
+  }
+  if (destructiveFill.isValid()) set("destructiveFill", destructiveFill);
   colors.insert(QStringLiteral("sidebarActiveIndicator"), QStringLiteral("#00000000"));
   colors.insert(QStringLiteral("scrim"), QStringLiteral("#00000052"));  // black at 32%, as CSS writes it
   // The ink and surface roles, as ThemeStore::color derives them from the rest.
