@@ -113,7 +113,10 @@ void IdentityController::refreshProjects() {
           requestFavicon(key, row);
         }
         if (const QString url = m_favicons.value(key).url; !url.isEmpty()) {
+          // The automatic monogram stays along, in its colour, for while the
+          // image loads or if it cannot.
           icon = {{QStringLiteral("kind"), QStringLiteral("image")}, {QStringLiteral("url"), url}, {QStringLiteral("path"), text(row, "faviconPath")},
+                  {QStringLiteral("text"), icon.value(QStringLiteral("text"))}, {QStringLiteral("tint"), icon.value(QStringLiteral("tint"))},
                   {QStringLiteral("automatic"), text(row, "faviconPath").isEmpty()}};
         }
       } else {

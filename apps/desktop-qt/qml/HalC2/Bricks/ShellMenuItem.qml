@@ -12,6 +12,9 @@ MenuItem {
     property bool current: false
     // A project's icon (`projectIcons`), drawn in place of `iconName`.
     property var badge: null
+    // The project's name, for the initial drawn when it has no icon (or its
+    // image does not load).
+    property string badgeName: ""
     // A muted second part after the text (what tells two same-named entries
     // apart); it is elided before the text is.
     property string detail: ""
@@ -22,7 +25,8 @@ MenuItem {
     // column where a submenu's chevron would be.
     property string shortcut: ""
 
-    readonly property bool hasIcon: badge !== null || iconName.length > 0
+    readonly property bool hasBadge: badge !== null || badgeName.trim().length > 0
+    readonly property bool hasIcon: hasBadge || iconName.length > 0
 
     readonly property bool menuHasIcons: menu !== null && menu.hasIcons === true
 
@@ -46,14 +50,16 @@ MenuItem {
             spacing: Theme.space.sm
 
             ProjectIcon {
-                visible: control.badge !== null
+                objectName: "menuItemBadge"
+                visible: control.hasBadge
                 icon: control.badge
+                name: control.badgeName
                 size: Theme.icon.md
                 Layout.alignment: Qt.AlignVCenter
             }
 
             ShellIcon {
-                visible: control.iconName.length > 0 && control.badge === null
+                visible: control.iconName.length > 0 && !control.hasBadge
                 name: control.iconName
                 size: Theme.icon.md
                 color: control.destructive ? Theme.palette.color("destructive", "#f87171") : Theme.palette.color("inkSecondary", "#b8bdc7")

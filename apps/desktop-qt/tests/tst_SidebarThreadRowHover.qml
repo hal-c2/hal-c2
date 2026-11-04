@@ -78,6 +78,29 @@ Item {
             tryCompare(row, "showActions", false);
         }
 
+        // Scenario: Pointing at a thread previews it (features/threads/unread-and-status.feature):
+        // the card sits beside the row, never over the rows above and below.
+        function test_previewSitsBesideTheRow() {
+            let row = createTemporaryObject(rowComponent, root, {
+                width: 200,
+                item: {
+                    title: qsTr("Review"),
+                    status: "ready",
+                    branch: "main",
+                    updatedAt: "2026-09-07T12:00:00Z",
+                    preview: { project: "shop", branch: "main", activity: "Active 7d ago" }
+                }
+            });
+            verify(!!row, "Component exists");
+            mouseMove(row, 60, row.height / 2);
+            tryVerify(() => row.previewCard !== null && row.previewCard.opened, 2000);
+            const card = row.previewCard.contentItem.mapToItem(root, 0, 0);
+            const rowLeft = row.mapToItem(root, 0, 0).x;
+            verify(card.x >= rowLeft + row.width, "the card starts at " + card.x + ", over the row column that ends at " + (rowLeft + row.width));
+            mouseMove(root, 390, 190);
+            tryCompare(row, "previewCard", null);
+        }
+
         function test_multiLineTitleHoldsStillOnHover() {
             let row = createTemporaryObject(rowComponent, root, {
                 item: {

@@ -127,24 +127,33 @@ Item {
             let label = findChild(workspace, "threadLabel");
             let project = findChild(workspace, "projectLabel");
             let slot = findChild(workspace, "titleSlot");
-            // Hardly any room: the title still shows more than an ellipsis.
+            // Hardly any room: the project goes first, and the title still
+            // shows more than an ellipsis.
             workspace.width = 150;
             tryCompare(label, "truncated", true);
             verify(label.width >= 40, "title is " + label.width + " wide");
-            verify(project.truncated);
-            // The whole names are a hover away.
+            verify(!project.visible, "the project segment goes before the title is cut");
+            // The whole title is a hover away.
             mouseMove(slot, 10, slot.height / 2);
             tryCompare(slot.ToolTip, "visible", true);
             compare(slot.ToolTip.text, "Isolated Maude Critical Behaviour");
-            mouseMove(project, 4, project.height / 2);
-            tryCompare(project.ToolTip, "visible", true);
-            compare(project.ToolTip.text, "positron-experiments");
             // A title that fits needs no tooltip.
             workspace.width = 1100;
             tryCompare(label, "truncated", false);
+            verify(project.visible);
             mouseMove(slot, 10, slot.height / 2);
             wait(600);
             verify(!slot.ToolTip.visible);
+            // A project name past its 160 is cut, and whole on hover.
+            Shell.state = {
+                workspace: Object.assign({}, Shell.state.workspace, {
+                    projectTitle: qsTr("positron-experiments-with-a-very-long-name")
+                })
+            };
+            tryCompare(project, "truncated", true);
+            mouseMove(project, 4, project.height / 2);
+            tryCompare(project.ToolTip, "visible", true);
+            compare(project.ToolTip.text, "positron-experiments-with-a-very-long-name");
         }
         // Scenario: A tight header never overlaps
         // (features/navigation/layout.feature)
@@ -208,7 +217,7 @@ Item {
             verify(findChild(workspace, "runActionButton").visible);
         }
 
-        // Scenario: The header gives up labels, then pills, only when they do not fit
+        // Scenario: The header gives up its project, labels, then pills, only when they do not fit
         // (features/navigation/layout.feature)
         function test_headerCollapsesInOrder() {
             Shell.state = {
@@ -228,9 +237,9 @@ Item {
                     files: [], menu: [], hints: [], canPublish: false, pendingDefaultBranch: null
                 }
             };
-            // The header of a 900 px window beside the sidebar is about 640.
+            // Room for the whole breadcrumb and every label.
             let workspace = createTemporaryObject(workspaceComponent, root, {
-                width: 640,
+                width: 760,
                 panelToggle: false,
                 detailsToggle: false,
                 windowControls: false
@@ -277,6 +286,50 @@ Item {
             tryCompare(run, "text", "Run Test");
             compare(open.text, "Open");
             verify(!overflow.visible);
+        }
+
+        // A label never cuts the title short: at the same 900 px window a
+        // title that needs the room takes it, and the pills show icons only.
+        function test_labelsGiveWayToTheTitle() {
+            Shell.state = {
+                workspace: {
+                    projectTitle: qsTr("hal-c2"),
+                    threadTitle: qsTr("Investigate release build failure"),
+                    isDraft: false,
+                    renameRequestId: 0,
+                    scripts: [{ id: "test", name: "Test", icon: "play" }],
+                    preferredScriptId: null,
+                    editors: [{ id: "zed", label: "Zed" }],
+                    preferredEditorId: "zed"
+                },
+                git: {
+                    available: true, isRepo: true, busy: false, isDefaultRef: false,
+                    quickAction: { kind: "run_action", label: "Commit, push & PR", disabledReason: null },
+                    files: [], menu: [], hints: [], canPublish: false, pendingDefaultBranch: null
+                }
+            };
+            let workspace = createTemporaryObject(workspaceComponent, root, {
+                width: 640,
+                panelToggle: false,
+                detailsToggle: false,
+                windowControls: false
+            });
+            verify(!!workspace, "Component exists");
+            let open = findChild(findChild(workspace, "openEditorButton"), "splitAction");
+            verify(waitForRendering(workspace));
+            // The project went first, then the labels; the pills stay as icons.
+            tryCompare(open, "text", "");
+            verify(!findChild(workspace, "projectLabel").visible);
+            verify(findChild(workspace, "openEditorButton").visible);
+            verify(!findChild(workspace, "headerOverflow").visible);
+            // A little more room brings the labels back before the project.
+            workspace.width += workspace.labelledNeed - workspace.room;
+            tryCompare(open, "text", "Open");
+            verify(!findChild(workspace, "projectLabel").visible);
+            tryCompare(findChild(workspace, "threadLabel"), "truncated", false);
+            // Wide enough for all of it.
+            workspace.width = 1180;
+            tryCompare(findChild(workspace, "projectLabel"), "visible", true);
         }
     }
 }

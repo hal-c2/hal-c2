@@ -641,6 +641,15 @@ Feature: The thread list
     Then each slim and card row shows the icon of its project
     And a project without an icon shows its monogram
 
+  # Proved by tst_SidebarThreadRow.qml (test_restingRowGivesTheTitleTheSlot).
+  @desktop @backlog-desktop
+  Scenario: A resting row gives its title the status slot's room
+    Given a thread with a long title that was last active a minute ago
+    When the user looks at its row in the thread list
+    Then the title runs up to the row's age
+    When the user points at the row
+    Then the title shortens to make room for the row's actions
+
   @desktop @backlog-desktop
   Scenario: The thread list announces only the threads it shows
     Given the thread list is scoped to the project "shop"
@@ -659,6 +668,15 @@ Feature: The thread list
     Given a thread of "qml-ghostty" stopped on a usage limit
     When the user opens the scope menu
     Then the entry for "qml-ghostty" says "a thread hit a usage limit"
+
+  # Proved by tst_Sidebar.qml (test_scopeMenuShowsEveryProjectsMark).
+  @desktop @backlog-desktop
+  Scenario: The scope menu shows each project's icon or initial
+    Given the project "shop" has an icon and "t3code-tracker-plugin" has none
+    When the user opens the scope menu
+    Then the entry for "shop" shows its icon
+    And the entry for "t3code-tracker-plugin" shows the initial "T"
+    And the hint "a thread failed" reads whole
 
   @desktop @backlog-desktop
   Scenario: A thread opened from search is brought into view in the sidebar

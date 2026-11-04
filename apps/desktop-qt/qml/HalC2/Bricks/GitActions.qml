@@ -23,8 +23,8 @@ RowLayout {
     // Icon-only pill, for narrow header strips.
     property bool compact: false
     // Its width with labels and without, whichever it shows (ShellSplitButton).
-    readonly property real fullWidth: !visible ? 0 : pill.visible ? pill.fullWidth : unavailableReason !== "" ? unavailableWide.advanceWidth : implicitWidth
-    readonly property real compactWidth: !visible ? 0 : pill.visible ? pill.compactWidth : unavailableReason !== "" ? unavailableNarrow.advanceWidth : implicitWidth
+    readonly property real fullWidth: !visible ? 0 : pill.visible ? pill.fullWidth : unavailableReason !== "" ? unavailableWide.advanceWidth : initButton.visible ? initButton.labelledWidth : implicitWidth
+    readonly property real compactWidth: !visible ? 0 : pill.visible ? pill.compactWidth : unavailableReason !== "" ? unavailableNarrow.advanceWidth : initButton.visible ? initButton.implicitHeight : implicitWidth
 
     TextMetrics {
         id: unavailableWide
@@ -75,12 +75,28 @@ RowLayout {
     }
 
     ShellButton {
+        id: initButton
+
+        readonly property string label: git.ready && git.model.initPending ? qsTr("Initializing…") : qsTr("Initialize Git")
+        // Its width with the label, measured whether or not it shows one.
+        readonly property real labelledWidth: Theme.space.sm * 3 + iconSize + Math.ceil(initLabel.advanceWidth)
+
+        TextMetrics {
+            id: initLabel
+
+            font: initButton.font
+            text: initButton.label
+        }
+
+        objectName: "gitInitButton"
         implicitHeight: 24
         font.pixelSize: Theme.type.meta.size
         iconName: "git-branch"
         visible: git.ready && !git.model.isRepo
         enabled: git.ready && !git.model.initPending
-        text: git.ready && git.model.initPending ? qsTr("Initializing…") : qsTr("Initialize Git")
+        // Compact, the branch glyph alone, named by its tooltip.
+        text: git.compact ? "" : label
+        Accessible.name: label
         onClicked: Shell.dispatch("git.init")
     }
 

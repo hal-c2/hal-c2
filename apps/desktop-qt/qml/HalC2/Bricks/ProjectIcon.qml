@@ -5,7 +5,7 @@ import HalC2.Shell
 // monogram tile, an emoji, a symbol in its colour, or an image the MC serves.
 // A project with no icon yet draws its name's first letter in a neutral tile
 // when given `name`, and nothing without it. An image that has not loaded
-// (yet, or at all) shows that letter until it does.
+// (yet, or at all) shows the project's monogram in its colour until it does.
 //
 //   ProjectIcon { icon: Shell.state.projectIcons?.[projectKey] ?? null; name: projectName }
 Item {
@@ -28,7 +28,9 @@ Item {
         anchors.fill: parent
         visible: root.kind === "monogram" || (root.kind === "image" && image.status !== Image.Ready && root.fallbackText.length > 0)
         radius: Theme.radiusXs
-        color: Qt.alpha(root.tint, 0.14)
+        // The raised surface in the project's colour, so the colour carries
+        // at the sidebar's 14px.
+        color: Qt.tint(Theme.palette.color("surfaceRaised", "#1c1f26"), Qt.alpha(root.tint, 0.22))
 
         Text {
             objectName: "projectIconMonogramText"
@@ -36,7 +38,8 @@ Item {
             text: root.icon?.text ?? root.fallbackText
             color: root.tint
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: Math.round(root.size * 0.5)
+            // Large enough to read on the sidebar's 14px mark; two letters still fit.
+            font.pixelSize: Math.round(root.size * 0.64)
             font.weight: Font.DemiBold
         }
     }
