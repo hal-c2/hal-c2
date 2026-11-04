@@ -3,6 +3,8 @@
 #include <QRegularExpression>
 #include <QSet>
 
+#include <optional>
+
 namespace keybindings {
 
 namespace {
@@ -458,6 +460,71 @@ QString whenText(const WhenPtr& when) {
       return wrapped(when->left) + QStringLiteral(" || ") + wrapped(when->right);
   }
   return {};
+}
+
+namespace {
+
+// Each context variable in words, held and negated; the caller capitalises.
+// A variable the map does not know reads as it is spelled.
+std::optional<std::pair<QString, QString>> whenPhrase(const QString& name) {
+  static const QHash<QString, std::pair<QString, QString>> phrases{
+      {QStringLiteral("terminalFocus"), {QStringLiteral("in the terminal"), QStringLiteral("outside the terminal")}},
+      {QStringLiteral("editableFocus"), {QStringLiteral("in a text field"), QStringLiteral("outside text fields")}},
+      {QStringLiteral("composerFocus"), {QStringLiteral("in the composer"), QStringLiteral("outside the composer")}},
+      {QStringLiteral("previewFocus"), {QStringLiteral("in a preview"), QStringLiteral("outside previews")}},
+      {QStringLiteral("terminalOpen"), {QStringLiteral("terminal open"), QStringLiteral("terminal closed")}},
+      {QStringLiteral("previewOpen"), {QStringLiteral("preview open"), QStringLiteral("no preview open")}},
+      {QStringLiteral("modelPickerOpen"), {QStringLiteral("model picker open"), QStringLiteral("model picker closed")}},
+      {QStringLiteral("composerDraft"), {QStringLiteral("composer has a draft"), QStringLiteral("composer empty")}},
+      {QStringLiteral("draftThreadRoute"), {QStringLiteral("on a new thread"), QStringLiteral("not on a new thread")}},
+      {QStringLiteral("turnRunning"), {QStringLiteral("agent working"), QStringLiteral("agent not working")}},
+      {QStringLiteral("isDesktop"), {QStringLiteral("on desktop"), QStringLiteral("not on desktop")}},
+      {QStringLiteral("isWeb"), {QStringLiteral("on web"), QStringLiteral("not on web")}},
+      {QStringLiteral("true"), {QStringLiteral("always"), QStringLiteral("never")}},
+      {QStringLiteral("false"), {QStringLiteral("never"), QStringLiteral("always")}},
+  };
+  if (const auto phrase = phrases.constFind(name); phrase != phrases.cend()) return *phrase;
+  return std::nullopt;
+}
+
+QString words(const WhenPtr& when, bool negated);
+
+// A side of an "and"/"or": a group of the other kind keeps its parentheses.
+QString side(const WhenPtr& when, When::Kind parent) {
+  const QString text = words(when, false);
+  const bool group = when->kind == When::Kind::And || when->kind == When::Kind::Or;
+  return group && when->kind != parent ? QLatin1Char('(') + text + QLatin1Char(')') : text;
+}
+
+QString words(const WhenPtr& when, bool negated) {
+  switch (when->kind) {
+    case When::Kind::Identifier: {
+      if (const auto phrase = whenPhrase(when->name)) return negated ? phrase->second : phrase->first;
+      return negated ? QStringLiteral("not ") + when->name : when->name;
+    }
+    case When::Kind::Not:
+      return words(when->left, !negated);
+    case When::Kind::And:
+    case When::Kind::Or: {
+      const QString joined = side(when->left, when->kind) +
+                             (when->kind == When::Kind::And ? QStringLiteral(" and ") : QStringLiteral(" or ")) +
+                             side(when->right, when->kind);
+      return negated ? QStringLiteral("not (") + joined + QLatin1Char(')') : joined;
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
+QString whenWords(const WhenPtr& when) {
+  if (!when) return QStringLiteral("Always");
+  QString text = words(when, false);
+  // The sentence starts with a capital unless it starts with a variable's own name.
+  WhenPtr first = when;
+  while (first->kind == When::Kind::And || first->kind == When::Kind::Or) first = first->left;
+  if (first->kind != When::Kind::Identifier || whenPhrase(first->name)) text[0] = text.at(0).toUpper();
+  return text;
 }
 
 QString commandLabel(const QString& command) {

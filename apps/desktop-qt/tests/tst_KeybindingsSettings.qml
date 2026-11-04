@@ -27,6 +27,7 @@ Item {
             key: key,
             keyLabel: key,
             when: when,
+            whenLabel: when.length === 0 ? "Always" : "Outside the terminal",
             source: "Default",
             defaultKey: key,
             defaultWhen: when,
@@ -88,7 +89,7 @@ Item {
             keyClick(Qt.Key_Q);
             keyClick(Qt.Key_Q);
             tryVerify(() => empty.visible);
-            compare(empty.text, "No keybindings match your search.");
+            compare(findChild(empty, "emptyStateTitle").text, "No keybindings match your search.");
             keyClick(Qt.Key_Escape);
             tryVerify(() => !empty.visible);
         }
@@ -121,11 +122,31 @@ Item {
         // Scenario: A binding with no condition applies always
         function test_noConditionReadsAlways() {
             const settings = page();
-            const when = findChild(row(settings, 0), "whenField");
+            compare(findChild(row(settings, 1), "whenLabel").text, "Always");
+            const first = row(settings, 0);
+            mouseClick(findChild(first, "editWhen"));
+            const when = findChild(first, "whenField");
+            verify(when.visible);
+            verify(when.activeFocus);
             compare(when.text, "!terminalFocus");
             when.text = "";
             compare(when.placeholderText, "Always");
-            compare(findChild(row(settings, 1), "whenField").placeholderText, "Always");
+        }
+
+        // Scenario: Conditions read as words
+        function test_conditionsReadAsWordsUntilEdited() {
+            const settings = page();
+            const first = row(settings, 0);
+            const words = findChild(first, "whenLabel");
+            compare(words.text, "Outside the terminal");
+            verify(words.visible);
+            verify(!findChild(first, "whenField").visible);
+            mouseClick(findChild(first, "editWhen"));
+            verify(!words.visible);
+            const when = findChild(first, "whenField");
+            when.text = "terminalOpen";
+            // The typed condition reads back in words under the field.
+            compare(findChild(first, "whenWords").text, "words: terminalOpen");
         }
 
         // Scenario: Adding a binding can be cancelled

@@ -43,6 +43,7 @@ Feature: Keybindings settings
         | Start in Back  | label     |
         | mod+shift+e    | key       |
         | terminalFocus  | condition |
+        | outside the te | condition |
         | Custom         | source    |
 
     @desktop
@@ -138,6 +139,16 @@ Feature: Keybindings settings
     Scenario: Conditions are built from variables, negation and groups
       When the user adds the condition "terminalFocus", negates it, and groups it with "previewOpen"
       Then the binding's condition is "!terminalFocus && previewOpen"
+
+    @desktop
+    Scenario: Conditions read as words
+      Then the condition "terminalFocus" reads "In the terminal"
+      And the condition "!terminalFocus" reads "Outside the terminal"
+      And the condition "terminalOpen && !editableFocus" reads "Terminal open and outside text fields"
+      And the condition "composerFocus || previewFocus" reads "In the composer or in a preview"
+      And the condition "!(terminalFocus || previewFocus) && turnRunning" reads "Not (in the terminal or in a preview) and agent working"
+      And the condition "sidebarFocus" reads "sidebarFocus"
+      And an empty condition reads "Always"
 
     @desktop
     Scenario: A malformed condition is explained

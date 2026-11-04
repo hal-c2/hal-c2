@@ -475,6 +475,7 @@ bool KeybindingController::refreshRows() {
         {QStringLiteral("key"), key},
         {QStringLiteral("keyLabel"), keybindings::label(binding.shortcut, m_mac)},
         {QStringLiteral("when"), when},
+        {QStringLiteral("whenLabel"), keybindings::whenWords(binding.when)},
         {QStringLiteral("rule"), binding.rule.toJson().toVariantMap()},
         {QStringLiteral("source"), source},
         {QStringLiteral("defaultKey"), defaultKey},
@@ -482,7 +483,7 @@ bool KeybindingController::refreshRows() {
         {QStringLiteral("canReset"), source == QLatin1String("Custom") && !defaultKey.isEmpty()},
         {QStringLiteral("canRemove"), source != QLatin1String("Default")},
         {QStringLiteral("search"),
-         QStringList{binding.command, label, key, when, source}.join(QLatin1Char('\n')).toLower()},
+         QStringList{binding.command, label, key, when, keybindings::whenWords(binding.when), source}.join(QLatin1Char('\n')).toLower()},
     });
   }
   std::stable_sort(rows.begin(), rows.end(), [](const QVariant& left, const QVariant& right) {
@@ -525,6 +526,13 @@ QStringList KeybindingController::conflicts(const QString& rowId, const QString&
 QString KeybindingController::keyLabel(const QString& key) const {
   const std::optional<keybindings::Shortcut> shortcut = keybindings::parseShortcut(key);
   return shortcut ? keybindings::label(*shortcut, m_mac) : key;
+}
+
+QString KeybindingController::whenLabel(const QString& expression) const {
+  const QString trimmed = expression.trimmed();
+  if (trimmed.isEmpty()) return keybindings::whenWords(nullptr);
+  const keybindings::WhenPtr when = keybindings::parseWhen(trimmed);
+  return when ? keybindings::whenWords(when) : trimmed;
 }
 
 QString KeybindingController::whenError(const QString& expression) const {

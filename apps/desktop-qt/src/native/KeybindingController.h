@@ -104,6 +104,9 @@ public:
   // "mod+shift+y" as the rows show it: "Ctrl+Shift+Y", or "⇧⌘Y" on macOS.
   Q_INVOKABLE QString keyLabel(const QString& key) const;
   Q_INVOKABLE QString commandLabel(const QString& command) const { return keybindings::commandLabel(command); }
+  // A condition in words: "Outside the terminal", "Always" for none; an
+  // expression that does not parse reads as typed.
+  Q_INVOKABLE QString whenLabel(const QString& expression) const;
   // Why a condition cannot be used, or empty (an empty condition is "always").
   Q_INVOKABLE QString whenError(const QString& expression) const;
   // The identifiers in a condition no context sets.

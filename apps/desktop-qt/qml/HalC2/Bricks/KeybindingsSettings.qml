@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // Settings → Keybindings, a native settings page over the shell's keymap
 // (KeybindingController, the `Keybindings` singleton): every binding with its
@@ -47,7 +48,7 @@ Rectangle {
         signal recorded(string key)
 
         implicitWidth: 150
-        implicitHeight: 28
+        implicitHeight: Theme.control.md
         radius: Theme.radiusMd
         color: Theme.palette.color("input", "#18181b")
         border.width: 1
@@ -112,6 +113,10 @@ Rectangle {
         readonly property var unknown: problem.length === 0 ? Keybindings.unknownVariables(input.text) : []
         signal accepted
 
+        function edit() {
+            input.forceActiveFocus();
+        }
+
         spacing: Theme.space.xxs
 
         ShellTextField {
@@ -123,6 +128,17 @@ Rectangle {
             font.pixelSize: Theme.type.meta.size
             Accessible.name: qsTr("When expression")
             onAccepted: whenField.accepted()
+        }
+
+        // What the typed condition means, in the words the rows show.
+        Label {
+            objectName: "whenWords"
+            Layout.fillWidth: true
+            visible: input.text.trim().length > 0 && whenField.problem.length === 0
+            text: visible ? Keybindings.whenLabel(input.text) : ""
+            color: page.muted
+            font.pixelSize: Theme.type.caption.size
+            wrapMode: Text.Wrap
         }
 
         Label {
@@ -147,13 +163,14 @@ Rectangle {
     }
 
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: Theme.space.xl
+        x: Pages.columnX(page.width, Theme.space.xl)
+        y: Theme.space.xl
+        width: Pages.columnWidth(page.width, Theme.space.xl)
+        height: page.height - 2 * Theme.space.xl
         spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.maximumWidth: 760
             spacing: Theme.space.sm
 
             SettingsBreadcrumb {
@@ -197,7 +214,6 @@ Rectangle {
             id: search
             objectName: "keybindingSearch"
             Layout.fillWidth: true
-            Layout.maximumWidth: 760
             placeholderText: qsTr("Search keybindings")
             Accessible.name: qsTr("Search keybindings")
             Keys.onEscapePressed: event => {
@@ -218,9 +234,8 @@ Rectangle {
             property string label: ""
 
             Layout.fillWidth: true
-            Layout.maximumWidth: 760
             visible: page.adding
-            implicitHeight: draftColumn.implicitHeight + 20
+            implicitHeight: draftColumn.implicitHeight + 2 * Theme.space.sm
 
             function cancel() {
                 page.adding = false;
@@ -316,14 +331,15 @@ Rectangle {
             }
         }
 
-        Label {
+        ShellEmptyState {
             objectName: "keybindingEmpty"
-            Layout.fillWidth: true
-            Layout.maximumWidth: 760
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Theme.space.xxl
             visible: page.rows.length === 0 && !page.adding
-            text: qsTr("No keybindings match your search.")
-            color: page.muted
-            font.pixelSize: Theme.type.meta.size
+            iconName: "keyboard"
+            title: qsTr("No keybindings match your search.")
+            actionText: qsTr("Clear search")
+            onActionTriggered: search.clear()
         }
 
         ListView {
@@ -331,10 +347,9 @@ Rectangle {
             objectName: "keybindingRows"
 
             Layout.fillWidth: true
-            Layout.maximumWidth: 760
             Layout.fillHeight: true
             clip: true
-            spacing: Theme.space.xxs
+            spacing: 0
             boundsBehavior: Flickable.StopAtBounds
             model: page.rows
             reuseItems: false
@@ -348,12 +363,19 @@ Rectangle {
                 property string labelDraft: modelData.keyLabel
                 readonly property bool dirty: keyDraft !== modelData.key || rowWhen.text.trim() !== modelData.when
                 readonly property var conflicts: dirty ? Keybindings.conflicts(modelData.id, keyDraft, rowWhen.text) : modelData.conflicts
+                // The condition shows in words; its expression opens to edit.
+                property bool editingWhen: false
 
                 width: ListView.view.width
-                implicitHeight: rowColumn.implicitHeight + 12
+                implicitHeight: rowColumn.implicitHeight + 2 * Theme.space.md
                 height: implicitHeight
-                radius: Theme.radiusMd
                 color: hover.hovered ? Qt.alpha(Theme.palette.color("accentSurface", "#27272a"), 0.4) : "transparent"
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: Theme.palette.color("border", "#27272a")
+                }
 
                 HoverHandler {
                     id: hover
@@ -362,9 +384,9 @@ Rectangle {
                 ColumnLayout {
                     id: rowColumn
 
-                    x: 8
-                    y: 6
-                    width: parent.width - 16
+                    x: Theme.space.sm
+                    y: Theme.space.md
+                    width: parent.width - 2 * Theme.space.sm
                     spacing: Theme.space.xs
 
                     RowLayout {
@@ -392,8 +414,8 @@ Rectangle {
                                     text: row.modelData.source
                                     color: page.muted
                                     font.pixelSize: Theme.type.caption.size
-                                    leftPadding: 5
-                                    rightPadding: 5
+                                    leftPadding: Theme.space.xs
+                                    rightPadding: Theme.space.xs
                                     background: Rectangle {
                                         radius: Theme.radiusXs
                                         color: "transparent"
@@ -456,14 +478,30 @@ Rectangle {
                         spacing: Theme.space.sm
 
                         Label {
-                            text: qsTr("When")
+                            objectName: "whenLabel"
+                            Layout.fillWidth: !rowWhen.visible
+                            visible: !rowWhen.visible
+                            text: row.modelData.whenLabel
                             color: page.muted
-                            font.pixelSize: Theme.type.caption.size
+                            font.pixelSize: Theme.type.meta.size
+                            elide: Text.ElideRight
+                        }
+
+                        ShellButton {
+                            objectName: "editWhen"
+                            visible: !rowWhen.visible
+                            subtle: true
+                            text: qsTr("Edit condition")
+                            onClicked: {
+                                row.editingWhen = true;
+                                rowWhen.edit();
+                            }
                         }
 
                         WhenField {
                             id: rowWhen
                             Layout.fillWidth: true
+                            visible: row.editingWhen || row.dirty
                             text: row.modelData.when
                             onAccepted: if (row.dirty && rowWhen.problem.length === 0 && row.keyDraft.length > 0)
                                 Keybindings.save(row.modelData.command, row.keyDraft, rowWhen.text, row.modelData)

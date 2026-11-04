@@ -514,6 +514,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/keybinding-settings.feature:Recording a new shortcut*"),
     QStringLiteral("navigation/keybinding-settings.feature:A shortcut needs a modifier"),
     QStringLiteral("navigation/keybinding-settings.feature:Recorded modifiers follow the platform*"),
+    QStringLiteral("navigation/keybinding-settings.feature:Conditions read as words"),
     QStringLiteral("navigation/keybinding-settings.feature:A malformed condition*"),
     QStringLiteral("navigation/keybinding-settings.feature:An unknown condition variable*"),
     QStringLiteral("navigation/keybinding-settings.feature:Conflicting bindings*"),

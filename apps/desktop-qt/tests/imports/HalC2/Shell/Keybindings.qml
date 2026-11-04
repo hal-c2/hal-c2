@@ -54,6 +54,10 @@ QtObject {
     function commandLabel(command) {
         return command;
     }
+    // Words a test can tell from the expression.
+    function whenLabel(expression) {
+        return expression.trim().length === 0 ? "Always" : "words: " + expression.trim();
+    }
     function whenError(expression) {
         return "";
     }
