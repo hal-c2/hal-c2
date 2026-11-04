@@ -89,6 +89,7 @@ bool LayoutController::handle(const QString& action, const QVariant& payload) {
     if (map.contains(QStringLiteral("width"))) setSidebarWidth(map.value(QStringLiteral("width")).toInt());
     else resetSidebarWidth();
   } else if (action == QLatin1String("layout.window")) {
+    if (map.contains(QStringLiteral("monospace"))) setMonospace(map.value(QStringLiteral("monospace")).toBool());
     setWindowWidth(map.value(QStringLiteral("width")).toInt());
   } else {
     return false;
@@ -100,44 +101,85 @@ int LayoutController::sidebarRoom() const {
   return m_windowWidth > 0 ? std::max(0, m_windowWidth - kContentMinWidth) : std::numeric_limits<int>::max();
 }
 
+QString LayoutController::sidebarMode() const {
+  if (narrow() && !m_overlayOpen) return QStringLiteral("rail");
+  if (!narrow() && m_windowWidth > 0 && m_windowWidth < kSlimBelow) return QStringLiteral("slim");
+  return QStringLiteral("full");
+}
+
 int LayoutController::sidebarWidth() const {
-  return std::max(std::min(m_sidebarWidth, sidebarRoom()), kSidebarMinWidth);
+  if (narrow() && !m_overlayOpen) return kRailWidth;
+  const int chosen = m_sidebarWidth > 0 ? m_sidebarWidth : defaultSidebarWidth();
+  return std::max(std::min(chosen, sidebarRoom()), kSidebarMinWidth);
 }
 
 void LayoutController::setSidebarWidth(int width) {
   load();
   width = std::max(std::min(width, sidebarRoom()), kSidebarMinWidth);
-  if (width == m_sidebarWidth) return;
-  m_sidebarWidth = width;
-  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
-    settings->writeDevice(kSidebarWidthKey, width == kSidebarWidth ? QVariant() : QVariant(width));
-  }
-  publish();
+  // The default is not a choice: a monospace interface keeps its own.
+  chooseSidebarWidth(width == defaultSidebarWidth() ? 0 : width);
 }
 
 void LayoutController::resetSidebarWidth() {
-  setSidebarWidth(kSidebarWidth);
+  load();
+  chooseSidebarWidth(0);
+}
+
+void LayoutController::chooseSidebarWidth(int width) {
+  if (width == m_sidebarWidth) return;
+  const int before = sidebarWidth();
+  m_sidebarWidth = width;
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    settings->writeDevice(kSidebarWidthKey, width == 0 ? QVariant() : QVariant(width));
+  }
+  if (sidebarWidth() != before) publish();
+}
+
+void LayoutController::setMonospace(bool monospace) {
+  load();
+  if (monospace == m_monospace) return;
+  const int before = sidebarWidth();
+  m_monospace = monospace;
+  if (sidebarWidth() != before) publish();
 }
 
 void LayoutController::setWindowWidth(int width) {
   load();
   if (width == m_windowWidth) return;
   const int before = sidebarWidth();
+  const QString mode = sidebarMode();
   const bool overlay = sidebarOverlay();
   const bool collapsed = sidebarCollapsed();
+  const bool wasNarrow = narrow();
   m_windowWidth = width;
-  if (sidebarOverlay() != overlay) m_overlayOpen = false;
-  if (sidebarWidth() != before || sidebarOverlay() != overlay || sidebarCollapsed() != collapsed) publish();
+  if (narrow() != wasNarrow) m_overlayOpen = false;
+  if (sidebarWidth() != before || sidebarMode() != mode || sidebarOverlay() != overlay ||
+      sidebarCollapsed() != collapsed) {
+    publish();
+  }
+}
+
+void LayoutController::toggleSidebar() {
+  // A narrow window opens the full list over the thread, from the rail or
+  // from nothing, and puts it away again.
+  if (narrow()) {
+    load();
+    m_overlayOpen = !m_overlayOpen;
+    publish();
+    return;
+  }
+  setSidebarCollapsed(!sidebarCollapsed());
 }
 
 void LayoutController::setSidebarCollapsed(bool collapsed) {
   load();
-  if (collapsed == sidebarCollapsed()) return;
-  if (sidebarOverlay()) {
+  if (narrow()) {
+    if (m_overlayOpen == !collapsed) return;
     m_overlayOpen = !collapsed;
     publish();
     return;
   }
+  if (collapsed == sidebarCollapsed()) return;
   m_sidebarCollapsed = collapsed;
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     settings->writeDevice(kSidebarCollapsed, collapsed);
@@ -164,6 +206,7 @@ void LayoutController::publish() {
   m_bridge->publish(QStringLiteral("layout"),
                     QVariantMap{{kSidebarCollapsed, sidebarCollapsed()},
                                 {kSidebarWidthKey, sidebarWidth()},
+                                {QStringLiteral("sidebarMode"), sidebarMode()},
                                 {QStringLiteral("sidebarOverlay"), sidebarOverlay()},
                                 {QStringLiteral("zoom"), zoom()}});
 }

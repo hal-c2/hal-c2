@@ -1,10 +1,11 @@
 // LayoutController as a state machine over what moves the thread list: the
-// window's width, the list's edge dragged or reset, the toggle, and a restart
-// reading the device's preferences back. The model is the ledger's
-// rule (features/navigation/layout.feature):
-// the list is never narrower than its minimum, leaves the thread its room
-// while it is beside it, and in a window with no room for both is shown over
-// the thread, hidden until asked for, without that being remembered.
+// window's width and interface font, the list's edge dragged or reset, the
+// toggle, and a restart reading the device's preferences back. The model is
+// the ledger's rule (features/navigation/layout.feature): the list is never
+// narrower than its minimum, leaves the thread its room while it is beside
+// it, goes slim in a window under 1100, and in a window with no room for both
+// keeps a rail beside the thread whose toggle shows the full list over it,
+// without that being remembered.
 
 #include "Prop.h"
 
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <string>
 
 namespace {
 
@@ -25,18 +27,29 @@ constexpr int kMin = LayoutController::kSidebarMinWidth;
 constexpr int kContent = LayoutController::kContentMinWidth;
 
 struct Model {
-  // What the device remembers.
+  // What the device remembers: hidden, and the width chosen (0 for the default).
   bool collapsed = false;
-  int chosen = LayoutController::kSidebarWidth;
-  // This run's: the window's width (0 until it says) and the list shown
-  // over the thread.
+  int chosen = 0;
+  // This run's: the window's width (0 until it says), its interface font,
+  // and the full list shown over the thread.
   int window = 0;
+  bool monospace = false;
   bool overlayOpen = false;
 
-  bool overlay() const { return window > 0 && window < kMin + kContent; }
+  bool narrow() const { return window > 0 && window < LayoutController::kRailBelow; }
+  bool overlay() const { return narrow() && overlayOpen; }
+  bool rail() const { return narrow() && !overlayOpen; }
+  std::string mode() const {
+    if (rail()) return "rail";
+    return !narrow() && window > 0 && window < LayoutController::kSlimBelow ? "slim" : "full";
+  }
+  int fallback() const { return monospace ? LayoutController::kSidebarMonospaceWidth : LayoutController::kSidebarWidth; }
   int room() const { return window > 0 ? std::max(0, window - kContent) : std::numeric_limits<int>::max(); }
-  int width() const { return std::max(std::min(chosen, room()), kMin); }
-  bool hidden() const { return overlay() ? !overlayOpen : collapsed; }
+  int width() const {
+    if (rail()) return LayoutController::kRailWidth;
+    return std::max(std::min(chosen > 0 ? chosen : fallback(), room()), kMin);
+  }
+  bool hidden() const { return collapsed && !overlay(); }
 };
 
 struct Shell {
@@ -70,22 +83,26 @@ void check(const Model& model, Shell& shell) {
   const QVariantMap layout = shell.published();
   const int width = layout.value(QStringLiteral("sidebarWidth")).toInt();
   RC_ASSERT(width == model.width());
+  RC_ASSERT(layout.value(QStringLiteral("sidebarMode")).toString().toStdString() == model.mode());
   RC_ASSERT(layout.value(QStringLiteral("sidebarOverlay")).toBool() == model.overlay());
   RC_ASSERT(layout.value(QStringLiteral("sidebarCollapsed")).toBool() == model.hidden());
   RC_ASSERT(shell.layout()->sidebarCollapsed() == model.hidden());
-  // Never under its minimum, and beside the thread only with room for both.
-  RC_ASSERT(width >= kMin);
+  // Never under its minimum but as the rail, and beside the thread only
+  // with room for both.
+  if (!model.rail()) RC_ASSERT(width >= kMin);
   if (model.window > 0 && !model.overlay()) RC_ASSERT(width <= model.window - kContent);
-  // Only a window with room changes what the device remembers.
+  // Only a window with room changes what the device remembers, and the
+  // default is never written down.
   auto* settings = shell.run->native.controller<SettingsController>();
   RC_ASSERT(settings->deviceValue(QStringLiteral("sidebarCollapsed")).toBool() == model.collapsed);
+  RC_ASSERT(settings->deviceValue(QStringLiteral("sidebarWidth")).toInt() == model.chosen);
 }
 
 using Command = rc::state::Command<Model, Shell>;
 
 struct Toggle : Command {
   void apply(Model& model) const override {
-    if (model.overlay()) model.overlayOpen = !model.overlayOpen;
+    if (model.narrow()) model.overlayOpen = !model.overlayOpen;
     else model.collapsed = !model.collapsed;
   }
   void run(const Model& model, Shell& shell) const override {
@@ -100,7 +117,10 @@ struct Toggle : Command {
 struct Resize : Command {
   int width = *rc::gen::inRange(0, 900);
 
-  void apply(Model& model) const override { model.chosen = std::max(std::min(width, model.room()), kMin); }
+  void apply(Model& model) const override {
+    const int clamped = std::max(std::min(width, model.room()), kMin);
+    model.chosen = clamped == model.fallback() ? 0 : clamped;
+  }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
@@ -111,9 +131,7 @@ struct Resize : Command {
 };
 
 struct ResetWidth : Command {
-  void apply(Model& model) const override {
-    model.chosen = std::max(std::min(LayoutController::kSidebarWidth, model.room()), kMin);
-  }
+  void apply(Model& model) const override { model.chosen = 0; }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
@@ -124,13 +142,13 @@ struct ResetWidth : Command {
 };
 
 struct Window : Command {
-  // Around both edges: the list's minimum beside the thread, and its default.
-  int width = *rc::gen::oneOf(rc::gen::inRange(640, 760), rc::gen::inRange(640, 1600));
+  // Around the edges: the rail's, the slim rows', and the default's room.
+  int width = *rc::gen::oneOf(rc::gen::inRange(800, 920), rc::gen::inRange(1040, 1160), rc::gen::inRange(640, 1600));
 
   void apply(Model& model) const override {
-    const bool overlay = model.overlay();
+    const bool narrow = model.narrow();
     model.window = width;
-    if (model.overlay() != overlay) model.overlayOpen = false;
+    if (model.narrow() != narrow) model.overlayOpen = false;
   }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
@@ -141,10 +159,25 @@ struct Window : Command {
   void show(std::ostream& os) const override { os << "Window(" << width << ")"; }
 };
 
+// The interface font changes between a proportional and a monospace face.
+struct Font : Command {
+  bool monospace = *rc::gen::arbitrary<bool>();
+
+  void apply(Model& model) const override { model.monospace = monospace; }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.act("layout.window", {{QStringLiteral("width"), model.window}, {QStringLiteral("monospace"), monospace}});
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override { os << "Font(" << (monospace ? "monospace" : "sans") << ")"; }
+};
+
 // The app quits and starts again: the window has yet to say how wide it is.
 struct Restart : Command {
   void apply(Model& model) const override {
     model.window = 0;
+    model.monospace = false;
     model.overlayOpen = false;
   }
   void run(const Model& model, Shell& shell) const override {
@@ -165,10 +198,10 @@ class LayoutProp : public QObject {
 
 private slots:
   void sidebar() {
-    QVERIFY(rc::check("the thread list keeps its minimum and the thread its room, or goes over the thread", [] {
+    QVERIFY(rc::check("the thread list keeps its minimum and the thread its room, or keeps a rail and goes over the thread", [] {
       Shell shell;
       rc::state::check(Model{}, shell,
-                       rc::state::gen::execOneOfWithArgs<Toggle, Toggle, Resize, ResetWidth, Window, Window, Restart>());
+                       rc::state::gen::execOneOfWithArgs<Toggle, Toggle, Resize, ResetWidth, Window, Window, Font, Restart>());
     }));
   }
 };
