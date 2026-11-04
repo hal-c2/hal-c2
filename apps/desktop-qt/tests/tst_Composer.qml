@@ -239,7 +239,7 @@ Item {
 
             const fast = overflowRow(menu, "composerOverflow:optionToggle:fastMode");
             if (fast !== null) {
-                verify(fast.current, "an on toggle is checked");
+                compare(fast.iconName, "check", "an on toggle is checked in the icon column");
                 compare(fast.detail, "On", "a folded toggle says whether it is on");
                 fast.triggered();
                 sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
@@ -268,7 +268,7 @@ Item {
             const plan = overflowRow(composer.overflowMenu, "composerOverflow:planToggle");
             verify(plan !== null);
             compare(plan.text, "Plan");
-            compare(plan.current, false);
+            compare(plan.iconName, "", "an off toggle has no check");
             compare(plan.detail, "Off", "a folded toggle says when it is off");
             plan.triggered();
             const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];

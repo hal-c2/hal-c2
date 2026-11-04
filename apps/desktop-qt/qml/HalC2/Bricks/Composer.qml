@@ -100,9 +100,9 @@ Rectangle {
     }
 
     // Opens the overflow chip's menu: a row per folded chip in toolbar
-    // order, a picker as a submenu of its choices and a toggle as a checked
-    // row reading On or Off. `chip`, when given, is the row the keyboard
-    // starts on.
+    // order, a picker as a submenu of its choices and a toggle as a row
+    // reading On or Off, with a check in the icon column while on. `chip`,
+    // when given, is the row the keyboard starts on.
     function openOverflow(chip) {
         if (overflowMenu !== null) {
             overflowMenu.close();
@@ -140,7 +140,7 @@ Rectangle {
                     objectName: "composerOverflow:" + item.objectName,
                     text: item.menuTitle,
                     detail: item.checked ? qsTr("On") : qsTr("Off"),
-                    current: item.checked
+                    iconName: item.checked ? "check" : ""
                 });
                 row.triggered.connect(() => item.flip());
                 menu.built.push(row);
@@ -1314,9 +1314,11 @@ Rectangle {
                                         objectName: "optionToggle:" + option.id
                                         visible: !composer.folded.includes(toggleChip)
                                         checked: option.value === true
-                                        // On is the fill; fast mode adds its bolt, filled,
-                                        // in Claude's orange on a Claude model.
-                                        iconName: fast && checked ? "zap" : ""
+                                        // On is the fill and a leading check; fast mode's
+                                        // is its bolt, filled, in Claude's orange on a
+                                        // Claude model.
+                                        iconName: !checked ? "" : fast ? "zap" : "check"
+                                        iconSize: checked && !fast ? Theme.icon.sm : Theme.icon.md
                                         iconFilled: fast && checked
                                         iconTint: fast && checked && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
                                         text: option.label ?? ""
