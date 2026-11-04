@@ -1341,8 +1341,9 @@ Item {
         function test_an_empty_space_says_so_and_offers_a_first_page() {
             const view = root.research({ pages: [], blocks: [], page: {} });
             verify(!findChild(view, "spacePage").visible);
-            compare(findChild(view, "spaceEmptyText").text, "Research has no pages yet.");
-            mouseClick(findChild(view, "spaceEmptyNewPage"));
+            const empty = findChild(view, "spaceEmpty");
+            compare(empty.title, "Research has no pages yet");
+            mouseClick(findChild(empty, "emptyStateAction"));
             const field = findChild(view, "spaceNameField");
             verify(field.visible);
             keyClick("R");
@@ -1368,8 +1369,10 @@ Item {
 
         function test_an_unreachable_mc_is_said_rather_than_an_empty_space() {
             const view = root.research({ status: "unreachable", pages: [], blocks: [], page: {} });
-            compare(findChild(view, "spaceEmptyText").text, "The MC cannot be reached, so its Spaces cannot be shown.");
-            verify(!findChild(view, "spaceEmptyNewPage").visible);
+            const empty = findChild(view, "spaceEmpty");
+            compare(empty.status, "error");
+            compare(empty.description, "The MC cannot be reached. Its Spaces show again once it answers.");
+            verify(!findChild(empty, "emptyStateAction").visible);
         }
 
         function test_renaming_the_page_writes_its_new_title() {

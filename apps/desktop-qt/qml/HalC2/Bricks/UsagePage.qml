@@ -221,16 +221,17 @@ Rectangle {
             }
         }
 
-        Label {
+        // Why there is nothing to show, or that history is still being read.
+        ShellEmptyState {
+            id: usageMessage
+
             objectName: "usageMessage"
-            Layout.fillWidth: true
-            Layout.topMargin: 48
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            color: page.muted
-            font.pixelSize: Theme.type.body.size
-            visible: text.length > 0
-            text: page.model ? page.model.message : ""
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Theme.space.xxl
+            visible: title.length > 0
+            status: page.model && page.model.scanning && !page.limitsShown ? "loading" : "empty"
+            iconName: "chart-no-axes-column"
+            title: page.model ? page.model.message : ""
         }
 
         ScrollView {

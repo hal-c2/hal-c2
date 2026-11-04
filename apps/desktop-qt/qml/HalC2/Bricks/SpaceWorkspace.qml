@@ -31,12 +31,21 @@ Rectangle {
     // What the open page's state is when it shows nothing.
     readonly property string emptyText: {
         if (Spaces.status === "unreachable")
-            return qsTr("The MC cannot be reached, so its Spaces cannot be shown.");
+            return qsTr("Spaces can’t be shown");
         if (Spaces.status === "loading")
             return qsTr("Loading the Space…");
         if (Spaces.spaceId === "")
-            return qsTr("There are no Spaces. Make one to start writing pages.");
-        return qsTr("%1 has no pages yet.").arg(Spaces.spaceName);
+            return qsTr("No Spaces yet");
+        return qsTr("%1 has no pages yet").arg(Spaces.spaceName);
+    }
+    readonly property string emptyDetail: {
+        if (Spaces.status === "unreachable")
+            return qsTr("The MC cannot be reached. Its Spaces show again once it answers.");
+        if (Spaces.status === "loading")
+            return "";
+        if (Spaces.spaceId === "")
+            return qsTr("Make a Space to start writing pages.");
+        return workspace.space.busy === true ? qsTr("Writing a page from the thread…") : qsTr("Write one, or import Markdown.");
     }
 
     function showComments(blockId) {
@@ -112,59 +121,20 @@ Rectangle {
                 visible: Spaces.deckId !== "" && !workspace.imagesShown
             }
 
-            ColumnLayout {
+            // Placed by its top, so loading, empty and unreachable share one place.
+            ShellEmptyState {
                 objectName: "spaceEmpty"
-                anchors.centerIn: parent
-                width: Math.min(parent.width - 48, 420)
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: Math.round(parent.height / 3)
                 visible: Spaces.pageId === "" && Spaces.deckId === "" && !workspace.imagesShown
-                spacing: 12
-
-                ShellIcon {
-                    Layout.alignment: Qt.AlignHCenter
-                    name: Spaces.status === "unreachable" ? "info" : "book"
-                    size: 28
-                    color: workspace.muted
-                }
-
-                Text {
-                    objectName: "spaceEmptyText"
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                    text: workspace.emptyText
-                    color: workspace.foreground
-                    font.pixelSize: Theme.type.title.size
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    visible: workspace.space.busy === true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: qsTr("Writing a page from the thread…")
-                    color: workspace.muted
-                    font.pixelSize: Theme.type.body.size
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    visible: Spaces.status === "live" && Spaces.spaceId !== ""
-                    spacing: 8
-
-                    ShellButton {
-                        objectName: "spaceEmptyNewPage"
-                        primary: true
-                        iconName: "plus"
-                        text: qsTr("New page")
-                        onClicked: sidebar.newPage("")
-                    }
-
-                    ShellButton {
-                        objectName: "spaceEmptyImport"
-                        iconName: "file"
-                        text: qsTr("Import Markdown")
-                        onClicked: importDialog.open()
-                    }
-                }
+                status: Spaces.status === "unreachable" ? "error" : Spaces.status === "loading" ? "loading" : "empty"
+                iconName: "book"
+                title: workspace.emptyText
+                description: workspace.emptyDetail
+                actionText: Spaces.status === "live" && Spaces.spaceId !== "" ? qsTr("New page") : ""
+                secondaryActionText: actionText.length > 0 ? qsTr("Import Markdown") : ""
+                onActionTriggered: sidebar.newPage("")
+                onSecondaryActionTriggered: importDialog.open()
             }
 
             SpaceImages {

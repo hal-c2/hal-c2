@@ -169,41 +169,22 @@ Rectangle {
             wrapMode: Text.Wrap
         }
 
-        ColumnLayout {
+        // Loading, empty and failed in one place under the filters.
+        ShellEmptyState {
+            id: message
+
             readonly property var message: page.model ? (page.model.error ?? page.model.empty) : null
 
-            Layout.fillWidth: true
-            Layout.topMargin: 48
-            visible: page.items.length === 0
-            spacing: 8
-
-            Label {
-                objectName: "pullRequestMessageTitle"
-                Layout.alignment: Qt.AlignHCenter
-                text: parent.message ? parent.message.title : (page.model && page.model.loading ? qsTr("Loading pull requests…") : "")
-                color: page.foreground
-                font.pixelSize: Theme.type.title.size
-                font.weight: Font.DemiBold
-            }
-
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.maximumWidth: 420
-                visible: text.length > 0
-                text: parent.message ? (parent.message.body ?? parent.message.message ?? "") : ""
-                color: page.muted
-                font.pixelSize: Theme.type.body.size
-                wrapMode: Text.Wrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            ShellButton {
-                objectName: "pullRequestMessageAction"
-                Layout.alignment: Qt.AlignHCenter
-                visible: parent.message !== null
-                text: parent.message && parent.message.action === "project.add" ? qsTr("Add project") : page.model && page.model.error ? qsTr("Retry") : qsTr("Check again")
-                onClicked: parent.message.action === "project.add" ? Shell.dispatch("project.add") : Shell.dispatch("pullRequestList.refresh")
-            }
+            objectName: "pullRequestMessage"
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Theme.space.xxl
+            visible: page.items.length === 0 && title.length > 0
+            status: page.model && page.model.error ? "error" : !message.message && page.model && page.model.loading ? "loading" : "empty"
+            iconName: "git-pull-request"
+            title: message.message ? message.message.title : (page.model && page.model.loading ? qsTr("Loading pull requests…") : "")
+            description: message.message ? (message.message.body ?? message.message.message ?? "") : ""
+            actionText: message.message === null ? "" : message.message.action === "project.add" ? qsTr("Add project") : page.model && page.model.error ? qsTr("Retry") : qsTr("Check again")
+            onActionTriggered: message.message.action === "project.add" ? Shell.dispatch("project.add") : Shell.dispatch("pullRequestList.refresh")
         }
 
         // Takes the spare height while there are no rows, as the list does
