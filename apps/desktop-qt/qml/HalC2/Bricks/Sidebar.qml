@@ -469,6 +469,9 @@ Rectangle {
 
                                 text: modelData.displayName
                                 detail: [sidebar.projectDetails[modelData.key] ?? "", statusWord].filter(part => part.length > 0).join(" · ")
+                                // A folder hint keeps the folder that differs (its start)
+                                // and the state word (its end), as row branches do.
+                                detailElide: Text.ElideMiddle
                                 badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
                                 badgeName: modelData.displayName
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
