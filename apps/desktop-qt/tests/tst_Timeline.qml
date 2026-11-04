@@ -233,39 +233,42 @@ Item {
             tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
         }
 
-        // "Scroll to end" floats on its own band, 12px over the bottom, and
-        // keeps off the end once the end is already under it.
-        function test_scrollToEndHasItsOwnSurface() {
+        // "Scroll to end" sits on its own solid band at the bottom, so it
+        // never covers a line, and keeps off once the end is under the band.
+        function test_scrollToEndHasItsOwnBand() {
             const timeline = longThread();
             const list = view(timeline);
             scrollUp(timeline, timeline.height);
             const jump = findChild(timeline, "jumpToLatest");
             const band = findChild(timeline, "jumpToLatestBand");
             verify(jump.visible && band.visible, "the control shows on its band");
-            compare(jump.height, Theme.control.md);
+            compare(band.color.a, 1, "the band hides the rows under it");
+            verify(band.height >= 40, "about 40px of its own");
             const foot = list.mapToItem(timeline, 0, list.height).y;
-            compare(jump.mapToItem(timeline, 0, jump.height).y, foot - Theme.space.md, "12px over the bottom");
+            const bandTop = band.mapToItem(timeline, 0, 0).y;
             compare(band.mapToItem(timeline, 0, band.height).y, foot, "the band reaches the bottom");
-            verify(band.height >= jump.height + 2 * Theme.space.md, "with room around the control");
+            verify(jump.mapToItem(timeline, 0, 0).y > bandTop && jump.mapToItem(timeline, 0, jump.height).y < foot, "the control is inside it");
             list.contentY = list.originY + list.contentHeight - list.height - Theme.space.lg;
             verify(!timeline.following, "a little way from the end");
             verify(!jump.visible && !band.visible, "the end is under it, so it stays away");
         }
 
-        // Rows scrolled under the top fade out there instead of meeting
-        // whatever sits over the conversation with a cut line.
-        function test_rowsFadeOutAtTheTop() {
+        // Rows scrolled under the top are cut cleanly at a hairline, never
+        // faded into a ghost line.
+        function test_rowsAreCutCleanlyAtTheTop() {
             const timeline = longThread();
             const list = view(timeline);
             const edge = findChild(timeline, "timelineTopEdge");
-            verify(edge.visible, "a thread opened at its end fades at the top");
+            verify(list.clip, "the rows are cut at the view's top");
+            verify(edge.visible, "a thread opened at its end marks the cut");
             compare(edge.mapToItem(timeline, 0, 0).y, list.mapToItem(timeline, 0, 0).y);
-            compare(edge.height, Theme.space.lg);
+            compare(edge.height, 1, "a hairline, not a fade");
+            compare(edge.color.a, 1);
             list.forceActiveFocus();
             tryVerify(() => list.activeFocus, 2000);
             keyClick(Qt.Key_Home);
             compare(list.contentY, list.originY - list.topMargin, "Home goes to the start");
-            tryVerify(() => !edge.visible, 2000, "at the start nothing is under it");
+            tryVerify(() => !edge.visible, 2000, "at the start nothing is cut");
         }
 
         // Scenario: The keyboard pages through the conversation

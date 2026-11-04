@@ -2522,60 +2522,48 @@ Item {
         }
     }
 
-    // The rows fade out under the header above, rather than meeting it
-    // with a cut line, once the view has left the start.
+    // Once the view has left the start, the rows are cut cleanly at the top
+    // (the view clips) and a hairline marks the cut, so a half line under
+    // the header reads as scrolled, never as dimmed text.
     Rectangle {
         objectName: "timelineTopEdge"
         visible: !view.atYBeginning
-        anchors.horizontalCenter: view.horizontalCenter
+        anchors.left: view.left
         anchors.top: view.top
-        width: root.columnWidth
-        height: Theme.space.lg
-        gradient: Gradient {
-            GradientStop {
-                position: 0
-                color: root.canvasColor
-            }
-            GradientStop {
-                position: 1
-                color: Qt.alpha(root.canvasColor, 0)
-            }
-        }
+        width: view.width - scrollBar.width
+        height: 1
+        color: root.borderColor
     }
 
-    // Under "Scroll to end": the rows fade into the canvas there, so the
-    // control never reads as part of the text it floats over.
+    // "Scroll to end"'s own band over the bottom of the view: solid canvas
+    // with a hairline on top, so the control never sits on a line of text,
+    // faded or not. The rows are cut at the hairline like at the top.
     Rectangle {
         objectName: "jumpToLatestBand"
         visible: jump.visible
-        // The reading column's width, clear of the scroll bar at the edge.
-        anchors.horizontalCenter: view.horizontalCenter
-        width: root.columnWidth
+        anchors.left: view.left
         anchors.bottom: view.bottom
-        height: jump.height + 2 * Theme.space.md
-        gradient: Gradient {
-            GradientStop {
-                position: 0
-                color: Qt.alpha(root.canvasColor, 0)
-            }
-            GradientStop {
-                position: 0.5
-                color: root.canvasColor
-            }
+        width: view.width - scrollBar.width
+        height: jump.height + 2 * Theme.space.sm
+        color: root.canvasColor
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: root.borderColor
         }
     }
 
-    // Back to the latest output once the user scrolled away: floats
-    // bottom-centre, 12px over the composer, and only while they are away
-    // from the end. Where the end is already under it, it would only cover
-    // the last lines, so it stays away.
+    // Back to the latest output once the user scrolled away: bottom-centre
+    // on its band, and only while they are away from the end. Where the end
+    // is already under the band, the band would only hide the last lines,
+    // so neither shows.
     ShellButton {
         id: jump
         objectName: "jumpToLatest"
-        visible: !view.following && view.count > 0 && view.originY + view.contentHeight - (view.contentY + view.height) > height + 2 * Theme.space.md
+        visible: !view.following && view.count > 0 && view.originY + view.contentHeight - (view.contentY + view.height) > height + 2 * Theme.space.sm
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: view.bottom
-        anchors.bottomMargin: Theme.space.md
+        anchors.bottomMargin: Theme.space.sm
         height: Theme.control.md
         radius: Theme.radiusPill
         iconName: "chevron-down"
