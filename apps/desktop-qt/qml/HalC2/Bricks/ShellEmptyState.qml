@@ -5,10 +5,13 @@ import HalC2.Shell
 // What a list, panel or view shows when it has nothing to show, failed, or
 // is still loading: an icon in an inset tile, a title, one short sentence and
 // at most two actions. Loading, empty and error use the same geometry, so
-// nothing jumps when one becomes another.
+// nothing jumps when one becomes another; place it by its top, not its
+// centre, and the tile and title stay put while the actions come and go.
 ColumnLayout {
     id: root
 
+    // "empty", "loading" or "error": loading and error draw their own icon.
+    property string status: "empty"
     property string iconName: "circle-dashed"
     property string title: ""
     // One sentence; it wraps to two lines at most.
@@ -37,9 +40,9 @@ ColumnLayout {
 
         ShellIcon {
             anchors.centerIn: parent
-            name: root.iconName
+            name: root.status === "loading" ? "circle-dashed" : root.status === "error" ? "circle-alert" : root.iconName
             size: Theme.icon.xl
-            color: Theme.palette.color("textMuted", "#8b919e")
+            color: root.status === "error" ? Theme.palette.color("warning", "#fbbf24") : Theme.palette.color("inkTertiary", "#8b919e")
         }
     }
 
@@ -49,7 +52,7 @@ ColumnLayout {
         Layout.alignment: Qt.AlignHCenter
         Layout.maximumWidth: 360
         text: root.title
-        color: Theme.palette.color("text", "#f2f3f5")
+        color: Theme.palette.color("ink", "#f2f3f5")
         font.pixelSize: Theme.type.title.size
         font.weight: Theme.type.title.weight
         lineHeight: Theme.type.title.lineHeight

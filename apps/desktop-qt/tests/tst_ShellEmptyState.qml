@@ -73,5 +73,23 @@ TestCase {
         mouseClick(secondary);
         compare(secondarySpy.count, 1);
     }
+
+    // Loading, empty and error share geometry, so nothing jumps between them.
+    function test_loading_empty_and_error_keep_the_tile_and_title_in_place() {
+        const state = createTemporaryObject(emptyComponent, root, { status: "loading", description: "Checking connected environments." });
+        const icon = findNamed(state, "emptyStateIcon");
+        const title = findNamed(state, "emptyStateTitle");
+        waitForRendering(state);
+        const iconY = icon.mapToItem(root, 0, 0).y;
+        const titleY = title.mapToItem(root, 0, 0).y;
+        for (const status of ["empty", "error"]) {
+            state.status = status;
+            state.actionText = status === "error" ? "Try again" : "";
+            waitForRendering(state);
+            compare(icon.mapToItem(root, 0, 0).y, iconY, status);
+            compare(title.mapToItem(root, 0, 0).y, titleY, status);
+            compare(icon.width, 40);
+        }
+    }
 }
 }
