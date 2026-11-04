@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13553
 #   docs/user/composer.md (prompt recall, prompt stash)
 #   docs/internals/composer-editors.md
 #   apps/desktop-qt/qml/HalC2/Bricks/ComposerVimKeys.qml
@@ -92,6 +93,20 @@ Feature: Editing the draft
       | keys         |
       | mod+v        |
       | shift+insert |
+
+  # Upstream #13553: paste and typing go to the composer after the user clicks away, unless a
+  # menu on the page is actually open.
+  @desktop @backlog
+  Scenario: Pasting after clicking the thread's timeline puts the text in the composer
+    Given the user clicked the timeline and no menu is open
+    When the user pastes text
+    Then the text lands in the composer and the composer has focus
+
+  @desktop @backlog
+  Scenario: An open menu keeps a paste from moving into the composer
+    Given the user has a menu open on the thread
+    When the user pastes text
+    Then the text does not move into the composer
 
   # The usual text menu, with the composer's paste. Touch devices have their
   # own edit menu, so the menu is for the mouse and the keyboard.

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11477
 #   apps/web/src/components/ChatMarkdown.tsx (code block header, Copy code, line wrap, table expand and copy, streaming)
 #   apps/web/src/components/ChatMarkdown.tsx (fence file names, collapsible sections, template cards, file chips and their menu and failure toasts, website icons, pull request links)
 #   apps/web/src/markdown-links.ts (file link modifier click, PDFs in the browser, inline code paths)
@@ -630,6 +631,13 @@ Feature: Formatted messages
     When the user opens the menu of a web link in a reply
     Then the menu offers opening in the system browser and copying the link
     And the menu does not offer opening in the in-app browser
+
+  # Upstream #11477: a task checkbox belongs to its own list item, not to a nested one.
+  @desktop @backlog
+  Scenario: A parent item with a checked child copies as a plain bullet
+    Given the agent's reply is a plain item with a checked item nested under it
+    When the user selects both and copies
+    Then the clipboard holds "- Parent" and the nested "- [x] Child"
 
   @desktop @backlog
   Scenario Outline: Selected text in a reply copies as Markdown

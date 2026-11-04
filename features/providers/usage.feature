@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10409
+#   https://github.com/pingdotgg/t3code/pull/13599
 #   docs/user/usage.md (Understand your usage, Set custom model prices)
 #   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, server.refreshUsageRates, windows, fingerprints, 90-day cache)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Claude, Codex and Grok Build transcripts)
@@ -268,6 +270,32 @@ Feature: Usage
     Given a transcript that was counted last week and has since been deleted by the CLI
     When the user opens Usage
     Then last week's totals still include it
+
+  # Upstream #13599: Claude's fast mode bills at a multiple of the standard rate.
+  @mc @plugin-claude @backlog
+  Scenario: A Claude request in fast mode is priced at the fast rate
+    Given a Claude request on Opus 5.5 in fast mode that costs $0.28 at the standard rate
+    When the user opens Usage
+    Then the request is priced at $0.56
+
+  # Upstream #10409: Cursor's account history counts only once the user has enabled it.
+  @mc @plugin-cursor @backlog
+  Scenario: Cursor's account history is not counted until the user enables Cursor account usage
+    Given Cursor is signed in and the user has not enabled Cursor account usage
+    When the user opens Usage
+    Then Cursor's history is not counted
+
+  @mc @plugin-opencode @backlog
+  Scenario: OpenCode's local history counts toward usage
+    Given OpenCode has local session history
+    When the user opens Usage
+    Then OpenCode's tokens are counted
+
+  @mc @plugin-antigravity @backlog
+  Scenario: Antigravity's local history counts toward usage
+    Given Antigravity has local session history
+    When the user opens Usage
+    Then Antigravity's tokens are counted
 
   @mc
   Scenario: A scan that fails is reported

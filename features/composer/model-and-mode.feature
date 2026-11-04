@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13590
+#   https://github.com/pingdotgg/t3code/pull/13555
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
@@ -211,6 +213,22 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And no base branch is chosen
     When the user tries to send the first message
     Then the user is asked to select a base branch
+
+  # Upstream #13590: a thread whose worktree is still being checked out is in worktree mode.
+  @desktop @backlog
+  Scenario: A thread still preparing its worktree says "New worktree" until checkout finishes
+    Given the user started a thread in a new worktree
+    And the worktree is still being checked out
+    Then the workspace label reads "New worktree"
+    When the checkout finishes
+    Then the workspace label reads "Worktree"
+
+  # Upstream #13555: the collapsed bar's labels must not flip while the user scrolls.
+  @desktop @backlog
+  Scenario: The collapsed composer bar keeps its labels steady while the user scrolls
+    Given the user has collapsed the composer bar on a thread with a long branch name
+    When the user scrolls the thread
+    Then the bar keeps the same labels and does not switch between labels and icons
 
   @desktop
   Scenario: A new thread can run on a machine that has other projects

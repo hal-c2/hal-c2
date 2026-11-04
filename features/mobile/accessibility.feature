@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13356
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe accessibility hint)
 #   apps/mobile/src/features/threads/ThreadArrangementSheet.tsx (Move up and Move down actions)
 #   apps/mobile/src/features/home/thread-swipe-actions.tsx
@@ -102,6 +103,15 @@ Feature: Accessibility on phones and tablets
     Given the user set the system text size to the largest accessibility size
     When the user looks at a segmented choice such as the usage range
     Then every option stays readable and tappable
+
+  # Upstream #13356: Android header and icon controls follow the Settings text size, and keep a
+  # 48dp touch target.
+  @backlog @mobile
+  Scenario: Android header buttons grow with the app's text size and keep a 48dp touch target
+    Given the user set the app's text size to the largest option on Android
+    When the user looks at the thread list header
+    Then the header buttons grow with the text
+    And each button stays at least 48dp to tap
 
   # New behaviour: the React Native app does not guarantee this today.
   @backlog @mobile

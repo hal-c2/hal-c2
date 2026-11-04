@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13572
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (plan.updated, subagent.updated, proposed_plan, todo_list, subagent, handoff, fork, compaction, thread_created, delegated_task.request, delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge, delegated_task.completion-delivery.dispose)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (proposed_plan, todo_list)
@@ -725,6 +726,14 @@ Feature: Plans and subagents
     When the user opens the Agents tab
     Then the Agents tab lists "Tax tests" as "Working" and "Docs" as "Completed"
     And "Docs" is shown to have taken "1m 15s"
+
+  # Upstream #13572: the banner that says agents are working links to the Agents tab.
+  @desktop @backlog
+  Scenario: The agents-working banner opens the Agents tab while a subagent is live
+    Given the agent started the subagent "Tax tests" 12 seconds ago
+    And the Agents tab is closed
+    When the user chooses View on the agents-working banner
+    Then the Agents tab opens
 
   @desktop
   Scenario: The Agents tab keeps what is running above what has finished
