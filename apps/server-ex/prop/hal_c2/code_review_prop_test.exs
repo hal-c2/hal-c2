@@ -66,6 +66,9 @@ defmodule HalC2.CodeReviewPropTest do
   @statuses Map.new(@order, &{Atom.to_string(&1), &1})
 
   setup_all do
+    # `behind_a_post?/1` looks for `run/2` under a process's backoff; the default
+    # depth of 8 frames could cut it off and count a run as a held post.
+    depth = :erlang.system_flag(:backtrace_depth, 64)
     fx = Path.expand("../../tmp/prop/code-review-fixtures-#{System.pid()}", __DIR__)
     File.rm_rf!(fx)
     File.mkdir_p!(Path.join(fx, "holds"))
@@ -126,6 +129,8 @@ defmodule HalC2.CodeReviewPropTest do
     :persistent_term.put({__MODULE__, :fx}, %{dir: fx, shas: shas})
 
     on_exit(fn ->
+      :erlang.system_flag(:backtrace_depth, depth)
+
       for {var, value} <- previous_vars,
           do: if(value, do: System.put_env(var, value), else: System.delete_env(var))
 
