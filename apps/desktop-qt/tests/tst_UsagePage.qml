@@ -229,5 +229,32 @@ Item {
             verify(!findChild(row, "useReset").visible, "nothing is left to spend");
             compare(findChild(row, "resetStatus").text, "No reset credit left.");
         }
+
+        // A limit's bar is the accent until a quarter is left, then a warning,
+        // and an error under a tenth.
+        function test_a_limits_bar_is_the_accent_until_little_is_left() {
+            Theme.colors = { accent: "#3b6fe0", warning: "#fbbf24", error: "#f87171" };
+            try {
+                Shell.state = { usage: root.usage({ metric: "limits", summary: null, limits: { notices: [], pools: [{
+                    driver: "codex", label: "Codex",
+                    windows: [{ key: "weekly", label: "Weekly", remainingPercent: 60, resetsAt: "",
+                                accounts: [{ name: "Plenty", usedPercent: 40, resetsAt: "" },
+                                           { name: "Little", usedPercent: 80, resetsAt: "" },
+                                           { name: "Nearly none", usedPercent: 95, resetsAt: "" }] }],
+                    credits: [] }] } }) };
+                const page = createTemporaryObject(usageComponent, root);
+                const bars = [];
+                const collect = item => {
+                    if (item.objectName === "limitLeft")
+                        bars.push(item);
+                    for (const child of item.children)
+                        collect(child);
+                };
+                collect(page);
+                compare(bars.map(bar => bar.color.toString()), ["#3b6fe0", "#fbbf24", "#f87171"]);
+            } finally {
+                Theme.colors = {};
+            }
+        }
     }
 }
