@@ -426,6 +426,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user opens the right panel
       Then it is shown as a sheet over the thread, under the header
       And the thread keeps at least 480 pixels
+      And the thread details stay beside it, uncovered and usable
       When the user clicks the thread beside the right panel
       Then the right panel is closed
 

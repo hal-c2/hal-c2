@@ -1129,11 +1129,18 @@ private slots:
     QTRY_COMPARE(workspace->width(), 480.0);
     QCOMPARE(side->width(), 1400.0 - 256 - 280 - 480);
     QCOMPARE(leftOf(details), 256.0 + 480);
-    // And with no room left for its minimum beside them, it is a sheet.
+    // And with no room left for its minimum beside them, it is a sheet over
+    // the thread, left of the details, which stay uncovered and take clicks.
     window->resize(1200, 800);
     QTRY_COMPARE(workspace->width(), 1200.0 - 256 - 280);
     QTRY_VERIFY(scrim->isVisible());
-    QCOMPARE(leftOf(side) + side->width(), 1200.0);
+    QCOMPARE(leftOf(details) + details->width(), 1200.0);
+    QCOMPARE(leftOf(side) + side->width(), leftOf(details));
+    QCOMPARE(leftOf(scrim) + scrim->width(), leftOf(side));
+    const int closes = toggles();
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(leftOf(details) + details->width() / 2), 500));
+    QCoreApplication::processEvents();
+    QCOMPARE(toggles(), closes);
 
     bridge.publish("composer", QVariant());
     bridge.publish("panel", QVariant());
