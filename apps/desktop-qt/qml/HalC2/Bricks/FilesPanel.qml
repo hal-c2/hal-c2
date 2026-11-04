@@ -939,30 +939,18 @@ Rectangle {
                 Layout.fillHeight: true
                 Layout.minimumHeight: 80
 
-                ColumnLayout {
+                ShellEmptyState {
                     id: rootMessage
 
                     objectName: "filesRootMessage"
                     anchors.centerIn: parent
-                    width: parent.width - 32
+                    width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
                     visible: root.rootStatus === "error" || (root.source?.root ?? "").length === 0
-                    spacing: Theme.space.sm
-
-                    Text {
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        text: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
-                        color: root.rootStatus === "error" ? root.errorColor : root.muted
-                        font.pixelSize: Theme.type.body.size
-                        wrapMode: Text.Wrap
-                    }
-                    ShellButton {
-                        objectName: "filesRetry"
-                        Layout.alignment: Qt.AlignHCenter
-                        visible: root.rootStatus === "error"
-                        text: qsTr("Try again")
-                        onClicked: root.source.reload()
-                    }
+                    iconName: root.rootStatus === "error" ? "circle-alert" : "folder"
+                    title: (root.source?.root ?? "").length === 0 ? qsTr("No workspace") : qsTr("Couldn't list the files")
+                    description: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
+                    actionText: root.rootStatus === "error" ? qsTr("Try again") : ""
+                    onActionTriggered: root.source.reload()
                 }
 
                 ListView {

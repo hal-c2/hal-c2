@@ -56,6 +56,19 @@ Feature: Tool calls and file changes
     When the user hides them again
     Then the other four are behind "+4 previous tool calls"
 
+  # The running group is one line: what the agent is doing now, with the count of the calls
+  # before it at its end. It changes as calls land and never animates.
+  # Proved by tst_Timeline.qml (test_runningToolCallsReadAsOneLiveRow), not yet by a step (hal-c2/hal-c2#213).
+  # TUI: the latest call and "+N previous tool calls" are still two lines (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario: A running turn's tool calls read as one live row
+    Given the agent has run five tool calls in a row in the running turn
+    Then one row shows the latest tool call with "+4 previous tool calls" beside it
+    When the agent starts a sixth tool call
+    Then the row shows the sixth tool call with "+5 previous tool calls" beside it
+    When the user opens the row
+    Then all six tool calls are shown
+
   @shared
   Scenario: A group of tool calls reads as a summary of what the agent did
     Given the agent ran two commands and sent messages to three threads

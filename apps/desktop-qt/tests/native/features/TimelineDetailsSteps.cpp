@@ -395,8 +395,11 @@ const Steps steps([] {
   step(QStringLiteral("the user closes the group and opens it again"), [](World& world, const Captures&, const Table&) {
     click(world, drawn(world, QStringLiteral("workGroupToggle")));
     world.waitFor([&] { return callCount(world) < 30; }, QStringLiteral("the group to close"));
-    world.waitFor([&] { return drawnAll(world, QStringLiteral("workCalls")).size() == 1 && !drawnAll(world, QStringLiteral("workCalls")).first()->property("interactive").toBool(); },
-                  QStringLiteral("the group to stop scrolling"));
+    // A running turn's closed group folds into its live row, which draws no calls of its own.
+    world.waitFor([&] {
+      const auto views = drawnAll(world, QStringLiteral("workCalls"));
+      return views.isEmpty() || (views.size() == 1 && !views.first()->property("interactive").toBool());
+    }, QStringLiteral("the group to stop scrolling"));
     openGroup(world, 30);
   });
   step(QStringLiteral("the group shows the call the user was reading at the same place"), [](World& world, const Captures&, const Table&) {

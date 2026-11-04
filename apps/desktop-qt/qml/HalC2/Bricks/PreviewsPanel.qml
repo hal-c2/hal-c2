@@ -71,16 +71,14 @@ Rectangle {
         font.pixelSize: Theme.type.meta.size
     }
 
-    Text {
+    ShellEmptyState {
         objectName: "previewsEmpty"
         anchors.centerIn: parent
-        width: parent.width - 32
+        width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
         visible: list.count === 0 && root.source !== null && root.source.status === "ready"
-        horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.Wrap
-        text: qsTr("No browser tabs in this thread. Tabs the agent opens show here.")
-        color: root.muted
-        font.pixelSize: Theme.type.meta.size
+        iconName: "globe"
+        title: qsTr("No browser tabs")
+        description: qsTr("Tabs the agent opens in this thread show here.")
     }
 
     readonly property string emptyTab: root.source?.emptyTab ?? ""

@@ -208,5 +208,6 @@ void LayoutController::publish() {
                                 {kSidebarWidthKey, sidebarWidth()},
                                 {QStringLiteral("sidebarMode"), sidebarMode()},
                                 {QStringLiteral("sidebarOverlay"), sidebarOverlay()},
+                                {QStringLiteral("contentMinimumWidth"), kContentMinWidth},
                                 {QStringLiteral("zoom"), zoom()}});
 }

@@ -1379,8 +1379,8 @@ function segments(text, options, state) {
 // Rendering helpers for the brick
 
 // The look prose and table cells share, from the theme, by what it styles:
-// links, headings by their class (h6 muted), the inline code fill (`c`)
-// and the rule.
+// links, headings by their class (h6 muted), inline code (`c`, its fill and
+// size) and the rule.
 function styleRules(theme) {
     var heading = "font-weight:600;color:" + theme.heading + ";";
     return {
@@ -1391,7 +1391,7 @@ function styleRules(theme) {
         h4: heading + "font-size:14px;line-height:18.2px",
         h5: heading + "font-size:14px;line-height:18.2px",
         h6: "font-weight:600;color:" + theme.muted + ";font-size:14px;line-height:18.2px",
-        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:12px;font-family:" + theme.mono,
+        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:" + (theme.codeSize || 13) + "px;font-family:" + theme.mono,
         hr: "background-color:" + theme.rule
     };
 }

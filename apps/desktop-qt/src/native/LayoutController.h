@@ -18,7 +18,8 @@ class ShellBridge;
 // window), sidebarMode ("full" two-line rows, "slim" one-line rows in a window
 // under 1100, "rail" a column of icons in one under 860), sidebarOverlay (the
 // full list is drawn over the thread: the rail's way back to full width),
-// zoom (a factor)}.
+// contentMinimumWidth (the room the thread keeps: a side panel that would
+// leave it less goes over it instead), zoom (a factor)}.
 // A narrow window keeps the list beside the thread as the rail, or nothing if
 // the user hid it; `sidebar.toggle` there opens the full list over the thread
 // and puts it away again, without that being remembered: the device keeps

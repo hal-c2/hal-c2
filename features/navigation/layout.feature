@@ -375,7 +375,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user drags the right panel's edge far to the left or far to the right
       Then the right panel is never narrower than 360 pixels
       And it is never wider than 70 percent of the window
-      And the thread beside it keeps at least 360 pixels
+      And the thread beside it keeps at least 480 pixels
 
     @backlog @desktop
     Scenario: Each thread keeps its own right panel width
@@ -399,7 +399,7 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: A docked right panel leaves the thread its room
       Given the window is 1400 pixels wide
       And the right panel and the thread details are open
-      Then the thread is at least 360 pixels wide
+      Then the thread is at least 480 pixels wide
       And the right panel is narrower than the width it was given
 
     # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
@@ -416,6 +416,19 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses Escape
       Then the right panel is closed
 
+    # The timeline's floor is the layout's (LayoutController's
+    # contentMinimumWidth), the room the thread list leaves it too.
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: A right panel that would leave the thread under 480 pixels opens over it
+      Given the window is 1200 pixels wide
+      And the thread details are open beside the thread
+      When the user opens the right panel
+      Then it is shown as a sheet over the thread, under the header
+      And the thread keeps at least 480 pixels
+      When the user clicks the thread beside the right panel
+      Then the right panel is closed
+
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario: A click beside the right panel's sheet closes it
@@ -427,7 +440,7 @@ Feature: Layout: sidebar, header, right panel and drawer
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario: In a narrow window the thread details open over the thread
-      Given the thread would be under 360 pixels wide beside the thread details
+      Given the thread would be under 480 pixels wide beside the thread details
       When the user opens the thread details
       Then they are shown over the thread, under the header
       And the thread keeps the full width

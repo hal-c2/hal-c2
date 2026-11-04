@@ -35,8 +35,10 @@ Rectangle {
     // Whether its left edge drags. A layout showing the panel over the thread
     // gives it a width of its own, which is not the one to remember.
     property bool resizable: true
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
+    readonly property color foreground: Theme.palette.color("ink", "#f2f3f5")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#8b919e")
+    // The tab strip's height, and the width of the closed panel's toggle.
+    readonly property int stripHeight: Theme.control.xl
 
     // The tab being renamed in place (double-click its title), else "".
     property string editingId: ""
@@ -51,7 +53,7 @@ Rectangle {
     // Snaps by default: a width animation relays out the thread on every
     // frame. With Panel animations set, a toggle slides for that long
     // (model.transitionMs, none for a thread's own layout or reduced motion).
-    readonly property int targetWidth: open ? openWidth : ownToggle ? 36 : 0
+    readonly property int targetWidth: open ? openWidth : ownToggle ? stripHeight : 0
     property real shownWidth: targetWidth
 
     implicitWidth: shownWidth
@@ -89,9 +91,9 @@ Rectangle {
             id: header
 
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            Layout.minimumHeight: 36
-            Layout.maximumHeight: 36
+            Layout.preferredHeight: panel.stripHeight
+            Layout.minimumHeight: panel.stripHeight
+            Layout.maximumHeight: panel.stripHeight
 
             ShellButton {
                 id: toggleButton
@@ -99,11 +101,11 @@ Rectangle {
 
                 anchors.left: parent.left
                 anchors.top: parent.top
-                width: 36
-                height: 36
+                width: panel.stripHeight
+                height: panel.stripHeight
                 visible: panel.ownToggle
                 iconName: panel.open ? "panel-right-close" : "panel-right"
-                iconSize: 16
+                iconSize: Theme.icon.md
                 iconTint: panel.muted
                 enabled: panel.available
                 Accessible.name: panel.open ? qsTr("Close panel") : qsTr("Open panel")
@@ -135,10 +137,10 @@ Rectangle {
                 }
 
                 anchors.left: parent.left
-                anchors.leftMargin: panel.ownToggle ? 36 : 8
+                anchors.leftMargin: panel.ownToggle ? panel.stripHeight : Theme.space.sm
                 anchors.right: scrollButtons.visible ? scrollButtons.left : maximizeButton.visible ? maximizeButton.left : addButton.left
                 anchors.top: parent.top
-                height: 36
+                height: panel.stripHeight
                 visible: panel.open
                 onCountChanged: showActive()
                 onWidthChanged: showActive()
@@ -150,7 +152,7 @@ Rectangle {
                     }
                 }
                 orientation: ListView.Horizontal
-                spacing: 2
+                spacing: Theme.space.xxs
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 // Scrolled by its buttons and the wheel: a drag moves a tab.
@@ -173,8 +175,8 @@ Rectangle {
                     readonly property bool active: panel.activeId === modelData.id
                     readonly property string iconName: PanelTabs.tabs[modelData.kind]?.icon ?? ""
 
-                    width: tabRow.implicitWidth + 16
-                    height: 36
+                    width: tabRow.implicitWidth + Theme.space.lg
+                    height: panel.stripHeight
                     hoverEnabled: true
                     ToolTip.visible: hovered && titleText.truncated
                     ToolTip.delay: 600
@@ -184,11 +186,15 @@ Rectangle {
                     Keys.onReturnPressed: clicked()
                     Keys.onEnterPressed: clicked()
                     onClicked: Shell.dispatch("rightPanel.activate", { id: tab.modelData.id })
+                    // A pill inset in the strip; the shown tab is raised and outlined.
                     background: Rectangle {
-                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surface", "#141416") : "transparent"
-                        radius: Theme.radiusSm
-                        border.width: tab.visualFocus ? 1 : 0
-                        border.color: Theme.palette.color("focus", "#3b82f6")
+                        anchors.fill: parent
+                        anchors.topMargin: Theme.space.xs
+                        anchors.bottomMargin: Theme.space.xs
+                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surfaceOverlay", "#1c1f25") : "transparent"
+                        radius: Theme.radiusMd
+                        border.width: tab.visualFocus || tab.active ? 1 : 0
+                        border.color: tab.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#262a31")
                     }
 
                     PanelTabDrag {
@@ -208,7 +214,7 @@ Rectangle {
                         ShellIcon {
                             visible: tab.iconName.length > 0
                             name: tab.iconName
-                            size: 13
+                            size: Theme.icon.sm
                             color: tab.active ? panel.foreground : panel.muted
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -218,7 +224,7 @@ Rectangle {
 
                             visible: panel.editingId !== tab.modelData.id
                             text: tab.modelData.title
-                            width: Math.min(implicitWidth, 112)
+                            width: Math.min(implicitWidth, 3.5 * Theme.space.xxl)
                             elide: Text.ElideRight
                             color: tab.active ? panel.foreground : panel.muted
                             font.pixelSize: Theme.type.meta.size
@@ -239,7 +245,7 @@ Rectangle {
 
                             objectName: "panelRename-" + tab.modelData.id
                             visible: panel.editingId === tab.modelData.id
-                            width: 112
+                            width: 3.5 * Theme.space.xxl
                             anchors.verticalCenter: parent.verticalCenter
                             property bool cancelled: false
                             onAccepted: {
@@ -270,11 +276,11 @@ Rectangle {
                             objectName: "panelClose-" + tab.modelData.id
                             subtle: true
                             iconName: "x"
-                            iconSize: 12
+                            iconSize: Theme.icon.sm
                             iconTint: panel.muted
-                            width: 20
-                            height: 20
-                            padding: 4
+                            width: Theme.icon.md + Theme.space.xs
+                            height: Theme.icon.md + Theme.space.xs
+                            padding: Theme.space.xs
                             Accessible.name: qsTr("Close %1").arg(tab.modelData.title)
                             anchors.verticalCenter: parent.verticalCenter
                             onClicked: Shell.dispatch("rightPanel.close", { id: tab.modelData.id })
@@ -294,10 +300,10 @@ Rectangle {
                 ShellButton {
                     objectName: "panelScrollLeft"
                     subtle: true
-                    width: 28
-                    height: 36
+                    width: Theme.control.md
+                    height: panel.stripHeight
                     iconName: "chevron-left"
-                    iconSize: 14
+                    iconSize: Theme.icon.md
                     iconTint: panel.muted
                     enabled: !tabs.atXBeginning
                     Accessible.name: qsTr("Scroll tabs left")
@@ -307,10 +313,10 @@ Rectangle {
                 ShellButton {
                     objectName: "panelScrollRight"
                     subtle: true
-                    width: 28
-                    height: 36
+                    width: Theme.control.md
+                    height: panel.stripHeight
                     iconName: "chevron-right"
-                    iconSize: 14
+                    iconSize: Theme.icon.md
                     iconTint: panel.muted
                     enabled: !tabs.atXEnd
                     Accessible.name: qsTr("Scroll tabs right")
@@ -326,10 +332,10 @@ Rectangle {
 
                 anchors.right: addButton.left
                 anchors.top: parent.top
-                width: 36
-                height: 36
+                width: panel.stripHeight
+                height: panel.stripHeight
                 iconName: "panel-left-open"
-                iconSize: 14
+                iconSize: Theme.icon.md
                 iconTint: panel.muted
                 visible: panel.open && panel.activeTab !== null
                 Accessible.name: qsTr("Open in centre")
@@ -347,12 +353,12 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.rightMargin: panel.trailingInset
                 anchors.top: parent.top
-                width: 36
-                height: 36
+                width: panel.stripHeight
+                height: panel.stripHeight
                 leftPadding: Theme.space.sm
                 rightPadding: Theme.space.sm
                 iconName: "plus"
-                iconSize: 16
+                iconSize: Theme.icon.md
                 iconTint: panel.muted
                 visible: panel.open
                 objectName: "panelAdd"
@@ -529,7 +535,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: 6
+        width: Theme.space.sm
         visible: panel.open && panel.resizable
         cursorShape: Qt.SplitHCursor
         preventStealing: true
@@ -537,8 +543,8 @@ Rectangle {
         Accessible.role: Accessible.Splitter
         Accessible.name: qsTr("Resize panel")
         Accessible.onPressAction: Shell.dispatch("rightPanel.resize", {})
-        Keys.onLeftPressed: step(16)
-        Keys.onRightPressed: step(-16)
+        Keys.onLeftPressed: step(Theme.space.lg)
+        Keys.onRightPressed: step(-Theme.space.lg)
         Keys.onReturnPressed: Shell.dispatch("rightPanel.resize", {})
         Keys.onEnterPressed: Shell.dispatch("rightPanel.resize", {})
         onPressed: mouse => {
@@ -562,7 +568,7 @@ Rectangle {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            width: 2
+            width: Theme.space.xxs
             visible: edge.activeFocus
             color: Theme.palette.color("focus", "#3b82f6")
         }

@@ -234,40 +234,19 @@ Rectangle {
         }
     }
 
-    Column {
+    // Its action is the "Link pull request" button; offline it is not offered.
+    ShellEmptyState {
         objectName: "pullRequestsEmpty"
         anchors.centerIn: parent
-        width: parent.width - 32
-        spacing: 8
+        width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
         // Above the empty list, which would take its button's clicks.
         z: 1
         visible: root.available && list.count === 0 && root.projectOpen.length === 0 && root.dismissed.length === 0
-
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: qsTr("No linked pull requests")
-            color: root.foreground
-            font.pixelSize: Theme.type.body.size
-            font.weight: Font.Medium
-        }
-        Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            text: qsTr("Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.")
-            color: root.muted
-            font.pixelSize: Theme.type.meta.size
-        }
-        ShellButton {
-            objectName: "pullRequestsEmptyLink"
-            anchors.horizontalCenter: parent.horizontalCenter
-            iconName: "plus"
-            text: qsTr("Link pull request")
-            visible: !(root.source?.linkOpen ?? false)
-            enabled: root.online
-            onClicked: root.source.linkOpen = true
-        }
+        iconName: "git-pull-request-arrow"
+        title: qsTr("No linked pull requests")
+        description: qsTr("Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.")
+        actionText: root.online && !(root.source?.linkOpen ?? false) ? qsTr("Link pull request") : ""
+        onActionTriggered: root.source.linkOpen = true
     }
 
     ListView {
