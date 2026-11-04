@@ -570,6 +570,31 @@ Item {
             verify(!findChild(details, "threadDetailsShowMore").visible);
         }
 
+        // An action whose name is longer than the column wraps onto a
+        // second line rather than being cut, and its row grows to hold it.
+        function test_detailsActionsWrapInsteadOfCutting() {
+            Shell.reset();
+            Shell.state = { projectActions: { projectKey: "p", file: "ok",
+                scripts: [{ id: "s1", name: "Run the whole release build for every target", setup: false, shortcut: "Ctrl+Shift+R" }],
+                imports: [{ name: "Setup Worktree" }] } };
+            const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "", relations: [] } });
+            const imported = findChild(details, "threadDetailsImport-Setup Worktree");
+            const script = findChild(details, "threadDetailsAction-s1");
+            verify(imported && script);
+            for (const row of [imported, script]) {
+                const label = findChild(row, "actionRowLabel");
+                tryVerify(() => label.width > 0 && label.contentWidth <= label.width, 2000, row.text + " fits its row");
+                verify(!label.truncated, "and is never cut");
+                tryVerify(() => label.height >= label.implicitHeight && row.height >= label.implicitHeight + row.topPadding + row.bottomPadding, 2000, "inside its row");
+                verify(row.mapToItem(details, row.width, 0).x <= details.width, "inside the column");
+            }
+            compare(imported.text, "Import Setup Worktree from hal-c2.json");
+            const scriptLabel = findChild(script, "actionRowLabel");
+            verify(scriptLabel.lineCount >= 2, "the long name takes a second line");
+            tryVerify(() => script.height > Theme.control.md, 2000, "and its row grows to hold it");
+            Shell.reset();
+        }
+
         function test_relationRowsCentreTheirLabels() {
             const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "",
                 relations: [{ threadKey: "e:fork", title: "A fork", relation: "Fork", status: "running" }] } });
@@ -1105,7 +1130,7 @@ Item {
             rows.setProperty(2, "text", long);
             rows.maxColumns = long.length;
             const source = createTemporaryObject(reviewedDiff, root, { model: rows, wrap: true });
-            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 420, height: 300 });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 560, height: 300 });
             const view = findChild(diff, "diffRows");
             tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
             const line = view.itemAtIndex(2).item;
@@ -1133,6 +1158,30 @@ Item {
             view.contentX = view.originX + 120;
             compare(number.mapToItem(view, 0, 0).x, before, "the line numbers stay put");
             verify(text.mapToItem(view, 0, 0).x < view.gutter - 100, "while the line scrolls under them");
+        }
+
+        // Too narrow for about forty characters of code, the lines scroll
+        // sideways whatever the setting says, and wrap again once wider.
+        function test_aNarrowDiffScrollsInsteadOfWrapping() {
+            const rows = createTemporaryObject(fakeDiffRows, root);
+            const long = "        log: snapshot.state.thread_id, adopt: dir, offset: snapshot.offset, channel: snapshot.channel";
+            rows.setProperty(2, "text", long);
+            rows.maxColumns = long.length;
+            const source = createTemporaryObject(reviewedDiff, root, { model: rows, wrap: true });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 380, height: 300 });
+            const view = findChild(diff, "diffRows");
+            tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
+            verify(diff.codeWidth < diff.wrapFloor, "a 380px sheet leaves too little room");
+            verify(source.wrap && !diff.wrap, "the setting stays on, the lines do not wrap");
+            verify(view.contentWidth > view.width, "the long line scrolls sideways");
+            const number = findChild(view.itemAtIndex(2).item, "diffOldLine");
+            const before = number.mapToItem(view, 0, 0).x;
+            view.contentX = view.originX + 120;
+            compare(number.mapToItem(view, 0, 0).x, before, "the line numbers stay put");
+            diff.width = 640;
+            tryVerify(() => diff.wrap && view.contentWidth === view.width, 2000, "wide again, the lines wrap");
+            rows.split = true;
+            verify(!diff.wrap, "a split half of 640px is too narrow as well");
         }
 
         // A turn with nothing to show names the turn and offers every change.
