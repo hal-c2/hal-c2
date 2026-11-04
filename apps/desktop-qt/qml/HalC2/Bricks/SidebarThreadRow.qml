@@ -180,6 +180,9 @@ Item {
     readonly property bool hasDetail: detailProject.length > 0 || branchName.length > 0
     // DIRECTION's 44px slot: two 20px actions and the gap between them.
     readonly property int slotWidth: Theme.icon.lg * 2 + Theme.space.xs
+    // The slot at rest, holding only the age: 28px, or the age's own width
+    // when that is less, so the title gets the rest.
+    readonly property int restingSlotWidth: Theme.icon.lg + Theme.space.sm
 
     function relativeAge(iso, now) {
         if (!iso) {
@@ -260,9 +263,10 @@ Item {
     // Resting the pointer on a row previews the thread in a standard
     // tooltip: the status icon's word, the whole title, project, branch and
     // the latest activity. A hidden list (the phone's, under the thread a tap
-    // opened) keeps its hover, so the row must be on screen too. The card
-    // sits beside the row, never over the rows above and below it, and is
-    // built only while the pointer rests here.
+    // opened) keeps its hover, so the row must be on screen too. The tip
+    // stays in the row's column, under the row (over it when the window ends
+    // first), so it covers the rows below for a moment and never the thread
+    // beside the list. It is built only while the pointer rests here.
     readonly property ToolTip previewCard: previewLoader.item?.card ?? null
 
     Loader {
@@ -277,8 +281,11 @@ Item {
 
                 objectName: "rowPreview"
                 parent: row
-                x: row.width + Theme.space.xs
-                y: Math.round((row.height - height) / 2)
+                x: 0
+                y: row.height + Theme.space.xxs
+                // Wraps rather than reach past the column; the window's edge
+                // flips it over the row.
+                width: Math.min(implicitWidth, row.width)
                 visible: true
                 delay: 600
                 text: {
@@ -464,11 +471,11 @@ Item {
 
         // The status slot: one thing at a time. It holds DIRECTION's 44px
         // only while something occupies it (the actions, the jump key, a
-        // status); a row at rest with just its age keeps the age's width
-        // and gives the title the rest.
+        // status); a row at rest with just its age keeps 28px or the age's
+        // width, whichever is less, and gives the title the rest.
         Item {
             objectName: "statusSlot"
-            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.slotWidth) : row.slotWidth
+            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.restingSlotWidth) : row.slotWidth
             Layout.fillHeight: true
 
             // Over the actions their own tooltips speak, not the preview.
@@ -582,18 +589,17 @@ Item {
                 color: row.statusColor
             }
 
+            // Never elided: an age wider than the resting slot ("11mo")
+            // reaches into the gap before the title instead.
             Text {
                 id: ageText
                 objectName: "rowAge"
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width
-                horizontalAlignment: Text.AlignRight
                 visible: row.slot === "age"
                 text: row.ageLabel
                 color: row.tertiaryColor
                 font.pixelSize: Theme.type.meta.size
-                elide: Text.ElideLeft
             }
         }
     }

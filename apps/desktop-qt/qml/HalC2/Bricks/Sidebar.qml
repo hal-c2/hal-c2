@@ -133,10 +133,10 @@ Rectangle {
     }
     Component.onCompleted: syncRows()
 
-    // LayoutController's default, 256 or 272 in a monospace interface, and
+    // LayoutController's default, 256 or 296 in a monospace interface, and
     // the rail's 48, for a shell that sizes the list by its implicit width.
     // Settings keep the full width: a shell sizes its sections by it.
-    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : Theme.monospace ? 272 : 256
+    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : Theme.monospace ? 296 : 256
     // The narrowest a layout shows it (LayoutController's kSidebarMinWidth).
     readonly property int minimumWidth: 208
     color: Theme.palette.color("sidebar", "#0a0a0a")
@@ -674,37 +674,28 @@ Rectangle {
                 dropLineY = -1;
             }
 
-            // A row cut by the list's edge fades into the sidebar there, so
-            // the cut reads as more to scroll to, not a sliced row.
-            component EdgeFade: Rectangle {
-                id: fade
+            // While the list goes on past an edge, a hairline marks that edge;
+            // the rows under it keep their ink and are clipped clean.
+            component ListEdge: Rectangle {
+                id: edge
 
                 required property bool atTop
 
                 parent: list
                 anchors.left: parent.left
                 anchors.right: parent.right
-                y: fade.atTop ? 0 : list.height - height
-                height: Theme.space.lg
+                y: edge.atTop ? 0 : list.height - height
+                height: 1
                 z: 2
-                gradient: Gradient {
-                    GradientStop {
-                        position: 0
-                        color: Qt.alpha(sidebar.color, fade.atTop ? sidebar.color.a : 0)
-                    }
-                    GradientStop {
-                        position: 1
-                        color: Qt.alpha(sidebar.color, fade.atTop ? 0 : sidebar.color.a)
-                    }
-                }
+                color: sidebar.hairline
             }
-            EdgeFade {
-                objectName: "listTopFade"
+            ListEdge {
+                objectName: "listTopEdge"
                 atTop: true
                 visible: !list.atYBeginning
             }
-            EdgeFade {
-                objectName: "listBottomFade"
+            ListEdge {
+                objectName: "listBottomEdge"
                 atTop: false
                 visible: !list.atYEnd
             }
