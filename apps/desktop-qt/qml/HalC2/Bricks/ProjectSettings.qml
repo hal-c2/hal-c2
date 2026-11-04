@@ -305,9 +305,18 @@ SettingsPage {
         Layout.fillWidth: true
         spacing: Theme.space.xs
 
+        // A link under the row it explains, flush with its words.
         ShellButton {
             objectName: "inspect"
             subtle: true
+            implicitHeight: Theme.control.sm
+            leftPadding: 0
+            rightPadding: 0
+            hoverFill: "transparent"
+            font.pixelSize: Theme.type.meta.size
+            font.weight: Font.Normal
+            font.underline: hovered
+            tint: Theme.palette.color("inkSecondary", "#b8bdc7")
             text: sources.inheritance === null ? qsTr("Where this comes from") : qsTr("Hide where this comes from")
             onClicked: page.send("inspect", { key: sources.inheritance === null ? "model" : "" })
         }
