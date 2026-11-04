@@ -93,4 +93,51 @@ TestCase {
         const huge = open([{id: "a", label: "x".repeat(200)}], "r2");
         compare(huge.menu.implicitWidth, 360);
     }
+
+    function selections() {
+        return Shell.dispatchedActions.filter(action => action.action === "menu.select").map(action => action.payload);
+    }
+
+    // A choice in one menu opening the next (Move to another machine…): the
+    // second request arrives while the first menu is still on its way out.
+    function test_a_request_arriving_while_the_last_menu_closes_stays_open() {
+        const host = open([{id: "move", label: "Move to another machine…"}], "r1");
+        const first = host.menu;
+        tryVerify(() => first.opened);
+        first.itemAt(0).triggered();
+        compare(selections(), [{requestId: "r1", id: "move"}]);
+        Shell.state = {menu: null};
+        Shell.state = {menu: request([{id: "m1", label: "ai-beast"}], "r2")};
+        const second = host.menu;
+        verify(second !== first);
+        compare(rowTexts(second), ["ai-beast"]);
+        // The first menu finishes leaving without answering for the second.
+        tryVerify(() => !first || !first.visible);
+        tryVerify(() => second.opened);
+        verify(second.visible);
+        compare(selections(), [{requestId: "r1", id: "move"}]);
+        Shell.state = {menu: null};
+        compare(host.menu, null);
+        tryVerify(() => !second || !second.visible);
+    }
+
+    function test_back_to_back_requests_show_the_second() {
+        const host = open([{id: "a", label: "Pin"}], "r1");
+        const first = host.menu;
+        Shell.state = {menu: request([{id: "b", label: "Rename"}], "r2")};
+        compare(rowTexts(host.menu), ["Rename"]);
+        tryVerify(() => !first || !first.visible);
+        tryVerify(() => host.menu !== null && host.menu.opened);
+        compare(selections(), []);
+    }
+
+    function test_dismissing_a_menu_answers_for_its_request() {
+        const host = open([{id: "a", label: "Pin"}], "r1");
+        const menu = host.menu;
+        tryVerify(() => menu.opened);
+        menu.close();
+        tryVerify(() => selections().length === 1);
+        compare(selections(), [{requestId: "r1", id: null}]);
+        compare(host.menu, null);
+    }
 }

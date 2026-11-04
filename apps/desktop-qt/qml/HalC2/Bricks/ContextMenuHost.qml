@@ -12,19 +12,14 @@ Item {
     required property string surfaceId
 
     readonly property var request: Shell.state.menu ?? null
-    readonly property bool mine: request !== null && request.surfaceId === surfaceId
-    property string shownRequestId: ""
-    readonly property alias menu: menu
-    // Everything built for the current request, destroyed with the next one.
-    property var built: []
+    // The menu showing the current request, or null. Each request gets a menu
+    // of its own, so a menu still running its exit transition can never
+    // close, or answer for, the request that replaced it.
+    property ShellMenu menu: null
 
     anchors.fill: parent
 
-    function choose(id) {
-        if (host.request === null) {
-            return;
-        }
-        const requestId = host.request.requestId;
+    function choose(requestId, id) {
         Shell.dispatch("menu.select", {
             requestId: requestId,
             id: id
@@ -33,30 +28,63 @@ Item {
 
     onRequestChanged: {
         // Not `mine`: its binding may not have seen this request yet.
-        if (request === null || request.surfaceId !== surfaceId) {
-            if (menu.visible) {
-                menu.close();
+        const shown = request !== null && request.surfaceId === surfaceId;
+        if (shown && menu !== null && menu.requestId === request.requestId) {
+            return;
+        }
+        if (menu !== null) {
+            const old = menu;
+            menu = null;
+            if (old.visible) {
+                old.close();
+            } else {
+                old.destroyBuilt();
+                old.destroy();
             }
+        }
+        if (!shown) {
             return;
         }
-        if (request.requestId === shownRequestId) {
-            return;
-        }
-        shownRequestId = request.requestId;
-        menu.chosen = false;
-        rebuild();
-        menu.popup(Math.min(request.x, host.width - menu.implicitWidth - 8), Math.min(request.y, host.height - menu.implicitHeight - 8));
+        const next = menuComponent.createObject(host, {
+            parent: host,
+            requestId: request.requestId
+        });
+        fill(next, next, request.items);
+        menu = next;
+        next.popup(Math.min(request.x, host.width - next.implicitWidth - 8), Math.min(request.y, host.height - next.implicitHeight - 8));
     }
 
-    ShellMenu {
-        id: menu
+    Component {
+        id: menuComponent
 
-        objectName: "contextMenu"
-        property bool chosen: false
+        ShellMenu {
+            id: shown
 
-        onClosed: {
-            if (!chosen && host.mine) {
-                host.choose(null);
+            objectName: "contextMenu"
+            required property string requestId
+            property bool chosen: false
+            // Everything built for this menu, destroyed with it.
+            property var built: []
+
+            onClosed: {
+                // Dismissed without a choice: answer for this menu's own
+                // request, which the controller ignores once it is not
+                // current.
+                if (!chosen && host.request !== null && host.request.requestId === requestId) {
+                    host.choose(requestId, null);
+                }
+                if (host.menu === shown) {
+                    host.menu = null;
+                }
+                destroyBuilt();
+                shown.destroy();
+            }
+
+            function destroyBuilt() {
+                for (const object of built) {
+                    object.destroy();
+                }
+                built = [];
             }
         }
     }
@@ -74,9 +102,11 @@ Item {
             destructive: entry.destructive === true
             current: entry.checked === true
             iconName: entry.icon ?? ""
+            required property var owner
+
             onTriggered: {
-                menu.chosen = true;
-                host.choose(entry.id);
+                owner.chosen = true;
+                host.choose(owner.requestId, entry.id);
             }
         }
     }
@@ -93,42 +123,31 @@ Item {
         ShellMenuSeparator {}
     }
 
-    // Fills `target` from the request's entries; a group with children is a
-    // submenu reached through one row, and `separatorBefore` is a hairline.
-    function fill(target, items) {
+    // Fills `target` (a menu or one of `owner`'s submenus) from the
+    // request's entries; a group with children is a submenu reached through
+    // one row, and `separatorBefore` is a hairline.
+    function fill(owner, target, items) {
         for (const entry of items) {
             if (entry.separatorBefore === true && target.count > 0) {
                 const line = separatorComponent.createObject(null);
-                built.push(line);
+                owner.built.push(line);
                 target.addItem(line);
             }
             if (entry.children && entry.children.length > 0) {
                 const sub = submenuComponent.createObject(null, {
                     title: entry.label
                 });
-                built.push(sub);
-                fill(sub, entry.children);
+                owner.built.push(sub);
+                fill(owner, sub, entry.children);
                 target.addMenu(sub);
                 continue;
             }
             const row = itemComponent.createObject(null, {
-                entry: entry
+                entry: entry,
+                owner: owner
             });
-            built.push(row);
+            owner.built.push(row);
             target.addItem(row);
-        }
-    }
-
-    function rebuild() {
-        while (menu.count > 0) {
-            menu.takeItem(0);
-        }
-        for (const object of built) {
-            object.destroy();
-        }
-        built = [];
-        if (request !== null) {
-            fill(menu, request.items);
         }
     }
 }
