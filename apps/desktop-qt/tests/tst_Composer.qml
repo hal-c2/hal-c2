@@ -103,11 +103,30 @@ Item {
             const label = findChild(composer, "suggestionsEmpty");
             verify(label.visible);
             compare(label.text, empty);
-            verify(label.height > 0);
-            // The box around it holds the label, not a sliver.
+            // One quiet row, left-aligned where a suggestion's label starts.
             const box = label.parent;
-            verify(box.height >= label.height + 16, "box " + box.height + " label " + label.height);
+            compare(box.height, Theme.control.md + Theme.space.xs * 2);
+            compare(label.horizontalAlignment, Text.AlignLeft);
+            compare(label.x, Theme.space.xs + Theme.space.md);
             verify(label.y >= 0 && label.y + label.height <= box.height);
+        }
+
+        function test_suggestionsAnchorToTheCard() {
+            Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), {
+                triggerKind: "path", suggestionsEmptyText: null,
+                suggestions: [{ label: "README.md", description: "" }, { label: "src/", description: "" }]
+            }), workspace: null };
+            let composer = createTemporaryObject(composerComponent, root, { width: 800 });
+            const popover = findChild(composer, "suggestionsPopover");
+            const card = findChild(composer, "composerCard");
+            tryVerify(() => popover.visible && popover.height > 0);
+            // Edges flush with the prompt's, inside the card's padding.
+            compare(popover.x, card.x + Theme.space.md);
+            compare(popover.width, card.width - Theme.space.md * 2);
+            // A popover over the card, not a tab on it: a 4px gap, and as
+            // tall as its whole rows.
+            compare(card.y - (popover.y + popover.height), Theme.space.xs);
+            compare(popover.height, Theme.control.md * 2 + Theme.space.xs * 2);
         }
 
         function test_theBranchPickerSizesToItsBranches() {

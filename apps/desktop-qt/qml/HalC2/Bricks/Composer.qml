@@ -526,19 +526,20 @@ Rectangle {
         spacing: 0
 
         // @file, $skill and /command suggestions, computed by the controller for the
-        // caret it was last told about; they sit on the card's top edge.
-        // Inset by the card's padding, so it lines up with the prompt.
-        Rectangle {
+        // caret it was last told about: a popover 4px above the card, its edges
+        // flush with the prompt's, as tall as its whole rows.
+        Item {
+            objectName: "suggestionsPopover"
             Layout.fillWidth: true
             Layout.leftMargin: Theme.space.md
             Layout.rightMargin: Theme.space.md
+            Layout.bottomMargin: visible ? Theme.space.xs : 0
             visible: composer.suggesting
-            implicitHeight: !visible ? 0 : suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, Theme.control.md * 8) + Theme.space.xs * 2 : suggestionsEmpty.implicitHeight + Theme.space.xxl
-            topLeftRadius: Theme.radiusXl
-            topRightRadius: Theme.radiusXl
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: composer.outline
-            border.width: 1
+            implicitHeight: !visible ? 0 : (suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, Theme.control.md * 8) : Theme.control.md) + Theme.space.xs * 2
+
+            ShellPopoverSurface {
+                anchors.fill: parent
+            }
 
             ListView {
                 id: suggestionList
@@ -609,21 +610,23 @@ Rectangle {
 
             }
 
-            // Outside the list, which is as tall as its rows: none, here.
+            // Nothing to offer: one quiet row where the first suggestion's
+            // label would start, outside the list, which has no rows.
             Text {
                 id: suggestionsEmpty
                 objectName: "suggestionsEmpty"
 
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.margins: Theme.space.md
+                anchors.fill: parent
+                anchors.topMargin: Theme.space.xs
+                anchors.bottomMargin: Theme.space.xs
+                anchors.leftMargin: Theme.space.xs + Theme.space.md
+                anchors.rightMargin: Theme.space.xs + Theme.space.md
                 visible: suggestionList.count === 0
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
                 text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
-                color: composer.muted
-                font.pixelSize: Theme.type.meta.size
+                color: Theme.palette.color("inkTertiary", "#8b919e")
+                font.pixelSize: Theme.type.body.size
             }
         }
 
@@ -633,8 +636,8 @@ Rectangle {
             Layout.rightMargin: Theme.space.xl
         }
 
-        // The stash (composer.stash), on the card's top edge like the
-        // suggestions: a row restores its prompt, its cross deletes it.
+        // The stash (composer.stash), on the card's top edge: a row
+        // restores its prompt, its cross deletes it.
         Rectangle {
             objectName: "stashList"
             Layout.fillWidth: true
