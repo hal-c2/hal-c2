@@ -629,6 +629,25 @@ private slots:
     QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("auto-accept-edits"));
     QCOMPARE(shown(), QStringLiteral("auto-accept-edits"));
   }
+
+  // A thread that named no provider was switched to the composer's model on
+  // its first send, a provider.switch the user never asked for, ahead of the
+  // message. The message's own model is what the MC runs it on.
+  void aThreadWithNoProviderIsNotSwitchedOnItsFirstSend() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    QVERIFY(shell.native->store()->thread(shell.key)->modelSelection.isEmpty());
+    shell.type(QStringLiteral("first prompt"));
+    shell.submit(QStringLiteral("first prompt"));
+    QTRY_COMPARE(shell.dispatched(), 1);
+    QStringList types;
+    for (const QJsonObject& command : std::as_const(shell.mc.commands)) types.append(command.value(QLatin1String("type")).toString());
+    QCOMPARE(types, QStringList{QStringLiteral("message.dispatch")});
+    const QJsonObject message = shell.mc.commands.constLast();
+    QCOMPARE(message.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString(), QStringLiteral("codex"));
+  }
 };
 
 int main(int argc, char** argv) {
