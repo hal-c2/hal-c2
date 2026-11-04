@@ -36,7 +36,7 @@ ThreadDiff::ThreadDiff(McClient* client, Notify notify, QObject* parent)
 }
 
 ThreadDiff::Facts ThreadDiff::facts() const {
-  return {choices(), latestTurn(), latestCheckpoint(), m_selection, shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
+  return {choices(), latestTurn(), latestCheckpoint(), selection(), shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
           m_comparedHead, m_truncated, canRevert(), m_revertTurn, m_reverting};
 }
 
@@ -64,7 +64,7 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
   }
   const Facts before = facts();
   if (!sameThread) {
-    if (!m_threadId.isEmpty()) m_choices.insert(m_environment + QLatin1Char(':') + m_threadId, {m_selection, m_baseRef});
+    if (!m_threadId.isEmpty()) m_choices.insert(m_environment + QLatin1Char(':') + m_threadId, {m_selection, m_baseRef, m_latestPicked});
     const Choice choice = m_choices.take(environmentId + QLatin1Char(':') + threadId);
     m_environment = environmentId;
     m_threadId = threadId;
@@ -82,6 +82,7 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
     m_reverting = false;
     m_selection = choice.selection;
     m_baseRef = choice.baseRef;
+    m_latestPicked = choice.latestPicked;
     m_sourceKey.clear();
     m_lazy = false;
     m_refs = {};
@@ -122,7 +123,14 @@ void ThreadDiff::setCheckout(const QString& cwd) {
 
 int ThreadDiff::effectiveSelection() const {
   if (m_selection == -1 && m_turns.isEmpty() && !m_cwd.isEmpty()) return WorkingTree;
-  return m_selection;
+  return selection();
+}
+
+bool ThreadDiff::opensOnAllChanges() const {
+  if (m_latestPicked || m_turns.size() < 2) return false;
+  const auto changed = [](const QJsonObject& checkpoint) { return !checkpoint.value(QLatin1String("files")).toArray().isEmpty(); };
+  if (changed(m_turns.last())) return false;
+  return std::any_of(m_turns.cbegin(), m_turns.cend(), changed);
 }
 
 void ThreadDiff::setBaseRef(const QString& ref) {
@@ -200,9 +208,14 @@ QVariantList ThreadDiff::choices() const {
 void ThreadDiff::select(int selection) {
   if (selection > 0 && !m_turns.contains(selection)) return;
   if (selection < Branch || (selection <= WorkingTree && m_cwd.isEmpty()) || (selection == 0 && m_turns.isEmpty())) selection = -1;
-  if (selection == m_selection) return;
+  // Picking the latest turn shows it from then on, even when it changed nothing.
+  if (selection == m_selection && !(selection == -1 && opensOnAllChanges())) {
+    if (selection == -1) m_latestPicked = true;
+    return;
+  }
   const Facts before = facts();
   m_selection = selection;
+  m_latestPicked = selection == -1;
   // Another selection is shown whole, even when it is the same diff.
   if (!m_focus.isEmpty()) {
     m_focus.clear();
@@ -222,8 +235,9 @@ void ThreadDiff::selectRun(const QString& runId) {
 }
 
 int ThreadDiff::shownTurn() const {
-  if (m_selection == 0 || reviewing()) return 0;
-  return m_selection > 0 ? m_selection : latestTurn();
+  const int selection = effectiveSelection();
+  if (selection == 0 || reviewing()) return 0;
+  return selection > 0 ? selection : latestTurn();
 }
 
 void ThreadDiff::setIgnoreWhitespace(bool ignore) {
@@ -275,11 +289,12 @@ QString ThreadDiff::loadKey() const {
   }
   // The checkpoints the diff is between: a rewound turn's number comes back
   // with another checkpoint, and one being written becomes ready later.
-  const int to = m_selection == 0 ? latestTurn() : shownTurn();
-  const QString from = m_selection == 0 ? QString() : m_turns.value(to - 1).value(QLatin1String("id")).toString();
+  const bool all = effectiveSelection() == 0;
+  const int to = all ? latestTurn() : shownTurn();
+  const QString from = all ? QString() : m_turns.value(to - 1).value(QLatin1String("id")).toString();
   return QStringLiteral("%1:%2 %3 %4 %5 %6 %7")
       .arg(m_environment, m_threadId)
-      .arg(m_selection == 0 ? QStringLiteral("all") : QStringLiteral("turn"))
+      .arg(all ? QStringLiteral("all") : QStringLiteral("turn"))
       .arg(to)
       .arg(from, m_turns.value(to).value(QLatin1String("id")).toString())
       .arg(ignoreWhitespace());
@@ -334,7 +349,7 @@ void ThreadDiff::load() {
   const int turn = shownTurn();
   QJsonObject payload{{QStringLiteral("threadId"), m_threadId}, {QStringLiteral("ignoreWhitespace"), ignoreWhitespace()}};
   QString method;
-  if (m_selection == 0) {
+  if (effectiveSelection() == 0) {
     method = QStringLiteral("orchestration.getFullThreadDiff");
     payload.insert(QStringLiteral("toTurnCount"), latestTurn());
   } else {
