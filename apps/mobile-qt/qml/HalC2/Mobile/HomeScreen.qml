@@ -98,6 +98,9 @@ ColumnLayout {
         showFooter: false
         // The phone does not mark the build's stage yet (features/navigation/appearance.feature).
         showStage: false
+        // The list is the whole screen: two-line rows, never the desktop's
+        // narrow-window rail.
+        density: "full"
         touchRows: true
 
         // Projects are added where their folders are.
