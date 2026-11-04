@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // Settings → Open source licenses:
 // the third-party notices LicensesController reads from the manifest shipped
@@ -42,8 +43,8 @@ Rectangle {
         model: page.status === "ready" ? page.entries : []
 
         header: ColumnLayout {
-            x: 24
-            width: Math.min(720, list.width - 48)
+            x: Pages.columnX(list.width, Theme.space.xl)
+            width: Pages.columnWidth(list.width, Theme.space.xl)
             spacing: Theme.space.sm
 
             SettingsBreadcrumb {
@@ -149,8 +150,8 @@ Rectangle {
             readonly property bool open: page.settings?.openKey === notice.modelData.key
 
             objectName: "license:" + notice.modelData.name
-            x: 24
-            width: Math.min(720, list.width - 48)
+            x: Pages.columnX(list.width, Theme.space.xl)
+            width: Pages.columnWidth(list.width, Theme.space.xl)
             spacing: 0
 
             GridLayout {

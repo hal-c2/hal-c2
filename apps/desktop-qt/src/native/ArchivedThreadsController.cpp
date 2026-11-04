@@ -89,13 +89,14 @@ bool ArchivedThreadsController::handle(const QString& action, const QVariant& pa
       act(environmentId, threadId, QStringLiteral("thread.delete"), QStringLiteral("Failed to delete thread"));
     };
     if (menu && settings && settings->setting(QStringLiteral("confirmThreadDelete")).toBool()) {
-      QString title = threadId;
+      // Never the thread's id: an untitled thread is "this thread".
+      QString title;
       for (const QJsonValue& thread : m_threads.value(environmentId)) {
         if (thread.toObject().value(QLatin1String("id")).toString() == threadId) {
           title = thread.toObject().value(QLatin1String("title")).toString();
         }
       }
-      menu->confirm(QStringLiteral("Delete thread \"%1\"?").arg(title),
+      menu->confirm(title.isEmpty() ? QStringLiteral("Delete this thread?") : QStringLiteral("Delete thread \"%1\"?").arg(title),
                     QStringLiteral("This permanently clears conversation history for this thread."),
                     QStringLiteral("Delete"), true, remove);
     } else {
@@ -200,14 +201,15 @@ void ArchivedThreadsController::publish() {
         return a.value(QLatin1String("id")).toString() > b.value(QLatin1String("id")).toString();
       });
       // One group per project, in the environment's project order; a thread
-      // whose project is gone groups under its id.
+      // whose project is gone groups under "Removed project", never its id.
       QStringList order;
       QHash<QString, QString> titles;
       for (const QJsonValue& value : m_projects.value(environmentId)) {
         const QJsonObject project = value.toObject();
         const QString id = project.value(QLatin1String("id")).toString();
         order.append(id);
-        titles.insert(id, project.value(QLatin1String("title")).toString(id));
+        const QString title = project.value(QLatin1String("title")).toString();
+        titles.insert(id, title.isEmpty() ? QStringLiteral("Untitled project") : title);
       }
       QHash<QString, QVariantList> rows;
       for (const QJsonObject& thread : std::as_const(threads)) {
@@ -216,11 +218,12 @@ void ArchivedThreadsController::publish() {
         if (!order.contains(projectId)) order.append(projectId);
         const QString threadId = thread.value(QLatin1String("id")).toString();
         const QString key = environmentId + QLatin1Char(':') + threadId;
+        const QString title = thread.value(QLatin1String("title")).toString();
         rows[projectId].append(QVariantMap{
             {QStringLiteral("key"), key},
             {QStringLiteral("environmentId"), environmentId},
             {QStringLiteral("threadId"), threadId},
-            {QStringLiteral("title"), thread.value(QLatin1String("title")).toString()},
+            {QStringLiteral("title"), title.isEmpty() ? QStringLiteral("Untitled thread") : title},
             {QStringLiteral("description"), QStringLiteral("Archived %1 · Created %2")
                                                 .arg(ago(archivedAt(thread)), ago(thread.value(QLatin1String("createdAt")).toString()))},
             {QStringLiteral("busy"), m_busy.contains(key)},
@@ -229,7 +232,7 @@ void ArchivedThreadsController::publish() {
       for (const QString& projectId : std::as_const(order)) {
         if (!rows.contains(projectId)) continue;
         groups.append(QVariantMap{{QStringLiteral("key"), environmentId + QLatin1Char(':') + projectId},
-                                  {QStringLiteral("title"), titles.value(projectId, projectId)},
+                                  {QStringLiteral("title"), titles.value(projectId, QStringLiteral("Removed project"))},
                                   {QStringLiteral("threads"), rows.value(projectId)}});
       }
     }

@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // The Archive settings section (ArchivedThreadsController publishes
 // `archivedThreads`): the archived threads by project, each with a way back
@@ -24,18 +25,20 @@ Rectangle {
     color: Theme.palette.color("canvas", "#0b0b0d")
 
     Flickable {
+        id: flick
+
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         ColumnLayout {
             id: column
 
-            x: 24
-            y: 24
-            width: Math.min(720, parent.width - 48)
-            spacing: Theme.space.sm
+            x: Pages.columnX(flick.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(flick.width, Theme.space.xl)
+            spacing: Theme.space.md
 
             RowLayout {
                 Layout.fillWidth: true
@@ -57,71 +60,58 @@ Rectangle {
             // A picked project or environment narrows the list to its threads.
             SettingsScopeSentence {}
 
-            // Why nothing is listed.
-            ColumnLayout {
+            // Why nothing is listed: loading, failed or empty, in one place.
+            ShellEmptyState {
                 objectName: "placeholder"
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.space.md
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Theme.space.xxl
                 visible: page.model !== null && page.model.title.length > 0
-                spacing: Theme.space.xs
-
-                Label {
-                    objectName: "placeholderTitle"
-                    Layout.fillWidth: true
-                    text: page.model ? page.model.title : ""
-                    color: page.foreground
-                    font.pixelSize: Theme.type.title.size
-                    font.weight: Font.DemiBold
-                    wrapMode: Text.Wrap
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: page.model ? page.model.description : ""
-                    color: page.muted
-                    font.pixelSize: Theme.type.meta.size
-                    wrapMode: Text.Wrap
-                }
+                status: page.model?.status === "loading" || page.model?.status === "error" ? page.model.status : "empty"
+                iconName: "archive"
+                title: page.model ? page.model.title : ""
+                description: page.model ? page.model.description : ""
+                actionText: page.model?.status === "error" ? qsTr("Try again") : ""
+                onActionTriggered: Shell.dispatch("archivedThreads.refresh")
             }
 
             Repeater {
                 model: page.groups
 
-                delegate: ShellCard {
+                // A project's archived threads under its title, each on a hairline.
+                delegate: ColumnLayout {
                     id: group
 
                     required property var modelData
 
                     objectName: "group_" + modelData.key
                     Layout.fillWidth: true
-                    implicitHeight: groupColumn.implicitHeight + 24
+                    spacing: Theme.space.md
 
-                    ColumnLayout {
-                        id: groupColumn
+                    SettingsHeading {
+                        text: group.modelData.title
+                        elide: Text.ElideRight
+                        wrapMode: Text.NoWrap
+                    }
 
-                        x: 12
-                        y: 12
-                        width: parent.width - 24
-                        spacing: Theme.space.sm
+                    Repeater {
+                        model: group.modelData.threads
 
-                        Label {
+                        delegate: ColumnLayout {
+                            id: row
+
+                            required property var modelData
+
+                            objectName: "thread_" + modelData.key
                             Layout.fillWidth: true
-                            text: group.modelData.title
-                            color: page.muted
-                            font.pixelSize: Theme.type.caption.size
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
+                            spacing: Theme.space.md
 
-                        Repeater {
-                            model: group.modelData.threads
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                color: Theme.palette.color("border", "#27272a")
+                            }
 
-                            delegate: RowLayout {
-                                id: row
-
-                                required property var modelData
-
-                                objectName: "thread_" + modelData.key
+                            RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Theme.space.sm
 
@@ -141,7 +131,7 @@ Rectangle {
                                         Layout.fillWidth: true
                                         text: row.modelData.description
                                         color: page.muted
-                                        font.pixelSize: Theme.type.caption.size
+                                        font.pixelSize: Theme.type.meta.size
                                         elide: Text.ElideRight
                                     }
                                 }

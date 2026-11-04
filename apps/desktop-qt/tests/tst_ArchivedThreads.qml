@@ -36,7 +36,7 @@ Item {
                                                description: "Archived threads will appear here.", groups: [] } };
             const page = createTemporaryObject(archiveComponent, root);
             verify(findChild(page, "placeholder").visible);
-            compare(findChild(page, "placeholderTitle").text, "No archived threads");
+            compare(findChild(findChild(page, "placeholder"), "emptyStateTitle").text, "No archived threads");
         }
 
         function test_a_thread_is_unarchived_and_deleted_from_its_row() {

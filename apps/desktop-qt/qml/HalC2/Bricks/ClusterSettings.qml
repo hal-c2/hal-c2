@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // This machine's cluster, a native settings page (ClusterController publishes
 // `cluster`): its members, an invite link for another machine, joining another
@@ -79,17 +80,19 @@ Rectangle {
     }
 
     Flickable {
+        id: flick
+
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         ColumnLayout {
             id: column
 
-            x: 24
-            y: 24
-            width: Math.min(640, parent.width - 48)
+            x: Pages.columnX(flick.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(flick.width, Theme.space.xl)
             spacing: Theme.space.sm
 
             SettingsBreadcrumb {
