@@ -1246,6 +1246,17 @@ Item {
             compare(message.title, "No changes in turn 2");
         }
 
+        // A thread whose latest turn changed nothing opens on all changes before its
+        // turns reach the picker; the picker names what is shown once they do.
+        function test_thePickerNamesASelectionMadeBeforeItsChoices() {
+            const source = createTemporaryObject(fakeDiff, root, { choices: [], selection: -1 });
+            const diff = createTemporaryObject(diffComponent, root, { source: source });
+            const picker = findChild(diff, "diffTurnPicker");
+            source.selection = 0;
+            source.choices = [{ value: -1, label: "Latest turn" }, { value: 0, label: "All changes" }];
+            compare(picker.currentText, "All changes");
+        }
+
         function test_pullRequestsOpenInTheBrowserAndLinkFromTheField() {
             const source = createTemporaryObject(fakePullRequests, root);
             const panel = createTemporaryObject(pullRequestsComponent, root, { source: source });

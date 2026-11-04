@@ -136,7 +136,12 @@ Rectangle {
                 textRole: "label"
                 valueRole: "value"
                 enabled: count > 0
-                currentIndex: Math.max(0, indexOfValue(root.source?.selection ?? -1))
+                // Found in the choices themselves, not with indexOfValue, so the index
+                // follows them: a selection can land before the turns that list it do.
+                currentIndex: {
+                    const selection = root.source?.selection ?? -1;
+                    return Math.max(0, (root.source?.choices ?? []).findIndex(choice => choice.value === selection));
+                }
                 onActivated: index => root.source.select(valueAt(index))
             }
 
