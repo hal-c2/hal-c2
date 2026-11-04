@@ -365,6 +365,13 @@ Item {
                 root.linkPreviews.hover(hoveredLink.startsWith("task:") ? "" : hoveredLink);
         }
         onSelectedTextChanged: root.track(this)
+        // Qt's own copy would carry the word joiners inline code is drawn with.
+        Keys.onPressed: event => {
+            if (event.matches(StandardKey.Copy) && selectedText.length > 0) {
+                root.copyText(Md.plain(selectedText));
+                event.accepted = true;
+            }
+        }
         function texts() {
             return [this];
         }
