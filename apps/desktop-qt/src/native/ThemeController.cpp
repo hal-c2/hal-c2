@@ -11,6 +11,7 @@
 
 #include <cmath>
 #include <optional>
+#include <utility>
 
 #include <QFileInfo>
 #include <QSaveFile>
@@ -670,6 +671,11 @@ void ThemeController::resolve() {
   for (auto it = fixed.begin(); it != fixed.end(); ++it) {
     if (!colors.contains(it.key())) colors.insert(it.key(), it.value());
   }
+  // Roles every brick may ask for that a theme can leave out: like the colour
+  // they stand next to.
+  for (const auto& [role, like] : {std::pair{"popover", "surfaceOverlay"}, std::pair{"destructive", "errorForeground"}}) {
+    if (!colors.contains(QLatin1String(role)) && colors.contains(QLatin1String(like))) colors.insert(QLatin1String(role), colors.value(QLatin1String(like)));
+  }
   // The interface rows of Settings → Appearance that are colours: what diffs
   // draw additions and deletions in, and how solid menus, dialogs and the
   // composer are.
@@ -887,6 +893,14 @@ QVariantMap ThemeController::derive(const QString& canvasValue, const QString& a
   set("sidebarRowHover", surface(0.09, tint));
   set("sidebarRowActive", surface(0.12, tint));
   set("sidebarRowSelected", surface(0.14, tint));
+  // The roles the built-in palettes leave out, as the bricks draw them then.
+  for (const char* role : {"projectForeground", "branchForeground"}) set(role, textMuted);
+  set("popover", overlay);
+  set("diffAdded", QColor(QStringLiteral("#22c55e")));
+  set("diffRemoved", QColor(QStringLiteral("#ef4444")));
+  colors.insert(QStringLiteral("destructive"), colors.value(QLatin1String("errorForeground")));
+  colors.insert(QStringLiteral("sidebarActiveIndicator"), QStringLiteral("#00000000"));
+  colors.insert(QStringLiteral("scrim"), QStringLiteral("#00000052"));  // black at 32%, as CSS writes it
   return colors.toVariantMap();
 }
 

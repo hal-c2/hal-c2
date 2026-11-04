@@ -1,11 +1,14 @@
 #pragma once
 
+#include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
 #include <QObject>
 #include <QSet>
+#include <QTimer>
 #include <QVariant>
 
+#include <functional>
 #include <optional>
 
 #include "NativeController.h"
@@ -22,7 +25,9 @@ class ShellStore;
 //    url (an image's, on the MC), path, automatic}.
 // A project with no icon of its own shows the monogram and colour derived
 // from its name until the MC serves a favicon for it (`assets.createUrl`
-// project-favicon): its own, or the image file the user picked.
+// project-favicon): its own, or the image file the user picked. The MC signs
+// that URL for half an hour or more; it is asked for again a minute before it
+// runs out, the old one showing meanwhile.
 //
 // The picker (ProjectIconPicker.qml), opened from Settings → Projects, is
 // `projectIconPicker`, null while closed:
@@ -50,6 +55,9 @@ public:
 
   void activate() override;
   bool handle(const QString& action, const QVariant& payload) override;
+  // Asks again for the favicon URLs about to run out; the renewal timer runs it.
+  void renewFavicons() { refreshProjects(); }
+  void setClock(std::function<qint64()> now) { m_now = std::move(now); }
 
 private:
   struct Picker {
@@ -69,6 +77,7 @@ private:
 
   void refreshProjects();
   void requestFavicon(const QString& key, const QJsonObject& row);
+  void armFaviconRenewal();
   void publishProjects();
   void publishPicker();
   void openPicker(const QString& projectKey, const QString& name);
@@ -87,12 +96,17 @@ private:
   EnvironmentSettings* m_settings;
   bool m_active = false;
   // A project's favicon on its MC: the key it was asked for (the checkout
-  // and the picked file) and the URL that came, empty for none.
+  // and the picked file), the URL that came (empty for none), when that URL
+  // runs out (0: never asked again) and whether it is being asked for.
   struct Favicon {
     QString asked;
     QString url;
+    qint64 expiresAt = 0;
+    bool asking = false;
   };
   QHash<QString, Favicon> m_favicons;
+  QTimer m_faviconRenewal;
+  std::function<qint64()> m_now = &QDateTime::currentMSecsSinceEpoch;
   QVariantMap m_projectIcons;
   std::optional<Picker> m_picker;
   // Each environment's `environment` descriptor from its config.

@@ -1,5 +1,8 @@
 #include "IdentityController.h"
 
+#include <algorithm>
+#include <limits>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
@@ -15,6 +18,14 @@
 #include "WorkspaceFiles.h"
 
 namespace {
+
+// A favicon URL is asked for again this long before it runs out, and counts
+// as good for at least kFaviconAtLeastMs, so a clock behind the MC's cannot
+// ask in a loop. One the MC could not sign is asked for again after
+// kFaviconRetryMs.
+const qint64 kFaviconMarginMs = 60'000;
+const qint64 kFaviconAtLeastMs = 5 * 60'000;
+const qint64 kFaviconRetryMs = 30'000;
 
 const NativeControllerRegistrar<IdentityController> registrar(
     QStringLiteral("identity"), {QStringLiteral("projectIcons"), QStringLiteral("projectIconPicker"), QStringLiteral("environmentIcons")});
@@ -51,7 +62,10 @@ const Machine* machine(const QString& kind) {
 }  // namespace
 
 IdentityController::IdentityController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
-    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_settings(new EnvironmentSettings(client, this)) {}
+    : QObject(parent), m_bridge(bridge), m_client(client), m_store(store), m_settings(new EnvironmentSettings(client, this)) {
+  m_faviconRenewal.setSingleShot(true);
+  connect(&m_faviconRenewal, &QTimer::timeout, this, &IdentityController::renewFavicons);
+}
 
 void IdentityController::activate() {
   if (m_active) return;
@@ -90,8 +104,12 @@ void IdentityController::refreshProjects() {
       // Its own favicon, or the image the user picked, once the MC serves one.
       if (row.value(QLatin1String("projectIcon")).toObject().isEmpty()) {
         const QString asked = text(row, "workspaceRoot") + QLatin1Char('\n') + text(row, "faviconPath");
-        if (m_favicons.value(key).asked != asked && m_store->environmentOnline(environmentId)) {
-          m_favicons.insert(key, {asked, {}});
+        auto favicon = m_favicons.find(key);
+        const bool moved = favicon == m_favicons.end() || favicon->asked != asked;
+        const bool due = !moved && !favicon->asking && favicon->expiresAt > 0 && favicon->expiresAt - kFaviconMarginMs <= m_now();
+        if ((moved || due) && m_store->environmentOnline(environmentId)) {
+          if (moved) favicon = m_favicons.insert(key, {asked, {}});
+          favicon->asking = true;
           requestFavicon(key, row);
         }
         if (const QString url = m_favicons.value(key).url; !url.isEmpty()) {
@@ -105,6 +123,7 @@ void IdentityController::refreshProjects() {
     }
   }
   for (auto it = m_favicons.begin(); it != m_favicons.end();) it = seen.contains(it.key()) ? std::next(it) : m_favicons.erase(it);
+  armFaviconRenewal();
   if (icons == m_projectIcons) return;
   m_projectIcons = icons;
   m_bridge->publish(QStringLiteral("projectIcons"), m_projectIcons);
@@ -116,13 +135,33 @@ void IdentityController::requestFavicon(const QString& key, const QJsonObject& r
   if (!text(row, "faviconPath").isEmpty()) resource.insert(QStringLiteral("path"), text(row, "faviconPath"));
   m_client->call(this, key.left(key.indexOf(QLatin1Char(':'))), QStringLiteral("assets.createUrl"), QJsonObject{{QStringLiteral("resource"), resource}},
                  [this, key, asked](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (m_favicons.value(key).asked != asked) return;
+                   const auto favicon = m_favicons.find(key);
+                   if (favicon == m_favicons.end() || favicon->asked != asked) return;
+                   favicon->asking = false;
                    const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
-                   // The MC names a project without a favicon this way: the monogram stays.
-                   if (error || relative.isEmpty() || relative.endsWith(QLatin1String("project-favicon-missing"))) return;
-                   m_favicons[key].url = m_client->origin().resolved(QUrl(relative)).toString();
+                   if (error || relative.isEmpty()) {
+                     // A URL being renewed is asked for again soon; a first one is not.
+                     if (favicon->expiresAt > 0) favicon->expiresAt = m_now() + kFaviconMarginMs + kFaviconRetryMs;
+                   } else if (relative.endsWith(QLatin1String("project-favicon-missing"))) {
+                     // The MC names a project without a favicon this way: the monogram shows.
+                     *favicon = {asked, {}};
+                   } else {
+                     const qint64 expiresAt = qint64(result.toObject().value(QLatin1String("expiresAt")).toDouble());
+                     favicon->url = m_client->origin().resolved(QUrl(relative)).toString();
+                     favicon->expiresAt = expiresAt > 0 ? qMax(expiresAt, m_now() + kFaviconAtLeastMs) : 0;
+                   }
                    refreshProjects();
                  });
+}
+
+void IdentityController::armFaviconRenewal() {
+  std::optional<qint64> due;
+  for (auto it = m_favicons.cbegin(); it != m_favicons.cend(); ++it) {
+    if (it->expiresAt == 0 || it->asking || !m_store->environmentOnline(it.key().left(it.key().indexOf(QLatin1Char(':'))))) continue;
+    due = qMin(due.value_or(it->expiresAt), it->expiresAt);
+  }
+  if (!due) return m_faviconRenewal.stop();
+  m_faviconRenewal.start(int(std::clamp<qint64>(*due - kFaviconMarginMs - m_now(), 0, std::numeric_limits<int>::max())));
 }
 
 void IdentityController::publishPicker() {

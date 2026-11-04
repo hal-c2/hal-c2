@@ -144,6 +144,30 @@ private slots:
     }
     QVERIFY(found > 100);
     QVERIFY2(unknown.isEmpty(), qPrintable(unknown.join(QStringLiteral(", "))));
+    // A theme can name them.
+    for (const QString& role : optional) QVERIFY2(themes()->roles().contains(role), qPrintable(role));
+  }
+
+  // The roles the built-in palettes leave out are a theme's to set; diffs
+  // keep the theme's colours unless the user chose blue and orange.
+  void aThemeSetsTheRolesThePalettesLeaveOut() {
+    const QList<std::pair<QString, QString>> set{
+        {QStringLiteral("projectForeground"), QStringLiteral("#123456")}, {QStringLiteral("branchForeground"), QStringLiteral("#234567")},
+        {QStringLiteral("sidebarActiveIndicator"), QStringLiteral("#345678")}, {QStringLiteral("diffAdded"), QStringLiteral("#456789")},
+        {QStringLiteral("diffRemoved"), QStringLiteral("#56789a")}, {QStringLiteral("scrim"), QStringLiteral("#00000080")},
+        {QStringLiteral("popover"), QStringLiteral("#6789ab")}, {QStringLiteral("destructive"), QStringLiteral("#789abc")}};
+    QJsonObject mine = theme(QStringLiteral("mine"), QStringLiteral("light"), QStringLiteral("#fafafa"));
+    QJsonObject colors = mine.value(QLatin1String("colors")).toObject();
+    for (const auto& [role, color] : set) colors.insert(role, color);
+    mine.insert(QStringLiteral("colors"), colors);
+    const auto drawn = [this](const QString& role) { return published().value(QStringLiteral("colors")).toMap().value(role).toString(); };
+    save({{QStringLiteral("customThemes"), QJsonArray{mine}}, {QStringLiteral("theme"), QStringLiteral("mine")}});
+    for (const auto& [role, color] : set) QCOMPARE(drawn(role), color);
+    save({{QStringLiteral("customThemes"), QJsonArray{mine}}, {QStringLiteral("theme"), QStringLiteral("mine")},
+          {QStringLiteral("diffColorScheme"), QStringLiteral("blue-orange")}});
+    QCOMPARE(drawn(QStringLiteral("diffAdded")), QStringLiteral("#3b82f6"));
+    QCOMPARE(drawn(QStringLiteral("diffRemoved")), QStringLiteral("#f97316"));
+    QCOMPARE(drawn(QStringLiteral("projectForeground")), QStringLiteral("#123456"));
   }
 
   void builtInsWinTheirIds() {
