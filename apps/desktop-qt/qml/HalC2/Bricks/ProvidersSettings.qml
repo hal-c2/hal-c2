@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // The Providers settings section (ProviderSettingsController publishes
 // `providerSettings`): one environment's providers, how each stands, turning
@@ -49,6 +50,7 @@ Rectangle {
     readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
     readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
+    readonly property color line: Theme.palette.color("border", "#27272a")
 
     // A redacted placeholder: the same length and
     // separators, other characters drawn from a hash of the value, so an
@@ -213,7 +215,7 @@ Rectangle {
 
         objectName: "wizard"
         Layout.fillWidth: true
-        implicitHeight: wizardColumn.implicitHeight + 24
+        implicitHeight: wizardColumn.implicitHeight + 2 * Theme.space.md
 
         function send(action, payload) {
             Shell.dispatch("providerSettings.wizard" + action, payload || {});
@@ -231,9 +233,9 @@ Rectangle {
         ColumnLayout {
             id: wizardColumn
 
-            x: 12
-            y: 12
-            width: parent.width - 24
+            x: Theme.space.md
+            y: Theme.space.md
+            width: parent.width - 2 * Theme.space.md
             spacing: Theme.space.sm
 
             RowLayout {
@@ -554,7 +556,8 @@ Rectangle {
         }
     }
 
-    component ProviderCard: ShellCard {
+    // One provider on the page's list: a row under a hairline.
+    component ProviderCard: Item {
         id: card
 
         required property var modelData
@@ -566,14 +569,21 @@ Rectangle {
 
         objectName: "provider_" + provider.instanceId
         Layout.fillWidth: true
-        implicitHeight: cardColumn.implicitHeight + 24
+        // The column's spacing finishes the gap under the row, so the space
+        // either side of a hairline matches.
+        implicitHeight: cardColumn.implicitHeight + Theme.space.md + Theme.space.xs
+
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: page.line
+        }
 
         ColumnLayout {
             id: cardColumn
 
-            x: 12
-            y: 12
-            width: parent.width - 24
+            y: Theme.space.md
+            width: parent.width
             spacing: Theme.space.sm
 
             RowLayout {
@@ -582,7 +592,7 @@ Rectangle {
 
                 ProviderIcon {
                     driverKind: card.provider.driver
-                    size: 18
+                    size: Theme.icon.lg
                 }
 
                 Rectangle {
@@ -1374,16 +1384,16 @@ Rectangle {
 
         objectName: "providersScroll"
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         ColumnLayout {
             id: column
 
-            x: 24
-            y: 24
-            width: Math.min(720, parent.width - 48)
+            x: Pages.columnX(pageScroll.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(pageScroll.width, Theme.space.xl)
             spacing: Theme.space.sm
 
             RowLayout {
@@ -1440,26 +1450,16 @@ Rectangle {
                 }
             }
 
-            // Why nothing is listed.
-            ColumnLayout {
+            // Why nothing is listed: no device, offline, loading or empty.
+            ShellEmptyState {
                 objectName: "placeholder"
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.space.md
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Theme.space.xxl
                 visible: page.model !== null && page.model.title.length > 0
-                spacing: Theme.space.xs
-
-                Label {
-                    Layout.fillWidth: true
-                    text: page.model ? page.model.title : ""
-                    color: page.foreground
-                    font.pixelSize: Theme.type.title.size
-                    wrapMode: Text.Wrap
-                    font.weight: Font.DemiBold
-                }
-
-                Note {
-                    text: page.model ? page.model.description : ""
-                }
+                status: !page.model ? "empty" : page.model.status === "loading" ? "loading" : page.model.status === "offline" ? "error" : "empty"
+                iconName: "bot"
+                title: page.model ? page.model.title : ""
+                description: page.model ? page.model.description : ""
             }
 
             Loader {
@@ -1472,6 +1472,8 @@ Rectangle {
                 }
             }
 
+            // Every provider on one list, each on its own hairline. Straight in the
+            // page's column, so a card that grows lays the page out in one pass.
             Repeater {
                 model: page.providers
 
@@ -1508,9 +1510,9 @@ Rectangle {
                             visible: healthRow.health !== null && healthRow.health.seconds !== healthRow.health.defaultSeconds
                             subtle: true
                             iconName: "undo-2"
-                            iconSize: 12
-                            implicitWidth: 20
-                            implicitHeight: 20
+                            iconSize: Theme.icon.sm
+                            implicitWidth: Theme.control.sm
+                            implicitHeight: Theme.control.sm
                             Accessible.name: qsTr("Reset provider health check interval to default")
                             onClicked: Shell.dispatch("providerSettings.resetHealthInterval")
                         }
@@ -1555,12 +1557,9 @@ Rectangle {
                 RowLayout {
                     Layout.fillWidth: true
 
-                    Label {
-                        Layout.fillWidth: true
+                    SettingsHeading {
+                        Layout.topMargin: 0
                         text: qsTr("Usage providers")
-                        color: page.foreground
-                        font.pixelSize: Theme.type.title.size
-                        font.weight: Font.DemiBold
                     }
 
                     ShellButton {

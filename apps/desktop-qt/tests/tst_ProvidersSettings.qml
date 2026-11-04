@@ -555,6 +555,8 @@ Item {
             const page = createTemporaryObject(settingsComponent, root);
             const card = findChild(page, "provider_claudeAgent_work");
             mouseClick(findChild(card, "configure"));
+            // The editor lays out in the next frame, as the user sees it.
+            waitForRendering(page);
             const section = findChild(card, "acpSessions");
             verify(section.visible);
             mouseClick(findChild(findChild(section, "acpSession_s1"), "acpImport"));
@@ -636,6 +638,8 @@ Item {
             const page = createTemporaryObject(settingsComponent, root);
             const card = findChild(page, "provider_claudeAgent_work");
             mouseClick(findChild(card, "configure"));
+            // The editor lays out in the next frame, as the user sees it.
+            waitForRendering(page);
             verify(findChild(card, "editor").visible);
             const value = findChild(findChild(card, "variable_0"), "variableValue");
             compare(value.text, "");
@@ -680,6 +684,8 @@ Item {
             const page = createTemporaryObject(settingsComponent, root);
             const card = findChild(page, "provider_claudeAgent_work");
             mouseClick(findChild(card, "configure"));
+            // The editor lays out in the next frame, as the user sees it.
+            waitForRendering(page);
             const models = findChild(card, "customModels");
             verify(models.visible);
             compare(findChild(models, "modelError").text, "Option 1 needs a label.");
