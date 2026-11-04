@@ -685,7 +685,8 @@ void ThreadMenuController::present() {
   const auto thread = key.isEmpty() ? std::nullopt : m_store->thread(key);
   const QString url = thread ? pullRequestUrl(key) : QString();
   commands->setTitle(kCopyReference, url.isEmpty() ? tr("Copy thread ID") : tr("Copy PR link"));
-  commands->setDescription(kCopyReference, url.isEmpty() && thread ? thread->id : url);
+  // The palette names the thread it copies from, never its id.
+  commands->setDescription(kCopyReference, url.isEmpty() && thread ? thread->title : url);
   commands->setListed(kCopyReference, thread.has_value());
   const auto project = thread ? m_store->project(thread->environmentId + QLatin1Char(':') + thread->projectId) : std::nullopt;
   commands->setDescription(kProjectSettingsCommand, project ? project->title : QString());

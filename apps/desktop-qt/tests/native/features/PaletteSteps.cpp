@@ -452,6 +452,12 @@ const Steps steps([] {
     const int row = indexOf(world, c[0], QStringLiteral("thread"));
     expect(row >= 0 && rows(world).at(row).description == c[1] + u" · " + c[2], describe(world));
   });
+  step(QStringLiteral("%1 is described by the title of the thread the user is looking at").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         const QList<Listed> listed = rows(world);
+         const int row = indexOf(world, c[0]);
+         expect(row >= 0 && listed.at(row).description == QStringLiteral("Chore %1").arg(kBackgroundThreads), describe(world));
+       });
   step(QStringLiteral("the thread the user is looking at is described as %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString current = world.native().controller<NavigationController>()->threadKey();
     const QList<Listed> listed = rows(world);
