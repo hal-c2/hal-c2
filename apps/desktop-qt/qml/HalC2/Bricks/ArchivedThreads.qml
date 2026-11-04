@@ -40,13 +40,9 @@ Rectangle {
             width: Pages.columnWidth(flick.width, Theme.space.xl)
             spacing: Theme.space.md
 
-            RowLayout {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-
-                SettingsBreadcrumb {
-                    Layout.fillWidth: true
-                    section: qsTr("Archive")
-                }
+                section: qsTr("Archive")
 
                 ShellButton {
                     objectName: "refresh"

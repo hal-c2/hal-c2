@@ -1396,13 +1396,9 @@ Rectangle {
             width: Pages.columnWidth(pageScroll.width, Theme.space.xl)
             spacing: Theme.space.sm
 
-            RowLayout {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-
-                SettingsBreadcrumb {
-                    Layout.fillWidth: true
-                    section: qsTr("Providers")
-                }
+                section: qsTr("Providers")
 
                 ShellButton {
                     objectName: "addInstance"
