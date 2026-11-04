@@ -256,5 +256,17 @@ Item {
                 Theme.colors = {};
             }
         }
+
+        // Each day's bar is the accent too.
+        function test_a_days_bar_is_the_accent() {
+            Theme.colors = { accent: "#3b6fe0" };
+            try {
+                Shell.state = { usage: root.usage({}) };
+                const page = createTemporaryObject(usageComponent, root);
+                compare(findChild(page, "periodBar").color.toString(), "#3b6fe0");
+            } finally {
+                Theme.colors = {};
+            }
+        }
     }
 }

@@ -608,6 +608,7 @@ Rectangle {
                                 implicitHeight: 8
 
                                 Rectangle {
+                                    objectName: "periodBar"
                                     height: parent.height
                                     radius: 2
                                     width: periods.peak > 0 ? parent.width * (page.metric === "tokens" ? periodRow.modelData.totalTokens : periodRow.modelData.costUsd) / periods.peak : 0
