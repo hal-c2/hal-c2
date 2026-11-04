@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Templates as T
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
 
@@ -94,6 +95,11 @@ Window {
         height: root.height / root.zoom
         scale: root.zoom
         transformOrigin: Item.TopLeft
+    }
+
+    // Every attached ToolTip shares one instance; this dresses it.
+    ShellToolTip {
+        tip: root.contentItem.T.ToolTip.toolTip
     }
 
     PanelBodies {

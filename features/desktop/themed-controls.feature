@@ -1,7 +1,7 @@
 # Sources:
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellSwitch.qml, ShellCheckBox.qml, ShellSpinBox.qml,
 #     ShellTextField.qml, ShellComboBox.qml, ShellMenu.qml, ContextMenuHost.qml (the shared controls)
-#   apps/desktop-qt/src/ShellRuntime.cpp (applyWindowTheme: tooltip colours)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellToolTip.qml (every attached tooltip's look)
 #   apps/web/src/components/ui/switch.tsx, checkbox.tsx, number-field.tsx, input.tsx, select.tsx
 #   Proved today by apps/desktop-qt/tests/tst_Shell*.qml; no Gherkin step runs QML yet.
 
@@ -19,9 +19,12 @@ Feature: Shared controls follow the theme
   Scenario: Tooltips follow the theme
     Given the dark base theme is applied
     When a tooltip is shown
-    Then its background and text use the theme's surface and text colours
+    Then it is drawn on the popover surface: the solid overlay colour, a strong hairline and a small radius
+    And its text is the theme's text colour at the meta size
     When the light base theme is applied
     Then the next tooltip uses the light colours
+    When I press the control under the tooltip
+    Then the tooltip hides at once, without fading
 
   Scenario: A text field is translucent in dark themes and keeps a focus ring
     Given the dark base theme is applied

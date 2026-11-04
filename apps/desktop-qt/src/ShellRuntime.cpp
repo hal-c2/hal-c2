@@ -317,16 +317,8 @@ void ShellRuntime::applyWindowTheme() {
   // Markdown takes its links' colour from the application's palette as it is
   // parsed (the timeline's TextEdit has no linkColor of its own).
   QPalette palette = QGuiApplication::palette();
-  // Likewise the attached ToolTip, which is the stock Basic one: the popover's
-  // surface (solid, whatever the glass opacity) and its text colour.
-  QColor tipBase = m_theme->color(QStringLiteral("surfaceOverlay"), palette.color(QPalette::ToolTipBase));
-  tipBase.setAlpha(255);
-  const QColor tipText = m_theme->color(QStringLiteral("text"), palette.color(QPalette::ToolTipText));
-  if (palette.color(QPalette::Link) != m_theme->link() || palette.color(QPalette::ToolTipBase) != tipBase ||
-      palette.color(QPalette::ToolTipText) != tipText) {
+  if (palette.color(QPalette::Link) != m_theme->link()) {
     palette.setColor(QPalette::Link, m_theme->link());
-    palette.setColor(QPalette::ToolTipBase, tipBase);
-    palette.setColor(QPalette::ToolTipText, tipText);
     QGuiApplication::setPalette(palette);
   }
 }
