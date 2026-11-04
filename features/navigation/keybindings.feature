@@ -1,5 +1,6 @@
 # Sources:
 #   docs/user/keybindings.md
+#   https://github.com/pingdotgg/t3code/pull/9434 (usage.open, mod+u outside a terminal)
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
 #   packages/shared/src/keybindings.ts (DEFAULT_KEYBINDINGS)
 #   apps/web/src/keybindings.ts (layout letters, AltGr, esc, last matching rule, shadowed labels, shortcut labels)
@@ -148,6 +149,20 @@ Feature: Keybindings
       When the user presses mod+d
       Then the terminal splits
       But the diff panel does not toggle
+
+    @desktop @backlog
+    Scenario: The usage shortcut opens usage from the composer
+      Given no custom keybindings
+      And the user is typing in the composer
+      When the user presses mod+u
+      Then the usage page opens
+
+    @desktop @backlog
+    Scenario: The usage shortcut does nothing in a terminal
+      Given the user is in a terminal
+      When the user presses mod+u
+      Then the usage page does not open
+      And the terminal receives the key
 
   Rule: The desktop shell honours the web keymap
 
