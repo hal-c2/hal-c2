@@ -225,6 +225,8 @@ Popup {
 
             // The palette ends on a whole row; the edge says there is more.
             ShellScrollEdge {
+                id: edge
+
                 target: list
             }
 
@@ -284,7 +286,8 @@ Popup {
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 8
-                    anchors.rightMargin: 8
+                    // The shortcut column keeps a gutter clear of the bar.
+                    anchors.rightMargin: edge.scrolls ? edge.reserve + Theme.space.md : Theme.space.sm
                     spacing: 8
 
                     Text {
@@ -310,6 +313,7 @@ Popup {
                         font.pixelSize: Theme.type.caption.size
                     }
                     Text {
+                        objectName: "commandPaletteShortcut"
                         visible: text.length > 0
                         text: row.shortcut
                         color: Theme.palette.color("textMuted", "#a1a1aa")
