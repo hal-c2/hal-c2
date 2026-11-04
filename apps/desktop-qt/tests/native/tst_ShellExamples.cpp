@@ -997,7 +997,8 @@ private slots:
     QTRY_VERIFY(rightOf("panelAdd") > 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
     QCOMPARE(left(), corner);
-    QVERIFY(buttons->y() + buttons->height() <= 36);
+    // Centred on the strip's line, which is the thread header's.
+    QCOMPARE(buttons->y() + buttons->height() / 2, theme->headerHeight() / 2.0);
     show(true, false, false);
     QTRY_VERIFY(rightOf("threadDetailsClose") < 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
