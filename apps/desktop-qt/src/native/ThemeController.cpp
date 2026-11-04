@@ -677,8 +677,8 @@ void ThemeController::resolve() {
     if (!colors.contains(QLatin1String(role)) && colors.contains(QLatin1String(like))) colors.insert(QLatin1String(role), colors.value(QLatin1String(like)));
   }
   // The interface rows of Settings → Appearance that are colours: what diffs
-  // draw additions and deletions in, and how solid menus, dialogs and the
-  // composer are.
+  // draw additions and deletions in, and how solid the composer is (menus and
+  // dialogs draw surfaceOverlay solid, ShellPopoverSurface).
   // A theme's own diff colours stand unless blue and orange are asked for;
   // their line backgrounds then derive from the new pair (ThemeStore::color).
   const bool blueOrange = m_settings->setting(QStringLiteral("diffColorScheme")).toString() == QLatin1String("blue-orange");

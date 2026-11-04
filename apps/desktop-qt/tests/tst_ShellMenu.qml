@@ -128,4 +128,16 @@ TestCase {
         compare(findNamed(menu.background, "popoverFrame").color, Qt.color("#101820"));
         Theme.colors = {};
     }
+
+    // The glass opacity thins surfaceOverlay for the composer; a menu stays solid.
+    function test_menus_are_opaque_whatever_the_glass() {
+        Theme.colors = {
+            surfaceOverlay: "#66101820"
+        };
+        const menu = openMenu(shortMenu);
+        const fill = findNamed(menu.background, "popoverFrame").color;
+        compare(fill.a, 1);
+        compare(fill, Qt.color("#101820"));
+        Theme.colors = {};
+    }
 }

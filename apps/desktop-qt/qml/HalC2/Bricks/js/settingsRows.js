@@ -133,7 +133,7 @@ var appearance = [
     { key: "appearanceContrast", kind: "number", title: "Contrast", min: 50, max: 200, step: 10, unit: "%",
       description: "Adjust the contrast of colors and borders across the interface." },
     { key: "glassOpacity", kind: "number", title: "Glass opacity", min: 40, max: 100, step: 5, unit: "%",
-      description: "Higher values make menus, dialogs, and the composer more solid." },
+      description: "Higher values make the composer more solid. Menus and dialogs are always solid." },
     { key: "environmentIdentificationMode", kind: "select", title: "Environment identification",
       description: "Choose how Dev and Nightly environments are identified.",
       options: [option("artwork", "Artwork"), option("pill", "Version pill"), option("none", "None")] },

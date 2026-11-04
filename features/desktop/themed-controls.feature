@@ -2,6 +2,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellSwitch.qml, ShellCheckBox.qml, ShellSpinBox.qml,
 #     ShellTextField.qml, ShellComboBox.qml, ShellMenu.qml, ContextMenuHost.qml (the shared controls)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellToolTip.qml (every attached tooltip's look)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellPopoverSurface.qml (menus, the palette, pickers, dialogs)
 #   apps/web/src/components/ui/switch.tsx, checkbox.tsx, number-field.tsx, input.tsx, select.tsx
 #   Proved today by apps/desktop-qt/tests/tst_Shell*.qml; no Gherkin step runs QML yet.
 
@@ -32,11 +33,14 @@ Feature: Shared controls follow the theme
     When the text field has focus
     Then its border is the theme's focus colour
 
-  Scenario: Menus, palettes and dialogs are nearly opaque by default
-    Given the glass opacity setting was never changed
-    Then the overlay surface used by menus, palettes and dialogs has an alpha of 96 percent
+  Scenario: Menus, palettes and dialogs are opaque whatever the glass opacity
+    Given the glass opacity is set to 40 percent
+    When a menu, the command palette, a picker or a dialog opens over the timeline
+    Then it is drawn on the solid overlay colour, so nothing behind it shows through
+    And the glass opacity still thins the composer
 
-  @desktop @backlog-desktop
+  # Opaque popovers have nothing behind them to blur.
+  @desktop @dropped
   Scenario: Menus, palettes and dialogs blur what is behind them
     When a menu, palette or dialog opens over the timeline
     Then the content behind it is blurred as the web client's dropdown-glass does
