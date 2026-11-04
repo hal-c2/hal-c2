@@ -542,9 +542,9 @@ Item {
                             font.family: requests.uiFont
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
-                        ShellIcon {
-                            name: queueCard.expanded ? "chevron-down" : "chevron-right"
-                            size: 13
+                        ShellChevron {
+                            direction: queueCard.expanded ? "down" : "right"
+                            size: Theme.icon.sm
                             color: requests.muted
                         }
                     }

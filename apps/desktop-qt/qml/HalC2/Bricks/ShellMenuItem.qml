@@ -82,10 +82,10 @@ MenuItem {
                 Layout.fillWidth: true
             }
 
-            ShellIcon {
+            ShellChevron {
                 visible: control.subMenu !== null
-                name: "chevron-right"
-                size: 14
+                direction: "right"
+                size: Theme.icon.sm
                 color: Qt.alpha(Theme.palette.color("textMuted", "#8b8b93"), 0.8)
                 Layout.alignment: Qt.AlignVCenter
             }

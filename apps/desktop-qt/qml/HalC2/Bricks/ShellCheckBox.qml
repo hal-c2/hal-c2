@@ -31,7 +31,6 @@ CheckBox {
             visible: control.checkState !== Qt.Unchecked
             name: control.checkState === Qt.PartiallyChecked ? "minus" : "check"
             size: 12
-            strokeWidth: 3
             color: Theme.palette.color("accentForeground", "#ffffff")
         }
     }

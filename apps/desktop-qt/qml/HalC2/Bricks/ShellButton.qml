@@ -19,7 +19,7 @@ Button {
     property real iconSize: 14
     // Fills the icon's outline too, for the filled variants (the fast-mode bolt).
     property bool iconFilled: false
-    property real chevronSize: 14
+    property real chevronSize: Theme.icon.sm
     property color tint: primary ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("text", "#e4e4e7")
     property color iconTint: tint
     property real radius: Math.min(Theme.radius, 8)
@@ -102,9 +102,9 @@ Button {
                 Layout.minimumWidth: 0
             }
 
-            ShellIcon {
+            ShellChevron {
                 visible: control.chevron
-                name: "chevron-down"
+                direction: "down"
                 size: control.chevronSize
                 color: control.text.length > 0 || control.iconName.length > 0 ? Theme.palette.color("iconMuted", "#8b8b93") : control.tint
                 Layout.alignment: Qt.AlignVCenter

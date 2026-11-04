@@ -557,10 +557,10 @@ Rectangle {
                     Layout.preferredHeight: 32
                     spacing: 6
 
-                    ShellIcon {
+                    ShellChevron {
                         Layout.leftMargin: 8
-                        name: header.row.expanded ? "chevron-down" : "chevron-right"
-                        size: 13
+                        direction: header.row.expanded ? "down" : "right"
+                        size: Theme.icon.sm
                         color: root.muted
                     }
                     Text {

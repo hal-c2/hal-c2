@@ -23,7 +23,7 @@ ComboBox {
     property Component rowAction: null
     property string iconName: ""
     property real iconSize: 16
-    property real chevronSize: 14
+    property real chevronSize: Theme.icon.sm
     // The ghost picker is borderless until the keyboard reaches it; the outline one
     // also shows its ring when it holds focus.
     readonly property bool showFocusRing: control.visualFocus || (control.outline && control.activeFocus)
@@ -69,12 +69,11 @@ ComboBox {
         elide: Text.ElideRight
     }
 
-    indicator: ShellIcon {
+    indicator: ShellChevron {
         x: control.width - width - 10
         y: (control.height - height) / 2
-        name: "chevron-down"
+        direction: "down"
         size: control.chevronSize
-        strokeWidth: 2.25
         color: Theme.palette.color("iconMuted", "#8b8b93")
     }
 

@@ -77,7 +77,6 @@ Row {
                     anchors.centerIn: parent
                     name: button.isClose ? "x" : button.modelData === "minimize" ? "minus" : controls.trafficLights ? "plus" : controls.window !== null && controls.window.visibility === Window.Maximized ? "copy" : "square"
                     size: controls.trafficLights ? 8 : button.isClose ? 14 : 12
-                    strokeWidth: controls.trafficLights ? 2.5 : 2
                     color: controls.trafficLights ? Qt.darker(button.light, 2.4) : button.isClose && button.hovered ? Theme.palette.color("errorForeground", "#ffffff") : controls.foreground
                     visible: !controls.trafficLights || hover.hovered
                 }

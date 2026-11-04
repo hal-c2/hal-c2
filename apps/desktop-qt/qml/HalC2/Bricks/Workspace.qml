@@ -287,9 +287,9 @@ Rectangle {
                         elide: Text.ElideRight
                     }
 
-                    ShellIcon {
-                        name: "chevron-down"
-                        size: 14
+                    ShellChevron {
+                        direction: "down"
+                        size: Theme.icon.sm
                         color: strip.muted
                         opacity: titleHover.hovered ? 1 : 0
                         Layout.alignment: Qt.AlignVCenter

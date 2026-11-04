@@ -1338,7 +1338,6 @@ Rectangle {
                                 visible: !primaryAction.stopMode
                                 name: primaryAction.followUp === "steer" ? "corner-down-right" : primaryAction.followUp === "queue" ? "list-plus" : "arrow-up"
                                 size: 16
-                                strokeWidth: 2.5
                                 color: Theme.palette.color("messageActionForeground", "#ffffff")
                             }
 

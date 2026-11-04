@@ -229,12 +229,11 @@ AbstractButton {
             }
         }
 
-        ShellIcon {
+        ShellChevron {
             x: parent.width - width - 10
             y: (parent.height - height) / 2
-            name: "chevron-down"
-            size: 14
-            strokeWidth: 2.25
+            direction: "down"
+            size: Theme.icon.sm
             color: Theme.palette.color("iconMuted", "#8b8b93")
         }
     }
@@ -902,9 +901,9 @@ AbstractButton {
                     }
                 }
 
-                ShellIcon {
-                    name: "chevron-right"
-                    size: 16
+                ShellChevron {
+                    direction: "right"
+                    size: Theme.icon.md
                     color: control.muted
                     rotation: legacy.entry && legacy.entry.expanded ? 90 : 0
 

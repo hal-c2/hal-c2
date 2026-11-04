@@ -58,9 +58,9 @@ ShellCard {
                 contentItem: RowLayout {
                     spacing: 8
 
-                    ShellIcon {
-                        name: group.open ? "chevron-down" : "chevron-right"
-                        size: 16
+                    ShellChevron {
+                        direction: group.open ? "down" : "right"
+                        size: Theme.icon.md
                         color: group.muted
                     }
 

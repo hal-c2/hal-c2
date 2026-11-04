@@ -790,9 +790,9 @@ Rectangle {
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
 
-                        ShellIcon {
-                            name: "chevron-down"
-                            size: 12
+                        ShellChevron {
+                            direction: "down"
+                            size: Theme.icon.sm
                             color: Qt.alpha(sidebar.muted, 0.5)
                             rotation: entry.kind === "header" && entry.modelData.open ? 0 : -90
                             Layout.alignment: Qt.AlignVCenter

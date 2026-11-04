@@ -466,7 +466,6 @@ Item {
             visible: line.iconName.length > 0 && ownIcon.status !== Image.Ready
             name: line.iconName
             size: 16
-            strokeWidth: 1.8
             color: line.iconTint
         }
         Image {
@@ -1308,13 +1307,13 @@ Item {
                                                 else
                                                     root.fileActivated(changedFile.modelData.path, "diff", row.rowId);
                                             }
-                                            ShellIcon {
+                                            ShellChevron {
                                                 id: folderChevron
                                                 visible: changedFile.folder
                                                 x: 8 + changedFile.modelData.depth * 14
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                name: "chevron-right"
-                                                size: 14
+                                                direction: "right"
+                                                size: Theme.icon.sm
                                                 rotation: changedFile.modelData.expanded ? 90 : 0
                                                 color: Qt.alpha(root.mutedColor, 0.7)
                                             }
@@ -1536,10 +1535,10 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             width: 16
                             height: 16
-                            ShellIcon {
+                            ShellChevron {
                                 anchors.centerIn: parent
-                                name: "chevron-right"
-                                size: 12
+                                direction: "right"
+                                size: Theme.icon.sm
                                 color: Qt.alpha(root.iconColor, 0.7)
                                 rotation: row.expanded ? 90 : 0
                             }
@@ -1703,11 +1702,11 @@ Item {
                                             anchors.verticalCenter: parent.verticalCenter
                                             width: 16
                                             height: 16
-                                            ShellIcon {
+                                            ShellChevron {
                                                 anchors.centerIn: parent
                                                 visible: call.hasDetails
-                                                name: "chevron-right"
-                                                size: 12
+                                                direction: "right"
+                                                size: Theme.icon.sm
                                                 color: Qt.alpha(root.iconColor, 0.7)
                                                 rotation: call.open ? 90 : 0
                                             }
@@ -1922,10 +1921,10 @@ Item {
                             font.pixelSize: Math.round(14 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                         }
-                        ShellIcon {
+                        ShellChevron {
                             anchors.verticalCenter: parent.verticalCenter
-                            name: row.expanded ? "chevron-down" : "chevron-right"
-                            size: 14
+                            direction: row.expanded ? "down" : "right"
+                            size: Theme.icon.sm
                             color: foldHover.hovered ? root.textColor : root.mutedColor
                         }
                         HoverHandler {
