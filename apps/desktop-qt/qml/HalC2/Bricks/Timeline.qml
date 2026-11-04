@@ -2329,10 +2329,11 @@ Item {
     }
 
     // The conversation has the keyboard (Tab to it): Page Up/Down page it.
+    // Not when a click put it on message text inside, which Tab never reaches.
     Rectangle {
         objectName: "timelineFocus"
         anchors.fill: view
-        visible: view.activeFocus && !view.tapped
+        visible: view.activeFocus && !view.tapped && view.Window.activeFocusItem?.selectByMouse === undefined
         color: "transparent"
         radius: 6
         border.width: 1
