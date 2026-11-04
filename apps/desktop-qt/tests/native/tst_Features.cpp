@@ -386,6 +386,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("files/search.feature:The search is cleared*"),
     QStringLiteral("threads/sidebar-list.feature:Threads are grouped*"),
     QStringLiteral("threads/sidebar-list.feature:Active threads are listed newest first"),
+    QStringLiteral("threads/sidebar-list.feature:A thread row reads its title first, then its project and branch"),
     QStringLiteral("threads/sidebar-list.feature:Settled threads are listed by when they settled"),
     QStringLiteral("threads/sidebar-list.feature:A settled thread's age*"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),

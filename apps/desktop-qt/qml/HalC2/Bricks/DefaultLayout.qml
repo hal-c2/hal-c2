@@ -150,6 +150,8 @@ Item {
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: 6
+                        // The rail keeps its width.
+                        visible: !sidebarView.rail
                         cursorShape: Qt.SplitHCursor
                         preventStealing: true
                         activeFocusOnTab: true

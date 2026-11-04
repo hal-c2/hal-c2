@@ -143,12 +143,14 @@ Item {
             tryCompare(list, "count", 2);
             let row = null;
             tryVerify(() => !!(row = findChild(sidebar, "threadRow:second")));
-            mousePress(row, 100, 40);
+            // Up into the top half of the row above.
+            const above = -row.height + 10;
+            mousePress(row, 100, row.height - 10);
             mouseMove(row, 100, 10);
-            mouseMove(row, 100, -30);
-            mouseMove(row, 100, -50);
+            mouseMove(row, 100, above + 20);
+            mouseMove(row, 100, above);
             verify(findChild(sidebar, "dropLine").visible);
-            mouseRelease(row, 100, -50);
+            mouseRelease(row, 100, above);
             tryCompare(Shell, "dispatchCount", 1);
             compare(Shell.dispatchedActions[0].action, "thread.drop");
             compare(Shell.dispatchedActions[0].payload.key, "second");
@@ -365,7 +367,8 @@ Item {
             tryVerify(() => !!findChild(sidebar, "threadRow:old"));
             let header = findChild(sidebar, "header:settled");
             verify(!!header, "Object exists");
-            compare(findChild(header, "headerCount").visible, false);
+            // The count reads "Settled 1 ›" folded or not.
+            compare(findChild(header, "headerCount").visible, true);
             mouseClick(header);
             tryCompare(list, "count", 4);
             compare(sidebar.rows.some(r => r.rowKey === "old"), false);
