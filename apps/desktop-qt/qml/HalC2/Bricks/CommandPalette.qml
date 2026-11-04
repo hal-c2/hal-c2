@@ -23,7 +23,8 @@ Popup {
     x: Math.round(((parent?.width ?? width) - width * scale) / 2)
     y: Math.round((parent?.height ?? 0) * 0.12)
     width: Math.min(640, (parent?.width ?? 672) / scale - 32)
-    height: Math.min(480, ((parent?.height ?? 512) - y) / scale - 16)
+    // As tall as its rows, up to the room below it.
+    height: Math.min(implicitHeight, 480, ((parent?.height ?? 512) - y) / scale - 16)
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
 
@@ -187,6 +188,7 @@ Popup {
             Accessible.name: qsTr("Commands")
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.preferredHeight: count > 0 ? contentHeight : empty.implicitHeight + 24
             clip: true
             model: PaletteModel
             currentIndex: PaletteModel.highlighted
@@ -297,6 +299,8 @@ Popup {
             }
 
             Text {
+                id: empty
+
                 anchors.centerIn: parent
                 visible: list.count === 0
                 text: PaletteModel.emptyText
