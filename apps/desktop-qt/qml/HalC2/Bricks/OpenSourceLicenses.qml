@@ -17,8 +17,8 @@ Rectangle {
     readonly property string status: settings?.status ?? "loading"
     readonly property var entries: settings?.entries ?? []
     readonly property int total: settings?.total ?? 0
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color line: Theme.palette.color("border", "#27272a")
 
     objectName: "openSourceLicenses"
@@ -32,8 +32,8 @@ Rectangle {
         objectName: "licenseList"
 
         anchors.fill: parent
-        anchors.topMargin: 24
-        anchors.bottomMargin: 24
+        anchors.topMargin: Theme.space.xl
+        anchors.bottomMargin: Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {
@@ -53,10 +53,10 @@ Rectangle {
 
             GridLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 columns: page.narrow ? 2 : 3
-                columnSpacing: 12
-                rowSpacing: 8
+                columnSpacing: Theme.space.md
+                rowSpacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
@@ -106,7 +106,7 @@ Rectangle {
             Label {
                 objectName: "noLicenseMatch"
                 Layout.fillWidth: true
-                Layout.topMargin: 20
+                Layout.topMargin: Theme.space.xl
                 visible: page.status === "ready" && page.entries.length === 0
                 horizontalAlignment: Text.AlignHCenter
                 text: qsTr("No licenses match that search.")
@@ -156,7 +156,7 @@ Rectangle {
             GridLayout {
                 Layout.fillWidth: true
                 columns: page.narrow ? 2 : 3
-                columnSpacing: 8
+                columnSpacing: Theme.space.sm
                 rowSpacing: 0
 
                 ShellButton {
@@ -206,7 +206,7 @@ Rectangle {
                 objectName: "noticeText"
                 Layout.fillWidth: true
                 Layout.leftMargin: 28
-                Layout.bottomMargin: 12
+                Layout.bottomMargin: Theme.space.md
                 visible: notice.open
                 readOnly: true
                 selectByMouse: true

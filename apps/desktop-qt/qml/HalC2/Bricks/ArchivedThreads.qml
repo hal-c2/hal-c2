@@ -14,8 +14,8 @@ Rectangle {
 
     readonly property var model: Shell.state.archivedThreads ?? null
     readonly property var groups: model ? model.groups : []
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     function act(action, thread) {
         Shell.dispatch("archivedThreads." + action, { environmentId: thread.environmentId, threadId: thread.threadId });
@@ -35,7 +35,7 @@ Rectangle {
             x: 24
             y: 24
             width: Math.min(720, parent.width - 48)
-            spacing: 8
+            spacing: Theme.space.sm
 
             RowLayout {
                 Layout.fillWidth: true
@@ -61,9 +61,9 @@ Rectangle {
             ColumnLayout {
                 objectName: "placeholder"
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 visible: page.model !== null && page.model.title.length > 0
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Label {
                     objectName: "placeholderTitle"
@@ -123,11 +123,11 @@ Rectangle {
 
                                 objectName: "thread_" + modelData.key
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: Theme.space.sm
 
                                 ColumnLayout {
                                     Layout.fillWidth: true
-                                    spacing: 2
+                                    spacing: Theme.space.xxs
 
                                     Label {
                                         Layout.fillWidth: true

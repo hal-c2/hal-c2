@@ -11,22 +11,22 @@ ColumnLayout {
     id: updates
 
     readonly property var update: Shell.state.desktopUpdate ?? null
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warning", "#fbbf24")
 
     objectName: "desktopUpdateSettings"
     Layout.fillWidth: true
     visible: update !== null && update.shown === true
-    spacing: 8
+    spacing: Theme.space.sm
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: qsTr("Version %1").arg(updates.update?.currentVersion ?? "")

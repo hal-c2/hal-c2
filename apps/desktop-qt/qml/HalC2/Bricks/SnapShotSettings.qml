@@ -16,7 +16,7 @@ SettingsPage {
     readonly property var settings: Shell.state.snapShot ?? null
     readonly property var shortcut: settings?.shortcut ?? null
     readonly property var wizard: settings?.wizard ?? null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property bool mac: Qt.platform.os === "osx"
 
     objectName: "snapShotSettings"
@@ -32,15 +32,15 @@ SettingsPage {
         default property alias control: slot.data
 
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: row.heading
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
@@ -49,7 +49,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: row.description
-                color: Theme.palette.color("textMuted", "#a1a1aa")
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
                 font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
@@ -59,7 +59,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: row.status
-                color: Theme.palette.color("textMuted", "#a1a1aa")
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
                 font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
@@ -198,13 +198,13 @@ SettingsPage {
 
             Label {
                 text: snap.wizard?.title ?? ""
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
 
             RowLayout {
-                spacing: 12
+                spacing: Theme.space.md
 
                 Repeater {
                     model: [{ step: "access", label: qsTr("Access") }, { step: "shortcut", label: qsTr("Shortcut") }]
@@ -212,7 +212,7 @@ SettingsPage {
                     delegate: Label {
                         required property var modelData
                         text: modelData.label
-                        color: snap.wizard?.step === modelData.step ? Theme.palette.color("text", "#e4e4e7") : snap.muted
+                        color: snap.wizard?.step === modelData.step ? Theme.palette.color("ink", "#e4e4e7") : snap.muted
                         font.pixelSize: Theme.type.meta.size
                         font.weight: snap.wizard?.step === modelData.step ? Font.DemiBold : Font.Normal
                     }
@@ -222,7 +222,7 @@ SettingsPage {
             Label {
                 objectName: "heading"
                 text: snap.wizard?.heading ?? ""
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
@@ -244,15 +244,15 @@ SettingsPage {
 
                     objectName: "permission:" + modelData.id
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 2
+                        spacing: Theme.space.xxs
 
                         Label {
                             text: modelData.title
-                            color: Theme.palette.color("text", "#e4e4e7")
+                            color: Theme.palette.color("ink", "#e4e4e7")
                             font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                         }
@@ -334,7 +334,7 @@ SettingsPage {
                     delegate: ColumnLayout {
                         required property var modelData
                         Layout.fillWidth: true
-                        spacing: 2
+                        spacing: Theme.space.xxs
 
                         ShellButton {
                             objectName: "advanced-" + modelData.action
@@ -357,7 +357,7 @@ SettingsPage {
 
             RowLayout {
                 visible: snap.wizard?.step === "shortcut"
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Recorder {}
 
@@ -390,7 +390,7 @@ SettingsPage {
 
                 Layout.fillWidth: true
                 visible: snap.wizard?.step === "shortcut" && config !== null
-                spacing: 8
+                spacing: Theme.space.sm
                 onFailedChanged: if (failed) advanced = true
 
                 Label {
@@ -463,7 +463,7 @@ SettingsPage {
 
                 RowLayout {
                     visible: configPanel.review?.changed ?? false
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellButton {
                         objectName: "configSave"
@@ -492,7 +492,7 @@ SettingsPage {
                 ColumnLayout {
                     Layout.fillWidth: true
                     visible: configPanel.advanced
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Label {
                         objectName: "configDetails"
@@ -526,7 +526,7 @@ SettingsPage {
                     }
 
                     RowLayout {
-                        spacing: 8
+                        spacing: Theme.space.sm
 
                         ShellButton {
                             objectName: "configChooseFile"
@@ -565,7 +565,7 @@ SettingsPage {
                     }
 
                     RowLayout {
-                        spacing: 8
+                        spacing: Theme.space.sm
 
                         ShellButton {
                             objectName: "configCopy"
@@ -596,7 +596,7 @@ SettingsPage {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     objectName: "back"

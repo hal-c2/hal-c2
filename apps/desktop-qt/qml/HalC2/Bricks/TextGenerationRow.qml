@@ -16,18 +16,18 @@ RowLayout {
 
     objectName: "settingsRow:" + spec.id
     Layout.fillWidth: true
-    spacing: 12
+    spacing: Theme.space.md
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 2
+        spacing: Theme.space.xxs
 
         RowLayout {
-            spacing: 4
+            spacing: Theme.space.xs
 
             Label {
                 text: row.spec.title
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
@@ -48,7 +48,7 @@ RowLayout {
         Label {
             Layout.fillWidth: true
             text: row.spec.description
-            color: Theme.palette.color("textMuted", "#a1a1aa")
+            color: Theme.palette.color("inkTertiary", "#a1a1aa")
             font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
@@ -58,7 +58,7 @@ RowLayout {
         objectName: "unavailable"
         visible: row.unavailable.length > 0
         text: row.unavailable
-        color: Theme.palette.color("textMuted", "#a1a1aa")
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
         font.pixelSize: Theme.type.meta.size
     }
 

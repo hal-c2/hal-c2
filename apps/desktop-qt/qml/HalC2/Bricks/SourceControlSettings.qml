@@ -17,7 +17,7 @@ SettingsPage {
     readonly property var discovery: settings?.discovery ?? null
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: settings?.projectScope ?? false
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
     readonly property var mergeMethods: ["last", "merge", "squash", "rebase"]
     readonly property var writingModes: ["repo_conventions", "conventional_commits", "custom"]
@@ -41,15 +41,11 @@ SettingsPage {
     title: qsTr("Source Control")
 
     // Inline components cannot see `page`; the ones that need it are handed it.
-    component Heading: Label {
-        color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Theme.type.meta.size
-        font.weight: Font.DemiBold
-    }
+    component Heading: SettingsHeading {}
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: Theme.palette.color("textMuted", "#a1a1aa")
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
         font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
@@ -69,11 +65,11 @@ SettingsPage {
         default property alias control: controls.data
 
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
                 spacing: Theme.space.sm
@@ -109,7 +105,7 @@ SettingsPage {
 
         RowLayout {
             id: controls
-            spacing: 8
+            spacing: Theme.space.sm
         }
     }
 
@@ -129,7 +125,7 @@ SettingsPage {
         // The name and summary share a left column; the switch centres on both lines.
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -137,7 +133,7 @@ SettingsPage {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Rectangle {
                         implicitWidth: 8
@@ -177,7 +173,7 @@ SettingsPage {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     // Alone it takes the row and wraps; with an account it is one
                     // word ("Authenticated") and the account sits beside it.
@@ -324,13 +320,15 @@ SettingsPage {
     ColumnLayout {
         objectName: "sourceControlDiscovery"
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.topMargin: Theme.space.lg
 
             Heading {
                 Layout.fillWidth: true
+                Layout.topMargin: 0
                 text: {
                     const status = page.discovery?.status;
                     const found = (page.discovery?.versionControl ?? []).length + (page.discovery?.providers ?? []).length;
@@ -382,7 +380,7 @@ SettingsPage {
         ColumnLayout {
             objectName: "discoveryNotice"
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
             visible: (page.discovery?.title ?? "").length > 0
 
             Label {

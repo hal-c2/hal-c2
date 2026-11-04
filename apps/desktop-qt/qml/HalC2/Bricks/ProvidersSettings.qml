@@ -45,8 +45,8 @@ Rectangle {
         }
     }
     // The session may only view this environment: nothing on it can be changed.
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
     readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
 
@@ -130,7 +130,7 @@ Rectangle {
 
         objectName: "field_" + field.key
         Layout.fillWidth: true
-        spacing: 2
+        spacing: Theme.space.xxs
 
         Label {
             text: configField.field.label
@@ -234,7 +234,7 @@ Rectangle {
             x: 12
             y: 12
             width: parent.width - 24
-            spacing: 8
+            spacing: Theme.space.sm
 
             RowLayout {
                 Layout.fillWidth: true
@@ -349,7 +349,7 @@ Rectangle {
                 ColumnLayout {
                     objectName: "registryEmpty"
                     visible: !registryPane.registry.manual && registryPane.registry.agents !== null && registryPane.registry.agents.length === 0
-                    spacing: 2
+                    spacing: Theme.space.xxs
 
                     Label {
                         text: qsTr("No compatible agents found")
@@ -371,7 +371,7 @@ Rectangle {
                         required property var modelData
                         objectName: "registryAgent_" + modelData.id
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.space.sm
 
                         Image {
                             Layout.preferredWidth: 20
@@ -494,7 +494,7 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: wizardCard.wizard.step === 2
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Note {
                     visible: wizardCard.wizard.fields.length === 0
@@ -514,7 +514,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     subtle: true
@@ -578,7 +578,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ProviderIcon {
                     driverKind: card.provider.driver
@@ -711,7 +711,7 @@ Rectangle {
                         // for a window that is not laid out yet.
                         readonly property real contentRoom: Math.max(24, (windowHeight - 16) / scale - topPadding - bottomPadding)
                         width: windowWidth > 0 ? Math.max(24, Math.min(320, (windowWidth - 16) / scale)) : 320
-                        padding: 12
+                        padding: Theme.space.md
                         // Focus is what lets Escape close it here instead of leaving
                         // Settings. Pressing the icon again closes it through the
                         // checkable button's onToggled, not a click handler.
@@ -785,7 +785,7 @@ Rectangle {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 8
+                                    spacing: Theme.space.sm
 
                                     ShellButton {
                                         id: updateButton
@@ -894,7 +894,7 @@ Rectangle {
                 readonly property bool busy: !!(runtime && runtime.busy)
                 Layout.fillWidth: true
                 visible: runtime !== null
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Note {
                     objectName: "runtimeStatus"
@@ -962,7 +962,7 @@ Rectangle {
                 objectName: "urlAuth"
                 Layout.fillWidth: true
                 visible: !!card.provider.urlAuth
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Note {
                     visible: text.length > 0
@@ -988,7 +988,7 @@ Rectangle {
                 objectName: "account"
                 Layout.fillWidth: true
                 visible: card.account !== null
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Note {
                     text: card.account ? card.account.description : ""
@@ -1007,7 +1007,7 @@ Rectangle {
                 }
 
                 RowLayout {
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellComboBox {
                         id: method
@@ -1089,7 +1089,7 @@ Rectangle {
                     property var values: ({})
                     Layout.fillWidth: true
                     visible: fields.length > 0
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     Repeater {
                         model: credentials.fields
@@ -1099,7 +1099,7 @@ Rectangle {
 
                             required property var modelData
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: Theme.space.xxs
 
                             Label {
                                 text: credentialField.modelData.label || credentialField.modelData.name
@@ -1136,7 +1136,7 @@ Rectangle {
                     objectName: "callback"
                     Layout.fillWidth: true
                     visible: !!(card.account && card.account.acceptsCallback)
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     Note {
                         text: qsTr("If the final localhost page does not load, paste its full URL here.")
@@ -1175,7 +1175,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.topMargin: Theme.space.sm
                 visible: card.configuring && card.provider.editable
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Label {
                     text: qsTr("Name")
@@ -1218,7 +1218,7 @@ Rectangle {
                         required property var modelData
                         objectName: "secret_" + secretRow.modelData.name
                         Layout.fillWidth: true
-                        spacing: 2
+                        spacing: Theme.space.xxs
 
                         Label {
                             text: secretRow.modelData.label
@@ -1346,7 +1346,7 @@ Rectangle {
                 }
 
                 RowLayout {
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellButton {
                         objectName: "delete"
@@ -1384,7 +1384,7 @@ Rectangle {
             x: 24
             y: 24
             width: Math.min(720, parent.width - 48)
-            spacing: 8
+            spacing: Theme.space.sm
 
             RowLayout {
                 Layout.fillWidth: true
@@ -1444,9 +1444,9 @@ Rectangle {
             ColumnLayout {
                 objectName: "placeholder"
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 visible: page.model !== null && page.model.title.length > 0
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Label {
                     Layout.fillWidth: true
@@ -1485,16 +1485,16 @@ Rectangle {
                 objectName: "healthInterval"
                 readonly property var health: page.model ? (page.model.health ?? null) : null
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 visible: health !== null
-                spacing: 12
+                spacing: Theme.space.md
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: Theme.space.xxs
 
                     RowLayout {
-                        spacing: 4
+                        spacing: Theme.space.xs
 
                         Label {
                             text: qsTr("Provider health check interval")
@@ -1548,7 +1548,7 @@ Rectangle {
                 objectName: "hubs"
                 readonly property var hubs: page.model ? (page.model.hubs ?? null) : null
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 visible: hubs !== null
                 spacing: Theme.space.sm
 
@@ -1585,11 +1585,11 @@ Rectangle {
                         required property var modelData
                         objectName: "hub_" + hubRow.modelData.id
                         Layout.fillWidth: true
-                        spacing: 12
+                        spacing: Theme.space.md
 
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: Theme.space.xxs
 
                             Label {
                                 objectName: "label"
@@ -1630,14 +1630,14 @@ Rectangle {
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
         width: Math.min(460, (parent?.width ?? 492) / scale - 32)
-        padding: 20
+        padding: Theme.space.xl
 
         Overlay.modal: ShellScrim {}
         background: ShellPopoverSurface {}
         header: Label {
             text: hubDialog.title
-            padding: 20
-            bottomPadding: 4
+            padding: Theme.space.xl
+            bottomPadding: Theme.space.xs
             font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: page.foreground
@@ -1665,7 +1665,7 @@ Rectangle {
         })
 
         contentItem: ColumnLayout {
-            spacing: 8
+            spacing: Theme.space.sm
 
             Note {
                 text: qsTr("Its accounts' limits appear in Usage next to this machine's. The management key is kept on the server and never shown again.")
@@ -1700,8 +1700,8 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 8
+                Layout.topMargin: Theme.space.xs
+                spacing: Theme.space.sm
 
                 Item { Layout.fillWidth: true }
 
@@ -1734,7 +1734,7 @@ Rectangle {
         onAccepted: Shell.dispatch("providerSettings.removeHub", { id: hubId })
 
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.space.md
 
             Note {
                 text: qsTr("The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.")
@@ -1742,7 +1742,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Item { Layout.fillWidth: true }
 

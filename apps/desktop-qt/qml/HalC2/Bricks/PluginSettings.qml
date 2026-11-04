@@ -20,7 +20,7 @@ SettingsPage {
     }
     readonly property var fields: entry?.settingsSchema ?? []
     readonly property string ownPage: entry?.settingsPageUrl ?? ""
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // The values the fields show, saved together.
     property var values: ({})
@@ -116,7 +116,7 @@ SettingsPage {
     RowLayout {
         Layout.fillWidth: true
         visible: page.entry !== null && (page.entry.status === "failed" || page.entry.status === "error")
-        spacing: 12
+        spacing: Theme.space.md
 
         Label {
             objectName: "pluginSettingsFailure"
@@ -273,7 +273,7 @@ SettingsPage {
     RowLayout {
         Layout.fillWidth: true
         visible: page.ownPage.length === 0 && page.fields.length > 0
-        spacing: 8
+        spacing: Theme.space.sm
 
         Item {
             Layout.fillWidth: true

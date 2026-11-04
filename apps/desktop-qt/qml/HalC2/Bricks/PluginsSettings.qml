@@ -19,7 +19,7 @@ SettingsPage {
     readonly property var failed: settings?.failed ?? []
     // Every MC, with plugins or not: one with none yet can still look in its folder.
     readonly property var mcEnvironments: Shell.state.mcPlugins?.environments ?? []
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // Keeps the plugins loaded while only this page shows.
     readonly property int loadedRevision: PluginRegistry.revision
@@ -36,16 +36,16 @@ SettingsPage {
 
         objectName: "plugin:" + pluginId
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 objectName: "pluginName"
                 text: row.pluginId
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
@@ -54,7 +54,7 @@ SettingsPage {
                 objectName: "pluginDetail"
                 Layout.fillWidth: true
                 text: row.detail
-                color: Theme.palette.color("textMuted", "#a1a1aa")
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
                 elide: Text.ElideMiddle
                 font.pixelSize: Theme.type.meta.size
             }
@@ -91,7 +91,7 @@ SettingsPage {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.space.md
 
             Image {
                 Layout.preferredWidth: 32
@@ -106,7 +106,7 @@ SettingsPage {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     objectName: "mcPluginName"
@@ -203,7 +203,7 @@ SettingsPage {
         Flow {
             Layout.fillWidth: true
             visible: card.plugin.screenshotUrls.length > 0
-            spacing: 8
+            spacing: Theme.space.sm
 
             Repeater {
                 model: card.plugin.screenshotUrls
@@ -234,8 +234,8 @@ SettingsPage {
 
             objectName: "mcPlugins:" + modelData.id
             Layout.fillWidth: true
-            Layout.bottomMargin: 8
-            spacing: 12
+            Layout.bottomMargin: Theme.space.sm
+            spacing: Theme.space.md
 
             RowLayout {
                 Layout.fillWidth: true
@@ -311,7 +311,7 @@ SettingsPage {
 
     Label {
         visible: page.failed.length > 0
-        Layout.topMargin: 8
+        Layout.topMargin: Theme.space.sm
         text: qsTr("Failed")
         color: page.foreground
         font.pixelSize: Theme.type.body.size
@@ -335,8 +335,8 @@ SettingsPage {
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.topMargin: 8
-        spacing: 8
+        Layout.topMargin: Theme.space.sm
+        spacing: Theme.space.sm
 
         ShellTextField {
             id: address

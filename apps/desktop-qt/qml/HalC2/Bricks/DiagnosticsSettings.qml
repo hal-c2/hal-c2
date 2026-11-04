@@ -15,7 +15,7 @@ SettingsPage {
     readonly property var processes: settings?.processes ?? ({})
     readonly property var history: settings?.history ?? ({})
     readonly property var traces: settings?.traces ?? ({})
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
     objectName: "diagnosticsSettings"
@@ -26,7 +26,7 @@ SettingsPage {
         default property alias trailing: extra.data
 
         Layout.fillWidth: true
-        Layout.topMargin: 12
+        Layout.topMargin: Theme.space.md
         spacing: Theme.space.sm
 
         RowLayout {
@@ -35,7 +35,7 @@ SettingsPage {
             Label {
                 id: label
                 Layout.fillWidth: true
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
@@ -60,7 +60,7 @@ SettingsPage {
         property var figures: []
 
         Layout.fillWidth: true
-        spacing: 24
+        spacing: Theme.space.xl
 
         Repeater {
             model: stats.figures
@@ -69,18 +69,18 @@ SettingsPage {
                 id: figure
 
                 required property var modelData
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     text: figure.modelData[0]
-                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    color: Theme.palette.color("inkTertiary", "#a1a1aa")
                     font.pixelSize: Theme.type.caption.size
                 }
 
                 Label {
                     objectName: "stat:" + figure.modelData[0]
                     text: figure.modelData[1]
-                    color: Theme.palette.color("text", "#e4e4e7")
+                    color: Theme.palette.color("ink", "#e4e4e7")
                     font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
@@ -107,7 +107,7 @@ SettingsPage {
         property bool header: false
 
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         Repeater {
             model: row.cells
@@ -120,7 +120,7 @@ SettingsPage {
                 Layout.preferredWidth: index === 0 ? -1 : 80
                 text: modelData
                 elide: Text.ElideRight
-                color: row.header ? Theme.palette.color("textMuted", "#a1a1aa") : Theme.palette.color("text", "#e4e4e7")
+                color: row.header ? Theme.palette.color("inkTertiary", "#a1a1aa") : Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.meta.size
             }
         }
@@ -164,11 +164,11 @@ SettingsPage {
 
             objectName: "processGroup:" + modelData.id
             Layout.fillWidth: true
-            spacing: 4
+            spacing: Theme.space.xs
 
             RowLayout {
                 visible: group.modelData.label.length > 0
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     objectName: "fold"
@@ -197,7 +197,7 @@ SettingsPage {
 
                     objectName: "process:" + modelData.pid
                     Layout.fillWidth: true
-                    spacing: 12
+                    spacing: Theme.space.md
 
                     Label {
                         Layout.fillWidth: true

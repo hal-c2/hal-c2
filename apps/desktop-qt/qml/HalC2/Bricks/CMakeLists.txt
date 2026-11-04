@@ -68,6 +68,7 @@ set(hal_c2_bricks_qml_files
     SettingsHost.qml
     SettingsPage.qml
     SettingsRow.qml
+    SettingsHeading.qml
     BackgroundActivityRow.qml
     TextGenerationRow.qml
     ProjectActionsSettings.qml

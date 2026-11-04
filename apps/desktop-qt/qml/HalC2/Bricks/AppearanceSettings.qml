@@ -16,7 +16,7 @@ SettingsPage {
     title: qsTr("Appearance")
     rows: Rows.appearance
 
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     // The collection variants picked to remove together.
     property var selected: []
     readonly property var modes: [
@@ -50,14 +50,14 @@ SettingsPage {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 12
-            spacing: 8
+            Layout.topMargin: Theme.space.md
+            spacing: Theme.space.sm
 
             Label {
                 id: label
 
                 Layout.fillWidth: true
-                color: Theme.palette.color("text", "#e4e4e7")
+                color: Theme.palette.color("ink", "#e4e4e7")
                 font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
@@ -65,7 +65,7 @@ SettingsPage {
             RowLayout {
                 id: actions
 
-                spacing: 8
+                spacing: Theme.space.sm
             }
         }
 
@@ -86,8 +86,8 @@ SettingsPage {
 
         Layout.fillWidth: true
         implicitHeight: 32
-        leftPadding: 8
-        rightPadding: 8
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
         hoverEnabled: true
         font.pixelSize: Theme.type.body.size
         font.weight: Font.Medium
@@ -100,10 +100,10 @@ SettingsPage {
         }
 
         contentItem: RowLayout {
-            spacing: 8
+            spacing: Theme.space.sm
 
             Row {
-                spacing: 3
+                spacing: Theme.space.xxs
 
                 Repeater {
                     model: choice.swatch
@@ -160,8 +160,8 @@ SettingsPage {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            anchors.margins: 12
-            spacing: 4
+            anchors.margins: Theme.space.md
+            spacing: Theme.space.xs
 
             Label {
                 objectName: "shellThemeTitle"
@@ -212,7 +212,7 @@ SettingsPage {
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Repeater {
             model: page.modes
@@ -405,7 +405,7 @@ SettingsPage {
             }
 
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.space.md
 
             Label {
                 Layout.fillWidth: true

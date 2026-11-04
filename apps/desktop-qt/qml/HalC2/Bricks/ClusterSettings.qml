@@ -22,14 +22,14 @@ Rectangle {
     readonly property bool canChange: !busy && !needsAdmin
     // Connected members that run another version than this machine.
     readonly property var behind: clustered ? status.members.filter(m => m.connected && m.version && m.version !== status.version) : []
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     color: Theme.palette.color("canvas", "#0b0b0d")
 
     component Heading: Label {
         Layout.fillWidth: true
-        Layout.topMargin: 12
+        Layout.topMargin: Theme.space.md
         color: page.foreground
         font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
@@ -50,7 +50,7 @@ Rectangle {
         property string memberId: ""
 
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             Layout.fillWidth: true
@@ -90,7 +90,7 @@ Rectangle {
             x: 24
             y: 24
             width: Math.min(640, parent.width - 48)
-            spacing: 8
+            spacing: Theme.space.sm
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -104,7 +104,7 @@ Rectangle {
             Label {
                 objectName: "clusterNotice"
                 Layout.fillWidth: true
-                Layout.topMargin: 4
+                Layout.topMargin: Theme.space.xs
                 visible: page.notice !== null
                 text: page.notice ? page.notice.text : ""
                 color: page.notice && page.notice.kind === "error" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#22c55e")
@@ -180,7 +180,7 @@ Rectangle {
             }
 
             RowLayout {
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     objectName: "clusterInvite"
@@ -203,7 +203,7 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
                 visible: page.invite !== null
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     objectName: "clusterInviteLink"
@@ -225,7 +225,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     id: joinLink

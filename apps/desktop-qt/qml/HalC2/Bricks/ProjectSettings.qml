@@ -15,7 +15,7 @@ SettingsPage {
     readonly property bool ready: settings?.status === "ready"
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: (Shell.state.settingsScope?.kind ?? "all") === "project"
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
 
     function send(name, payload) {
@@ -26,15 +26,11 @@ SettingsPage {
     title: qsTr("Project")
 
     // Inline components cannot see `page`; the ones that need it are handed it.
-    component Heading: Label {
-        color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Theme.type.meta.size
-        font.weight: Font.DemiBold
-    }
+    component Heading: SettingsHeading {}
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: Theme.palette.color("textMuted", "#a1a1aa")
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
         font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
@@ -52,11 +48,11 @@ SettingsPage {
         default property alias control: controls.data
 
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
                 spacing: Theme.space.sm
@@ -93,7 +89,7 @@ SettingsPage {
 
         RowLayout {
             id: controls
-            spacing: 8
+            spacing: Theme.space.sm
         }
     }
 
@@ -134,7 +130,7 @@ SettingsPage {
         objectName: "identity"
         visible: page.ready
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         Heading { text: qsTr("Project") }
 
@@ -223,7 +219,7 @@ SettingsPage {
                     required property var modelData
                     objectName: "checkout:" + modelData.key
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Label {
                         text: checkout.modelData.environment
@@ -307,7 +303,7 @@ SettingsPage {
 
         objectName: "modelSources"
         Layout.fillWidth: true
-        spacing: 4
+        spacing: Theme.space.xs
 
         ShellButton {
             objectName: "inspect"
@@ -338,7 +334,7 @@ SettingsPage {
                 required property var modelData
 
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Caption {
                     text: qsTr("%1 overrides it with %2.").arg(overriding.modelData.title).arg(overriding.modelData.value)

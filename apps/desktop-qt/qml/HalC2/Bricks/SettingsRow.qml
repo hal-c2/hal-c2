@@ -41,7 +41,7 @@ ColumnLayout {
         return spec.needs && !Settings.supports(spec.needs) ? spec.unsupported : "";
     }
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     // Project grouping remembers the mode it was on for turning it back on.
     property string lastGrouping: ""
 
@@ -55,14 +55,14 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Label {
                     text: row.spec.title
@@ -84,9 +84,9 @@ ColumnLayout {
                     visible: !row.atDefault
                     subtle: true
                     iconName: "undo-2"
-                    iconSize: 12
-                    implicitWidth: 20
-                    implicitHeight: 20
+                    iconSize: Theme.icon.sm
+                    implicitWidth: Theme.control.sm
+                    implicitHeight: Theme.control.sm
                     Accessible.name: qsTr("Reset %1 to default").arg(row.spec.title.toLowerCase())
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Reset to default")
@@ -140,13 +140,13 @@ ColumnLayout {
     // Inactive settling's days, shown while it is on.
     RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: 12
+        Layout.leftMargin: Theme.space.md
         visible: row.spec.kind === "settleDays" && Rows.settleOn(row.value)
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: row.spec.daysTitle ?? ""

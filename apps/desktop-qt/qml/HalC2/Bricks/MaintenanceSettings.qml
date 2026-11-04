@@ -15,7 +15,7 @@ SettingsPage {
 
     readonly property var model: Shell.state.maintenance ?? null
     readonly property var machines: model !== null ? model.machines : []
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color success: Theme.palette.color("success", "#22c55e")
     readonly property color error: Theme.palette.color("error", "#f87171")
 
@@ -27,8 +27,8 @@ SettingsPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        Layout.topMargin: 12
-        spacing: 12
+        Layout.topMargin: Theme.space.md
+        spacing: Theme.space.md
 
         Label {
             objectName: "maintenanceAppVersion"
@@ -67,8 +67,8 @@ SettingsPage {
                 id: confirmColumn
 
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
+                anchors.margins: Theme.space.md
+                spacing: Theme.space.sm
 
                 Label {
                     objectName: "maintenanceConfirmText"
@@ -80,7 +80,7 @@ SettingsPage {
                 }
 
                 RowLayout {
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellButton {
                         objectName: "maintenanceConfirmUpdate"
@@ -130,7 +130,7 @@ SettingsPage {
 
                 objectName: "maintenanceMachine-" + environmentId
                 Layout.fillWidth: true
-                Layout.topMargin: 8
+                Layout.topMargin: Theme.space.sm
                 spacing: Theme.space.sm
 
                 Label {
@@ -194,7 +194,7 @@ SettingsPage {
 
                 Flow {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
                     visible: machine.may
 
                     ShellButton {
@@ -249,8 +249,8 @@ SettingsPage {
 
                         objectName: "maintenanceProvider-" + key
                         Layout.fillWidth: true
-                        Layout.leftMargin: 12
-                        spacing: 4
+                        Layout.leftMargin: Theme.space.md
+                        spacing: Theme.space.xs
 
                         Label {
                             Layout.fillWidth: true

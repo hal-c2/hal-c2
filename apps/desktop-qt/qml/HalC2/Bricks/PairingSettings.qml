@@ -12,19 +12,19 @@ SettingsPage {
     id: page
 
     readonly property var pairing: Shell.state.pairing ?? null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     objectName: "pairingSettings"
     title: qsTr("Pairing")
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             objectName: "environmentName"
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             text: page.pairing !== null && page.pairing.label ? page.pairing.label : qsTr("This environment")
             color: page.foreground
             font.pixelSize: Theme.type.title.size
@@ -58,7 +58,7 @@ SettingsPage {
 
         ShellButton {
             objectName: "environmentPairAnother"
-            Layout.topMargin: 8
+            Layout.topMargin: Theme.space.sm
             text: qsTr("Pair with another environment")
             onClicked: Shell.dispatch("pairing.add")
         }

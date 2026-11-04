@@ -14,8 +14,8 @@ ColumnLayout {
     readonly property var model: Shell.state.backgroundActivity ?? null
     readonly property var profiles: model?.profiles ?? []
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     objectName: "settingsRow:" + spec.id
     Layout.fillWidth: true
@@ -23,11 +23,11 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: row.spec.title
@@ -61,9 +61,9 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: 12
+        Layout.leftMargin: Theme.space.md
         visible: row.model?.advanced ?? false
-        spacing: 12
+        spacing: Theme.space.md
 
         Label {
             Layout.fillWidth: true
@@ -87,9 +87,9 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: 12
+        Layout.leftMargin: Theme.space.md
         visible: row.model?.advanced ?? false
-        spacing: 12
+        spacing: Theme.space.md
 
         Label {
             Layout.fillWidth: true

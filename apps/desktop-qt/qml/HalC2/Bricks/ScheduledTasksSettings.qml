@@ -11,7 +11,7 @@ SettingsPage {
     id: tasks
 
     readonly property var settings: Shell.state.scheduledTasks ?? null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
     objectName: "scheduledTasksSettings"
@@ -26,20 +26,20 @@ SettingsPage {
 
         objectName: "scheduledTask:" + modelData.id
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: task.modelData.title
-                    color: Theme.palette.color("text", "#e4e4e7")
+                    color: Theme.palette.color("ink", "#e4e4e7")
                     font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                     elide: Text.ElideRight
@@ -49,12 +49,12 @@ SettingsPage {
                     objectName: "lastRun"
                     visible: text.length > 0
                     text: task.modelData.lastRun ?? ""
-                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
+                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("inkTertiary", "#a1a1aa")
                     font.pixelSize: Theme.type.caption.size
                     leftPadding: Theme.space.sm
                     rightPadding: Theme.space.sm
-                    topPadding: 1
-                    bottomPadding: 1
+                    topPadding: Theme.space.xxs
+                    bottomPadding: Theme.space.xxs
                     background: Rectangle {
                         radius: Theme.radiusSm
                         color: "transparent"
@@ -67,7 +67,7 @@ SettingsPage {
                 objectName: "promptPreview"
                 Layout.fillWidth: true
                 text: task.modelData.prompt
-                color: Theme.palette.color("textMuted", "#a1a1aa")
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
                 font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
@@ -79,7 +79,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: task.modelData.schedule + " · " + task.modelData.when
                 wrapMode: Text.Wrap
-                color: Theme.palette.color("textMuted", "#a1a1aa")
+                color: Theme.palette.color("inkTertiary", "#a1a1aa")
                 font.pixelSize: Theme.type.meta.size
             }
 
@@ -174,11 +174,11 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: environment.modelData.status !== "ready" || environment.modelData.linkMissing
                          || environment.modelData.tasks.length === 0
-                spacing: 12
+                spacing: Theme.space.md
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: Theme.space.xxs
 
                     Label {
                         text: {

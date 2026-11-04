@@ -15,8 +15,8 @@ Rectangle {
     readonly property var rows: query.length === 0 ? Keybindings.bindings : Keybindings.bindings.filter(row => row.search.includes(query))
     property bool adding: false
     readonly property int count: rows.length + (adding ? 1 : 0)
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
 
     function conflictText(labels) {
@@ -61,13 +61,13 @@ Rectangle {
 
         Label {
             anchors.fill: parent
-            anchors.leftMargin: 8
-            anchors.rightMargin: 8
+            anchors.leftMargin: Theme.space.sm
+            anchors.rightMargin: Theme.space.sm
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             font.family: "monospace"
             font.pixelSize: Theme.type.meta.size
-            color: recorder.recording || recorder.key.length === 0 ? Theme.palette.color("textMuted", "#a1a1aa") : Theme.palette.color("text", "#e4e4e7")
+            color: recorder.recording || recorder.key.length === 0 ? Theme.palette.color("inkTertiary", "#a1a1aa") : Theme.palette.color("ink", "#e4e4e7")
             text: recorder.recording ? qsTr("Press shortcut") : recorder.key.length > 0 ? recorder.label : qsTr("Unassigned")
         }
 
@@ -112,7 +112,7 @@ Rectangle {
         readonly property var unknown: problem.length === 0 ? Keybindings.unknownVariables(input.text) : []
         signal accepted
 
-        spacing: 2
+        spacing: Theme.space.xxs
 
         ShellTextField {
             id: input
@@ -148,13 +148,13 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 24
-        spacing: 8
+        anchors.margins: Theme.space.xl
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
             Layout.maximumWidth: 760
-            spacing: 8
+            spacing: Theme.space.sm
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -246,7 +246,7 @@ Rectangle {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellComboBox {
                         id: command
@@ -292,7 +292,7 @@ Rectangle {
                 }
 
                 RowLayout {
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellButton {
                         objectName: "save"
@@ -334,7 +334,7 @@ Rectangle {
             Layout.maximumWidth: 760
             Layout.fillHeight: true
             clip: true
-            spacing: 2
+            spacing: Theme.space.xxs
             boundsBehavior: Flickable.StopAtBounds
             model: page.rows
             reuseItems: false
@@ -365,11 +365,11 @@ Rectangle {
                     x: 8
                     y: 6
                     width: parent.width - 16
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.space.sm
 
                         ColumnLayout {
                             Layout.fillWidth: true

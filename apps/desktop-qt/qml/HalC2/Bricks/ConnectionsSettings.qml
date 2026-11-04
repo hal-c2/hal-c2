@@ -23,7 +23,7 @@ SettingsPage {
     readonly property var machine: machines.find(entry => entry.id === chosenMachine) ?? machines[0] ?? null
     readonly property var notice: model ? model.notice : null
     readonly property bool busy: model !== null && model.busy
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
     // What a pairing link may grant (packages/contracts auth scopes); the
     // standard ones start checked.
@@ -62,7 +62,7 @@ SettingsPage {
 
     component Heading: Label {
         Layout.fillWidth: true
-        Layout.topMargin: 12
+        Layout.topMargin: Theme.space.md
         color: page.foreground
         font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
@@ -86,7 +86,7 @@ SettingsPage {
         signal activated
 
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             Layout.fillWidth: true
@@ -116,12 +116,12 @@ SettingsPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             objectName: "connectionsNotice"
             Layout.fillWidth: true
-            Layout.topMargin: 4
+            Layout.topMargin: Theme.space.xs
             visible: page.notice !== null
             text: page.notice ? page.notice.text : ""
             color: page.notice && page.notice.kind === "error" ? page.danger : Theme.palette.color("success", "#22c55e")
@@ -157,12 +157,12 @@ SettingsPage {
 
         LoadBalancingGroup {
             Layout.fillWidth: true
-            Layout.topMargin: 4
+            Layout.topMargin: Theme.space.xs
         }
 
         ServerUpdatesList {
             Layout.fillWidth: true
-            Layout.topMargin: 4
+            Layout.topMargin: Theme.space.xs
         }
 
         Heading {
@@ -184,7 +184,7 @@ SettingsPage {
         ColumnLayout {
             Layout.fillWidth: true
             visible: page.access !== null
-            spacing: 8
+            spacing: Theme.space.sm
 
             Note {
                 text: page.machines.length > 1 ? qsTr("A pairing link lets one more device reach the machine you choose, and the rest of the cluster through it. It works once and expires after five minutes.") : qsTr("A pairing link lets one more device reach this machine. It works once and expires after five minutes.")
@@ -195,7 +195,7 @@ SettingsPage {
             RowLayout {
                 Layout.fillWidth: true
                 visible: page.machines.length > 1
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
@@ -225,7 +225,7 @@ SettingsPage {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Repeater {
                     model: page.scopeOptions
@@ -246,7 +246,7 @@ SettingsPage {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     objectName: "connectionsCreateLink"
@@ -267,7 +267,7 @@ SettingsPage {
             RowLayout {
                 Layout.fillWidth: true
                 visible: page.created !== null
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellTextField {
                     objectName: "connectionsCreatedLink"
@@ -302,8 +302,8 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: page.created !== null
                 columns: page.contentWidth < 480 ? 1 : 2
-                columnSpacing: 16
-                rowSpacing: 8
+                columnSpacing: Theme.space.lg
+                rowSpacing: Theme.space.sm
 
                 QrCode {
                     objectName: "connectionsQr"
@@ -318,7 +318,7 @@ SettingsPage {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignTop
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Note {
                         objectName: "connectionsQrHint"

@@ -17,7 +17,7 @@ SettingsPage {
     readonly property var slack: Shell.state.slackSettings ?? null
     readonly property bool slackIdle: (slack?.pending ?? "") === ""
     readonly property bool idle: (settings?.pending ?? "") === ""
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
     readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
@@ -30,7 +30,7 @@ SettingsPage {
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: Theme.palette.color("textMuted", "#a1a1aa")
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
         font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
@@ -58,15 +58,15 @@ SettingsPage {
 
         objectName: tool
         Layout.fillWidth: true
-        spacing: 4
+        spacing: Theme.space.xs
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.space.md
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     text: toggle.title
@@ -114,7 +114,7 @@ SettingsPage {
         }
 
         RowLayout {
-            spacing: 8
+            spacing: Theme.space.sm
             // From the state, not the buttons' `visible`: theirs follows
             // this row's, so a row once hidden would stay hidden.
             visible: (toggle.entry?.update ?? "") !== "" || (toggle.settings?.canCheck ?? false)
@@ -152,11 +152,8 @@ SettingsPage {
 
     SettingsScopeSentence {}
 
-    Label {
+    SettingsHeading {
         text: qsTr("Devices")
-        color: page.muted
-        font.pixelSize: Theme.type.meta.size
-        font.weight: Font.DemiBold
     }
 
     Toggle {
@@ -207,7 +204,7 @@ SettingsPage {
                 required property var modelData
                 objectName: "platform:" + platform.modelData.platform
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Label {
                     text: platform.modelData.platform
@@ -244,11 +241,11 @@ SettingsPage {
             required property var modelData
             objectName: "host:" + host.modelData.id
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.space.md
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     text: host.modelData.label
@@ -277,12 +274,8 @@ SettingsPage {
         }
     }
 
-    Label {
-        Layout.topMargin: 12
+    SettingsHeading {
         text: qsTr("Slack")
-        color: page.muted
-        font.pixelSize: Theme.type.meta.size
-        font.weight: Font.DemiBold
     }
 
     // The tokens are sent once and cleared: the MC keeps them, and the page
@@ -298,7 +291,7 @@ SettingsPage {
 
         objectName: "slack"
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Caption {
             text: qsTr("Connect this environment to one Slack workspace. Plugins you allow to read or write Slack use it to post, follow threads and answer their own slash commands.")
@@ -312,7 +305,7 @@ SettingsPage {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Theme.space.md
 
             Label {
                 objectName: "slackStatus"

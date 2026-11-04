@@ -14,31 +14,31 @@ ColumnLayout {
     readonly property var model: Shell.state.projectActions?.settings === true ? Shell.state.projectActions : null
     readonly property var actions: model?.scripts ?? []
     readonly property bool editable: (Shell.state.settingsScope?.editable ?? false) && (model?.available ?? false)
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
 
     objectName: "projectActions"
     Layout.fillWidth: true
     visible: model !== null
-    spacing: 8
+    spacing: Theme.space.sm
 
     component Note: Label {
         Layout.fillWidth: true
-        color: Theme.palette.color("textMuted", "#a1a1aa")
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
         font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
     component Tag: Label {
-        color: Theme.palette.color("textMuted", "#a1a1aa")
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
         font.pixelSize: Theme.type.caption.size
     }
 
     RowLayout {
         Layout.fillWidth: true
-        Layout.topMargin: 12
-        spacing: 8
+        Layout.topMargin: Theme.space.md
+        spacing: Theme.space.sm
 
         Label {
             Layout.fillWidth: true
@@ -86,11 +86,11 @@ ColumnLayout {
 
             objectName: "action:" + modelData.id
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 RowLayout {
                     spacing: Theme.space.sm
@@ -137,7 +137,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         ShellTextField {
             id: name
@@ -178,7 +178,7 @@ ColumnLayout {
             required property var modelData
 
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             Note {
                 text: qsTr("%1 (%2) is declared in hal-c2.json.").arg(found.modelData.name).arg(found.modelData.command)

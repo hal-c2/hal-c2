@@ -14,7 +14,7 @@ SettingsPage {
     readonly property var notifications: Shell.state.notifications ?? null
     readonly property bool supported: notifications !== null && notifications.supported === true
     readonly property var quietHours: notifications !== null ? (notifications.quietHours ?? null) : null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     // "22:00" for 1320 minutes after midnight, and back; -1 when it is not a time.
     function clock(minutes) {
@@ -33,12 +33,12 @@ SettingsPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             objectName: "notificationsUnsupported"
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: !page.supported
             text: qsTr("This build of HAL-C2 cannot receive notifications. Install a newer build to get them.")
             color: page.muted
@@ -48,9 +48,9 @@ SettingsPage {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             Label {
                 Layout.fillWidth: true
@@ -118,7 +118,7 @@ SettingsPage {
         // than one is installed.
         Label {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported && (page.notifications?.distributors ?? []).length > 0
             text: page.notifications?.choosing ? qsTr("Pick the app that delivers notifications")
                                                : qsTr("Delivered by")
@@ -140,13 +140,13 @@ SettingsPage {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     Layout.fillWidth: true
@@ -186,7 +186,7 @@ SettingsPage {
         // Quiet hours, kept by the MC: alerts wait for them to end.
         Label {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported
             text: qsTr("Quiet hours")
             color: page.foreground
@@ -208,7 +208,7 @@ SettingsPage {
 
         RowLayout {
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ShellTextField {
                 id: quietStart
@@ -232,7 +232,7 @@ SettingsPage {
 
         RowLayout {
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ShellSwitch {
                 id: allowApprovals
@@ -249,7 +249,7 @@ SettingsPage {
 
         RowLayout {
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ShellButton {
                 objectName: "notificationsQuietSave"
