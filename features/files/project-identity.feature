@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12810
 #   docs/user/project-settings.md (Project icons)
 #   apps/server-ex/lib/hal_c2/environment_themes.ex
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (project-favicon-assets)
@@ -102,6 +103,13 @@ Feature: Project and environment identity
       Given "shop" showed its icon before the app was closed
       When the app starts and "laptop" has not connected yet
       Then "shop" shows the same icon
+
+    # Upstream #12810: an icon the user assigned in project settings also shows on the phone.
+    @mobile @backlog
+    Scenario: A project's assigned icon shows in the mobile chat list
+      Given "shop" has the emoji icon "🍎" assigned in its project settings
+      When the user opens the chat list on the phone
+      Then "shop" shows the emoji in its row
 
     # Legacy: packages/client-runtime/src/projectFaviconCache.ts (resolve, revision)
     @desktop @mobile @backlog

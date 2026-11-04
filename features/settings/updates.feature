@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13575
 #   https://github.com/pingdotgg/t3code/pull/13302 (phone maintenance of environments and providers)
 #   docs/user/updating.md
 #   docs/internals/server-updates.md
@@ -293,6 +294,25 @@ Feature: Updating the server, the desktop app and providers
         | the app runs from a development or unpacked build | Automatic updates are only available in packaged production builds.      |
         | automatic updates were turned off for this run    | Automatic updates are disabled by the HAL_C2_DISABLE_AUTO_UPDATE setting. |
         | the app on Linux is not the AppImage build        | Automatic updates on Linux require running the AppImage build.            |
+
+    # Upstream #13575: a .deb updates itself through dpkg, so the Linux refusal below changes
+    # once the desktop carries it.
+    @desktop @backlog
+    Scenario Outline: A Linux build that cannot update itself says why
+      Given <situation>
+      When the user checks for updates
+      Then the user is told "Could not check for updates" with "<reason>"
+
+      Examples:
+        | situation                                                  | reason                                                                    |
+        | the app on Linux is neither the AppImage nor a .deb build  | Automatic updates on Linux require the AppImage or .deb build.            |
+
+    @desktop @backlog
+    Scenario: A .deb install downloads the new .deb and installs it with the admin password
+      Given the app on Linux was installed from a .deb package and a newer version exists
+      When the user installs the update
+      Then the app downloads the .deb and not the AppImage
+      And the system asks for the admin password to install it
 
     # Legacy: apps/desktop/src/window/DesktopApplicationMenu.ts (check for updates from the menu)
     @desktop

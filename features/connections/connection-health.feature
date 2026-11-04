@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13577
 #   apps/web/src/hooks/useEnvironmentDisconnectDelay.ts (20 seconds before a thread offers to disconnect), apps/web/src/components/ChatView.tsx (disconnect, reconnect)
 #   docs/internals/connection-runtime.md (one retry owner, HTTP authorization, freshness)
 #   docs/internals/environment-auth.md
@@ -489,6 +490,14 @@ Feature: Connection health
     When the client refreshes the relay's environments
     Then the environment is shown as blocked with the same advice
     And the client has not tried to connect to it
+
+  # Upstream #13577: a relay's health report describes the server behind the relay, so it must
+  # not disable a directly paired environment that shares its id. HAL-C2 Connect was removed.
+  @dropped @desktop @mobile
+  Scenario: A relay's protocol report does not disable a directly paired environment with the same id
+    Given HAL-C2 Connect lists an environment with the same id as a directly paired one, on another protocol
+    When the client refreshes the relay's environments
+    Then the directly paired environment stays connected
 
   # A different app version does not block the connection; only a server behind the client
   # warns. settings/updates.feature holds updating the server from that warning and keeping

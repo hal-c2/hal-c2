@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13559
+#   https://github.com/pingdotgg/t3code/pull/13558
 #   https://github.com/pingdotgg/t3code/pull/13064
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
@@ -163,6 +165,19 @@ Feature: Agents drive the preview browser
     Scenario: An agent takes a snapshot without the image
       When an agent takes a snapshot and asks for no image
       Then the tool returns the page's text without the screenshot
+
+    # Upstream #13558: a save-only snapshot returns the path, not the page metadata.
+    @mc @backlog
+    Scenario: A snapshot saved as a file without its image returns only the address and the file's path
+      Given an agent's current tab shows a page
+      When the agent takes a snapshot with no image and saves the screenshot
+      Then the tool returns only the page's address and the saved file's path
+
+    # Upstream #13559: a missing preview tab says what to do next, not just that it is missing.
+    @mc @backlog
+    Scenario: An agent that names a tab which is not open is told to open a preview first
+      When an agent takes a snapshot of a tab that is not open
+      Then the tool fails saying to open a preview with preview_open first
 
     @mc
     Scenario Outline: A large snapshot is cut down and says what was left out

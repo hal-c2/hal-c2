@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
@@ -158,6 +159,15 @@ Feature: Cursor
     Given Cursor is signed in through the system keychain
     When the user opens the limits view
     Then Cursor says usage needs a file-based login
+
+  # Upstream #10409: the keychain is read for Cursor usage only after the user opts in. Replaces
+  # the scenario above once the MC carries it.
+  @backlog
+  Scenario: Cursor usage through a keychain login waits until the user enables it
+    Given Cursor is signed in through the system keychain
+    When the user opens the limits view
+    Then Cursor does not read the keychain
+    And the user is offered to enable Cursor account usage
 
   Scenario: Cursor skills can be mentioned in the composer
     Given the project has the Cursor skill "deploy"

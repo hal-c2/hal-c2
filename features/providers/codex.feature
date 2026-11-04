@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13547
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/13481 (the 0.156 floor and its support ranges)
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -379,6 +380,20 @@ Feature: Codex
     Given the "hal-c2" server is attached to a Codex thread
     When the user sends a message in plan mode and then one in default mode
     Then Codex receives HAL-C2's orchestration instructions with the second message only
+
+  # Upstream #13547: a model catalog's own default-mode text replaced the instructions sent
+  # inside the collaboration mode, so HAL-C2's details went missing on newer models.
+  @mc @plugin-codex @backlog
+  Scenario: A model whose catalog replaces default mode still gets HAL-C2's runtime details
+    Given the "hal-c2" server is attached to a Codex thread on a model whose catalog replaces default mode
+    When the user sends a message in default mode
+    Then Codex is told the runtime, the model's name and slug, and the PR linking rules
+
+  @mc @plugin-codex @backlog
+  Scenario: Codex gets HAL-C2's runtime and tool instructions again after compacting the thread
+    Given the "hal-c2" server is attached to a Codex thread
+    When Codex compacts the thread's context
+    Then the next message carries HAL-C2's runtime and tool instructions again
 
   Scenario: Codex is not told about browser or device tools it does not have
     Given the "hal-c2" server is attached to a Codex thread without browser or device tools

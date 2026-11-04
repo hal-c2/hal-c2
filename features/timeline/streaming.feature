@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13554
+#   https://github.com/pingdotgg/t3code/pull/13551 (the sync status waits 400 ms before it shows)
 #   https://github.com/pingdotgg/t3code/pull/13060 (Run a shell command from a reply in the thread terminal)
 #   https://github.com/pingdotgg/t3code/pull/13504 (section titles held until their text)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
@@ -311,6 +313,30 @@ Feature: Streaming the agent's reply
     When that environment is reachable again
     Then the thread follows its MC again
     And the answer "Deploy when green." is still shown
+
+  # A running thread always has events to catch up on when it opens, so its sync is set for a few
+  # frames even when nothing is missing. Showing that for every open is the flicker to avoid.
+  @shared @backlog
+  Scenario: A catch-up that ends within 400 milliseconds shows no sync status
+    Given the user opens a thread that is running
+    When the thread catches up within 400 milliseconds
+    Then no sync status is shown
+    And the tasks row stays visible
+
+  @shared @backlog
+  Scenario: A sync status that has appeared stays for at least 400 milliseconds
+    Given the thread's sync status has just appeared
+    When the catch-up ends 100 milliseconds later
+    Then the sync status is still shown
+    And it goes away once 400 milliseconds have passed since it appeared
+
+  # Upstream #13554: the desktop keeps running threads subscribed in the background, so
+  # opening one is already caught up and shows no sync status.
+  @desktop @backlog
+  Scenario: A running thread the desktop has been following is already caught up when opened
+    Given the desktop has been following a running thread in the background
+    When the user opens that thread
+    Then no sync status is shown
 
   @desktop
   Scenario: Retrying follows the thread again once its MC sends it

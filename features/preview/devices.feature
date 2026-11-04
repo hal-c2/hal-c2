@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13574
+#   https://github.com/pingdotgg/t3code/pull/13534
 #   https://github.com/pingdotgg/t3code/pull/12787
 #   https://github.com/pingdotgg/t3code/pull/12813 (iPhone Duo postures, hinge and touch handoff; foldable Android)
 #   docs/user/devices.md (Device panel, agent access, remote streaming)
@@ -433,6 +435,25 @@ Feature: Device panel
       And the user is watching the "Pixel 9 Pro Fold" tab
       When the emulator is folded or opened
       Then the picture changes to the new size without the tab being reopened
+
+    # Upstream #13534: the fold controls drive the emulator's hinge and animate the 3D model.
+    @desktop @backlog
+    Scenario: The user folds and unfolds a foldable Android emulator from the device panel
+      Given the thread has the Android Emulator "Pixel 10 Pro Fold" open in 3D
+      When the user folds the device and then unfolds it
+      Then the 3D model animates through each hinge angle
+      And the picture follows the device's posture
+
+    @desktop @backlog
+    Scenario: Fold controls appear only for an emulator that reports folding
+      Given the thread has an Android Emulator open that does not report a fold posture
+      Then no fold controls are shown
+
+    # Upstream #13574: the fold model is sized from the inner screen, so a landscape panel is not stretched.
+    @desktop @backlog
+    Scenario: The fold model keeps the shape of a landscape inner screen
+      Given the thread has the Android Emulator "Pixel Fold" open with a landscape inner screen
+      Then the 3D model is drawn with a landscape inner screen, not stretched
 
     @desktop
     Scenario Outline: A device shown in 3D keeps a plain body when its own model is missing
