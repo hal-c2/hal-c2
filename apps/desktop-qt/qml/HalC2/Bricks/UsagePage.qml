@@ -96,7 +96,7 @@ Rectangle {
     }
 
     component Section: Label {
-        Layout.topMargin: 12
+        Layout.topMargin: Theme.space.md
         color: page.muted
         font.pixelSize: Theme.type.meta.size
         font.weight: Font.DemiBold
@@ -636,7 +636,7 @@ Rectangle {
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
         width: Math.min(440, (parent?.width ?? 472) / scale - 32)
-        padding: 20
+        padding: Theme.space.xl
         title: qsTr("Use a reset credit?")
         onAccepted: Shell.dispatch("usage.resetCredit", { key: key })
 
@@ -644,14 +644,14 @@ Rectangle {
         background: ShellPopoverSurface {}
         header: Label {
             text: resetDialog.title
-            padding: 20
-            bottomPadding: 4
+            padding: Theme.space.xl
+            bottomPadding: Theme.space.xs
             font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: page.foreground
         }
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.space.md
 
             Label {
                 Layout.fillWidth: true

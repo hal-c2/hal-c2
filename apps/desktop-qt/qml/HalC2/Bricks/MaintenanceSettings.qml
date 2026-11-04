@@ -57,7 +57,7 @@ SettingsPage {
             objectName: "maintenanceConfirm"
             Layout.fillWidth: true
             visible: page.model !== null && page.model.confirm !== null
-            implicitHeight: confirmColumn.implicitHeight + 24
+            implicitHeight: confirmColumn.implicitHeight + 2 * Theme.space.md
             radius: Theme.radiusMd
             color: "transparent"
             border.color: Theme.palette.color("warning", "#f59e0b")

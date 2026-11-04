@@ -255,7 +255,7 @@ Rectangle {
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
         width: Math.min(440, (parent?.width ?? 472) / scale - 32)
-        padding: 20
+        padding: Theme.space.xl
         title: qsTr("Restore default settings?")
         onAccepted: nav.restoreDefaults()
 
@@ -263,14 +263,14 @@ Rectangle {
         background: ShellPopoverSurface {}
         header: Label {
             text: restoreDialog.title
-            padding: 20
-            bottomPadding: 4
+            padding: Theme.space.xl
+            bottomPadding: Theme.space.xs
             font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: Theme.palette.color("text", "#e4e4e7")
         }
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.space.md
 
             Label {
                 objectName: "restoreList"
