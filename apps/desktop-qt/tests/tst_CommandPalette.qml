@@ -61,8 +61,14 @@ Item {
             verify(list.height > 0, "with room for the empty text");
             for (let n = 1; n <= 40; ++n)
                 PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "", kind: "action", runnable: true, current: false });
-            tryCompare(popup, "height", 480);
-            // The rows past the cap are hinted at by a fade at the edge.
+            // It stops at the cap on a whole row, not a sliced one...
+            tryVerify(() => popup.height <= 480 && popup.height > 480 - 34, 2000, "near the cap, not " + popup.height);
+            let last = null;
+            for (let i = 0; i < list.count && list.itemAtIndex(i); ++i)
+                if (list.itemAtIndex(i).y + list.itemAtIndex(i).height === list.height)
+                    last = i;
+            verify(last !== null, "a row ends where the list does");
+            // ...and the rows past it are hinted at by a fade at the edge.
             verify(findChild(list, "scrollEdgeBottom").visible);
             verify(!findChild(list, "scrollEdgeTop").visible);
             list.positionViewAtEnd();
