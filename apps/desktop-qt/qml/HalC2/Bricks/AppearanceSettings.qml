@@ -76,7 +76,12 @@ SettingsPage {
         }
     }
 
-    // A theme to draw with: its colors, its name, and a mark on the one in use (`checked`).
+    // The one in use, in a list or a segmented row: a raised fill and the
+    // accent's ink, never an outline (that is keyboard focus's).
+    readonly property color selectedFill: Theme.palette.color("surfaceRaised", "#1f1f24")
+    readonly property color selectedInk: Theme.palette.color("accentText", "#60a5fa")
+
+    // A theme to draw with: a check on the one in use (`checked`), its colors and its name.
     component ThemeChoice: AbstractButton {
         id: choice
 
@@ -94,13 +99,22 @@ SettingsPage {
 
         background: Rectangle {
             radius: Theme.radiusMd
-            color: choice.checked || choice.hovered || choice.down ? choice.accentSurface : Qt.alpha(choice.accentSurface, 0)
-            border.width: choice.visualFocus ? 2 : choice.checked ? 1 : 0
-            border.color: choice.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("accent", "#2563eb")
+            color: choice.hovered || choice.down ? choice.accentSurface : choice.checked ? page.selectedFill : Qt.alpha(choice.accentSurface, 0)
+            border.width: choice.visualFocus ? 2 : 0
+            border.color: Theme.palette.color("focus", "#3b82f6")
         }
 
         contentItem: RowLayout {
             spacing: Theme.space.sm
+
+            // Its room is kept on every row, so the names line up.
+            ShellIcon {
+                objectName: "chosen"
+                opacity: choice.checked ? 1 : 0
+                name: "check"
+                size: 14
+                color: page.selectedInk
+            }
 
             Row {
                 spacing: Theme.space.xxs
@@ -125,15 +139,8 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: choice.text
                 font: choice.font
-                color: page.foreground
+                color: choice.checked ? page.selectedInk : page.foreground
                 elide: Text.ElideRight
-            }
-
-            ShellIcon {
-                visible: choice.checked
-                name: "check"
-                size: 14
-                color: page.foreground
             }
         }
     }
@@ -222,8 +229,12 @@ SettingsPage {
 
                 objectName: "mode:" + modelData.mode
                 Layout.fillWidth: true
+                readonly property bool chosen: Themes.mode === modelData.mode
+
                 text: modelData.label
-                primary: Themes.mode === modelData.mode
+                hoverFill: chosen ? page.selectedFill : Qt.alpha(accentSurface, accentSurface.a * 0.5)
+                checked: chosen
+                tint: chosen ? page.selectedInk : Theme.palette.color("text", "#e4e4e7")
                 Accessible.name: qsTr("%1 appearance").arg(modelData.label)
                 onClicked: Themes.setMode(modelData.mode)
             }

@@ -91,7 +91,8 @@ Item {
             const grove = findChild(page, "use:grove");
             compare(swatches(standard), ["#ffffff", "#2563eb", "#18181b"]);
             compare(swatches(grove), ["#f1f5ee", "#3f7d4e", "#1c2a1f"]);
-            // The name starts at the left, after the swatches, not in the middle of the row.
+            // The name starts at the left, after the check's room and the swatches,
+            // not in the middle of the row.
             let name = null;
             const walk = item => {
                 if (item.text === "Grove" && item.elide !== undefined && item !== grove) name = item;
@@ -99,7 +100,7 @@ Item {
             };
             walk(grove.contentItem);
             verify(name !== null);
-            verify(name.mapToItem(grove, 0, 0).x < 80, "the name starts at " + name.mapToItem(grove, 0, 0).x);
+            verify(name.mapToItem(grove, 0, 0).x < 100, "the name starts at " + name.mapToItem(grove, 0, 0).x);
             compare(name.horizontalAlignment, Text.AlignLeft);
         }
 
