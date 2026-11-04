@@ -191,9 +191,11 @@ defmodule HalC2.Search do
     |> Enum.map(&elem(&1, 1))
   end
 
-  # The text around the first match, cut to fit.
+  # The text around the first match, cut to fit, without the markup HAL-C2
+  # wraps around what it hands an agent (a delegated task's result, with its
+  # task and thread ids), so a reader sees words, never ids.
   defp snippet(text, query) do
-    text = text |> String.replace(~r/\s+/u, " ") |> String.trim()
+    text = text |> unwrap() |> String.replace(~r/\s+/u, " ") |> String.trim()
 
     if String.length(text) <= @snippet do
       text
@@ -212,5 +214,20 @@ defmodule HalC2.Search do
 
       "#{if start > 0, do: "…"}#{cut}#{if start + body < String.length(text), do: "…"}"
     end
+  end
+
+  # Drops each tag that carries attributes (`<name key="value" …>`) and its
+  # closing tag; a bare `Vec<String>` in prose or code stays as written.
+  defp unwrap(text) do
+    names =
+      ~r/<([A-Za-z][\w:-]*)(?:\s+[\w:-]+="[^"]*")+\s*\/?>/u
+      |> Regex.scan(text, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.uniq()
+
+    Enum.reduce(names, text, fn name, text ->
+      name = Regex.escape(name)
+      Regex.replace(~r/<#{name}(?:\s+[\w:-]+="[^"]*")+\s*\/?>|<\/#{name}\s*>/u, text, " ")
+    end)
   end
 end
