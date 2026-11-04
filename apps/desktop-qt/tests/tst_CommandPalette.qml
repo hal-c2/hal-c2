@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import QtQuick.Controls
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
@@ -74,6 +75,49 @@ Item {
             list.positionViewAtEnd();
             tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
             verify(findChild(list, "scrollEdgeTop").visible);
+        }
+
+        // A submenu's long list, under its title and without group headers,
+        // also ends on a whole row with a fade below it.
+        function test_aLongSubmenuEndsOnAWholeRowAndHintsAtMore() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            for (let n = 4; n <= 20; ++n)
+                PaletteModel.append({ title: "Entry " + n, description: "", group: n < 10 ? "Actions" : "Threads", shortcut: "", kind: "action", runnable: true, current: false });
+            tryVerify(() => findChild(list, "scrollEdgeBottom").visible);
+            // As the palette moves into a submenu: its rows go and come
+            // (no reset), and the title above the search shows after them.
+            PaletteModel.remove(0, PaletteModel.count);
+            for (let n = 1; n <= 13; ++n)
+                PaletteModel.append({ title: "project-" + n, description: "/home/me/dev/project-" + n, group: "", shortcut: "", kind: "project", runnable: true, current: false });
+            PaletteModel.submenu = "New thread in...";
+            tryVerify(() => list.contentHeight > 13 * 34 - 1);
+            verify(list.height < list.contentHeight, "the list scrolls, " + list.height + " of " + list.contentHeight);
+            tryVerify(() => {
+                for (let i = 0; i < list.count && list.itemAtIndex(i); ++i)
+                    if (list.itemAtIndex(i).y + list.itemAtIndex(i).height === list.height)
+                        return true;
+                return false;
+            }, 2000, "a row ends where the list does, at " + list.height);
+            const edge = findChild(list, "scrollEdgeBottom");
+            verify(edge.visible);
+            // The fade paints over the last whole row: it holds less ink with it.
+            function lastRowInk() {
+                const img = grabImage(Overlay.overlay);
+                const o = list.mapToItem(Overlay.overlay, 0, list.height - Theme.control.md);
+                let sum = 0;
+                for (let y = 2; y < Theme.control.md - 2; ++y)
+                    for (let x = 0; x < Math.min(300, list.width); x += 2) {
+                        const c = Qt.color(img.pixel(o.x + x, o.y + y));
+                        sum += c.r + c.g + c.b;
+                    }
+                return sum;
+            }
+            const faded = lastRowInk();
+            edge.visible = false;
+            waitForRendering(list);
+            const plain = lastRowInk();
+            verify(faded < plain, "the fade dims the last row, " + faded + " vs " + plain);
         }
 
         // Rows are list items named by their title, for assistive technology.

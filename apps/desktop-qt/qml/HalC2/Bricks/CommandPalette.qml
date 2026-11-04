@@ -27,7 +27,7 @@ Popup {
     readonly property real room: Math.min(480, ((parent?.height ?? 512) - y) / scale - 16)
     property real fit: room
     height: Math.min(implicitHeight, room, fit)
-    onRoomChanged: refit()
+    onRoomChanged: Qt.callLater(refit)
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
 
@@ -35,8 +35,11 @@ Popup {
     // bottom of a row; a group's header goes with the row under it. The list
     // is the last thing in the column, so only the padding sits below it.
     // Set from the list's signals rather than bound, since the rows it reads
-    // are laid out again whenever the height changes.
+    // are laid out again whenever the height changes. Run once a change
+    // settles, after the list has placed its rows: moving into a submenu swaps
+    // the rows and then shows the title above the search.
     function refit() {
+        list.forceLayout();
         const top = topPadding + list.y;
         let end = 0;
         for (let i = 0; i < list.count; ++i) {
@@ -213,9 +216,10 @@ Popup {
             property var pointer: null
 
             boundsBehavior: Flickable.StopAtBounds
-            onContentHeightChanged: popup.refit()
-            onCountChanged: popup.refit()
-            onYChanged: popup.refit()
+            onContentHeightChanged: Qt.callLater(popup.refit)
+            onCountChanged: Qt.callLater(popup.refit)
+            onYChanged: Qt.callLater(popup.refit)
+            onOriginYChanged: Qt.callLater(popup.refit)
 
             // The palette ends on a whole row; the edge says there is more.
             ShellScrollEdge {
