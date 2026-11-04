@@ -293,8 +293,10 @@ Feature: Updating the server, the desktop app and providers
         | the update source is not https                    | Automatic updates are not available because the update feed is not https. |
         | the app runs from a development or unpacked build | Automatic updates are only available in packaged production builds.      |
         | automatic updates were turned off for this run    | Automatic updates are disabled by the HAL_C2_DISABLE_AUTO_UPDATE setting. |
+        | the app on Linux is not the AppImage build        | Automatic updates on Linux require running the AppImage build.            |
 
-    # Upstream #13575: a .deb updates itself through dpkg, so only other Linux packages cannot.
+    # Upstream #13575: a .deb updates itself through dpkg, so the Linux refusal below changes
+    # once the desktop carries it.
     @desktop @backlog
     Scenario Outline: A Linux build that cannot update itself says why
       Given <situation>

@@ -155,8 +155,14 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor shows its monthly, Auto and API usage with the billing cycle end
 
-  # Upstream #10409: the keychain is read for Cursor usage only after the user opts in.
-  @mc @backlog
+  Scenario: Cursor usage is unavailable with a keychain login
+    Given Cursor is signed in through the system keychain
+    When the user opens the limits view
+    Then Cursor says usage needs a file-based login
+
+  # Upstream #10409: the keychain is read for Cursor usage only after the user opts in. Replaces
+  # the scenario above once the MC carries it.
+  @backlog
   Scenario: Cursor usage through a keychain login waits until the user enables it
     Given Cursor is signed in through the system keychain
     When the user opens the limits view
