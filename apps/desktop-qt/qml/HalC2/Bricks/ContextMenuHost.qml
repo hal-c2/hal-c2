@@ -102,6 +102,7 @@ Item {
             destructive: entry.destructive === true
             current: entry.checked === true
             iconName: entry.icon ?? ""
+            shortcut: entry.shortcut ?? ""
             required property var owner
 
             onTriggered: {

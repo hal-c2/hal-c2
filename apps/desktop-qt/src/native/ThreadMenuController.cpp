@@ -134,9 +134,18 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
          QStringLiteral("message-square-plus")},
         false);
   }
+  // The keys that run an item, from where the palette reads them, shown only
+  // on the open thread's menu: they act on the open thread, not on another
+  // row the menu was opened from.
+  const bool viewed = shell->controller<NavigationController>()->threadKey() == key;
+  const auto keyed = [viewed, shell](Item item, const QString& command) {
+    if (viewed) item.shortcut = shell->controller<KeybindingController>()->shortcutLabel(command);
+    return item;
+  };
   if (supports.pinning) {
-    add(thread->pinnedAt ? Item{QStringLiteral("unpin"), QStringLiteral("Unpin thread"), QStringLiteral("pin-off")}
-                         : Item{QStringLiteral("pin"), QStringLiteral("Pin thread"), QStringLiteral("pin")});
+    add(keyed(thread->pinnedAt ? Item{QStringLiteral("unpin"), QStringLiteral("Unpin thread"), QStringLiteral("pin-off")}
+                               : Item{QStringLiteral("pin"), QStringLiteral("Pin thread"), QStringLiteral("pin")},
+              QStringLiteral("thread.pin")));
   }
   // Arranging, where the thread has a place to move to.
   if (sidebar->canMove(key, true) || sidebar->canMove(key, false)) {
@@ -149,8 +158,9 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   }
   if (supports.settlement) {
     const bool settled = thread->settledOverride == QLatin1String("settled");
-    add({settled ? QStringLiteral("unsettle") : QStringLiteral("settle"),
-         settled ? QStringLiteral("Un-settle thread") : QStringLiteral("Settle thread"), QStringLiteral("circle-check")});
+    add(keyed({settled ? QStringLiteral("unsettle") : QStringLiteral("settle"),
+               settled ? QStringLiteral("Un-settle thread") : QStringLiteral("Settle thread"), QStringLiteral("circle-check")},
+              QStringLiteral("thread.settle")));
   }
   if (supports.snooze) {
     if (sidebar::effectiveSnoozed(*thread, nowMs)) {

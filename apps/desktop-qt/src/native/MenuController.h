@@ -40,6 +40,9 @@ public:
     QList<Item> children;
     // A second line, for a sheet of rows a finger wide (the phone's).
     QString subtitle;
+    // The keys that do the same, as the user reads them ("Ctrl+Shift+P"),
+    // drawn in the row's right column; empty when no key does.
+    QString shortcut;
   };
   using Chosen = std::function<void(const QString& id)>;
 
