@@ -420,6 +420,27 @@ Item {
         }
 
         // Scenario: Scrolling away stops the view from following
+        // A wheel's scroll up the list cuts short (rows measured above it
+        // mid-scroll) ends where it began; where the host's room for reading
+        // shows the end, that is not the user going back to it.
+        function test_aScrollUpTheListDidNotTakeLeavesTheUserAway() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            // A short scroll up, which the room the host then makes undoes.
+            list.movementStarted();
+            list.contentY -= 50;
+            list.movementEnded();
+            tryVerify(() => timeline.scrolledAway && list.height === root.roomyHeight && atEnd(list), 5000, "the room shows the end");
+            verify(!timeline.following);
+            // A scroll up that moved nothing.
+            list.movementStarted();
+            list.movementEnded();
+            verify(!timeline.following, "the user is still away");
+            verify(timeline.scrolledAway);
+            verify(findChild(timeline, "jumpToLatest").visible);
+        }
+
+        // Scenario: Scrolling away stops the view from following
         function test_scrollingDownOverTheJumpButtonMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
