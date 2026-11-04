@@ -690,19 +690,31 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   end
 
   # The time every GitHub project's error says calls resume, "HH:MM:SS".
+  # A pause on the whole account also holds back the read of who is signed in, so the
+  # listing fails as a whole rather than project by project.
   defp paused_until(context) do
-    assert {:ok, %{"errors" => errors}} = context.reply
-    assert errors |> Enum.map(& &1["repository"]) |> Enum.sort() == ["acme/api", "acme/shop"]
-
     [until] =
-      errors
-      |> Enum.map(fn %{"message" => message} ->
-        assert [_, at] = Regex.run(~r/paused until it resets at (\d\d:\d\d:\d\d) UTC/, message)
+      context
+      |> messages()
+      |> Enum.map(fn message ->
+        assert [_, at] = Regex.run(~r/until it resets at (\d\d:\d\d:\d\d) UTC/, message)
         at
       end)
       |> Enum.uniq()
 
     until
+  end
+
+  # What the listing said went wrong: one message per GitHub project, or one for all.
+  defp messages(context) do
+    case context.reply do
+      {:ok, %{"errors" => errors}} ->
+        assert errors |> Enum.map(& &1["repository"]) |> Enum.sort() == ["acme/api", "acme/shop"]
+        Enum.map(errors, & &1["message"])
+
+      {:error, message, _} ->
+        [message]
+    end
   end
 
   defp at(ms), do: ms |> DateTime.from_unix!(:millisecond) |> Calendar.strftime("%H:%M:%S")
@@ -938,5 +950,182 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     assert graphql_calls(context) > context.graphql_before
     assert {:ok, %{"errors" => []}} = context.reply
     context
+  end
+
+  # --- GitHub's own numbers, from the headers `gh api --include` shows -----------------
+
+  # Puts `status` and `headers` ahead of the answer to every GraphQL read.
+  defp head(context, status, headers \\ %{}) do
+    World.cli_rules(context, %{
+      "args" => ["api graphql"],
+      "head" => %{"status" => status, "headers" => headers}
+    })
+  end
+
+  defp http_date(ms),
+    do: ms |> DateTime.from_unix!(:millisecond) |> Calendar.strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+  step ~r/^the host rate limits a read and says to retry (?<retry>in 120 seconds|at a date and time given in full)$/,
+       %{args: [retry]} = context do
+    context = clock(context)
+    until = now(context) + 120_000
+    value = if retry == "in 120 seconds", do: "120", else: http_date(until)
+
+    context
+    |> World.cli_rules(@rate_limited)
+    |> head("HTTP/2.0 403 Forbidden", %{"Retry-After" => value})
+    |> relist()
+    |> Map.put(:until, until)
+  end
+
+  step "the user lists pull requests before then", context do
+    move_clock(context, context.until - 1_000)
+    context |> Map.put(:graphql_before, graphql_calls(context)) |> relist()
+  end
+
+  step "no request goes to the host until that time", context do
+    assert graphql_calls(context) == context.graphql_before
+    assert paused_until(context) == at(context.until)
+    # GitHub's own time was enough: its budget was not asked for.
+    assert World.cli_calls(context, "api rate_limit") == []
+    context
+  end
+
+  step "an earlier time from an older request never shortens a pause that is already longer",
+       context do
+    account = HalC2.GitHub.account("github.com")
+
+    assert HalC2.GitHub.Limits.limited(account, :all, now(context), now(context) + 500) ==
+             context.until
+
+    still_paused(context, context.until)
+  end
+
+  step "GitHub reported that fewer than a tenth of its read quota is left until it resets",
+       context do
+    context = clock(context)
+    reset = div(now(context), 1_000) + 600
+
+    context =
+      context
+      |> head("HTTP/2.0 200 OK", %{
+        "X-RateLimit-Limit" => "5000",
+        "X-RateLimit-Remaining" => "499",
+        "X-RateLimit-Reset" => "#{reset}",
+        "X-RateLimit-Resource" => "graphql"
+      })
+      |> relist()
+
+    assert {:ok, %{"errors" => []}} = context.reply
+    Map.put(context, :until, reset * 1_000)
+  end
+
+  step "a background refresh needs to read pull requests", context do
+    context |> Map.put(:graphql_before, graphql_calls(context)) |> relist()
+  end
+
+  step "it waits until the quota resets", context do
+    assert graphql_calls(context) == context.graphql_before
+    assert paused_until(context) == at(context.until)
+    # Saving quota is not a limit reached.
+    for message <- messages(context), do: assert(message =~ "nearly used up", message)
+    context
+  end
+
+  step "a read the user asked for is still sent while any quota is left", context do
+    query = "query={viewer{login}}"
+    context = World.cli_rules(context, %{"args" => ["api graphql -f #{query}"], "stdout" => "{}"})
+    before = graphql_calls(context)
+
+    # What `pullRequests.update` and the other asked-for RPCs read runs like this.
+    assert {:ok, _} =
+             HalC2.GitHub.asked(fn ->
+               HalC2.GitHub.gh(context.cwd, ["api", "graphql", "-f", query])
+             end)
+
+    assert graphql_calls(context) == before + 1
+    # And the background refresh is still held back.
+    still_paused(context, context.until)
+  end
+
+  # The answer GitHub refuses a read with: the head `gh api --include` shows, gh's
+  # message, and when the pause it should cause ends, if it should cause one.
+  defp refusal(~s("forbidden" and nothing about a limit), _now),
+    do: {"HTTP/2.0 403 Forbidden", %{}, "gh: Forbidden (HTTP 403)", nil}
+
+  defp refusal(~s("too many requests" and a time to retry in 120 seconds), now),
+    # Its text names no limit, so the status alone must tell.
+    do:
+      {"HTTP/2.0 429 Too Many Requests", %{"Retry-After" => "120"}, "gh: Too Many Requests",
+       now + 120_000}
+
+  defp refusal(~s("forbidden", no quota left and a reset time 60 seconds on), now) do
+    reset = div(now, 1_000) + 60
+
+    {"HTTP/2.0 403 Forbidden",
+     %{"X-RateLimit-Remaining" => "0", "X-RateLimit-Reset" => "#{reset}"},
+     "gh: Forbidden (HTTP 403)", reset * 1_000}
+  end
+
+  defp refusal(~s("forbidden" with text saying the rate limit was exceeded), now),
+    do:
+      {"HTTP/2.0 403 Forbidden", %{}, "gh: API rate limit exceeded for user ID 7. (HTTP 403)",
+       now + 30_000}
+
+  defp refusal(~s("not modified"), _now),
+    do: {"HTTP/2.0 304 Not Modified", %{}, "gh: HTTP 304", nil}
+
+  defp refusal(~s("unauthorized"), _now),
+    do: {"HTTP/2.0 401 Unauthorized", %{}, "gh: Bad credentials (HTTP 401)", nil}
+
+  defp refusal("a server error", _now),
+    do: {"HTTP/2.0 502 Bad Gateway", %{}, "gh: HTTP 502: Bad Gateway", nil}
+
+  step ~r/^GitHub refuses a re-read of data that may be unchanged with (?<answer>.+)$/,
+       %{args: [answer]} = context do
+    context = clock(context)
+    {status, headers, said, until} = refusal(answer, now(context))
+    HalC2.PullRequests.invalidate(%{})
+
+    context
+    |> World.cli_rules(%{"args" => ["api graphql"], "stderr" => said <> "\n", "exit" => 1})
+    |> head(status, headers)
+    |> Map.put(:until, until)
+  end
+
+  # The listing fails as `said` expects, and asking again goes to GitHub again.
+  defp not_paused(context, said) do
+    assert context.until == nil
+
+    refused = fn context ->
+      for message <- messages(context), do: assert(said.(message), message)
+      context
+    end
+
+    before = graphql_calls(context)
+    context = context |> refused.() |> relist() |> refused.()
+    assert graphql_calls(context) > before
+    context
+  end
+
+  step "the read fails without pausing the host", context do
+    not_paused(context, &(not (&1 =~ "paused")))
+  end
+
+  step "the user is told to sign in to GitHub again", context do
+    not_paused(context, &(&1 =~ "gh auth login" and not (&1 =~ "paused")))
+  end
+
+  step "the read fails with GitHub's status and without pausing it", context do
+    # The message is put in words a user can act on; GitHub's own is the detail.
+    assert {:ok, %{"errors" => [_, _] = errors}} = context.reply
+    for %{"detail" => detail} <- errors, do: assert(detail =~ "HTTP 502")
+    not_paused(context, &(not (&1 =~ "paused")))
+  end
+
+  step ~r/^the host is paused (for 120 seconds|until the reset time|with the usual back-off)$/,
+       context do
+    assert paused_until(context) == at(context.until)
+    still_paused(context, context.until)
   end
 end
