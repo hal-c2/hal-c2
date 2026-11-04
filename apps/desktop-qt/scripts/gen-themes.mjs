@@ -32,7 +32,7 @@ const fixed = {
 };
 
 const themes = {
-  roles: palettes.THEME_COLOR_ROLES,
+  roles: [...palettes.THEME_COLOR_ROLES, ...palettes.THEME_OPTIONAL_COLOR_ROLES],
   // The stock look (no theme chosen), and the palette roles a theme file
   // leaves out are filled from.
   standard: { light: palettes.HAL_C2_LIGHT_THEME_COLORS, dark: palettes.HAL_C2_DARK_THEME_COLORS },

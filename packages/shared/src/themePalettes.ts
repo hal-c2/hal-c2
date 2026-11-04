@@ -96,6 +96,21 @@ export const THEME_COLOR_ROLES = [
   "terminalScrollbarHover",
 ] as const;
 
+/**
+ * Roles a theme may set that the palettes here leave out: a brick reading one
+ * draws its own fallback until a theme names it.
+ */
+export const THEME_OPTIONAL_COLOR_ROLES = [
+  "projectForeground",
+  "branchForeground",
+  "sidebarActiveIndicator",
+  "diffAdded",
+  "diffRemoved",
+  "scrim",
+  "popover",
+  "destructive",
+] as const;
+
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;

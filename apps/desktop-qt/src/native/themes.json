@@ -56,7 +56,15 @@
     "terminalCursor",
     "terminalSelection",
     "terminalScrollbar",
-    "terminalScrollbarHover"
+    "terminalScrollbarHover",
+    "projectForeground",
+    "branchForeground",
+    "sidebarActiveIndicator",
+    "diffAdded",
+    "diffRemoved",
+    "scrim",
+    "popover",
+    "destructive"
   ],
   "standard": {
     "light": {
