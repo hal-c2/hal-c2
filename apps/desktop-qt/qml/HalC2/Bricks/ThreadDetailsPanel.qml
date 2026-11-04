@@ -145,7 +145,9 @@ Rectangle {
                 objectName: "actionRowLabel"
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
-                text: actionRow.text
+                // A word joiner after each hyphen inside a word, so a name
+                // such as hal-c2.json moves to the next line whole.
+                text: actionRow.text.replace(/-(?=\S)/g, "-\u2060")
                 font: actionRow.font
                 color: root.foreground
                 wrapMode: Text.Wrap
