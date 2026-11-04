@@ -57,7 +57,9 @@ Item {
     readonly property real detailsShown: detailsView.visible ? detailsView.implicitWidth : 0
     readonly property real panelSheetShift: Math.max(0, Math.min(detailsShown, besideList - panelView.implicitWidth))
     // A sheet starts under the header, whose toggle puts it away again.
-    readonly property real headerHeight: workspaceView.visible ? workspaceView.height : chromeBand.visible ? chromeBand.height : 0
+    readonly property real headerHeight: workspaceView.visible ? workspaceView.height : centreTitleBar ? Theme.headerHeight : chromeBand.visible ? chromeBand.height : 0
+    // The route's view draws its own header line (RouteView.titleBar).
+    readonly property bool centreTitleBar: threadArea.visible && threadArea.centreView.titleBar
     // Where the window is, less what changes while it stays there (the title).
     readonly property string place: [window.route?.kind, window.route?.threadKey, window.route?.draftId, window.route?.section].join("|")
 
@@ -232,13 +234,14 @@ Item {
 
                 // Away from a thread (home, pull requests, usage, settings)
                 // there is no header: a band in its place, for a frameless
-                // window to be dragged by and for its buttons to lie over.
+                // window to be dragged by and for its buttons to lie over,
+                // unless the route's view draws its own header line (a Space).
                 Rectangle {
                     id: chromeBand
                     objectName: "chromeBand"
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
-                    visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible
+                    visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible && !layout.centreTitleBar
                     color: Theme.palette.color("canvas", "#0f0f12")
                     Accessible.role: Accessible.TitleBar
                     Accessible.name: qsTr("Title bar")
@@ -503,7 +506,7 @@ Item {
         buttonHeight: 28
         anchors.right: parent.right
         anchors.rightMargin: 4
-        y: layout.corner === "centre" && workspaceView.visible || layout.corner === "panel" ? (Theme.headerHeight - buttonHeight) / 2 : layout.corner === "details" ? 8 : 4
+        y: layout.corner === "centre" && (workspaceView.visible || layout.centreTitleBar) || layout.corner === "panel" ? (Theme.headerHeight - buttonHeight) / 2 : layout.corner === "details" ? 8 : 4
     }
 
     ProjectFolderDrop {

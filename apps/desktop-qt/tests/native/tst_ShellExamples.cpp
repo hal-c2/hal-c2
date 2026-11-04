@@ -110,6 +110,11 @@ private slots:
                              "HalC2.Shell", 1, 0, "Panel");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/PaletteModel.qml")),
                              "HalC2.Shell", 1, 0, "PaletteModel");
+    // A Space route shows the Space view, which reads these.
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Spaces.qml")),
+                             "HalC2.Shell", 1, 0, "Spaces");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Diagrams.qml")),
+                             "HalC2.Shell", 1, 0, "Diagrams");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -1237,6 +1242,38 @@ private slots:
     bridge.publish("toasts", QVariant());
     // And they work from here.
     QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(buttons->x()) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+  }
+
+  // Scenario Outline: The window controls are on every page, a Space
+  // (features/navigation/windows.feature): a Space draws the header line a
+  // thread's header shares, so no band sits above it; the buttons centre on
+  // that line, and the line drags and maximizes the window.
+  void defaultShellPutsTheWindowButtonsOnASpacesHeaderLine() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    bridge.publish("workspace", QVariant());
+    bridge.publish("route", QVariantMap{{"kind", "space"}});
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* band = findVisualItem(root, "chromeBand");
+    QVERIFY(buttons && band);
+    QQuickItem* line = nullptr;
+    QTRY_VERIFY((line = findVisualItem(root, "spaceHeaderLine")) && line->isVisible());
+    QTRY_VERIFY(!band->isVisible());
+    QTRY_VERIFY(buttons->isVisible());
+    QTRY_COMPARE(buttons->mapToScene(QPointF(buttons->width(), 0)).x(), 1396.0);
+    QTRY_COMPARE(line->mapToScene(QPointF(0, 0)).y(), 52.0);
+    QCOMPARE(buttons->mapToScene(QPointF(0, buttons->height() / 2)).y(), 26.0);
+    // A double click on the line, clear of its buttons, maximizes the window.
+    const QPoint onTheLine(800, 26);
+    QTest::mouseDClick(window, Qt::LeftButton, {}, onTheLine);
     QTRY_COMPARE(window->visibility(), QWindow::Maximized);
     window->showNormal();
     bridge.publish("route", QVariant());

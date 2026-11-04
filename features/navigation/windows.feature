@@ -68,7 +68,9 @@ Feature: Windows, zoom and quitting
       Then the window controls have not moved
       And nothing of the right panel is under them
 
-    # Proved by tst_ShellExamples.cpp (defaultShellHasTheWindowButtonsOnEveryPage), not yet by a step (hal-c2/hal-c2#213).
+    # Proved by tst_ShellExamples.cpp (defaultShellHasTheWindowButtonsOnEveryPage, and
+    # defaultShellPutsTheWindowButtonsOnASpacesHeaderLine for a Space, whose header line
+    # is the band), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario Outline: The window controls are on every page
       Given the user is on Linux
@@ -85,6 +87,7 @@ Feature: Windows, zoom and quitting
         | Settings                     |
         | a tab in the thread's centre |
         | a plugin's page              |
+        | a Space                      |
 
     @desktop
     Scenario: macOS controls show their symbols only on hover

@@ -19,6 +19,9 @@ SettingsPage {
     readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     // The collection variants picked to remove together.
     property var selected: []
+    // Whether any theme row has Edit and Remove: every row then keeps their
+    // room, so the icons of all rows share columns.
+    readonly property bool anyCustom: Themes.available.some(theme => theme.source === "custom")
     readonly property var modes: [
         { mode: "system", label: qsTr("System") },
         { mode: "light", label: qsTr("Light") },
@@ -217,8 +220,11 @@ SettingsPage {
         text: qsTr("Color scheme")
     }
 
+    // Three equal segments, whatever their labels' lengths.
     RowLayout {
+        objectName: "modes"
         Layout.fillWidth: true
+        uniformCellSizes: true
         spacing: Theme.space.sm
 
         Repeater {
@@ -284,6 +290,8 @@ SettingsPage {
         }
 
         ShellButton {
+            id: standardCopy
+
             objectName: "duplicate:hal-c2"
             subtle: true
             iconName: "copy"
@@ -291,6 +299,18 @@ SettingsPage {
             ToolTip.visible: hovered
             ToolTip.text: qsTr("Duplicate")
             onClicked: Themes.duplicateStandard()
+        }
+
+        // The room of the buttons it lacks (Export, and Edit and Remove when
+        // a row has them), so its Duplicate is in the other rows' column.
+        Repeater {
+            model: page.anyCustom ? 3 : 1
+
+            delegate: Item {
+                objectName: "slot"
+                implicitWidth: standardCopy.implicitWidth
+                implicitHeight: standardCopy.implicitHeight
+            }
         }
     }
 
@@ -341,6 +361,7 @@ SettingsPage {
             }
 
             ShellButton {
+                objectName: "duplicate:" + themeRow.modelData.id
                 subtle: true
                 iconName: "copy"
                 Accessible.name: qsTr("Duplicate %1").arg(themeRow.modelData.label)
@@ -349,8 +370,13 @@ SettingsPage {
                 onClicked: Themes.duplicate(themeRow.modelData.id)
             }
 
+            // Only a theme of one's own is edited or removed; the others
+            // keep the room while one shows, so the columns hold.
             ShellButton {
-                visible: themeRow.custom
+                visible: themeRow.custom || page.anyCustom
+                opacity: themeRow.custom ? 1 : 0
+                enabled: themeRow.custom
+                Accessible.ignored: !themeRow.custom
                 subtle: true
                 iconName: "pencil-ruler"
                 Accessible.name: qsTr("Edit %1").arg(themeRow.modelData.label)
@@ -374,7 +400,10 @@ SettingsPage {
             }
 
             ShellButton {
-                visible: themeRow.custom
+                visible: themeRow.custom || page.anyCustom
+                opacity: themeRow.custom ? 1 : 0
+                enabled: themeRow.custom
+                Accessible.ignored: !themeRow.custom
                 subtle: true
                 iconName: "x"
                 Accessible.name: qsTr("Remove %1").arg(themeRow.modelData.label)
