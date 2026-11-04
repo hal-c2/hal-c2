@@ -611,6 +611,38 @@ const Steps steps([] {
     expect(!diff(world).wrap(), QStringLiteral("wrapping cannot be turned off again"));
   });
 
+  // Too narrow to wrap: the setting stays on, the lines scroll instead.
+  step(QStringLiteral("the user wraps long lines in the diff"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* view = rows(world);
+    diff(world).setWrap(true);
+    world.waitFor([&] { return view->property("contentWidth").toReal() <= view->width(); }, QStringLiteral("the long lines to wrap"));
+  });
+  step(QStringLiteral("the diff has room for fewer than forty characters of code"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = panel(world);
+    // A sheet in a 900px window.
+    brick.window().resize(380, 420);
+    brick.root()->setSize(QSizeF(380, 420));
+    QQuickItem* root = brick.root();
+    world.waitFor([&] { return root->property("codeWidth").toReal() < root->property("wrapFloor").toReal(); },
+                  [&] { return QStringLiteral("a line of code to have less than %1px; it has %2").arg(root->property("wrapFloor").toReal()).arg(root->property("codeWidth").toReal()); });
+  });
+  step(QStringLiteral("long lines scroll sideways under their line numbers"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* view = rows(world);
+    QQuickItem* root = panel(world).root();
+    world.waitFor([&] { return !root->property("wrap").toBool() && view->property("contentWidth").toReal() > view->width(); },
+                  [&] { return QStringLiteral("the rows to scroll sideways; they are %1 wide in %2").arg(view->property("contentWidth").toReal()).arg(view->width()); });
+    expect(diff(world).wrap(), QStringLiteral("the narrow panel turned the wrap setting off"));
+  });
+  step(QStringLiteral("they wrap again once the diff is wider"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* view = rows(world);
+    Brick& brick = panel(world);
+    QQuickItem* root = brick.root();
+    brick.window().resize(900, 420);
+    root->setSize(QSizeF(900, 420));
+    world.waitFor([&] { return root->property("wrap").toBool() && view->property("contentWidth").toReal() <= view->width(); },
+                  [&] { return QStringLiteral("the rows to wrap again; they are %1 wide in %2").arg(view->property("contentWidth").toReal()).arg(view->width()); });
+  });
+
   // Refreshing.
   step(QStringLiteral("the user refreshes the diff"), [](World& world, const Captures&, const Table&) {
     panel(world);

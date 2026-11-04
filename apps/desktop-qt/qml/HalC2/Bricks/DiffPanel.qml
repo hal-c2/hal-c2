@@ -25,7 +25,15 @@ Rectangle {
     property var source: null
     readonly property var model: source?.model ?? null
     readonly property string status: source?.status ?? "idle"
-    readonly property bool wrap: source?.wrap ?? false
+    // Whether lines wrap: as the setting says, except where a line of code
+    // has less room than `wrapFloor` (a sheet in a narrow window, a split
+    // half). Wrapped there, nearly every line would break mid-token, so the
+    // code scrolls sideways under its pinned numbers instead.
+    readonly property bool wantsWrap: source?.wrap ?? false
+    readonly property bool wrap: wantsWrap && codeWidth >= wrapFloor
+    readonly property real wrapFloor: glyph.advanceWidth * 40
+    // The room one line of code has.
+    readonly property real codeWidth: split ? (view.width - glyph.advanceWidth * 12) / 2 - Theme.space.sm : view.width - view.gutter - Theme.space.sm
     readonly property bool split: model?.split ?? false
     // One file of the selection is shown alone (ThreadDiff.focusPath).
     readonly property bool focused: (source?.focusPath ?? "").length > 0
@@ -209,8 +217,10 @@ Rectangle {
                     }
                     ShellMenuItem {
                         objectName: "diffWrap"
-                        text: root.wrap ? qsTr("Don't wrap lines") : qsTr("Wrap lines")
-                        onTriggered: root.source.wrap = !root.wrap
+                        text: root.wantsWrap ? qsTr("Don't wrap lines") : qsTr("Wrap lines")
+                        // On, but too narrow here: says why the lines scroll.
+                        detail: root.wantsWrap && !root.wrap ? qsTr("Too narrow here") : ""
+                        onTriggered: root.source.wrap = !root.wantsWrap
                     }
                     ShellMenuItem {
                         objectName: "diffWhitespace"
@@ -746,8 +756,9 @@ Rectangle {
         property string line: ""
         // Wrapped, the line breaks between words (inside one only where a
         // single word is wider than the room) and the rest hangs under its
-        // indentation.
-        readonly property real hang: root.wrap ? Math.min(root.indent(line), width / 2) : 0
+        // indentation, at most half the line's room (codeWidth, not this
+        // width: that follows the wrap and would loop back here).
+        readonly property real hang: root.wrap ? Math.min(root.indent(line), root.codeWidth / 2) : 0
         color: sign === "\\" ? root.muted : root.foreground
         font.family: root.mono
         font.pixelSize: Theme.fontSizeCode
