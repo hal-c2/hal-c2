@@ -674,6 +674,41 @@ Rectangle {
                 dropLineY = -1;
             }
 
+            // A row cut by the list's edge fades into the sidebar there, so
+            // the cut reads as more to scroll to, not a sliced row.
+            component EdgeFade: Rectangle {
+                id: fade
+
+                required property bool atTop
+
+                parent: list
+                anchors.left: parent.left
+                anchors.right: parent.right
+                y: fade.atTop ? 0 : list.height - height
+                height: Theme.space.lg
+                z: 2
+                gradient: Gradient {
+                    GradientStop {
+                        position: 0
+                        color: Qt.alpha(sidebar.color, fade.atTop ? sidebar.color.a : 0)
+                    }
+                    GradientStop {
+                        position: 1
+                        color: Qt.alpha(sidebar.color, fade.atTop ? 0 : sidebar.color.a)
+                    }
+                }
+            }
+            EdgeFade {
+                objectName: "listTopFade"
+                atTop: true
+                visible: !list.atYBeginning
+            }
+            EdgeFade {
+                objectName: "listBottomFade"
+                atTop: false
+                visible: !list.atYEnd
+            }
+
             // Where the dragged row would land.
             Rectangle {
                 objectName: "dropLine"
