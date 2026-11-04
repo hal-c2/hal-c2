@@ -205,6 +205,12 @@ defmodule HalC2.Steps.Orchestration.Search do
     context
   end
 
+  step "the snippet reads:", context do
+    text = context.docstring
+    assert [%{"snippet" => ^text}] = matches(context)
+    context
+  end
+
   step "their finished messages can be searched", context do
     {reply, context} = search(context, %{"query" => "ledger"})
     assert {:ok, %{"matches" => matches}} = reply

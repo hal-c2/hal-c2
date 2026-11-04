@@ -177,18 +177,18 @@ defmodule HalC2.Search do
       {_, role, text, at} = Enum.find(found, &(elem(&1, 1) == "user")) || hd(found)
       thread = active[thread_id]
 
-      {thread["updatedAt"] || "",
+      {thread["updatedAt"] || "", text,
        %{
          "threadId" => thread_id,
          "projectId" => thread["projectId"],
          "source" => role,
-         "snippet" => snippet(text, query),
          "messageCreatedAt" => at
        }}
     end)
     |> Enum.sort_by(&elem(&1, 0), :desc)
     |> Enum.take(limit)
-    |> Enum.map(&elem(&1, 1))
+    # Only the kept matches pay for a snippet.
+    |> Enum.map(fn {_, text, match} -> Map.put(match, "snippet", snippet(text, query)) end)
   end
 
   # The text around the first match, cut to fit, without the markup HAL-C2
@@ -216,18 +216,14 @@ defmodule HalC2.Search do
     end
   end
 
-  # Drops each tag that carries attributes (`<name key="value" …>`) and its
-  # closing tag; a bare `Vec<String>` in prose or code stays as written.
+  # Drops the tags HAL-C2 wraps around what it hands an agent (a delegated
+  # task's result, a composer's context envelope), opening and closing, and
+  # leaves every other tag, such as `<a href="…">` or `Vec<String>`, as written.
   defp unwrap(text) do
-    names =
-      ~r/<([A-Za-z][\w:-]*)(?:\s+[\w:-]+="[^"]*")+\s*\/?>/u
-      |> Regex.scan(text, capture: :all_but_first)
-      |> List.flatten()
-      |> Enum.uniq()
-
-    Enum.reduce(names, text, fn name, text ->
-      name = Regex.escape(name)
-      Regex.replace(~r/<#{name}(?:\s+[\w:-]+="[^"]*")+\s*\/?>|<\/#{name}\s*>/u, text, " ")
-    end)
+    Regex.replace(
+      ~r{</?(?:delegated_task_result|hal_c2_context|context)(?:\s+[\w:-]+="[^"]*")*\s*/?>}u,
+      text,
+      " "
+    )
   end
 end
