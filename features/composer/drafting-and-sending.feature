@@ -1,6 +1,6 @@
 # Sources:
 #   docs/user/composer.md (message limits, sending, background prompts, multiple models)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target, the folding toolbar, Send's accent)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (isSendBusy while a message is on its way)
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (Sending…)
@@ -264,10 +264,19 @@ Feature: Drafting and sending a message
     When the user presses the model picker shortcut
     Then the composer is back at its full size with the model picker open
 
-  @backlog @desktop
-  Scenario: A narrow composer folds its mode and access controls into one menu
-    Given the composer is too narrow to show all its controls
-    Then the mode, access and model option controls are offered in one menu of further controls
+  @desktop
+  Scenario: A narrow composer folds its controls into one menu instead of wrapping
+    Given the composer offers its reasoning effort, plan and access controls
+    When the composer is too narrow to show all its controls
+    Then its toolbar is still one line
+    And the reasoning effort is offered in its menu of further controls
     And the model can still be chosen beside it
-    When the user chooses "Plan" as the mode in that menu
-    Then the next turn plans instead of making changes
+    When the user chooses "Plan" in that menu
+    Then plan mode is requested
+
+  @desktop
+  Scenario: Send stands out only when there is something to send
+    Given the composer is empty
+    Then the send control cannot be used
+    When the user types "hello" into the composer
+    Then the send control can be used and is the composer's accent

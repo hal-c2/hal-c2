@@ -296,11 +296,11 @@ Feature: Follow-ups while the agent is working
       | the message is on its way to the MC            | Submitting message       |
       | a queued message's edit is being saved         | Updating queued message  |
 
-  @backlog @desktop
+  @desktop
   Scenario: A running turn with nothing to send offers only Stop
     Given the composer is empty
     Then the send control is replaced by a control that stops the turn
-    When the user types "tweak"
+    When the user types "tweak" into the composer
     Then the send control is back
 
   @backlog @desktop
