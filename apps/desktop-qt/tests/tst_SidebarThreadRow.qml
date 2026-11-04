@@ -153,6 +153,55 @@ Item {
             tryVerify(() => !findChild(mark, "projectIconMonogram"));
         }
 
+        function shown(item, name) {
+            for (const child of item.children) {
+                if (!child.visible) {
+                    continue;
+                }
+                if (child.objectName === name) {
+                    return child;
+                }
+                const found = shown(child, name);
+                if (found) {
+                    return found;
+                }
+            }
+            return null;
+        }
+
+        function sceneRect(item) {
+            const p = item.mapToItem(null, 0, 0);
+            return Qt.rect(p.x, p.y, item.width, item.height);
+        }
+
+        // The jump key takes the age's place instead of covering the title.
+        function test_jumpHintTakesTheStatusSlot_data() {
+            return [
+                { tag: "slim", slim: true },
+                { tag: "card", slim: false }
+            ];
+        }
+
+        function test_jumpHintTakesTheStatusSlot(data) {
+            let row = createTemporaryObject(rowComponent, root, { slim: data.slim });
+            verify(!shown(row, "jumpHint"), "no hint before the modifier is held");
+            row.item = Object.assign({}, row.item, {
+                title: "A long title that fills the whole row and then some more",
+                jumpLabel: "⌘3"
+            });
+            const hint = shown(row, "jumpHint");
+            verify(!!hint, "the hint shows");
+            verify(!row.showActions);
+            waitForRendering(row);
+            const hintRect = sceneRect(hint);
+            if (!data.slim) {
+                const title = findChild(row, "cardTitle");
+                const titleRect = sceneRect(title);
+                verify(hintRect.y >= titleRect.y + titleRect.height || hintRect.y + hintRect.height <= titleRect.y, "the hint is not on the title line");
+            }
+            verify(hintRect.x + hintRect.width <= sceneRect(row).x + row.width, "the hint stays in the row");
+        }
+
         // Scenario: The thread list announces only the threads it shows (features/threads/sidebar-list.feature)
         function test_hiddenRowIsNotAnnounced() {
             let row = createTemporaryObject(rowComponent, root);

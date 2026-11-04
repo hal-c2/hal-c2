@@ -68,7 +68,10 @@ Item {
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
     readonly property bool pinned: !draft && item.pinned === true
     readonly property bool hasActions: !offline && (parked || canSettle || canSnooze)
-    readonly property bool showActions: hasActions && (hover.hovered || focused)
+    // The key that opens the row, shown in the status slot while the jump
+    // modifier is held.
+    readonly property string jumpLabel: item.jumpLabel ?? ""
+    readonly property bool showActions: hasActions && (hover.hovered || focused) && jumpLabel.length === 0
     // The status word for each state; empty when the
     // row is at rest, then the slot shows the age (or the wake time).
     readonly property string statusWord: {
@@ -261,32 +264,6 @@ Item {
         }
     }
 
-    // The key that opens the row, while the jump modifier is held.
-    Rectangle {
-        objectName: "jumpHint"
-        visible: !!row.item.jumpLabel
-        anchors.right: parent.right
-        anchors.rightMargin: 6
-        anchors.verticalCenter: parent.verticalCenter
-        z: 1
-        implicitWidth: jumpText.implicitWidth + 12
-        implicitHeight: 20
-        radius: 10
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.width: 1
-        border.color: Theme.palette.color("border", "#27272a")
-
-        Text {
-            id: jumpText
-
-            anchors.centerIn: parent
-            text: row.item.jumpLabel ?? ""
-            color: row.textColor
-            font.pixelSize: Math.round(10 * Theme.fontScale)
-            font.weight: Font.Medium
-        }
-    }
-
     TapHandler {
         acceptedButtons: Qt.LeftButton
         onTapped: {
@@ -399,16 +376,39 @@ Item {
         }
     }
 
-    // The right-hand slot: the section's actions while hovered or focused,
-    // the woke pill (click acknowledges the wake), else the status or age.
+    // The right-hand slot: the jump key while its modifier is held, the
+    // section's actions while hovered or focused, the woke pill (click
+    // acknowledges the wake), else the status or age.
     component StatusSlot: RowLayout {
         spacing: 2
+
+        Rectangle {
+            objectName: "jumpHint"
+            visible: row.jumpLabel.length > 0
+            Layout.alignment: Qt.AlignVCenter
+            implicitWidth: jumpText.implicitWidth + 12
+            implicitHeight: 20
+            radius: 10
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.width: 1
+            border.color: Theme.palette.color("border", "#27272a")
+
+            Text {
+                id: jumpText
+
+                anchors.centerIn: parent
+                text: row.jumpLabel
+                color: row.textColor
+                font.pixelSize: Math.round(10 * Theme.fontScale)
+                font.weight: Font.Medium
+            }
+        }
 
         // A pinned row says so, and the pin unpins it. Made only for pinned
         // rows, so the hundreds of others pay nothing. The row builds a slot
         // for both its layouts; only the one in view gets the button.
         Loader {
-            active: row.pinned && parent.visible
+            active: row.pinned && parent.visible && row.jumpLabel.length === 0
             visible: active
             Layout.alignment: Qt.AlignVCenter
             sourceComponent: RowAction {
@@ -456,7 +456,7 @@ Item {
         }
 
         ShellButton {
-            visible: row.woke && !row.showActions
+            visible: row.woke && !row.showActions && row.jumpLabel.length === 0
             subtle: true
             focusPolicy: Qt.NoFocus
             implicitHeight: 22
@@ -474,7 +474,7 @@ Item {
         }
 
         ShellIcon {
-            visible: !row.showActions && !row.woke && row.showStatus && row.statusIcon.length > 0
+            visible: !row.showActions && !row.woke && row.jumpLabel.length === 0 && row.showStatus && row.statusIcon.length > 0
             name: row.statusIcon
             size: 14
             color: row.statusColor
@@ -482,7 +482,7 @@ Item {
         }
 
         Text {
-            visible: !row.showActions && !row.woke
+            visible: !row.showActions && !row.woke && row.jumpLabel.length === 0
             text: row.showStatus ? row.statusWord : row.ageLabel
             color: row.showStatus ? row.statusColor : row.secondaryColor
             font.pixelSize: Math.round(12 * Theme.fontScale)
