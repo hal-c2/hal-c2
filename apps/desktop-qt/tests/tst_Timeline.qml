@@ -596,9 +596,52 @@ Item {
             tryVerify(() => list.count === 1 && list.itemAtIndex(0) !== null);
             const previous = findText(list.itemAtIndex(0), "+4 previous tool calls");
             verify(previous !== null, "the other four are behind \"+4 previous tool calls\"");
+            const toggle = findChild(list.itemAtIndex(0), "workGroupToggle");
+            tryVerify(() => previous.mapToItem(toggle, previous.width, 0).x <= toggle.width, 2000, "the count is on the row");
             mouseClick(previous);
             compare(spy.count, 1);
             compare(spy.signalArguments[0][0], "work:1");
+        }
+
+        // Scenario: A running turn's tool calls read as one live row
+        function test_runningToolCallsReadAsOneLiveRow() {
+            const call = (n, label, statusLabel) => ({
+                    id: "command:" + n,
+                    label: label,
+                    command: "bun test cart-" + n,
+                    statusLabel: statusLabel ?? ""
+                });
+            const group = (hidden, latest, expanded) => root.row({
+                    rowId: "work:1",
+                    kind: "work",
+                    hiddenCount: hidden,
+                    expanded: expanded === true,
+                    entries: [latest]
+                });
+            rows.clear();
+            rows.append(group(4, call(5, "Ran command")));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.count === 1 && list.itemAtIndex(0) !== null);
+            const item = list.itemAtIndex(0);
+            const shown = text => {
+                const found = findText(item, text);
+                return found !== null && found.visible;
+            };
+            tryVerify(() => shown("Ran command") && shown("+4 previous tool calls"), 2000, "one row: what it is doing now and how many came before");
+            verify(!findChild(item, "workCalls").visible, "the calls are folded into it");
+
+            // The next call takes the row's place; the one before joins the count.
+            rows.set(0, group(5, call(6, "Edited cart.ts", "Running")));
+            tryVerify(() => shown("Edited cart.ts") && shown("Running") && shown("+5 previous tool calls"), 2000, "the row follows the latest call");
+            verify(!shown("Ran command"));
+            rows.set(0, group(5, call(6, "Edited cart.ts")));
+            tryVerify(() => !shown("Running"), 2000, "and its status as it settles");
+
+            // Opened, it is every call again, with the way back.
+            rows.set(0, group(5, call(6, "Edited cart.ts"), true));
+            tryVerify(() => findChild(item, "workCalls").visible && shown("Show fewer tool calls"), 2000, "an open group lists its calls");
+            verify(!shown("+5 previous tool calls"));
         }
 
         // A tool call opens into its command and output, and closes again.
