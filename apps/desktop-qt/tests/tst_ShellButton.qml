@@ -172,7 +172,47 @@ Item {
                 hoverEnabled: true
                 readonly property bool tipShown: ToolTip.visible
                 readonly property string tipText: ToolTip.text
+                readonly property var sharedTip: ToolTip.toolTip
             }
+        }
+
+        Component {
+            id: hoverTipButtonComponent
+            ShellButton {
+                x: 10
+                y: 10
+                width: 28
+                height: 28
+                toolTip: "Split terminal"
+                ToolTip.visible: hovered
+                readonly property var sharedTip: ToolTip.toolTip
+            }
+        }
+
+        function test_pressPutsTheTooltipAway_data() {
+            return [
+                { tag: "named", component: namedButtonComponent },
+                { tag: "own visibility", component: hoverTipButtonComponent }
+            ];
+        }
+
+        function test_pressPutsTheTooltipAway(data) {
+            let button = createTemporaryObject(data.component, root, {
+                iconName: "settings",
+                "Accessible.name": "Open panel"
+            });
+            verify(!!button);
+            mouseMove(button, 14, 14);
+            tryVerify(() => button.sharedTip.visible, 2000);
+            mousePress(button, 14, 14);
+            tryVerify(() => !button.sharedTip.visible, 2000);
+            mouseRelease(button, 14, 14);
+            wait(500);
+            verify(!button.sharedTip.visible);
+            mouseMove(root, 2, 2);
+            tryVerify(() => !button.hovered, 2000);
+            mouseMove(button, 14, 14);
+            tryVerify(() => button.sharedTip.visible, 2000);
         }
 
         function test_iconOnlyButtonNamesItselfOnHover() {

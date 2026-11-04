@@ -47,6 +47,8 @@ Button {
     ToolTip.visible: hovered && ToolTip.text.length > 0
     ToolTip.text: toolTip.length > 0 ? toolTip : iconOnly || chevronOnly ? Accessible.name : ""
     ToolTip.delay: 400
+    // A press puts the tip away until the pointer leaves and comes back.
+    onPressed: ToolTip.hide()
 
     Behavior on scale {
         NumberAnimation {
