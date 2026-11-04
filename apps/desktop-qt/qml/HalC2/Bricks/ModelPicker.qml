@@ -192,7 +192,7 @@ AbstractButton {
         return target !== null;
     }
 
-    implicitHeight: Math.max(28, topPadding + contentItem.implicitHeight + bottomPadding)
+    implicitHeight: Math.max(Theme.control.md, topPadding + contentItem.implicitHeight + bottomPadding)
     implicitWidth: leftPadding + contentItem.implicitWidth + rightPadding
     leftPadding: Theme.space.sm
     rightPadding: Theme.space.sm + Theme.icon.sm + Theme.space.xs
@@ -201,7 +201,7 @@ AbstractButton {
     opacity: enabled ? 1 : 0.64
     font.family: fontFamily
     font.pixelSize: Theme.type.body.size
-    font.weight: Font.Medium
+    font.weight: Theme.type.body.weight
     Accessible.role: Accessible.ComboBox
     Accessible.name: triggerLabel
 
@@ -214,17 +214,19 @@ AbstractButton {
     background: Rectangle {
         id: triggerBackground
 
-        readonly property color labelColor: control.hovered || control.pressed || popup.visible ? control.foreground : Theme.palette.color("secondaryLabel", "#a1a1aa")
+        readonly property color labelColor: control.hovered || control.pressed || popup.visible ? control.foreground : Theme.palette.color("inkSecondary", "#b8bdc7")
+        readonly property color fill: Theme.palette.color("surfaceRaised", "#1c1f24")
 
+        // The composer's ghost chip: no fill at rest, the raised surface under the pointer.
         radius: Theme.radiusMd
-        color: control.pressed || control.hovered || popup.visible ? control.highlight : Qt.alpha(control.highlight, 0)
+        color: control.pressed || control.hovered || popup.visible ? fill : "transparent"
         // Borderless like the composer's other pickers, so the keyboard's
         // arrival is the ring; pointer focus stays quiet.
         border.color: control.visualFocus ? Theme.palette.color("focus", "#3b82f6") : "transparent"
         border.width: control.visualFocus ? 1 : 0
 
         ShellChevron {
-            x: parent.width - width - 10
+            x: parent.width - width - Theme.space.sm
             y: (parent.height - height) / 2
             direction: "down"
             size: Theme.icon.sm
@@ -238,7 +240,7 @@ AbstractButton {
         ProviderIcon {
             objectName: "modelPickerIcon"
             visible: control.activeInstance !== null
-            size: 16
+            size: Theme.icon.md
             driverKind: control.activeInstance ? control.activeInstance.driverKind : ""
             initials: control.activeInstance ? control.activeInstance.initials : ""
             accentColor: control.activeInstance ? control.activeInstance.accentColor : null
