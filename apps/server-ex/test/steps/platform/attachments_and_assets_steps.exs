@@ -247,9 +247,20 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     {:ok, _conn} = Mint.HTTP.close(conn)
     chunks = Enum.reverse(result.chunks)
 
-    context
-    |> Map.put(:response, {result.status, result.headers, IO.iodata_to_binary(chunks)})
-    |> Map.put(:response_chunks, chunks)
+    Map.put(context, :response, {result.status, result.headers, IO.iodata_to_binary(chunks)})
+  end
+
+  defp stream_pieces(pid, ref, pieces) do
+    receive do
+      {^ref, :chunk, bytes} ->
+        send(pid, {ref, :ack})
+        stream_pieces(pid, ref, [bytes | pieces])
+
+      {^ref, :done} ->
+        Enum.reverse(pieces)
+    after
+      5_000 -> flunk("the asset stream stalled")
+    end
   end
 
   defp mint_response(conn, request, result) do
@@ -277,15 +288,21 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     read_chunks(context, asset_url!(context))
   end
 
+  # Over the wire the body is length-delimited, so how it splits into reads is TCP's
+  # business; the bound is on what the MC reads and holds per piece.
   step "the MC serves the whole video in bounded pieces", context do
-    assert {200, _headers, body} = context.response
+    assert {200, headers, body} = context.response
     assert body == context.bytes
-    assert length(context.response_chunks) > 1
+    assert {"content-length", Integer.to_string(byte_size(body))} in headers
 
-    assert Enum.all?(context.response_chunks, fn bytes ->
-             byte_size(bytes) <= HalC2.Attachments.chunk_bytes()
-           end)
+    assert {:ok, 200, _headers, {:stream, pid, ref}} =
+             HalC2.Attachments.serve(token(asset_url!(context)))
 
+    send(pid, {ref, :start, self()})
+    pieces = stream_pieces(pid, ref, [])
+    assert IO.iodata_to_binary(pieces) == context.bytes
+    assert length(pieces) > 1
+    assert Enum.all?(pieces, &(byte_size(&1) <= HalC2.Attachments.chunk_bytes()))
     context
   end
 

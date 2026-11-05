@@ -779,19 +779,25 @@ defmodule HalC2.Web.Router do
         Process.demonitor(monitor, [:flush])
         conn
 
-      {^ref, :error, _reason} ->
+      {^ref, :error, reason} ->
         Process.demonitor(monitor, [:flush])
-        conn
+        abort_asset_stream(reason)
 
-      {:DOWN, ^monitor, :process, ^pid, _reason} ->
-        conn
+      {:DOWN, ^monitor, :process, ^pid, reason} ->
+        abort_asset_stream(reason)
     after
       60_000 ->
         send(pid, {ref, :stop})
         Process.demonitor(monitor, [:flush])
-        conn
+        abort_asset_stream(:stalled)
     end
   end
+
+  # The status line is already out, so a failure mid-body must not end the response
+  # normally: the client would take a short body for the whole file. Raising makes
+  # Bandit drop the connection instead.
+  defp abort_asset_stream(reason),
+    do: raise(HalC2.Web.AssetStreamAborted, "asset stream aborted: #{inspect(reason)}")
 
   defp read_all(conn, left, acc) do
     case read_body(conn, length: min(left, 8_000_000)) do

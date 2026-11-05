@@ -246,7 +246,27 @@ defmodule HalC2.AttachmentsTest do
 
       assert Plug.Conn.get_resp_header(response, "content-range") == expected_headers,
              "range: #{inspect(range)}"
+
+      if status in [200, 206] do
+        assert Plug.Conn.get_resp_header(response, "content-length") ==
+                 [Integer.to_string(byte_size(expected))],
+               "range: #{inspect(range)}"
+      end
     end
+  end
+
+  test "a file cut short while it streams ends in an error, not a complete body" do
+    dir = Application.fetch_env!(:hal_c2, :home)
+    path = Path.join(dir, "cut.mp4")
+    File.write!(path, :crypto.strong_rand_bytes(3 * Attachments.chunk_bytes()))
+
+    assert {:ok, 200, headers, stream} = Attachments.serve(asset_token(media_url(path)))
+    assert {"content-length", Integer.to_string(3 * Attachments.chunk_bytes())} in headers
+
+    File.write!(path, "short")
+
+    assert {:error, :read, chunks} = collect_stream(stream)
+    assert IO.iodata_to_binary(chunks) == "short"
   end
 
   test "a media path swapped before open fails its descriptor identity check" do

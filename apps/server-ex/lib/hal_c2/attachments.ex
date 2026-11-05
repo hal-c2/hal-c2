@@ -466,11 +466,12 @@ defmodule HalC2.Attachments do
 
     case byte_range(headers["range"], size) do
       nil ->
-        send_stream_answer(caller, ref, 200, base)
+        send_stream_answer(caller, ref, 200, [content_length(size) | base])
         stream_file(file, ref, 0, size)
 
       {first, last} ->
         send_stream_answer(caller, ref, 206, [
+          content_length(last - first + 1),
           {"content-range", "bytes #{first}-#{last}/#{size}"} | base
         ])
 
@@ -480,6 +481,10 @@ defmodule HalC2.Attachments do
         send(caller, {self(), ref, {:ok, 416, [{"content-range", "bytes */#{size}"}], ""}})
     end
   end
+
+  # A declared length lets a player show progress and keeps the HTTP server from
+  # compressing the stream; a body cut short is then visible to the client.
+  defp content_length(length), do: {"content-length", Integer.to_string(length)}
 
   defp send_stream_answer(caller, ref, status, headers),
     do: send(caller, {self(), ref, {:ok, status, headers, {:stream, self(), ref}}})
