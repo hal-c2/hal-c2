@@ -86,6 +86,12 @@ defmodule HalC2.WorkspaceTest do
              })
   end
 
+  test "containment handles the filesystem root without a double slash" do
+    assert Workspace.within?("/", "/home/sam/.bashrc")
+    assert Workspace.within?("/", "/")
+    refute Workspace.within?("/home/sam", "/home/samantha")
+  end
+
   test "a file outside the root is written back by its full path only when it is text already there",
        %{root: root, tmp_dir: dir} do
     outside = Path.join(dir, "outside")

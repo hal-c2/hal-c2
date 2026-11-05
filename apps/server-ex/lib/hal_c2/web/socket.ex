@@ -433,8 +433,8 @@ defmodule HalC2.Web.Socket do
 
   # Runs a client RPC on the MC that owns the environment, off this process so a
   # slow command never holds up streaming.
-  # Each call needs the scopes the contract declares for it (`HalC2.Rpc.required_scopes/2`),
-  # checked here, before the call goes to whichever member owns the environment.
+  # Most calls need the scopes the contract declares for them (`HalC2.Rpc.required_scopes/2`),
+  # checked here. A file write's root-dependent scope is checked on the environment's MC.
   # The desktop app's reports go to its MC from here, in the order it sent them.
   defp rpc(state, id, environment, "server.reportDesktopUpdateStatus", payload)
        when is_map(payload) do
@@ -449,6 +449,10 @@ defmodule HalC2.Web.Socket do
 
   defp rpc(state, id, environment, method, payload),
     do: scoped_rpc(state, id, environment, method, payload)
+
+  # The write root belongs to the environment's MC, not necessarily this one.
+  defp scoped_rpc(state, id, environment, "projects.writeFile" = method, payload),
+    do: run_rpc(state, id, environment, method, payload)
 
   defp scoped_rpc(state, id, environment, method, payload) do
     scope =
@@ -511,6 +515,9 @@ defmodule HalC2.Web.Socket do
   defp call_mc(state, socket, mc, method, payload, timeout) do
     {module, fun, args} =
       cond do
+        method == "projects.writeFile" ->
+          {HalC2.Rpc, :handle_with_scopes, [method, payload || %{}, state.scopes]}
+
         method == "hal-c2.createPairingLink" ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.scopes]}
 

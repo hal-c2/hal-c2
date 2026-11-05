@@ -296,6 +296,24 @@ defmodule HalC2.Rpc do
 
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
+  @doc "Handles `projects.writeFile` with the caller's scopes on the environment's MC."
+  @spec handle_with_scopes(String.t(), term(), [String.t()] | :all) ::
+          {:ok, term()} | {:error, String.t() | map()}
+  def handle_with_scopes("projects.writeFile" = method, payload, scopes) do
+    scope = required_scope(method, payload)
+
+    if scopes == :all or scope in scopes do
+      handle(method, payload)
+    else
+      {:error,
+       %{
+         "_tag" => "EnvironmentScopeRequiredError",
+         "requiredScope" => scope,
+         "message" => "#{scope} is required"
+       }}
+    end
+  end
+
   @doc """
   Handles one of `session_methods/0` for `session`, the caller's session id (`nil` for
   the MC's own token, which is no paired client): the twins of `/api/auth/clients*`.
@@ -406,12 +424,14 @@ defmodule HalC2.Rpc do
   The session scope a client needs to call `method` with `payload`. A
   `projects.writeFile` by an absolute path overwrites a file anywhere on the host the
   MC can write (`HalC2.Workspace.write_file/1`), as a shell in a terminal can, so it
-  needs `terminal:operate`; a session paired without it can save inside the project
-  only. Every other call needs what its method does (`required_scope/1`).
+  needs `terminal:operate`. A relative path gets the same scope when its canonical
+  `cwd` is not a registered project or worktree root. Every other call needs what its
+  method does (`required_scope/1`).
   """
   @spec required_scope(String.t(), term()) :: String.t()
-  def required_scope("projects.writeFile", %{"relativePath" => path}) when is_binary(path) do
-    if Path.type(path) == :absolute,
+  def required_scope("projects.writeFile", %{"relativePath" => path} = input)
+      when is_binary(path) do
+    if Path.type(path) == :absolute or not HalC2.Workspace.project_root?(input["cwd"]),
       do: "terminal:operate",
       else: required_scope("projects.writeFile")
   end

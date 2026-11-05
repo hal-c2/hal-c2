@@ -14,9 +14,9 @@ defmodule HalC2.Workspace do
 
   That write reaches any such file the MC's user can write (`~/.bashrc` as much as a
   report the agent left in `/tmp`), which is as much as a shell can do, so a session
-  needs `terminal:operate` for it (`HalC2.Rpc.required_scope/2`, which the socket
-  checks before the call goes to the member that owns the environment). Nothing here
-  ties the path to the thread.
+  needs `terminal:operate` for it. A relative write whose canonical root is not a
+  registered project or worktree needs that scope too (`HalC2.Rpc.required_scope/2`).
+  Nothing here ties the path to the thread.
   """
 
   use GenServer
@@ -639,8 +639,18 @@ defmodule HalC2.Workspace do
 
   # --- paths -----------------------------------------------------------------------
 
+  @doc "Whether `cwd` canonicalizes to a project or worktree root on this MC."
+  def project_root?(cwd) when is_binary(cwd) do
+    root = canonical_root(cwd)
+    Enum.any?(HalC2.Projects.roots(), &(canonical_root(&1) == root))
+  end
+
+  def project_root?(_cwd), do: false
+
+  defp canonical_root(cwd), do: cwd |> Path.expand() |> real()
+
   defp root(cwd, tag) do
-    root = Path.expand(cwd)
+    root = canonical_root(cwd)
 
     case File.stat(root) do
       {:ok, %File.Stat{type: :directory}} ->
@@ -678,7 +688,8 @@ defmodule HalC2.Workspace do
   end
 
   @doc "Whether `path` is `root` or under it; both absolute and normalized."
-  def within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
+  def within?(root, path),
+    do: path == root or String.starts_with?(path, String.trim_trailing(root, "/") <> "/")
 
   @doc """
   The real path of `path`, or of its nearest existing ancestor joined with the rest:
