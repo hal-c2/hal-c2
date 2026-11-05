@@ -450,15 +450,23 @@ defmodule HalC2.Web.Socket do
   defp rpc(state, id, environment, method, payload),
     do: scoped_rpc(state, id, environment, method, payload)
 
-  # The write root belongs to the environment's MC, not necessarily this one.
-  defp scoped_rpc(state, id, environment, "projects.writeFile" = method, payload),
-    do: run_rpc(state, id, environment, method, payload)
+  defp scoped_rpc(state, id, environment, method, payload),
+    do: check_scopes(state, id, environment, method, payload, local_scopes(method, payload))
 
-  defp scoped_rpc(state, id, environment, method, payload) do
-    scope =
-      method
-      |> HalC2.Rpc.required_scopes(payload)
-      |> Enum.find(fn scope -> not allowed?(state, scope) end)
+  # Whether a relative write's root is a project belongs to the environment's MC, which
+  # checks it again with the caller's scopes (`HalC2.Rpc.handle_with_scopes/3`); a write
+  # by full path is refused here, before it is routed anywhere.
+  defp local_scopes("projects.writeFile" = method, %{"relativePath" => path})
+       when is_binary(path) do
+    if Path.type(path) == :absolute,
+      do: ["terminal:operate"],
+      else: [HalC2.Rpc.required_scope(method)]
+  end
+
+  defp local_scopes(method, payload), do: HalC2.Rpc.required_scopes(method, payload)
+
+  defp check_scopes(state, id, environment, method, payload, scopes) do
+    scope = Enum.find(scopes, fn scope -> not allowed?(state, scope) end)
 
     if scope == nil do
       run_rpc(state, id, environment, method, payload)

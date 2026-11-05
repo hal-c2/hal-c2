@@ -414,6 +414,7 @@ defmodule HalC2.AuthTest do
     start_supervised!(HalC2.Workspace)
     project = Path.join(dir, "shop")
     File.mkdir_p!(project)
+    HalC2.Test.Machines.create_project("shop", "Shop", project)
     outside = Path.join(dir, "notes.txt")
     File.write!(outside, "- buy milk\n")
 
