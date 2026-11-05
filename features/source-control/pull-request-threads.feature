@@ -243,6 +243,15 @@ Feature: Threads that work on or link pull requests
     Then the branch is at pull request 42's head
     And the uncommitted file is still there
 
+  @mc
+  Scenario: A Forgejo response cannot turn the preserving reset into a hard reset
+    Given Forgejo reports pull request 42's head SHA as "--hard"
+    And the checkout has a branch "pulls/42" behind pull request 42's head and an uncommitted file
+    When the user starts a thread on Forgejo pull request 42 in the local checkout forcing the update
+    Then the user is told the Forgejo pull request head SHA is invalid
+    And the uncommitted file is still there
+    And the thread is not prepared
+
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (getPull: number from a reference)
   @mc
   Scenario: A Forgejo reference with no pull request number is refused
