@@ -45,7 +45,7 @@ export const ClusterInviteInput = Schema.Struct({
 export type ClusterInviteInput = typeof ClusterInviteInput.Type;
 
 export const ClusterInvite = Schema.Struct({
-  /** A pairing link granting `access:write`, good once. */
+  /** A pairing link granting `access:write` and `terminal:operate`, good once. */
   link: Schema.String,
   expiresAt: Schema.String,
   /** Only this machine can reach the link: the node listens on loopback. */

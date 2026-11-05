@@ -433,7 +433,7 @@ defmodule HalC2.Web.Socket do
 
   # Runs a client RPC on the MC that owns the environment, off this process so a
   # slow command never holds up streaming.
-  # Each call needs the scope the contract declares for it (`HalC2.Rpc.required_scope/2`),
+  # Each call needs the scopes the contract declares for it (`HalC2.Rpc.required_scopes/2`),
   # checked here, before the call goes to whichever member owns the environment.
   # The desktop app's reports go to its MC from here, in the order it sent them.
   defp rpc(state, id, environment, "server.reportDesktopUpdateStatus", payload)
@@ -451,9 +451,12 @@ defmodule HalC2.Web.Socket do
     do: scoped_rpc(state, id, environment, method, payload)
 
   defp scoped_rpc(state, id, environment, method, payload) do
-    scope = HalC2.Rpc.required_scope(method, payload)
+    scope =
+      method
+      |> HalC2.Rpc.required_scopes(payload)
+      |> Enum.find(fn scope -> not allowed?(state, scope) end)
 
-    if allowed?(state, scope) do
+    if scope == nil do
       run_rpc(state, id, environment, method, payload)
     else
       error = %{

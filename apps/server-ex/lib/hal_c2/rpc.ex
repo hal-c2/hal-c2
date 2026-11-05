@@ -394,6 +394,14 @@ defmodule HalC2.Rpc do
     setReaction setFilesViewed requestReviewers setLabels
   )
 
+  @doc "Every session scope a client needs to call `method` with `payload`."
+  @spec required_scopes(String.t(), term()) :: [String.t()]
+  def required_scopes("cluster." <> method, _payload)
+      when method in ~w(invite join remove update),
+      do: ["access:write", "terminal:operate"]
+
+  def required_scopes(method, payload), do: [required_scope(method, payload)]
+
   @doc """
   The session scope a client needs to call `method` with `payload`. A
   `projects.writeFile` by an absolute path overwrites a file anywhere on the host the

@@ -25,13 +25,13 @@ defmodule HalC2.Cluster do
   `HalC2.Cluster.Discovery` finds where members are.
 
   A machine joins with an invite from any member (`invite/1`, `join/1`): it trades the
-  link for an `access:write` session, presents its fingerprint, and the member admits
-  it (`admit/1`). The invite names the inviter's fingerprint, so the joining machine
-  trusts that certificate alone and nothing else the answer says. Members exchange
-  the list whenever they connect, whenever it changes and every half minute, entry by
-  entry by timestamp (`merge/3`), so the new machine learns the other members from the
-  inviter over the cluster connection, a machine that joins one member is admitted by
-  all of them, and a removal (`remove/1`) reaches members that were away. The half
+  link for an `access:write` and `terminal:operate` session, presents its fingerprint,
+  and the member admits it (`admit/1`). The invite names the inviter's fingerprint, so
+  the joining machine trusts that certificate alone and nothing else the answer says.
+  Members exchange the list whenever they connect, whenever it changes and every half
+  minute, entry by entry by timestamp (`merge/3`), so the new machine learns the other
+  members from the inviter over the cluster connection, a machine that joins one member
+  is admitted by all of them, and a removal (`remove/1`) reaches members that were away. The half
   minute is for a member whose cluster process restarted: its connections outlived it,
   so no member connects anew to tell it what it missed. Timestamps come from
   `stamp/1`, so they order changes even when the members' clocks disagree.
@@ -131,17 +131,18 @@ defmodule HalC2.Cluster do
   end
 
   @doc """
-  A one-time pairing link that grants `access:write` and names this MC's fingerprint
-  (in the fragment, which is never sent anywhere), for another machine to `join/1`
-  with within five minutes: `%{"link", "expiresAt", "localOnly"}`. It points at the
-  address `HalC2.Web.address/1` picks for `input` (`"baseUrl"`, `"tailscale"`, else
-  where the MC listens), and `localOnly` says no other machine can reach the link.
+  A one-time pairing link that grants `access:write` and `terminal:operate` and names
+  this MC's fingerprint (in the fragment, which is never sent anywhere), for another
+  machine to `join/1` with within five minutes: `%{"link", "expiresAt", "localOnly"}`.
+  It points at the address `HalC2.Web.address/1` picks for `input` (`"baseUrl"`,
+  `"tailscale"`, else where the MC listens), and `localOnly` says no other machine can
+  reach the link.
   """
   def invite(input \\ %{}) do
     with {:ok, %{"address" => base, "localOnly" => local_only}} <- HalC2.Web.address(input),
          {:ok, %{"credential" => token, "expiresAt" => expires}} <-
            HalC2.Auth.create_pairing_link(%{
-             "scopes" => ["access:write"],
+             "scopes" => ["access:write", "terminal:operate"],
              "label" => "Cluster invite"
            }) do
       fingerprint = GenServer.call(__MODULE__, :fingerprint)
@@ -780,7 +781,7 @@ defmodule HalC2.Cluster do
         "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
         "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap",
         "subject_token" => token,
-        "scope" => "access:write",
+        "scope" => "access:write terminal:operate",
         "client_label" => "Cluster: #{label}"
       })
 

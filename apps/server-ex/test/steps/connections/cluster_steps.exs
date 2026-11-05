@@ -299,6 +299,42 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  step "a client paired for access management without terminal operation asks the first for a cluster invite",
+       context do
+    a = context.machines.a
+    Map.put(context, :invited, client_call(a, :access, "cluster.invite", %{}))
+  end
+
+  step "the MC refuses saying terminal operation is required", context do
+    assert {:error, _message, %{"_tag" => "EnvironmentScopeRequiredError"} = detail} =
+             context.invited
+
+    assert detail["requiredScope"] == "terminal:operate"
+    assert status(context.machines.a)["members"] == []
+    context
+  end
+
+  step "a client with access and terminal scopes asks the first for a cluster invite over HTTP",
+       context do
+    a = context.machines.a
+    assert {200, invite} = http_client_call(a, :admin, "/api/cluster/invite", %{})
+    assert invite["link"] =~ "#{origin(a)}/?token="
+    Map.put(context, :invite, invite)
+  end
+
+  step "a client with access and terminal scopes joins the second with that invite over HTTP",
+       context do
+    b = context.machines.b
+
+    joined =
+      case http_client_call(b, :admin, "/api/cluster/join", %{"link" => context.invite["link"]}) do
+        {200, status} -> {:ok, status}
+        other -> other
+      end
+
+    Map.put(context, :joined, joined)
+  end
+
   step "an MC started without the cluster boot flags", context do
     context |> machine(:a) |> boot(:a, flags: false)
   end
@@ -1289,17 +1325,9 @@ defmodule HalC2.Steps.Connections.Cluster do
   end
 
   # One RPC over a fresh socket to the machine's MC, as the TUI and desktop send it.
-  # `:admin` pairs the client with an admin link, `:standard` with a standard one.
+  # `:admin` may manage access and operate terminals; `:access` may only manage access.
   defp client_call(machine, pairing, method, payload) do
-    scopes =
-      case pairing do
-        :admin -> ~w(orchestration:read access:read access:write)
-        :standard -> :peer.call(machine.peer, HalC2.Auth, :standard_scopes, [])
-      end
-
-    link = %{"label" => "Client", "scopes" => scopes}
-    {:ok, %{"credential" => pairing_token}} = auth(machine, :create_pairing_link, [link])
-    {:ok, access, _, _} = auth(machine, :exchange, [pairing_token, %{"label" => "Client"}])
+    access = client_access(machine, pairing)
     {:ok, ticket, _} = auth(machine, :issue_ticket, [access])
 
     port = URI.parse(origin(machine)).port
@@ -1315,6 +1343,25 @@ defmodule HalC2.Steps.Connections.Cluster do
       %{"t" => "rpc.result", "result" => result} -> {:ok, result}
       %{"t" => "rpc.error", "error" => error} -> {:error, error, frame["detail"]}
     end
+  end
+
+  defp http_client_call(machine, pairing, path, body) do
+    access = client_access(machine, pairing)
+    Mc.http(origin(machine), :post, path, bearer: access, json: body)
+  end
+
+  defp client_access(machine, pairing) do
+    scopes =
+      case pairing do
+        :admin -> ~w(orchestration:read access:read access:write terminal:operate)
+        :access -> ~w(orchestration:read access:read access:write)
+        :standard -> :peer.call(machine.peer, HalC2.Auth, :standard_scopes, [])
+      end
+
+    link = %{"label" => "Client", "scopes" => scopes}
+    {:ok, %{"credential" => pairing_token}} = auth(machine, :create_pairing_link, [link])
+    {:ok, access, _, _} = auth(machine, :exchange, [pairing_token, %{"label" => "Client"}])
+    access
   end
 
   defp auth(machine, fun, args), do: :peer.call(machine.peer, HalC2.Auth, fun, args)

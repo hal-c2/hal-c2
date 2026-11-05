@@ -109,10 +109,23 @@ Feature: Clustering one person's machines
     Then the client sees the first alone again
 
   @mc
-  Scenario: Only a client that manages access sees or changes the cluster
+  Scenario: A client with access and terminal scopes joins its machine over HTTP
+    Given two MCs that are not clustered
+    When a client with access and terminal scopes asks the first for a cluster invite over HTTP
+    And a client with access and terminal scopes joins the second with that invite over HTTP
+    Then the client sees both machines connected
+
+  @mc
+  Scenario: Cluster changes require access management and terminal operation
     Given two MCs that are not clustered
     When a client paired with a standard link asks the first for a cluster invite
     Then the MC refuses both, saying access is required
+
+  @mc
+  Scenario: Access management without terminal operation cannot change the cluster
+    Given two MCs that are not clustered
+    When a client paired for access management without terminal operation asks the first for a cluster invite
+    Then the MC refuses saying terminal operation is required
 
   @mc
   Scenario: A machine that joins one member reaches every member

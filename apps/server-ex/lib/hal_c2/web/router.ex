@@ -305,7 +305,7 @@ defmodule HalC2.Web.Router do
   end
 
   post "/api/cluster/members" do
-    with_scope(conn, "access:write", fn session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn session ->
       with {:ok, body} <- json_body(conn) do
         answer = cluster_answer(HalC2.Cluster.admit(body))
         if session.id && elem(answer, 0) == 200, do: HalC2.Auth.revoke_client(session.id)
@@ -315,13 +315,13 @@ defmodule HalC2.Web.Router do
   end
 
   post "/api/cluster/invite" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       with {:ok, body} <- json_body(conn), do: cluster_answer(HalC2.Cluster.invite(body))
     end)
   end
 
   post "/api/cluster/join" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       case json_body(conn) do
         {:ok, %{"link" => link}} when is_binary(link) -> cluster_answer(HalC2.Cluster.join(link))
         _ -> {:error, :invalid_body}
@@ -330,7 +330,7 @@ defmodule HalC2.Web.Router do
   end
 
   post "/api/cluster/remove" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       case json_body(conn) do
         {:ok, %{"id" => id}} when is_binary(id) -> cluster_answer(HalC2.Cluster.remove(id))
         _ -> {:error, :invalid_body}
@@ -500,12 +500,16 @@ defmodule HalC2.Web.Router do
 
   defp socket_session(_), do: :error
 
-  # Runs `fun.(session)` for a bearer whose session has `scope`; `fun` returns
-  # `{status, body}` or `{:error, reason}`.
-  defp with_scope(conn, scope, fun) do
+  # Runs `fun.(session)` for a bearer whose session has every scope in `scopes`; `fun`
+  # returns `{status, body}` or `{:error, reason}`.
+  defp with_scope(conn, scopes, fun) do
+    scopes = List.wrap(scopes)
+
     case request_session(conn) do
       {:ok, session} ->
-        if scope in session.scopes do
+        missing = Enum.find(scopes, &(&1 not in session.scopes))
+
+        if missing == nil do
           case fun.(session) do
             {204, nil} ->
               send_resp(conn, 204, "")
@@ -532,7 +536,7 @@ defmodule HalC2.Web.Router do
           json(conn, 403, %{
             "_tag" => "EnvironmentScopeRequiredError",
             "code" => "insufficient_scope",
-            "requiredScope" => scope,
+            "requiredScope" => missing,
             "traceId" => trace_id()
           })
         end
