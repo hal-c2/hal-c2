@@ -2826,36 +2826,47 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   /**
-   * With a choice, asks which provider draws it, naming the ones that cannot; the
-   * model is that provider's default. Without one the MC picks, or says why it cannot.
+   * With a choice, asks which image model draws it: each model of each provider that can
+   * make an image, the ones not ready now saying why. Without one the MC picks, or says
+   * why it cannot.
    */
   const chooseImageProvider = async (id: string, prompt: string) => {
     const offer = await send<SpaceImageProvidersResult>(WS_METHODS.spaceImageProviders, {});
     if (!offer) return;
-    if (offer.providers.filter((provider) => provider.status === "ready").length < 2) {
+    const choices = offer.providers.flatMap((provider) =>
+      provider.models.map((model) => ({ provider, model })),
+    );
+    if (choices.filter(({ provider }) => provider.status === "ready").length < 2) {
       generateImage(id, prompt);
       return;
     }
     const chosen = offer.selection;
     options.menu({
-      title: "Who should draw it?",
+      title: "Which image model?",
       index: Math.max(
         0,
-        offer.providers.findIndex((provider) => provider.instanceId === chosen?.instanceId),
+        choices.findIndex(
+          ({ provider, model }) =>
+            provider.instanceId === chosen?.instanceId && model.slug === (chosen?.model ?? "auto"),
+        ),
       ),
-      options: offer.providers.map((provider) => ({
-        label: provider.instanceId,
-        value: provider.instanceId,
+      options: choices.map(({ provider, model }, index) => ({
+        label: `${provider.instanceId} · ${model.name}`,
+        value: String(index),
         disabled: provider.status !== "ready",
         description:
           provider.status === "ready"
-            ? ""
-            : provider.status === "unsupported"
-              ? "not supported here"
-              : (provider.message ?? "unavailable"),
+            ? (model.description ?? "")
+            : (provider.message ?? "unavailable"),
       })),
-      onChoose: (instanceId) =>
-        generateImage(id, prompt, instanceId === chosen?.instanceId ? chosen : { instanceId }),
+      onChoose: (index) => {
+        const choice = choices[Number(index)];
+        if (!choice) return;
+        generateImage(id, prompt, {
+          instanceId: choice.provider.instanceId,
+          model: choice.model.slug,
+        });
+      },
     });
   };
 

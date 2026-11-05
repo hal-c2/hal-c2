@@ -170,6 +170,13 @@ defmodule HalC2.Steps.Space.Images do
     generate(context, space, %{"prompt" => prompt, "modelSelection" => selection})
   end
 
+  step "the user generates an image of {string} in {string} with {word} using {string}",
+       %{args: [prompt, space, provider, model]} = context do
+    Mc.ensure(HalC2.Settings)
+    selection = %{"instanceId" => provider, "model" => model}
+    generate(context, space, %{"prompt" => prompt, "modelSelection" => selection})
+  end
+
   step "{string} has a generated image of {string}", %{args: [space, prompt]} = context do
     image = Enum.find(Images.live(space_state(space, context)), &(&1["prompt"] == prompt))
     assert %{"name" => ^prompt, "mimeType" => "image/png", "generatedBy" => %{}} = image
@@ -197,17 +204,57 @@ defmodule HalC2.Steps.Space.Images do
     context
   end
 
-  step "the image providers on offer say which can generate", context do
+  step "the image remembers it was made by {word} using {string}",
+       %{args: [provider, model]} = context do
+    assert {:ok,
+            %{"image" => %{"generatedBy" => %{"instanceId" => ^provider, "model" => ^model}}}} =
+             context.space_reply
+
+    context
+  end
+
+  step "the user is told {string} is not an image model {word} can use",
+       %{args: [model, provider]} = context do
+    context = told(context, "unsupported")
+    {:error, message, _} = context.space_reply
+    assert message =~ model and message =~ provider
+    context
+  end
+
+  step "the agent ran on {string}, a model the MC picked for writing text",
+       %{args: [model]} = context do
+    [call] = calls(context)
+    pairs = Enum.chunk_every(call["argv"], 2, 1)
+    assert ["--model", model] in pairs or ["-m", model] in pairs
+
+    context
+  end
+
+  step "grok was told to draw with {string}", %{args: [model]} = context do
+    assert [%{"imageModel" => ^model}] = calls(context)
+    context
+  end
+
+  step "grok was not told which image model to use", context do
+    assert [%{"imageModel" => nil}] = calls(context)
+    context
+  end
+
+  step "only the providers that can generate are offered, with their image models", context do
     {%{"providers" => providers, "selection" => selection}, context} =
       World.call!(context, "space.image.providers")
 
-    status = Map.new(providers, &{&1["instanceId"], &1["status"]})
-    assert status["codex"] == "ready"
+    assert Enum.map(providers, &{&1["instanceId"], &1["status"]}) == [
+             {"codex", "ready"},
+             {"grok", "unavailable"}
+           ]
 
-    for id <- ~w(claudeAgent cursor opencode antigravity pi),
-        do: assert(status[id] == "unsupported")
+    models =
+      Map.new(providers, &{&1["instanceId"], Enum.map(&1["models"], fn m -> m["slug"] end)})
 
-    assert %{"instanceId" => "codex"} = selection
+    assert models["codex"] == ["auto"]
+    assert models["grok"] == ["auto", "grok-imagine-image-2.0", "grok-imagine-image"]
+    assert selection == %{"instanceId" => "codex", "model" => "auto"}
     context
   end
 
@@ -384,6 +431,14 @@ defmodule HalC2.Steps.Space.Images do
     if :grok in providers,
       do: World.update_settings(context, %{"providers" => %{"grok" => %{"enabled" => true}}}),
       else: context
+  end
+
+  # Each call the fake CLI logged, oldest first.
+  defp calls(context) do
+    Path.join(context.mc.home, "image-calls.jsonl")
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.map(&JSON.decode!/1)
   end
 
   defp told(context, reason) do

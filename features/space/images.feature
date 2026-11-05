@@ -7,6 +7,12 @@
 #   apps/server-ex/lib/hal_c2/space/images.ex
 #   apps/server-ex/lib/hal_c2/space/image_file.ex
 #   apps/server-ex/lib/hal_c2/space/image_generation.ex
+#   https://github.com/openai/codex/blob/main/codex-rs/ext/image-generation/src/tool.rs
+#     (Codex's image tool always asks for gpt-image-2; no setting chooses the model)
+#   https://github.com/openai/codex/issues/43965 (asking Codex to let the model be chosen)
+#   grok 1.0.70: features.image_gen_model_override, GROK_IMAGE_GEN_MODEL_OVERRIDE
+#   https://docs.x.ai/docs/models (grok-imagine-image, grok-imagine-image-2.0)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (the prompt area, reused for images)
 
 Feature: Images in a Space
   A Space keeps images: generated from a prompt by a provider the user already has, or
@@ -100,11 +106,30 @@ Feature: Images in a Space
       And the images of "Research" are ""
 
   @mc @desktop @mobile @tui
-  Rule: Choosing the provider
+  Rule: Choosing the provider and its image model
 
     Scenario: The user is offered only the providers that can generate an image
       Given image generation is available
-      Then the image providers on offer say which can generate
+      Then only the providers that can generate are offered, with their image models
+
+    Scenario: The user generates with the image model they chose
+      Given grok is installed and can generate images
+      When the user generates an image of "a red fox" in "Research" with grok using "grok-imagine-image-2.0"
+      Then the image remembers it was made by grok using "grok-imagine-image-2.0"
+
+  @desktop @mobile
+  Rule: The prompt is written in the prompt area
+
+    Scenario: The images have the prompt area of a page, offering image models
+      Given image generation is available
+      When the user opens the images of "Research"
+      Then the prompt area asks what the image should show
+      And its model picker offers only image models
+
+    Scenario: Without a provider that can generate, the prompt area says so
+      Given no image generation provider is available
+      When the user opens the images of "Research"
+      Then the prompt area says no provider can generate images
 
   @mc
   Rule: Which providers generate images
@@ -114,11 +139,28 @@ Feature: Images in a Space
       When the user generates an image of "a red fox" in "Research" with <provider>
       Then "Research" has a generated image of "a red fox"
       And the image remembers it was made by <provider>
+      And the agent ran on "<text model>", a model the MC picked for writing text
 
       Examples:
-        | provider |
-        | codex    |
-        | grok     |
+        | provider | text model |
+        | codex    | gpt-6-luna |
+        | grok     | grok-build |
+
+    Scenario: Grok is told which image model to use
+      Given grok is installed and can generate images
+      When the user generates an image of "a red fox" in "Research" with grok using "grok-imagine-image-2.0"
+      Then grok was told to draw with "grok-imagine-image-2.0"
+
+    Scenario: Left to itself, Grok picks its own image model
+      Given grok is installed and can generate images
+      When the user generates an image of "a red fox" in "Research" with grok
+      Then grok was not told which image model to use
+
+    Scenario: Codex cannot be told which image model to use
+      Given codex is installed and can generate images
+      When the user generates an image of "a red fox" in "Research" with codex using "gpt-image-2.6-sunburst"
+      Then the user is told "gpt-image-2.6-sunburst" is not an image model codex can use
+      And the images of "Research" are ""
 
     Scenario Outline: A provider that cannot generate one is not supported here
       When the user generates an image of "a red fox" in "Research" with <provider>

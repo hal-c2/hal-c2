@@ -374,7 +374,11 @@ export const SpaceSlide = Schema.Struct({
 });
 export type SpaceSlide = typeof SpaceSlide.Type;
 
-/** A provider and model, as chosen for anything else in HAL-C2. */
+/**
+ * The provider that makes an image, and the image model it is told to use: a `slug` of
+ * its `SpaceImageProvider.models`, "auto" (the provider picks) when left out. The agent
+ * itself runs on a model for writing text that the MC picks.
+ */
 const SpaceImageSelection = Schema.Struct({
   instanceId: TrimmedNonEmptyString,
   model: Schema.optional(Schema.String),
@@ -1032,16 +1036,29 @@ export type SpaceImageResult = typeof SpaceImageResult.Type;
 export const SpaceImageDeleteResult = Schema.Struct({ imageId: SpaceImageId });
 export type SpaceImageDeleteResult = typeof SpaceImageDeleteResult.Type;
 
+/**
+ * An image model a provider's image tool can be told to use. "auto" leaves the choice to
+ * the provider, and is the only one Codex has: its tool cannot be told which to use.
+ */
+export const SpaceImageModel = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  description: Schema.NullOr(Schema.String),
+});
+export type SpaceImageModel = typeof SpaceImageModel.Type;
+
+/** A provider whose agent can make an image; those that cannot are not offered. */
 export const SpaceImageProvider = Schema.Struct({
   instanceId: TrimmedNonEmptyString,
   driver: TrimmedNonEmptyString,
-  status: Schema.Literals(["ready", "unavailable", "unsupported"]),
-  /** Why it cannot make an image; null when it can. */
+  status: Schema.Literals(["ready", "unavailable"]),
+  /** Why it cannot make an image now; null when it can. */
   message: Schema.NullOr(Schema.String),
+  models: Schema.Array(SpaceImageModel),
 });
 export type SpaceImageProvider = typeof SpaceImageProvider.Type;
 
-/** Which providers can make an image, and which is used when the user does not choose. */
+/** The providers that can make an image, and the selection used when the user does not choose. */
 export const SpaceImageProvidersResult = Schema.Struct({
   providers: Schema.Array(SpaceImageProvider),
   selection: Schema.NullOr(SpaceImageSelection),
