@@ -106,21 +106,6 @@ defmodule HalC2.Rpc do
   def handle("hal-c2.placeThread", %{"environmentId" => _, "projectId" => _} = input),
     do: HalC2.LoadBalancing.place(input)
 
-  # Settings → Connections over the socket: the twins of `/api/auth/pairing-token` and
-  # `/api/auth/pairing-links*`, with the HTTP routes' bodies and replies. A link made
-  # here also says where its MC is reached (`"address"` and `"localOnly"`, picked by
-  # `"baseUrl"` or `"tailscale"` as `HalC2.Web.address/1` does): the MC asked may be
-  # another member than the one the client is connected to, whose address the client
-  # has no way to know. No link is made when that address cannot be had.
-  def handle("hal-c2.createPairingLink", input) do
-    with {:ok, reached} <- HalC2.Web.address(input),
-         {:ok, link} <- HalC2.Auth.create_pairing_link(Map.take(input, ~w(label scopes))) do
-      {:ok, Map.merge(link, reached)}
-    else
-      {:error, {:tailscale, message}} -> {:error, message}
-    end
-  end
-
   def handle("hal-c2.pairingLinks", _input), do: {:ok, HalC2.Auth.pairing_links()}
 
   def handle("hal-c2.revokePairingLink", %{"id" => id}),
@@ -340,6 +325,20 @@ defmodule HalC2.Rpc do
   # Push goes to the phone that registered, so it belongs to the client's session.
   def handle("hal-c2.registerPush", input, session), do: HalC2.Push.register(session, input)
   def handle("hal-c2.unregisterPush", _input, session), do: HalC2.Push.unregister(session)
+
+  # Settings → Connections: the twin of `/api/auth/pairing-token`, with the caller's
+  # verified scopes. The MC asked may be another member, whose address the client has
+  # no way to know. No link is made when that address cannot be had.
+  def handle("hal-c2.createPairingLink", input, creator_scopes) do
+    with {:ok, reached} <- HalC2.Web.address(input),
+         {:ok, link} <-
+           HalC2.Auth.create_pairing_link(Map.take(input, ~w(label scopes)), creator_scopes) do
+      {:ok, Map.merge(link, reached)}
+    else
+      {:error, :invalid_scope} -> {:error, "invalid pairing link scopes"}
+      {:error, {:tailscale, message}} -> {:error, message}
+    end
+  end
 
   defp cluster({:ok, _} = ok), do: ok
 

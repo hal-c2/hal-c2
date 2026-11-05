@@ -508,6 +508,9 @@ defmodule HalC2.Web.Socket do
   defp call_mc(state, socket, mc, method, payload, timeout) do
     {module, fun, args} =
       cond do
+        method == "hal-c2.createPairingLink" ->
+          {HalC2.Rpc, :handle, [method, payload || %{}, state.scopes]}
+
         method in @session_methods ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
 

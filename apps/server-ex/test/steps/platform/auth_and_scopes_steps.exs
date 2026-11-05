@@ -573,6 +573,41 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
+  step "an administrator creating a pairing link", context do
+    {:ok, link} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => ["access:read", "access:write"]})
+
+    Map.put(context, :access, pair!(context, link["credential"]))
+  end
+
+  step ~r/^it names (a scope that the administrator does not hold|an unknown scope|no scopes at all|the same scope twice|the default scopes without holding all of them)$/,
+       %{args: [scopes]} = context do
+    requested =
+      case scopes do
+        "a scope that the administrator does not hold" -> ["terminal:operate"]
+        "an unknown scope" -> ["files:everything"]
+        "no scopes at all" -> []
+        "the same scope twice" -> ["access:write", "access:write"]
+        "the default scopes without holding all of them" -> nil
+      end
+
+    body = if requested == nil, do: %{}, else: %{"scopes" => requested}
+
+    response =
+      Mc.request(context.mc, :post, "/api/auth/pairing-token",
+        bearer: context.access,
+        json: body
+      )
+
+    Map.put(context, :response, response)
+  end
+
+  step "the MC refuses the link as an invalid scope", context do
+    assert {400, _, %{"_tag" => "EnvironmentRequestInvalidError"}} = context.response
+    assert HalC2.Auth.pairing_links() == []
+    context
+  end
+
   step "an administrator follows the MC's access list", context do
     access = admin!(context)
     client = socket!(context, access)

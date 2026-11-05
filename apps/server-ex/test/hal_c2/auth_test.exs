@@ -260,7 +260,7 @@ defmodule HalC2.AuthTest do
         phone
     end
 
-    input = %{"label" => "Tablet", "scopes" => ["orchestration:read", "not-a-scope"]}
+    input = %{"label" => "Tablet", "scopes" => ["orchestration:read"]}
     {{:ok, link}, admin} = call(admin, "hal-c2.createPairingLink", input)
     assert %{"id" => link_id, "credential" => credential, "label" => "Tablet"} = link
     # With where this MC is reached: its loopback listener, which only this machine reaches.
@@ -296,6 +296,84 @@ defmodule HalC2.AuthTest do
     {reply, admin} = call(admin, "hal-c2.revokeOtherClients", %{})
     assert {:ok, %{"revokedCount" => 1}} = reply
     assert {{:ok, [%{"sessionId" => ^admin_session}]}, _} = call(admin, "hal-c2.clients", %{})
+  end
+
+  test "HTTP pairing links cannot delegate scopes their creator does not hold", %{port: port} do
+    {:ok, %{"credential" => credential}} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => ["access:write"]})
+
+    {:ok, access, _, _} = HalC2.Auth.exchange(credential)
+    base = "http://127.0.0.1:#{port}"
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+    for scopes <- [
+          nil,
+          [],
+          ["access:write", "access:write"],
+          ["not-a-scope"],
+          ["access:write", "terminal:operate"],
+          admin_scopes
+        ] do
+      body = if scopes == nil, do: %{}, else: %{"scopes" => scopes}
+
+      assert {400, %{"_tag" => "EnvironmentRequestInvalidError"}} =
+               request(:post, base <> "/api/auth/pairing-token", access, body)
+    end
+
+    assert HalC2.Auth.pairing_links() == []
+
+    assert {200, %{"credential" => narrow_credential}} =
+             request(:post, base <> "/api/auth/pairing-token", access, %{
+               "scopes" => ["access:write"]
+             })
+
+    assert {:ok, _, _, ["access:write"]} = HalC2.Auth.exchange(narrow_credential)
+  end
+
+  test "socket pairing links cannot delegate scopes their creator does not hold", %{port: port} do
+    {narrow, _} = paired_socket(port, ["access:write"], "Narrow")
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+    for scopes <- [
+          nil,
+          [],
+          ["access:write", "access:write"],
+          ["not-a-scope"],
+          ["access:write", "terminal:operate"],
+          admin_scopes
+        ],
+        reduce: narrow do
+      narrow ->
+        payload = if scopes == nil, do: %{}, else: %{"scopes" => scopes}
+        {reply, narrow} = call(narrow, "hal-c2.createPairingLink", payload)
+        assert reply == {:error, "invalid pairing link scopes"}
+        narrow
+    end
+
+    assert HalC2.Auth.pairing_links() == []
+
+    {{:ok, link}, _} =
+      call(narrow, "hal-c2.createPairingLink", %{"scopes" => ["access:write"]})
+
+    assert {:ok, _, _, ["access:write"]} = HalC2.Auth.exchange(link["credential"])
+  end
+
+  test "forwarded pairing link RPCs validate the socket's scopes", %{port: port, path: path} do
+    {narrow, _} = paired_socket(port, ["access:write"], "Narrow")
+    :ok = HalC2.Shell.subscribe(self())
+    peer = HalC2.Test.Mc.start_peer(%{home: Path.dirname(path)})
+
+    assert_receive {:hal_c2_shell, {:environment, ^peer, %{"environmentId" => peer_environment}}},
+                   10_000
+
+    payload = %{
+      "scopes" => HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+    }
+
+    assert {{:error, "invalid pairing link scopes"}, _} =
+             call(narrow, "hal-c2.createPairingLink", payload, peer_environment)
+
+    assert :erpc.call(peer, HalC2.Auth, :pairing_links, []) == []
   end
 
   test "paired clients are only managed on the MC the caller's session belongs to",

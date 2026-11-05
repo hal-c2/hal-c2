@@ -54,6 +54,46 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
+  property "a pairing link delegates only a valid subset of its creator's scopes",
+    numtests: HalC2.Prop.numtests(100) do
+    creator = let(scopes <- resize(5, list(oneof(@admin))), do: Enum.uniq(scopes))
+
+    requested =
+      frequency([
+        {2, nil},
+        {8, resize(5, list(oneof(@admin ++ ["bogus:scope"])))}
+      ])
+
+    forall {creator, requested} <- {creator, requested} do
+      HalC2.Prop.scratch_home("auth-delegation")
+      HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+      effective = requested || @standard
+
+      valid? =
+        effective != [] and effective == Enum.uniq(effective) and
+          Enum.all?(effective, &(&1 in @admin)) and Enum.all?(effective, &(&1 in creator))
+
+      input = if requested == nil, do: %{}, else: %{"scopes" => requested}
+
+      outcome =
+        case Auth.create_pairing_link(input, creator) do
+          {:ok, %{"credential" => credential}} ->
+            [listed] = Auth.pairing_links()
+            {:ok, _, _, granted} = Auth.exchange(credential)
+            valid? and listed["scopes"] == effective and granted == effective
+
+          {:error, :invalid_scope} ->
+            not valid? and Auth.pairing_links() == []
+
+          _ ->
+            false
+        end
+
+      HalC2.Prop.stop_services()
+      outcome
+    end
+  end
+
   # --- model ------------------------------------------------------------------
 
   # links: pending pairing tokens (unexpired or not, until pruned). sessions: rows of

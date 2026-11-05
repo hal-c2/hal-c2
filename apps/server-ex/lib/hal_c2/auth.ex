@@ -338,8 +338,15 @@ defmodule HalC2.Auth do
     end
   end
 
-  @doc "`POST /api/auth/pairing-token`: a pairing link, with its one-time credential."
+  @doc "Creates a pairing link for a trusted MC operation, with its one-time credential."
   def create_pairing_link(input), do: GenServer.call(__MODULE__, {:create_link, input})
+
+  @doc """
+  Creates a pairing link for an authenticated client. `creator_scopes` must come from
+  the client's verified session, never from its request.
+  """
+  def create_pairing_link(input, creator_scopes),
+    do: GenServer.call(__MODULE__, {:create_link, input, creator_scopes})
 
   @doc "`GET /api/auth/pairing-links`."
   def pairing_links, do: GenServer.call(__MODULE__, :links)
@@ -433,22 +440,16 @@ defmodule HalC2.Auth do
     {:reply, reply, broadcast(state, events)}
   end
 
+  def handle_call({:create_link, input, creator_scopes}, _from, state) do
+    case delegated_scopes(Map.get(input, "scopes", @standard_scopes), creator_scopes) do
+      {:ok, scopes} -> create_link(input, scopes, state)
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
   def handle_call({:create_link, input}, _from, state) do
     scopes = Enum.filter(input["scopes"] || @standard_scopes, &(&1 in @admin_scopes))
-    ttl = input["ttlMs"] || @pairing_ttl
-
-    link =
-      with_db(
-        state.path,
-        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"])
-      )
-
-    listed =
-      Map.drop(link, ["credential"])
-      |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
-
-    state = broadcast(state, [event("pairingLinkUpserted", listed)])
-    {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
+    create_link(input, scopes, state)
   end
 
   def handle_call(:prune, _from, state), do: {:reply, prune_expired(state.path), state}
@@ -490,6 +491,33 @@ defmodule HalC2.Auth do
 
     snapshot = %{"pairingLinks" => links(state.path), "clientSessions" => clients(state)}
     {:reply, {:ok, revision(), snapshot}, state}
+  end
+
+  defp create_link(input, scopes, state) do
+    ttl = input["ttlMs"] || @pairing_ttl
+
+    link =
+      with_db(
+        state.path,
+        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"])
+      )
+
+    listed =
+      Map.drop(link, ["credential"])
+      |> Map.merge(%{"scopes" => scopes, "subject" => input["subject"] || "pairing-link"})
+
+    state = broadcast(state, [event("pairingLinkUpserted", listed)])
+    {:reply, {:ok, Map.take(link, ~w(id credential label expiresAt))}, state}
+  end
+
+  defp delegated_scopes(requested, creator) do
+    creator = if creator == :all, do: @admin_scopes, else: creator
+
+    if is_list(requested) and requested != [] and is_list(creator) and
+         Enum.all?(requested, &(&1 in @admin_scopes)) and requested == Enum.uniq(requested) and
+         Enum.all?(requested, &(&1 in creator)),
+       do: {:ok, requested},
+       else: {:error, :invalid_scope}
   end
 
   @impl true

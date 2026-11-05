@@ -243,9 +243,9 @@ defmodule HalC2.Web.Router do
 
   # Settings → Connections: pairing links and the clients paired with this MC.
   post "/api/auth/pairing-token" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, "access:write", fn session ->
       with {:ok, body} <- json_body(conn),
-           {:ok, link} <- HalC2.Auth.create_pairing_link(body),
+           {:ok, link} <- HalC2.Auth.create_pairing_link(body, session.scopes),
            do: {200, link}
     end)
   end
