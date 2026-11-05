@@ -48,7 +48,13 @@ defmodule HalC2.Subprocess do
   @tail_bytes 4_096
   @tail_lines 8
 
-  @spec start([String.t()], keyword) :: {:ok, t} | {:error, term}
+  @type command :: [String.t()] | (String.t() | nil -> [String.t()])
+
+  @doc """
+  Starts `cmd`. A one-argument `cmd` receives the durable directory before launch, or
+  `nil` for an owned process, and returns the argv; launch files can be made there first.
+  """
+  @spec start(command, keyword) :: {:ok, t} | {:error, term}
   def start(cmd, opts \\ []) do
     {durable, opts} = Keyword.pop(opts, :durable)
 
@@ -58,7 +64,12 @@ defmodule HalC2.Subprocess do
   end
 
   defp start_durable(thread_id, cmd, opts) do
-    with {:ok, program} <- Durable.launch(thread_id, spawn_command(cmd), opts) do
+    cmd =
+      if is_function(cmd, 1),
+        do: fn dir -> cmd.(dir) |> spawn_command() end,
+        else: spawn_command(cmd)
+
+    with {:ok, program} <- Durable.launch(thread_id, cmd, opts) do
       case attach(program.dir, 0, opts[:stderr_prefix]) do
         {:ok, sub} ->
           {:ok, sub}
@@ -105,7 +116,7 @@ defmodule HalC2.Subprocess do
   end
 
   defp start_owned(cmd, opts) do
-    cmd = spawn_command(cmd)
+    cmd = if is_function(cmd, 1), do: cmd.(nil) |> spawn_command(), else: spawn_command(cmd)
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     {tail?, opts} = Keyword.pop(opts, :stderr_tail, false)
     stderr = if prefix || tail?, do: :consume, else: :disable
