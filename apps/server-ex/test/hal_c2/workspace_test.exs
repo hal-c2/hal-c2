@@ -126,15 +126,15 @@ defmodule HalC2.WorkspaceTest do
 
   for ripgrep <- ["rg", nil] do
     @tag ripgrep: ripgrep
-    test "contents search literally or by regex, falling back from a bad regex (#{ripgrep || "git grep"})",
+    test "contents search with #{ripgrep || "git grep"}",
          %{root: root, ripgrep: ripgrep} do
       Application.put_env(:hal_c2, :ripgrep, ripgrep)
       on_exit(fn -> Application.delete_env(:hal_c2, :ripgrep) end)
-      contents_search(root)
+      contents_search(root, ripgrep)
     end
   end
 
-  defp contents_search(root) do
+  defp contents_search(root, ripgrep) do
     search = fn query, opts ->
       Workspace.search_contents(
         Map.merge(
@@ -158,13 +158,66 @@ defmodule HalC2.WorkspaceTest do
     readme = Enum.find(matches, &(&1["path"] == "README.md" and &1["lineNumber"] == 1))
     assert readme["matchRanges"] == [%{"start" => 0, "end" => 5}]
 
-    assert {:ok, %{"matches" => [%{"path" => "README.md", "lineNumber" => 1}]}} =
-             search.("hello", %{"caseSensitive" => true, "useRegex" => true, "query" => "^Hel+o"})
+    if ripgrep do
+      assert {:ok, %{"matches" => [%{"path" => "README.md", "lineNumber" => 1}]}} =
+               search.("hello", %{
+                 "caseSensitive" => true,
+                 "useRegex" => true,
+                 "query" => "^Hel+o"
+               })
 
-    assert {:ok, %{"matches" => [], "regexFallbackError" => error}} =
-             search.("(unclosed", %{"useRegex" => true})
+      assert {:ok, %{"matches" => [], "regexFallbackError" => error}} =
+               search.("(unclosed", %{"useRegex" => true})
 
-    assert is_binary(error)
+      assert is_binary(error)
+    else
+      for query <- ["^Hel+o", "(unclosed"] do
+        assert {:error, %{"failure" => "search_index_search_failed", "message" => message}} =
+                 search.(query, %{"useRegex" => true})
+
+        assert message =~ "Regex search needs ripgrep"
+      end
+    end
+  end
+
+  test "git grep computes literal ranges, applies the limit, and refuses regex without PCRE",
+       %{root: root} do
+    Application.put_env(:hal_c2, :ripgrep, nil)
+    on_exit(fn -> Application.delete_env(:hal_c2, :ripgrep) end)
+    File.write!(Path.join(root, "ranges.txt"), "étotal total\ntotal\n")
+
+    assert {:ok, %{"matches" => [match], "truncated" => true}} =
+             Workspace.search_contents(%{
+               "cwd" => root,
+               "query" => "total",
+               "useRegex" => false,
+               "limit" => 1
+             })
+
+    assert match["lineContent"] == "étotal total"
+
+    assert match["matchRanges"] == [
+             %{"start" => 1, "end" => 6},
+             %{"start" => 7, "end" => 12}
+           ]
+
+    attack = String.duplicate("a", 50_000) <> "bZ"
+    File.write!(Path.join(root, "attack.txt"), attack <> "\n")
+
+    search =
+      Task.async(fn ->
+        Workspace.search_contents(%{
+          "cwd" => root,
+          "query" => "(a+)+$|Z",
+          "useRegex" => true,
+          "limit" => 50
+        })
+      end)
+
+    assert {:error, %{"failure" => "search_index_search_failed", "message" => message}} =
+             Task.await(search, 5_000)
+
+    assert message =~ "Regex search needs ripgrep"
   end
 
   test "a long text file cut at the read limit is still text", %{root: root} do

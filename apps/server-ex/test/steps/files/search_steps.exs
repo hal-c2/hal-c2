@@ -154,6 +154,12 @@ defmodule HalC2.Steps.Files.Search do
     context
   end
 
+  step "the MC answers that regular expression search needs ripgrep", context do
+    assert {:error, message, %{"_tag" => "ProjectSearchContentsError"}} = context.reply
+    assert message =~ "Regex search needs ripgrep"
+    context
+  end
+
   step "ripgrep is not installed on the environment", context do
     Application.put_env(:hal_c2, :ripgrep, "rg-not-installed")
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :ripgrep) end)
@@ -219,7 +225,11 @@ defmodule HalC2.Steps.Files.Search do
         Map.merge(options, %{"cwd" => World.project(context, project).root, "query" => query})
       )
 
-    assert {:ok, %{"matches" => matches}} = reply
+    matches =
+      case reply do
+        {:ok, %{"matches" => matches}} -> matches
+        {:error, _message, _details} -> []
+      end
 
     Map.merge(context, %{
       reply: reply,

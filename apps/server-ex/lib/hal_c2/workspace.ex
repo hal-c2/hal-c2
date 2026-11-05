@@ -6,8 +6,9 @@ defmodule HalC2.Workspace do
 
   Entries come from git where the root is a repository (tracked and untracked files
   that are not ignored), else from a bounded walk; at most 25,000, kept a few seconds
-  (`invalidate/1` drops them when a turn ends). Content search runs ripgrep, or git
-  grep where ripgrep is missing. Writes, and reads by a relative path, stay inside
+  (`invalidate/1` drops them when a turn ends). Content search runs ripgrep. Literal
+  search falls back to git grep where ripgrep is missing; regex search then explains
+  that it needs ripgrep. Writes, and reads by a relative path, stay inside
   the workspace root, symlinks included; a write by an absolute path only replaces a
   text file already there, as one read by that path is edited.
 
@@ -237,22 +238,20 @@ defmodule HalC2.Workspace do
 
   @doc "`projects.searchContents`: lines matching a literal or a regex."
   def search_contents(%{"cwd" => cwd, "query" => query} = input) do
-    limit = input["limit"] || 100
-
     with {:ok, root} <- root(cwd, "ProjectSearchContentsError") do
       regex = input["useRegex"] == true
 
       case grep(root, query, regex, input) do
-        {:ok, matches} ->
-          {:ok, %{"matches" => Enum.take(matches, limit), "truncated" => length(matches) > limit}}
+        {:ok, matches, truncated} ->
+          {:ok, %{"matches" => matches, "truncated" => truncated}}
 
         # A regex that does not compile is searched for literally.
         {:regex_error, message} ->
-          with {:ok, matches} <- grep(root, query, false, input) do
+          with {:ok, matches, truncated} <- grep(root, query, false, input) do
             {:ok,
              %{
-               "matches" => Enum.take(matches, limit),
-               "truncated" => length(matches) > limit,
+               "matches" => matches,
+               "truncated" => truncated,
                "regexFallbackError" => message
              }}
           end
@@ -486,91 +485,128 @@ defmodule HalC2.Workspace do
         if regex, do: {:regex_error, String.trim(err)}, else: {:error, String.trim(err)}
 
       {:ok, _status, out, _err} ->
-        {:ok,
-         for line <- String.split(out, "\n", trim: true),
-             %{"type" => "match", "data" => data} <- [JSON.decode!(line)],
-             text = get_in(data, ["lines", "text"]),
-             is_binary(text) do
-           content = String.trim_trailing(text, "\n")
+        {matches, truncated} =
+          out
+          |> String.split("\n", trim: true)
+          |> Stream.map(&JSON.decode!/1)
+          |> Stream.filter(&match?(%{"type" => "match", "data" => %{}}, &1))
+          |> Stream.map(& &1["data"])
+          |> Stream.map(&ripgrep_match/1)
+          |> Stream.reject(&is_nil/1)
+          |> take_matches(input["limit"] || 100)
 
-           %{
-             "path" => data |> get_in(["path", "text"]) |> String.trim_leading("./"),
-             "lineNumber" => data["line_number"],
-             "lineContent" => content,
-             "matchRanges" =>
-               for %{"start" => s, "end" => e} <- data["submatches"] || [] do
-                 # ripgrep counts bytes; clients count characters.
-                 %{"start" => chars(text, s), "end" => chars(text, e)}
-               end
-           }
-         end}
+        {:ok, matches, truncated}
 
       {:error, message} ->
         {:error, message}
     end
   end
 
-  defp git_grep(root, query, regex, input) do
+  defp ripgrep_match(data) do
+    case get_in(data, ["lines", "text"]) do
+      text when is_binary(text) ->
+        content = String.trim_trailing(text, "\n")
+
+        %{
+          "path" => data |> get_in(["path", "text"]) |> String.trim_leading("./"),
+          "lineNumber" => data["line_number"],
+          "lineContent" => content,
+          "matchRanges" =>
+            for %{"start" => s, "end" => e} <- data["submatches"] || [] do
+              # ripgrep counts bytes; clients count characters.
+              %{"start" => chars(text, s), "end" => chars(text, e)}
+            end
+        }
+
+      _ ->
+        nil
+    end
+  end
+
+  defp git_grep(_root, _query, true, _input),
+    do: {:error, "Regex search needs ripgrep installed on this environment."}
+
+  defp git_grep(root, query, false, input) do
     in_repo = match?({:ok, _}, HalC2.Git.ok(root, ~w(rev-parse --git-dir)))
+    limit = input["limit"] || 100
 
     args =
-      ["grep", "-n", "-I", "--untracked"] ++
+      ["grep", "-z", "-n", "--column", "-o", "-I", "--untracked", "-m", to_string(limit + 1)] ++
         if(in_repo, do: [], else: ["--no-index"]) ++
         if(input["caseSensitive"] == true, do: [], else: ["-i"]) ++
         if(input["wholeWord"] == true, do: ["-w"], else: []) ++
-        if(regex, do: ["-E"], else: ["-F"]) ++ ["-e", query]
+        ["-F", "-e", query, "--"]
 
     case HalC2.Git.run(root, args, max_bytes: 10_000_000) do
       {:ok, %{status: status, out: out}} when status in [0, 1] ->
-        pattern = match_pattern(query, regex, input)
+        {matches, truncated} =
+          out
+          |> String.split("\n", trim: true)
+          |> Stream.flat_map(fn line ->
+            case String.split(line, <<0>>, parts: 4) do
+              [path, number, column, matched] ->
+                [{path, String.to_integer(number), String.to_integer(column), matched}]
 
-        lines =
-          for line <- String.split(out, "\n", trim: true),
-              [path, number, content] <- [String.split(line, ":", parts: 3)],
-              do: {path, number, content}
+              _ ->
+                []
+            end
+          end)
+          |> Stream.chunk_by(fn {path, _number, _column, _matched} -> path end)
+          |> Stream.flat_map(&git_file_matches(root, &1))
+          |> take_matches(limit)
 
-        # Files over 1 MB are skipped, as ripgrep's `--max-filesize` does.
-        small =
-          for {path, _, _} <- Enum.uniq_by(lines, &elem(&1, 0)),
-              match?(
-                {:ok, %File.Stat{size: size}} when size <= 1_048_576,
-                File.stat(Path.join(root, path))
-              ),
-              into: MapSet.new(),
-              do: path
-
-        {:ok,
-         for {path, number, content} <- lines, path in small do
-           ranges =
-             for [{start, length}] <- Regex.scan(pattern, content, return: :index),
-                 do: %{
-                   "start" => chars(content, start),
-                   "end" => chars(content, start + length)
-                 }
-
-           %{
-             "path" => path,
-             "lineNumber" => String.to_integer(number),
-             "lineContent" => content,
-             "matchRanges" => ranges
-           }
-         end}
+        {:ok, matches, truncated}
 
       {:ok, %{err: err}} ->
-        if regex, do: {:regex_error, String.trim(err)}, else: {:error, String.trim(err)}
+        {:error, String.trim(err)}
 
       {:error, message} ->
         {:error, message}
     end
   end
 
-  defp match_pattern(query, regex, input) do
-    source = if regex, do: query, else: Regex.escape(query)
-    source = if input["wholeWord"] == true, do: "\\b#{source}\\b", else: source
-    opts = if input["caseSensitive"] == true, do: "u", else: "iu"
-    Regex.compile!(source, opts)
-  rescue
-    _ -> Regex.compile!(Regex.escape(query), "iu")
+  defp git_file_matches(root, [{path, _number, _column, _matched} | _] = matches) do
+    full = Path.join(root, path)
+
+    with {:ok, %File.Stat{type: :regular, size: size}} when size <= 1_048_576 <- File.stat(full),
+         {:ok, contents} when is_binary(contents) <-
+           File.open(full, [:read, :binary], &IO.binread(&1, @read_max_bytes)) do
+      lines = String.split(contents, "\n")
+
+      matches
+      |> Enum.chunk_by(fn {_path, number, _column, _matched} -> number end)
+      |> Enum.map(fn [{_path, number, _column, _matched} | _] = line_matches ->
+        content = Enum.at(lines, number - 1, "")
+
+        %{
+          "path" => path,
+          "lineNumber" => number,
+          "lineContent" => content,
+          "matchRanges" =>
+            for {_path, _number, column, matched} <- line_matches do
+              start = column - 1
+
+              %{
+                "start" => chars(content, start),
+                "end" => chars(content, start + byte_size(matched))
+              }
+            end
+        }
+      end)
+    else
+      _ -> []
+    end
+  end
+
+  defp take_matches(enumerable, limit) do
+    {matches, _count, truncated} =
+      Enum.reduce_while(enumerable, {[], 0, false}, fn match, {matches, count, _truncated} ->
+        if count < limit,
+          do: {:cont, {[match | matches], count + 1, false}},
+          else: {:halt, {matches, count, true}}
+      end)
+
+    {Enum.reverse(matches), truncated}
   end
 
   defp chars(text, bytes),
