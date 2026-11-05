@@ -1224,14 +1224,13 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     handoff(context, %{"branch" => "feature/pay", "baseRef" => base, "startFromOrigin" => false})
   end
 
-  step "the handoff skips the setup script because it differs from the main checkout's",
-       context do
+  step "the handoff skips the setup script until it is imported", context do
     assert {:ok, %{"setupScript" => script}} = context.handoff
 
     assert script == %{
              "status" => "skipped",
              "detail" =>
-               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+               "the checkout's setup script was not run; import or save the setup action under Settings → Project → Actions first"
            }
 
     context

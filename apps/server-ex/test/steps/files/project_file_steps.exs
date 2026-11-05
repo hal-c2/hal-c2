@@ -122,6 +122,24 @@ defmodule HalC2.Steps.Files.ProjectFile do
     context
   end
 
+  step "{string} imports its setup actions from hal-c2.json", %{args: [project]} = context do
+    id = World.project(context, project).id
+    root = World.project(context, project).root
+
+    scripts =
+      Enum.map(HalC2.ProjectFile.scripts(root), &Map.put(&1, "id", World.slug(&1["name"])))
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => id,
+        "scripts" => scripts
+      })
+
+    World.await_row(id, &(&1["scripts"] == scripts))
+    context
+  end
+
   step "the branch {string} changes the command of {string}", %{args: [branch, name]} = context do
     changed = %{setup(name) | "command" => "echo 'changed' > ran.txt"}
     commit_on_branch(context, branch, project_file([changed]))
@@ -143,14 +161,13 @@ defmodule HalC2.Steps.Files.ProjectFile do
     |> World.launch_in_worktree(project, "list the files", %{"baseRef" => branch})
   end
 
-  step "the new worktree skips the setup script because it differs from the main checkout's",
-       context do
+  step "the new worktree skips the setup script until it is imported", context do
     {snapshot, context} = setup_done(context)
 
     assert %{
              "status" => "skipped",
              "detail" =>
-               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+               "the checkout's setup script was not run; import or save the setup action under Settings → Project → Actions first"
            } = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
 
     assert World.setup_stage(snapshot, "agent") == "done"

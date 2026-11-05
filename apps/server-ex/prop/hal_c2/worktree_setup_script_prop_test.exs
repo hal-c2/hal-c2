@@ -1,11 +1,11 @@
 defmodule HalC2.WorktreeSetupScriptPropTest do
   @moduledoc """
   Which script `HalC2.WorktreeSetup.setup_script/3` picks for a new worktree: the first
-  of the project's saved actions marked to run on worktree creation; only when none is
-  marked, the first the worktree's `hal-c2.json` marks, and that one only when the main
-  checkout's file marks one with the same command and the same blocking; nothing when
-  the file is missing, malformed or does not match the format. Settings are left empty,
-  so the saved actions are the project's own (the settings tiers have plain tests).
+  of the project's saved actions marked to run on worktree creation. With no saved setup
+  action, a marked script in the worktree's `hal-c2.json` waits to be imported even when
+  the main checkout has the same file; nothing runs when the file is missing, malformed
+  or does not match the format. Settings are left empty, so the saved actions are the
+  project's own (the settings tiers have plain tests).
   """
 
   use ExUnit.Case, async: false
@@ -26,10 +26,10 @@ defmodule HalC2.WorktreeSetupScriptPropTest do
   defp file,
     do: frequency([{4, {:valid, scripts()}}, {1, :missing}, {1, :malformed}, {1, :invalid}])
 
-  # The main checkout's file: often the branch's own, else any other.
+  # A matching main checkout must not change the outcome, so generate it independently too.
   defp root_file, do: frequency([{3, :same}, {3, file()}])
 
-  property "a file's setup script runs only when no saved action is one and the main checkout's file has it",
+  property "a checked-in setup script waits for a saved action",
     numtests: HalC2.Prop.numtests(200) do
     forall {saved, file, root_file} <- {scripts(), file(), root_file()} do
       root_file = if root_file == :same, do: file, else: root_file
@@ -45,17 +45,9 @@ defmodule HalC2.WorktreeSetupScriptPropTest do
 
       expected =
         cond do
-          saved_setup ->
-            {:run, saved_setup}
-
-          file_setup == nil ->
-            :none
-
-          Enum.any?(declared(root_file), &(setup?(&1) and same?(&1, file_setup))) ->
-            {:run, file_setup}
-
-          true ->
-            :skip
+          saved_setup -> {:run, saved_setup}
+          file_setup == nil -> :none
+          true -> :skip
         end
 
       ((match?({:skip, _}, picked) and expected == :skip) or picked == expected)
@@ -66,8 +58,6 @@ defmodule HalC2.WorktreeSetupScriptPropTest do
   end
 
   defp setup?(script), do: script["runOnWorktreeCreate"]
-
-  defp same?(a, b), do: a["command"] == b["command"] and a["async"] == b["async"]
 
   defp declared({:valid, listed}), do: listed
   defp declared(_), do: []
