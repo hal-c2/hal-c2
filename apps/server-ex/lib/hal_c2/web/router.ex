@@ -714,12 +714,82 @@ defmodule HalC2.Web.Router do
     with {:ok, mc} <- HalC2.Attachments.issuer(token),
          {:ok, status, resp_headers, body} <-
            remote(mc, HalC2.Attachments, :serve, [token, headers]) do
-      conn
-      |> merge_resp_headers(resp_headers)
-      |> send_resp(status, body)
+      conn = merge_resp_headers(conn, resp_headers)
+
+      case body do
+        {:stream, pid, ref} -> stream_asset(conn, status, pid, ref)
+        body -> send_resp(conn, status, body)
+      end
     else
       {:error, status, message} -> send_resp(conn, status, message)
       _ -> send_resp(conn, 403, "The link is invalid or expired.")
+    end
+  end
+
+  defp stream_asset(conn, status, pid, ref) do
+    monitor = Process.monitor(pid)
+    send(pid, {ref, :start, self()})
+
+    receive do
+      {^ref, :chunk, bytes} ->
+        conn = send_chunked(conn, status)
+        stream_asset_chunk(conn, pid, ref, monitor, bytes)
+
+      {^ref, :done} ->
+        Process.demonitor(monitor, [:flush])
+        send_chunked(conn, status)
+
+      {^ref, :error, :too_large} ->
+        Process.demonitor(monitor, [:flush])
+        send_resp(conn, 413, "GitHub media is too large.")
+
+      {^ref, :error, _reason} ->
+        Process.demonitor(monitor, [:flush])
+        send_resp(conn, 502, "The asset could not be read.")
+
+      {:DOWN, ^monitor, :process, ^pid, _reason} ->
+        send_resp(conn, 502, "The MC holding this file is unavailable.")
+    after
+      60_000 ->
+        send(pid, {ref, :stop})
+        Process.demonitor(monitor, [:flush])
+        send_resp(conn, 504, "The asset stream stalled.")
+    end
+  end
+
+  defp stream_asset_chunk(conn, pid, ref, monitor, bytes) do
+    case Plug.Conn.chunk(conn, bytes) do
+      {:ok, conn} ->
+        send(pid, {ref, :ack})
+        stream_asset_chunks(conn, pid, ref, monitor)
+
+      {:error, _} ->
+        send(pid, {ref, :stop})
+        Process.demonitor(monitor, [:flush])
+        conn
+    end
+  end
+
+  defp stream_asset_chunks(conn, pid, ref, monitor) do
+    receive do
+      {^ref, :chunk, bytes} ->
+        stream_asset_chunk(conn, pid, ref, monitor, bytes)
+
+      {^ref, :done} ->
+        Process.demonitor(monitor, [:flush])
+        conn
+
+      {^ref, :error, _reason} ->
+        Process.demonitor(monitor, [:flush])
+        conn
+
+      {:DOWN, ^monitor, :process, ^pid, _reason} ->
+        conn
+    after
+      60_000 ->
+        send(pid, {ref, :stop})
+        Process.demonitor(monitor, [:flush])
+        conn
     end
   end
 

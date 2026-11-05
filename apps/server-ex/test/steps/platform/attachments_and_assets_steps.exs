@@ -240,6 +240,55 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   defp read(context, url, headers \\ []),
     do: Map.put(context, :response, Mc.request(context.mc, :get, url, headers: headers))
 
+  defp read_chunks(context, url) do
+    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.mc.port, mode: :passive)
+    {:ok, conn, request} = Mint.HTTP.request(conn, "GET", url, [], nil)
+    result = mint_response(conn, request, %{status: nil, headers: [], chunks: []})
+    {:ok, _conn} = Mint.HTTP.close(conn)
+    chunks = Enum.reverse(result.chunks)
+
+    context
+    |> Map.put(:response, {result.status, result.headers, IO.iodata_to_binary(chunks)})
+    |> Map.put(:response_chunks, chunks)
+  end
+
+  defp mint_response(conn, request, result) do
+    {:ok, conn, responses} = Mint.HTTP.recv(conn, 0, 10_000)
+
+    {result, done} =
+      Enum.reduce(responses, {result, false}, fn
+        {:status, ^request, status}, {result, _} ->
+          {%{result | status: status}, false}
+
+        {:headers, ^request, headers}, {result, _} ->
+          {%{result | headers: headers}, false}
+
+        {:data, ^request, bytes}, {result, _} ->
+          {%{result | chunks: [bytes | result.chunks]}, false}
+
+        {:done, ^request}, {result, _} ->
+          {result, true}
+      end)
+
+    if done, do: result, else: mint_response(conn, request, result)
+  end
+
+  step "the client reads the video without a range", context do
+    read_chunks(context, asset_url!(context))
+  end
+
+  step "the MC serves the whole video in bounded pieces", context do
+    assert {200, _headers, body} = context.response
+    assert body == context.bytes
+    assert length(context.response_chunks) > 1
+
+    assert Enum.all?(context.response_chunks, fn bytes ->
+             byte_size(bytes) <= HalC2.Attachments.chunk_bytes()
+           end)
+
+    context
+  end
+
   # --- background ------------------------------------------------------------------
 
   step "a running MC with a project and a thread", context do
@@ -588,7 +637,7 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
 
   step "an asset URL issued by another member", context do
     {mc, peer} = Mc.cluster(context.mc)
-    bytes = png(1500)
+    bytes = png(3 * HalC2.Attachments.chunk_bytes() + 117)
     path = Path.join(peer.home, "peer-chart.png")
     File.mkdir_p!(peer.home)
     File.write!(path, bytes)

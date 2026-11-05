@@ -1,0 +1,109 @@
+sload model-checker
+
+--- A signed asset streamed from the issuing MC to the requesting process. The producer
+--- offers one numbered chunk, the consumer acknowledges it, and only then may the next
+--- chunk be offered. Crashes, disconnects, partitions and timeouts end the request.
+--- proof/hal_c2/asset_stream_proof_test.exs maps it to the code and checks it.
+
+mod ASSET-STREAM is
+  protecting NAT .
+
+  sorts Phase Item Conf Sys .
+  subsort Item < Conf .
+
+  ops closed ready wait done aborted : -> Phase [ctor] .
+  --- Total chunks, the next chunk the owner may offer, the next the consumer expects,
+  --- and the request phase. Received chunks are ordered by construction.
+  op s : Nat Nat Nat Phase -> Item [ctor] .
+  ops chunk ack : Nat -> Item [ctor] .
+  op link : Bool -> Item [ctor] .
+  ops faults timeouts : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars N I J K F T : Nat .
+  var P : Phase .
+  var C : Conf .
+
+  op drop : Conf -> Conf .
+  eq drop(chunk(K) C) = drop(C) .
+  eq drop(ack(K) C) = drop(C) .
+  eq drop(C) = C [owise] .
+
+  --- Opening verifies the local asset before any body message is offered.
+  rl [open] : s(N, 0, 0, closed) => s(N, 0, 0, ready) .
+
+  --- The owner may not offer a second chunk until the consumer's ack came back.
+  crl [offer] : s(N, I, J, ready) link(true)
+    => s(N, I, J, wait) chunk(I) link(true) if I < N /\ I == J .
+  crl [consume] : s(N, I, J, wait) chunk(I) link(true)
+    => s(N, I, J + 1, wait) ack(I) link(true) if I == J .
+  crl [accept] : s(N, I, J, wait) ack(I) link(true)
+    => s(N, I + 1, J, ready) link(true) if J == I + 1 .
+  crl [finish] : s(N, I, J, ready) => s(N, I, J, done) if I == N /\ J == N .
+
+  --- A consumer that stops aborts the producer; no more body can follow.
+  crl [stop] : { s(N, I, J, P) faults(s F) C }
+    => { s(N, I, J, aborted) faults(F) drop(C) }
+    if P =/= done /\ P =/= aborted .
+
+  crl [crash] : { s(N, I, J, P) faults(s F) C }
+    => { s(N, I, J, aborted) faults(F) drop(C) }
+    if P =/= done /\ P =/= aborted .
+  rl [partition] : { link(true) faults(s F) C } => { link(false) faults(F) drop(C) } .
+  rl [heal] : link(false) => link(true) .
+  crl [time-out] : { s(N, I, J, P) timeouts(s T) C }
+    => { s(N, I, J, aborted) timeouts(T) drop(C) }
+    if P =/= done /\ P =/= aborted .
+
+  op start : Nat Nat Nat -> Sys .
+  eq start(N, F, T) = { s(N, 0, 0, closed) link(true) faults(F) timeouts(T) } .
+
+  op indexes : Nat Nat Nat Phase -> Bool .
+  eq indexes(N, I, J, closed) = I == 0 and J == 0 .
+  eq indexes(N, I, J, ready) = I <= N and J == I .
+  eq indexes(N, I, J, wait) = I < N and (J == I or J == I + 1) .
+  eq indexes(N, I, J, done) = I == N and J == N .
+  eq indexes(N, I, J, aborted) = I <= N and J <= I + 1 and (J == I or J == I + 1) .
+
+  ops chunks acks : Conf -> Nat .
+  eq chunks(chunk(K) C) = 1 + chunks(C) .
+  eq chunks(C) = 0 [owise] .
+  eq acks(ack(K) C) = 1 + acks(C) .
+  eq acks(C) = 0 [owise] .
+
+  --- A chunk is current, unacknowledged and the only body message in flight; an ack is
+  --- for that same chunk after the consumer advanced exactly once.
+  op badMessage : Nat Nat Nat Phase Conf -> Bool .
+  ceq badMessage(N, I, J, P, chunk(K) C) = true
+    if P =/= wait or K =/= I or J =/= I .
+  eq badMessage(N, I, J, P, chunk(K) C) = badMessage(N, I, J, P, C) [owise] .
+  ceq badMessage(N, I, J, P, ack(K) C) = true
+    if P =/= wait or K =/= I or J =/= I + 1 .
+  eq badMessage(N, I, J, P, ack(K) C) = badMessage(N, I, J, P, C) [owise] .
+  eq badMessage(N, I, J, P, C) = false [owise] .
+
+  op unsafe : Sys -> Bool .
+  eq unsafe({ s(N, I, J, P) C }) =
+       not indexes(N, I, J, P) or chunks(C) + acks(C) > 1 or badMessage(N, I, J, P, C) .
+
+  op settled : Sys -> Bool .
+  eq settled({ s(N, I, J, done) C }) = true .
+  eq settled({ s(N, I, J, aborted) C }) = true .
+  eq settled({ C }) = false [owise] .
+endm
+
+mod ASSET-STREAM-PROPS is
+  including ASSET-STREAM .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  vars N I J : Nat .
+  var C : Conf .
+
+  op complete : -> Prop [ctor] .
+  eq { s(N, I, J, done) C } |= complete = true .
+  eq { C } |= complete = false [owise] .
+endm
