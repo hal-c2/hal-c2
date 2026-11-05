@@ -438,6 +438,19 @@ Feature: MC authentication and scopes
     When a browser presents it to a development MC
     Then the MC grants an administrative session
     And revoking it locally does not affect another worktree
+    When the development token is rotated
+    Then the previous development credential is refused
+    And the replacement development credential signs in
+    When the development token is removed
+    Then the previous development credential is refused
+
+  @mc
+  Scenario: A non-development MC removes a reusable development credential
+    Given a fixed development auth token is configured
+    When a browser presents it to a development MC
+    Then the MC grants an administrative session
+    When a non-development MC restarts on the same store with that token in its environment
+    Then the previous development credential is refused
 
   @mc
   Scenario: The desktop's new bootstrap session replaces its previous one

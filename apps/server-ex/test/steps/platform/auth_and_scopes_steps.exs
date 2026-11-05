@@ -1231,6 +1231,55 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     %{context | mc: other, clients: %{}}
   end
 
+  step "the development token is rotated", context do
+    rotated = context.token <> "-rotated"
+    Application.put_env(:hal_c2, :dev_auth_token, rotated)
+
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+    |> Map.merge(%{previous_token: context.token, token: rotated})
+  end
+
+  step "the previous development credential is refused", context do
+    assert {200, _, %{"authenticated" => false}} =
+             Mc.request(context.mc, :get, "/api/auth/session", bearer: context.previous_token)
+
+    assert {401, _, _} =
+             Mc.request(context.mc, :post, "/api/auth/websocket-ticket",
+               bearer: context.previous_token
+             )
+
+    assert {400, %{"error" => "invalid_grant"}} =
+             Mc.exchange(context.mc, context.previous_token)
+
+    context
+  end
+
+  step "the replacement development credential signs in", context do
+    assert {200, _, %{"authenticated" => true, "scopes" => @admin}} =
+             Mc.request(context.mc, :get, "/api/auth/session", bearer: context.token)
+
+    assert {200, %{"scope" => scope}} = Mc.exchange(context.mc, context.token)
+    assert String.split(scope) == @admin
+    context
+  end
+
+  step "the development token is removed", context do
+    Application.delete_env(:hal_c2, :dev_auth_token)
+
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+    |> Map.put(:previous_token, context.token)
+  end
+
+  step "a non-development MC restarts on the same store with that token in its environment",
+       context do
+    World.put_os_env("HAL_C2_DEV_AUTH_TOKEN", context.token)
+    refute Keyword.has_key?(HalC2.Test.Storage.boot_config(:prod), :dev_auth_token)
+    Application.delete_env(:hal_c2, :dev_auth_token)
+
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+    |> Map.put(:previous_token, context.token)
+  end
+
   # --- the command line ------------------------------------------------------------
 
   step "an operator lists sessions from the MC's command line", context do

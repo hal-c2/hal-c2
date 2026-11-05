@@ -409,6 +409,7 @@ defmodule HalC2.Auth do
     path = HalC2.Store.path()
     with_db(path, &ensure_schema/1)
     dev = dev_credential(path)
+    revoked = revoke(path, "subject = ?1 AND id IS NOT ?2", ["reusable-dev-token", dev[:id]])
 
     desktop =
       case Application.get_env(:hal_c2, :desktop_token) do
@@ -416,9 +417,11 @@ defmodule HalC2.Auth do
         token -> %{hash: hash(token), expires_at: now() + @desktop_ttl}
       end
 
+    state = %{path: path, desktop: desktop, dev: dev}
+    close_sockets(state, revoked)
     Process.send_after(self(), :prune, @prune_every)
 
-    {:ok, %{path: path, desktop: desktop, dev: dev}}
+    {:ok, broadcast(state, removed_clients(revoked))}
   end
 
   @impl true

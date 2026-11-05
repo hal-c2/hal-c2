@@ -497,6 +497,83 @@ defmodule HalC2.AuthTest do
     assert :binary.list_to_bin(body) =~ "Settings → Connections"
   end
 
+  test "rotating or removing the dev credential revokes its sessions, tickets and sockets" do
+    on_exit(fn -> Application.delete_env(:hal_c2, :dev_auth_token) end)
+    restart_dev_auth("dev-token-a")
+    assert {:ok, %{id: old_id}} = HalC2.Auth.session("dev-token-a")
+    {:ok, old_ticket, _} = HalC2.Auth.issue_ticket("dev-token-a")
+    connect_socket(old_id)
+    {:ok, _, _} = HalC2.Auth.subscribe(self())
+
+    restart_dev_auth("dev-token-b")
+
+    assert HalC2.Auth.session("dev-token-a") == :error
+    assert HalC2.Auth.take_ticket(old_ticket) == :error
+    assert_receive {:socket, {:hal_c2_session_revoked, ^old_id}}
+
+    assert_receive {:hal_c2_auth_access,
+                    %{"type" => "clientRemoved", "payload" => %{"sessionId" => ^old_id}}}
+
+    assert {:ok, %{id: new_id}} = HalC2.Auth.session("dev-token-b")
+    {:ok, new_ticket, _} = HalC2.Auth.issue_ticket("dev-token-b")
+    connect_socket(new_id)
+
+    restart_dev_auth(nil)
+
+    assert HalC2.Auth.session("dev-token-b") == :error
+    assert HalC2.Auth.take_ticket(new_ticket) == :error
+    assert_receive {:socket, {:hal_c2_session_revoked, ^new_id}}
+
+    assert_receive {:hal_c2_auth_access,
+                    %{"type" => "clientRemoved", "payload" => %{"sessionId" => ^new_id}}}
+  end
+
+  test "a non-development start removes a seeded dev credential" do
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :dev_auth_token)
+      System.delete_env("HAL_C2_DEV_AUTH_TOKEN")
+    end)
+
+    restart_dev_auth("dev-token-a")
+    assert {:ok, _} = HalC2.Auth.session("dev-token-a")
+    :ok = stop_supervised(HalC2.Auth)
+    System.put_env("HAL_C2_DEV_AUTH_TOKEN", "dev-token-a")
+    refute Keyword.has_key?(HalC2.Test.Storage.boot_config(:prod), :dev_auth_token)
+    Application.delete_env(:hal_c2, :dev_auth_token)
+    start_supervised!(HalC2.Auth)
+
+    assert HalC2.Auth.session("dev-token-a") == :error
+  end
+
+  defp restart_dev_auth(token) do
+    if token do
+      Application.put_env(:hal_c2, :dev_auth_token, token)
+    else
+      Application.delete_env(:hal_c2, :dev_auth_token)
+    end
+
+    server = Process.whereis(HalC2.Auth)
+    ref = Process.monitor(server)
+    Process.exit(server, :kill)
+    assert_receive {:DOWN, ^ref, _, _, _}
+    :sys.get_state(HalC2.Auth.Supervisor)
+    :sys.get_state(HalC2.Auth)
+  end
+
+  defp connect_socket(id) do
+    test = self()
+
+    pid =
+      spawn_link(fn ->
+        HalC2.Auth.connected(id)
+        :sys.get_state(HalC2.Auth)
+        send(test, {:socket_ready, self()})
+        receive do: (message -> send(test, {:socket, message}))
+      end)
+
+    assert_receive {:socket_ready, ^pid}
+  end
+
   # A socket opened with a ticket from a session paired with `scopes`, and that session's id.
   defp paired_socket(port, scopes, label) do
     {:ok, %{"credential" => credential}} =

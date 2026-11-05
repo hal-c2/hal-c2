@@ -1022,3 +1022,92 @@ defmodule HalC2.AuthConcurrentPropTest do
     match?({:ok, _}, Auth.session(access))
   end
 end
+
+defmodule HalC2.AuthDevTokenPropTest do
+  @moduledoc """
+  The configured development credential becomes the only reusable dev session when Auth
+  restarts. Configuring a value alone changes nothing until that restart.
+  """
+
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2.Auth
+  alias HalC2.Store
+
+  @moduletag timeout: :infinity
+  @tokens ["dev-token-a", "dev-token-b"]
+  @standard ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
+  @admin @standard ++ ~w(access:read access:write relay:write)
+
+  property "only the configured dev token survives a restart",
+    numtests: HalC2.Prop.numtests(100) do
+    forall cmds <- commands(__MODULE__) do
+      trap_exit do
+        previous = Application.fetch_env(:hal_c2, :dev_auth_token)
+        Application.delete_env(:hal_c2, :dev_auth_token)
+        HalC2.Prop.scratch_home("auth-dev-token")
+        HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+        {history, state, result} = run_commands(__MODULE__, cmds)
+        HalC2.Prop.stop_services()
+        restore_dev_token(previous)
+
+        (result == :ok)
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  def initial_state, do: %{configured: nil, active: nil}
+
+  def command(_state) do
+    frequency([
+      {2, {:call, __MODULE__, :configure, [oneof([nil | @tokens])]}},
+      {2, {:call, __MODULE__, :restart, []}},
+      {4, {:call, __MODULE__, :present, [oneof(@tokens)]}}
+    ])
+  end
+
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :configure, [token]}),
+    do: %{state | configured: token}
+
+  def next_state(state, _result, {:call, _, :restart, []}),
+    do: %{state | active: state.configured}
+
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(_state, {:call, _, name, _}, result) when name in [:configure, :restart],
+    do: result == :ok
+
+  def postcondition(state, {:call, _, :present, [token]}, result) do
+    if state.active == token,
+      do: result == {:ok, Enum.sort(@admin)},
+      else: result == :error
+  end
+
+  def configure(nil) do
+    Application.delete_env(:hal_c2, :dev_auth_token)
+    :ok
+  end
+
+  def configure(token) do
+    Application.put_env(:hal_c2, :dev_auth_token, token)
+    :ok
+  end
+
+  def restart, do: HalC2.Prop.restart_service(Auth)
+
+  def present(token) do
+    case Auth.session(token) do
+      {:ok, session} -> {:ok, Enum.sort(session.scopes)}
+      :error -> :error
+    end
+  end
+
+  defp restore_dev_token({:ok, token}), do: Application.put_env(:hal_c2, :dev_auth_token, token)
+  defp restore_dev_token(:error), do: Application.delete_env(:hal_c2, :dev_auth_token)
+end
