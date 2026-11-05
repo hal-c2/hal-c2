@@ -72,6 +72,10 @@ defmodule HalC2.SettingsSharedProofTest do
       "HalC2.Cluster handle_call {:admit, _}" => @members,
       "HalC2.Cluster handle_call {:joined, _, _, _}" => @members,
       "HalC2.Cluster handle_call {:remove, _}" => @members,
+      "HalC2.Cluster handle_call :identity" =>
+        "reads this MC's key for the join handshake, which cluster_join.maude models",
+      "HalC2.Cluster handle_call {:join_challenge, _}" => @members,
+      "HalC2.Cluster handle_call {:join_admit, _}" => @members,
       "HalC2.Cluster handle_call _" => @members,
       "HalC2.Cluster handle_cast {:merge, _}" => @members,
       "HalC2.Cluster handle_cast :version_changed" => @members,
