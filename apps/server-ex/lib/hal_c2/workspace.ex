@@ -569,8 +569,7 @@ defmodule HalC2.Workspace do
     full = Path.join(root, path)
 
     with {:ok, %File.Stat{type: :regular, size: size}} when size <= 1_048_576 <- File.stat(full),
-         {:ok, contents} when is_binary(contents) <-
-           File.open(full, [:read, :binary], &IO.binread(&1, @read_max_bytes)) do
+         {:ok, contents} <- read_head(full, @read_max_bytes, fn _, _ -> :unreadable end) do
       lines = String.split(contents, "\n")
 
       matches
