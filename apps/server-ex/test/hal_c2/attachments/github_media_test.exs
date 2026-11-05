@@ -133,14 +133,10 @@ defmodule HalC2.Attachments.GitHubMediaTest do
       "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 10\r\nConnection: close\r\n\r\n1234"
     )
 
-    case serve(dir, "/short.png") do
-      {:ok, 502, _headers, ""} ->
-        :ok
-
-      {:ok, 200, headers, stream} ->
-        assert {"content-length", "10"} in headers
-        assert {:error, _reason, _chunks} = collect_stream(stream)
-    end
+    assert {:ok, 200, headers, stream} = serve(dir, "/short.png")
+    assert {"content-length", "10"} in headers
+    assert {:error, :upstream, chunks} = collect_stream(stream)
+    assert chunks |> IO.iodata_to_binary() |> byte_size() < 10
   end
 
   test "an upstream body that grows past the cap is cut off", %{dir: dir} do
