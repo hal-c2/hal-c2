@@ -131,6 +131,11 @@ Feature: Images in a Space
       When the user opens the images of "Research"
       Then the prompt area says no provider can generate images
 
+    Scenario: The prompt keeps its words until the image is made
+      Given image generation fails
+      When the user generates an image of "a red fox" in "Research"
+      Then the prompt area still holds "a red fox"
+
   @mc
   Rule: Which providers generate images
 

@@ -99,10 +99,6 @@ Item {
         imageFile.open();
     }
 
-    function askGenerateImage() {
-        generate.open();
-    }
-
     function imageMenu(id) {
         sheet.ask([
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
@@ -722,10 +718,6 @@ Item {
 
     SpacePresenter {
         anchors.fill: parent
-    }
-
-    SpaceImageDialog {
-        id: generate
     }
 
     // Open while `space.picking` names a project: from the palette.

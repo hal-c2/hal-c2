@@ -101,6 +101,8 @@ struct FakeSpaces {
   QString writes;
   // How image generation answers: available, unavailable or failed.
   QString imageGeneration = QStringLiteral("available");
+  // Whether Grok is installed beside Codex, and can draw.
+  bool grok = false;
   // The images a client asked an address for.
   QStringList signedImages;
   // The folder the last summary was written in, and the thread it was of.
@@ -750,7 +752,10 @@ Answer imageCall(FakeMc& mc, const QString& space, const QString& method, const 
     if (fake(mc).imageGeneration == QLatin1String("unavailable")) return refused(QStringLiteral("unavailable"), QStringLiteral("No provider that can make an image is set up."), tag);
     if (fake(mc).imageGeneration == QLatin1String("failed")) return refused(QStringLiteral("failed"), QStringLiteral("The provider left no image."), tag);
     const QString prompt = text(in, QLatin1String("prompt"));
-    return keepImage(mc, space, prompt + QStringLiteral(".png"), prompt, QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
+    // The image remembers who drew it with which image model: as chosen, else Codex's own pick.
+    const QJsonObject chosen = in.value(QLatin1String("modelSelection")).toObject();
+    const QJsonObject by = chosen.isEmpty() ? QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("auto")}} : chosen;
+    return keepImage(mc, space, prompt + QStringLiteral(".png"), prompt, by);
   }
   const QString id = text(in, QLatin1String("imageId"));
   const QJsonObject image = one(mc, stream, QStringLiteral("image"), id);
@@ -1183,12 +1188,21 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     return {{{QStringLiteral("space"), makeSpace(mc, text(in, QLatin1String("name")).trimmed())}}};
   }
   if (method == QLatin1String("image.providers")) {
-    const auto provider = [](const char* id, const char* status, const QString& message) {
-      return QJsonObject{{QStringLiteral("instanceId"), QLatin1String(id)}, {QStringLiteral("driver"), QLatin1String(id)}, {QStringLiteral("status"), QLatin1String(status)}, {QStringLiteral("message"), message}};
+    // As the MC's (lib/hal_c2/space/image_generation.ex): only who can draw, each with its image models.
+    const auto model = [](const char* slug, const char* name) {
+      return QJsonObject{{QStringLiteral("slug"), QLatin1String(slug)}, {QStringLiteral("name"), QLatin1String(name)}, {QStringLiteral("description"), QJsonValue::Null}};
     };
-    const bool able = fake(mc).imageGeneration == QLatin1String("available");
-    return {{{QStringLiteral("providers"), QJsonArray{provider("codex", able ? "ready" : "unavailable", {}), provider("claudeAgent", "unsupported", QStringLiteral("Claude does not generate images here."))}},
-             {QStringLiteral("selection"), able ? QJsonValue(QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}) : QJsonValue(QJsonValue::Null)}}};
+    const auto provider = [](const char* id, bool ready, const QString& message, const QJsonArray& models) {
+      return QJsonObject{{QStringLiteral("instanceId"), QLatin1String(id)}, {QStringLiteral("driver"), QLatin1String(id)},
+                         {QStringLiteral("status"), ready ? QStringLiteral("ready") : QStringLiteral("unavailable")}, {QStringLiteral("message"), message.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(message)},
+                         {QStringLiteral("models"), models}};
+    };
+    const bool able = fake(mc).imageGeneration != QLatin1String("unavailable");
+    const bool grok = able && fake(mc).grok;
+    return {{{QStringLiteral("providers"), QJsonArray{provider("codex", able, able ? QString() : QStringLiteral("Codex is not installed."), {model("auto", "GPT Image")}),
+                                                      provider("grok", grok, grok ? QString() : QStringLiteral("Grok is not installed."),
+                                                               {model("auto", "Grok Imagine"), model("grok-imagine-image-2.0", "Grok Imagine Image 2.0"), model("grok-imagine-image", "Grok Imagine Image")})}},
+             {QStringLiteral("selection"), able ? QJsonValue(QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("auto")}}) : QJsonValue(QJsonValue::Null)}}};
   }
   if (method.startsWith(QLatin1String("files."))) return filesCall(mc, method, in);
   if (method == QLatin1String("page.openFile")) return openFile(mc, in);
@@ -2086,6 +2100,64 @@ void imageMenu(World& world, const QString& said, bool trash, const QString& cho
   world.tap(S("spaceImageMenu:") + said);
   choose(world, choice);
   settle(world);
+}
+
+// `name` inside `within`, on screen.
+QQuickItem* inside(World& world, QQuickItem* within, const QString& name) {
+  QQuickItem* found = nullptr;
+  world.waitFor([&] {
+    found = world.findWhere([&](QQuickItem* item) {
+      if (item->objectName() != name) return false;
+      for (QQuickItem* up = item->parentItem(); up; up = up->parentItem()) {
+        if (up == within) return true;
+      }
+      return false;
+    });
+    return found != nullptr;
+  }, [&] { return S("%1 in %2; %3").arg(name, within->objectName(), describe(world)); });
+  return found;
+}
+
+// The images of the Space `id` on screen, with their prompt aimed at them and knowing who can draw.
+QQuickItem* imagesPromptOn(World& world, const QString& id) {
+  lookAtImages(world, id, false);
+  world.waitFor([&] {
+    return world.state(S("composer")).toMap().value(S("routeKind")) == S("images") &&
+           world.state(S("space")).toMap().value(S("imageProviders")).toMap().contains(S("providers"));
+  }, [&] { return S("the prompt to be the images', knowing who can draw; it is %1").arg(show(prompt(world))); });
+  return world.item(S("spaceImagesComposer"));
+}
+
+// The picker's instances: {instanceId: [model slugs]}, and who is available.
+QVariantMap pickerOffer(World& world, QStringList* available = nullptr) {
+  QVariantMap offer;
+  for (const QVariant& value : world.state(S("modelPicker")).toMap().value(S("instances")).toList()) {
+    const QVariantMap instance = value.toMap();
+    QStringList slugs;
+    for (const QVariant& model : instance.value(S("models")).toList()) slugs.append(model.toMap().value(S("slug")).toString());
+    offer.insert(instance.value(S("instanceId")).toString(), slugs);
+    if (available && instance.value(S("isAvailable")).toBool()) available->append(instance.value(S("instanceId")).toString());
+  }
+  return offer;
+}
+
+// The user types `words` in the images' prompt and taps its send.
+void generateInPrompt(World& world, QQuickItem* composer, const QString& words) {
+  QQuickItem* editor = promptEditor(composer);
+  world.tap(editor);
+  world.type(words);
+  QMetaObject::invokeMethod(composer, "flushText");
+  world.sync();
+  world.waitFor([&] { return prompt(world).value(S("text")) == words; },
+                [&] { return S("the prompt to hold \"%1\"; it is %2").arg(words, show(prompt(world))); });
+  // Without anyone to draw the send is held back; the MC's refusal is what that scenario is about.
+  QQuickItem* send = inside(world, composer, S("primaryAction"));
+  if (send->isEnabled()) {
+    sendPrompt(world, composer);
+  } else {
+    world.bridge().dispatch(S("composer.submit"), QVariantMap{{S("text"), words}, {S("intent"), S("foreground")}});
+    world.sync();
+  }
 }
 
 bool imageTrashed(World& world, const QString& id) {
@@ -4181,9 +4253,67 @@ const Steps steps([] {
     fake(world.mc).imageGeneration = QStringLiteral("failed");
   });
   step(QStringLiteral("the user generates an image of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    look(world, idOfSpace(world, c[1]));
-    // The dialog holds back a blank prompt or no provider; the MC's answer is what this is about.
-    act(world, QStringLiteral("space.image.generate"), {{QStringLiteral("prompt"), c[0]}});
+    generateInPrompt(world, imagesPromptOn(world, idOfSpace(world, c[1])), c[0]);
+  });
+  step(QStringLiteral("(\\w+) is installed and can generate images"), [](World& world, const Captures& c, const Table&) {
+    signImages(world);
+    fake(world.mc).imageGeneration = QStringLiteral("available");
+    if (c[0] == QLatin1String("grok")) fake(world.mc).grok = true;
+  });
+  step(QStringLiteral("the user generates an image of %1 in %1 with (\\w+) using %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* composer = imagesPromptOn(world, idOfSpace(world, c[1]));
+    world.waitFor([&] { return pickerOffer(world).value(c[2]).toStringList().contains(c[3]); },
+                  [&] { return S("the picker to offer %1's %2; it offers %3").arg(c[2], c[3], show(pickerOffer(world))); });
+    world.tap(inside(world, composer, S("modelPicker")));
+    const QString row = S("modelPickerRow:%1:%2").arg(c[2], c[3]);
+    world.waitFor([&] { return world.find(row) != nullptr || world.find(S("modelPickerProvider:") + c[2]) != nullptr; },
+                  [&] { return S("the picker to open; %1").arg(describe(world)); });
+    if (world.find(row) == nullptr) world.tap(S("modelPickerProvider:") + c[2]);
+    world.tap(world.item(row));
+    world.waitFor([&] { const QVariantMap state = world.state(S("composer")).toMap(); return state.value(S("selectedInstanceId")) == c[2] && state.value(S("selectedModel")) == c[3]; },
+                  [&] { return S("the prompt to be on %1's %2; it is %3").arg(c[2], c[3], show(prompt(world))); });
+    world.waitFor([&] { return world.find(row) == nullptr; }, S("the model picker to close"));
+    generateInPrompt(world, composer, c[0]);
+  });
+  step(QStringLiteral("the image remembers it was made by (\\w+) using %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString stream = streamOf(current(world));
+    world.waitFor([&] {
+      for (const QJsonObject& image : all(world.mc, stream, S("image"))) {
+        const QJsonObject by = image.value(QLatin1String("generatedBy")).toObject();
+        if (by.value(QLatin1String("instanceId")) == c[0] && by.value(QLatin1String("model")) == c[1]) return true;
+      }
+      return false;
+    }, [&] { return S("an image made by %1 using %2").arg(c[0], c[1]); });
+  });
+  step(QStringLiteral("only the providers that can generate are offered, with their image models"), [](World& world, const Captures&, const Table&) {
+    imagesPromptOn(world, current(world));
+    const QVariantMap wanted{{S("codex"), QStringList{S("auto")}}, {S("grok"), QStringList{S("auto"), S("grok-imagine-image-2.0"), S("grok-imagine-image")}}};
+    QStringList available;
+    world.waitFor([&] { available.clear(); return pickerOffer(world, &available) == wanted && available == QStringList{S("codex")}; },
+                  [&] { return S("the picker to offer %1 with only codex available; it offers %2 with %3").arg(show(wanted), show(pickerOffer(world)), available.join(u',')); });
+  });
+  step(QStringLiteral("the prompt area asks what the image should show"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* editor = world.item(S("spaceImagesComposer"))->property("editor").value<QQuickItem*>();
+    world.waitFor([&] { return editor->property("placeholderText") == S("What should the image show?"); },
+                  [&] { return S("the prompt to ask what the image should show; it is %1").arg(show(prompt(world))); });
+    expect(world.find(S("attachButton")) == nullptr, S("the images' prompt offers attachments"));
+  });
+  step(QStringLiteral("its model picker offers only image models"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return pickerOffer(world) == QVariantMap{{S("codex"), QStringList{S("auto")}}, {S("grok"), QStringList{S("auto"), S("grok-imagine-image-2.0"), S("grok-imagine-image")}}}; },
+                  [&] { return S("the picker to offer only image models; it offers %1").arg(show(pickerOffer(world))); });
+  });
+  step(QStringLiteral("the prompt area still holds %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* editor = promptEditor(world.item(S("spaceImagesComposer")));
+    world.waitFor([&] {
+      return !prompt(world).value(S("isSendBusy")).toBool() && prompt(world).value(S("text")) == c[0] && editor->property("text") == c[0] &&
+             !world.state(S("space")).toMap().value(S("generatingImage")).toBool();
+    }, [&] { return S("the prompt to still hold \"%1\" once the answer came; it is %2").arg(c[0], show(prompt(world))); });
+  });
+  step(QStringLiteral("the prompt area says no provider can generate images"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* composer = world.item(S("spaceImagesComposer"));
+    QQuickItem* editor = composer->property("editor").value<QQuickItem*>();
+    world.waitFor([&] { return editor->property("placeholderText") == S("No provider here can generate images. Set up Codex or Grok in Settings."); },
+                  [&] { return S("the prompt to say no provider can generate images; it is %1").arg(show(prompt(world))); });
   });
   step(QStringLiteral("%1 has a generated image of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     look(world, idOfSpace(world, c[0]));
@@ -4195,17 +4325,6 @@ const Steps steps([] {
                                                           : QStringLiteral("Image generation is unavailable, so no image was made.");
     world.waitFor([&] { return toldOf(world, start); }, [&] { return QStringLiteral("the user to be told \"%1\"; toasts %2").arg(start, show(toasts(world))); });
     expect(!world.state(QStringLiteral("space")).toMap().value(QStringLiteral("generatingImage")).toBool(), QStringLiteral("the Space view still says it is generating"));
-  });
-  step(QStringLiteral("the image providers on offer say which can generate"), [](World& world, const Captures&, const Table&) {
-    openSpaces(world);
-    act(world, QStringLiteral("space.image.providers"), {});
-    QVariantMap status;
-    world.waitFor([&] {
-      for (const QVariant& provider : world.state(QStringLiteral("space")).toMap().value(QStringLiteral("imageProviders")).toMap().value(QStringLiteral("providers")).toList()) {
-        status.insert(provider.toMap().value(QStringLiteral("instanceId")).toString(), provider.toMap().value(QStringLiteral("status")));
-      }
-      return status.value(QStringLiteral("codex")) == QLatin1String("ready") && status.value(QStringLiteral("claudeAgent")) == QLatin1String("unsupported");
-    }, [&] { return QStringLiteral("the providers to say which can generate; they say %1").arg(show(status)); });
   });
   step(QStringLiteral("the image %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(idOfSpace(world, c[1]) == current(world), QStringLiteral("%1 is not the scenario's Space").arg(c[1]));

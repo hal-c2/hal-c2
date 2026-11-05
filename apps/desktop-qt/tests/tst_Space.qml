@@ -1678,33 +1678,72 @@ Item {
             tryCompare(nameOf("spaceImage:dog.png"), "y", nameOf("spaceImage:cat.png").y);
         }
 
-        function test_the_generate_dialog_offers_only_who_can_generate() {
-            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "codex", status: "ready" }, { instanceId: "claudeAgent", status: "unsupported" }], selection: { instanceId: "codex", model: "gpt-5" } } } });
+        // The images open, and ComposerController aims the prompt at them
+        // (ComposerController::imagesComposerState, imagePickerInstances).
+        function openImages(more) {
             const view = root.research({});
             mouseClick(findChild(view, "spaceImages"));
-            mouseClick(findChild(view, "spaceImageGenerate"));
-            const dialog = findChild(view, "spaceImageDialog");
-            tryVerify(() => dialog.opened);
-            compare(root.dispatched("space.image.providers").length, 1);
-            compare(dialog.ready, ["codex"]);
-            compare(findChild(dialog.contentItem, "spaceImageModel").onlyInstances, ["codex"]);
-            compare(findChild(dialog.contentItem, "spaceImageNotHere").text, "Not supported here: claudeAgent");
-            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
-            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
-            mouseClick(findChild(dialog.contentItem, "spaceImageSubmit"));
-            compare(root.dispatched("space.image.generate"), [{ prompt: "a red fox", modelSelection: { instanceId: "codex", model: "gpt-5" } }]);
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    target: "images#space-1",
+                    routeKind: "images",
+                    spaceId: "space-1",
+                    text: "",
+                    placeholder: "What should the image show?",
+                    canSend: false,
+                    sendDisabledReason: null,
+                    selectedInstanceId: "codex",
+                    selectedModel: "auto",
+                    options: [],
+                    runtimeModes: [],
+                    showInteractionModeToggle: false,
+                    showContextStrip: false
+                }, more),
+                modelPicker: Object.assign({}, Shell.state.modelPicker, {
+                    favorites: false,
+                    multiple: null,
+                    instances: [
+                        { instanceId: "codex", driverKind: "codex", displayName: "Codex", accentColor: null, iconUrl: null, initials: "C", showBadge: false, status: "ready", isAvailable: true, unavailableReason: null,
+                          models: [{ slug: "auto", name: "GPT Image", shortName: null, subProvider: null, isFavorite: false, isCustom: false, isNew: false, isLegacy: false, isUnavailable: false, disabledReason: null }] },
+                        { instanceId: "grok", driverKind: "grok", displayName: "Grok", accentColor: null, iconUrl: null, initials: "G", showBadge: false, status: "ready", isAvailable: true, unavailableReason: null,
+                          models: [{ slug: "auto", name: "Grok Imagine", shortName: null, subProvider: null, isFavorite: false, isCustom: false, isNew: false, isLegacy: false, isUnavailable: false, disabledReason: null },
+                                   { slug: "grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", shortName: null, subProvider: null, isFavorite: false, isCustom: false, isNew: false, isLegacy: false, isUnavailable: false, disabledReason: null }] }
+                    ]
+                })
+            });
+            return view;
         }
 
-        function test_the_generate_dialog_says_when_no_one_can_generate() {
-            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "claudeAgent", status: "unsupported" }], selection: null } } });
-            const view = root.research({});
-            mouseClick(findChild(view, "spaceImages"));
-            mouseClick(findChild(view, "spaceImageGenerate"));
-            const dialog = findChild(view, "spaceImageDialog");
-            tryVerify(() => dialog.opened);
-            verify(findChild(dialog.contentItem, "spaceImageNoProvider").visible);
-            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
-            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
+        function test_the_images_have_the_prompt_area_with_image_models() {
+            const view = openImages();
+            const composer = findChild(view, "spaceImagesComposer");
+            tryVerify(() => composer.visible);
+            verify(!findChild(view, "spaceComposer").ready);
+            verify(!findChild(composer, "attachButton").visible);
+            verify(!findChild(composer, "runtimeModePicker").visible);
+            compare(composer.editor.placeholderText, "What should the image show?");
+            const picker = findChild(composer, "modelPicker");
+            compare(picker.instances.map(instance => instance.instanceId), ["codex", "grok"]);
+            verify(!picker.favorites);
+            compare(picker.triggerTitle, "GPT Image");
+            composer.focusInput();
+            composer.editor.text = "a red fox";
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("composer.submit").map(entry => entry.text), ["a red fox"]);
+        }
+
+        function test_the_images_prompt_says_when_no_one_can_generate() {
+            const view = openImages({
+                placeholder: "No provider here can generate images. Set up Codex or Grok in Settings.",
+                sendDisabledReason: "No provider can generate images",
+                selectedInstanceId: null,
+                selectedModel: null
+            });
+            Shell.state = Object.assign({}, Shell.state, { modelPicker: Object.assign({}, Shell.state.modelPicker, { instances: [] }) });
+            const composer = findChild(view, "spaceImagesComposer");
+            tryVerify(() => composer.visible);
+            compare(composer.editor.placeholderText, "No provider here can generate images. Set up Codex or Grok in Settings.");
+            verify(!findChild(composer, "modelPicker").enabled);
         }
 
         function test_a_page_from_a_thread_names_its_thread() {

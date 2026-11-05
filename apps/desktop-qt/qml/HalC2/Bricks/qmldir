@@ -127,7 +127,6 @@ SpaceChart 1.0 SpaceChart.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
 SpaceBlockImage 1.0 SpaceBlockImage.qml
 SpaceImages 1.0 SpaceImages.qml
-SpaceImageDialog 1.0 SpaceImageDialog.qml
 SpaceFilePicker 1.0 SpaceFilePicker.qml
 SpaceComments 1.0 SpaceComments.qml
 SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml

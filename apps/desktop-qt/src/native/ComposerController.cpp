@@ -253,6 +253,10 @@ void ComposerController::activate() {
     connect(spaces, &SpacePages::changed, this, &ComposerController::followPage);
     connect(spaces, &SpacePages::promptPageChanged, this, &ComposerController::followPage);
     connect(spaces, &SpacePages::agentAskRequested, this, &ComposerController::startAsk);
+    // The images' prompt: what it offers, and whether an image is being made.
+    connect(spaces, &SpacePages::imageOfferChanged, this, [this] {
+      if (onImages()) publish();
+    });
   }
   refreshCatalogue();
   follow();
@@ -278,6 +282,23 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     m_drafts[target].dismissed = true;
     publish();
     return true;
+  }
+  // The images' prompt makes an image of its words: nothing a turn carries.
+  if (onImages()) {
+    static const QSet<QString> turnOnly{
+        QStringLiteral("composer.terminalContext.add"), QStringLiteral("composer.reviewComment.add"),
+        QStringLiteral("composer.citation.add"),        QStringLiteral("composer.ask"),
+        QStringLiteral("composer.project.set"),         QStringLiteral("composer.model.multiple.toggle"),
+        QStringLiteral("composer.option.set"),          QStringLiteral("composer.runtimeMode.set"),
+        QStringLiteral("composer.interactionMode.set"), QStringLiteral("composer.stash"),
+        QStringLiteral("composer.stash.restore"),       QStringLiteral("composer.interrupt"),
+        QStringLiteral("composer.attach"),              QStringLiteral("composer.plan.implement"),
+        QStringLiteral("composer.model.favorite.toggle")};
+    if (turnOnly.contains(action)) return true;
+    if (action == QLatin1String("composer.model.select")) {
+      selectImageModel(target, map.value(QStringLiteral("instanceId")).toString(), map.value(QStringLiteral("model")).toString());
+      return true;
+    }
   }
   if (action == QLatin1String("composer.history.step")) {
     if (!target.isEmpty()) stepHistory(target, map.value(QStringLiteral("direction")).toString() != QLatin1String("forward"));
@@ -687,6 +708,7 @@ bool ComposerController::submit(const QVariantMap& payload) {
     return true;
   }
   if (onPage()) return submitPage(target, text);
+  if (onImages()) return submitImages(target, text);
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
   if (slashUsageLimits(target, text)) return true;
@@ -1742,7 +1764,7 @@ ComposerController::Attachment* ComposerController::findAttachment(const QString
 QString ComposerController::environmentOf(const QString& target) const {
   if (const auto thread = m_store->thread(target)) return thread->environmentId;
   // A page's ask runs on the MC its Space is on.
-  if (target.startsWith(pageKey({}))) return m_client->environment();
+  if (target.startsWith(pageKey({})) || target.startsWith(imagesKey({}))) return m_client->environment();
   auto* shell = NativeShell::of(this);
   if (!shell->controller<DraftController>()->draft(target)) return {};
   return shell->controller<WorkspaceController>()->launch(target).environmentId;
@@ -2494,11 +2516,56 @@ bool ComposerController::pageAgentRunning() const {
 }
 
 void ComposerController::followPage() {
-  if (openThread().isEmpty() && openDraft().isEmpty() && openPage() != m_pageId) {
+  if (openThread().isEmpty() && openDraft().isEmpty() && (openPage() != m_pageId || openImages() != m_imagesSpace)) {
     follow();
   } else if (std::exchange(m_pageRunning, pageAgentRunning()) != m_pageRunning) {
     publish();
   }
+}
+
+QString ComposerController::openImages() const {
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  return spaces ? spaces->promptImages() : QString();
+}
+
+QJsonObject ComposerController::imageSelection(const QString& target) const {
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  if (!spaces) return {};
+  const QVariantMap offer = spaces->imageProviders();
+  if (const auto picked = m_drafts.value(target).modelSelection;
+      picked && composer::offersImageModel(offer, picked->value(QLatin1String("instanceId")).toString(),
+                                           picked->value(QLatin1String("model")).toString())) {
+    return *picked;
+  }
+  return QJsonObject::fromVariantMap(offer.value(QStringLiteral("selection")).toMap());
+}
+
+bool ComposerController::selectImageModel(const QString& target, const QString& instanceId, const QString& model) {
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  if (!spaces || !composer::offersImageModel(spaces->imageProviders(), instanceId, model)) return false;
+  m_drafts[target].modelSelection = QJsonObject{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
+  save();
+  publish();
+  return true;
+}
+
+bool ComposerController::submitImages(const QString& target, const QString& text) {
+  auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  const QString prompt = text.trimmed();
+  if (!spaces || prompt.isEmpty() || spaces->generatingImage()) return true;
+  if (!m_client->isReady() || !m_store->environmentOnline(m_client->environment())) {
+    NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Not connected: no image made"),
+                                                               QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
+  // The prompt keeps its words until the image is made: a refusal or a failed
+  // generation leaves them there to try again.
+  spaces->generateImage(prompt, imageSelection(target), [self = QPointer(this), target, text](bool made) {
+    if (!self) return;
+    if (made && self->draft(target) == text) self->setText(target, QString(), 0);
+    self->publish();
+  });
+  return true;
 }
 
 namespace {
@@ -2607,6 +2674,11 @@ void ComposerController::follow() {
   m_draftId = draftId;
   const QString page = thread.isEmpty() && draftId.isEmpty() ? openPage() : QString();
   if (std::exchange(m_pageId, page) != page && !page.isEmpty()) askPageProject();
+  // The images' prompt asks what can make an image each time they open.
+  const QString images = thread.isEmpty() && draftId.isEmpty() && page.isEmpty() ? openImages() : QString();
+  if (std::exchange(m_imagesSpace, images) != images && !images.isEmpty()) {
+    NativeShell::of(this)->controller<SpaceController>()->handle(QStringLiteral("space.image.providers"), QVariantMap());
+  }
   m_pageRunning = pageAgentRunning();
   // Leaving the thread leaves its edit, as cancelling would.
   if (m_queuedEdit && m_queuedEdit->thread != m_thread) endQueuedEdit();
@@ -2679,6 +2751,21 @@ bool ComposerController::queueHeld() const {
 QVariantMap ComposerController::turnState() const {
   const auto thread = m_store->thread(m_thread);
   const bool isRunning = thread && thread->activeRunId.has_value();
+  // The Space's images: an image being made is the only work.
+  if (onImages()) {
+    const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+    return {{QStringLiteral("threadKey"), QString()},
+            {QStringLiteral("kind"), QStringLiteral("images")},
+            {QStringLiteral("running"), false},
+            {QStringLiteral("sending"), spaces && spaces->generatingImage()},
+            {QStringLiteral("approvals"), QVariantList()},
+            {QStringLiteral("questions"), QVariantList()},
+            {QStringLiteral("plan"), QVariant()},
+            {QStringLiteral("queue"), QVariantList()},
+            {QStringLiteral("waiting"), QVariantList()},
+            {QStringLiteral("queueHeld"), false},
+            {QStringLiteral("queueResuming"), false}};
+  }
   // A Space page: its agent's requests are asked in the agent's thread.
   if (onPage()) {
     return {{QStringLiteral("threadKey"), QString()},
@@ -2861,6 +2948,7 @@ QVariantList ComposerController::shownSent() const {
 
 QString ComposerController::target() const {
   if (onPage()) return pageKey(m_pageId);
+  if (onImages()) return imagesKey(m_imagesSpace);
   if (!m_draftId.isEmpty()) {
     return NativeShell::of(this)->controller<DraftController>()->draft(m_draftId) ? m_draftId : QString();
   }
@@ -3327,6 +3415,7 @@ QString ComposerController::interactionModeOf(const QString& target) const {
 QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const QString target = this->target();
   if (target.isEmpty()) return QVariant::fromValue(nullptr);
+  if (onImages()) return imagesComposerState();
   const bool isDraft = !m_draftId.isEmpty();
   const auto thread = m_store->thread(target);
   const Draft kept = m_drafts.value(target);
@@ -3536,10 +3625,13 @@ QVariantMap ComposerController::pickerState() const {
   const QVariant toggle = key(QStringLiteral("modelPicker.toggle"));
   return {
       {QStringLiteral("instances"),
-       composer::pickerInstances(m_catalogue, prefs, chosen.value(QLatin1String("instanceId")).toString(),
-                                 chosen.value(QLatin1String("model")).toString(), thread && thread->runtime,
-                                 current.value(QLatin1String("instanceId")).toString(),
-                                 current.value(QLatin1String("model")).toString())},
+       onImages() ? imagePickerInstances()
+                  : composer::pickerInstances(m_catalogue, prefs, chosen.value(QLatin1String("instanceId")).toString(),
+                                              chosen.value(QLatin1String("model")).toString(), thread && thread->runtime,
+                                              current.value(QLatin1String("instanceId")).toString(),
+                                              current.value(QLatin1String("model")).toString())},
+      // Image models are not starred.
+      {QStringLiteral("favorites"), !onImages()},
       // A new thread may go to several models: [{instanceId, model}] once
       // more than one is chosen.
       {QStringLiteral("supportsMultiple"), !m_draftId.isEmpty() && target == m_draftId},
@@ -3556,6 +3648,79 @@ QVariantMap ComposerController::pickerState() const {
       {QStringLiteral("nextProvider"), key(QStringLiteral("modelPicker.nextProvider"))},
       {QStringLiteral("jump"), jump},
   };
+}
+
+// The images' ShellComposerState: a prompt and an image model, nothing a turn carries.
+QVariantMap ComposerController::imagesComposerState() const {
+  const QString target = imagesKey(m_imagesSpace);
+  const Draft kept = m_drafts.value(target);
+  const QString text = draft(target);
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  const QVariantMap offer = spaces ? spaces->imageProviders() : QVariantMap();
+  const QVariantList providers = offer.value(QStringLiteral("providers")).toList();
+  const bool answered = !offer.isEmpty();
+  const bool able = std::any_of(providers.cbegin(), providers.cend(), [](const QVariant& provider) {
+    return provider.toMap().value(QStringLiteral("status")).toString() == QLatin1String("ready");
+  });
+  const bool busy = spaces && spaces->generatingImage();
+  const bool offline = !m_store->environmentOnline(m_client->environment());
+  const QJsonObject chosen = imageSelection(target);
+  QVariant disabledReason = QVariant::fromValue(nullptr);
+  if (offline) {
+    disabledReason = QStringLiteral("Not connected");
+  } else if (answered && !able) {
+    disabledReason = QStringLiteral("No provider can generate images");
+  }
+  const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
+  auto* keys = NativeShell::of(this)->controller<KeybindingController>();
+  return {
+      {QStringLiteral("target"), target},
+      {QStringLiteral("routeKind"), QStringLiteral("images")},
+      {QStringLiteral("spaceId"), m_imagesSpace},
+      {QStringLiteral("showContextStrip"), false},
+      {QStringLiteral("edit"), kept.edit.isValid() ? kept.edit : QVariant::fromValue(nullptr)},
+      {QStringLiteral("text"), text},
+      {QStringLiteral("cursor"), std::clamp(kept.cursor, 0, int(text.size()))},
+      {QStringLiteral("triggerKind"), QVariant::fromValue(nullptr)},
+      {QStringLiteral("suggestions"), QVariantList()},
+      {QStringLiteral("suggestionsEmptyText"), QVariant::fromValue(nullptr)},
+      {QStringLiteral("attachments"), QVariantList()},
+      {QStringLiteral("terminalContexts"), QVariantList()},
+      {QStringLiteral("reviewComments"), QVariantList()},
+      {QStringLiteral("citations"), QVariantList()},
+      {QStringLiteral("placeholder"), answered && !able
+                                          ? QStringLiteral("No provider here can generate images. Set up Codex or Grok in Settings.")
+                                          : QStringLiteral("What should the image show?")},
+      {QStringLiteral("editorDisabled"), false},
+      {QStringLiteral("canSend"), !(busy || offline) && able && !text.trimmed().isEmpty()},
+      {QStringLiteral("sendDisabledReason"), disabledReason},
+      {QStringLiteral("isRunning"), false},
+      {QStringLiteral("followUpBehavior"), QString()},
+      {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
+                                                              setting(QStringLiteral("sendShortcut")).toString(), false, false)},
+      {QStringLiteral("isSendBusy"), busy},
+      {QStringLiteral("isConnecting"), false},
+      {QStringLiteral("pendingApprovalCount"), 0},
+      {QStringLiteral("pendingUserInputCount"), 0},
+      {QStringLiteral("showPlanFollowUpPrompt"), false},
+      {QStringLiteral("selectedInstanceId"), orNull(chosen.value(QLatin1String("instanceId")).toString())},
+      {QStringLiteral("selectedModel"), orNull(chosen.value(QLatin1String("model")).toString())},
+      {QStringLiteral("options"), QVariantList()},
+      {QStringLiteral("runtimeMode"), QString()},
+      {QStringLiteral("runtimeModes"), QVariantList()},
+      {QStringLiteral("interactionMode"), QStringLiteral("default")},
+      {QStringLiteral("showInteractionModeToggle"), false},
+      {QStringLiteral("usageLimits"), QVariant::fromValue(nullptr)},
+      {QStringLiteral("editingQueuedRunId"), QVariant::fromValue(nullptr)},
+  };
+}
+
+// The picker's instances for the images' prompt: each provider that can make an
+// image, drawn as the chat's picker draws it, with its image models.
+QVariantList ComposerController::imagePickerInstances() const {
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  if (!spaces) return {};
+  return composer::imagePickerInstances(spaces->imageProviders(), m_catalogue);
 }
 
 // --- Keeping drafts ---------------------------------------------------------------

@@ -8,7 +8,9 @@ import HalC2.Bricks
 
 // The open Space's images, or those in its trash: a list a finger wide of scaled
 // thumbnails, so only the rows on screen fetch and decode anything. An image comes
-// from a file or a prompt, and its menu has what can be done with it.
+// from a file, or from the words of the prompt under the list with the image model
+// picked beside them (ComposerController's images prompt); its menu has what can
+// be done with it.
 ColumnLayout {
     id: view
 
@@ -33,14 +35,6 @@ ColumnLayout {
             iconName: "file"
             label: qsTr("Add from a file")
             onClicked: view.screen.askImageFile()
-        }
-
-        MobileIconButton {
-            objectName: "spaceImageGenerate"
-            enabled: !view.generating
-            iconName: "plus"
-            label: qsTr("Generate an image")
-            onClicked: view.screen.askGenerateImage()
         }
 
         MobileIconButton {
@@ -163,7 +157,14 @@ ColumnLayout {
             wrapMode: Text.Wrap
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Math.round(14 * Theme.fontScale)
-            text: view.trashShown ? qsTr("The trash is empty.") : qsTr("%1 has no images yet. Add one from a file or generate one from a prompt.").arg(Spaces.spaceName)
+            text: view.trashShown ? qsTr("The trash is empty.") : qsTr("%1 has no images yet. Add one from a file, or describe one below to generate it.").arg(Spaces.spaceName)
         }
+    }
+
+    Composer {
+        objectName: "spaceImagesComposer"
+        Layout.fillWidth: true
+        imagesHost: true
+        visible: !view.trashShown && ready
     }
 }

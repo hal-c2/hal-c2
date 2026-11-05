@@ -1994,22 +1994,27 @@ void SpaceController::addImageFile(const QString& url) {
       });
 }
 
-void SpaceController::generateImage(const QString& prompt, const QJsonObject& selection) {
+void SpaceController::generateImage(const QString& prompt, const QJsonObject& selection, std::function<void(bool made)> answered) {
   QJsonObject generate{{QStringLiteral("prompt"), prompt}};
   if (!selection.isEmpty()) generate.insert(QStringLiteral("modelSelection"), selection);
   ++m_generatingImages;
   publish();
+  emit imageOfferChanged();
   toast(QStringLiteral("loading"), tr("Generating an image…"));
   call(
       QStringLiteral("image.generate"), generate,
-      [this](const QJsonObject&) {
+      [this, answered](const QJsonObject&) {
         --m_generatingImages;
+        if (answered) answered(true);
         publish();
+        emit imageOfferChanged();
         toast(QStringLiteral("success"), tr("Image generated"));
       },
-      [this](const QJsonObject& detail) {
+      [this, answered](const QJsonObject& detail) {
         --m_generatingImages;
+        if (answered) answered(false);
         publish();
+        emit imageOfferChanged();
         if (detail.value(QLatin1String("_tag")).toString() != QLatin1String("SpaceImageGenerationError")) return QString();
         const QString reason = detail.value(QLatin1String("reason")).toString();
         const QString why = detail.value(QLatin1String("message")).toString();
@@ -2327,6 +2332,7 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     call(QStringLiteral("image.providers"), {}, [this](const QJsonObject& result) {
       m_imageProviders = result.toVariantMap();
       publish();
+      emit imageOfferChanged();
     });
   } else if (action == QLatin1String("space.image.addFile")) {
     addImageFile(field(QLatin1String("url")));

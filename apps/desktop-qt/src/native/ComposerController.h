@@ -82,6 +82,15 @@ class TimelineModel;
 // queue, follow-ups, several models or excerpts. `composer.ask` starts an ask
 // in the page's prompt, ahead of what is there.
 //
+// The Space's images (SpaceController::imagesShown, with no thread, draft or
+// page open) have a prompt of their own too, keyed imagesKey(spaceId), routeKind
+// "images": its words are what the image should show, and a send generates one
+// (`space.image.generate`) with the image model picked for it. The model picker
+// offers only the image models of the providers that can make an image
+// (`space.image.providers`, asked each time the images open); a send is busy
+// while an image is being made. It has no options, modes, attachments,
+// excerpts, checkout or queue.
+//
 // Actions: composer.text.set {target, text, cursor, edit},
 // composer.suggest.select {id}, composer.suggest.dismiss,
 // composer.model.select {instanceId, model},
@@ -177,6 +186,8 @@ public:
   bool attachmentsPending(const QString& target) const;
   // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
   static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
+  // The draft key of a Space's images prompt.
+  static QString imagesKey(const QString& spaceId) { return QStringLiteral("images#") + spaceId; }
   // More than one model is chosen for the draft, each to get a thread of its own.
   bool choseSeveralModels(const QString& draftId) const { return m_drafts.value(draftId).multipleModels.has_value(); }
   // Adds `text` after the route's draft, a space apart from what is there
@@ -362,6 +373,17 @@ private:
   // Whether the page's agent is at work, which makes the send button stop it.
   bool pageAgentRunning() const;
   void followPage();
+  // The Space whose images are on show, when no thread, draft or page is.
+  QString openImages() const;
+  bool onImages() const { return !m_imagesSpace.isEmpty(); }
+  // The images prompt: the image model picked, else the MC's default; empty when
+  // no provider is on offer to make one.
+  QJsonObject imageSelection(const QString& target) const;
+  bool selectImageModel(const QString& target, const QString& instanceId, const QString& model);
+  // The images prompt's send: an image of what it says.
+  bool submitImages(const QString& target, const QString& text);
+  QVariantMap imagesComposerState() const;
+  QVariantList imagePickerInstances() const;
   // The message and the mode changes before it; empty `text` implements the plan.
   bool sendTurn(const QString& target, const QString& text, const QString& mode, bool planFollowUp, bool fromDraft);
   void sendNext(const QString& target);
@@ -533,6 +555,8 @@ private:
   QString m_pageProject;
   bool m_pageProjectAsked = false;
   bool m_pageRunning = false;
+  // The Space whose images are on show instead.
+  QString m_imagesSpace;
   QPointer<TimelineModel> m_timeline;
   // Sent attachments whose address was asked of the timeline (sentAddress),
   // until it signs one; one it would not sign is not asked for again.

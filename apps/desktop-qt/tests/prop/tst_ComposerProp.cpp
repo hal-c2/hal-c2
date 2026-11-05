@@ -10,7 +10,9 @@
 // interaction mode picked goes before the message, and a provider change between.
 // A Space page's prompt keeps a draft of its own: plain words write a block,
 // and words starting with @agent ask an agent, which the MC takes, refuses or
-// holds; a refused ask keeps every word and image.
+// holds; a refused ask keeps every word and image. A Space's images have a
+// prompt of their own that draws an image with the image model picked: it
+// keeps its words until the image is made, and takes nothing a turn carries.
 
 #include <QBuffer>
 #include <QImage>
@@ -47,6 +49,18 @@ const QStringList kInteractionModes{QStringLiteral("default"), QStringLiteral("p
 const QStringList kPages{QStringLiteral("pg1"), QStringLiteral("pg2")};
 const QStringList kPageTexts{QStringLiteral("a note"), QStringLiteral("@agent tidy this"), QStringLiteral("@Agent"),
                              QStringLiteral("@agents meet"), QStringLiteral("  ")};
+
+// How the model names the Space's images, whose prompt draws an image.
+const QString kImages = QStringLiteral("images");
+const QStringList kImageTexts{QStringLiteral("a red fox"), QStringLiteral("a lighthouse at dusk"), QStringLiteral("  ")};
+// The image models picked ("instance|model"): the MC offers the first three, not a chat model.
+const QStringList kImageModels{QStringLiteral("codex|auto"), QStringLiteral("grok|auto"), QStringLiteral("grok|grok-imagine-image-2.0"),
+                               QStringLiteral("codex|gpt-a")};
+// The MC's own pick, until the user picks another.
+const QString kImageDefault = QStringLiteral("codex|auto");
+// The toasts drawing an image shows, which the model leaves out: it says what the prompt keeps instead.
+const QStringList kImageToasts{QStringLiteral("Generating an image…"), QStringLiteral("Image generated"),
+                               QStringLiteral("The image could not be made.")};
 
 // Words that ask an agent: they start with @agent.
 bool asks(const QString& text) {
@@ -102,6 +116,13 @@ struct Toast {
   bool restore = false;  // whether it offers "Restore prompt"
 };
 
+// An image the MC is drawing: the prompt's words, by whom ("instance|model"), and whether it will refuse it.
+struct Generation {
+  QString text;
+  QString by;
+  bool refused = false;
+};
+
 // An access change the MC holds the answer to; whether it will refuse it.
 struct HeldPick {
   QString thread;
@@ -124,6 +145,9 @@ struct Model {
   QList<Toast> toasts;
   QList<std::pair<QString, int>> stash;  // newest first: text, images
   QString lastModel;  // the model last sent with, a new thread's default
+  // A page's ask went since: it sends with its project's latest model, which the
+  // model leaves out, and that is the new thread's default until a send here.
+  bool lastModelUnknown = false;
   // The model each thread names at the MC, none until one is recorded: a
   // provider change that reached it, or the MC's own record.
   QMap<QString, QString> recorded;
@@ -156,6 +180,12 @@ struct Model {
   // The asks the MC took ("page|request|images"), and the blocks the pages' prompts wrote ("page|text").
   QStringList asked;
   QStringList written;
+  // The image model picked for the images ("instance|model"), none for the MC's pick;
+  // the image being drawn, held while the MC holds its answer; and those drawn ("prompt|instance|model").
+  QString imageModel;
+  bool generating = false;
+  std::optional<Generation> heldGeneration;
+  QStringList generated;
 
   int total() const {
     int count = 0;
@@ -164,6 +194,7 @@ struct Model {
   }
   bool isThread(const QString& target) const { return kThreads.contains(target); }
   bool isPage(const QString& target) const { return kPages.contains(target); }
+  QString imageBy() const { return imageModel.isEmpty() ? kImageDefault : imageModel; }
   // The provider the thread names, if any.
   QString provider(const QString& thread) const {
     const QString model = recorded.value(thread);
@@ -200,6 +231,16 @@ QStringList commandsOf(const Send& send) {
 
 void dispatchFirst(Model& m, const QString& thread);
 void answerAsk(Model& m, const Ask& ask);
+
+// The MC answers an image: one it drew empties the prompt (if it still holds the
+// words it was drawn from), a refused one leaves them to try again.
+void answerGeneration(Model& m, const Generation& generation) {
+  m.generating = false;
+  if (generation.refused) return;
+  m.generated.append(generation.text.trimmed() + u'|' + generation.by);
+  Target& target = m.targets[kImages];
+  if (target.text == generation.text) target.text.clear();
+}
 
 // The MC answers an access change: the thread takes it, and the pick goes once
 // the row with it has come, whatever the row shows; a refused one goes too,
@@ -334,6 +375,7 @@ void answerHeld(Model& m) {
   for (const HeldPick& pick : std::exchange(m.heldPicks, {})) answerPick(m, pick);
   QStringList refused;  // whose next command the MC refuses, in the order they went out
   for (const Ask& ask : std::exchange(m.heldAsks, {})) answerAsk(m, ask);
+  if (const auto generation = std::exchange(m.heldGeneration, std::nullopt)) answerGeneration(m, *generation);
   for (const QString& thread : std::exchange(m.held, {})) {
     const Send send = m.queues[thread].first();
     if (send.refusedAtMc) {
@@ -414,6 +456,8 @@ struct Sut {
   QStringList asked;
   QStringList written;
   bool refusingAsks = false;
+  // The images the MC drew ("prompt|instance|model").
+  QStringList generated;
 
   explicit Sut(const QMap<QString, QString>& recorded) {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -477,6 +521,8 @@ struct Sut {
     // commands' answers.
     mc.onRpc(QStringLiteral("space."), [this](const FakeMc::Rpc& rpc) {
       if (rpc.method == QLatin1String("space.page.agentTarget")) return mc.reply(rpc, QJsonObject{{QStringLiteral("projectId"), QStringLiteral("p1")}});
+      if (rpc.method == QLatin1String("space.image.providers")) return mc.reply(rpc, imageOffer());
+      if (rpc.method == QLatin1String("space.image.generate")) return generate(rpc);
       if (rpc.method != QLatin1String("space.page.askAgent")) return mc.reply(rpc, QJsonObject());
       const QString took = QStringList{rpc.payload.value(QLatin1String("pageId")).toString(),
                                        rpc.payload.value(QLatin1String("request")).toString(),
@@ -527,6 +573,34 @@ struct Sut {
     draftId = native->controller<DraftController>()->start(mc.environmentId, QStringLiteral("p1"));
     open(QStringLiteral("t1"));
     settle(0);
+  }
+
+  // Codex and Grok can draw, each with its image models; Codex's is the MC's pick.
+  static QJsonObject imageOffer() {
+    const auto provider = [](const QString& id, const QStringList& models) {
+      QJsonArray list;
+      for (const QString& model : models) list.append(QJsonObject{{QStringLiteral("slug"), model}, {QStringLiteral("name"), model}});
+      return QJsonObject{{QStringLiteral("instanceId"), id}, {QStringLiteral("driver"), id}, {QStringLiteral("status"), QStringLiteral("ready")},
+                         {QStringLiteral("models"), list}};
+    };
+    return {{QStringLiteral("providers"), QJsonArray{provider(QStringLiteral("codex"), {QStringLiteral("auto")}),
+                                                     provider(QStringLiteral("grok"), {QStringLiteral("auto"), QStringLiteral("grok-imagine-image-2.0")})}},
+            {QStringLiteral("selection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("auto")}}}};
+  }
+
+  // An image drawn, refused, or held with the commands' answers.
+  void generate(const FakeMc::Rpc& rpc) {
+    const QJsonObject by = rpc.payload.value(QLatin1String("modelSelection")).toObject();
+    const QString drawn = QStringList{rpc.payload.value(QLatin1String("prompt")).toString(), by.value(QLatin1String("instanceId")).toString(),
+                                      by.value(QLatin1String("model")).toString()}
+                              .join(u'|');
+    const auto answer = [this, rpc, drawn, refused = refusingAsks] {
+      if (refused) return mc.refuse(rpc, kImageToasts.last());
+      generated.append(drawn);
+      mc.reply(rpc, QJsonObject{{QStringLiteral("imageId"), QStringLiteral("image-%1").arg(rpc.id)}});
+    };
+    if (mc.holding(QStringLiteral("answers"))) return mc.defer(answer);
+    answer();
   }
 
   // A thread's messages, whole, then as they come.
@@ -676,16 +750,27 @@ struct Sut {
 
   QString keyFor(const QString& target) const {
     if (kPages.contains(target)) return ComposerController::pageKey(target);
+    if (target == kImages) return ComposerController::imagesKey(QStringLiteral("sp1"));
     return target == kDraft ? draftId : keyOf(target);
   }
 
   void open(const QString& target) {
-    if (kPages.contains(target)) {
+    if (kPages.contains(target) || target == kImages) {
       auto* spaces = native->controller<SpaceController>();
       if (native->controller<NavigationController>()->route().kind != QLatin1String("space")) {
         bridge->dispatch(SpaceController::kOpen, QVariantMap{});
       }
       RC_ASSERT(prop::until([&] { return spaces->spaceId() == QLatin1String("sp1") && spaces->space().live(); }));
+      // The images browser shows instead of the page, as SpaceWorkspace has it.
+      bridge->dispatch(QStringLiteral("space.images.show"), QVariantMap{{QStringLiteral("shown"), target == kImages}});
+    }
+    if (target == kImages) {
+      auto* spaces = native->controller<SpaceController>();
+      RC_ASSERT(prop::until([&] {
+        return bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString() == keyFor(target) &&
+               !spaces->imageProviders().isEmpty();
+      }));
+    } else if (kPages.contains(target)) {
       bridge->dispatch(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), target}});
       RC_ASSERT(prop::until([&] {
         return bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString() == keyFor(target);
@@ -751,6 +836,7 @@ struct Sut {
     QList<bool> shown;
     for (const QVariant& toast : bridge->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
       const QVariantList actions = toast.toMap().value(QStringLiteral("actions")).toList();
+      if (kImageToasts.contains(toast.toMap().value(QStringLiteral("title")).toString())) continue;
       shown.append(std::any_of(actions.cbegin(), actions.cend(), [](const QVariant& action) {
         return action.toMap().value(QStringLiteral("label")) == QLatin1String("Restore prompt");
       }));
@@ -771,7 +857,7 @@ void verify(const Model& m, Sut& sut) {
   sut.settle(m.total());
   RC_ASSERT(sut.commands() == m.commands);
   auto* composer = sut.composer();
-  for (const QString& target : kThreads + QStringList{kDraft} + kPages) {
+  for (const QString& target : kThreads + QStringList{kDraft, kImages} + kPages) {
     const Target expected = m.targets.value(target);
     RC_ASSERT(composer->draft(sut.keyFor(target)) == expected.text);
     RC_ASSERT(composer->attachments(sut.keyFor(target)).size() == expected.images);
@@ -780,7 +866,19 @@ void verify(const Model& m, Sut& sut) {
   RC_ASSERT(shown.value(QStringLiteral("target")).toString() == sut.keyFor(m.open));
   RC_ASSERT(shown.value(QStringLiteral("text")).toString() == m.targets.value(m.open).text);
   // A page's ask defaults to the model its project last worked with, which the model leaves out.
-  if (!m.isPage(m.open)) RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
+  const bool unknown = m.open == kDraft && m.lastModelUnknown && m.targets.value(kDraft).model.isEmpty();
+  if (!m.isPage(m.open) && m.open != kImages && !unknown) {
+    RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
+  }
+  // The images' prompt draws with the image model picked, and is busy while one is drawn.
+  if (m.open == kImages) {
+    RC_ASSERT(shown.value(QStringLiteral("routeKind")).toString() == kImages);
+    RC_ASSERT(shown.value(QStringLiteral("selectedInstanceId")).toString() + u'|' + shown.value(QStringLiteral("selectedModel")).toString() ==
+              m.imageBy());
+    RC_ASSERT(shown.value(QStringLiteral("isSendBusy")).toBool() == m.generating);
+    RC_ASSERT(shown.value(QStringLiteral("canSend")).toBool() == (!m.generating && !m.targets.value(kImages).text.trimmed().isEmpty()));
+  }
+  RC_ASSERT(sut.generated == m.generated);
   RC_ASSERT(sut.asked == m.asked);
   RC_ASSERT(sut.written == m.written);
   if (m.isThread(m.open)) {
@@ -832,7 +930,10 @@ struct Type : Command {
 
 struct Attach : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(m.targets.value(m.open).images < 2); }
-  void apply(Model& m) const override { ++m.targets[m.open].images; }
+  // The images' prompt takes no attachments.
+  void apply(Model& m) const override {
+    if (m.open != kImages) ++m.targets[m.open].images;
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.attach"),
                          QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("shot.png")},
@@ -994,6 +1095,7 @@ struct Submit : Command {
     queue.append(send);
     if (m.loaded.contains(m.open)) measure(m, m.open);
     m.lastModel = send.model;
+    m.lastModelUnknown = false;
     // Newer than what a restart cut off.
     m.limbo.remove(m.open);
     target.text.clear();
@@ -1032,6 +1134,8 @@ struct Prompt : Command {
 // The stash: the draft goes aside, or an empty draft takes back the only entry.
 struct Stash : Command {
   void apply(Model& m) const override {
+    // The images' prompt has no stash.
+    if (m.open == kImages) return;
     Target& target = m.targets[m.open];
     if (target.text.trimmed().isEmpty() && target.images == 0) {
       if (m.stash.size() != 1) return;
@@ -1246,8 +1350,10 @@ struct Elsewhere : Command {
 struct Restart : Command {
   bool received = *rc::gen::arbitrary<bool>();
   // Lagging rows are not modelled across a reconnect, which sends them whole;
-  // nor is an ask cut off.
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && m.heldAsks.isEmpty() && !m.lagging); }
+  // nor is an ask or an image cut off.
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.heldPicks.isEmpty() && m.heldAsks.isEmpty() && !m.heldGeneration && !m.lagging);
+  }
   void apply(Model& m) const override {
     m.toasts.clear();
     if (!m.held.isEmpty()) cutOff(m, received);
@@ -1312,6 +1418,7 @@ struct SubmitOnPage : Command {
     }
     if (m.asking.contains(m.open)) return;
     m.asking.insert(m.open);
+    m.lastModelUnknown = true;
     target.pending = target.images;
     const Ask ask{m.open, target.text, target.images, m.refusing};
     if (m.holding) {
@@ -1328,6 +1435,69 @@ struct SubmitOnPage : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "SubmitOnPage"; }
+};
+
+// The Space's images, shown with their prompt.
+struct OpenImages : Command {
+  void apply(Model& m) const override { m.open = kImages; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.open(kImages);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "OpenImages"; }
+};
+
+// What the user asks the image to show.
+struct TypeImage : Command {
+  Type type;
+  TypeImage() { type.text = pick(kImageTexts); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.open == kImages); }
+  void apply(Model& m) const override { type.apply(m); }
+  void run(const Model& m0, Sut& sut) const override { type.run(m0, sut); }
+  void show(std::ostream& os) const override { os << "TypeImage(\"" << type.text.toStdString() << "\")"; }
+};
+
+// An image model from the picker; one the MC does not offer for images (a chat model) is ignored.
+struct PickImageModel : Command {
+  QString model = pick(kImageModels);
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.open == kImages); }
+  void apply(Model& m) const override {
+    if (model != kImageModels.last()) m.imageModel = model;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.bridge->dispatch(QStringLiteral("composer.model.select"),
+                         QVariantMap{{QStringLiteral("instanceId"), model.section(u'|', 0, 0)}, {QStringLiteral("model"), model.section(u'|', 1)}});
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "PickImageModel(" << model.toStdString() << ")"; }
+};
+
+// A send from the images' prompt: an image of its words, one at a time.
+struct SubmitImage : Command {
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.open == kImages);
+    // Its answer would race a held send's or access change's.
+    RC_PRE(m.held.isEmpty() && m.heldPicks.isEmpty());
+  }
+  void apply(Model& m) const override {
+    const QString text = m.targets.value(kImages).text;
+    if (text.trimmed().isEmpty() || m.generating) return;
+    m.generating = true;
+    const Generation generation{text, m.imageBy(), m.refusing};
+    if (m.holding) {
+      m.heldGeneration = generation;
+    } else {
+      answerGeneration(m, generation);
+    }
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.bridge->dispatch(QStringLiteral("composer.submit"),
+                         QVariantMap{{QStringLiteral("edit"), sut.editOf()},
+                                     {QStringLiteral("text"), m0.targets.value(m0.open).text},
+                                     {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "SubmitImage"; }
 };
 
 // The MC is slow to send threads: one opened now is not known until Load.
@@ -1483,6 +1653,26 @@ private slots:
                                                    Open, OpenPage, OpenPage, Type, TypeOnPage, TypeOnPage, TypeOnPage, Attach,
                                                    RemoveImage, SubmitOnPage, SubmitOnPage, SubmitOnPage, Prompt, Stash, Hold,
                                                    AnswerHeld, Refuse, Restart>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // The Space's images among the threads and pages: their prompt keeps its own
+  // words and image model, takes no attachment or stash, draws one image at a
+  // time with the model picked (or the MC's), and keeps its words until the
+  // image is made: a refused one leaves them to try again.
+  void imagesPrompt() {
+    QVERIFY(rc::check("the images' prompt draws with the image model picked, and keeps its words until the image is made", [] {
+      const auto recorded = recordedAtStart();
+      Sut sut(recorded);
+      Model model;
+      model.recorded = recorded;
+      verify(model, sut);
+      const auto commands = *rc::gen::scale(
+          0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
+                                                   Open, OpenPage, OpenImages, OpenImages, TypeImage, TypeImage, TypeImage,
+                                                   PickImageModel, PickImageModel, SubmitImage, SubmitImage, SubmitImage, Attach,
+                                                   Stash, Type, Prompt, Hold, AnswerHeld, Refuse, Restart>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
