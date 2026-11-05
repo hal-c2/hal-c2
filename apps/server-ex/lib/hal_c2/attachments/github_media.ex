@@ -170,11 +170,26 @@ defmodule HalC2.Attachments.GitHubMedia do
           ],
           else: []
 
-      {:ok, status, [{"content-type", type} | base] ++ kept ++ svg, body}
+      {:ok, status,
+       [{"content-type", type} | base] ++ kept ++ declared_length(upstream, body) ++ svg, body}
     else
       {:ok, 415, base, ""}
     end
   end
+
+  # A streamed body declares the length GitHub did, so a client can tell a body cut short
+  # from a whole one; httpc fails a short upstream body, and the router drops the
+  # connection. An encoded body's length is not the decoded one, so it goes without.
+  defp declared_length(upstream, :stream) do
+    with nil <- upstream["content-encoding"],
+         {size, ""} when size >= 0 <- Integer.parse(upstream["content-length"] || "") do
+      [{"content-length", Integer.to_string(size)}]
+    else
+      _ -> []
+    end
+  end
+
+  defp declared_length(_upstream, _body), do: []
 
   # GitHub answers an asset with a redirect to a signed object URL, which needs no
   # credential: the token rides only on requests to GitHub itself.

@@ -79,8 +79,6 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.join_challenge/1" => "cluster_join.maude models the join handshake",
       "HalC2.Cluster.join_admit/1" => "cluster_join.maude models the join handshake",
       "HalC2.Cluster handle_call :identity" => "reads this MC's key for the join handshake",
-      "HalC2.Cluster handle_call {:join_challenge, _}" =>
-        "cluster_join.maude models the join handshake",
       "HalC2.Cluster handle_call {:join_admit, _}" =>
         "cluster_join.maude models the join handshake",
       "HalC2.Cluster.describe/1" => @words,

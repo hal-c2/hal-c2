@@ -164,6 +164,30 @@ defmodule HalC2.AuthTest do
     assert :error = HalC2.Auth.issue_ticket(session)
   end
 
+  # Before invites had a kind of their own, `Cluster.invite/1` made them as pairing
+  # links granting access:write; one still pending at an upgrade must not sign anyone in.
+  test "a cluster invite made before the upgrade is no pairing link after it", %{path: path} do
+    :ok = stop_supervised(HalC2.Auth)
+    token = "legacy-cluster-invite"
+    hash = Base.encode16(:crypto.hash(:sha256, token), case: :lower)
+    expires = System.system_time(:millisecond) + 300_000
+    {:ok, db} = Sqlite3.open(path)
+
+    {:ok, insert} =
+      Sqlite3.prepare(
+        db,
+        "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at) VALUES (?1, ?2, NULL, 'Cluster invite', 'access:write', ?3)"
+      )
+
+    :ok = Sqlite3.bind(insert, [hash, expires, System.system_time(:millisecond)])
+    :done = Sqlite3.step(db, insert)
+    :ok = Sqlite3.release(db, insert)
+    Sqlite3.close(db)
+    start_supervised!(HalC2.Auth)
+
+    assert HalC2.Auth.exchange(token) == :error
+  end
+
   defp assert_exchange_fails(path, token, opts \\ []) do
     {:ok, db} = Sqlite3.open(path)
 

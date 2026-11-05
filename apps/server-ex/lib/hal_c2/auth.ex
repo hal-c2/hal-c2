@@ -948,11 +948,12 @@ defmodule HalC2.Auth do
       []
     )
 
-    # Pending invites made before the cluster-only kind existed must not become sessions
-    # after an upgrade. New pairing links may reuse the label; their kind is explicit.
+    # Pending invites made before the cluster-only kind existed (`Cluster.invite/1` made
+    # them as pairing links with this label) must not become sessions after an upgrade.
+    # Every row written since names its kind, so a row without one is from before.
     exec(
       db,
-      "UPDATE auth_pairing SET kind = 'cluster-invite' WHERE kind IS NULL AND label = 'Cluster invite' AND scopes = 'access:write terminal:operate'",
+      "UPDATE auth_pairing SET kind = 'cluster-invite' WHERE kind IS NULL AND label = 'Cluster invite'",
       []
     )
   end

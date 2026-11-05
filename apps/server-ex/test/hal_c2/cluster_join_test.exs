@@ -107,6 +107,25 @@ defmodule HalC2.ClusterJoinTest do
     assert Map.has_key?(members, joiner.entry["id"])
   end
 
+  # Anyone on the network can send these, so one that names no live invite is turned
+  # away before it reaches the Cluster process, which gossip and membership share.
+  test "a join that names no live invite is refused without waiting on the cluster",
+       %{mc: mc} do
+    {:ok, request, _private} = Join.challenge("no-such-invite")
+    cluster = Process.whereis(HalC2.Cluster)
+    :ok = :sys.suspend(cluster)
+
+    try do
+      assert {409, %{"reason" => "link_invalid"}} =
+               Mc.http(mc, :post, "/api/cluster/join/challenge", json: request)
+
+      assert {409, %{"reason" => "link_invalid"}} =
+               Mc.http(mc, :post, "/api/cluster/join/admit", json: request)
+    after
+      :sys.resume(cluster)
+    end
+  end
+
   test "a replayed invite cannot admit a second time", %{mc: mc} do
     {:ok, %{"link" => link}} = HalC2.Cluster.invite(%{"baseUrl" => base(mc)})
     joiner = identity("joining")

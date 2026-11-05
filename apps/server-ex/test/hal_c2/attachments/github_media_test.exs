@@ -112,6 +112,7 @@ defmodule HalC2.Attachments.GitHubMediaTest do
 
     assert {:ok, 200, headers, stream} = serve(dir, "/media.png")
     assert {"content-type", "image/png"} in headers
+    assert {"content-length", Integer.to_string(byte_size(bytes))} in headers
     assert {:ok, ^bytes, chunks} = collect_stream(stream)
     assert length(chunks) > 1
     assert Enum.all?(chunks, &(byte_size(&1) <= HalC2.Attachments.chunk_bytes()))
@@ -125,6 +126,21 @@ defmodule HalC2.Attachments.GitHubMediaTest do
     )
 
     assert {:ok, 413, _headers, "GitHub media is too large."} = serve(dir, "/large.png")
+  end
+
+  test "an upstream body cut short declares its length and ends in an error", %{dir: dir} do
+    start_raw_upstream(
+      "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 10\r\nConnection: close\r\n\r\n1234"
+    )
+
+    case serve(dir, "/short.png") do
+      {:ok, 502, _headers, ""} ->
+        :ok
+
+      {:ok, 200, headers, stream} ->
+        assert {"content-length", "10"} in headers
+        assert {:error, _reason, _chunks} = collect_stream(stream)
+    end
   end
 
   test "an upstream body that grows past the cap is cut off", %{dir: dir} do

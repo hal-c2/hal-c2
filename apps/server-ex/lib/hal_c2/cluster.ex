@@ -98,11 +98,35 @@ defmodule HalC2.Cluster do
   """
   def admit(entry), do: GenServer.call(__MODULE__, {:admit, entry})
 
-  @doc "Answers the first, non-identifying message of a cluster join."
-  def join_challenge(request), do: GenServer.call(__MODULE__, {:join_challenge, request})
+  @doc """
+  Answers the first, non-identifying message of a cluster join. Anyone on the network
+  can send one, so the invite is checked and the handshake worked here, in the caller,
+  before this MC's process is asked for anything.
+  """
+  def join_challenge(request) do
+    with :ok <- live_invite(request),
+         {:ok, {cert, key}} <- GenServer.call(__MODULE__, :identity) do
+      Join.answer(request, cert, key)
+    end
+  end
 
-  @doc "Authenticates and consumes an invite, then admits its encrypted join entry."
-  def join_admit(request), do: GenServer.call(__MODULE__, {:join_admit, request})
+  @doc """
+  Authenticates and consumes an invite, then admits its encrypted join entry. As with
+  `join_challenge/1`, only an opened request for a live invite reaches this MC's process.
+  """
+  def join_admit(request) do
+    with :ok <- live_invite(request),
+         {:ok, {cert, key}} <- GenServer.call(__MODULE__, :identity),
+         {:ok, package} <- Join.open(request, cert, key) do
+      GenServer.call(__MODULE__, {:join_admit, package})
+    end
+  end
+
+  defp live_invite(%{"invite" => id}) when is_binary(id) do
+    if HalC2.Auth.cluster_invite?(id), do: :ok, else: {:error, :link_invalid}
+  end
+
+  defp live_invite(_request), do: {:error, :invalid_link}
 
   @doc "Tells the connected members this MC's shared settings, which changed here."
   def share_settings, do: GenServer.cast(__MODULE__, :share_settings)
@@ -448,26 +472,8 @@ defmodule HalC2.Cluster do
 
   def handle_call(:identity, _from, state), do: {:reply, {:ok, identity(state.dir)}, state}
 
-  def handle_call({:join_challenge, request}, _from, state) do
-    {cert, key} = identity(state.dir)
-
-    reply =
-      with %{"invite" => id} when is_binary(id) <- request,
-           true <- HalC2.Auth.cluster_invite?(id) do
-        Join.answer(request, cert, key)
-      else
-        false -> {:error, :link_invalid}
-        _ -> {:error, :invalid_link}
-      end
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:join_admit, request}, _from, state) do
-    {cert, key} = identity(state.dir)
-
-    with {:ok, package} <- Join.open(request, cert, key),
-         :ok <- validate_entry(state, package.entry),
+  def handle_call({:join_admit, package}, _from, state) do
+    with :ok <- validate_entry(state, package.entry),
          :ok <-
            HalC2.Auth.consume_cluster_invite(package.invite, package.proof, package.proof_message),
          {:ok, answer, state} <- put_admission(state, package.entry) do
