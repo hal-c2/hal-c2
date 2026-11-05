@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 /**
  * One person's machines as one cluster (apps/server-ex `HalC2.Cluster`). A machine
- * joins with an invite, a one-time pairing link from any member; members then
+ * joins with a cluster-only one-time invite from any member; members then
  * reach each other over pinned mutual TLS with nothing else to set up.
  */
 
@@ -45,7 +45,7 @@ export const ClusterInviteInput = Schema.Struct({
 export type ClusterInviteInput = typeof ClusterInviteInput.Type;
 
 export const ClusterInvite = Schema.Struct({
-  /** A pairing link granting `access:write` and `terminal:operate`, good once. */
+  /** A cluster-only invite, good once; it cannot be exchanged for a client session. */
   link: Schema.String,
   expiresAt: Schema.String,
   /** Only this machine can reach the link: the node listens on loopback. */

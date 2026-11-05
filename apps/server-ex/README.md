@@ -108,8 +108,11 @@ MC's `cluster.*` RPCs. Every MC boots ready to
 cluster (`rel/env.sh.eex`, `mise run mc`): it has its own certificate, and members pin
 each other's and talk Erlang distribution over mutual TLS on port 4370
 ([cluster.feature](../../features/connections/cluster.feature)). The joining machine has to
-reach the inviting MC's HTTP address, so start that one with `HAL_C2_MC_HOST` set to
-its LAN or tailnet address, or invite with `--tailscale`.
+reach the inviting MC's HTTP or HTTPS address, so start that one with `HAL_C2_MC_HOST` set to
+its LAN or tailnet address, or invite with `--tailscale`. A join authenticates the inviter's
+signed challenge before sending an encrypted entry and a cluster-only invite proof. The invite
+secret never becomes a client session. MCs that still use bearer admission cannot join an MC
+with this protocol; update the joining machine first.
 
 Members find each other at the addresses they report, then at those a discovery strategy
 lists: the tailnet (`HalC2.Cluster.Tailscale`) and `HAL_C2_PEERS=host[:port],...`

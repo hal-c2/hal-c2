@@ -72,6 +72,8 @@ defmodule HalC2.Auth do
     {"auth_pairing", "created_at", "INTEGER"},
     # Credentials bound to a device key: the DPoP key thumbprint that must redeem them.
     {"auth_pairing", "proof_jkt", "TEXT"},
+    # Cluster invites use pairing storage but never become client sessions.
+    {"auth_pairing", "kind", "TEXT"},
     {"auth_sessions", "id", "TEXT"},
     {"auth_sessions", "last_connected_at", "INTEGER"},
     {"auth_sessions", "device_type", "TEXT"},
@@ -348,6 +350,19 @@ defmodule HalC2.Auth do
   def create_pairing_link(input, creator_scopes),
     do: GenServer.call(__MODULE__, {:create_link, input, creator_scopes})
 
+  @doc "Creates a one-time credential usable only by the cluster join protocol."
+  def create_cluster_invite, do: GenServer.call(__MODULE__, :create_cluster_invite)
+
+  @doc "Whether a live cluster invite has this public id."
+  def cluster_invite?(id), do: GenServer.call(__MODULE__, {:cluster_invite, id})
+
+  @doc """
+  Consumes a cluster invite when its HMAC matches `message`. Verification and deletion
+  happen in one transaction; an ordinary pairing exchange cannot consume the row.
+  """
+  def consume_cluster_invite(id, proof, message),
+    do: GenServer.call(__MODULE__, {:consume_cluster_invite, id, proof, message})
+
   @doc "`GET /api/auth/pairing-links`."
   def pairing_links, do: GenServer.call(__MODULE__, :links)
 
@@ -440,6 +455,60 @@ defmodule HalC2.Auth do
     {:reply, reply, broadcast(state, events)}
   end
 
+  def handle_call(:create_cluster_invite, _from, state) do
+    create_link(
+      %{"label" => "Cluster invite"},
+      ~w(access:write terminal:operate),
+      state,
+      "cluster-invite"
+    )
+  end
+
+  def handle_call({:cluster_invite, id}, _from, state) when is_binary(id) do
+    found =
+      with_db(state.path, fn db ->
+        query(
+          db,
+          "SELECT 1 FROM auth_pairing WHERE id = ?1 AND kind = 'cluster-invite' AND expires_at > ?2",
+          [id, now()]
+        ) != []
+      end)
+
+    {:reply, found, state}
+  end
+
+  def handle_call({:consume_cluster_invite, id, proof, message}, _from, state)
+      when is_binary(id) and is_binary(proof) and is_binary(message) do
+    {reply, events} =
+      with_db(state.path, fn db ->
+        transaction(db, fn ->
+          with [[stored, expires]] <-
+                 query(
+                   db,
+                   "SELECT token_hash, expires_at FROM auth_pairing WHERE id = ?1 AND kind = 'cluster-invite'",
+                   [id]
+                 ),
+               true <- expires > now(),
+               {:ok, key} <- Base.decode16(stored, case: :lower),
+               expected <- :crypto.mac(:hmac, :sha256, key, message),
+               true <-
+                 byte_size(proof) == byte_size(expected) and :crypto.hash_equals(proof, expected),
+               [[^id]] <-
+                 query(
+                   db,
+                   "DELETE FROM auth_pairing WHERE id = ?1 AND kind = 'cluster-invite' RETURNING id",
+                   [id]
+                 ) do
+            {:ok, [event("pairingLinkRemoved", %{"id" => id})]}
+          else
+            _ -> {{:error, :link_invalid}, []}
+          end
+        end)
+      end)
+
+    {:reply, reply, broadcast(state, events)}
+  end
+
   def handle_call({:create_link, input, creator_scopes}, _from, state) do
     case delegated_scopes(Map.get(input, "scopes", @standard_scopes), creator_scopes) do
       {:ok, scopes} -> create_link(input, scopes, state)
@@ -493,13 +562,13 @@ defmodule HalC2.Auth do
     {:reply, {:ok, revision(), snapshot}, state}
   end
 
-  defp create_link(input, scopes, state) do
+  defp create_link(input, scopes, state, kind \\ "pairing-link") do
     ttl = input["ttlMs"] || @pairing_ttl
 
     link =
       with_db(
         state.path,
-        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"])
+        &insert_pairing(&1, input["label"], scopes, ttl, input["proofKeyThumbprint"], kind)
       )
 
     listed =
@@ -588,15 +657,22 @@ defmodule HalC2.Auth do
     %{pairing: pairing, sessions: sessions, tickets: tickets, proofs: HalC2.Auth.Dpop.prune()}
   end
 
-  defp insert_pairing(db, label, scopes, ttl \\ @pairing_ttl, proof_jkt \\ nil) do
+  defp insert_pairing(
+         db,
+         label,
+         scopes,
+         ttl \\ @pairing_ttl,
+         proof_jkt \\ nil,
+         kind \\ "pairing-link"
+       ) do
     token = random_token()
     id = "pairing-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
     created = now()
 
     exec(
       db,
-      "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at, proof_jkt) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-      [hash(token), created + ttl, id, label, Enum.join(scopes, " "), created, proof_jkt]
+      "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at, proof_jkt, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+      [hash(token), created + ttl, id, label, Enum.join(scopes, " "), created, proof_jkt, kind]
     )
 
     %{
@@ -630,6 +706,7 @@ defmodule HalC2.Auth do
                """
                DELETE FROM auth_pairing
                WHERE token_hash = ?1 AND (proof_jkt IS NULL OR proof_jkt = ?2)
+                 AND (kind IS NULL OR kind = 'pairing-link')
                RETURNING expires_at, id, scopes
                """,
                [hash(token), client[:proof_jkt]]
@@ -855,6 +932,14 @@ defmodule HalC2.Auth do
     exec(
       db,
       "UPDATE auth_pairing SET id = 'pairing-' || substr(token_hash, 1, 12) WHERE id IS NULL",
+      []
+    )
+
+    # Pending invites made before the cluster-only kind existed must not become sessions
+    # after an upgrade. New pairing links may reuse the label; their kind is explicit.
+    exec(
+      db,
+      "UPDATE auth_pairing SET kind = 'cluster-invite' WHERE kind IS NULL AND label = 'Cluster invite' AND scopes = 'access:write terminal:operate'",
       []
     )
   end

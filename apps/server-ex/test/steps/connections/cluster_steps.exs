@@ -204,13 +204,21 @@ defmodule HalC2.Steps.Connections.Cluster do
     added = %{answer["members"][a.id] | "fingerprint" => fingerprint(b), "label" => "added"}
     answer = put_in(answer["members"]["added"], added)
 
+    {cert, key} = machine_identity(a)
+
+    challenge = fn conn ->
+      request = JSON.decode!(conn.assigns.fake_http_body)
+      {:ok, response} = HalC2.Cluster.Join.answer(request, cert, key)
+      {200, response}
+    end
+
     {base, _log} =
       HalC2.Test.FakeHttp.start(%{
-        "/oauth/token" => {200, %{"access_token" => "access"}},
-        "/api/cluster/members" => {200, answer}
+        "/api/cluster/join/challenge" => challenge,
+        "/api/cluster/join/admit" => {200, answer}
       })
 
-    link = "#{base}/?token=invite#fingerprint=#{fingerprint(a)}"
+    link = "#{base}/?token=invite&invite=public#fingerprint=#{fingerprint(a)}"
     Map.put(context, :joined, command(b, ["join", link]))
   end
 
@@ -239,6 +247,91 @@ defmodule HalC2.Steps.Connections.Cluster do
     assert status(a)["members"] == []
     assert status(b)["members"] == []
     assert :peer.call(a.peer, Elixir.Node, :list, []) == []
+    context
+  end
+
+  step "a cluster invite from the first of two MCs that are not clustered", context do
+    context = context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b)
+    Map.put(context, :invite, invite(context.machines.a))
+  end
+
+  step "the second joins with it over a network someone else can read", context do
+    observed_join(context)
+  end
+
+  step "the invite's secret never crosses the network", context do
+    {token, _id, _pin} = invite_parts(context.invite)
+
+    for request <- HalC2.Test.FakeHttp.requests(context.observer) do
+      refute inspect(request) =~ token
+      refute request["authorization"]
+    end
+
+    context
+  end
+
+  step "the first admits the second because its request was made with that secret", context do
+    %{a: a, b: b} = context.machines
+    assert {:ok, _} = context.joined
+    assert [%{"id" => id}] = status(a)["members"]
+    assert id == b.id
+
+    request =
+      Enum.find(HalC2.Test.FakeHttp.requests(context.observer), fn request ->
+        request["path"] == "/api/cluster/join/admit"
+      end)
+
+    assert %{"proof" => _} = JSON.decode!(request["body"])
+    {token, _id, _pin} = invite_parts(context.invite)
+    refute request["body"] =~ token
+    context
+  end
+
+  step "the second joins with it and someone on the network swaps in their own certificate",
+       context do
+    swapped_join(context)
+  end
+
+  step "the first refuses the request because it no longer matches the invite's secret",
+       context do
+    assert {:error, message} = context.joined
+    assert message =~ "used already or has expired"
+    context
+  end
+
+  step "the first admits nobody", context do
+    %{a: a, b: b} = context.machines
+    assert status(a)["members"] == []
+    {_token, id, _pin} = invite_parts(context.invite)
+    assert :peer.call(a.peer, HalC2.Auth, :cluster_invite?, [id])
+    assert status(b)["members"] == []
+    context
+  end
+
+  step "the second joins with it", context do
+    stand_in_join(context)
+  end
+
+  step "the second talks only to a machine holding the certificate the invite names", context do
+    assert {:error, message} = context.joined
+    assert message =~ "not the one the invite is from"
+
+    refute Enum.any?(HalC2.Test.FakeHttp.requests(context.observer), fn request ->
+             request["path"] == "/api/cluster/join/admit"
+           end)
+
+    context
+  end
+
+  step "a machine answering in the first's place learns nothing about the second", context do
+    b = context.machines.b
+
+    for request <- HalC2.Test.FakeHttp.requests(context.observer) do
+      refute request["body"] =~ b.id
+      refute request["body"] =~ fingerprint(b)
+      refute request["body"] =~ "member-b"
+    end
+
     context
   end
 
@@ -1371,6 +1464,117 @@ defmodule HalC2.Steps.Connections.Cluster do
     {:ok, text} = command(machine, ["invite"])
     [_, link] = Regex.run(~r/cluster join (\S+)/, text)
     link
+  end
+
+  defp observed_join(context, substituted_admission \\ nil) do
+    a = context.machines.a
+
+    forward = fn conn ->
+      body =
+        if substituted_admission && conn.request_path == "/api/cluster/join/admit",
+          do: JSON.encode!(substituted_admission),
+          else: conn.assigns.fake_http_body
+
+      forward(a, conn.request_path, body)
+    end
+
+    routes = %{
+      "/api/cluster/join/challenge" => forward,
+      "/api/cluster/join/admit" => forward
+    }
+
+    join_through(context, routes)
+  end
+
+  defp swapped_join(context) do
+    a = context.machines.a
+    attacker = standalone_identity("attacker")
+    {cert, key} = machine_identity(a)
+    {_token, invite, _pin} = invite_parts(context.invite)
+    {:ok, request, private} = HalC2.Cluster.Join.challenge(invite)
+    {:ok, answer} = HalC2.Cluster.Join.answer(request, cert, key)
+
+    {:ok, admission} =
+      HalC2.Cluster.Join.seal(
+        request,
+        answer,
+        "not-the-invite-secret",
+        fingerprint(a),
+        attacker.entry,
+        attacker.cert,
+        attacker.key,
+        private
+      )
+
+    observed_join(context, admission)
+  end
+
+  defp stand_in_join(context) do
+    stand_in = standalone_identity("stand-in")
+
+    challenge = fn conn ->
+      request = JSON.decode!(conn.assigns.fake_http_body)
+      {:ok, response} = HalC2.Cluster.Join.answer(request, stand_in.cert, stand_in.key)
+      {200, response}
+    end
+
+    routes = %{
+      "/api/cluster/join/challenge" => challenge,
+      "/api/cluster/join/admit" => fn _conn -> {409, %{"reason" => "wrong_machine"}} end
+    }
+
+    # The real inviter's pin with the stand-in's address and certificate.
+    join_through(context, routes)
+  end
+
+  defp join_through(context, routes) do
+    %{a: a, b: b} = context.machines
+    {base, log} = HalC2.Test.FakeHttp.start(routes)
+    link = String.replace(context.invite, origin(a), base)
+
+    context
+    |> Map.put(:observer, log)
+    |> Map.put(:joined, command(b, ["join", link]))
+  end
+
+  defp forward(machine, path, body) do
+    request = {to_charlist(origin(machine) <> path), [], ~c"application/json", body}
+
+    {:ok, {{_, status, _}, _, response}} =
+      :httpc.request(:post, request, [timeout: 15_000], body_format: :binary)
+
+    {status, JSON.decode!(response)}
+  end
+
+  defp invite_parts(link) do
+    uri = URI.parse(link)
+    query = URI.decode_query(uri.query)
+    {query["token"], query["invite"], pin(link)}
+  end
+
+  defp machine_identity(machine) do
+    dir = HalC2.Cluster.dir(:peer.call(machine.peer, HalC2.Paths, :data_dir, []))
+    cert = Path.join(dir, "mc.pem") |> File.read!() |> X509.Certificate.from_pem!()
+    key = Path.join(dir, "mc.key") |> File.read!() |> X509.PrivateKey.from_pem!()
+    {cert, key}
+  end
+
+  defp standalone_identity(id) do
+    key = X509.PrivateKey.new_ec(:secp256r1)
+    cert = X509.Certificate.self_signed(key, "/CN=#{id}.hal-c2")
+    pin = HalC2.Cluster.fingerprint(cert)
+
+    %{
+      cert: cert,
+      key: key,
+      entry: %{
+        "id" => id,
+        "fingerprint" => pin,
+        "label" => id,
+        "addresses" => [],
+        "version" => HalC2.Upgrade.version()
+      }
+    }
   end
 
   # The fingerprint an invite names.

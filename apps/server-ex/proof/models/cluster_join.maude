@@ -1,0 +1,93 @@
+sload model-checker
+
+--- The two messages of HalC2.Cluster.Join. A stand-in can read, drop, replay and
+--- inject traffic and has its own certificate. `sealed` carries only a proof validity:
+--- the certificate and entry are encrypted, and the invite secret is only an HMAC key.
+--- clear-secret and clear-entry model what an implementation must never emit.
+mod CLUSTER-JOIN is
+  protecting NAT .
+
+  sorts Cert Msg Msgs Knowledge Item Conf Sys .
+  subsort Msg < Msgs .
+  subsort Item < Conf .
+
+  ops inviter joiner attacker : -> Cert [ctor] .
+  op challenge : -> Msg [ctor] .
+  op answer : Cert -> Msg [ctor] .
+  op sealed : Bool -> Msg [ctor] .
+  ops clear-secret clear-entry : -> Msg [ctor] .
+
+  op noMsgs : -> Msgs [ctor] .
+  op __ : Msgs Msgs -> Msgs [ctor assoc comm id: noMsgs] .
+
+  ops secret entry : -> Knowledge [ctor] .
+  op network : Msgs -> Item [ctor] .
+  op invite : Bool -> Item [ctor] .
+  op member : Cert -> Item [ctor] .
+  op knows : Knowledge -> Item [ctor] .
+  op seen : Msg -> Item [ctor] .
+  op attacks : Nat -> Item [ctor] .
+
+  op noItems : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: noItems] .
+  op {_} : Conf -> Sys [ctor] .
+
+  var M : Msg .
+  var Ms : Msgs .
+  var C : Conf .
+  var N : Nat .
+
+  --- The legitimate challenge, signed answer and encrypted admission.
+  rl [challenge] :
+    { network(challenge Ms) C } => { network(answer(inviter) Ms) C } .
+
+  rl [seal] :
+    { network(answer(inviter) Ms) C } => { network(sealed(true) Ms) C } .
+
+  --- A stand-in gets no sealed entry: the joiner refuses its certificate.
+  rl [seal] :
+    { network(answer(attacker) Ms) C } => { network(Ms) C } .
+
+  --- Admission consumes the invite. A replay finds it spent; a forged proof admits none.
+  rl [admit] :
+    { network(sealed(true) Ms) invite(true) C }
+    => { network(Ms) invite(false) member(joiner) C } .
+
+  rl [admit] :
+    { network(sealed(false) Ms) C } => { network(Ms) C } .
+
+  --- The active network attacker, bounded by its attack budget.
+  rl [drop] :
+    { network(M Ms) attacks(s N) C } => { network(Ms) attacks(N) C } .
+
+  rl [replay] :
+    { network(M Ms) attacks(s N) C } => { network(M M Ms) attacks(N) C } .
+
+  rl [read] :
+    { network(M Ms) attacks(s N) C } => { network(M Ms) attacks(N) seen(M) C } .
+
+  rl [inject] :
+    { network(Ms) attacks(s N) C } => { network(sealed(false) Ms) attacks(N) C } .
+
+  rl [stand-in] :
+    { network(Ms) attacks(s N) C } => { network(answer(attacker) Ms) attacks(N) C } .
+
+  --- These are the only rules that disclose the secret or entry. Neither message has a
+  --- production rule above; adding one would make the safety search below fail.
+  rl [read] :
+    { network(clear-secret Ms) attacks(s N) C }
+    => { network(clear-secret Ms) attacks(N) knows(secret) C } .
+
+  rl [read] :
+    { network(clear-entry Ms) attacks(s N) C }
+    => { network(clear-entry Ms) attacks(N) knows(entry) C } .
+
+  op initial : -> Sys .
+  eq initial = { network(challenge) invite(true) attacks(s(s(0))) } .
+
+  op unsafe : Sys -> Bool .
+  eq unsafe({ member(attacker) C }) = true .
+  eq unsafe({ knows(secret) C }) = true .
+  eq unsafe({ knows(entry) C }) = true .
+  eq unsafe({ C }) = false [owise] .
+endm

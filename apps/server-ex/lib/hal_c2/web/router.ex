@@ -298,20 +298,39 @@ defmodule HalC2.Web.Router do
     end)
   end
 
-  # The cluster of this person's machines (`HalC2.Cluster`). A machine joining through a
-  # pairing link is admitted with the link's one-time session, which ends there.
+  # The cluster of this person's machines (`HalC2.Cluster`). Remote joins authenticate
+  # the inviter, then carry an encrypted entry and a cluster-only one-time proof.
   get "/api/cluster" do
     with_scope(conn, "access:read", fn _session -> {200, HalC2.Cluster.status()} end)
   end
 
+  # Kept so older clients get a clear refusal and insufficient scopes still fail first.
+  # No credential accepted here can admit a member.
   post "/api/cluster/members" do
-    with_scope(conn, ["access:write", "terminal:operate"], fn session ->
-      with {:ok, body} <- json_body(conn) do
-        answer = cluster_answer(HalC2.Cluster.admit(body))
-        if session.id && elem(answer, 0) == 200, do: HalC2.Auth.revoke_client(session.id)
-        answer
-      end
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
+      with {:ok, _body} <- json_body(conn),
+           do: cluster_answer({:error, :not_an_invite})
     end)
+  end
+
+  post "/api/cluster/join/challenge" do
+    {status, body} =
+      case json_body(conn) do
+        {:ok, body} -> cluster_answer(HalC2.Cluster.join_challenge(body))
+        _ -> cluster_answer({:error, :invalid_link})
+      end
+
+    json(conn, status, body)
+  end
+
+  post "/api/cluster/join/admit" do
+    {status, body} =
+      case json_body(conn) do
+        {:ok, body} -> cluster_answer(HalC2.Cluster.join_admit(body))
+        _ -> cluster_answer({:error, :invalid_link})
+      end
+
+    json(conn, status, body)
   end
 
   post "/api/cluster/invite" do
