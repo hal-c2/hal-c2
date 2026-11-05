@@ -112,11 +112,15 @@ defmodule HalC2.Auth do
   Exchanges a pairing token for `{:ok, access_token, expires_in_s, scopes}`.
   `client` describes who asked: `label`, `device_type`, `os`, `user_agent`,
   `proof_jkt`, the DPoP key it proved and the token is bound to (a credential
-  minted for a key needs that one), and `scopes` to ask for fewer than the credential grants
-  (`{:error, :scope_not_granted}` when it asks for more).
+  minted for a key needs that one), `proof`, that key's verified but unclaimed exchange
+  proof, and `scopes` to ask for fewer than the credential grants (`{:error,
+  :scope_not_granted}` when it asks for more).
   """
   @spec exchange(String.t(), map) ::
-          {:ok, String.t(), pos_integer, [String.t()]} | :error | {:error, :scope_not_granted}
+          {:ok, String.t(), pos_integer, [String.t()]}
+          | :error
+          | {:error, :scope_not_granted}
+          | {:error, :dpop, :replay}
   def exchange(pairing_token, client \\ %{}),
     do: GenServer.call(__MODULE__, {:exchange, pairing_token, client})
 
@@ -435,14 +439,20 @@ defmodule HalC2.Auth do
               requested = client[:scopes] || granted
 
               if Enum.all?(requested, &(&1 in granted)) do
-                # Desktop restarts forget the previous token, so its session is replaced.
-                replaced =
-                  if subject == "desktop-bootstrap",
-                    do: revoke_rows(db, "subject = ?1", [subject]),
-                    else: []
+                case HalC2.Auth.Dpop.claim(client[:proof]) do
+                  :ok ->
+                    # Desktop restarts forget the previous token, so its session is replaced.
+                    replaced =
+                      if subject == "desktop-bootstrap",
+                        do: revoke_rows(db, "subject = ?1", [subject]),
+                        else: []
 
-                {reply, created} = create_session(db, requested, subject, client, state)
-                {reply, events ++ removed_clients(replaced) ++ created, replaced}
+                    {reply, created} = create_session(db, requested, subject, client, state)
+                    {reply, events ++ removed_clients(replaced) ++ created, replaced}
+
+                  {:error, :replay} ->
+                    {:rollback, {{:error, :dpop, :replay}, [], []}}
+                end
               else
                 {:rollback, {{:error, :scope_not_granted}, [], []}}
               end

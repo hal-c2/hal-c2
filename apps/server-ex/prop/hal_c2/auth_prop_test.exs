@@ -1003,6 +1003,36 @@ defmodule HalC2.AuthConcurrentPropTest do
   def postcondition(state, {:call, _, :lookup, [h]}, result),
     do: result == h in state.sessions
 
+  property "an exchange proof is claimed once however many valid exchanges race",
+    numtests: HalC2.Prop.numtests(100) do
+    forall callers <- integer(2, 4) do
+      trap_exit do
+        previous = Application.fetch_env(:hal_c2, :desktop_token)
+        Application.put_env(:hal_c2, :desktop_token, "desktop-token")
+        HalC2.Prop.scratch_home("auth-exchange-proof")
+        HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+        proof = %{thumbprint: "key", jti: "shared-proof", iat: div(Auth.now(), 1000)}
+
+        tasks =
+          for _ <- 1..callers do
+            Task.async(fn ->
+              Auth.exchange("desktop-token", %{proof_jkt: proof.thumbprint, proof: proof})
+            end)
+          end
+
+        results = Enum.map(tasks, &Task.await/1)
+        HalC2.Prop.stop_services()
+
+        if match?({:ok, _}, previous),
+          do: Application.put_env(:hal_c2, :desktop_token, elem(previous, 1)),
+          else: Application.delete_env(:hal_c2, :desktop_token)
+
+        Enum.count(results, &match?({:ok, _, _, _}, &1)) == 1 and
+          Enum.count(results, &(&1 == {:error, :dpop, :replay})) == callers - 1
+      end
+    end
+  end
+
   # --- system under test ---
 
   def redeem(h) do

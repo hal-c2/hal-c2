@@ -145,7 +145,7 @@ defmodule HalC2.Web.Router do
          "urn:hal-c2:params:oauth:token-type:environment-bootstrap" <-
            params["subject_token_type"],
          {:ok, requested} <- requested_scopes(params["scope"]),
-         {:ok, proof_jkt} <- exchange_proof(conn),
+         {:ok, proof} <- exchange_proof(conn),
          {:ok, access, expires_in, scopes} <-
            HalC2.Auth.exchange(params["subject_token"] || "", %{
              label: params["client_label"],
@@ -153,12 +153,13 @@ defmodule HalC2.Web.Router do
              os: params["client_os"],
              user_agent: conn |> get_req_header("user-agent") |> List.first(),
              scopes: requested,
-             proof_jkt: proof_jkt
+             proof_jkt: proof[:thumbprint],
+             proof: proof
            }) do
       json(conn, 200, %{
         "access_token" => access,
         "issued_token_type" => "urn:ietf:params:oauth:token-type:access_token",
-        "token_type" => if(proof_jkt, do: "DPoP", else: "Bearer"),
+        "token_type" => if(proof, do: "DPoP", else: "Bearer"),
         "expires_in" => expires_in,
         "scope" => Enum.join(scopes, " ")
       })
@@ -595,8 +596,8 @@ defmodule HalC2.Web.Router do
         {:ok, nil}
 
       [proof | _] ->
-        case HalC2.Auth.Dpop.verify(proof, conn.method, request_url(conn)) do
-          {:ok, thumbprint} -> {:ok, thumbprint}
+        case HalC2.Auth.Dpop.verify_unclaimed(proof, conn.method, request_url(conn)) do
+          {:ok, verified} -> {:ok, verified}
           {:error, reason} -> {:error, :dpop, reason}
         end
     end
