@@ -125,11 +125,12 @@ jobs:
           key: ${{ steps.mc.outputs.cache-key }}
 
   # Its own job, so an advisory published against a dep fails this, not the tests; the
-  # nightly run is what catches one between changes.
+  # nightly run is what catches one between changes. Not on a merge to main, which runs
+  # only mc_check: its pull request ran this.
   mc_audit:
     name: MC security audit
     needs: [changes, mc_check]
-    if: needs.changes.outputs.mc == 'true'
+    if: needs.changes.outputs.mc == 'true' && github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
