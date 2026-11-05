@@ -74,7 +74,9 @@ defmodule HalC2.PullRequests.Checkout do
     case fetch_pr(cwd, host, reference) do
       {:ok, %{"number" => number, "headRefName" => head} = pr}
       when is_integer(number) and is_binary(head) ->
-        {:ok, pr}
+        if match?({:ok, _}, Git.ok(cwd, ["check-ref-format", "--branch", head])),
+          do: {:ok, pr},
+          else: error(operation, cwd, "The host answered with an invalid head branch.")
 
       {:ok, _} ->
         error(operation, cwd, "The host answered in an unexpected shape.")
@@ -141,7 +143,8 @@ defmodule HalC2.PullRequests.Checkout do
              "repos/#{Forgejo.encode_repository(host.repository)}/pulls/#{number}"
            ),
          {:ok, pr} <- decode(body),
-         do: {:ok, forgejo(pr)}
+         {:ok, pr} <- forgejo(pr),
+         do: {:ok, pr}
   end
 
   defp number(reference, pattern) do
@@ -236,26 +239,39 @@ defmodule HalC2.PullRequests.Checkout do
   defp forgejo(pr) do
     head = get_in(pr, ["head", "repo"])
     base = get_in(pr, ["base", "repo"])
+    sha = get_in(pr, ["head", "sha"])
 
-    %{
-      "number" => pr["number"],
-      "title" => pr["title"],
-      "url" => pr["html_url"],
-      "baseRefName" => get_in(pr, ["base", "ref"]),
-      "headRefName" => get_in(pr, ["head", "ref"]),
-      "state" =>
-        cond do
-          pr["merged"] == true -> "MERGED"
-          pr["state"] == "closed" -> "CLOSED"
-          true -> "OPEN"
-        end,
-      "isCrossRepository" =>
-        is_map(head) and is_map(base) and head["full_name"] != base["full_name"],
-      "headRepository" => head && head["full_name"],
-      "headOwner" => head && get_in(head, ["owner", "login"]),
-      "headSha" => get_in(pr, ["head", "sha"])
-    }
+    if object_id?(sha) do
+      {:ok,
+       %{
+         "number" => pr["number"],
+         "title" => pr["title"],
+         "url" => pr["html_url"],
+         "baseRefName" => get_in(pr, ["base", "ref"]),
+         "headRefName" => get_in(pr, ["head", "ref"]),
+         "state" =>
+           cond do
+             pr["merged"] == true -> "MERGED"
+             pr["state"] == "closed" -> "CLOSED"
+             true -> "OPEN"
+           end,
+         "isCrossRepository" =>
+           is_map(head) and is_map(base) and head["full_name"] != base["full_name"],
+         "headRepository" => head && head["full_name"],
+         "headOwner" => head && get_in(head, ["owner", "login"]),
+         "headSha" => sha
+       }}
+    else
+      {:error,
+       {:failed,
+        "The Forgejo server returned an invalid pull request head SHA; expected 40 or 64 hexadecimal characters."}}
+    end
   end
+
+  defp object_id?(sha) when is_binary(sha),
+    do: Regex.match?(~r/\A(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\z/, sha)
+
+  defp object_id?(_sha), do: false
 
   defp resolved(pr),
     do: %{
@@ -307,7 +323,7 @@ defmodule HalC2.PullRequests.Checkout do
     head = pr["headRefName"]
 
     with {:ok, remote} <- head_remote(cwd, host, pr) || {:ok, host.remote},
-         {:ok, _} <- Git.ok(cwd, ["fetch", "--quiet", "--no-tags", remote, head]),
+         {:ok, _} <- Git.ok(cwd, ["fetch", "--quiet", "--no-tags", "--", remote, head]),
          {:ok, _} <- Git.ok(cwd, ["checkout", "--quiet", "-B", head, "FETCH_HEAD"]),
          do: {:ok, head}
   end
@@ -322,13 +338,28 @@ defmodule HalC2.PullRequests.Checkout do
          url = if(ssh?(host.url), do: urls["sshUrl"], else: urls["url"]),
          {:ok, _} <-
            Git.ok(cwd, ["fetch", "--quiet", "--", url, "refs/pull/#{pr["number"]}/head"]),
+         {:ok, head} <- fetched_commit(cwd),
          {:ok, _} <-
            if(rev(cwd, "refs/heads/#{branch}"),
              do: Git.ok(cwd, ["checkout", "--quiet", branch]),
              else: Git.ok(cwd, ["checkout", "--quiet", "-b", branch, "FETCH_HEAD"])
            ),
-         {:ok, _} <- Git.ok(cwd, ["reset", "--quiet", "--keep", pr["headSha"] || "FETCH_HEAD"]),
+         {:ok, _} <- Git.ok(cwd, ["reset", "--quiet", "--keep", head]),
          do: {:ok, branch}
+  end
+
+  defp fetched_commit(cwd) do
+    case Git.ok(cwd, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"]) do
+      {:ok, sha} ->
+        sha = String.trim(sha)
+
+        if object_id?(sha),
+          do: {:ok, sha},
+          else: {:error, {:failed, "The fetched pull request ref is not a commit."}}
+
+      failure ->
+        failure
+    end
   end
 
   # `HalC2.SourceControl.lookup/1`'s clone addresses, its failure as `{reason, detail}`.
@@ -412,8 +443,9 @@ defmodule HalC2.PullRequests.Checkout do
 
         {:ok, remote} ->
           with {:ok, _} <- fetch_branch(cwd, remote, head),
-               {:ok, _} <- Git.ok(cwd, ["branch", "--force", branch, "#{remote}/#{head}"]),
-               {:ok, _} <- Git.ok(cwd, ["branch", "--set-upstream-to=#{remote}/#{head}", branch]),
+               {:ok, _} <- Git.ok(cwd, ["branch", "--force", "--", branch, "#{remote}/#{head}"]),
+               {:ok, _} <-
+                 Git.ok(cwd, ["branch", "--set-upstream-to=#{remote}/#{head}", "--", branch]),
                do: :ok
 
         failure ->
@@ -451,6 +483,7 @@ defmodule HalC2.PullRequests.Checkout do
                  "fetch",
                  "--quiet",
                  "--no-tags",
+                 "--",
                  host.remote,
                  "+#{ref}:refs/heads/#{branch}"
                ]),
@@ -468,6 +501,7 @@ defmodule HalC2.PullRequests.Checkout do
         "fetch",
         "--quiet",
         "--no-tags",
+        "--",
         remote,
         "+refs/heads/#{head}:refs/remotes/#{remote}/#{head}"
       ])
@@ -479,7 +513,7 @@ defmodule HalC2.PullRequests.Checkout do
 
     with {:ok, remote} <- head_remote(cwd, host, pr),
          {:ok, _} <- fetch_branch(cwd, remote, head),
-         do: Git.ok(cwd, ["branch", "--set-upstream-to=#{remote}/#{head}", branch])
+         do: Git.ok(cwd, ["branch", "--set-upstream-to=#{remote}/#{head}", "--", branch])
   end
 
   # The remote the head branch lives on: the primary one for a pull request from the
@@ -541,7 +575,7 @@ defmodule HalC2.PullRequests.Checkout do
           |> Stream.map(&if(&1 == 0, do: preferred, else: "#{preferred}-#{&1}"))
           |> Enum.find(&(not MapSet.member?(names, &1)))
 
-        with {:ok, _} <- Git.ok(cwd, ["remote", "add", name, url]), do: {:ok, name}
+        with {:ok, _} <- Git.ok(cwd, ["remote", "add", "--", name, url]), do: {:ok, name}
     end
   end
 
@@ -561,7 +595,7 @@ defmodule HalC2.PullRequests.Checkout do
 
     target =
       with ref when is_binary(ref) <- pr_ref(host, pr),
-           {:ok, _} <- Git.ok(path, ["fetch", "--quiet", "--no-tags", host.remote, ref]) do
+           {:ok, _} <- Git.ok(path, ["fetch", "--quiet", "--no-tags", "--", host.remote, ref]) do
         rev(path, "FETCH_HEAD")
       else
         _ ->

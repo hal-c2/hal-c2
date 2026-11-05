@@ -75,7 +75,12 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster handle_call :fingerprint" => @reads,
       "HalC2.Cluster handle_call :entry" =>
         "describes this MC to an inviter, whose admit takes it; changes nothing",
-      "HalC2.Cluster.invite/1" => "makes a pairing link; changes no table",
+      "HalC2.Cluster.invite/1" => "makes a cluster-only invite; changes no table",
+      "HalC2.Cluster.join_challenge/1" => "cluster_join.maude models the join handshake",
+      "HalC2.Cluster.join_admit/1" => "cluster_join.maude models the join handshake",
+      "HalC2.Cluster handle_call :identity" => "reads this MC's key for the join handshake",
+      "HalC2.Cluster handle_call {:join_admit, _}" =>
+        "cluster_join.maude models the join handshake",
       "HalC2.Cluster.describe/1" => @words,
       "HalC2.Cluster.reason/1" => @words,
       "HalC2.Cluster.detail/1" => @words,

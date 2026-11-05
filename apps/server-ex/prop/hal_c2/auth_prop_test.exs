@@ -54,6 +54,46 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
+  property "a pairing link delegates only a valid subset of its creator's scopes",
+    numtests: HalC2.Prop.numtests(100) do
+    creator = let(scopes <- resize(5, list(oneof(@admin))), do: Enum.uniq(scopes))
+
+    requested =
+      frequency([
+        {2, nil},
+        {8, resize(5, list(oneof(@admin ++ ["bogus:scope"])))}
+      ])
+
+    forall {creator, requested} <- {creator, requested} do
+      HalC2.Prop.scratch_home("auth-delegation")
+      HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+      effective = requested || @standard
+
+      valid? =
+        effective != [] and effective == Enum.uniq(effective) and
+          Enum.all?(effective, &(&1 in @admin)) and Enum.all?(effective, &(&1 in creator))
+
+      input = if requested == nil, do: %{}, else: %{"scopes" => requested}
+
+      outcome =
+        case Auth.create_pairing_link(input, creator) do
+          {:ok, %{"credential" => credential}} ->
+            [listed] = Auth.pairing_links()
+            {:ok, _, _, granted} = Auth.exchange(credential)
+            valid? and listed["scopes"] == effective and granted == effective
+
+          {:error, :invalid_scope} ->
+            not valid? and Auth.pairing_links() == []
+
+          _ ->
+            false
+        end
+
+      HalC2.Prop.stop_services()
+      outcome
+    end
+  end
+
   # --- model ------------------------------------------------------------------
 
   # links: pending pairing tokens (unexpired or not, until pruned). sessions: rows of
@@ -963,6 +1003,36 @@ defmodule HalC2.AuthConcurrentPropTest do
   def postcondition(state, {:call, _, :lookup, [h]}, result),
     do: result == h in state.sessions
 
+  property "an exchange proof is claimed once however many valid exchanges race",
+    numtests: HalC2.Prop.numtests(100) do
+    forall callers <- integer(2, 4) do
+      trap_exit do
+        previous = Application.fetch_env(:hal_c2, :desktop_token)
+        Application.put_env(:hal_c2, :desktop_token, "desktop-token")
+        HalC2.Prop.scratch_home("auth-exchange-proof")
+        HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+        proof = %{thumbprint: "key", jti: "shared-proof", iat: div(Auth.now(), 1000)}
+
+        tasks =
+          for _ <- 1..callers do
+            Task.async(fn ->
+              Auth.exchange("desktop-token", %{proof_jkt: proof.thumbprint, proof: proof})
+            end)
+          end
+
+        results = Enum.map(tasks, &Task.await/1)
+        HalC2.Prop.stop_services()
+
+        if match?({:ok, _}, previous),
+          do: Application.put_env(:hal_c2, :desktop_token, elem(previous, 1)),
+          else: Application.delete_env(:hal_c2, :desktop_token)
+
+        Enum.count(results, &match?({:ok, _, _, _}, &1)) == 1 and
+          Enum.count(results, &(&1 == {:error, :dpop, :replay})) == callers - 1
+      end
+    end
+  end
+
   # --- system under test ---
 
   def redeem(h) do
@@ -981,4 +1051,93 @@ defmodule HalC2.AuthConcurrentPropTest do
     {_, access} = Reg.get({:session, h})
     match?({:ok, _}, Auth.session(access))
   end
+end
+
+defmodule HalC2.AuthDevTokenPropTest do
+  @moduledoc """
+  The configured development credential becomes the only reusable dev session when Auth
+  restarts. Configuring a value alone changes nothing until that restart.
+  """
+
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2.Auth
+  alias HalC2.Store
+
+  @moduletag timeout: :infinity
+  @tokens ["dev-token-a", "dev-token-b"]
+  @standard ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
+  @admin @standard ++ ~w(access:read access:write relay:write)
+
+  property "only the configured dev token survives a restart",
+    numtests: HalC2.Prop.numtests(100) do
+    forall cmds <- commands(__MODULE__) do
+      trap_exit do
+        previous = Application.fetch_env(:hal_c2, :dev_auth_token)
+        Application.delete_env(:hal_c2, :dev_auth_token)
+        HalC2.Prop.scratch_home("auth-dev-token")
+        HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+        {history, state, result} = run_commands(__MODULE__, cmds)
+        HalC2.Prop.stop_services()
+        restore_dev_token(previous)
+
+        (result == :ok)
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  def initial_state, do: %{configured: nil, active: nil}
+
+  def command(_state) do
+    frequency([
+      {2, {:call, __MODULE__, :configure, [oneof([nil | @tokens])]}},
+      {2, {:call, __MODULE__, :restart, []}},
+      {4, {:call, __MODULE__, :present, [oneof(@tokens)]}}
+    ])
+  end
+
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :configure, [token]}),
+    do: %{state | configured: token}
+
+  def next_state(state, _result, {:call, _, :restart, []}),
+    do: %{state | active: state.configured}
+
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(_state, {:call, _, name, _}, result) when name in [:configure, :restart],
+    do: result == :ok
+
+  def postcondition(state, {:call, _, :present, [token]}, result) do
+    if state.active == token,
+      do: result == {:ok, Enum.sort(@admin)},
+      else: result == :error
+  end
+
+  def configure(nil) do
+    Application.delete_env(:hal_c2, :dev_auth_token)
+    :ok
+  end
+
+  def configure(token) do
+    Application.put_env(:hal_c2, :dev_auth_token, token)
+    :ok
+  end
+
+  def restart, do: HalC2.Prop.restart_service(Auth)
+
+  def present(token) do
+    case Auth.session(token) do
+      {:ok, session} -> {:ok, Enum.sort(session.scopes)}
+      :error -> :error
+    end
+  end
+
+  defp restore_dev_token({:ok, token}), do: Application.put_env(:hal_c2, :dev_auth_token, token)
+  defp restore_dev_token(:error), do: Application.delete_env(:hal_c2, :dev_auth_token)
 end

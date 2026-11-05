@@ -552,6 +552,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
   end
 
+  step "Forgejo reports pull request 42's head SHA as {string}", %{args: [sha]} = context do
+    Map.put(context, :forgejo_head_sha, sha)
+  end
+
   step "the branch is at pull request 42's head", context do
     assert World.git!(context.cwd, ~w(rev-parse pulls/42)) == context.pr_head
     context
@@ -559,6 +563,13 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
 
   step "the uncommitted file is still there", context do
     assert File.read!(Path.join(context.cwd, "notes.txt")) == "draft\n"
+    context
+  end
+
+  step "the user is told the Forgejo pull request head SHA is invalid", context do
+    assert World.failure(context) =~
+             "The Forgejo server returned an invalid pull request head SHA; expected 40 or 64 hexadecimal characters."
+
     context
   end
 
@@ -1329,7 +1340,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
       "base" => %{"ref" => "main", "repo" => %{"full_name" => "acme/shop"}},
       "head" => %{
         "ref" => "feature/tax",
-        "sha" => context.pr_head,
+        "sha" => context[:forgejo_head_sha] || context.pr_head,
         "repo" => %{"full_name" => "acme/shop"}
       }
     }

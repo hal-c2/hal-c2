@@ -109,10 +109,23 @@ Feature: Clustering one person's machines
     Then the client sees the first alone again
 
   @mc
-  Scenario: Only a client that manages access sees or changes the cluster
+  Scenario: A client with access and terminal scopes joins its machine over HTTP
+    Given two MCs that are not clustered
+    When a client with access and terminal scopes asks the first for a cluster invite over HTTP
+    And a client with access and terminal scopes joins the second with that invite over HTTP
+    Then the client sees both machines connected
+
+  @mc
+  Scenario: Cluster changes require access management and terminal operation
     Given two MCs that are not clustered
     When a client paired with a standard link asks the first for a cluster invite
     Then the MC refuses both, saying access is required
+
+  @mc
+  Scenario: Access management without terminal operation cannot change the cluster
+    Given two MCs that are not clustered
+    When a client paired for access management without terminal operation asks the first for a cluster invite
+    Then the MC refuses saying terminal operation is required
 
   @mc
   Scenario: A machine that joins one member reaches every member
@@ -550,27 +563,25 @@ Feature: Clustering one person's machines
     Then the member shows as connected with the version it runs
     And the user is told the two run different versions
 
-  # The hardened join, not built. Today the invite's token and the joining machine's
-  # description cross the network the way the link's origin carries them. Over HTTPS or a
-  # tailnet nobody else reads or changes them. Over plain HTTP on a shared network, someone
-  # on the path can take the token before it is used, or put their own machine's
-  # certificate in the joining machine's place, and the inviter admits them. The invite's
-  # fingerprint only protects the joining machine (the three scenarios on invites above).
-  @backlog @mc
+  # The inviter signs a challenge with the certificate the invite pins. The joiner
+  # answers only after checking it, then encrypts its certificate and entry to that key.
+  # A one-time HMAC proves the invite without sending its secret, so these guarantees do
+  # not depend on whether the link itself uses HTTP, HTTPS or a tailnet.
+  @mc
   Scenario: A join proves it holds the invite without sending the invite's secret
     Given a cluster invite from the first of two MCs that are not clustered
     When the second joins with it over a network someone else can read
     Then the invite's secret never crosses the network
     And the first admits the second because its request was made with that secret
 
-  @backlog @mc
+  @mc
   Scenario: Someone who changes a join on the way cannot put their own machine in its place
     Given a cluster invite from the first of two MCs that are not clustered
     When the second joins with it and someone on the network swaps in their own certificate
     Then the first refuses the request because it no longer matches the invite's secret
     And the first admits nobody
 
-  @backlog @mc
+  @mc
   Scenario: The inviter proves who it is before the joining machine describes itself
     Given a cluster invite from the first of two MCs that are not clustered
     When the second joins with it

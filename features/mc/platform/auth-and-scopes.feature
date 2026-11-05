@@ -273,7 +273,7 @@ Feature: MC authentication and scopes
     Then the authorized clients list shows that surface and version for it
     And a later connection that reports only a version keeps the surface it reported before
 
-  @backlog @mc
+  @mc
   Scenario Outline: A pairing link carries only scopes its creator holds
     Given an administrator creating a pairing link
     When it names <scopes>
@@ -282,8 +282,10 @@ Feature: MC authentication and scopes
     Examples:
       | scopes                                          | outcome                                    |
       | a scope that the administrator does not hold    | refuses the link as an invalid scope       |
+      | an unknown scope                                | refuses the link as an invalid scope       |
       | no scopes at all                                | refuses the link as an invalid scope       |
       | the same scope twice                            | refuses the link as an invalid scope       |
+      | the default scopes without holding all of them  | refuses the link as an invalid scope       |
 
   @backlog @mc
   Scenario: Responses that carry credentials are never cached
@@ -436,6 +438,19 @@ Feature: MC authentication and scopes
     When a browser presents it to a development MC
     Then the MC grants an administrative session
     And revoking it locally does not affect another worktree
+    When the development token is rotated
+    Then the previous development credential is refused
+    And the replacement development credential signs in
+    When the development token is removed
+    Then the previous development credential is refused
+
+  @mc
+  Scenario: A non-development MC removes a reusable development credential
+    Given a fixed development auth token is configured
+    When a browser presents it to a development MC
+    Then the MC grants an administrative session
+    When a non-development MC restarts on the same store with that token in its environment
+    Then the previous development credential is refused
 
   @mc
   Scenario: The desktop's new bootstrap session replaces its previous one

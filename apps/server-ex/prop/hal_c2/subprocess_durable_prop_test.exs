@@ -1,8 +1,9 @@
 defmodule HalC2.SubprocessDurablePropTest do
   @moduledoc """
-  `HalC2.Subprocess.Durable` against the one thing it promises: whichever order lines
+  `HalC2.Subprocess.Durable` against its lifecycle promises: whichever order lines
   are sent, read, and the MC leaves and comes back in, the program stays the same one
   and every line it wrote reaches the MC once, in order, from the last checkpoint.
+  Files made in its launch directory survive those same restarts and go with its final stop.
   """
 
   use ExUnit.Case, async: false
@@ -15,23 +16,40 @@ defmodule HalC2.SubprocessDurablePropTest do
   @moduletag capture_log: true
   @echo ["sh", "-c", ~s(while read l; do echo "$l"; done)]
 
-  property "lines reach the MC once and in order across any restarts",
+  property "lines and launch files survive restarts, and final stop removes them",
     numtests: HalC2.Prop.numtests(15) do
     forall ops <- list(oneof([:send, :drain, :restart])) do
       HalC2.Prop.scratch_home("durable")
       flush()
       Application.put_env(:hal_c2, :durable_programs, true)
-      {:ok, sub} = Subprocess.start(@echo, durable: "t1")
+
+      launch = fn dir ->
+        path = Path.join(dir, "launch-config")
+        File.write!(path, "secret")
+        File.chmod!(path, 0o600)
+        @echo
+      end
+
+      {:ok, sub} = Subprocess.start(launch, durable: "t1")
       pid = Subprocess.os_pid(sub)
+      dir = sub.durable.dir
+      config = Path.join(dir, "launch-config")
       world = %{sub: sub, n: 0, read: [], offset: 0}
       world = Enum.reduce(ops ++ [:drain], world, &step/2)
       same = Subprocess.os_pid(world.sub) == pid
+      kept = File.read!(config) == "secret"
       Subprocess.stop(world.sub)
+      removed = not File.exists?(dir)
       Application.put_env(:hal_c2, :durable_programs, false)
       expected = Enum.map(1..world.n//1, &"#{&1}")
 
-      (same and world.read == expected)
-      |> when_fail(IO.puts("same program: #{same}, read #{inspect(world.read)}, sent #{world.n}"))
+      (same and kept and removed and world.read == expected)
+      |> when_fail(
+        IO.puts(
+          "same program: #{same}, config kept: #{kept}, removed: #{removed}, " <>
+            "read #{inspect(world.read)}, sent #{world.n}"
+        )
+      )
     end
   end
 

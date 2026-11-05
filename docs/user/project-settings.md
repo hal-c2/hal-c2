@@ -59,13 +59,12 @@ project crumb.
 The Project category, shown while a project is selected, holds the project's name, icon, actions,
 checkouts and removal. Actions belong to a project: editing them creates the project's own list
 on each selected environment, and reset returns to the environment's shared list. A project's
-`hal-c2.json` actions can be imported there. A new worktree runs the project's action marked to run
-on worktree creation; when the project has none, it runs the first one marked in the `hal-c2.json`
-of the branch being checked out, imported or not. That script runs only if the project folder's own
-`hal-c2.json` has the same command, so a branch can't change which setup command runs. A branch that
-adds or changes it gets a worktree without it, and the setup details say why; import or save the
-action to run it anyway. The command still runs against the branch's files, such as its
-`package.json` or `mise.toml`, the same as a saved setup script.
+`hal-c2.json` actions can be imported there.
+
+A new worktree runs the saved action marked to run on worktree creation. If only the checkout's
+`hal-c2.json` marks a setup action, HAL-C2 still creates the worktree and starts the agent, but
+skips the script and explains why in the setup details. Import or save the setup action under
+**Settings → Project → Actions** to run it in later worktrees.
 
 Settings a repository can also declare in `hal-c2.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `hal-c2.json`, then the

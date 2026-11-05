@@ -1,17 +1,18 @@
 defmodule HalC2.WorkspaceWritePropTest do
   @moduledoc """
-  `HalC2.Workspace.write_file/1` by an absolute path, against a model of a few host
-  paths outside the project. Each is missing, a small text file, a binary file, a text
-  file over 1 MB, a folder, or a link to another of them, in whatever order the agent
-  leaves them. A write by full path lands only on a text file already there that
-  `read_file/1` gives whole, through any links; every other write is refused and
-  changes nothing, and nothing is ever created outside the project.
+  `HalC2.Workspace.write_file/1` against a model of a few host paths outside the
+  project. Each is missing, a small text file, a binary file, a text file over 1 MB, a
+  folder, or a link to another of them, in whatever order the agent leaves them. A
+  write by full path lands only on a text file already there that `read_file/1` gives
+  whole, through any links. A caller-chosen root outside the project takes terminal
+  access too.
 
   Each write is made by a session with or without `terminal:operate`, gated as the
-  socket gates it (`HalC2.Rpc.required_scope/2`), and names the file by its full path
-  or by a relative path that tries to leave the project (`../outside/a`, or through a
-  link in the project to the folder outside) or names the project's own folder (`.`). A session without terminal access never
-  changes anything outside the project, however it names the file.
+  socket gates it (`HalC2.Rpc.required_scope/2`). It names the file by its full path,
+  by a relative path that tries to leave the project (`../outside/a`, or through a
+  link), by the project's own folder (`.`), or from the outside folder as its root. A
+  session without terminal access never changes anything outside the project, however
+  it names the file.
   """
 
   use ExUnit.Case, async: false
@@ -33,6 +34,7 @@ defmodule HalC2.WorkspaceWritePropTest do
       trap_exit do
         start_case()
         {history, state, result} = run_commands(__MODULE__, cmds)
+        HalC2.Prop.stop_services()
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -51,6 +53,28 @@ defmodule HalC2.WorkspaceWritePropTest do
     File.ln_s!(outside, Path.join(root, "out"))
     Process.put(:root, root)
     Process.put(:outside, outside)
+
+    HalC2.Prop.start_services([
+      {HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")},
+      HalC2.Streams,
+      HalC2.Shell,
+      HalC2.Workspace
+    ])
+
+    :ok = HalC2.Shell.subscribe(self())
+    registered = Path.join(dir, "registered-project")
+    File.ln_s!(root, registered)
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "project",
+        "workspaceRoot" => registered
+      })
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"project", {"project", %{"workspaceRoot" => ^registered}}}]}},
+                   1_000
   end
 
   # --- model ------------------------------------------------------------------
@@ -66,11 +90,20 @@ defmodule HalC2.WorkspaceWritePropTest do
       {1, {:call, __MODULE__, :remove, [oneof(@names)]}},
       {5,
        {:call, __MODULE__, :write,
-        [oneof(@names), oneof(@texts), oneof([:full, :dotdot, :link, :own_folder]), boolean()]}}
+        [
+          oneof(@names),
+          oneof(@texts),
+          oneof([:full, :dotdot, :link, :own_folder, :chosen_root]),
+          boolean()
+        ]}}
     ])
   end
 
   def precondition(_state, {:call, _, :link, [name, target]}), do: name != target
+
+  def precondition(state, {:call, _, :write, [name, _text, :chosen_root, _terminal?]}),
+    do: Map.get(state, name) != :folder and not match?({:link, _}, Map.get(state, name))
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :put_text, [name, text]}),
@@ -84,11 +117,17 @@ defmodule HalC2.WorkspaceWritePropTest do
   def next_state(state, _result, {:call, _, :remove, [name]}), do: Map.delete(state, name)
 
   def next_state(state, _result, {:call, _, :write, [name, text, how, terminal?]}) do
-    case resolve(state, name) do
-      {target, {:text, _}} when how == :full and terminal? ->
-        Map.put(state, target, {:text, text})
+    cond do
+      how == :chosen_root and terminal? ->
+        Map.put(state, name, {:text, text})
 
-      _ ->
+      how == :full and terminal? ->
+        case resolve(state, name) do
+          {target, {:text, _}} -> Map.put(state, target, {:text, text})
+          _ -> state
+        end
+
+      true ->
         state
     end
   end
@@ -98,12 +137,17 @@ defmodule HalC2.WorkspaceWritePropTest do
         {:call, _, :write, [name, _, how, terminal?]} = call,
         {result, seen, project}
       ) do
-    refused_scope? = how == :full and not terminal?
-    written? = how == :full and terminal? and match?({_, {:text, _}}, resolve(state, name))
+    refused_scope? = how in [:full, :chosen_root] and not terminal?
+
+    written? =
+      (how == :chosen_root and terminal?) or
+        (how == :full and terminal? and match?({_, {:text, _}}, resolve(state, name)))
+
+    shown = if how == :chosen_root, do: Atom.to_string(name), else: path(name)
 
     answered =
       case result do
-        {:ok, %{"relativePath" => shown}} -> written? and shown == path(name)
+        {:ok, %{"relativePath" => ^shown}} -> written?
         :terminal_operate_required -> refused_scope?
         {:error, %{"_tag" => "ProjectWriteFileError"}} -> not written? and not refused_scope?
         _ -> false
@@ -158,15 +202,16 @@ defmodule HalC2.WorkspaceWritePropTest do
   def write(name, text, how, terminal?) do
     root = Process.get(:root)
 
-    relative =
+    {cwd, relative} =
       case how do
-        :full -> path(name)
-        :dotdot -> "../outside/#{name}"
-        :link -> "out/#{name}"
-        :own_folder -> "."
+        :full -> {root, path(name)}
+        :dotdot -> {root, "../outside/#{name}"}
+        :link -> {root, "out/#{name}"}
+        :own_folder -> {root, "."}
+        :chosen_root -> {Process.get(:outside), Atom.to_string(name)}
       end
 
-    input = %{"cwd" => root, "relativePath" => relative, "contents" => text}
+    input = %{"cwd" => cwd, "relativePath" => relative, "contents" => text}
     scopes = HalC2.Auth.standard_scopes()
     scopes = if terminal?, do: scopes, else: scopes -- ["terminal:operate"]
 

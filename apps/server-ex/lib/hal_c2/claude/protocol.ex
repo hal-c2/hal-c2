@@ -62,17 +62,7 @@ defmodule HalC2.Claude.Protocol do
   # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
   defp mcp_args(nil, _workers_only, _opts), do: []
 
-  defp mcp_args(%{url: url, authorization: authorization}, workers_only, opts) do
-    config = %{
-      "mcpServers" => %{
-        "hal-c2" => %{
-          "type" => "http",
-          "url" => url,
-          "headers" => %{"Authorization" => authorization}
-        }
-      }
-    }
-
+  defp mcp_args(%{url: _url, authorization: _authorization}, workers_only, opts) do
     # A read-only run pre-approves only HAL-C2's reading tools, so it cannot
     # silently start threads or schedule tasks; others pre-approve them all.
     allowed =
@@ -83,7 +73,7 @@ defmodule HalC2.Claude.Protocol do
 
     [
       "--mcp-config",
-      JSON.encode!(config),
+      Keyword.fetch!(opts, :mcp_config_path),
       "--allowedTools",
       allowed,
       "--append-system-prompt",

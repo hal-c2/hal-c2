@@ -24,6 +24,10 @@ defmodule HalC2.ClusterPropTest do
 
   `HalC2.Cluster.merge/3` is checked on its own: any three updates of one machine's
   entry merge to one table whatever their order, grouping or repetition.
+
+  The join property runs Auth and Cluster together: a bad proof or certificate does not
+  consume the invite, a valid live one admits once, an expired or replayed one admits
+  nobody, and no cluster invite can be exchanged for a client session.
   """
 
   use ExUnit.Case, async: false
@@ -661,5 +665,107 @@ defmodule HalC2.ClusterPropTest do
       {2, let({a, b, c, d} <- ip(), do: "#{a}.#{b}.#{c}.#{d}")},
       {1, oneof(["10.0.0.1:0", "10.0.0.1:x", "a:b:c"])}
     ])
+  end
+
+  # --- joining with a one-time invite ------------------------------------------
+
+  property "a cluster invite admits only its certificate's entry, once and before expiry",
+    numtests: HalC2.Prop.numtests(30) do
+    forall {attack, expired} <- {oneof([:none, :wrong_proof, :wrong_entry]), boolean()} do
+      trap_exit do
+        HalC2.Prop.scratch_home("cluster-join")
+        ClusterTransport.install()
+
+        HalC2.Prop.start_services([
+          {HalC2.Store, path: HalC2.Store.home_path()},
+          HalC2.Auth,
+          Cluster
+        ])
+
+        key = X509.PrivateKey.new_ec(:secp256r1)
+        cert = X509.Certificate.self_signed(key, "/CN=property-joiner.hal-c2")
+        pin = Cluster.fingerprint(cert)
+
+        entry = %{
+          "id" => "property-joiner",
+          "fingerprint" => pin,
+          "label" => "Property joiner",
+          "addresses" => [],
+          "version" => HalC2.Upgrade.version()
+        }
+
+        {:ok, %{"id" => invite, "credential" => token}} = HalC2.Auth.create_cluster_invite()
+        {:ok, request, private} = HalC2.Cluster.Join.challenge(invite)
+        {:ok, answer} = Cluster.join_challenge(request)
+        own_pin = :sys.get_state(Cluster).fingerprint
+
+        {:ok, admission} =
+          HalC2.Cluster.Join.seal(request, answer, token, own_pin, entry, cert, key, private)
+
+        attack_result =
+          case attack do
+            :none ->
+              :ok
+
+            :wrong_proof ->
+              bad = %{admission | "proof" => Base.encode64(:binary.copy(<<0>>, 32))}
+              Cluster.join_admit(bad)
+
+            :wrong_entry ->
+              wrong = %{entry | "fingerprint" => own_pin}
+
+              {:ok, bad} =
+                HalC2.Cluster.Join.seal(
+                  request,
+                  answer,
+                  token,
+                  own_pin,
+                  wrong,
+                  cert,
+                  key,
+                  private
+                )
+
+              Cluster.join_admit(bad)
+          end
+
+        attack_ok =
+          attack == :none or
+            (match?({:error, _}, attack_result) and Cluster.status()["members"] == [])
+
+        if expired,
+          do: Application.put_env(:hal_c2, :auth_now, HalC2.Auth.now() + :timer.minutes(6))
+
+        result = Cluster.join_admit(admission)
+        replay = Cluster.join_admit(admission)
+        members = Cluster.status()["members"]
+        stored_pin = get_in(:sys.get_state(Cluster).members, [entry["id"], "fingerprint"])
+
+        outcome =
+          attack_ok and HalC2.Auth.exchange(token) == :error and
+            if expired do
+              match?({:error, :link_invalid}, result) and members == []
+            else
+              match?({:ok, _}, result) and match?({:error, :link_invalid}, replay) and
+                length(members) == 1 and hd(members)["id"] == entry["id"] and stored_pin == pin
+            end
+
+        Application.delete_env(:hal_c2, :auth_now)
+        HalC2.Prop.stop_services()
+        drain()
+
+        outcome
+        |> when_fail(
+          IO.inspect(%{
+            attack: attack,
+            expired: expired,
+            attack_result: attack_result,
+            result: result,
+            replay: replay,
+            members: members
+          })
+        )
+      end
+    end
   end
 end

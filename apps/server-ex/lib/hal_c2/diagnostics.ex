@@ -547,7 +547,8 @@ defmodule HalC2.Diagnostics do
   defp row(line) do
     case String.split(String.trim(line), ~r/\s+/, parts: 15) do
       [pid, ppid, pgid, stat, cpu, rss, vsz, time, etime, _day, month, date, clock, year, command] ->
-        command = if(command == "", do: "?", else: String.slice(command, 0, 500))
+        command =
+          if(command == "", do: "?", else: command |> redact_command() |> String.slice(0, 500))
 
         %{
           pid: String.to_integer(pid),
@@ -571,6 +572,19 @@ defmodule HalC2.Diagnostics do
       _ ->
         nil
     end
+  end
+
+  defp redact_command(command) do
+    command
+    |> String.replace(
+      ~r/(authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token)?\s*)[^\s"',\}]+/i,
+      "\\1[REDACTED]"
+    )
+    |> String.replace(~r/\bbearer\s+[^\s"',\}]+/i, "Bearer [REDACTED]")
+    |> String.replace(
+      ~r/\b(token|password|passwd|api[-_]?key|api[-_]?token)(["']?\s*[:=]\s*["']?)[^\s"',\}]+/i,
+      "\\1\\2[REDACTED]"
+    )
   end
 
   defp walk(row, depth, children) do

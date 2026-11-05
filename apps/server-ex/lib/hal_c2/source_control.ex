@@ -355,7 +355,7 @@ defmodule HalC2.SourceControl do
     dest = Path.expand(dest)
 
     with {:ok, url, repository} <- remote(input),
-         {:ok, _} <- HalC2.Git.ok(Path.dirname(dest), ["clone", url, dest]) do
+         {:ok, _} <- HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest]) do
       {:ok, %{"cwd" => dest, "remoteUrl" => url, "repository" => repository}}
     else
       {:error, {_status, detail}} ->
@@ -392,12 +392,12 @@ defmodule HalC2.SourceControl do
          {:ok, repository} <-
            lookup(%{"provider" => provider, "repository" => name, "cwd" => cwd}),
          url = if(protocol(input) == "ssh", do: repository["sshUrl"], else: repository["url"]),
-         {:ok, _} <- HalC2.Git.ok(cwd, ["remote", "add", remote_name, url]) do
+         {:ok, _} <- HalC2.Git.ok(cwd, ["remote", "add", "--", remote_name, url]) do
       branch = HalC2.Git.current_branch(cwd)
 
       pushed =
         branch &&
-          match?({:ok, _}, HalC2.Git.ok(cwd, ["push", "-u", remote_name, branch]))
+          match?({:ok, _}, HalC2.Git.ok(cwd, ["push", "-u", "--", remote_name, branch]))
 
       {:ok,
        %{

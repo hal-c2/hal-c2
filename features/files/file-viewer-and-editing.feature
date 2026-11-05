@@ -624,6 +624,26 @@ Feature: Viewing and editing files
       When that client writes "src/app.ts" in "shop"
       Then "src/app.ts" exists with the written contents
 
+    @mc
+    Scenario: A session without terminal access cannot pick an outside folder as the project
+      Given the host has the file "/home/sam/.bashrc"
+      And a client paired without terminal access
+      When that client writes ".bashrc" with the project folder "/home/sam"
+      Then the MC answers that client that terminal:operate is required
+      And nothing at "/home/sam/.bashrc" changed
+      When that client writes "src/app.ts" in "shop"
+      Then "src/app.ts" exists with the written contents
+      Given thread "Work" of project "workshop" works in a worktree outside the project folder
+      When that client writes "src/worktree.ts" in the worktree
+      Then "src/worktree.ts" exists in the worktree with the written contents
+
+    @mc
+    Scenario: A session with terminal access can pick an outside folder as the project
+      Given the host has the file "/home/sam/.bashrc"
+      And a client paired with terminal access
+      When a client writes ".bashrc" with the project folder "/home/sam"
+      Then the outside file "/home/sam/.bashrc" has the written contents
+
     @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
       Given the user is editing "src/app.ts"

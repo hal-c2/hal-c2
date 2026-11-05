@@ -56,7 +56,9 @@ the desktop app and make an invite. On the machine that joins, open the same pag
 paste the link. In the terminal client the command palette has **Invite a machine to this
 cluster** and **Join another machine's cluster…**. The link works once, for five minutes,
 and the joining machine has to reach the address in it: a LAN or tailnet address, not a
-loopback one. From a command line:
+loopback one. The invite's secret stays on the joining machine, which authenticates the
+inviter before sending its encrypted description. Older MCs that use bearer admission cannot
+join an MC with this protocol; update the joining machine first. From a command line:
 
 ```bash
 hal-c2-service cluster invite      # prints the link

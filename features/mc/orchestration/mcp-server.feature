@@ -54,6 +54,12 @@ Feature: The HAL-C2 MCP server agents receive
     Then the agent keeps its tools with the new credential
     And the old credential is refused from then on
 
+  @mc @plugin-claude
+  Scenario: Claude's MCP credential never appears in process diagnostics
+    Given the agent of a running Claude thread uses the "hal-c2" server
+    When a client asks for the MC's process diagnostics
+    Then Claude's launch and process diagnostics contain no MCP credential
+
   @mc
   Scenario: Credentials differ per provider instance of a thread
     When "caller" is given credentials for "codex" and for "claudeAgent"

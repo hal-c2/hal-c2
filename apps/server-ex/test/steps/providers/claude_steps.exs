@@ -1576,7 +1576,14 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "Claude can call the HAL-C2 tools for this thread", context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
-    config = argv |> Enum.drop_while(&(&1 != "--mcp-config")) |> Enum.at(1) |> JSON.decode!()
+
+    config =
+      argv
+      |> Enum.drop_while(&(&1 != "--mcp-config"))
+      |> Enum.at(1)
+      |> File.read!()
+      |> JSON.decode!()
+
     %{"url" => url, "headers" => %{"Authorization" => auth}} = config["mcpServers"]["hal-c2"]
     assert url =~ ~r{^http://127\.0\.0\.1:\d+/mcp$}
 

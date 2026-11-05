@@ -19,7 +19,7 @@ defmodule HalC2.Claude.Session do
 
   use GenServer
 
-  alias HalC2.Claude.Protocol
+  alias HalC2.Claude.{McpConfig, Protocol}
   alias HalC2.Subprocess
 
   @state_version 1
@@ -56,7 +56,7 @@ defmodule HalC2.Claude.Session do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
-    with {:ok, sub} <- subprocess(opts) do
+    with {:ok, sub, config_dir} <- subprocess(opts) do
       channel = get_in(opts, [:adopt, :channel]) || %{next_id: 1, permissions: %{}}
 
       {:ok,
@@ -69,7 +69,8 @@ defmodule HalC2.Claude.Session do
          offset: get_in(opts, [:adopt, :offset]) || 0,
          # Tool input is echoed back on "allow", so keep it until the prompt is answered.
          permissions: channel.permissions,
-         log: Keyword.get(opts, :log)
+         log: Keyword.get(opts, :log),
+         mcp_config_dir: config_dir
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -79,23 +80,46 @@ defmodule HalC2.Claude.Session do
   defp subprocess(opts) do
     case opts[:adopt] do
       %{dir: dir, offset: offset} ->
-        Subprocess.adopt(dir, offset)
+        with {:ok, sub} <- Subprocess.adopt(dir, offset), do: {:ok, sub, nil}
 
       nil ->
         # `:command` replaces the `claude` executable (with its own leading args), e.g. in tests.
-        cmd =
-          Keyword.get(opts, :command, [Keyword.get(opts, :executable, "claude")]) ++
-            Protocol.cli_args(opts)
+        executable = Keyword.get(opts, :command, [Keyword.get(opts, :executable, "claude")])
+        config_dir = if opts[:mcp], do: McpConfig.new_dir()
 
-        with {:ok, sub} <- Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable])),
-             :ok <-
-               Subprocess.write_line(
-                 sub,
-                 Protocol.control_request("init", "initialize", %{
-                   "supportedDialogKinds" => @dialog_kinds
-                 })
-               ) do
-          {:ok, sub}
+        cmd = fn durable_dir ->
+          opts =
+            if opts[:mcp] do
+              dir = if durable_dir, do: Path.join(durable_dir, "mcp"), else: config_dir
+              path = McpConfig.write!(opts[:mcp], dir)
+              Keyword.put(opts, :mcp_config_path, path)
+            else
+              opts
+            end
+
+          executable ++ Protocol.cli_args(opts)
+        end
+
+        case Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable])) do
+          {:ok, sub} ->
+            case Subprocess.write_line(
+                   sub,
+                   Protocol.control_request("init", "initialize", %{
+                     "supportedDialogKinds" => @dialog_kinds
+                   })
+                 ) do
+              :ok ->
+                {:ok, sub, config_dir}
+
+              {:error, _reason} = error ->
+                Subprocess.stop(sub)
+                McpConfig.remove(config_dir)
+                error
+            end
+
+          {:error, _reason} = error ->
+            McpConfig.remove(config_dir)
+            error
         end
     end
   end
@@ -151,12 +175,28 @@ defmodule HalC2.Claude.Session do
   @impl true
   def terminate(_reason, state) do
     for {_id, from} <- state.pending, do: GenServer.reply(from, {:error, :closed})
-    Subprocess.stop(state.sub)
+
+    try do
+      Subprocess.stop(state.sub)
+    after
+      cleanup_config(state)
+    end
   end
+
+  # Durable configs belong to the durable directory, whose final stop removes them.
+  defp cleanup_config(%{sub: %{durable: nil}} = state),
+    do: McpConfig.remove(Map.get(state, :mcp_config_dir))
+
+  defp cleanup_config(_state), do: :ok
 
   @impl true
   def code_change(_old_vsn, state, _extra),
-    do: {:ok, state |> Map.put_new(:offset, 0) |> Map.put(:v, @state_version)}
+    do:
+      {:ok,
+       state
+       |> Map.put_new(:offset, 0)
+       |> Map.put_new(:mcp_config_dir, nil)
+       |> Map.put(:v, @state_version)}
 
   # After what the CLI wrote and after what it was sent.
   defp checkpoint(state, wrote \\ true)

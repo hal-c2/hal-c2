@@ -156,10 +156,16 @@ Feature: Searching project files
       And the result explains why the regular expression was not used
 
     @mc
-    Scenario: Content search works without ripgrep installed
+    Scenario: Literal content search works without ripgrep installed
       Given ripgrep is not installed on the environment
       When a client searches the contents of "shop" for "total"
       Then "src/cart.ts" is returned
+
+    @mc
+    Scenario: Regular expression content search without ripgrep says what it needs
+      Given ripgrep is not installed on the environment
+      When a client searches the contents of "shop" for "T.tal" as a regular expression
+      Then the MC answers that regular expression search needs ripgrep
 
     @mc
     Scenario: Content search skips files larger than one megabyte

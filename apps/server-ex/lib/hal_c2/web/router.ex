@@ -145,7 +145,7 @@ defmodule HalC2.Web.Router do
          "urn:hal-c2:params:oauth:token-type:environment-bootstrap" <-
            params["subject_token_type"],
          {:ok, requested} <- requested_scopes(params["scope"]),
-         {:ok, proof_jkt} <- exchange_proof(conn),
+         {:ok, proof} <- exchange_proof(conn),
          {:ok, access, expires_in, scopes} <-
            HalC2.Auth.exchange(params["subject_token"] || "", %{
              label: params["client_label"],
@@ -153,12 +153,13 @@ defmodule HalC2.Web.Router do
              os: params["client_os"],
              user_agent: conn |> get_req_header("user-agent") |> List.first(),
              scopes: requested,
-             proof_jkt: proof_jkt
+             proof_jkt: proof[:thumbprint],
+             proof: proof
            }) do
       json(conn, 200, %{
         "access_token" => access,
         "issued_token_type" => "urn:ietf:params:oauth:token-type:access_token",
-        "token_type" => if(proof_jkt, do: "DPoP", else: "Bearer"),
+        "token_type" => if(proof, do: "DPoP", else: "Bearer"),
         "expires_in" => expires_in,
         "scope" => Enum.join(scopes, " ")
       })
@@ -243,9 +244,9 @@ defmodule HalC2.Web.Router do
 
   # Settings → Connections: pairing links and the clients paired with this MC.
   post "/api/auth/pairing-token" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, "access:write", fn session ->
       with {:ok, body} <- json_body(conn),
-           {:ok, link} <- HalC2.Auth.create_pairing_link(body),
+           {:ok, link} <- HalC2.Auth.create_pairing_link(body, session.scopes),
            do: {200, link}
     end)
   end
@@ -298,30 +299,49 @@ defmodule HalC2.Web.Router do
     end)
   end
 
-  # The cluster of this person's machines (`HalC2.Cluster`). A machine joining through a
-  # pairing link is admitted with the link's one-time session, which ends there.
+  # The cluster of this person's machines (`HalC2.Cluster`). Remote joins authenticate
+  # the inviter, then carry an encrypted entry and a cluster-only one-time proof.
   get "/api/cluster" do
     with_scope(conn, "access:read", fn _session -> {200, HalC2.Cluster.status()} end)
   end
 
+  # Kept so older clients get a clear refusal and insufficient scopes still fail first.
+  # No credential accepted here can admit a member.
   post "/api/cluster/members" do
-    with_scope(conn, "access:write", fn session ->
-      with {:ok, body} <- json_body(conn) do
-        answer = cluster_answer(HalC2.Cluster.admit(body))
-        if session.id && elem(answer, 0) == 200, do: HalC2.Auth.revoke_client(session.id)
-        answer
-      end
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
+      with {:ok, _body} <- json_body(conn),
+           do: cluster_answer({:error, :not_an_invite})
     end)
   end
 
+  post "/api/cluster/join/challenge" do
+    {status, body} =
+      case json_body(conn) do
+        {:ok, body} -> cluster_answer(HalC2.Cluster.join_challenge(body))
+        _ -> cluster_answer({:error, :invalid_link})
+      end
+
+    json(conn, status, body)
+  end
+
+  post "/api/cluster/join/admit" do
+    {status, body} =
+      case json_body(conn) do
+        {:ok, body} -> cluster_answer(HalC2.Cluster.join_admit(body))
+        _ -> cluster_answer({:error, :invalid_link})
+      end
+
+    json(conn, status, body)
+  end
+
   post "/api/cluster/invite" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       with {:ok, body} <- json_body(conn), do: cluster_answer(HalC2.Cluster.invite(body))
     end)
   end
 
   post "/api/cluster/join" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       case json_body(conn) do
         {:ok, %{"link" => link}} when is_binary(link) -> cluster_answer(HalC2.Cluster.join(link))
         _ -> {:error, :invalid_body}
@@ -330,7 +350,7 @@ defmodule HalC2.Web.Router do
   end
 
   post "/api/cluster/remove" do
-    with_scope(conn, "access:write", fn _session ->
+    with_scope(conn, ["access:write", "terminal:operate"], fn _session ->
       case json_body(conn) do
         {:ok, %{"id" => id}} when is_binary(id) -> cluster_answer(HalC2.Cluster.remove(id))
         _ -> {:error, :invalid_body}
@@ -500,12 +520,16 @@ defmodule HalC2.Web.Router do
 
   defp socket_session(_), do: :error
 
-  # Runs `fun.(session)` for a bearer whose session has `scope`; `fun` returns
-  # `{status, body}` or `{:error, reason}`.
-  defp with_scope(conn, scope, fun) do
+  # Runs `fun.(session)` for a bearer whose session has every scope in `scopes`; `fun`
+  # returns `{status, body}` or `{:error, reason}`.
+  defp with_scope(conn, scopes, fun) do
+    scopes = List.wrap(scopes)
+
     case request_session(conn) do
       {:ok, session} ->
-        if scope in session.scopes do
+        missing = Enum.find(scopes, &(&1 not in session.scopes))
+
+        if missing == nil do
           case fun.(session) do
             {204, nil} ->
               send_resp(conn, 204, "")
@@ -532,7 +556,7 @@ defmodule HalC2.Web.Router do
           json(conn, 403, %{
             "_tag" => "EnvironmentScopeRequiredError",
             "code" => "insufficient_scope",
-            "requiredScope" => scope,
+            "requiredScope" => missing,
             "traceId" => trace_id()
           })
         end
@@ -572,8 +596,8 @@ defmodule HalC2.Web.Router do
         {:ok, nil}
 
       [proof | _] ->
-        case HalC2.Auth.Dpop.verify(proof, conn.method, request_url(conn)) do
-          {:ok, thumbprint} -> {:ok, thumbprint}
+        case HalC2.Auth.Dpop.verify_unclaimed(proof, conn.method, request_url(conn)) do
+          {:ok, verified} -> {:ok, verified}
           {:error, reason} -> {:error, :dpop, reason}
         end
     end
@@ -690,14 +714,90 @@ defmodule HalC2.Web.Router do
     with {:ok, mc} <- HalC2.Attachments.issuer(token),
          {:ok, status, resp_headers, body} <-
            remote(mc, HalC2.Attachments, :serve, [token, headers]) do
-      conn
-      |> merge_resp_headers(resp_headers)
-      |> send_resp(status, body)
+      conn = merge_resp_headers(conn, resp_headers)
+
+      case body do
+        {:stream, pid, ref} -> stream_asset(conn, status, pid, ref)
+        body -> send_resp(conn, status, body)
+      end
     else
       {:error, status, message} -> send_resp(conn, status, message)
       _ -> send_resp(conn, 403, "The link is invalid or expired.")
     end
   end
+
+  defp stream_asset(conn, status, pid, ref) do
+    monitor = Process.monitor(pid)
+    send(pid, {ref, :start, self()})
+
+    receive do
+      {^ref, :chunk, bytes} ->
+        conn = send_chunked(conn, status)
+        stream_asset_chunk(conn, pid, ref, monitor, bytes)
+
+      {^ref, :done} ->
+        Process.demonitor(monitor, [:flush])
+        send_chunked(conn, status)
+
+      {^ref, :error, :too_large} ->
+        Process.demonitor(monitor, [:flush])
+        send_resp(conn, 413, "GitHub media is too large.")
+
+      {^ref, :error, _reason} ->
+        Process.demonitor(monitor, [:flush])
+        send_resp(conn, 502, "The asset could not be read.")
+
+      {:DOWN, ^monitor, :process, ^pid, _reason} ->
+        send_resp(conn, 502, "The MC holding this file is unavailable.")
+    after
+      60_000 ->
+        send(pid, {ref, :stop})
+        Process.demonitor(monitor, [:flush])
+        send_resp(conn, 504, "The asset stream stalled.")
+    end
+  end
+
+  defp stream_asset_chunk(conn, pid, ref, monitor, bytes) do
+    case Plug.Conn.chunk(conn, bytes) do
+      {:ok, conn} ->
+        send(pid, {ref, :ack})
+        stream_asset_chunks(conn, pid, ref, monitor)
+
+      {:error, _} ->
+        send(pid, {ref, :stop})
+        Process.demonitor(monitor, [:flush])
+        conn
+    end
+  end
+
+  defp stream_asset_chunks(conn, pid, ref, monitor) do
+    receive do
+      {^ref, :chunk, bytes} ->
+        stream_asset_chunk(conn, pid, ref, monitor, bytes)
+
+      {^ref, :done} ->
+        Process.demonitor(monitor, [:flush])
+        conn
+
+      {^ref, :error, reason} ->
+        Process.demonitor(monitor, [:flush])
+        abort_asset_stream(reason)
+
+      {:DOWN, ^monitor, :process, ^pid, reason} ->
+        abort_asset_stream(reason)
+    after
+      60_000 ->
+        send(pid, {ref, :stop})
+        Process.demonitor(monitor, [:flush])
+        abort_asset_stream(:stalled)
+    end
+  end
+
+  # The status line is already out, so a failure mid-body must not end the response
+  # normally: the client would take a short body for the whole file. Raising makes
+  # Bandit drop the connection instead.
+  defp abort_asset_stream(reason),
+    do: raise(HalC2.Web.AssetStreamAborted, "asset stream aborted: #{inspect(reason)}")
 
   defp read_all(conn, left, acc) do
     case read_body(conn, length: min(left, 8_000_000)) do

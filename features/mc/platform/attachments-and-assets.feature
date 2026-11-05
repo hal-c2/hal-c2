@@ -719,6 +719,12 @@ Feature: Attachments and assets served by the MC
     When a player seeks into the video
     Then the MC serves the requested range
 
+  @mc
+  Scenario: Large media streams in bounded pieces
+    Given a signed URL for a video on the host
+    When the client reads the video without a range
+    Then the MC serves the whole video in bounded pieces
+
   @backlog @mc
   Scenario Outline: A byte range that the file cannot satisfy is refused
     Given a signed URL for a video that is ten bytes long

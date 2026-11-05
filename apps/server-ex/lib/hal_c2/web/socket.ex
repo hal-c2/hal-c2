@@ -433,8 +433,8 @@ defmodule HalC2.Web.Socket do
 
   # Runs a client RPC on the MC that owns the environment, off this process so a
   # slow command never holds up streaming.
-  # Each call needs the scope the contract declares for it (`HalC2.Rpc.required_scope/2`),
-  # checked here, before the call goes to whichever member owns the environment.
+  # Most calls need the scopes the contract declares for them (`HalC2.Rpc.required_scopes/2`),
+  # checked here. A file write's root-dependent scope is checked on the environment's MC.
   # The desktop app's reports go to its MC from here, in the order it sent them.
   defp rpc(state, id, environment, "server.reportDesktopUpdateStatus", payload)
        when is_map(payload) do
@@ -450,10 +450,25 @@ defmodule HalC2.Web.Socket do
   defp rpc(state, id, environment, method, payload),
     do: scoped_rpc(state, id, environment, method, payload)
 
-  defp scoped_rpc(state, id, environment, method, payload) do
-    scope = HalC2.Rpc.required_scope(method, payload)
+  defp scoped_rpc(state, id, environment, method, payload),
+    do: check_scopes(state, id, environment, method, payload, local_scopes(method, payload))
 
-    if allowed?(state, scope) do
+  # Whether a relative write's root is a project belongs to the environment's MC, which
+  # checks it again with the caller's scopes (`HalC2.Rpc.handle_with_scopes/3`); a write
+  # by full path is refused here, before it is routed anywhere.
+  defp local_scopes("projects.writeFile" = method, %{"relativePath" => path})
+       when is_binary(path) do
+    if Path.type(path) == :absolute,
+      do: ["terminal:operate"],
+      else: [HalC2.Rpc.required_scope(method)]
+  end
+
+  defp local_scopes(method, payload), do: HalC2.Rpc.required_scopes(method, payload)
+
+  defp check_scopes(state, id, environment, method, payload, scopes) do
+    scope = Enum.find(scopes, fn scope -> not allowed?(state, scope) end)
+
+    if scope == nil do
       run_rpc(state, id, environment, method, payload)
     else
       error = %{
@@ -508,6 +523,12 @@ defmodule HalC2.Web.Socket do
   defp call_mc(state, socket, mc, method, payload, timeout) do
     {module, fun, args} =
       cond do
+        method == "projects.writeFile" ->
+          {HalC2.Rpc, :handle_with_scopes, [method, payload || %{}, state.scopes]}
+
+        method == "hal-c2.createPairingLink" ->
+          {HalC2.Rpc, :handle, [method, payload || %{}, state.scopes]}
+
         method in @session_methods ->
           {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
 

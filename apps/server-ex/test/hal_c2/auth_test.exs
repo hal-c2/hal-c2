@@ -164,6 +164,30 @@ defmodule HalC2.AuthTest do
     assert :error = HalC2.Auth.issue_ticket(session)
   end
 
+  # Before invites had a kind of their own, `Cluster.invite/1` made them as pairing
+  # links granting access:write; one still pending at an upgrade must not sign anyone in.
+  test "a cluster invite made before the upgrade is no pairing link after it", %{path: path} do
+    :ok = stop_supervised(HalC2.Auth)
+    token = "legacy-cluster-invite"
+    hash = Base.encode16(:crypto.hash(:sha256, token), case: :lower)
+    expires = System.system_time(:millisecond) + 300_000
+    {:ok, db} = Sqlite3.open(path)
+
+    {:ok, insert} =
+      Sqlite3.prepare(
+        db,
+        "INSERT INTO auth_pairing (token_hash, expires_at, id, label, scopes, created_at) VALUES (?1, ?2, NULL, 'Cluster invite', 'access:write', ?3)"
+      )
+
+    :ok = Sqlite3.bind(insert, [hash, expires, System.system_time(:millisecond)])
+    :done = Sqlite3.step(db, insert)
+    :ok = Sqlite3.release(db, insert)
+    Sqlite3.close(db)
+    start_supervised!(HalC2.Auth)
+
+    assert HalC2.Auth.exchange(token) == :error
+  end
+
   defp assert_exchange_fails(path, token, opts \\ []) do
     {:ok, db} = Sqlite3.open(path)
 
@@ -260,7 +284,7 @@ defmodule HalC2.AuthTest do
         phone
     end
 
-    input = %{"label" => "Tablet", "scopes" => ["orchestration:read", "not-a-scope"]}
+    input = %{"label" => "Tablet", "scopes" => ["orchestration:read"]}
     {{:ok, link}, admin} = call(admin, "hal-c2.createPairingLink", input)
     assert %{"id" => link_id, "credential" => credential, "label" => "Tablet"} = link
     # With where this MC is reached: its loopback listener, which only this machine reaches.
@@ -296,6 +320,84 @@ defmodule HalC2.AuthTest do
     {reply, admin} = call(admin, "hal-c2.revokeOtherClients", %{})
     assert {:ok, %{"revokedCount" => 1}} = reply
     assert {{:ok, [%{"sessionId" => ^admin_session}]}, _} = call(admin, "hal-c2.clients", %{})
+  end
+
+  test "HTTP pairing links cannot delegate scopes their creator does not hold", %{port: port} do
+    {:ok, %{"credential" => credential}} =
+      HalC2.Auth.create_pairing_link(%{"scopes" => ["access:write"]})
+
+    {:ok, access, _, _} = HalC2.Auth.exchange(credential)
+    base = "http://127.0.0.1:#{port}"
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+    for scopes <- [
+          nil,
+          [],
+          ["access:write", "access:write"],
+          ["not-a-scope"],
+          ["access:write", "terminal:operate"],
+          admin_scopes
+        ] do
+      body = if scopes == nil, do: %{}, else: %{"scopes" => scopes}
+
+      assert {400, %{"_tag" => "EnvironmentRequestInvalidError"}} =
+               request(:post, base <> "/api/auth/pairing-token", access, body)
+    end
+
+    assert HalC2.Auth.pairing_links() == []
+
+    assert {200, %{"credential" => narrow_credential}} =
+             request(:post, base <> "/api/auth/pairing-token", access, %{
+               "scopes" => ["access:write"]
+             })
+
+    assert {:ok, _, _, ["access:write"]} = HalC2.Auth.exchange(narrow_credential)
+  end
+
+  test "socket pairing links cannot delegate scopes their creator does not hold", %{port: port} do
+    {narrow, _} = paired_socket(port, ["access:write"], "Narrow")
+    admin_scopes = HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+
+    for scopes <- [
+          nil,
+          [],
+          ["access:write", "access:write"],
+          ["not-a-scope"],
+          ["access:write", "terminal:operate"],
+          admin_scopes
+        ],
+        reduce: narrow do
+      narrow ->
+        payload = if scopes == nil, do: %{}, else: %{"scopes" => scopes}
+        {reply, narrow} = call(narrow, "hal-c2.createPairingLink", payload)
+        assert reply == {:error, "invalid pairing link scopes"}
+        narrow
+    end
+
+    assert HalC2.Auth.pairing_links() == []
+
+    {{:ok, link}, _} =
+      call(narrow, "hal-c2.createPairingLink", %{"scopes" => ["access:write"]})
+
+    assert {:ok, _, _, ["access:write"]} = HalC2.Auth.exchange(link["credential"])
+  end
+
+  test "forwarded pairing link RPCs validate the socket's scopes", %{port: port, path: path} do
+    {narrow, _} = paired_socket(port, ["access:write"], "Narrow")
+    :ok = HalC2.Shell.subscribe(self())
+    peer = HalC2.Test.Mc.start_peer(%{home: Path.dirname(path)})
+
+    assert_receive {:hal_c2_shell, {:environment, ^peer, %{"environmentId" => peer_environment}}},
+                   10_000
+
+    payload = %{
+      "scopes" => HalC2.Auth.standard_scopes() ++ ~w(access:read access:write relay:write)
+    }
+
+    assert {{:error, "invalid pairing link scopes"}, _} =
+             call(narrow, "hal-c2.createPairingLink", payload, peer_environment)
+
+    assert :erpc.call(peer, HalC2.Auth, :pairing_links, []) == []
   end
 
   test "paired clients are only managed on the MC the caller's session belongs to",
@@ -336,6 +438,7 @@ defmodule HalC2.AuthTest do
     start_supervised!(HalC2.Workspace)
     project = Path.join(dir, "shop")
     File.mkdir_p!(project)
+    HalC2.Test.Machines.create_project("shop", "Shop", project)
     outside = Path.join(dir, "notes.txt")
     File.write!(outside, "- buy milk\n")
 
@@ -417,6 +520,83 @@ defmodule HalC2.AuthTest do
   test "a pairing link opened in a browser explains where to paste it", %{port: port} do
     {:ok, {{_, 200, _}, _, body}} = :httpc.request(~c"http://127.0.0.1:#{port}/?token=abc")
     assert :binary.list_to_bin(body) =~ "Settings → Connections"
+  end
+
+  test "rotating or removing the dev credential revokes its sessions, tickets and sockets" do
+    on_exit(fn -> Application.delete_env(:hal_c2, :dev_auth_token) end)
+    restart_dev_auth("dev-token-a")
+    assert {:ok, %{id: old_id}} = HalC2.Auth.session("dev-token-a")
+    {:ok, old_ticket, _} = HalC2.Auth.issue_ticket("dev-token-a")
+    connect_socket(old_id)
+    {:ok, _, _} = HalC2.Auth.subscribe(self())
+
+    restart_dev_auth("dev-token-b")
+
+    assert HalC2.Auth.session("dev-token-a") == :error
+    assert HalC2.Auth.take_ticket(old_ticket) == :error
+    assert_receive {:socket, {:hal_c2_session_revoked, ^old_id}}
+
+    assert_receive {:hal_c2_auth_access,
+                    %{"type" => "clientRemoved", "payload" => %{"sessionId" => ^old_id}}}
+
+    assert {:ok, %{id: new_id}} = HalC2.Auth.session("dev-token-b")
+    {:ok, new_ticket, _} = HalC2.Auth.issue_ticket("dev-token-b")
+    connect_socket(new_id)
+
+    restart_dev_auth(nil)
+
+    assert HalC2.Auth.session("dev-token-b") == :error
+    assert HalC2.Auth.take_ticket(new_ticket) == :error
+    assert_receive {:socket, {:hal_c2_session_revoked, ^new_id}}
+
+    assert_receive {:hal_c2_auth_access,
+                    %{"type" => "clientRemoved", "payload" => %{"sessionId" => ^new_id}}}
+  end
+
+  test "a non-development start removes a seeded dev credential" do
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :dev_auth_token)
+      System.delete_env("HAL_C2_DEV_AUTH_TOKEN")
+    end)
+
+    restart_dev_auth("dev-token-a")
+    assert {:ok, _} = HalC2.Auth.session("dev-token-a")
+    :ok = stop_supervised(HalC2.Auth)
+    System.put_env("HAL_C2_DEV_AUTH_TOKEN", "dev-token-a")
+    refute Keyword.has_key?(HalC2.Test.Storage.boot_config(:prod), :dev_auth_token)
+    Application.delete_env(:hal_c2, :dev_auth_token)
+    start_supervised!(HalC2.Auth)
+
+    assert HalC2.Auth.session("dev-token-a") == :error
+  end
+
+  defp restart_dev_auth(token) do
+    if token do
+      Application.put_env(:hal_c2, :dev_auth_token, token)
+    else
+      Application.delete_env(:hal_c2, :dev_auth_token)
+    end
+
+    server = Process.whereis(HalC2.Auth)
+    ref = Process.monitor(server)
+    Process.exit(server, :kill)
+    assert_receive {:DOWN, ^ref, _, _, _}
+    :sys.get_state(HalC2.Auth.Supervisor)
+    :sys.get_state(HalC2.Auth)
+  end
+
+  defp connect_socket(id) do
+    test = self()
+
+    pid =
+      spawn_link(fn ->
+        HalC2.Auth.connected(id)
+        :sys.get_state(HalC2.Auth)
+        send(test, {:socket_ready, self()})
+        receive do: (message -> send(test, {:socket, message}))
+      end)
+
+    assert_receive {:socket_ready, ^pid}
   end
 
   # A socket opened with a ticket from a session paired with `scopes`, and that session's id.
