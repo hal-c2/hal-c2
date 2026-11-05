@@ -387,6 +387,7 @@ AbstractButton {
 
                         RailButton {
                             visible: control.favorites
+                            available: control.favorites
                             railId: Picker.FAVORITES
                             tooltip: qsTr("Favorites")
                             objectName: "modelPickerProvider:favorites"

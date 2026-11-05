@@ -213,14 +213,6 @@ defmodule HalC2.Steps.Space.Images do
     context
   end
 
-  step "the user is told {string} is not an image model {word} can use",
-       %{args: [model, provider]} = context do
-    context = told(context, "unsupported")
-    {:error, message, _} = context.space_reply
-    assert message =~ model and message =~ provider
-    context
-  end
-
   step "the agent ran on {string}, a model the MC picked for writing text",
        %{args: [model]} = context do
     [call] = calls(context)

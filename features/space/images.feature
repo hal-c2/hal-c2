@@ -164,8 +164,14 @@ Feature: Images in a Space
     Scenario: Codex cannot be told which image model to use
       Given codex is installed and can generate images
       When the user generates an image of "a red fox" in "Research" with codex using "gpt-image-2.6-sunburst"
-      Then the user is told "gpt-image-2.6-sunburst" is not an image model codex can use
-      And the images of "Research" are ""
+      Then "Research" has a generated image of "a red fox"
+      And the image remembers it was made by codex using "auto"
+
+    Scenario: A model that is not an image model leaves the choice to the provider
+      Given grok is installed and can generate images
+      When the user generates an image of "a red fox" in "Research" with grok using "grok-build"
+      Then "Research" has a generated image of "a red fox"
+      And grok was not told which image model to use
 
     Scenario Outline: A provider that cannot generate one is not supported here
       When the user generates an image of "a red fox" in "Research" with <provider>

@@ -106,7 +106,8 @@ defmodule HalC2.Space.ImageGeneration do
   Runs the agent and leaves its image as a pending upload for
   `HalC2.Space.add_image/5`: `{:ok, attachment_id, selection used}`, or `{:error, reason,
   message}` with reason `:unsupported`, `:unavailable` or `:failed`. The selection's
-  model is an image model of `providers/0`; the agent itself runs on the provider's
+  model is an image model of `providers/0`; any other, such as an older client's chat
+  model, leaves the choice to the provider. The agent itself runs on the provider's
   model for writing text, which the MC picks.
   """
   def generate(prompt, selection) do
@@ -130,17 +131,13 @@ defmodule HalC2.Space.ImageGeneration do
   defp choose(%{"instanceId" => id} = selection) when is_binary(id) do
     settings = HalC2.Settings.settings()
     driver = TextGeneration.driver(id)
-    model = if selection["model"] in [nil, ""], do: "auto", else: selection["model"]
 
     cond do
       driver not in @supported ->
         {:error, :unsupported, unsupported(id)}
 
-      not Enum.any?(@models[driver], &(&1["slug"] == model)) ->
-        {:error, :unsupported, "#{model} is not an image model #{id} can use."}
-
       TextGeneration.usable?(settings, selection) ->
-        {:ok, %{"instanceId" => id, "model" => model}}
+        {:ok, %{"instanceId" => id, "model" => image_model(driver, selection["model"])}}
 
       true ->
         {:error, :unavailable, unavailable(id)}
@@ -156,6 +153,12 @@ defmodule HalC2.Space.ImageGeneration do
       selection ->
         {:ok, selection}
     end
+  end
+
+  # A model the provider's tool cannot be told, such as the chat model an older client's
+  # Generate dialog sent, leaves the choice to the provider.
+  defp image_model(driver, model) do
+    if Enum.any?(@models[driver], &(&1["slug"] == model)), do: model, else: "auto"
   end
 
   defp instruction(prompt) do
