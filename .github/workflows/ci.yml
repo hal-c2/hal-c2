@@ -124,6 +124,37 @@ jobs:
             apps/server-ex/_build
           key: ${{ steps.mc.outputs.cache-key }}
 
+  # Its own job, so an advisory published against a dep fails this, not the tests; the
+  # nightly run is what catches one between changes.
+  mc_audit:
+    name: MC security audit
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.mc == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      MIX_ENV: test
+    defaults:
+      run:
+        working-directory: apps/server-ex
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
+
+      - name: Retired packages
+        run: mix hex.audit
+
+      - name: Dependency advisories
+        run: mix deps.audit
+
+      # Fails only on findings sobelow_baseline.txt lacks (scripts/sobelow_check.exs).
+      - name: Sobelow against its baseline
+        run: mix sobelow.check
+
   mc:
     name: MC tests
     needs: [changes, mc_check]

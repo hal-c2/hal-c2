@@ -15,7 +15,15 @@ defmodule HalC2.MixProject do
       test_paths: test_paths(Mix.env()),
       # Step definitions are Cucumber glue, loaded by test_helper.exs, not test files.
       test_ignore_filters: [~r{^test/steps/}],
-      aliases: [features: &features/1, prop: &prop/1, proof: &proof/1],
+      aliases: [
+        features: &features/1,
+        prop: &prop/1,
+        proof: &proof/1,
+        # Mix prunes the code paths of a `runtime: false` dep's own deps from its tasks
+        # (mix_audit's YAML parser, Sobelow's JSON encoder) unless `loadpaths` ran first.
+        "deps.audit": ["loadpaths", "deps.audit"],
+        "sobelow.check": ["loadpaths", "run --no-start --no-compile scripts/sobelow_check.exs"]
+      ],
       deps: deps(),
       releases: [
         hal_c2: [
@@ -63,10 +71,14 @@ defmodule HalC2.MixProject do
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
       {:mint_web_socket, "~> 1.0"},
+      # The security ratchet in CI (`mix deps.audit`, `mix sobelow.check`), never
+      # compiled into a release.
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       # GPL-3.0, for the property tests in prop/ only: never compiled into the MC.
       {:propcheck, "~> 1.5", only: :prop},
       # The Slack connection plugins borrow (HalC2.Slack): the Web API.
       {:slack_elixir, "~> 1.2"},
+      {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
       {:tz, "~> 0.28"},
       {:websock_adapter, "~> 0.6"},
       # Slack's Socket Mode (HalC2.Slack.Socket).
