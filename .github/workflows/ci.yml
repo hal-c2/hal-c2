@@ -144,9 +144,10 @@ jobs:
         uses: ./.github/actions/setup-mc
 
       # The tests that mount another machine's folder skip without it (HalC2.MachineFiles).
+      # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
       - name: Build the machine-files helper
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3
+          sudo apt-get update && sudo apt-get install -y fuse3 ripgrep
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       # The orphan reaper kills through it, and with `kill` without it (HalC2.Subprocess.Orphans).
@@ -294,10 +295,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh
 
       # Files on another machine mount them with FUSE; they skip without the helper.
+      # Regex content search needs ripgrep, which the runner image lacks.
       - name: Build the machine-files helper
         if: contains(matrix.dirs, 'files')
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3
+          sudo apt-get update && sudo apt-get install -y fuse3 ripgrep
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       # space/diagrams.feature draws with the real helper.
