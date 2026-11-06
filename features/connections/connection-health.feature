@@ -406,9 +406,7 @@ Feature: Connection health
     Then the subscription continues on the new connection
 
   # Legacy: packages/client-runtime/src/rpc/client.ts (currentSession)
-  # The phone draws no toasts: the error reaches its state, but the user reads only the
-  # thread's banner that the MC cannot be reached.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An action for an environment that is not connected fails by its name
     Given "studio" is offline
     When the user asks "studio" to do something
