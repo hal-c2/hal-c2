@@ -412,6 +412,6 @@ Feature: Follow-ups while the agent is working
     And a steer that misses the turn starts the follow-up on that choice
 
   @backlog @mobile
-  Scenario: Tapping Remove on a swiped queued message removes it
+  Scenario: A queued message can be removed on the phone
     When the user removes a queued message on the phone
     Then the queued message is cancelled
