@@ -16,6 +16,8 @@ struct ConnectionWatch {
   QList<bool> checks;
   // The MC's connections when the step that acts on the connection began.
   qsizetype connectionsBefore = 0;
+  // The client's own foreground check timeout, before a step shortens it.
+  int probeTimeout = 0;
   QPointer<McClient> watched;
 };
 
