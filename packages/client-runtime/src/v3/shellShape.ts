@@ -112,3 +112,72 @@ export class ShellShapeFold {
     return items;
   }
 }
+
+/**
+ * The cluster shell's rows as the client holds them, across the sockets of one
+ * client: each MC's rows and the [epoch, rev] they stand at. A shell sub on a new
+ * socket sends `have()`, the MC answers with the rows changed since (all of an MC
+ * it marks `reset`), and `answer` folds those into what is held, so every session
+ * still gets the whole shell. Kept per client, as the thread streams' resume points.
+ */
+export class ShellRows {
+  private readonly at = new Map<string, readonly [string, number]>();
+  // Per MC, its rows by `kind\0id`.
+  private readonly rows = new Map<string, Map<string, ShellRow>>();
+
+  /** `{mc: [epoch, rev]}` for every MC whose rows are held. */
+  have(): Readonly<Record<string, readonly [string, number]>> {
+    return Object.fromEntries(this.at);
+  }
+
+  /**
+   * A `shell` answer: the MCs it lists (reset unless it says otherwise) and the
+   * rows the client lacked. MCs it does not list are no longer in the cluster.
+   * Returns every row held.
+   */
+  answer(
+    mcs: ReadonlyArray<Record<string, unknown>>,
+    rows: ReadonlyArray<ShellRow>,
+  ): ReadonlyArray<ShellRow> {
+    const listed = new Set(mcs.map((entry) => String(entry.mc)));
+    for (const mc of [...this.rows.keys(), ...this.at.keys()]) {
+      if (!listed.has(mc)) this.forget(mc);
+    }
+    for (const entry of mcs) {
+      const mc = String(entry.mc);
+      if (entry.reset !== false) this.forget(mc);
+      this.stand(mc, entry.epoch, entry.rev);
+    }
+    for (const [mc, id, kind, row] of rows) this.put(mc, id, kind, row);
+    return [...this.rows.values()].flatMap((held) => [...held.values()]);
+  }
+
+  /** A `shell.rows` frame: brings that MC's rows to its [epoch, rev]. */
+  changed(
+    mc: string,
+    rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+    reset: boolean,
+    epoch: unknown,
+    rev: unknown,
+  ): void {
+    if (reset) this.forget(mc);
+    for (const [id, kind, row] of rows) this.put(mc, id, kind, row);
+    this.stand(mc, epoch, rev);
+  }
+
+  /** An MC removed from the cluster: its rows are no longer part of the shell. */
+  forget(mc: string): void {
+    this.rows.delete(mc);
+    this.at.delete(mc);
+  }
+
+  private stand(mc: string, epoch: unknown, rev: unknown): void {
+    if (typeof epoch === "string" && typeof rev === "number") this.at.set(mc, [epoch, rev]);
+  }
+
+  private put(mc: string, id: string, kind: string, row: Record<string, unknown>): void {
+    let held = this.rows.get(mc);
+    if (held === undefined) this.rows.set(mc, (held = new Map()));
+    held.set(`${kind}\u0000${id}`, [mc, id, kind, row]);
+  }
+}

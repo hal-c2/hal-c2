@@ -2,6 +2,7 @@
 
 #include <QJsonDocument>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QtLogging>
 
 #include <algorithm>
@@ -35,10 +36,28 @@ FakeMc::FakeMc() : m_server(QStringLiteral("fake-mc"), QWebSocketServer::NonSecu
   onShape(QStringLiteral("shell"), [this](int id, const QJsonObject&) {
     m_shellSubscription = id;
     m_have = subscriptions.last().value(QLatin1String("have")).toObject();
-    if (!holdSnapshot) sendSnapshot();
+    if (holdSnapshot) return;
+    if (buildMs > 0) {
+      busy(buildMs, [this, id] {
+        if (m_shellSubscription == id) sendSnapshot();
+      });
+    } else {
+      sendSnapshot();
+    }
   });
   onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const Rpc& rpc) { dispatchCommand(rpc); });
   for (const auto extend : std::as_const(extensions())) extend(*this);
+}
+
+void FakeMc::busy(int ms, std::function<void()> then) {
+  ++m_busy;
+  QTimer::singleShot(ms, this, [this, socket = m_socket, then = std::move(then)] {
+    --m_busy;
+    if (!socket || socket != m_socket) return;
+    then();
+    if (m_busy > 0) return;
+    for (; m_heldPongs > 0; --m_heldPongs) send({{QStringLiteral("t"), QStringLiteral("pong")}});
+  });
 }
 
 void FakeMc::onRpc(const QString& method, RpcHandler handler) {
@@ -359,6 +378,7 @@ void FakeMc::accept() {
     m_accepted.append(socket);
     m_socket = socket;
     m_shellSubscription = -1;
+    m_heldPongs = 0;
     m_live.clear();
     QObject::connect(socket, &QWebSocket::textMessageReceived, this,
                      [this, socket](const QString& text) { onMessage(socket, text); });
@@ -392,7 +412,12 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   } else if (const auto read = m_frames.constFind(type); read != m_frames.cend()) {
     (*read)(message);
   } else if (type == QLatin1String("ping")) {
-    if (answerPings) send({{QStringLiteral("t"), QStringLiteral("pong")}});
+    if (!answerPings) return;
+    if (m_busy > 0) {
+      ++m_heldPongs;
+    } else {
+      send({{QStringLiteral("t"), QStringLiteral("pong")}});
+    }
   } else if (type == QLatin1String("rpc")) {
     const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket,
                   message.value(QLatin1String("environment")).toString()};

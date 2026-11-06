@@ -332,14 +332,14 @@ Feature: Connection health
     Then the thread shows its cached content
     And the client does not claim a live connection
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Cached data never overwrites newer live data
     Given the client reconnects while cached data loads
     When live data arrives first
     Then the older cached data is not applied over it
 
   # Legacy: packages/client-runtime/src/platform/orchestrationCache.ts (decodeOrDiscardOrchestrationCache)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A kept copy the client cannot read is dropped and never blocks live data
     Given the client kept a copy of "Fix checkout" that it can no longer read
     When the user opens "Fix checkout" while connected
@@ -347,7 +347,7 @@ Feature: Connection health
     And "Fix checkout" loads from the MC as if nothing had been kept
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (EnvironmentCacheStore.loadServerConfig)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A new task offline still offers the models the environment last reported
     Given "studio" last reported the models "Claude Sonnet" and "GPT-5"
     And "studio" is not reachable
@@ -355,7 +355,7 @@ Feature: Connection health
     Then "Claude Sonnet" and "GPT-5" are offered
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (loadVcsRefs, clearVcsRefs)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Only the whole branch list of a repository is kept
     Given the user searched the branches of "hal-c2" for "fix"
     When the client keeps the branches of "hal-c2" for later
@@ -363,21 +363,21 @@ Feature: Connection health
     And a branch picker opened offline never presents a partial list as the whole one
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (clearVcsRefs: refs are repository-wide)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A change to a repository's branches drops every kept branch list for it
     Given the client kept the branch list of "hal-c2" and of a worktree of "hal-c2"
     When a branch of "hal-c2" is created
     Then neither kept list is offered again until it is read anew
 
   # Upstream #13683: a slow but alive MC finishes a load instead of being asked for it twice.
-  @shared @backlog
+  @shared
   Scenario: A slow MC finishes the thread list instead of building it twice
     Given the MC takes 12 seconds to build the thread list
     When the client connects
     Then the thread list shows once the MC answers
     And the MC builds the thread list once
 
-  @shared @backlog
+  @shared
   Scenario: A slow MC finishes opening a thread instead of loading it twice
     Given the MC takes 12 seconds to load a thread
     When the user opens the thread
@@ -527,13 +527,13 @@ Feature: Connection health
       | 1.4.0                  | 1.4.0-nightly.20260901 | does not warn               |
       | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: One connection serves every MC of a cluster
     Given a client connected to a cluster of three MCs
     Then the client keeps one connection for the cluster
     And streams from every MC arrive over it
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A cluster connection resumes each stream from where it stopped
     Given a client following threads on two cluster members
     When the cluster connection drops and returns

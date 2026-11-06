@@ -152,6 +152,7 @@ public:
   int pingInterval() const { return m_pingTimer.interval(); }
   // How long a ping may go unanswered before the connection counts as dead.
   void setPongTimeout(int ms) { m_pongTimer.setInterval(ms); }
+  int pongTimeout() const { return m_pongTimer.interval(); }
   // How long wake()'s check may go unanswered before the connection is replaced.
   void setProbeTimeout(int ms) { m_probeTimer.setInterval(ms); }
   int probeTimeout() const { return m_probeTimer.interval(); }

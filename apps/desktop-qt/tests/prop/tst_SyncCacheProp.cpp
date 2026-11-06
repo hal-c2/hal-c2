@@ -1,15 +1,21 @@
 // The client's cache (src/native/LocalCache) against a model of what it was
-// told: thread copies and the sidebar's rows, across reopening the same file
-// and a process that died part-way through writing it.
+// told: thread copies, the sidebar's rows, each environment's providers and
+// whole branch lists, across reopening the same file, a process that died
+// part-way through writing it, and a row gone unreadable.
 
 #include "Prop.h"
 
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 
 #include <map>
 #include <memory>
 #include <optional>
+#include <tuple>
+#include <vector>
 
 #include "LocalCache.h"
 
@@ -49,6 +55,8 @@ using ShellCopy = std::map<std::string, McCopy>;  // by mc
 struct Model {
   std::map<std::string, ThreadCopy> threads;      // by key
   std::map<std::string, ShellCopy> shells;        // by origin
+  std::map<std::string, int> providers;           // by environment
+  std::map<std::pair<std::string, std::string>, int> refs;  // by environment and folder
 };
 
 const std::vector<std::string> kKeys{"env-a:t1", "env-a:t2", "env-b:t1"};
@@ -56,6 +64,7 @@ const std::vector<std::string> kEnvironments{"env-a", "env-b"};
 const std::vector<std::string> kOrigins{"http://a", "http://b"};
 const std::vector<std::string> kMcs{"mc-a", "mc-b"};
 const std::vector<std::string> kRowIds{"r1", "r2", "r3"};
+const std::vector<std::string> kFolders{"/work/a", "/work/a-fix"};
 
 void show(const std::optional<qint64>& value, std::ostream& os) {
   if (value) {
@@ -132,6 +141,22 @@ struct Sut {
     cache = std::make_unique<LocalCache>();
     cache->open(dir);
   }
+  std::map<std::string, int> providers() {
+    std::map<std::string, int> found;
+    cache->loadProviders(cache.get(), [&found](const QHash<QString, QJsonArray>& kept) {
+      for (auto it = kept.cbegin(); it != kept.cend(); ++it) found[it.key().toStdString()] = it.value().first().toObject().value(QLatin1String("n")).toInt();
+    });
+    cache->drain();
+    return found;
+  }
+  std::optional<int> refs(const std::string& environment, const std::string& folder) {
+    std::optional<int> found;
+    cache->loadRefs(q(environment), q(folder), cache.get(), [&found](const std::optional<QJsonObject>& list) {
+      if (list) found = list->value(QLatin1String("totalCount")).toInt();
+    });
+    cache->drain();
+    return found;
+  }
   cache::Thread load(const QString& key) {
     cache::Thread found;
     cache->loadThread(key, cache.get(), [&found](const cache::Thread& thread) { found = thread; });
@@ -155,6 +180,17 @@ void expectSame(const Model& model, Sut& sut) {
       if (!(actual == expected->second)) {
         RC_FAIL("thread " + key + ": kept " + rc::toString(actual) + ", told " + rc::toString(expected->second));
       }
+    }
+  }
+  const std::map<std::string, int> providers = sut.providers();
+  if (providers != model.providers) RC_FAIL("providers: kept " + rc::toString(providers) + ", told " + rc::toString(model.providers));
+  for (const std::string& environment : kEnvironments) {
+    for (const std::string& folder : kFolders) {
+      const std::optional<int> kept = sut.refs(environment, folder);
+      const auto told = model.refs.find({environment, folder});
+      const std::optional<int> expected = told == model.refs.end() ? std::nullopt : std::optional<int>(told->second);
+      const auto text = [](const std::optional<int>& count) { return count ? std::to_string(*count) : std::string("none"); };
+      if (kept != expected) RC_FAIL("branches of " + environment + folder + ": kept " + text(kept) + ", told " + text(expected));
     }
   }
   const cache::Shell shell = sut.cache->shell();
@@ -292,6 +328,8 @@ struct ForgetEnvironment : Command {
 
   void apply(Model& model) const override {
     std::erase_if(model.threads, [this](const auto& entry) { return entry.first.starts_with(environment + ":"); });
+    model.providers.erase(environment);
+    std::erase_if(model.refs, [this](const auto& entry) { return entry.first.first == environment; });
   }
 
   void run(const Model& model, Sut& sut) const override {
@@ -302,6 +340,64 @@ struct ForgetEnvironment : Command {
   }
 
   void show(std::ostream& os) const override { os << "ForgetEnvironment(" << environment << ")"; }
+};
+
+struct StoreProviders : Command {
+  std::string environment = *rc::gen::elementOf(kEnvironments);
+  int n = *rc::gen::inRange(0, 50);
+
+  explicit StoreProviders(const Model&) {}
+
+  void apply(Model& model) const override { model.providers[environment] = n; }
+
+  void run(const Model& model, Sut& sut) const override {
+    sut.cache->storeProviders(q(environment), QJsonArray{QJsonObject{{QStringLiteral("n"), n}}});
+    Model next = model;
+    apply(next);
+    expectSame(next, sut);
+  }
+
+  void show(std::ostream& os) const override { os << "StoreProviders(" << environment << ", " << n << ")"; }
+};
+
+// A whole branch list of a folder; its count tells one from another.
+struct StoreRefs : Command {
+  std::string environment = *rc::gen::elementOf(kEnvironments);
+  std::string folder = *rc::gen::elementOf(kFolders);
+  int n = *rc::gen::inRange(0, 50);
+
+  explicit StoreRefs(const Model&) {}
+
+  void apply(Model& model) const override { model.refs[{environment, folder}] = n; }
+
+  void run(const Model& model, Sut& sut) const override {
+    sut.cache->storeRefs(q(environment), q(folder), {{QStringLiteral("refs"), QJsonArray()}, {QStringLiteral("totalCount"), n}});
+    Model next = model;
+    apply(next);
+    expectSame(next, sut);
+  }
+
+  void show(std::ostream& os) const override { os << "StoreRefs(" << environment << folder << ", " << n << ")"; }
+};
+
+// A repository of the environment changed its branches: every list of it goes.
+struct ForgetRefs : Command {
+  std::string environment = *rc::gen::elementOf(kEnvironments);
+
+  explicit ForgetRefs(const Model&) {}
+
+  void apply(Model& model) const override {
+    std::erase_if(model.refs, [this](const auto& entry) { return entry.first.first == environment; });
+  }
+
+  void run(const Model& model, Sut& sut) const override {
+    sut.cache->forgetRefs(q(environment));
+    Model next = model;
+    apply(next);
+    expectSame(next, sut);
+  }
+
+  void show(std::ostream& os) const override { os << "ForgetRefs(" << environment << ")"; }
 };
 
 struct McChange {
@@ -484,6 +580,58 @@ struct DieWhileStoring : Command {
   }
 };
 
+// One row of a copy goes unreadable on disk while the app is closed (bytes
+// flipped, or written by a build that wrote it otherwise). The copy is no
+// copy any more: the next run reads it as none, and keeps it as none.
+struct Garble : Command {
+  std::string key;
+  std::string slot;
+
+  explicit Garble(const Model& model) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (const auto& [key, copy] : model.threads) {
+      for (const auto& [slot, entity] : copy.entities) rows.emplace_back(key, slot);
+    }
+    RC_PRE(!rows.empty());
+    std::tie(key, slot) = *rc::gen::elementOf(rows);
+  }
+
+  void apply(Model& model) const override { model.threads.erase(key); }
+
+  void run(const Model& model, Sut& sut) const override {
+    sut.cache.reset();
+    const QString text = q(slot);
+    // Removed however the block is left, a failed assertion included.
+    struct Connection {
+      ~Connection() { QSqlDatabase::removeDatabase(QStringLiteral("garble")); }
+    } connection;
+    {
+      QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("garble"));
+      db.setDatabaseName(sut.file());
+      RC_ASSERT(db.open());
+      QSqlQuery query(db);
+      RC_ASSERT(query.prepare(QStringLiteral("UPDATE entities SET json = ? WHERE thread = ? AND kind = ? AND id = ?")));
+      query.addBindValue(QByteArray("{\"n\": "));
+      query.addBindValue(q(key));
+      query.addBindValue(text.section(QLatin1Char('/'), 0, 0));
+      query.addBindValue(text.section(QLatin1Char('/'), 1));
+      RC_ASSERT(query.exec());
+      RC_ASSERT(query.numRowsAffected() == 1);
+      query.finish();
+      db.close();
+    }
+    sut.reopenAt(sut.dir);
+    Model next = model;
+    apply(next);
+    expectSame(next, sut);
+    // And it stays none in the run after.
+    sut.reopenAt(sut.dir);
+    expectSame(next, sut);
+  }
+
+  void show(std::ostream& os) const override { os << "Garble(" << key << ", " << slot << ")"; }
+};
+
 struct Clear : Command {
   explicit Clear(const Model&) {}
 
@@ -504,11 +652,12 @@ class SyncCacheProp : public QObject {
 
 private slots:
   void keptEqualsTold() {
-    QVERIFY(rc::check("the cache reads back what it was told, across reopening and a write cut short", [] {
+    QVERIFY(rc::check("the cache reads back what it was told, across reopening, a write cut short and a row gone unreadable", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
                        rc::state::gen::execOneOfWithArgs<StoreThread, StoreThread, TrimThread, ForgetThread, ForgetEnvironment,
-                                                         StoreShell, StoreShell, OpenAt, Reopen, DieWhileStoring, Clear>());
+                                                         StoreShell, StoreShell, OpenAt, Reopen, DieWhileStoring, Garble, Clear,
+                                                         StoreProviders, StoreRefs, StoreRefs, ForgetRefs>());
     }));
   }
 };

@@ -73,6 +73,8 @@ struct FakeStreams {
   // thread loads slowly.
   bool slow = false;
   QList<std::function<void()>> waiting;
+  // How long the MC takes to load a thread for a `sub` (FakeMc::busy()).
+  int loadMs = 0;
   // Environments that are down (a cluster member that left): a stream on one
   // is refused.
   QSet<QString> offline;
