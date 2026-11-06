@@ -268,8 +268,9 @@ const Steps steps([] {
     world.waitFor([&] { return !composer(world).value(S("usageLimits")).isNull(); },
                   [&] { return S("the limits over the composer; it shows %1").arg(show(composer(world))); });
     const QVariantMap limits = composer(world).value(S("usageLimits")).toMap();
-    const QVariantMap window = limits.value(S("windows")).toList().value(0).toMap();
-    expect(limits.value(S("provider")) == QLatin1String("Codex") && window.value(S("label")) == QLatin1String("5-hour") &&
+    const QVariantMap summary = limits.value(S("summary")).toMap();
+    const QVariantMap window = summary.value(S("windows")).toList().value(0).toMap();
+    expect(summary.value(S("label")) == QLatin1String("Codex") && window.value(S("label")) == QLatin1String("5-hour") &&
                window.value(S("remainingPercent")).toDouble() == 60,
            S("the composer shows %1").arg(show(limits)));
     world.waitFor([&] { return world.shows(S("60% left")) && world.shows(S("5-hour")); },
