@@ -11,6 +11,8 @@ import HalC2.Shell
 Rectangle {
     id: page
 
+    // Whether the page heads itself; a host with its own bar says it.
+    property bool titled: true
     readonly property var model: Shell.state.usage ?? null
     readonly property string metric: model ? model.metric : "limits"
     readonly property bool limitsShown: metric === "limits"
@@ -116,6 +118,7 @@ Rectangle {
             spacing: 8
 
             Label {
+                visible: page.titled
                 text: qsTr("Usage")
                 color: page.foreground
                 font.pixelSize: Theme.type.title.size
