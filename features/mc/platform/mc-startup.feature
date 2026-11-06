@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14912
 #   apps/server-ex/config/config.exs (the hal-c2-dev profile for a dev MC)
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_HOME, HAL_C2_HOME, T3_HOME, T3CODE_HOME, HAL_C2_MC_PORT, HAL_C2_MC_HOST, HAL_C2_HOST)
 #   apps/server-ex/README.md (Run, Release: where the MC keeps its state)
@@ -470,3 +471,11 @@ Feature: Starting the MC
     Given the home records an MC that is still alive
     When another MC is launched on that home
     Then it is refused before it creates directories or opens state
+
+  @backlog @mc
+  Scenario: Automatic pull does not hold the MC's readiness
+    Given several projects have automatic pull turned on
+    When the MC starts
+    Then clients are served as soon as the MC is ready
+    And each of those projects is pulled once in the background
+    And a pull that fails is logged and does not stop the others

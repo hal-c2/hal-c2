@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16246
 #   https://github.com/pingdotgg/t3code/pull/7079
 #   https://github.com/pingdotgg/t3code/pull/13669
 #   apps/server-ex/lib/hal_c2/editors.ex (availableEditors, shell.openInEditor)
@@ -660,3 +661,10 @@ Feature: The MC working with its host machine
       | before                  | change                  | transport |
       | not signed in           | signs in to github.com  | HTTPS     |
       | signed in to github.com | signs out               | SSH       |
+
+  @backlog @mc
+  Scenario: A JetBrains editor whose application bundle carries a version is found
+    Given the editor "IntelliJ IDEA 2026.1.4.app" is installed in Applications on macOS
+    When the MC looks for installed editors
+    Then IntelliJ IDEA is available
+    And "Visual Studio Code - Insiders.app" is not taken for "Visual Studio Code"

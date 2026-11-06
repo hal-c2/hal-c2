@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13217
 #   https://github.com/pingdotgg/t3code/pull/13409
 #   https://github.com/pingdotgg/t3code/pull/13553
 #   docs/user/composer.md (prompt recall, prompt stash)
@@ -778,3 +779,10 @@ Feature: Editing the draft
     Given the user typed, pasted, then typed more
     When the user undoes once
     Then only the last action is undone
+
+  @backlog @shared
+  Scenario: Typing before or after bold at a line's edge can be plain
+    Given rich text editing is on and a line starts with bold text
+    When the user moves the caret to the start of the line
+    Then the caret can be placed to type plain text in front of the bold
+    And the arrow keys step between typing plain and typing bold before moving on

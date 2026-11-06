@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12919
 #   docs/user/remote-access.md (Load balancing, Local environment off)
 #   docs/user/install.md (Windows Subsystem for Linux)
 #   docs/internals/connection-runtime.md (saved environments, registry)
@@ -424,3 +425,9 @@ Feature: Managing environments on a client
     When the client connects
     Then it checks the direct routes in parallel and uses the first that answers as that environment
     And a route that is blocked is skipped, while an incompatible server stops the walk
+
+  @backlog @desktop
+  Scenario: The desktop retries a transient failure when signing in to its own MC
+    Given the MC answers the desktop's first sign-in with a temporary failure
+    Then the desktop retries for up to 15 seconds
+    And a rejected credential fails at once

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14718
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsStatusLocalResult, VcsStatusRemoteResult, VcsStatusStreamEvent, VcsDriverKind)
 #   packages/contracts/src/rpc.ts (vcs.refreshStatus, subscribeVcsStatus, vcs.init)
@@ -445,3 +446,9 @@ Feature: Repository status and working tree changes
     Given the project "shop" is a Jujutsu repository
     When status is read for "shop"
     Then the status reports the Jujutsu driver with its bookmark and working copy changes
+
+  @backlog @mc
+  Scenario: Reading status never takes the git index lock
+    Given the MC keeps the status of "shop" fresh in the background
+    When the user runs "git checkout" or "git commit" in "shop" while a status read is under way
+    Then the user's git command is not refused for a lock the MC holds

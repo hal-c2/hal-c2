@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16551
 #   docs/user/source-control.md (GitHub stacks)
 #   packages/contracts/src/pullRequest.ts (PullRequestStack, expectedStackHeads)
 #   packages/contracts/src/rpc.ts (pullRequests.stack, pullRequests.runAction)
@@ -438,3 +439,11 @@ Feature: Stacked pull requests
     When the user merges the stack at pull request 43
     Then the user is told "GitHub returned an unreadable stack operation response."
     And nothing is changed
+
+  @backlog @mc
+  Scenario: Rebasing the stack moves each layer's own commits onto the rebased layer below
+    Given a stack of three layers where the base branch has moved
+    When the user rebases the stack
+    Then each layer, bottom to top, is rebased onto the new head of the layer below it
+    And a layer replays only its own commits, so a layer above does not conflict with the old copy of the one below
+    And the user's checkout does not move

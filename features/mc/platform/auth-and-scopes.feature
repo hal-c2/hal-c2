@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10298
+#   https://github.com/pingdotgg/t3code/pull/9791
+#   https://github.com/pingdotgg/t3code/pull/9790
+#   https://github.com/pingdotgg/t3code/pull/9789
+#   https://github.com/pingdotgg/t3code/pull/9788
+#   https://github.com/pingdotgg/t3code/pull/9787
+#   https://github.com/pingdotgg/t3code/pull/9786
+#   https://github.com/pingdotgg/t3code/pull/9785
 #   apps/server-ex/lib/hal_c2/auth.ex (pairing tokens, sessions, tickets, desktop bootstrap, access stream)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, /api/auth/*, with_scope)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (authAccess shape, current session)
@@ -542,3 +550,42 @@ Feature: MC authentication and scopes
     When an operator mints a pairing link and lists sessions from the command line
     Then both commands work against the MC's stored access records
     And the minted link works once the MC starts
+
+  @backlog @mc
+  Scenario: A pairing link with limited scopes pairs with exactly those
+    Given a pairing link granting only some scopes
+    When a client exchanges it asking for those scopes
+    Then the session holds exactly those scopes
+    And a request the link cannot grant is refused before the link is used up
+
+  @backlog @mc
+  Scenario Outline: Sensitive actions need their own scope
+    Given a session without the scope "<scope>"
+    When it <action>
+    Then the call is refused for the missing scope
+
+    Examples:
+      | scope                  | action                                                      |
+      | settings:write         | changes environment settings or keybindings                 |
+      | providers:manage       | configures, signs in, installs or updates a provider        |
+      | environment:maintain   | updates the server or sends it a process signal             |
+      | source-control:write   | clones, pushes, switches branch or writes to a pull request |
+      | filesystem:read        | browses, searches or previews workspace files               |
+      | filesystem:write       | edits a file or saves a plan                                |
+      | preview:operate        | controls a browser preview                                  |
+      | diagnostics:read       | reads traces, host processes, resource history or usage     |
+      | terminal:read          | observes a terminal's history and output                    |
+
+  @backlog @mc
+  Scenario: A terminal can be watched without being controlled
+    Given a session that may read terminals but not operate them
+    When it observes a terminal
+    Then it sees the history and live output, including a session that has exited
+    And it cannot send input, resize, clear, restart or close it
+
+  @backlog @mc
+  Scenario: An older client keeps its connection across new scopes
+    Given a client that does not know a newly added scope
+    When it pairs or reads its permissions
+    Then scopes it does not know are left out of what it is told
+    And it stays connected, with single features denied rather than the connection

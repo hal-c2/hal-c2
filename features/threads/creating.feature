@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16628
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
 #   apps/web/src/components/ChatView.tsx (several models: started count, failed model, uncertain start, send gates)
@@ -434,3 +435,11 @@ Feature: Creating threads
     When the user presses the Cycle Host key
     Then the draft moves to the next machine, as choosing it from the machine menu would
     And no key is bound to it by default on desktop
+
+  @backlog @shared
+  Scenario: "No project" is offered right after the current project
+    Given the user has more projects than fit on screen
+    When the user picks where to start a new thread
+    Then "No project" is listed right after the current project
+    And it is first when the current thread has no project
+    And the current project is still the default choice

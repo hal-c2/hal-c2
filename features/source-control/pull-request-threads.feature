@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16627
+#   https://github.com/pingdotgg/t3code/pull/16612
 #   https://github.com/pingdotgg/t3code/pull/14918
 #   https://github.com/pingdotgg/t3code/pull/15415
 #   https://github.com/pingdotgg/t3code/pull/15804
@@ -945,3 +947,18 @@ Feature: Threads that work on or link pull requests
     Given a chat link of the form "/pull/N" where N is an issue
     When the user opens it
     Then the viewer says the host has no such pull request, with no retry that cannot succeed
+
+  @backlog @shared
+  Scenario: A linked pull request's actions open from a secondary click
+    Given a thread has a linked pull request
+    When the user secondary-clicks the pull request's row
+    Then the same actions open as from the row's menu, at the pointer
+
+  @backlog @shared
+  Scenario: Holding a modifier on a linked pull request offers its quick actions
+    Given a thread has a linked pull request
+    When the user holds the quick-action modifier over its row
+    Then the quick actions of the pull request list appear on the row
+    And a closed pull request offers reopen
+    And a draft offers ready for review
+    And a pull request from another repository acts through that repository's project

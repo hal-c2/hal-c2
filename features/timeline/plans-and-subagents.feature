@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16635
+#   https://github.com/pingdotgg/t3code/pull/15211
+#   https://github.com/pingdotgg/t3code/pull/13056
+#   https://github.com/pingdotgg/t3code/pull/14108
 #   https://github.com/pingdotgg/t3code/pull/13572
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (plan.updated, subagent.updated, proposed_plan, todo_list, subagent, handoff, fork, compaction, thread_created, delegated_task.request, delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge, delegated_task.completion-delivery.dispose)
@@ -898,3 +902,37 @@ Feature: Plans and subagents
     When the notification appears in the parent thread
     Then it shows the subagent's card with the outcome at that time (finished, failed, stopped or updated)
     And selecting it opens the child thread
+
+  @backlog @mc
+  Scenario: A subagent's model shows once its provider reports it
+    Given a subagent started without a known model
+    When its provider later reports the model it runs on
+    Then the subagent shows that model instead of "Not reported"
+    And a known model is kept when a later update leaves the model out
+
+  @backlog @shared
+  Scenario Outline: A subagent's details show the effort and speed it was started with
+    Given a subagent ran on a model with the saved effort "<effort>" and speed "<speed>"
+    When the user looks at the subagent's details
+    Then they show the effort "<effort>" followed by the speed marker "<marker>"
+
+    Examples:
+      | effort | speed       | marker     |
+      | high   | Fast        | one bolt   |
+      | high   | Ultrafast   | two bolts  |
+      | high   | Standard    | none       |
+
+  @backlog @shared
+  Scenario: Stopping a subagent from the lineage
+    Given a subagent that HAL-C2 started is running
+    When the user stops it from the thread's lineage
+    Then its run is interrupted
+    And the parent hears the interrupted result like any other finished subagent
+    And subagents the provider owns and settled subagents offer no stop
+
+  @backlog @shared
+  Scenario: Expanding the lineage keeps the workspace options
+    Given a thread with dozens of previous agents
+    When the user expands the previous agents or asks to see more
+    Then the lineage grows
+    And the workspace selector and git actions stay available

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15627
+#   https://github.com/pingdotgg/t3code/pull/15617
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
@@ -445,3 +447,15 @@ Feature: Agents working with threads through MCP tools
     When it repeats the interrupt with request key "k1"
     Then the answer's status is no_active_run
     And the new turn of "t2" was not interrupted
+
+  @backlog @mc
+  Scenario: A tool that fails as declared is marked as an error
+    When an agent asks to read a thread that does not exist
+    Then the tool call is marked as an error
+    And it carries the failure code "thread_not_found"
+
+  @backlog @mc
+  Scenario: A refused thread command says why
+    Given a thread has an active run
+    When an agent asks to settle the thread
+    Then the refusal carries the reason the MC gave, up to 1000 characters

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16353
+#   https://github.com/pingdotgg/t3code/pull/15876
+#   https://github.com/pingdotgg/t3code/pull/14781
 #   docs/user/source-control.md (providers, CLI and auth setup, clone via Add Project, Publish Repository)
 #   packages/contracts/src/sourceControl.ts (SourceControlDiscoveryResult, SourceControlRepositoryLookupInput, SourceControlCloneRepositoryInput, SourceControlPublishRepositoryInput)
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl, sourceControl.lookupRepository, sourceControl.cloneRepository, sourceControl.publishRepository, projectClone.start, projectClone.retry, projectClone.cancel, subscribeProjectClones)
@@ -592,3 +595,24 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Given the project "notes" has commits and no remote
     When the user chooses to publish the repository
     Then publishing begins for "notes"
+
+  @backlog @mc
+  Scenario: A clone address or folder that starts with a dash is not read as a git option
+    When the user clones the repository "--bare" into the folder "-checkout"
+    Then both are taken as the repository and the destination
+    And the clone does not fail with a git option error
+
+  @backlog @mc
+  Scenario: A Bitbucket repository must be written as workspace and repository
+    When the user names the Bitbucket repository "myrepo"
+    Then the MC says to use "workspace/repository"
+    And it does not fall back to the repository of the MC's working directory
+    And leaving the repository out still uses the current checkout
+
+  @backlog @mc @shared
+  Scenario: A fork is grouped and labelled by its own repository, not the one it tracks
+    Given the checkout "shop-fork" has its origin on the user's fork
+    And its "upstream" remote names the original repository
+    When the user looks at the project picker
+    Then "shop-fork" is grouped and labelled by the fork
+    And pull request features still target the repository in "upstream"

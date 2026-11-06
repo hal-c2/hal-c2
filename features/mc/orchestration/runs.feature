@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15571
+#   https://github.com/pingdotgg/t3code/pull/15442
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, message.updated, run.created,
 #     run.updated, run-attempt.created, run-attempt.updated, node.updated, turn-item.updated,
@@ -495,3 +497,17 @@ Feature: Runs and turns
     When the provider reports output for the turn of "t2"
     Then nothing is recorded on the run of "t1"
     And the output is recorded on the run of "t2"
+
+  @backlog @mc
+  Scenario: Stop settles a run whose provider disappeared before it finished
+    Given a run is still active because its provider vanished before reporting an end
+    When the user stops the thread
+    Then the run is settled as stopped with its partial output kept
+    And its pending requests are closed and its checkpoint is captured
+    And a late result from the provider cannot undo the stop or replace a newer attempt
+
+  @backlog @mc
+  Scenario: Stopping during a slow provider start leaves no session behind
+    Given a provider session is still starting
+    When the user stops the thread before the start completes
+    Then the half-started provider session is cleaned up

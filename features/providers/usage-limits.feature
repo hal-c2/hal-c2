@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16358
 #   https://github.com/pingdotgg/t3code/pull/13118 (Claude banked resets)
 #   https://github.com/pingdotgg/t3code/pull/14209 (OpenCode Go accounts merged by API key fingerprint)
 #   https://github.com/pingdotgg/t3code/pull/13363 (a refused Codex reset credit is not reported as unconfirmed)
@@ -404,3 +405,10 @@ Feature: Subscription limits
   Scenario: The widget can show session, weekly or both per provider
     When the user sets the widget to show only the weekly window for Claude
     Then the widget shows Claude's weekly window only
+
+  @backlog @mc @plugin-claude
+  Scenario: Claude limits load for a user with gigabytes of transcripts
+    Given the user has gigabytes of Claude transcripts
+    When the MC reads Claude's limits
+    Then the plan's limits are shown without the check failing
+    And the check does not scan the transcripts
