@@ -173,10 +173,11 @@ public:
   enum class Folds { Desktop, Phone };
   void setFolds(Folds folds);
   bool phone() const { return m_folds == Folds::Phone; }
-  // The thread reports work it left running in the background (its row's
-  // `pendingBackgroundTasks`): the phone then keeps listing a call its settled
-  // turn left running, which it otherwise drops as one that never ended.
-  void setBackgroundWork(bool running);
+  // The work the thread left running in the background (its row's
+  // `pendingBackgroundTasks`, each a `taskType` and `description`): the phone
+  // keeps listing a call a settled turn left running when it is one of these,
+  // and drops the rest as calls that never said they ended.
+  void setBackgroundWork(const QJsonArray& tasks);
   // Where the thread works (its worktree, else its project's root), which a
   // changed file's label is read from; empty when it is not known.
   void setWorkspaceRoot(std::function<QString()> root) { m_workspaceRoot = std::move(root); }
@@ -401,7 +402,7 @@ private:
   QSet<QString> m_keptOpen;  // run ids
   // The phone's subagent groups the user opened, by row id.
   QSet<QString> m_openSubagentGroups;
-  bool m_backgroundWork = false;
+  QSet<QString> m_backgroundWork;  // "<taskType>\n<description>"
   Folds m_folds = Folds::Desktop;
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.

@@ -567,9 +567,14 @@ void TimelineModel::setFolds(Folds folds) {
   emit foldsChanged();
 }
 
-void TimelineModel::setBackgroundWork(bool running) {
-  if (running == m_backgroundWork) return;
-  m_backgroundWork = running;
+void TimelineModel::setBackgroundWork(const QJsonArray& tasks) {
+  QSet<QString> work;
+  for (const QJsonValue& task : tasks) {
+    const QJsonObject object = task.toObject();
+    work.insert(text(object, QLatin1String("taskType")) + QLatin1Char('\n') + text(object, QLatin1String("description")));
+  }
+  if (work == m_backgroundWork) return;
+  m_backgroundWork = work;
   if (phone()) restructure({});
 }
 
@@ -1248,8 +1253,9 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     if (phone()) {
       // A call that never said it ended once its turn settled, the
       // workspace's preparation, and a delegation its subagent's card shows.
-      if (!m_backgroundWork && kSettled.contains(status) && classify(item) == Kind::Work &&
-          text(item, QLatin1String("status")) == QLatin1String("running")) {
+      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running") &&
+          !m_backgroundWork.contains(type + QLatin1Char('\n') + text(item, QLatin1String("input"))) &&
+          !m_backgroundWork.contains(type + QLatin1Char('\n') + text(item, QLatin1String("title")))) {
         return false;
       }
       if (type == QLatin1String("command_execution") && text(item, QLatin1String("input")) == QLatin1String("Preparing workspace")) return false;

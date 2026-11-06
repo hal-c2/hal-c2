@@ -601,6 +601,20 @@ const Steps steps([] {
               {{S("pendingBackgroundTasks"), QJsonArray{QJsonObject{{S("taskType"), S("command_execution")}, {S("description"), S("npm run dev")}}}}});
     world.sync();
   });
+  step(S("a later turn left %1 running without saying it ended").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world, 10);
+    addItem(world, S("command_execution"), {{S("input"), c[0]}, {S("status"), S("running")}});
+    settleRun(world);
+  });
+  step(S("the command %1 is not listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    TimelineModel& model = timeline(world);
+    for (int row = 0; row < model.rowCount(); ++row) {
+      for (const QVariant& entry : role(model, row, TimelineModel::EntriesRole).toList()) {
+        expect(entry.toMap().value(S("command")) != c[0], describe(model));
+      }
+    }
+    expect(!world.shows(c[0]), S("the screen says: %1").arg(world.texts().join(S(" | "))));
+  });
   step(S("the user looks at the parent thread"), [](World& world, const Captures&, const Table&) {
     expectOpen(world, world.thread, S("the parent thread"));
     world.waitFor([&] { return timeline(world).status() == QLatin1String("live"); }, [&] { return describe(timeline(world)); });
