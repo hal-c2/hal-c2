@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13344
 #   https://github.com/pingdotgg/t3code/pull/11580
 #   docs/user/keyboard-focus.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
@@ -173,6 +174,12 @@ Feature: Keyboard focus and keyboard-only use
         | key   |
         | Enter |
         | Space |
+
+    # Upstream #13344: a thread or draft row the keyboard has reached shows where focus is.
+    @backlog @desktop
+    Scenario: The thread or draft row the keyboard has reached shows where focus is
+      When the user moves the keyboard focus down the thread list
+      Then the row the focus is on shows a visible focus mark
 
     @desktop
     Scenario: The menu key opens the highlighted thread's menu

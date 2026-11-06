@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13689
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink,
 #     thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced,
@@ -399,3 +400,11 @@ Feature: Pull requests linked to a thread
       | git@ssh.dev.azure.com:v3/org/project/web                       |
       | org@vs-ssh.visualstudio.com:v3/org/project/web                 |
       | https://org.visualstudio.com/defaultcollection/project/_git/web |
+
+  # Upstream #13689: a turn that adds a remote must not leave its pull request unlinked until a
+  # cached repository identity expires.
+  @backlog @mc
+  Scenario: A pull request opened in a turn that added the remote is linked when the turn ends
+    Given the thread's project had no remote when the turn started
+    When the turn adds the remote "origin" and opens a pull request for its branch
+    Then the pull request is linked to the thread when the turn ends

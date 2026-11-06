@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13713
 #   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
 #   docs/user/keybindings.md (Desktop quit shortcut, mod+w)
 #   apps/web/src/components/QuitHoldOverlay.tsx

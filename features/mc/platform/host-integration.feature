@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/7079
+#   https://github.com/pingdotgg/t3code/pull/13669
 #   apps/server-ex/lib/hal_c2/editors.ex (availableEditors, shell.openInEditor)
 #   apps/server-ex/lib/hal_c2/codex/provider.ex (the version read a server config waits on)
 #   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
@@ -28,6 +30,26 @@ Feature: The MC working with its host machine
     When a client reads the MC's server config
     Then the available editors include Cursor and Zed
     And the file manager is listed last
+
+  # Upstream #7079: the agy command is Google's Antigravity CLI, not the Antigravity IDE.
+  @backlog @mc @plugin-antigravity
+  Scenario: The agy command is not taken for the Antigravity IDE
+    Given the Antigravity CLI "agy" is installed on the host and the Antigravity IDE is not
+    When a client reads the MC's server config
+    Then the available editors do not include Antigravity
+
+  @backlog @mc @plugin-antigravity
+  Scenario: The Antigravity IDE opens a location at its line
+    Given the Antigravity IDE is installed on the host
+    When a client opens "src/app.ts" at line 12 column 4 in Antigravity IDE
+    Then the MC launches the Antigravity IDE at that line
+
+  # Upstream #13669: a long PATH does not empty the editor list.
+  @backlog @mc
+  Scenario: Editors installed on a long PATH are still listed
+    Given the host's PATH has more than seventy folders and Cursor is installed in the last one
+    When a client reads the MC's server config
+    Then the available editors include Cursor
 
   @mc
   Scenario Outline: Opening a location in an editor uses that editor's style

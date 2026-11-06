@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13714
 #   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
@@ -168,6 +169,14 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor does not read the keychain
     And the user is offered to enable Cursor account usage
+
+  # Upstream #13714: the keychain read is offered only where the Cursor provider is ready, so a
+  # machine without a working Cursor sees no prompt.
+  @backlog @shared @plugin-cursor
+  Scenario: The Cursor keychain prompt is offered only where Cursor is ready
+    Given Cursor is not set up in this environment
+    When the user opens the limits view
+    Then Cursor's keychain prompt is not offered
 
   Scenario: Cursor skills can be mentioned in the composer
     Given the project has the Cursor skill "deploy"
