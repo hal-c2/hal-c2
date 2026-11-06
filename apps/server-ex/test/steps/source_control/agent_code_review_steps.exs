@@ -1117,6 +1117,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "the replaced thread's agent reports late", context do
+    # The new run retires the replaced thread (revoking its credential) before it
+    # checks out anew, so a report racing that retire would hear 401 instead.
+    old = context.replaced_checkout
+
+    {_, context} =
+      await_review(context, 12, &(&1["checkout"] not in [nil, old]))
+
     result = call_report(%{context | thread: context.replaced_thread}, findings("approve", 1))
     Map.put(context, :report_result, result)
   end
