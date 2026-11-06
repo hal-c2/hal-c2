@@ -99,16 +99,12 @@ Feature: Preparing a new thread's worktree
     And the agent does not start
 
   # Upstream #13673: an idle setup shell closes once its script succeeds, so a finished setup leaves no terminal behind.
+  # A failed script already keeps its shell open for the error (apps/server-ex/lib/hal_c2/worktree_setup.ex await_script),
+  # so that path is not ledgered as new behaviour here.
   @mc @backlog
   Scenario: A setup script that succeeds closes its idle setup terminal
     Given the setup script ran in the terminal "setup" and exited with 0
     Then the "setup" terminal is closed
-
-  # A failed script keeps its shell so the user can read the error.
-  @mc @backlog
-  Scenario: A setup script that fails keeps its terminal open with its output
-    Given the setup script ran in the terminal "setup" and exited with 1
-    Then the "setup" terminal stays open and shows the error
 
   @mc
   Scenario: A setup script that runs alongside the agent does not stop it when it fails

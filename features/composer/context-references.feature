@@ -145,7 +145,7 @@ Feature: Referencing files, skills, commands and context
     Then the draft carries the quoted paragraph
     And the user can add a comment to it
 
-  # Upstream #13450: the keyboard stays in the draft after a quote's comment is saved or cancelled.
+  # Upstream #13450: the keyboard returns to the draft after a quote's comment is saved.
   @desktop @backlog
   Scenario: Saving a quote's comment returns the keyboard to the draft
     Given the user is writing the comment on a quote in the draft
