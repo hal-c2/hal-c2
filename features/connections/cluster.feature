@@ -1,7 +1,7 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/cluster.ex (identity, members, joining, runtime TLS distribution)
+#   apps/server-ex/lib/hal_c2/cluster.ex (identity, members, joining, switching off, runtime TLS distribution)
 #   apps/server-ex/lib/hal_c2/cluster/epmd.ex (member names to addresses, no port mapper)
-#   apps/server-ex/lib/hal_c2/cluster/discovery.ex (reconnecting, strategies)
+#   apps/server-ex/lib/hal_c2/cluster/discovery.ex (reconnecting, strategies, giving up on a member, reconnect)
 #   apps/server-ex/lib/hal_c2/cluster/tailscale.ex, cluster/static.ex (discovery strategies)
 #   apps/server-ex/lib/hal_c2/tailscale_serve.ex (invites over Tailscale Serve)
 #   apps/server-ex/lib/hal_c2/cluster/command.ex, lib/mix/tasks/hal_c2.cluster.ex (status, invite, join, remove)
@@ -9,7 +9,7 @@
 #   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar, offline peers)
 #   apps/server-ex/lib/hal_c2/environment.ex (descriptor cluster list)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
-#   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove/update)
+#   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove/switch/reconnect/update)
 #   apps/server-ex/lib/hal_c2/upgrade.ex (update_members: members take this MC's version from it)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink), apps/server-ex/lib/hal_c2/web.ex (address/1:
 #     the address an invite or a pairing link names)
@@ -226,6 +226,48 @@ Feature: Clustering one person's machines
     And the first two list a project of the third
     When the user removes the third member on the first
     Then the first two no longer list the third or its project
+
+  # Switching a member off is a removal every member keeps listing: one MC alone could
+  # not stay apart from a member the others connect it to. Switched on, it is admitted
+  # again from what was kept.
+  @mc
+  Scenario: A member switched off stays listed and is cut off from every member
+    Given a cluster of three members
+    When a client of the first switches the third off
+    Then no member connects to the third any more
+    And the first two stay connected
+    And the first two list the third as switched off
+
+  @mc
+  Scenario: A switched-off member's projects and threads come back when it is switched on
+    Given a cluster of three members
+    And the first two list a project of the third
+    When a client of the first switches the third off
+    Then the first two no longer list the third or its project
+    When a client of the first switches the third on
+    Then all three are connected to each other
+    And the first two list the third's project again
+
+  @mc
+  Scenario: A switched-off member is switched on, not reconnected
+    Given a cluster of three members
+    When a client of the first switches the third off
+    And a client of the first asks it to reconnect the third
+    Then the request is refused saying "That machine is switched off. Switch it on first."
+
+  # Members are tried every ten seconds; one not reached for five minutes is tried only
+  # every five minutes after, until a client asks for it.
+  @mc
+  Scenario: A member that cannot be reached for minutes is offline until a client asks to reconnect
+    Given a cluster of three members
+    And a client follows the first's shell
+    And the third is offline
+    When the first has failed to reach the third for five minutes
+    Then the client is told the first stopped trying the third
+    And the first lists the third as offline
+    When a client of the first asks it to reconnect the third
+    Then the client is told the first is trying the third again
+    And the first does not list the third as offline
 
   @mc
   Scenario: The sidebar lists every member's projects and threads

@@ -15,6 +15,10 @@ export const ClusterMember = Schema.Struct({
   /** The HAL-C2 version it last reported. Members connect whatever versions they run. */
   version: Schema.optional(Schema.NullOr(Schema.String)),
   connected: Schema.Boolean,
+  /** Switched off (`cluster.switch`): kept, but cut off from every member until switched on. */
+  off: Schema.optional(Schema.Boolean),
+  /** Not reached for minutes, so tried only now and then until `cluster.reconnect`. */
+  offline: Schema.optional(Schema.Boolean),
 });
 export type ClusterMember = typeof ClusterMember.Type;
 
@@ -58,6 +62,12 @@ export type ClusterJoinInput = typeof ClusterJoinInput.Type;
 
 export const ClusterRemoveInput = Schema.Struct({ id: Schema.String });
 export type ClusterRemoveInput = typeof ClusterRemoveInput.Type;
+
+export const ClusterSwitchInput = Schema.Struct({ id: Schema.String, on: Schema.Boolean });
+export type ClusterSwitchInput = typeof ClusterSwitchInput.Type;
+
+export const ClusterReconnectInput = Schema.Struct({ id: Schema.String });
+export type ClusterReconnectInput = typeof ClusterReconnectInput.Type;
 
 /** How one member's update to the version the asked MC runs went. */
 export const ClusterMemberUpdate = Schema.Struct({

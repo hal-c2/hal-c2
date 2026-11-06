@@ -205,6 +205,8 @@ Feature: RPC parity with the TypeScript server
       | cluster.invite                           | cluster           | rpc                                                                       |
       | cluster.join                             | cluster           | rpc                                                                       |
       | cluster.remove                           | cluster           | rpc                                                                       |
+      | cluster.switch                           | cluster           | rpc                                                                       |
+      | cluster.reconnect                        | cluster           | rpc                                                                       |
       | hal-c2.registerPush                      | push              | rpc                                                                       |
       | hal-c2.unregisterPush                    | push              | rpc                                                                       |
 

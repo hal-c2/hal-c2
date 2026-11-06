@@ -181,8 +181,10 @@ import {
   ClusterInvite,
   ClusterInviteInput,
   ClusterJoinInput,
+  ClusterReconnectInput,
   ClusterRemoveInput,
   ClusterStatus,
+  ClusterSwitchInput,
   ClusterUpdateResult,
 } from "./cluster.ts";
 import { InvalidPushRegistration, PushRegistrationInput } from "./push.ts";
@@ -619,6 +621,8 @@ export const WS_METHODS = {
   clusterInvite: "cluster.invite",
   clusterJoin: "cluster.join",
   clusterRemove: "cluster.remove",
+  clusterSwitch: "cluster.switch",
+  clusterReconnect: "cluster.reconnect",
   clusterUpdate: "cluster.update",
 
   // Agent push to the calling client's UnifiedPush endpoint (MCs only)
@@ -999,6 +1003,23 @@ const WsClusterJoinRpc = Rpc.make(WS_METHODS.clusterJoin, {
 /** Stops every member admitting `id`; answers the new status. */
 const WsClusterRemoveRpc = Rpc.make(WS_METHODS.clusterRemove, {
   payload: ClusterRemoveInput,
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+/**
+ * Switches the member `id` off, kept but cut off from every member with its threads gone
+ * from the sidebar, or back on; answers the new status.
+ */
+const WsClusterSwitchRpc = Rpc.make(WS_METHODS.clusterSwitch, {
+  payload: ClusterSwitchInput,
+  success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+/** Tries the member `id` again at once and often, after it was found offline; answers the status. */
+const WsClusterReconnectRpc = Rpc.make(WS_METHODS.clusterReconnect, {
+  payload: ClusterReconnectInput,
   success: ClusterStatus,
   error: ClusterRpcError,
 });
@@ -2341,6 +2362,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsClusterInviteRpc,
   WsClusterJoinRpc,
   WsClusterRemoveRpc,
+  WsClusterSwitchRpc,
+  WsClusterReconnectRpc,
   WsClusterUpdateRpc,
   WsRegisterPushRpc,
   WsUnregisterPushRpc,

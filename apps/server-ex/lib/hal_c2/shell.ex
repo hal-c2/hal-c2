@@ -132,6 +132,15 @@ defmodule HalC2.Shell do
   def forget(environment_id), do: GenServer.cast(__MODULE__, {:forget, environment_id})
 
   @doc """
+  Tells clients whether discovery (`HalC2.Cluster.Discovery`) still tries the member
+  with `environment_id` often (`trying`) or has stopped and counts it offline. Said
+  only of a machine that is not online.
+  """
+  @spec link(String.t(), boolean) :: :ok
+  def link(environment_id, trying),
+    do: GenServer.cast(__MODULE__, {:link, environment_id, trying})
+
+  @doc """
   Tells every reachable member this MC's environment again: after it moved to another
   version in place (`HalC2.Upgrade`), when no member connects anew to ask for it.
   """
@@ -392,6 +401,15 @@ defmodule HalC2.Shell do
     end
 
     {:noreply, %{state | online: MapSet.difference(state.online, MapSet.new(peers))}}
+  end
+
+  def handle_cast({:link, environment_id, trying}, state) do
+    for {peer, %{"environmentId" => ^environment_id}} <- :ets.tab2list(@mcs),
+        peer != node(),
+        not MapSet.member?(state.online, peer),
+        do: notify({:mc, peer, if(trying, do: :down, else: :offline)})
+
+    {:noreply, state}
   end
 
   # A peer says what it holds of this MC and is sent the rest; `ask_back?` when it

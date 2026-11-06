@@ -125,10 +125,10 @@ Feature: Protocol 3 wire parity
       | error                    | a frame or subscription is refused                     | reason, and the id when there is one                          |
       | rpc.result               | a method succeeds                                      | id, result                                                    |
       | rpc.error                | a method fails                                         | id, error, and the contract error as detail when there is one |
-      | shell                    | the shell subscription opens                           | id, MCs with online, environment and version, rows            |
+      | shell                    | the shell subscription opens                           | id, MCs with online, trying, environment and version, rows    |
       | shell.rows               | projects or threads on one MC change                   | id, mc, rows, the version they bring the MC to                |
       | shell.environment        | an MC's environment descriptor changes                 | id, mc, environment                                           |
-      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, and removed once it is no longer a member     |
+      | shell.mc                 | an MC joins or leaves the cluster                      | id, mc, online, trying, and removed once it is not a member   |
       | snapshot                 | a stream subscription starts without a usable offset   | id, offset, at, part, rows in creation order, done, handle    |
       | events                   | stream entities change                                 | id, offset, events as seq, kind, id, patch and unix ms at     |
       | live                     | a stream has caught up                                 | id, offset, handle                                            |

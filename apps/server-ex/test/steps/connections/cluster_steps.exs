@@ -761,6 +761,89 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  # --- switching off, giving up and reconnecting -----------------------------------
+
+  step "a client of the first switches the third {word}", %{args: [on]} = context do
+    %{a: a, c: c} = context.machines
+    payload = %{"id" => c.id, "on" => on == "on"}
+    assert {:ok, %{"clustered" => true}} = client_call(a, :admin, "cluster.switch", payload)
+    context
+  end
+
+  step "no member connects to the third any more", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    for m <- [a, b] do
+      assert await_disconnected(m, c)
+      refute :peer.call(c.peer, Elixir.Node, :connect, [HalC2.Cluster.mc_name(m.id)])
+    end
+
+    context
+  end
+
+  step "the first two list the third as switched off", context do
+    %{a: a, b: b, c: c} = context.machines
+
+    for m <- [a, b], do: assert(await_off(m, c))
+
+    context
+  end
+
+  step "the first two list the third's project again", context do
+    %{a: a, b: b, c: c} = context.machines
+    for m <- [a, b], do: assert(await_sidebar(m, c, true))
+    context
+  end
+
+  step "a client of the first asks it to reconnect the third", context do
+    %{a: a, c: c} = context.machines
+    Map.put(context, :reconnect, client_call(a, :admin, "cluster.reconnect", %{"id" => c.id}))
+  end
+
+  step "the request is refused saying {string}", %{args: [message]} = context do
+    assert {:error, ^message, %{"_tag" => "ClusterError"}} = context.reconnect
+    context
+  end
+
+  step "a client follows the first's shell", context do
+    a = context.machines.a
+    access = client_access(a, :admin)
+    {:ok, ticket, _} = auth(a, :issue_ticket, [access])
+    port = URI.parse(origin(a)).port
+    {:ok, client} = WsClient.connect(port, "/ws?wsTicket=#{ticket}", a.address)
+    {%{"t" => "hello"}, client} = WsClient.recv(client, 5_000)
+    client = Mc.sub(client, 1, %{"type" => "shell"})
+    {_, client} = Mc.await(client, &(&1["t"] == "shell"), 5_000)
+    Map.put(context, :shell_client, client)
+  end
+
+  # Five minutes of failed attempts, given up on at once instead of waited out.
+  step "the first has failed to reach the third for five minutes", context do
+    a = context.machines.a
+    assert await_disconnected(a, context.machines.c)
+    :ok = :peer.call(a.peer, Application, :put_env, [:hal_c2, :cluster_give_up_after, 0])
+    :ok = :peer.call(a.peer, HalC2.Cluster.Discovery, :poll, [])
+    context
+  end
+
+  step "the client is told the first stopped trying the third", context do
+    await_link(context, false)
+  end
+
+  step "the client is told the first is trying the third again", context do
+    await_link(context, true)
+  end
+
+  step "the first lists the third as offline", context do
+    assert offline?(context.machines.a, context.machines.c)
+    context
+  end
+
+  step "the first does not list the third as offline", context do
+    refute offline?(context.machines.a, context.machines.c)
+    context
+  end
+
   # --- one socket, every member ------------------------------------------------------
 
   step "a client connected to one member of a two-machine cluster", context do
@@ -857,7 +940,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     {_, client} =
       Mc.await(
         World.client(context),
-        &(&1 == %{"t" => "shell.mc", "id" => 1, "mc" => there, "online" => true}),
+        &(&1 == %{"t" => "shell.mc", "id" => 1, "mc" => there, "online" => true, "trying" => true}),
         10_000
       )
 
@@ -1633,6 +1716,59 @@ defmodule HalC2.Steps.Connections.Cluster do
 
     {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, [id: other.id]], 20_000)
     result
+  end
+
+  # Waits until `machine`'s table holds `other` switched off, rechecking as each table
+  # cast to its cluster process arrives.
+  defp await_off(machine, other) do
+    code = """
+    test = self()
+    hook = fn nil, {:in, {:"$gen_cast", {:merge, _}}}, _ -> send(test, :merge); nil
+              nil, _event, _ -> nil end
+    :ok = :sys.install(HalC2.Cluster, {hook, nil})
+    off? = fn ->
+      Enum.any?(HalC2.Cluster.status()["members"], fn member ->
+        member["id"] == id and member["off"] and not member["connected"]
+      end)
+    end
+
+    wait = fn wait ->
+      off?.() or
+        receive do
+          :merge -> wait.(wait)
+        after
+          15_000 -> false
+        end
+    end
+
+    result = wait.(wait)
+    :sys.remove(HalC2.Cluster, hook)
+    result
+    """
+
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, [id: other.id]], 20_000)
+    result
+  end
+
+  defp offline?(machine, other) do
+    %{"members" => members} = status(machine)
+    Enum.any?(members, &(&1["id"] == other.id and &1["offline"]))
+  end
+
+  # The `shell.mc` frame of the third telling whether the first still tries it, with the
+  # client's next shell frame (the subscription's first) read on its way.
+  defp await_link(context, trying) do
+    mc = Atom.to_string(HalC2.Cluster.mc_name(context.machines.c.id))
+
+    {frame, client} =
+      Mc.await(
+        context.shell_client,
+        &(&1["t"] == "shell.mc" and &1["mc"] == mc and &1["trying"] == trying),
+        15_000
+      )
+
+    assert frame["online"] == false
+    Map.put(context, :shell_client, client)
   end
 
   # Waits until `machine`'s sidebar has rows of `other` (`listed`) or has none.

@@ -287,6 +287,20 @@ defmodule HalC2.Rpc do
     end
   end
 
+  def handle("cluster.switch", %{"id" => id, "on" => on}) when is_binary(id) and is_boolean(on) do
+    case HalC2.Cluster.switch(id, on) do
+      :ok -> {:ok, HalC2.Cluster.status()}
+      error -> cluster(error)
+    end
+  end
+
+  def handle("cluster.reconnect", %{"id" => id}) when is_binary(id) do
+    case HalC2.Cluster.reconnect(id) do
+      :ok -> {:ok, HalC2.Cluster.status()}
+      error -> cluster(error)
+    end
+  end
+
   def handle("cluster.update", _input) do
     case HalC2.Upgrade.update_members() do
       {:ok, version, updates} -> {:ok, %{"version" => version, "members" => members_of(updates)}}
@@ -415,7 +429,7 @@ defmodule HalC2.Rpc do
   @doc "Every session scope a client needs to call `method` with `payload`."
   @spec required_scopes(String.t(), term()) :: [String.t()]
   def required_scopes("cluster." <> method, _payload)
-      when method in ~w(invite join remove update),
+      when method in ~w(invite join remove switch update),
       do: ["access:write", "terminal:operate"]
 
   def required_scopes(method, payload), do: [required_scope(method, payload)]
