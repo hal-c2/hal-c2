@@ -29,6 +29,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "SidebarModel.h"
+#include "SubagentDisplay.h"
 #include "ToastController.h"
 
 class ThreadLineageController : public QObject, public NativeController {
@@ -190,7 +191,7 @@ private:
       parentTitle = parentThread ? parentThread->title : QString();
       if (parentThread && running(*parentThread)) ++runningCount;
       parentState = QVariantMap{{QStringLiteral("key"), parentKey},
-                                {QStringLiteral("title"), parentThread ? parentThread->title : QStringLiteral("This related thread is unavailable")},
+                                {QStringLiteral("title"), parentThread ? subagents::displayTitle(parentThread->title) : QStringLiteral("This related thread is unavailable")},
                                 {QStringLiteral("missing"), !parentThread.has_value()},
                                 // A subagent's thread says whose it is, and is not merged back.
                                 {QStringLiteral("subagent"), parent.isEmpty()}};
@@ -200,7 +201,7 @@ private:
       if (other.archivedAt) continue;
       if (parentId(m_store->threadRow(other.key())) != thread->id) continue;
       if (running(other)) ++runningCount;
-      forks.append(QVariantMap{{QStringLiteral("key"), other.key()}, {QStringLiteral("title"), other.title}, {QStringLiteral("running"), running(other)}});
+      forks.append(QVariantMap{{QStringLiteral("key"), other.key()}, {QStringLiteral("title"), subagents::displayTitle(other.title)}, {QStringLiteral("running"), running(other)}});
     }
     if (shownParent.isEmpty() && forks.isEmpty()) {
       m_bridge->publish(QStringLiteral("lineage"), QVariant::fromValue(nullptr));

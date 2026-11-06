@@ -11,6 +11,7 @@
 #include "SettingsController.h"
 #include "ShellStore.h"
 #include "SidebarModel.h"
+#include "WorkspaceController.h"
 
 namespace {
 const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads"), {}, "Threads");
@@ -188,6 +189,15 @@ void ThreadStore::configure(TimelineModel* model) const {
   });
   model->setThreadTitles([store = m_store, environment](const QString& threadId) {
     return store->threadRow(environment + threadId).value(QLatin1String("title")).toString();
+  });
+  model->setThreadRows([store = m_store, environment](const QString& threadId) { return store->threadRow(environment + threadId); });
+  model->setProjectTitles([store = m_store, environment](const QString& projectId) {
+    return store->projectRow(environment.chopped(1), projectId).value(QLatin1String("title")).toString();
+  });
+  // The provider names and models a handoff or subagent reads by.
+  model->setProviders([shell = NativeShell::of(this)]() -> QJsonArray {
+    const auto* workspace = shell ? shell->controller<WorkspaceController>() : nullptr;
+    return workspace ? workspace->environmentConfig().value(QLatin1String("providers")).toArray() : QJsonArray();
   });
 }
 
