@@ -175,7 +175,7 @@ Feature: Cursor
   @backlog @shared @plugin-cursor
   Scenario: The Cursor keychain prompt is offered only where Cursor is ready
     Given Cursor is not set up in this environment
-    When the user opens the usage view
+    When the user opens the limits view
     Then Cursor's keychain prompt is not offered
 
   Scenario: Cursor skills can be mentioned in the composer

@@ -247,9 +247,14 @@ Feature: Antigravity
     Examples:
       | attachment                    | outcome  |
       | a 900 KiB text file           | accepted |
+      | a 2 MiB text file             | rejected |
       | a 12 MiB image                | rejected |
       | a 15 MiB audio clip           | accepted |
+      | files totalling 60 MiB        | rejected |
+      | an unsupported file format    | rejected |
 
+  # Upstream #13339 turns the rejections of text, total and unsupported files into sends by saved
+  # path (the scenario below). These rows still describe the MC until that lands.
   # Upstream #13339: files that are over a native limit, past the 50 MiB budget, or of a kind
   # Antigravity does not read natively go to the agent by their saved path. Images keep native
   # handling and are still refused over their limit.

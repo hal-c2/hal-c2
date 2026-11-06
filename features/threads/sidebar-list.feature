@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13759
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
@@ -700,3 +701,11 @@ Feature: The thread list
     When the user opens a settled thread past the listed ones from search
     Then the sidebar has a row for it and scrolls it into view
     And a folded Settled section still shows it
+
+  # Upstream #13759: settled threads that settled at the same moment are ordered by id, not by
+  # the order the MC sent them.
+  @desktop @mobile @backlog
+  Scenario: Settled threads with the same settle time are listed in id order
+    Given threads "t2" and "t1" settled at the same moment
+    When the settled shelf is shown
+    Then "t1" is listed before "t2" whatever order the MC sent them in

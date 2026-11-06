@@ -204,6 +204,8 @@ Feature: Sharing GitHub access between environments
     Then it is refused with "The project list could not be read."
 
   # Upstream #12537: the port of an ssh:// remote addresses the SSH server, not the provider's web API.
+  # MC drops the port already (HalC2.PullRequests.parse_remote uses URI.host); no step definitions yet,
+  # so it stays @backlog until features:mc can run it.
   @backlog @mc
   Scenario: A remote reached over SSH on a custom port still finds its pull requests on the provider
     Given the project's remote is "ssh://git@git.example.com:2222/team/app.git" on a self-hosted provider
