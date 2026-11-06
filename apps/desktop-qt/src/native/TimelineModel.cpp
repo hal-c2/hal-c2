@@ -48,6 +48,12 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
+// The id the MC gives a call's background task (HalC2.Projection.BackgroundWork).
+QString backgroundTaskId(const QJsonObject& item) {
+  const QString native = item.value(QLatin1String("nativeItemRef")).toObject().value(QLatin1String("nativeId")).toString();
+  return native.isEmpty() ? text(item, QLatin1String("id")) : native;
+}
+
 QDateTime timeOf(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
 }
@@ -570,8 +576,8 @@ void TimelineModel::setFolds(Folds folds) {
 void TimelineModel::setBackgroundWork(const QJsonArray& tasks) {
   QSet<QString> work;
   for (const QJsonValue& task : tasks) {
-    const QJsonObject object = task.toObject();
-    work.insert(text(object, QLatin1String("taskType")) + QLatin1Char('\n') + text(object, QLatin1String("description")));
+    const QString id = text(task.toObject(), QLatin1String("taskId"));
+    if (!id.isEmpty()) work.insert(id);
   }
   if (work == m_backgroundWork) return;
   m_backgroundWork = work;
@@ -1254,8 +1260,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       // A call that never said it ended once its turn settled, the
       // workspace's preparation, and a delegation its subagent's card shows.
       if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running") &&
-          !m_backgroundWork.contains(type + QLatin1Char('\n') + text(item, QLatin1String("input"))) &&
-          !m_backgroundWork.contains(type + QLatin1Char('\n') + text(item, QLatin1String("title")))) {
+          !m_backgroundWork.contains(backgroundTaskId(item))) {
         return false;
       }
       if (type == QLatin1String("command_execution") && text(item, QLatin1String("input")) == QLatin1String("Preparing workspace")) return false;

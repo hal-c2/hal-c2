@@ -99,6 +99,9 @@ QString openKey(World& world) {
 
 // --- The parent's stream -----------------------------------------------------
 
+// The background tool call the open scenario started.
+QString backgroundTool;
+
 void set(World& world, const QString& kind, const QString& id, const QJsonObject& fields) {
   changeEntity(world.mc, world.thread, kind, id, {{S("s"), fields}});
   world.sync();
@@ -592,19 +595,44 @@ const Steps steps([] {
   // A finished subagent that left work running.
   step(S("a subagent returned its result while background work it started is still running"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);
-    addItem(world, S("command_execution"), {{S("input"), S("npm run dev")}, {S("status"), S("running")}});
+    // The MC's task id is the call's own id when it has no native one.
+    const QString command = addItem(world, S("command_execution"), {{S("input"), S("npm run dev\n")}, {S("status"), S("running")}});
     delegate(world, {{S("status"), S("completed")}, {S("result"), S("Dev server started")}});
     addItem(world, S("assistant_message"), {{S("text"), S("The dev server is up.")}});
     // The turn is over; the command the subagent started is what is still pending.
     settleRun(world);
     updateRow(world.mc, world.thread,
-              {{S("pendingBackgroundTasks"), QJsonArray{QJsonObject{{S("taskType"), S("command_execution")}, {S("description"), S("npm run dev")}}}}});
+              {{S("pendingBackgroundTasks"),
+                QJsonArray{QJsonObject{{S("taskId"), command}, {S("taskType"), S("command_execution")}, {S("description"), S("npm run dev")}}}}});
     world.sync();
   });
   step(S("a later turn left %1 running without saying it ended").arg(q), [](World& world, const Captures& c, const Table&) {
     startRun(world, 10);
     addItem(world, S("command_execution"), {{S("input"), c[0]}, {S("status"), S("running")}});
     settleRun(world);
+  });
+  // A tool the provider runs on, with no title of its own: the MC names its
+  // task after the tool and keys it by the call's native id.
+  step(S("a turn left the tool %1 running in the background").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world, 30);
+    backgroundTool = addItem(world, S("dynamic_tool"),
+                         {{S("toolName"), c[0]}, {S("input"), QJsonObject{{S("url"), S("http://localhost:3000")}}}, {S("status"), S("running")},
+                          {S("nativeItemRef"), QJsonObject{{S("nativeId"), S("native-watch")}}}});
+    settleRun(world);
+    updateRow(world.mc, world.thread,
+              {{S("pendingBackgroundTasks"),
+                QJsonArray{QJsonObject{{S("taskId"), S("native-watch")}, {S("taskType"), S("dynamic_tool")}, {S("description"), c[0]}}}}});
+    world.sync();
+  });
+  step(S("the tool is still shown as running"), [](World& world, const Captures&, const Table&) {
+    TimelineModel& model = timeline(world);
+    bool running = false;
+    for (int row = 0; row < model.rowCount(); ++row) {
+      for (const QVariant& entry : role(model, row, TimelineModel::EntriesRole).toList()) {
+        running = running || (entry.toMap().value(S("id")) == backgroundTool && entry.toMap().value(S("statusLabel")) == QLatin1String("Running"));
+      }
+    }
+    expect(running, describe(model));
   });
   step(S("the command %1 is not listed").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
@@ -629,7 +657,7 @@ const Steps steps([] {
   step(S("its background work is still shown as running"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
     const QVariantList entries = role(model, rowOf(world, S("work")), TimelineModel::EntriesRole).toList();
-    expect(entries.size() == 1 && entries.first().toMap().value(S("command")) == QLatin1String("npm run dev") &&
+    expect(entries.size() == 1 && entries.first().toMap().value(S("command")).toString().trimmed() == QLatin1String("npm run dev") &&
                entries.first().toMap().value(S("statusLabel")) == QLatin1String("Running"),
            describe(model));
     world.waitFor([&] { return world.shows(S("Running")); }, [&] { return S("the running command; the screen says: %1").arg(world.texts().join(S(" | "))); });

@@ -494,6 +494,12 @@ Feature: Plans and subagents
     Then its background work is still shown as running
     And the command "npm test" is not listed
 
+  @mobile
+  Scenario: A background tool with no title stays listed
+    Given a turn left the tool "browser_watch" running in the background
+    When the user looks at the parent thread
+    Then the tool is still shown as running
+
   @mc @shared
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
