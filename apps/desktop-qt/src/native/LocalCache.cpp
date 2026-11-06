@@ -184,7 +184,17 @@ cache::Thread readThread(QSqlDatabase& db, const QString& key) {
   rows.setForwardOnly(true);
   if (!run(rows, QStringLiteral("SELECT kind, id, run_ord, json FROM entities WHERE thread = ?"), {key})) return {};
   while (rows.next()) {
-    cache::Entity entity{rows.value(0).toString(), rows.value(1).toString(), object(rows.value(3)), std::nullopt};
+    QJsonParseError error;
+    const QJsonDocument fields = QJsonDocument::fromJson(rows.value(3).toByteArray(), &error);
+    // A copy with a row it cannot read is no copy: shown without that row and
+    // resumed from its cursor, the thread would never be sent it again. It
+    // goes, and the thread is loaded whole.
+    if (error.error != QJsonParseError::NoError || !fields.isObject()) {
+      rows.finish();
+      if (!dropThread(db, key)) lost().threads.insert(key);
+      return {};
+    }
+    cache::Entity entity{rows.value(0).toString(), rows.value(1).toString(), fields.object(), std::nullopt};
     if (!rows.value(2).isNull()) entity.run = rows.value(2).toLongLong();
     thread.entities.append(std::move(entity));
   }

@@ -1,15 +1,19 @@
 // The client's cache (src/native/LocalCache) against a model of what it was
-// told: thread copies and the sidebar's rows, across reopening the same file
-// and a process that died part-way through writing it.
+// told: thread copies and the sidebar's rows, across reopening the same file,
+// a process that died part-way through writing it, and a row gone unreadable.
 
 #include "Prop.h"
 
 #include <QDir>
 #include <QFile>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 
 #include <map>
 #include <memory>
 #include <optional>
+#include <tuple>
+#include <vector>
 
 #include "LocalCache.h"
 
@@ -484,6 +488,58 @@ struct DieWhileStoring : Command {
   }
 };
 
+// One row of a copy goes unreadable on disk while the app is closed (bytes
+// flipped, or written by a build that wrote it otherwise). The copy is no
+// copy any more: the next run reads it as none, and keeps it as none.
+struct Garble : Command {
+  std::string key;
+  std::string slot;
+
+  explicit Garble(const Model& model) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    for (const auto& [key, copy] : model.threads) {
+      for (const auto& [slot, entity] : copy.entities) rows.emplace_back(key, slot);
+    }
+    RC_PRE(!rows.empty());
+    std::tie(key, slot) = *rc::gen::elementOf(rows);
+  }
+
+  void apply(Model& model) const override { model.threads.erase(key); }
+
+  void run(const Model& model, Sut& sut) const override {
+    sut.cache.reset();
+    const QString text = q(slot);
+    // Removed however the block is left, a failed assertion included.
+    struct Connection {
+      ~Connection() { QSqlDatabase::removeDatabase(QStringLiteral("garble")); }
+    } connection;
+    {
+      QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("garble"));
+      db.setDatabaseName(sut.file());
+      RC_ASSERT(db.open());
+      QSqlQuery query(db);
+      RC_ASSERT(query.prepare(QStringLiteral("UPDATE entities SET json = ? WHERE thread = ? AND kind = ? AND id = ?")));
+      query.addBindValue(QByteArray("{\"n\": "));
+      query.addBindValue(q(key));
+      query.addBindValue(text.section(QLatin1Char('/'), 0, 0));
+      query.addBindValue(text.section(QLatin1Char('/'), 1));
+      RC_ASSERT(query.exec());
+      RC_ASSERT(query.numRowsAffected() == 1);
+      query.finish();
+      db.close();
+    }
+    sut.reopenAt(sut.dir);
+    Model next = model;
+    apply(next);
+    expectSame(next, sut);
+    // And it stays none in the run after.
+    sut.reopenAt(sut.dir);
+    expectSame(next, sut);
+  }
+
+  void show(std::ostream& os) const override { os << "Garble(" << key << ", " << slot << ")"; }
+};
+
 struct Clear : Command {
   explicit Clear(const Model&) {}
 
@@ -504,11 +560,11 @@ class SyncCacheProp : public QObject {
 
 private slots:
   void keptEqualsTold() {
-    QVERIFY(rc::check("the cache reads back what it was told, across reopening and a write cut short", [] {
+    QVERIFY(rc::check("the cache reads back what it was told, across reopening, a write cut short and a row gone unreadable", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
                        rc::state::gen::execOneOfWithArgs<StoreThread, StoreThread, TrimThread, ForgetThread, ForgetEnvironment,
-                                                         StoreShell, StoreShell, OpenAt, Reopen, DieWhileStoring, Clear>());
+                                                         StoreShell, StoreShell, OpenAt, Reopen, DieWhileStoring, Garble, Clear>());
     }));
   }
 };
