@@ -1140,6 +1140,7 @@ Item {
                             // Clipped inside the padding, so a collapsed
                             // message keeps its bottom margin.
                             Item {
+                                objectName: "userMessageClip"
                                 x: Theme.space.lg
                                 y: Theme.space.md
                                 width: body.width - 2 * Theme.space.lg

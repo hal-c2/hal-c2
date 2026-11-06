@@ -515,7 +515,9 @@ const Steps steps([] {
   step(QStringLiteral("the whole message is shown"), [](World& world, const Captures&, const Table&) {
     QQuickItem* body = drawn(world, QStringLiteral("userMessageBody"));
     // Thirty lines are taller than the preview, and nothing is cut off.
-    world.waitFor([&] { return !body->property("collapsed").toBool() && body->height() > 400 && !body->clip(); },
+    QQuickItem* clip = body->findChild<QQuickItem*>(QStringLiteral("userMessageClip"));
+    expect(clip != nullptr, QStringLiteral("the message has no clip"));
+    world.waitFor([&] { return !body->property("collapsed").toBool() && body->height() > 400 && !clip->clip(); },
                   [&] { return QStringLiteral("the whole message; it is %1 high").arg(body->height()); });
     expect(drawn(world, QStringLiteral("messageExpand"))->property("text") == QLatin1String("Show less"), QStringLiteral("the message does not offer to show less"));
   });
@@ -524,7 +526,11 @@ const Steps steps([] {
   });
   step(QStringLiteral("the message returns to its preview"), [](World& world, const Captures&, const Table&) {
     QQuickItem* body = drawn(world, QStringLiteral("userMessageBody"));
-    world.waitFor([&] { return body->property("collapsed").toBool() && body->height() <= 200 && body->clip(); },
+    QQuickItem* clip = body->findChild<QQuickItem*>(QStringLiteral("userMessageClip"));
+    expect(clip != nullptr, QStringLiteral("the message has no clip"));
+    // Cut off inside the padding, as far from the bottom edge as the top.
+    world.waitFor([&] { return body->property("collapsed").toBool() && body->height() <= 200 && clip->clip() && clip->y() > 0 &&
+                               qFuzzyCompare(body->height() - (clip->y() + clip->height()), clip->y()); },
                   [&] { return QStringLiteral("the preview; the message is %1 high").arg(body->height()); });
     expect(drawn(world, QStringLiteral("messageExpand"))->property("text") == QLatin1String("Show full message"), QStringLiteral("the message does not offer to show it in full"));
   });

@@ -519,14 +519,20 @@ const Steps steps([] {
   });
   step(S("the whole message is shown"), [](World& world, const Captures&, const Table&) {
     QQuickItem* body = world.item(S("userMessageBody"));
-    world.waitFor([&] { return !body->property("collapsed").toBool() && body->height() > 400 && !body->clip(); },
+    QQuickItem* clip = body->findChild<QQuickItem*>(S("userMessageClip"));
+    expect(clip != nullptr, S("the message has no clip"));
+    world.waitFor([&] { return !body->property("collapsed").toBool() && body->height() > 400 && !clip->clip(); },
                   [&] { return S("the whole message; it is %1 high").arg(body->height()); });
     expect(world.item(S("messageExpand"))->property("text") == QLatin1String("Show less"), S("the message does not offer to show less"));
   });
   step(S("the user shows less"), [](World& world, const Captures&, const Table&) { tapStill(world, world.item(S("messageExpand"))); });
   step(S("the message returns to its preview"), [](World& world, const Captures&, const Table&) {
     QQuickItem* body = world.item(S("userMessageBody"));
-    world.waitFor([&] { return body->property("collapsed").toBool() && body->height() <= 200 && body->clip(); },
+    QQuickItem* clip = body->findChild<QQuickItem*>(S("userMessageClip"));
+    expect(clip != nullptr, S("the message has no clip"));
+    // Cut off inside the padding, as far from the bottom edge as the top.
+    world.waitFor([&] { return body->property("collapsed").toBool() && body->height() <= 200 && clip->clip() && clip->y() > 0 &&
+                               qFuzzyCompare(body->height() - (clip->y() + clip->height()), clip->y()); },
                   [&] { return S("the preview; the message is %1 high").arg(body->height()); });
     expect(world.item(S("messageExpand"))->property("text") == QLatin1String("Show full message"), S("the message does not offer to show it in full"));
   });
