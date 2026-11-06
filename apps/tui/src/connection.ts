@@ -200,6 +200,8 @@ export interface TuiCreateThreadInput {
   readonly worktreePath: string | null;
   readonly createWorktree: boolean;
   readonly startFromOrigin: boolean;
+  /** The plan this thread implements; the MC marks it implemented there. */
+  readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: string };
 }
 
 export function buildThreadReplyTurn(input: {
@@ -1077,6 +1079,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
             runtimeMode: input.runtimeMode,
             interactionMode: input.interactionMode,
             bootstrap: buildThreadCreationBootstrap(input, createdAt, worktreeBranch),
+            ...(input.sourceProposedPlan
+              ? {
+                  sourceProposedPlan: {
+                    threadId: input.sourceProposedPlan.threadId,
+                    planId: PlanId.make(input.sourceProposedPlan.planId),
+                  },
+                }
+              : {}),
             createdAt,
           });
           return threadId;
