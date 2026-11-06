@@ -1074,6 +1074,93 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     Map.put(context, :woken_run, run_id)
   end
 
+  # Queued behind the running turn, on the provider the thread is on now (#1048).
+  step ~r/^(?:a delegated task result|a background wake from "(?<provider>[^"]+)") for "(?<thread>[^"]+)" (?<where>waits in the queue|arrives while no turn is running)$/,
+       %{args: [provider, thread, where]} = context do
+    provider = if provider == "", do: nil, else: provider
+
+    message_id = "message:wake-#{System.unique_integer([:positive])}"
+
+    fields =
+      if provider,
+        do: %{
+          "createdBy" => "agent",
+          "creationSource" => "provider",
+          "providerWake" => true,
+          "modelSelection" => selection(provider),
+          "notification" => %{"kind" => "background_task", "summary" => "Background activity"}
+        },
+        else: %{
+          "createdBy" => "system",
+          "creationSource" => "server",
+          "notification" => %{"kind" => "delegated_tasks", "summary" => "Tasks finished"},
+          "delegatedCompletion" => %{
+            "parentRunId" => context.running,
+            "taskIds" => ["task-one"],
+            "acceptedAt" => nil
+          }
+        }
+
+    context =
+      World.dispatch_message(
+        context,
+        thread,
+        "Woken",
+        Map.merge(
+          %{"messageId" => message_id, "dispatchMode" => %{"type" => "queue_after_active"}},
+          fields
+        )
+      )
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run_id = World.state(context, thread).entities["message"][message_id]["runId"]
+    if where == "waits in the queue", do: assert(run(context, run_id)["status"] == "queued")
+    Map.put(context, :woken_run, run_id)
+  end
+
+  step "the agent of {string} switches it to {string}", %{args: [thread, provider]} = context do
+    context =
+      context
+      |> World.log_claude_prompts()
+      |> World.command(%{
+        "type" => "provider.switch",
+        "threadId" => World.thread_id(context, thread),
+        "modelSelection" => selection(provider)
+      })
+
+    assert {:ok, _} = context.reply, "provider.switch failed: #{inspect(context.reply)}"
+    context
+  end
+
+  step "the turn for the woken agent runs on {string}", %{args: [provider]} = context do
+    id = context.woken_run
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+
+    assert %{"providerInstanceId" => ^provider, "modelSelection" => %{"instanceId" => ^provider}} =
+             run(context, id)
+
+    context
+  end
+
+  step "the woken turn completes", context do
+    id = context.woken_run
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] == "completed"))
+    context
+  end
+
+  # The handoff to the provider switched to carries the turn the old provider ran
+  # after the switch (#1048).
+  step "Claude receives the woken turn as earlier conversation before {string}",
+       %{args: [text]} = context do
+    World.await_latest_run(context, context.thread, "completed")
+    prompt = List.last(World.claude_prompts(context))
+    assert [_, rest] = String.split(prompt, "<conversation_history>", parts: 2)
+    assert [history, message] = String.split(rest, "</conversation_history>", parts: 2)
+    assert history =~ "User: Woken"
+    assert String.trim(message) == text
+    context
+  end
+
   step "a turn for it starts", context do
     id = context.woken_run
     World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))

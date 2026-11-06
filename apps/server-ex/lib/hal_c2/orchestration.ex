@@ -4213,9 +4213,18 @@ defmodule HalC2.Orchestration do
     thread_id = thread["id"]
     {ordinal, renumbered} = start_ordinal(state, runs, queued)
 
-    selection =
+    named =
       (queued && queued["modelSelection"]) || command["modelSelection"] ||
         thread["modelSelection"]
+
+    # The MC's own message to the agent (a delegated result, a pull request wake) names
+    # no model: queued, it runs on the thread's selection when it starts, not the one
+    # the thread had when it queued, since the agent may have switched since (#1048).
+    # A provider's wake (`HalC2.Orchestration.Wake`) stays on the provider that woke.
+    selection =
+      if queued && agent_message?(command) && command["createdBy"] == "system",
+        do: thread["modelSelection"] || named,
+        else: named
 
     instance = selection["instanceId"] || thread["providerInstanceId"] || "codex"
     driver = driver_for(instance)
@@ -4355,8 +4364,11 @@ defmodule HalC2.Orchestration do
 
     # A run on another provider takes the thread over, as `provider.switch` would: a
     # client's switch can be missing or stale when it sent behind sends still in flight.
+    # A message the MC sends for the agent is no choice of provider: a provider's wake
+    # finishes that provider's background work and leaves a switch away from it
+    # standing (#1048).
     switch_change =
-      if instance != message_instance(thread, %{}),
+      if instance != message_instance(thread, %{}) and not agent_message?(command),
         do:
           upsert(
             state,

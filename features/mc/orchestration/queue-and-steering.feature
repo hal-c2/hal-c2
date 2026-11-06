@@ -104,6 +104,39 @@ Feature: Queueing, steering and restarting
     Then the run for "Over to Claude" starts with ordinal 2
     And thread "t1" is on "claudeAgent"
 
+  # What the MC queued for the agent before the agent switched provider (#1048).
+  @mc
+  Scenario: A delegated result queued before a switch runs on the provider the thread switched to
+    Given "t1" has a running turn on "codex"
+    And a delegated task result for "t1" waits in the queue
+    When the agent of "t1" switches it to "claudeAgent"
+    And the running turn completes
+    Then the turn for the woken agent runs on "claudeAgent"
+    And thread "t1" is on "claudeAgent"
+
+  # A provider's wake finishes that provider's background work; it is no choice of provider.
+  @mc
+  Scenario: A provider's wake after a switch runs on that provider and leaves the switch standing
+    Given "t1" has a running turn on "codex"
+    And a background wake from "codex" for "t1" waits in the queue
+    When the agent of "t1" switches it to "claudeAgent"
+    And the running turn completes
+    Then the turn for the woken agent runs on "codex"
+    And thread "t1" is on "claudeAgent"
+
+  @mc
+  Scenario: A provider's wake on a switched idle thread runs on that provider and leaves the switch standing
+    Given "t1" has a running turn on "codex"
+    And the running turn completes
+    When the agent of "t1" switches it to "claudeAgent"
+    And a background wake from "codex" for "t1" arrives while no turn is running
+    Then the turn for the woken agent runs on "codex"
+    And thread "t1" is on "claudeAgent"
+    When the woken turn completes
+    And the user sends "Where were we?" to "t1" with automatic delivery
+    Then "Where were we?" runs on "claudeAgent"
+    And Claude receives the woken turn as earlier conversation before "Where were we?"
+
   @mc
   Scenario Outline: A restart interrupts the active turn and goes first
     Given "t1" has a running turn and a queued message "Old"

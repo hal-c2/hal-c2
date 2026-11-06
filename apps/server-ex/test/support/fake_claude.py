@@ -211,7 +211,8 @@ for line in sys.stdin:
         send({"type": "control_request", "request_id": f"dialog-{turn}", "request": {"subtype": "request_user_dialog", "dialog_kind": "resume_return",
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
-    if "wait" in text:
+    # A handoff's earlier conversation is history, not a directive.
+    if "wait" in text.split("</conversation_history>")[-1]:
         continue
     # "grow the conversation": with an autoCompactWindow in --settings the conversation
     # outgrows it and Claude compacts (compact_boundary) before it answers.
