@@ -189,6 +189,17 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
     add(regenerate);
   }
   add({QStringLiteral("mark-unread"), QStringLiteral("Mark unread"), QStringLiteral("mail-open")});
+  // Whether the MC may settle this thread on its own (pingdotgg/t3code#11846).
+  if (m_store->supports(thread->environmentId, QStringLiteral("threadAutoSettleOptOut"))) {
+    const bool enabled = row.value(QLatin1String("autoSettleDisabledAt")).toString().isEmpty();
+    Item autoSettle{QStringLiteral("auto-settle"), QStringLiteral("Auto-settle behavior"), QStringLiteral("timer")};
+    Item on{QStringLiteral("auto-settle:enabled"), QStringLiteral("Enabled")};
+    on.checked = enabled;
+    Item off{QStringLiteral("auto-settle:disabled"), QStringLiteral("Disabled")};
+    off.checked = !enabled;
+    autoSettle.children = {on, off};
+    add(autoSettle);
+  }
   const std::optional<QString> projectKey = sidebar->logicalProjectKey(thread->environmentId, thread->projectId);
   if (!header && projectKey) {
     const bool scoped = sidebar->scope() == projectKey;
@@ -447,6 +458,12 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
             QStringLiteral("Failed to regenerate thread title"));
   } else if (id == QLatin1String("mark-unread")) {
     m_bridge->dispatch(QStringLiteral("thread.markUnread"), keyed);
+  } else if (id == QLatin1String("auto-settle:enabled") || id == QLatin1String("auto-settle:disabled")) {
+    command(key,
+            {{QStringLiteral("type"), QStringLiteral("thread.auto-settle.set")},
+             {QStringLiteral("threadId"), thread->id},
+             {QStringLiteral("enabled"), id == QLatin1String("auto-settle:enabled")}},
+            QStringLiteral("Failed to update auto-settle"));
   } else if (id == QLatin1String("filter-by-project")) {
     const auto projectKey = shell->sidebar()->logicalProjectKey(thread->environmentId, thread->projectId);
     const bool scoped = shell->sidebar()->scope() == projectKey;

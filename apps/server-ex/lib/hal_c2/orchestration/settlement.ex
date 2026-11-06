@@ -3,7 +3,8 @@ defmodule HalC2.Orchestration.Settlement do
   Settles threads that need nobody any more (`thread.auto-settle`): one whose pull requests all merged
   (`sidebarAutoSettleOnMerge`) or closed after the user last spoke in it, or one idle
   for `sidebarAutoSettleAfterDays`, each resolved per project override. Pinned,
-  running, waiting-on-you, just-messaged and still-snoozed threads are left alone,
+  running, waiting-on-you, just-messaged and still-snoozed threads, and those the user
+  turned auto-settle off for (`thread.auto-settle.set`), are left alone,
   and the thread is checked again as it settles, so anything newer wins.
 
   Linked pull requests decide from their synced snapshots (`HalC2.PullRequests.Sync`); a
@@ -82,11 +83,12 @@ defmodule HalC2.Orchestration.Settlement do
 
   def handle_info(_other, state), do: {:noreply, state}
 
-  # What can make a thread settle: its runs, what it waits on, and its pull requests.
+  # What can make a thread settle: its runs, what it waits on, its pull requests and
+  # whether auto-settle is on for it.
   defp watched(row),
     do:
       {row["status"], row["activityRunStatus"], row["pendingRuntimeRequest"],
-       row["branchPullRequest"],
+       row["branchPullRequest"], row["autoSettleDisabledAt"],
        for(
          link <- row["pullRequests"] || [],
          do: {link["number"], link["source"], link["snapshot"]["state"]}
@@ -246,6 +248,7 @@ defmodule HalC2.Orchestration.Settlement do
       row["archivedAt"] != nil -> "archived"
       row["settledOverride"] == "settled" -> "already settled"
       row["settledOverride"] != nil -> "kept active by the user"
+      row["autoSettleDisabledAt"] != nil -> "auto-settle is turned off for it"
       row["pinnedAt"] != nil -> "pinned"
       row["pendingRuntimeRequest"] != nil -> "waiting on the user"
       row["activityRunStatus"] != nil -> "has a run in progress"

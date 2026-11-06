@@ -86,6 +86,8 @@ export interface ThreadActionsContext {
   /** The mode to return to when a menu or prompt closes. */
   readonly restingMode: () => TuiMode;
   readonly settlementSupported: () => boolean;
+  /** The server understands thread.auto-settle.set (`capabilities.threadAutoSettleOptOut`). */
+  readonly autoSettleOptOutSupported?: () => boolean;
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
   /** The connection to the environment is lost: what it would have to do is refused here. */
   readonly offline: () => boolean;
@@ -231,6 +233,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     const items = buildThreadContextMenuItems({
       row: row ?? { section: "active", thread },
       settlementSupported: ctx.settlementSupported(),
+      autoSettleOptOutSupported: autoSettleOptOut(),
       hasWorkspacePath: workspacePath(thread) !== null,
       canSnooze: canSnooze(thread, { now: ctx.now() }),
       canMove: ctx.canMove(),
@@ -272,6 +275,32 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     };
   };
 
+  /** Auto-settle's two settings for `thread`, the current one checked, as a submenu. */
+  const autoSettleMenu = (thread: TuiThreadShell): ThreadSubmenu => {
+    const enabled = thread.autoSettleDisabledAt == null;
+    const option = (on: boolean) => ({
+      id: on ? "enabled" : "disabled",
+      label: `${on === enabled ? "✓" : " "} ${on ? "Enabled" : "Disabled"}`,
+    });
+    return {
+      items: [
+        { id: "header", label: `Auto-settle ${clip(thread.title, 24)}`, header: true },
+        option(true),
+        option(false),
+      ],
+      choose: (id) => setAutoSettle(thread, id === "enabled"),
+    };
+  };
+
+  const setAutoSettle = (thread: TuiThreadShell, enabled: boolean) =>
+    report(
+      client.setThreadAutoSettle(thread.id as never, enabled),
+      enabled ? "Auto-settle turned on." : "Auto-settle turned off.",
+      "Failed to change auto-settle",
+    );
+
+  const autoSettleOptOut = () => ctx.autoSettleOptOutSupported?.() ?? false;
+
   const copy = (value: string, label: string) => {
     const copied = ctx.copyToClipboard?.(value) ?? false;
     store.setStatus(
@@ -297,6 +326,8 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         return settle(thread);
       case "unsettle":
         return report(client.unsettleThread(thread.id as never), "Un-settled.", "Un-settle failed");
+      case "auto-settle":
+        return openSubmenu(thread, autoSettleMenu(thread));
       case "rename":
         return openOverlay({
           kind: "rename",
@@ -380,6 +411,16 @@ export function createThreadActions(ctx: ThreadActionsContext) {
           keywords: "park done inbox active lifecycle",
           action: settled ? "thread.unsettle" : "thread.settle",
           payload,
+        });
+      }
+      if (autoSettleOptOut()) {
+        const enabled = thread.autoSettleDisabledAt == null;
+        list.push({
+          id: "auto-settle",
+          title: enabled ? "Turn auto-settle off" : "Turn auto-settle on",
+          keywords: "auto settle automatic disable enable long-running",
+          action: "thread.auto-settle.set",
+          payload: { ...payload, enabled: !enabled },
         });
       }
       const snoozed = effectiveSnoozed(thread, { now: ctx.now() });
@@ -538,6 +579,11 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       case "thread.unsettle": {
         const thread = threadFromPayload(payload);
         if (thread) runMenuAction(thread, "unsettle");
+        return true;
+      }
+      case "thread.auto-settle.set": {
+        const thread = threadFromPayload(payload);
+        if (thread) setAutoSettle(thread, field(payload, "enabled") === true);
         return true;
       }
       case "thread.move": {
