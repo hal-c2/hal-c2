@@ -128,9 +128,6 @@ public:
     // Whether an error row is a wait rather than a failure (a usage limit),
     // which draws in the warning colour with its title alone.
     WarningRole,
-    // A long plan's first lines, empty for a plan short enough to show
-    // whole; the plan opens to `text` while `expanded`.
-    PreviewRole,
     // What a marker or a resource card offers to do with the thread
     // ThreadRole names ("Open fork", "Open chat"), or empty.
     ActionRole,
