@@ -52,29 +52,6 @@ Rectangle {
     readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
     readonly property color line: Theme.palette.color("border", "#27272a")
 
-    // A redacted placeholder: the same length and
-    // separators, other characters drawn from a hash of the value, so an
-    // account can be told apart without being read.
-    function redacted(value) {
-        const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
-        let state = 0x811c9dc5 | 0;
-        for (let i = 0; i < value.length; ++i) {
-            state ^= value.charCodeAt(i);
-            state = Math.imul(state, 0x01000193);
-        }
-        let result = "";
-        for (const ch of value) {
-            if (ch === "@" || ch === "." || ch === "-" || ch === "_") {
-                result += ch;
-                continue;
-            }
-            state = Math.imul(state ^ (state >>> 13), 0x85ebca6b);
-            state = Math.imul(state ^ (state >>> 16), 0xc2b2ae35);
-            result += alphabet[Math.abs(state) % alphabet.length];
-        }
-        return result;
-    }
-
     // "Checked 5m ago": when the environment last checked its providers,
     // re-read every half minute while the page shows it.
     property double checkedNow: Date.now()
@@ -564,7 +541,6 @@ Rectangle {
         readonly property var provider: modelData
         readonly property var account: provider.account
         readonly property var advisory: provider.advisory
-        property bool revealed: false
         property bool configuring: false
 
         objectName: "provider_" + provider.instanceId
@@ -865,35 +841,13 @@ Rectangle {
             }
 
             // The account email, scrambled until the user asks.
-            Button {
-                id: email
-
+            RedactedText {
                 objectName: "email"
                 visible: card.provider.email.length > 0
-                flat: true
-                padding: 0
-                // Tall enough to hit, though the text is small.
-                implicitHeight: Math.max(24, implicitContentHeight)
-                text: card.revealed ? card.provider.email : page.redacted(card.provider.email)
-                font.pixelSize: Theme.type.caption.size
-                font.family: "monospace"
+                value: card.provider.email
                 Accessible.name: qsTr("Toggle account email visibility")
-                ToolTip.visible: hovered
-                ToolTip.text: card.revealed ? qsTr("Hide account email") : qsTr("Show account email")
-                onClicked: card.revealed = !card.revealed
-
-                contentItem: Label {
-                    text: email.text
-                    verticalAlignment: Text.AlignVCenter
-                    color: email.hovered ? page.foreground : page.muted
-                    font: email.font
-                }
-                background: Rectangle {
-                    color: "transparent"
-                    radius: Theme.radiusXs
-                    border.width: email.visualFocus ? 1 : 0
-                    border.color: Theme.palette.color("focus", "#3b82f6")
-                }
+                revealTip: qsTr("Show account email")
+                hideTip: qsTr("Hide account email")
             }
 
             // The runtime the environment installs itself (Antigravity).

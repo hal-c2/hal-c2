@@ -50,6 +50,9 @@ void saveOn(FakeMc& mc, const QString& environment, const QString& key, const QJ
 // Another environment's document, created on first use; its config
 // snapshot carries it.
 FakeConfig::Document& documentOf(FakeMc& mc, const QString& environment);
+// The MC's hubs (usage-limit sources) become `sources`, announced as
+// `config.usageLimitSources`.
+void publishSources(FakeMc& mc, const QJsonArray& sources);
 // The MC's providers become `providers`, announced as `config.providers`.
 void publishProviders(FakeMc& mc, const QJsonArray& providers);
 // The same on any environment: another one's providers are kept in
