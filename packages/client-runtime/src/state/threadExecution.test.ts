@@ -3,6 +3,10 @@ import {
   NodeId,
   MessageId,
   RunId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2RunStatus,
 } from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
@@ -86,6 +90,32 @@ describe("thread execution presentation", () => {
     expect(
       deriveThreadRuntime({ ...projection, runs: [failed, run("new", 2, "running")] }),
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
+
+    // A switch to a provider whose session failed earlier leaves the run's limit standing.
+    const otherInstance = ProviderInstanceId.make("codex-work");
+    const crashed = {
+      id: ProviderSessionId.make("session-crashed"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      status: "error" as const,
+      cwd: "/repo",
+      model: null,
+      capabilities: {} as OrchestrationV2ProviderSession["capabilities"],
+      createdAt: now,
+      updatedAt: now,
+      lastError: "Session crashed",
+    };
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        runs: [{ ...failed, providerInstanceId: otherInstance }],
+        providerSessions: [crashed],
+      }),
+    ).toMatchObject({ lastError: "Plan limit reached", lastErrorClass: "usage_limit" });
+    expect(deriveThreadRuntime({ ...projection, providerSessions: [crashed] })).toMatchObject({
+      lastError: "Session crashed",
+      lastErrorClass: null,
+    });
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {
