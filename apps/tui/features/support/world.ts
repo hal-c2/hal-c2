@@ -5,6 +5,9 @@
 // client is not connected at boot: call `ctx.fake.connect()` (default
 // snapshot) or `ctx.fake.emitShell(snapshot)` when the scenario has data.
 // Configure the fake before the first render with `useClient(ctx, options)`.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { KeyEvent } from "@opentui/core";
 import type { QmlObject } from "opentui-qml";
@@ -77,6 +80,8 @@ export interface World extends StepContext {
   prepare?: () => void;
   /** Plugin loads the host started (`plugin.load`); await them before asserting. */
   pluginLoads?: Array<Promise<void>>;
+  /** Where downloads go (made on first write, removed after the scenario), never ~/Downloads. */
+  downloadsDir?: string;
 }
 
 /** Set up the fake client before boot; later calls replace it only if not booted. */
@@ -99,8 +104,14 @@ export async function boot(
   const logs: string[] = (ctx.logs ??= []);
   const clipboard: string[] = (ctx.clipboard ??= []);
   const dispatched = (ctx.dispatched ??= []);
+  const downloadsDir = (ctx.downloadsDir ??= NodePath.join(
+    NodeOS.tmpdir(),
+    `tui-downloads-${process.pid}-${NodeCrypto.randomUUID()}`,
+  ));
+  ctx.cleanups.push(() => NodeFS.rmSync(downloadsDir, { recursive: true, force: true }));
   const host = createHost({
     ...ctx.hostOptions,
+    features: { downloadsDir, ...ctx.hostOptions?.features },
     client: fake.client,
     size: { columns, rows },
     log: (message) => logs.push(message),

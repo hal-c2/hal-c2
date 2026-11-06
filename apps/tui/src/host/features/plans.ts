@@ -1,3 +1,6 @@
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import type { OrchestrationThread } from "@hal-c2/contracts";
 
 import { clip } from "../../format.ts";
@@ -5,7 +8,7 @@ import { findLatestProposedPlan, proposedPlanTitle } from "../../proposedPlan.ts
 import { THEME } from "../../theme.ts";
 import { threadKey } from "../sidebarState.ts";
 import { chunk, styled, type StyledText } from "../styledText.ts";
-import { errorText, type Feature, type FeatureKit } from "./kit.ts";
+import { errorText, payloadField, type Feature, type FeatureKit } from "./kit.ts";
 
 type StepStatus = "pending" | "inProgress" | "completed";
 
@@ -29,9 +32,38 @@ const STEP_GLYPH: Record<StepStatus, string> = { completed: "✓", inProgress: "
 export function planFileName(planMarkdown: string): string {
   const segment = (proposedPlanTitle(planMarkdown) ?? "plan")
     .toLowerCase()
+    .replace(/[`'".,!?()[\]{}]+/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return `${segment || "plan"}.md`;
+}
+
+/** The plan as the web client exports it: its Markdown with one closing newline. */
+const planText = (planMarkdown: string) => `${planMarkdown.trimEnd()}\n`;
+
+/** The first message of a thread that implements a plan (the web client's prompt). */
+export const planImplementationPrompt = (planMarkdown: string) =>
+  `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
+
+/** Write `name` into `dir` without overwriting: `plan.md`, then `plan (2).md`, … */
+export function writeNewFile(dir: string, name: string, text: string): string {
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const ext = NodePath.extname(name);
+  const stem = name.slice(0, name.length - ext.length);
+  for (let n = 1; ; n += 1) {
+    const file = NodePath.join(dir, n === 1 ? name : `${stem} (${n})${ext}`);
+    try {
+      NodeFS.writeFileSync(file, text, { flag: "wx" });
+      return file;
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EEXIST") throw error;
+    }
+  }
+}
+
+export interface PlansOptions {
+  /** Where "Download plan" writes on this machine (the user's Downloads folder). */
+  readonly downloadsDir: string;
 }
 
 function latestSteps(detail: OrchestrationThread) {
@@ -51,7 +83,7 @@ function latestSteps(detail: OrchestrationThread) {
  * it, the thread an implemented plan went to, and the plan as a Markdown file
  * in the workspace (or on the clipboard).
  */
-export function createPlansFeature(kit: FeatureKit): Feature {
+export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feature {
   const { client, store } = kit;
   let last = "";
 
@@ -133,19 +165,96 @@ export function createPlansFeature(kit: FeatureKit): Feature {
     kit.state.set("planStatus", next);
   };
 
-  const save = () => {
+  // The thread's worktree, else its project's folder; null when the MC knows neither.
+  const workspaceOrSay = () => {
+    const current = detail();
+    const cwd =
+      current?.worktreePath ??
+      store.getState().shell?.projects.find((p) => p.id === current?.projectId)?.workspaceRoot ??
+      null;
+    if (cwd === null) kit.status("Workspace path is unavailable", "error");
+    return cwd;
+  };
+
+  // The workspace may be another machine's: the MC writes the file there.
+  const save = (path: string) => {
     const plan = latestPlan();
-    const workspace = kit.workspace();
-    if (!plan || !workspace) {
-      kit.status("This thread has no plan to save.", "warning");
-      return;
-    }
-    const name = planFileName(plan.planMarkdown);
+    const cwd = workspaceOrSay();
+    if (!plan || cwd === null) return;
     void kit.track(
-      client.writeFile(workspace.cwd, name, `${plan.planMarkdown.trimEnd()}\n`).then(
-        () => kit.status(`Plan saved to ${name}.`, "success"),
+      client.writeFile(cwd, path, planText(plan.planMarkdown)).then(
+        () => kit.status(`Plan saved to ${path}.`, "success"),
         (error: unknown) => kit.status(`Could not save the plan: ${errorText(error)}`, "error"),
       ),
+    );
+  };
+
+  const askSave = () => {
+    const plan = latestPlan();
+    if (!plan || workspaceOrSay() === null) return;
+    kit.ask({
+      label: "save plan to",
+      placeholder: "path in the workspace",
+      value: planFileName(plan.planMarkdown),
+      onSubmit: (path) => {
+        if (path.length > 0) save(path);
+      },
+    });
+  };
+
+  const download = () => {
+    const plan = latestPlan();
+    if (!plan) return;
+    try {
+      const file = writeNewFile(
+        options.downloadsDir,
+        planFileName(plan.planMarkdown),
+        planText(plan.planMarkdown),
+      );
+      kit.status(`Plan downloaded to ${file}.`, "success");
+    } catch (error) {
+      kit.status(`Could not download the plan: ${errorText(error)}`, "error");
+    }
+  };
+
+  // A new thread in default mode, on the planning thread's branch and model,
+  // starts with the plan; the MC marks the plan implemented by it.
+  const implementInNewThread = () => {
+    const current = detail();
+    const plan = latestPlan();
+    if (!current || !plan) return;
+    const project = store.getState().shell?.projects.find((p) => p.id === current.projectId);
+    if (!project) {
+      kit.status("Could not start implementation thread", "error");
+      return;
+    }
+    const title = proposedPlanTitle(plan.planMarkdown);
+    kit.status("Starting implementation thread…", "busy");
+    void kit.track(
+      client
+        .createThread({
+          projectId: current.projectId,
+          projectCwd: project.workspaceRoot,
+          title: title ? `Implement ${title}` : "Implement plan",
+          modelSelection: current.modelSelection,
+          firstMessage: planImplementationPrompt(plan.planMarkdown),
+          attachments: [],
+          runtimeMode: current.runtimeMode,
+          interactionMode: "default",
+          branch: current.branch,
+          worktreePath: current.worktreePath,
+          createWorktree: false,
+          startFromOrigin: false,
+          sourceProposedPlan: { threadId: current.id, planId: plan.id },
+        })
+        .then(
+          (threadId) => {
+            store.select({ kind: "thread", id: threadId });
+            kit.status("Implementation thread started.", "success");
+          },
+          // The web client's toast title; the status line has room for no more.
+          () => kit.status("Could not start implementation thread", "error"),
+        ),
     );
   };
 
@@ -158,6 +267,12 @@ export function createPlansFeature(kit: FeatureKit): Feature {
         ...(latestPlan()
           ? [
               {
+                id: "plan.implementInNewThread",
+                title: "Implement plan in a new thread",
+                keywords: "proposed plan start",
+                action: "plan.implementInNewThread",
+              },
+              {
                 id: "plan.save",
                 title: "Save plan as Markdown",
                 keywords: "export file write",
@@ -168,6 +283,12 @@ export function createPlansFeature(kit: FeatureKit): Feature {
                 title: "Copy plan as Markdown",
                 keywords: "clipboard export",
                 action: "plan.copy",
+              },
+              {
+                id: "plan.download",
+                title: "Download plan as Markdown",
+                keywords: "export file downloads",
+                action: "plan.download",
               },
             ]
           : []),
@@ -184,15 +305,25 @@ export function createPlansFeature(kit: FeatureKit): Feature {
           : []),
       ];
     },
-    dispatch: (action) => {
+    dispatch: (action, payload) => {
       switch (action) {
-        case "plan.save":
-          save();
+        case "plan.implementInNewThread":
+          implementInNewThread();
+          return true;
+        case "plan.save": {
+          // A path in the payload saves there; without one the user is asked.
+          const path = payloadField(payload, "path");
+          if (typeof path === "string" && path.trim().length > 0) save(path.trim());
+          else askSave();
+          return true;
+        }
+        case "plan.download":
+          download();
           return true;
         case "plan.copy": {
           const plan = latestPlan();
           if (!plan) return true;
-          const copied = kit.copy(`${plan.planMarkdown.trimEnd()}\n`);
+          const copied = kit.copy(planText(plan.planMarkdown));
           kit.status(
             copied ? "Plan copied." : "This terminal has no clipboard access.",
             copied ? "success" : "warning",

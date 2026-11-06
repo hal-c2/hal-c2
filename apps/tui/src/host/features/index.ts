@@ -1,3 +1,6 @@
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import type { PaletteCommand } from "../paletteState.ts";
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
 import { createAppearanceFeature } from "./appearance.ts";
@@ -6,14 +9,14 @@ import { createContextFeature } from "./context.ts";
 import { createConversationFeature } from "./conversation.ts";
 import { createEditorFeature, type EditorOptions } from "./editor.ts";
 import { createKeysFeature } from "./keys.ts";
-import { createPlansFeature } from "./plans.ts";
+import { createPlansFeature, type PlansOptions } from "./plans.ts";
 import { createReachFeature } from "./reach.ts";
 import { createRepositoryFeature } from "./repository.ts";
 import { createServerFeature } from "./server.ts";
 import type { Feature, FeatureKit } from "./kit.ts";
 import { createWorkspaceFeature } from "./workspace.ts";
 
-export interface FeatureOptions extends Partial<EditorOptions> {
+export interface FeatureOptions extends Partial<EditorOptions>, Partial<PlansOptions> {
   readonly saveKeymap?: ((overrides: Record<string, string | null>) => void) | undefined;
 }
 
@@ -47,7 +50,9 @@ export function createFeatures(
     createKeysFeature(kit, options),
     createArchiveFeature(kit),
     createConversationFeature(kit),
-    createPlansFeature(kit),
+    createPlansFeature(kit, {
+      downloadsDir: options.downloadsDir ?? NodePath.join(NodeOS.homedir(), "Downloads"),
+    }),
     createServerFeature(kit),
     createWorkspaceFeature(kit),
     createRepositoryFeature(kit),
