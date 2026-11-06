@@ -486,7 +486,7 @@ Feature: Connection health
     When the user signs out of HAL-C2 Connect
     Then the directly paired environment stays
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A protocol mismatch blocks the connection with advice
     Given an environment whose MC speaks <protocol>
     When the client connects
