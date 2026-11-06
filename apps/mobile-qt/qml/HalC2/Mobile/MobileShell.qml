@@ -66,7 +66,7 @@ ShellWindow {
 
     readonly property string routeKind: route !== null ? route.kind : "home"
     // The phone layout's screen for the route.
-    readonly property string screen: routeKind === "thread" || routeKind === "draft" ? "thread" : routeKind === "settings" ? "settings" : routeKind === "space" ? "space" : "home"
+    readonly property string screen: routeKind === "thread" || routeKind === "draft" ? "thread" : routeKind === "settings" ? "settings" : routeKind === "space" ? "space" : routeKind === "usage" ? "usage" : "home"
     // The settings section the route names; none on the bare settings route,
     // which is the list of them in the phone layout.
     readonly property string openSection: screen === "settings" && route.section && route.section !== "/settings" ? route.section : ""
@@ -302,6 +302,14 @@ ShellWindow {
                             onAwaitDropped: root.spacePageComing = ""
                             resumeStep: root.spaceStep
                             onStepMoved: step => root.spaceStep = step
+                            onBackRequested: root.stepBack()
+                        }
+                    }
+
+                    Loader {
+                        anchors.fill: parent
+                        active: root.screen === "usage"
+                        sourceComponent: UsageScreen {
                             onBackRequested: root.stepBack()
                         }
                     }

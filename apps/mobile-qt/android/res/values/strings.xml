@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="hal_c2_usage_widget_name">Subscription usage</string>
+    <string name="hal_c2_usage_widget_description">Your subscriptions\' remaining limits from your HAL-C2 environments. Tap to open Limits.</string>
+    <string name="hal_c2_usage_widget_empty">Open HAL-C2 and connect an environment to see limits.</string>
+    <string name="hal_c2_usage_widget_open">Tap to open Limits</string>
+    <string name="hal_c2_usage_widget_refresh">Open the app to refresh</string>
+    <string name="hal_c2_usage_widget_remaining">%1$d%% left</string>
+    <string name="hal_c2_usage_widget_resets">Resets %1$s</string>
+    <string name="hal_c2_usage_widget_as_of">As of %1$s</string>
+    <string name="hal_c2_usage_widget_unknown_check">Last check unknown</string>
+    <string name="hal_c2_usage_widget_more"> · +%1$d more</string>
+</resources>

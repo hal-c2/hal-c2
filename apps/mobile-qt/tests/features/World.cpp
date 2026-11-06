@@ -24,6 +24,7 @@
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "ThreadStore.h"
+#include "UsageController.h"
 
 namespace {
 
@@ -131,7 +132,7 @@ void World::open() {
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
   push->opened();
   m_app = std::make_unique<MobileApp>(
-      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera, push});
+      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera, push, widgets});
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
@@ -215,6 +216,8 @@ void World::setTime(const QDateTime& time) {
   const QDateTime now = time.toUTC();
   native().controller<ThreadStore>()->setClock([now] { return now; });
   native().controller<ComposerController>()->setClock([now] { return now; });
+  native().controller<UsageController>()->setClock([now] { return now; });
+  m_app->widget().setClock([now] { return now; });
 }
 
 MobileApp& World::app() {

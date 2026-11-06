@@ -44,9 +44,14 @@ class ShellStore;
 // totalTokens}] newest first, chart [{key, label, heading, costUsd [one per
 // provider], totalTokens [one per provider]}] every period of the window,
 // oldest first} | null, limits {pools [{driver, label, windows
-// [{key, label, remainingPercent, resetsAt, accounts [{name, usedPercent,
-// resetsAt}]}], credits [{key, name, available, nextExpiresAt, busy,
-// status}]}], notices [text]}}.
+// [{key, kind, label, remainingPercent, resetsAt, accounts [{name,
+// usedPercent, resetsAt, checkedAt}]}], credits [{key, name, available,
+// nextExpiresAt, busy, status}]}], notices [text]}}.
+//
+// A home-screen widget (the phone's SubscriptionWidget) follows every online
+// environment's limits whether or not the page shows (`setFollowAll`), and
+// hears them pooled over all of them (`allLimitsChanged`, the shape of
+// `limits`).
 //
 // Actions: `usage.metric {metric}` and `usage.window {days}` (kept on this
 // device), `usage.environment {id}`, `usage.refresh`, and `usage.resetCredit
@@ -62,6 +67,16 @@ public:
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
   // The zone the window's days and the labels of its hours are read in.
   void setZone(std::function<QTimeZone()> zone) { m_zone = std::move(zone); }
+  // Follows every online environment's limits while on, the page open or not.
+  void setFollowAll(bool on);
+  bool followsAll() const { return m_followAll; }
+  // Asks the followed environments for their limits afresh, as showing them
+  // does: at most every five minutes each.
+  void checkLimits() { refreshLimits(false); }
+
+signals:
+  // Every followed environment's limits, pooled, while following them all.
+  void allLimitsChanged(const QVariantMap& limits);
 
 private:
   struct Answer {
@@ -82,12 +97,17 @@ private:
   void follow();
   void unfollow();
   QStringList targets() const;
+  // The environments whose limits are followed: the page's, or all of them.
+  QStringList limitTargets() const;
+  bool limitsFollowed() const;
   QString label(const QString& environmentId) const;
   QJsonObject window() const;
   void keep();
   void publish();
   QVariantMap summary(QStringList& notices) const;
-  QVariantMap limits();
+  // The followed accounts of `environments`, pooled; `page` remembers where
+  // the page's reset credits are redeemed.
+  QVariantMap limits(const QStringList& environments, bool page);
   void redeem(const QString& key);
 
   ShellBridge* m_bridge;
@@ -118,4 +138,6 @@ private:
   QSet<QString> m_redeeming;
   QHash<QString, QString> m_redeemStatus;
   quint64 m_openings = 0;
+  bool m_followAll = false;
+  QVariantMap m_allLimits;
 };

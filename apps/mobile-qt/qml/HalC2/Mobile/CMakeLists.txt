@@ -29,6 +29,7 @@ set(hal_c2_mobile_qml_files
     TerminalContextSheet.qml
     TerminalScreen.qml
     ThreadScreen.qml
+    UsageScreen.qml
 )
 include("${HAL_C2_DESKTOP_DIR}/cmake/QmldirCheck.cmake")
 hal_c2_check_qmldir(${hal_c2_mobile_qml_files} qmldir)

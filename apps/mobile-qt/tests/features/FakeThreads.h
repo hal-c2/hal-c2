@@ -63,3 +63,8 @@ void changeEntity(FakeMc& mc, const QString& thread, const QString& kind, const 
 void updateRow(FakeMc& mc, const QString& thread, const QJsonObject& fields);
 // The providers the MC's config lists.
 void offerProviders(FakeMc& mc, const QJsonArray& providers);
+// Another environment's, or the MC's own; and what the config says each lists.
+void offerProvidersOn(FakeMc& mc, const QString& environment, const QJsonArray& providers);
+QJsonArray providersOn(FakeMc& mc, const QString& environment);
+// The usage-limit sources (hubs) an environment's config lists.
+void offerLimitSources(FakeMc& mc, const QString& environment, const QJsonArray& sources);

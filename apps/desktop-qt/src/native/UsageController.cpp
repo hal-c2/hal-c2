@@ -140,9 +140,18 @@ void UsageController::activate() {
           [this, navigation] { setOpen(navigation->route().kind == QLatin1String("usage")); });
   // An environment that comes, goes, or drops changes who is asked.
   connect(m_store, &ShellStore::changed, this, [this] {
-    if (m_open) update();
+    if (m_open) {
+      update();
+    } else if (m_followAll) {
+      follow();
+      refreshLimits(false);
+    }
   });
   setOpen(navigation->route().kind == QLatin1String("usage"));
+  if (m_followAll) {
+    follow();
+    refreshLimits(false);
+  }
   publish();
 }
 
@@ -196,6 +205,27 @@ void UsageController::keep() {
   }
 }
 
+void UsageController::setFollowAll(bool on) {
+  if (on == m_followAll) return;
+  m_followAll = on;
+  if (limitsFollowed()) {
+    follow();
+    refreshLimits(false);
+  } else {
+    unfollow();
+  }
+  if (!on) m_allLimits.clear();
+  publish();
+}
+
+bool UsageController::limitsFollowed() const {
+  return m_followAll || (m_open && m_metric == QLatin1String("limits"));
+}
+
+QStringList UsageController::limitTargets() const {
+  return m_followAll ? m_store->environments() : targets();
+}
+
 void UsageController::setOpen(bool open) {
   if (open == m_open) return;
   m_open = open;
@@ -204,7 +234,7 @@ void UsageController::setOpen(bool open) {
     ++m_generation;
     ++m_openings;
     m_redeemStatus.clear();
-    unfollow();
+    if (!m_followAll) unfollow();
     publish();
     return;
   }
@@ -221,7 +251,7 @@ void UsageController::update() {
     follow();
     refreshLimits(false);
   } else {
-    unfollow();
+    if (!m_followAll) unfollow();
     QStringList asked = m_answers.keys();
     QStringList wanted = targets();
     std::sort(asked.begin(), asked.end());
@@ -325,8 +355,9 @@ void UsageController::read(bool rescan) {
 // Each chosen environment re-reads its providers' limits; the answers come as
 // `config.providers`. Unless the user asked, not within five minutes of the last.
 void UsageController::refreshLimits(bool manual) {
+  if (!limitsFollowed()) return;
   const QDateTime now = m_now();
-  for (const QString& environmentId : targets()) {
+  for (const QString& environmentId : limitTargets()) {
     if (!m_store->environmentOnline(environmentId) || m_limitsInFlight.contains(environmentId)) continue;
     const QDateTime asked = m_limitsAsked.value(environmentId);
     if (!manual && asked.isValid() && asked.secsTo(now) < kLimitsThrottleSecs) continue;
@@ -350,7 +381,7 @@ void UsageController::refreshLimits(bool manual) {
 // While limits show, each chosen environment's config says what its providers have left.
 void UsageController::follow() {
   QStringList environments;
-  for (const QString& environmentId : targets()) {
+  for (const QString& environmentId : limitTargets()) {
     if (m_store->environmentOnline(environmentId)) environments.append(environmentId);
   }
   for (auto it = m_configs.begin(); it != m_configs.end();) {
@@ -603,7 +634,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
 // The followed environments' accounts, one per driver and email with the
 // freshest read winning, pooled per driver and window.
 // Remembers where each account's banked reset credit is redeemed.
-QVariantMap UsageController::limits() {
+QVariantMap UsageController::limits(const QStringList& environments, bool page) {
   struct Account {
     QString driver;
     QString name;
@@ -621,9 +652,9 @@ QVariantMap UsageController::limits() {
   QList<QString> order;
   QHash<QString, Account> accounts;
   QStringList notices;
-  QStringList ids = m_providers.keys();
-  for (const QString& environmentId : m_sources.keys()) {
-    if (!ids.contains(environmentId)) ids.append(environmentId);
+  QStringList ids;
+  for (const QString& environmentId : environments) {
+    if (m_providers.contains(environmentId) || m_sources.contains(environmentId)) ids.append(environmentId);
   }
   std::sort(ids.begin(), ids.end());
   const bool several = m_store->environments().size() > 1;
@@ -748,7 +779,7 @@ QVariantMap UsageController::limits() {
   std::stable_sort(drivers.begin(), drivers.end(), [](const QString& a, const QString& b) {
     return (kDriverLabels.contains(a) ? 0 : 1) < (kDriverLabels.contains(b) ? 0 : 1);
   });
-  m_redeems.clear();
+  if (page) m_redeems.clear();
   QVariantList pools;
   for (const QString& driver : drivers) {
     QStringList windowKeys;
@@ -767,14 +798,15 @@ QVariantMap UsageController::limits() {
         }
         members[windowKey].append(QVariantMap{{QStringLiteral("name"), account.name},
                                               {QStringLiteral("usedPercent"), number(window, "usedPercent")},
-                                              {QStringLiteral("resetsAt"), text(window, "resetsAt")}});
+                                              {QStringLiteral("resetsAt"), text(window, "resetsAt")},
+                                              {QStringLiteral("checkedAt"), account.checkedAt}});
       }
       // Banked reset credits, and what came of the last redemption.
       const int available = account.credits.value(QLatin1String("availableCount")).toInt();
       const QString status = m_redeemStatus.value(key);
       if (available == 0 && status.isEmpty() && !m_redeeming.contains(key)) continue;
       const Redeem& target = account.hubRedeem.environmentId.isEmpty() ? account.redeem : account.hubRedeem;
-      if (!target.environmentId.isEmpty()) m_redeems.insert(key, target);
+      if (page && !target.environmentId.isEmpty()) m_redeems.insert(key, target);
       credits.append(QVariantMap{{QStringLiteral("key"), key},
                                  {QStringLiteral("name"), account.name},
                                  {QStringLiteral("available"), available},
@@ -802,6 +834,7 @@ QVariantMap UsageController::limits() {
         }
       }
       windows.append(QVariantMap{{QStringLiteral("key"), windowKey},
+                                 {QStringLiteral("kind"), text(firsts.value(windowKey), "kind")},
                                  {QStringLiteral("label"), text(firsts.value(windowKey), "label")},
                                  {QStringLiteral("remainingPercent"), static_cast<int>(std::lround(100 - used / list.size()))},
                                  {QStringLiteral("resetsAt"), soonest},
@@ -863,7 +896,19 @@ void UsageController::publish() {
   }
   QStringList notices;
   const QVariantMap merged = m_open && !limitsShown ? summary(notices) : QVariantMap();
-  const QVariantMap limitsNow = m_open && limitsShown ? limits() : QVariantMap();
+  const QVariantMap limitsNow = m_open && limitsShown ? limits(chosen, true) : QVariantMap();
+  // Nothing is said until an environment has: a widget keeps its last read
+  // rather than going blank while the providers are asked for again.
+  const QStringList everywhere = m_store->environments();
+  const bool heard = std::any_of(everywhere.begin(), everywhere.end(),
+                                 [&](const QString& id) { return m_providers.contains(id) || m_sources.contains(id); });
+  if (m_followAll && heard) {
+    const QVariantMap all = limits(everywhere, false);
+    if (all != m_allLimits) {
+      m_allLimits = all;
+      emit allLimitsChanged(all);
+    }
+  }
   // Why there is nothing to show.
   QString message;
   if (chosen.isEmpty()) {

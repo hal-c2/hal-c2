@@ -56,6 +56,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
     QStringLiteral("mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*"),
     QStringLiteral("settings/updates.feature"),
+    QStringLiteral("providers/usage-limits.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
     QStringLiteral("source-control/review-diffs.feature"),
     QStringLiteral("source-control/pull-request-threads.feature"),
