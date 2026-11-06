@@ -445,6 +445,7 @@ const Steps steps([] {
            describe(world));
   });
   step(QStringLiteral("%1 is not listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("notListed"))) return world.onSettingsPage.value(QStringLiteral("notListed"))(c);
     if (modelPickerLists(world, c[0], false)) return;
     expect(indexOf(world, c[0]) < 0, describe(world));
   });

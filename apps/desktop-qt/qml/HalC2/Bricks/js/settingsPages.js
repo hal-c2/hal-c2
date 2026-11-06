@@ -10,9 +10,15 @@
 //   under      the section it opens from, which stays current; it is not listed itself
 //   requires   shell state the section needs before it is listed
 //   keywords   what the native search matches, beside the label
-//   rows       the section's settingsRows.js rows, each found by its title and description
+//   rows       the section's settingsRows.js rows, each found by its title, description
+//              and keywords
 //   settings   other settings on the page the search finds: {title, targetId, keywords,
-//              requires (shell state the setting needs before it is found)}
+//              requires (shell state the setting needs before it is found), connected
+//              (found while an environment is connected), project (found while editing
+//              a project), scope ("environment": set for all projects, not one), within
+//              (what opening it shows while the setting itself is hidden)}
+//   project    the section of the project being edited: listed first while a project
+//              is, and as `others` {label, detail} while every project is
 var sections = [
     { to: "/settings/general", label: "General", brick: "GeneralSettings", rows: Rows.general,
       keywords: "project grouping auto-resume snooze limited threads auto-settle merged inactive notifications time format response streaming whitespace diff layout proactive panels skills slash rich text composer collapse send shortcut follow-up provider update checks continue restarts origin worktree add project unpin archive delete confirmation quit text generation model legacy plan context window sidebar" },
@@ -22,10 +28,12 @@ var sections = [
       keywords: "open source licenses licences notices third party attribution dependencies" },
     { to: "/settings/appearance", label: "Appearance", brick: "AppearanceSettings", rows: Rows.appearance,
       settings: [{ title: "Theme", targetId: "themes", keywords: "theme themes light dark system color scheme mode" }],
-      keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing word wrap custom editor" },
+      keywords: "appearance theme themes light dark system color scheme contrast glass opacity environment identification diff colors composer context panel animations font size family smoothing custom editor" },
     { to: "/settings/projects", label: "Project", brick: "ProjectSettings", requires: "projectSettings",
       detail: "Name, icon, checkouts and how new threads start",
-      settings: [{ title: "Default model", targetId: "model", keywords: "model provider new threads automatic" },
+      project: { label: "New threads", detail: "How new threads start on the selected environments" },
+      settings: [{ title: "Project overview", targetId: "identity", project: true, keywords: "name rename title icon emoji favicon checkouts remove" },
+                 { title: "Default model", targetId: "model", keywords: "model provider new threads automatic" },
                  { title: "Project environment", targetId: "environment", keywords: "environment variables env dotenv .env mise direnv envrc mcp" },
                  { title: "Actions", targetId: "projectActions", keywords: "actions scripts commands setup dev test run hal-c2.json import" }],
       keywords: "project projects name rename title icon emoji favicon checkout checkouts remove delete default model permissions runtime mode workspace worktree submodules environment variables dotenv mise direnv new threads" },
@@ -37,10 +45,17 @@ var sections = [
     { to: "/settings/plugin", label: "Plugin", brick: "PluginSettings", under: "/settings/plugins", prefix: true },
     { to: "/settings/snap-shot", label: "SnapShots", brick: "SnapShotSettings",
       detail: "Capture a window into your draft",
+      // The capture options show while capture is on; until then a result opens at its switch.
+      settings: [{ title: "Capture sound", targetId: "snapShot:sound", within: "snapShot:enabled", keywords: "sound audio play starts" },
+                 { title: "Capture flash", targetId: "snapShot:flash", within: "snapShot:enabled", keywords: "flash cue captured window" },
+                 { title: "Capture animations", targetId: "snapShot:animations", within: "snapShot:enabled", keywords: "animations animate draft" },
+                 { title: "Include app text", targetId: "snapShot:accessibility", within: "snapShot:enabled", keywords: "accessibility text controls" }],
       keywords: "snapshot snapshots snap shot capture screenshot window shortcut sound flash animation portal accessibility" },
     { to: "/settings/providers", label: "Providers", brick: "ProvidersSettings", requires: "providerSettings",
       detail: "Install, sign-in, versions and models",
-      keywords: "providers provider codex claude cursor grok opencode antigravity pi muse acp agents sign in sign out login logout account email enable disable update version models refresh" },
+      settings: [{ title: "Provider health check interval", targetId: "healthInterval", connected: true, keywords: "health check probe background refresh interval seconds" },
+                 { title: "Usage providers", targetId: "hubs", connected: true, keywords: "usage limits cliproxyapi cli proxy hub accounts" }],
+      keywords: "providers provider codex claude cursor grok opencode antigravity pi muse acp agents sign in sign out login logout account email enable disable update version models refresh binary path executable install" },
     { to: "/settings/integrations", label: "Integrations", brick: "IntegrationsSettings", requires: "deviceSettings",
       detail: "Simulators, emulators, agent device access and Slack",
       keywords: "integrations devices device hub simulator emulator ios android xcode agent device access tools version update slack bot token socket mode manifest" },
@@ -49,6 +64,9 @@ var sections = [
       keywords: "scheduled tasks schedule cron timer recurring daily weekdays interval prompt run now pause resume automation" },
     { to: "/settings/source-control", label: "Source Control", brick: "SourceControlSettings", requires: "sourceControlSettings",
       detail: "Git, hosts, fetching and writing style",
+      settings: [{ title: "Automatic Git fetch interval", targetId: "fetchInterval", scope: "environment", keywords: "git fetch background refresh remote branches interval" },
+                 { title: "Writing style", targetId: "writingStyle", keywords: "commit messages pull request descriptions conventional commits" },
+                 { title: "Follow change request templates", targetId: "templates", keywords: "pull request merge request template templates" }],
       keywords: "source control git jujutsu github gitlab forgejo azure bitbucket authenticated account fetch interval pull merge method squash rebase writing style conventional commits instructions templates writer model" },
     { to: "/settings/storage", label: "Storage", brick: "StorageSettings", requires: "storageSettings",
       detail: "Worktree, artifact and log cleanup",
@@ -101,12 +119,26 @@ function brickFor(section) {
     return found !== null && found.brick ? found.brick : "";
 }
 
+function present(state, key) {
+    return state[key] !== undefined && state[key] !== null;
+}
+
+function projectScope(state) {
+    return (state.settingsScope?.kind ?? "all") === "project";
+}
+
 // The sections there are: the ones that need shell state once it is there.
-// `state` is the shell's state.
+// `state` is the shell's state. The project's section leads while a project
+// is being edited, and goes by its `project` names while every project is.
 function available(state) {
-    return sections.filter(function (section) {
-        return !section.prefix && (!section.requires || (state[section.requires] !== undefined && state[section.requires] !== null));
+    var listed = [];
+    sections.forEach(function (section) {
+        if (section.prefix || (section.requires && !present(state, section.requires))) return;
+        if (!section.project) listed.push(section);
+        else if (projectScope(state)) listed.unshift(section);
+        else listed.push(Object.assign({}, section, section.project));
     });
+    return listed;
 }
 
 // The navigation rows: the sections there are, less those opened from another.
@@ -115,11 +147,20 @@ function navRows(state) {
 }
 
 // The settings a section's page holds, each {title, targetId (its objectName
-// on the page), keywords}: its rows this platform shows, then its others.
+// on the page), keywords, capability (one every selected environment must
+// have for the row to show)}: its rows this platform shows, then its others.
 function settingsOf(section, os) {
     return Rows.visible(section.rows || [], os).filter(function (row) { return row.key !== undefined || row.link !== undefined || row.component !== undefined; }).map(function (row) {
-        return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: row.description || "" };
+        return { title: row.title, targetId: "settingsRow:" + (row.key ?? row.id), keywords: (row.description || "") + " " + (row.keywords || ""),
+                 capability: row.requires };
     }).concat(section.settings || []);
+}
+
+// The setting a section's page names `targetId`, or null.
+function targetOf(section, targetId, os) {
+    var found = find(section);
+    if (found === null || !targetId) return null;
+    return settingsOf(found, os).find(function (setting) { return setting.targetId === targetId; }) ?? null;
 }
 
 // What the command palette offers (PaletteModel.setSettingsSections): every
@@ -137,10 +178,15 @@ function paletteEntries(os) {
     return entries;
 }
 
+// Search text as it is compared: lower case, without accents, its spaces
+// single and trimmed.
+function normalize(text) {
+    return text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 // How well a title matches `query`: the whole
 // title, its start, anywhere in it, every word in it, the phrase in its other
-// words, or only the words scattered. Titles that hold the query alike go
-// shortest first.
+// words, or only the words scattered.
 function rank(title, query, words, others) {
     if (title === query) return 5;
     if (title.indexOf(query) === 0) return 4;
@@ -149,50 +195,76 @@ function rank(title, query, words, others) {
     return others.indexOf(query) >= 0 ? 1 : 0;
 }
 
-// What the native search finds for `query` (lower case): sections by label or
-// keywords, the settings in their sections, and the commands in `bindings`
-// (Keybindings.bindings), each {label, detail (its section), to, action,
-// targetId (the setting's objectName in its section)}. Every word must match;
-// the best matching titles come first, commands after every setting.
-function searchRows(query, state, bindings) {
-    query = query.trim().replace(/\s+/g, " ");
+// Whether an environment of the settings scope's is connected.
+function connected(state) {
+    return (state.settingsScope?.environments ?? []).some(function (environment) { return environment.online; });
+}
+
+// What the native search finds for `query`: sections by label or keywords,
+// the settings in their sections, and the keyboard commands, from `bindings`
+// (Keybindings.bindings) and `commands` ([{command, label}], every command
+// there is), each {label, detail (its section), to, action, targetId (the
+// setting's objectName in its section)}. Every word must match. The best
+// matching titles come first; of titles matching alike in different sections,
+// the one the query covers more of, and within a section in page order; a
+// section found only by its keywords after the settings in it; commands after
+// every setting.
+function searchRows(query, state, bindings, commands) {
+    query = normalize(query);
     var words = query.split(" ").filter(function (word) { return word.length > 0; });
     var found = [];
-    var add = function (row, title, others, secondary) {
-        title = title.toLowerCase();
-        others = others.toLowerCase();
+    var add = function (row, title, others, kind, group) {
+        title = normalize(title);
+        others = normalize(others);
         var text = title + "\n" + others;
         if (!words.every(function (word) { return text.indexOf(word) >= 0; })) return;
-        found.push({ row: row, rank: rank(title, query, words, others), secondary: secondary, length: title.length, index: found.length });
+        found.push({ row: row, rank: rank(title, query, words, others), kind: kind, group: group, length: title.length, index: found.length });
     };
+    var isConnected = connected(state);
+    var inProject = projectScope(state);
     available(state).forEach(function (section) {
-        add(section, section.label, section.keywords || "", false);
+        add(section, section.label, section.keywords || "", 0, section.to);
         // Rows this platform does not show are not found.
         settingsOf(section, Qt.platform.os).filter(function (setting) {
-            return !setting.requires || (state[setting.requires] !== undefined && state[setting.requires] !== null);
+            return (!setting.requires || present(state, setting.requires)) && (!setting.connected || isConnected) && (!setting.project || inProject);
         }).forEach(function (setting) {
-            add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords, false);
+            add({ label: setting.title, detail: section.label, to: section.to, targetId: setting.targetId }, setting.title, setting.keywords || "", 0, section.to);
         });
     });
-    // One result per command, found by its id and keys too.
-    var commands = {};
+    // One result per command, found by its id and keys too. A command opens
+    // Keybindings at its rows, or, with none, at a new one for it.
+    var byCommand = {};
+    (commands || []).forEach(function (entry) {
+        byCommand[entry.command] = { label: entry.label, terms: [entry.command] };
+    });
     (bindings || []).forEach(function (binding) {
-        var command = commands[binding.command];
-        if (command === undefined) {
-            command = commands[binding.command] = { label: binding.label, terms: [binding.command] };
-        }
+        var command = byCommand[binding.command];
+        if (command === undefined) command = byCommand[binding.command] = { label: binding.label, terms: [binding.command] };
         command.terms.push(binding.key);
         if (binding.defaultKey) command.terms.push(binding.defaultKey);
     });
-    Object.keys(commands).sort(function (left, right) {
-        return commands[left].label.localeCompare(commands[right].label);
+    Object.keys(byCommand).sort(function (left, right) {
+        return byCommand[left].label.localeCompare(byCommand[right].label);
     }).forEach(function (id) {
-        add({ label: commands[id].label, detail: "Keybindings", to: "/settings/keybindings" }, commands[id].label, commands[id].terms.join(" "), true);
+        add({ label: byCommand[id].label, detail: "Keybindings", to: "/settings/keybindings", targetId: "keybinding:" + id },
+            byCommand[id].label, byCommand[id].terms.join(" "), 1, "");
     });
+    // A section's closeness is its closest title among those matching alike.
+    var closest = {};
+    found.forEach(function (entry) {
+        if (entry.rank < 3) return;
+        var key = entry.group + "\n" + entry.rank;
+        if (closest[key] === undefined || entry.length < closest[key]) closest[key] = entry.length;
+    });
+    var closeness = function (entry) {
+        return entry.rank >= 3 && entry.group ? closest[entry.group + "\n" + entry.rank] : 0;
+    };
+    var keywordOnly = function (entry) {
+        return entry.row.targetId === undefined && entry.kind === 0 && entry.rank < 3 ? 1 : 0;
+    };
     return found.sort(function (left, right) {
-        // Of two titles matching alike, the one the query covers more of.
-        const closer = left.rank >= 3 && right.rank >= 3 ? left.length - right.length : 0;
-        return (left.secondary - right.secondary) || (right.rank - left.rank) || closer || (left.index - right.index);
+        return (left.kind - right.kind) || (right.rank - left.rank) || (closeness(left) - closeness(right))
+            || (keywordOnly(left) - keywordOnly(right)) || (left.index - right.index);
     }).map(function (entry) { return entry.row; });
 }
 

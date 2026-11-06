@@ -16,7 +16,7 @@ Rectangle {
     // The section showing, from the shell's route.
     readonly property var route: Shell.state.route ?? null
     readonly property string currentSection: Pages.current(route !== null && route.kind === "settings" ? route.section : "")
-    readonly property string query: search.text.trim().toLowerCase()
+    readonly property string query: search.text.trim()
     // A query set from elsewhere (settings.search); the field follows each asking.
     readonly property int searchSeq: route !== null ? (route.searchSeq ?? 0) : 0
 
@@ -37,13 +37,21 @@ Rectangle {
                         action: section.action
                     }));
         }
-        return Pages.searchRows(query, state, Keybindings.bindings).filter(offered).map(section => ({
+        return Pages.searchRows(query, state, Keybindings.bindings, commands).filter(offered).map(section => ({
                     result: true,
                     to: section.to,
                     title: section.label,
                     sectionLabel: section.detail ?? section.label,
                     action: section.action,
                     targetId: section.targetId
+                }));
+    }
+    // Every keyboard command, a key or not, as search finds them.
+    readonly property var commands: {
+        Keybindings.bindings;
+        return Keybindings.commandOptions().map(command => ({
+                    command: command,
+                    label: Keybindings.commandLabel(command)
                 }));
     }
     readonly property color foreground: Theme.palette.color("sidebarForeground", "#e4e4e7")
@@ -135,6 +143,8 @@ Rectangle {
                 text = "";
             }
             Keys.onDownPressed: list.forceActiveFocus()
+            // Tab goes on to the sections, at the one showing.
+            KeyNavigation.tab: list
         }
 
         ShellButton {
@@ -152,6 +162,7 @@ Rectangle {
 
         ListView {
             id: list
+            objectName: "sections"
 
             readonly property bool searching: nav.query.length > 0
 

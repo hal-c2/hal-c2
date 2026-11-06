@@ -27,6 +27,29 @@ Rectangle {
         return qsTr("Conflicts with %1. The most recent matching binding wins when both conditions can apply.").arg(listed);
     }
 
+    // A settings search result for a command (route.target "keybinding:<id>")
+    // opens at its rows, or with none, at a new keybinding for it.
+    readonly property var route: Shell.state.route ?? null
+    readonly property int targetSeq: route?.targetSeq ?? 0
+
+    function openTarget() {
+        const target = route?.target ?? "";
+        if (!target.startsWith("keybinding:"))
+            return;
+        const wanted = target.slice("keybinding:".length);
+        if (Keybindings.bindings.some(row => row.command === wanted)) {
+            draft.cancel();
+            search.text = wanted;
+            return;
+        }
+        search.text = "";
+        draft.cancel();
+        page.adding = true;
+        command.currentIndex = command.model.indexOf(wanted);
+    }
+
+    onTargetSeqChanged: Qt.callLater(openTarget)
+    Component.onCompleted: Qt.callLater(openTarget)
     color: Theme.palette.color("canvas", "#0b0b0d")
 
     // Searching starts from its shortcut while the page shows.

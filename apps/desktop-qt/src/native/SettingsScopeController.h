@@ -63,6 +63,8 @@ public:
   // Whether every connected target's environment has the capability
   // (ServerConfig environment.capabilities); the ones that lack it.
   QStringList lacking(const QString& capability) const;
+  // What an environment says it can do (its descriptor's capabilities).
+  QJsonObject capabilitiesOf(const QString& environmentId) const;
   EnvironmentSettings::Reading read(const Pick& pick) const;
   // Changes every target; a failure is toasted with the environments that
   // could not save, titled `failureTitle` when given. Nothing is written

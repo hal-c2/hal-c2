@@ -178,15 +178,18 @@ Item {
             const nav = createTemporaryObject(component, root);
             const search = type(nav, "model");
             tryVerify(() => row(nav, 0) !== null && row(nav, 0).Accessible.name === "Default model");
-            compare(row(nav, 0).modelData.sectionLabel, "Project");
+            // Outside a project the section is the one new threads start from.
+            compare(row(nav, 0).modelData.sectionLabel, "New threads");
             let last = null;
             for (let index = 0; row(nav, index) !== null; ++index) last = row(nav, index);
             compare(last.Accessible.name, "Model picker: Open", "commands come after every setting");
             search.text = "mod+b";
             tryVerify(() => row(nav, 0) !== null && row(nav, 0).Accessible.name === "Sidebar: Toggle");
             mouseClick(row(nav, 0));
-            compare(Shell.dispatchedActions[0].action, "settings.navigate");
+            // A command opens Keybindings at its row.
+            compare(Shell.dispatchedActions[0].action, "settings.openResult");
             compare(Shell.dispatchedActions[0].payload.to, "/settings/keybindings");
+            compare(Shell.dispatchedActions[0].payload.targetId, "keybinding:sidebar.toggle");
         }
         function test_slashStartsASearch() {
             Shell.state = {};

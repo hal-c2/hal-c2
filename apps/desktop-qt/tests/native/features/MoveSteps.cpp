@@ -441,6 +441,7 @@ const Steps steps([] {
   // Where the thread is listed and shown. A name with a dot is a changed
   // file's (TimelineDetailsSteps).
   step(QStringLiteral("\"([^\".]*)\" is listed under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("listedUnder"))) return world.onSettingsPage.value(QStringLiteral("listedUnder"))(c);
     const QString key = keyOn(c[1], idOf(world, c[0]));
     world.waitFor([&] { return sidebarRow(world, key).value(QStringLiteral("environmentId")) == c[1]; },
                   [&] { return QStringLiteral("%1 to be listed under %2; %3").arg(c[0], c[1], sidebar(world)); });

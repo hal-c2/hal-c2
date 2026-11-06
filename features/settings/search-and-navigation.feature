@@ -48,13 +48,13 @@ Feature: Settings search and navigation
       When the user moves down and confirms
       Then the next section opens
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Tab from the settings search reaches the current section
       Given the user has focus in the settings search
       When the user presses Tab
       Then the list of sections has focus, on the current section
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Escape leaves settings when nothing else takes it
       Given the user opened settings from a thread
       And the search is empty
@@ -96,7 +96,7 @@ Feature: Settings search and navigation
         | diagnostics                       | Diagnostics           |
         | the open source licenses page     | Open source licenses  |
 
-    @backlog @desktop
+    @desktop
     Scenario: The project section appears only while editing a project
       Given the user is editing settings for all projects
       Then there is no project section
@@ -129,11 +129,10 @@ Feature: Settings search and navigation
 
   Rule: Searching settings
 
-    # The desktop finds the settings of its native pages; Network access is not one yet.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: Search results show each setting with its section
-      When the user searches settings for "network"
-      Then "Network access" is listed under "Connections"
+      When the user searches settings for "word wrap"
+      Then "Word wrap" is listed under "Appearance"
 
     @desktop
     Scenario: Opening a search result goes to that setting
@@ -171,13 +170,12 @@ Feature: Settings search and navigation
         | model  | Default model  |
         | mod+b  | Sidebar: Toggle |
 
-    # Tailscale HTTPS is not a native Connections setting yet.
-    @backlog @desktop
+    @desktop
     Scenario: Every word of the search must match
-      When the user searches settings for "tailscale https"
-      Then only "Tailscale HTTPS" is listed
+      When the user searches settings for "composer vim"
+      Then only "Vim keys in the composer" is listed
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Settings that do not apply here are not found
       Given <condition>
       When the user searches settings for "<query>"
@@ -185,24 +183,40 @@ Feature: Settings search and navigation
 
       Examples:
         | condition                                  | query       | setting           |
-        | the user is in a web browser               | local env   | Local environment |
-        | the machine is not running Windows         | wsl         | WSL backend       |
         | the user is editing all projects           | project     | Project overview  |
 
+      # There is no web client.
+      @dropped
+      Examples:
+        | condition                                  | query       | setting           |
+        | the user is in a web browser               | local env   | Local environment |
+
+      # Waits on the WSL backend setting of settings/connections.feature.
+      @backlog @blocked
+      Examples:
+        | condition                                  | query       | setting           |
+        | the machine is not running Windows         | wsl         | WSL backend       |
+
     # Legacy: apps/web/src/components/settings/settingsSearch.ts (filterAvailableSettingsSearchItems)
-    @backlog @desktop
+    @desktop
     Scenario Outline: Settings that depend on what this machine can do are only found when it can
       Given <condition>
       When the user searches settings for "<query>"
       Then "<setting>" is not listed
 
       Examples:
+        | condition                                        | query              | setting                         |
+        | no connected environment has provider settings   | usage providers    | Usage providers                 |
+        | no connected environment has provider settings   | health check       | Provider health check interval  |
+
+      # Waits on the desktop managing this machine's server: Network access, the environment
+      # icon and Tailscale HTTPS in settings/connections.feature.
+      @backlog @blocked
+      Examples:
         | condition                                        | query              | setting                |
         | the app cannot manage this machine's server      | network access     | Network access         |
         | the app cannot manage this machine's server      | environment icon   | Environment icon       |
         | the app cannot manage this machine's server      | tailscale          | Tailscale HTTPS        |
-        | no connected environment has provider settings   | usage providers    | Usage providers        |
-        | no connected environment has provider settings   | health check       | Health check interval  |
 
     @desktop
     Scenario: A search result inside a folded section opens the fold
@@ -217,7 +231,7 @@ Feature: Settings search and navigation
       When the user opens the search result "Default model" again
       Then the page brings the setting into view again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A setting is found by the words people use for it
       When the user searches settings for "<query>"
       Then the first result is "<first>"
@@ -231,19 +245,19 @@ Feature: Settings search and navigation
         | binary path        | Providers              |
         | pull request template | Follow change request templates |
 
-    @backlog @desktop
+    @desktop
     Scenario: Search ignores case, extra spaces and accents
       When the user searches settings for "  WORD   WRAP  "
       Then "Word wrap" is the only result
       When the user searches settings for "thèmes" with an accent on the e
       Then "Theme" is the first result
 
-    @backlog @desktop
+    @desktop
     Scenario: Thread confirmations are listed in the order of the page
       When the user searches settings for "confirmation"
       Then the results are the unpin, archive and delete confirmations in that order
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Keyboard commands are found by name, id or default key
       When the user searches settings for "<query>"
       Then the first result is the "Sidebar: Toggle" keybinding
@@ -253,31 +267,31 @@ Feature: Settings search and navigation
         | toggle sidebar |
         | sidebar.toggle |
 
-    @backlog @desktop
+    @desktop
     Scenario: Keyboard commands rank after other settings
       When the user searches settings for "model"
       Then "Default model" is the first result
       And the model picker keybinding is listed after "Text generation model"
 
-    @backlog @desktop
+    @desktop
     Scenario: A command with no default key opens the keybindings section
       When the user opens the search result for the "thread.stop" command
       Then the Keybindings section opens at that command's row
 
-    @backlog @desktop
+    @desktop
     Scenario: A setting that only appears when another is on opens at that toggle
       Given window capture is off
       When the user opens the search result "Capture sound"
       Then the window capture toggle is brought into view
 
-    @backlog @desktop
+    @desktop
     Scenario: A setting only some environments support is offered for those
       Given "laptop" can settle threads and "server" cannot
       When the user searches settings for "auto-settle"
       Then the results are found
       And choosing one offers "laptop" and not "server"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A setting no chosen environment supports says what it needs
       Given the settings are scoped to "server", which cannot settle threads
       And <others>
@@ -289,14 +303,14 @@ Feature: Settings search and navigation
         | "laptop" can settle threads       | Auto-settle merged threads requires a supporting environment. Choose one to continue.                       |
         | no environment can settle threads | Auto-settle merged threads requires a supporting environment. Connect or update an environment to continue. |
 
-    @backlog @desktop
+    @desktop
     Scenario: A setting that belongs to another scope asks the user to choose that scope
       Given the settings are scoped to the project "shop"
       When the user opens the search result of a setting that is set per environment
       Then the page says that setting is not available for the selected target and to choose its owning scope
       And the user can choose the scope there to carry on to the setting
 
-    @backlog @desktop
+    @desktop
     Scenario: Environment settings are found without a primary environment
       Given no environment is the primary one
       When the user searches settings for "writing style"
@@ -331,14 +345,14 @@ Feature: Settings search and navigation
       And the user is told the theme settings could not be restored
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (useSettingsRestore), apps/web/src/routes/settings.tsx
-    @backlog @desktop
+    @desktop
     Scenario: Restoring defaults is unavailable while every setting is at its default
       Given every setting the restore covers is at its default
       When the user looks at the settings page
       Then restoring default settings cannot be chosen
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (useSettingsRestore, enableAgentBrowserAccess)
-    @backlog @desktop
+    @desktop
     Scenario: Restoring defaults gives agents browser access back and says so
       Given the user turned agent browser access off
       When the user restores default settings
