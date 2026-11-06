@@ -36,15 +36,15 @@ Rectangle {
         id: named
 
         property var account: null
-        readonly property bool sensitive: account !== null && account.sensitive === true
-        readonly property string plan: account !== null ? account.plan ?? "" : ""
+        readonly property bool sensitive: !!account && account.sensitive === true
+        readonly property string plan: account ? account.plan ?? "" : ""
 
         spacing: 0
 
         Label {
             visible: !named.sensitive
             Layout.fillWidth: !named.sensitive
-            text: named.account !== null ? named.account.label + (named.plan.length > 0 ? " · " + named.plan : "") : ""
+            text: named.account ? named.account.label + (named.plan.length > 0 ? " · " + named.plan : "") : ""
             elide: Text.ElideRight
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Theme.type.meta.size
@@ -53,7 +53,6 @@ Rectangle {
         RedactedText {
             objectName: "composerUsageLimitsAccount"
             visible: named.sensitive
-            Layout.maximumWidth: named.width
             value: named.sensitive ? named.account.label : ""
             Accessible.name: qsTr("Toggle account label visibility")
             revealTip: qsTr("Click to reveal account")
