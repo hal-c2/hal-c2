@@ -89,6 +89,7 @@ import {
   ProviderUploadFeedbackError,
   type PreviewAutomationHost,
   type McSettingsDocument,
+  type OrchestrationV2ShellStreamItem,
 } from "@hal-c2/contracts";
 import {
   compileResolvedKeybindingsConfig,
@@ -125,7 +126,7 @@ import {
   type StreamResumePoint,
   type WindowedSubscription,
 } from "./clusterSocket.ts";
-import { ShellShapeFold, type ShellRow } from "./shellShape.ts";
+import { ShellRows, ShellShapeFold, type ShellRow } from "./shellShape.ts";
 import { ThreadShapeFold, type ShapeEvent, type ShapeRow } from "./threadShape.ts";
 
 const decodeServerConfig = Schema.decodeUnknownSync(Schema.toCodecJson(ServerConfig));
@@ -439,9 +440,12 @@ export function makeV3Session(input: {
   readonly socket: ClusterSocket;
   readonly environmentId: string;
   readonly resumes?: ThreadResumes;
+  /** The shell rows the client holds across sockets; a session of its own holds them otherwise. */
+  readonly shellRows?: ShellRows;
 }): Effect.Effect<RpcSession, ConnectionTransientError> {
   return Effect.gen(function* () {
     const { socket } = input;
+    const shellRows = input.shellRows ?? new ShellRows();
     // The environment may live on another MC of the cluster; its config reply
     // names the MC that this session's shapes are addressed to.
     const reply = yield* Deferred.make<
@@ -487,22 +491,43 @@ export function makeV3Session(input: {
       ),
     );
 
+    // The shell says which rows the client holds (`shellRows`), so a new socket's
+    // answer carries only what changed; each answer still reaches the fold whole.
     const shell = () => {
       const fold = new ShellShapeFold(mc);
-      return shapeStream(socket, { type: "shell" }, (frame) => {
+      const onFrame = (frame: ShapeFrame): ReadonlyArray<OrchestrationV2ShellStreamItem> => {
         if (frame.t === "shell.mc" || frame.t === "shell.environment") {
+          if (frame.t === "shell.mc" && frame.removed === true) shellRows.forget(String(frame.mc));
           for (const listener of memberListeners) listener();
           return [];
         }
-        if (frame.t === "shell") return fold.shell(frame.rows as ReadonlyArray<ShellRow>);
-        if (frame.t === "shell.rows")
-          return fold.rows(
-            String(frame.mc),
-            frame.rows as ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
-            frame.reset === true,
+        if (frame.t === "shell")
+          return fold.shell(
+            shellRows.answer(
+              (frame.mcs ?? []) as ReadonlyArray<Record<string, unknown>>,
+              frame.rows as ReadonlyArray<ShellRow>,
+            ),
           );
+        if (frame.t === "shell.rows") {
+          const rows = frame.rows as ReadonlyArray<
+            readonly [string, string, Record<string, unknown>]
+          >;
+          shellRows.changed(String(frame.mc), rows, frame.reset === true, frame.epoch, frame.rev);
+          return fold.rows(String(frame.mc), rows, frame.reset === true);
+        }
         return [];
-      });
+      };
+      return Stream.callback<OrchestrationV2ShellStreamItem>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() =>
+            socket.subscribeShell(
+              (frame) => Queue.offerAllUnsafe(queue, onFrame(frame)),
+              () => shellRows.have(),
+            ),
+          ),
+          (unsubscribe) => Effect.sync(unsubscribe),
+        ),
+      );
     };
 
     // A thread opens as its newest turns, as the Qt clients' does; `loadEarlier` adds
@@ -1670,6 +1695,12 @@ export function makeV3Session(input: {
 }
 
 /**
+ * How long a new socket waits for the MC's `hello`, its only deadline: the shell
+ * and threads load over it with none, however long the MC takes to build them.
+ */
+export const HELLO_TIMEOUT_MS = 15_000;
+
+/**
  * Opens a protocol-3 session for a prepared connection. The socket URL carries a
  * single-use ticket, so the socket does not reconnect by itself: a drop fails
  * `closed`, and the environment supervisor reconnects with a fresh ticket.
@@ -1677,6 +1708,8 @@ export function makeV3Session(input: {
 export const connectV3Session = (
   connection: PreparedConnection,
   resumes?: ThreadResumes,
+  shellRows?: ShellRows,
+  pingIntervalMs?: number,
 ): Effect.Effect<RpcSession, ConnectionAttemptError, Scope.Scope> =>
   Effect.gen(function* () {
     const hello = yield* Deferred.make<string, ConnectionTransientError>();
@@ -1687,6 +1720,7 @@ export const connectV3Session = (
           new ClusterSocket({
             url: connection.socketUrl,
             reconnect: false,
+            ...(pingIntervalMs === undefined ? {} : { pingIntervalMs }),
             onStatus: (status) => {
               if (status.connected && status.mc !== null) {
                 Deferred.doneUnsafe(hello, Effect.succeed(status.mc));
@@ -1705,7 +1739,7 @@ export const connectV3Session = (
     );
     yield* Deferred.await(hello).pipe(
       Effect.timeoutOrElse({
-        duration: "15 seconds",
+        duration: HELLO_TIMEOUT_MS,
         orElse: () =>
           Effect.fail(
             new ConnectionTransientError({
@@ -1715,10 +1749,21 @@ export const connectV3Session = (
           ),
       }),
     );
-    const session = yield* makeV3Session({
-      socket,
-      environmentId: connection.environmentId,
-      ...(resumes === undefined ? {} : { resumes }),
-    });
-    return { ...session, closed: Deferred.await(closed) } satisfies RpcSession;
+    // Every environment of the cluster is reached over this one socket.
+    const forEnvironment = (
+      environmentId: string,
+    ): Effect.Effect<RpcSession, ConnectionTransientError> =>
+      makeV3Session({
+        socket,
+        environmentId,
+        ...(resumes === undefined ? {} : { resumes }),
+        ...(shellRows === undefined ? {} : { shellRows }),
+      }).pipe(
+        Effect.map((session): RpcSession => ({
+          ...session,
+          closed: Deferred.await(closed),
+          forEnvironment,
+        })),
+      );
+    return yield* forEnvironment(connection.environmentId);
   });

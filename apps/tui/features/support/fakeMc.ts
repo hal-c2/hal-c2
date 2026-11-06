@@ -21,13 +21,13 @@ const AUTH = {
 };
 const SCOPES = ["orchestration:read", "orchestration:operate", "terminal:operate"];
 
-function descriptor(origin: string) {
+function descriptor(origin: string, protocol = 3) {
   return {
     environmentId: FAKE_MC_ENVIRONMENT_ID,
     label: `Fake MC ${new URL(origin).port}`,
     platform: { os: "linux", arch: "x64" },
     serverVersion: "0.0.0",
-    orchestrationProtocolVersion: 3,
+    orchestrationProtocolVersion: protocol,
     capabilities: {},
   };
 }
@@ -102,6 +102,8 @@ export interface FakeMcOptions {
   readonly silentTickets?: boolean;
   /** Keep every `shell` snapshot the client asks for back until `releaseShell()`. */
   readonly holdShell?: boolean;
+  /** The orchestration protocol the descriptor declares (3 by default). */
+  readonly protocol?: number;
 }
 
 interface SocketData {
@@ -150,7 +152,7 @@ export function startFakeMc(options: FakeMcOptions = {}): FakeMc {
     const origin = `http://127.0.0.1:${url.port}`;
     switch (url.pathname) {
       case "/.well-known/hal-c2/environment":
-        return Response.json(descriptor(origin));
+        return Response.json(descriptor(origin, options.protocol));
       case "/oauth/token": {
         tokenExchanges++;
         const body = await formOrJson(request);

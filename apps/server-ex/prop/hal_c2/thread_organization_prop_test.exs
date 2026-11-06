@@ -327,9 +327,16 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
           true ->
             # Untouched: the same organization, and the model still describes it.
-            {t, same?(now[t], before[t]) and matches?(thread, now[t], before[t], [], nil)}
+            {t, now[t] == before[t] and matches?(thread, now[t], before[t], [], nil)}
         end
       end
+
+    # Arranging the active list and turning auto-settle off and on are not activity:
+    # the thread's last activity time, and so its auto-settle idle clock, stays put.
+    checks =
+      if fun in [:active_reorder, :auto_settle_set] and expected == :ok,
+        do: [{tid, now[tid].updated_at == before[tid].updated_at} | checks],
+        else: checks
 
     reply_ok? = reply == expected
 
@@ -349,13 +356,9 @@ defmodule HalC2.ThreadOrganizationPropTest do
   # The real thread's organization against the model: its values, which stamps are
   # set, the stamps the command did not set anew kept from before, and a sidebar row
   # that shows the same.
-  # The same organization; when the stream last changed is left to `matches?`.
-  defp same?(now, before),
-    do: Map.delete(now || %{}, :updated_at) == Map.delete(before || %{}, :updated_at)
-
   defp matches?(_model, nil, _before, _fresh, _fun), do: false
 
-  defp matches?(model, %{fields: real, row: row, running: running} = now, before, fresh, fun) do
+  defp matches?(model, %{fields: real, row: row, running: running}, before, fresh, fun) do
     stamps_set =
       %{
         "settledAt" => model.override == "settled",
@@ -393,10 +396,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
     auto? = fun != :auto_settle or real["settledAt"] == @auto_settled_at
 
-    # A setting, not activity: turning auto-settle off or on leaves `updatedAt` alone.
-    quiet? = fun != :auto_settle_set or now.updated_at == before.updated_at
-
-    values? and stamps? and auto? and quiet? and row == Map.delete(real, "activeOrderKey")
+    values? and stamps? and auto? and row == Map.delete(real, "activeOrderKey")
   end
 
   # --- commands ---------------------------------------------------------------------

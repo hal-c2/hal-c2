@@ -647,8 +647,8 @@ const highlighted = (ctx: World) => {
   return menu.items[menu.selectedIndex]!.label;
 };
 
-// The menu opens on "Settle thread": the next enabled item is "Auto-settle behavior…",
-// and the previous one wraps to "Delete" at the bottom.
+// The menu opens on "Settle thread": the next enabled item is "Auto-settle
+// behavior…", and the previous one wraps to "Delete" at the bottom.
 step(/^the (next|previous) enabled item is highlighted$/, async (ctx: World, which: string) => {
   await flush(ctx);
   expect(highlighted(ctx)).toBe(which === "next" ? "Auto-settle behavior…" : "Delete");

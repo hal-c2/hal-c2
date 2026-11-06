@@ -56,6 +56,16 @@ void projectCommand(FakeMc& mc, const QJsonObject& command) {
     // Settling clears the thread's pinned and active places (orchestration.ex),
     // and its snooze.
     for (const char* key : {"pinnedAt", "pinOrderKey", "activeOrderKey", "snoozedUntil", "snoozedAt"}) row.remove(QLatin1String(key));
+    // It dismisses the questions the agent asked in the background, too.
+    if (row.value(QLatin1String("pendingRuntimeRequest")).toObject().value(QLatin1String("kind")) == QLatin1String("user_input")) {
+      row.remove(QStringLiteral("pendingRuntimeRequest"));
+    }
+  } else if (type == QLatin1String("thread.auto-settle.set")) {
+    if (command.value(QLatin1String("enabled")).toBool()) {
+      row.remove(QStringLiteral("autoSettleDisabledAt"));
+    } else {
+      row.insert(QStringLiteral("autoSettleDisabledAt"), now);
+    }
   } else if (type == QLatin1String("thread.mark-unread")) {
     // Just before the latest run completed.
     const QDateTime completed = QDateTime::fromString(row.value(QLatin1String("latestRunCompletedAt")).toString(), Qt::ISODateWithMs);

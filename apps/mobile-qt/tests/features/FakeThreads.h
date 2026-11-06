@@ -63,3 +63,17 @@ void changeEntity(FakeMc& mc, const QString& thread, const QString& kind, const 
 void updateRow(FakeMc& mc, const QString& thread, const QJsonObject& fields);
 // The providers the MC's config lists.
 void offerProviders(FakeMc& mc, const QJsonArray& providers);
+// Another environment's settings document (a cluster member's), created on
+// first use: its `config` shape and hal-c2.readSettings / writeSettings serve
+// it, refusing a write over a stale version as the MC does.
+struct SettingsDocument {
+  QJsonObject settings;
+  int version = 0;
+  QJsonObject capabilities;  // what its `config` says the environment can do
+};
+SettingsDocument& settingsOf(FakeMc& mc, const QString& environment);
+// The MC's own settings document; its `config` carries the MC's capabilities.
+QJsonObject ownSettings(FakeMc& mc);
+// A setting the MC's own document takes, as another client saves it, announced
+// as `config.settings`.
+void saveOwnSetting(FakeMc& mc, const QString& key, const QJsonValue& value);

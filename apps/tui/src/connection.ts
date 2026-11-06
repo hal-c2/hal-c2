@@ -177,6 +177,13 @@ export interface TuiOptions {
   readonly environmentId: string;
   /** The MC's wire protocol from its descriptor. */
   readonly orchestrationProtocolVersion?: number | undefined;
+  /** How often the socket pings the MC (25 seconds); tests shorten it. */
+  readonly pingIntervalMs?: number | undefined;
+  /**
+   * The runtime of the MC this one is reached through: a cluster member's runtime
+   * follows that runtime's connection, over its socket, instead of opening its own.
+   */
+  readonly via?: TuiRuntime | undefined;
 }
 
 const TUI_LABEL = "HAL-C2";
@@ -201,6 +208,8 @@ export interface TuiCreateThreadInput {
   readonly worktreePath: string | null;
   readonly createWorktree: boolean;
   readonly startFromOrigin: boolean;
+  /** The plan this thread implements; the MC marks it implemented there. */
+  readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: string };
 }
 
 export function buildThreadReplyTurn(input: {
@@ -281,9 +290,13 @@ const CONNECTED_STATE: SupervisorConnectionState = {
  * A minimal {@link EnvironmentSupervisor} for the TUI. It maintains a single
  * connection to the MC, re-minting a fresh websocket URL on every (re)connect
  * attempt via the host-provided `mintSocketUrl`, and drives the
- * `client-runtime` RPC client and reducers.
+ * `client-runtime` RPC client and reducers. Given the `home` MC's supervisor, it
+ * opens no connection of its own: each of home's sessions reaches this environment.
  */
-export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
+export const makeTuiSupervisor = (
+  options: Omit<TuiOptions, "logPath" | "via">,
+  home?: EnvironmentSupervisor["Service"],
+) =>
   Effect.gen(function* () {
     const factory = yield* RpcSessionFactory;
     const { origin } = options;
@@ -327,9 +340,42 @@ export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
       return yield* session.closed;
     });
 
+    // A cluster member: a session for this environment over each of the home MC's.
+    const followConnection = (via: EnvironmentSupervisor["Service"]) =>
+      Effect.gen(function* () {
+        const current = yield* SubscriptionRef.get(via.session);
+        const homeSession = Option.isSome(current)
+          ? current.value
+          : yield* SubscriptionRef.changes(via.session).pipe(
+              Stream.filter(Option.isSome),
+              Stream.map((value) => value.value),
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            );
+        const homePrepared = yield* SubscriptionRef.get(via.prepared);
+        if (Option.isSome(homePrepared)) {
+          yield* SubscriptionRef.set(
+            preparedRef,
+            Option.some({ ...homePrepared.value, environmentId, target }),
+          );
+        }
+        if (homeSession.forEnvironment === undefined) {
+          return yield* Effect.fail(new Error("the MC does not reach other environments"));
+        }
+        const session = yield* homeSession
+          .forEnvironment(environmentId)
+          .pipe(Effect.raceFirst(homeSession.closed));
+        yield* session.ready;
+        yield* SubscriptionRef.set(sessionRef, Option.some(session));
+        yield* SubscriptionRef.set(stateRef, CONNECTED_STATE);
+        return yield* session.closed;
+      });
+
     const loop = Effect.gen(function* () {
       for (;;) {
-        yield* Effect.scoped(runConnection).pipe(Effect.ignore);
+        yield* Effect.scoped(home === undefined ? runConnection : followConnection(home)).pipe(
+          Effect.ignore,
+        );
         yield* SubscriptionRef.set(sessionRef, Option.none());
         yield* SubscriptionRef.set(stateRef, CONNECTING_STATE);
         yield* Effect.sleep(options.reconnectDelay ?? RECONNECT_DELAY);
@@ -468,9 +514,18 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
     fileLoggerLayer(options.logPath),
   );
 
-  const rpcLayer = layerWithOptions({}).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
+  const rpcLayer = layerWithOptions(
+    options.pingIntervalMs === undefined ? {} : { pingIntervalMs: options.pingIntervalMs },
+  ).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal));
 
-  const supervisorLayer = Layer.effect(EnvironmentSupervisor, makeTuiSupervisor(options)).pipe(
+  const { via } = options;
+  const supervisor =
+    via === undefined
+      ? makeTuiSupervisor(options)
+      : Effect.promise(() => via.runPromise(EnvironmentSupervisor)).pipe(
+          Effect.flatMap((home) => makeTuiSupervisor(options, home)),
+        );
+  const supervisorLayer = Layer.effect(EnvironmentSupervisor, supervisor).pipe(
     Layer.provideMerge(rpcLayer),
     Layer.provideMerge(services),
   );
@@ -1080,6 +1135,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
             runtimeMode: input.runtimeMode,
             interactionMode: input.interactionMode,
             bootstrap: buildThreadCreationBootstrap(input, createdAt, worktreeBranch),
+            ...(input.sourceProposedPlan
+              ? {
+                  sourceProposedPlan: {
+                    threadId: input.sourceProposedPlan.threadId,
+                    planId: PlanId.make(input.sourceProposedPlan.planId),
+                  },
+                }
+              : {}),
             createdAt,
           });
           return threadId;

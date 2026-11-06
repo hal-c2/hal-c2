@@ -102,6 +102,14 @@ defmodule HalC2.OrchestrationSettleTest do
       assert thread(thread_id)["settledOverride"] == "settled"
     end
 
+    test "turning it off and on is not activity", %{thread_id: thread_id} do
+      before = stream(thread_id).updated_at
+      {:ok, _} = auto_settle_set(thread_id, false)
+      assert stream(thread_id).updated_at == before
+      {:ok, _} = auto_settle_set(thread_id, true)
+      assert stream(thread_id).updated_at == before
+    end
+
     test "settling and un-settling by hand still work and keep it off", %{thread_id: thread_id} do
       {:ok, _} = auto_settle_set(thread_id, false)
       {:ok, _} = Orchestration.dispatch(%{"type" => "thread.settle", "threadId" => thread_id})
@@ -116,28 +124,6 @@ defmodule HalC2.OrchestrationSettleTest do
         })
 
       assert %{"settledOverride" => "active", "autoSettleDisabledAt" => ^off} = thread(thread_id)
-    end
-
-    test "turning it off and on is not activity", %{thread_id: thread_id} do
-      # The thread's last activity was a week ago.
-      week_ago = System.system_time(:millisecond) - 7 * 24 * 60 * 60 * 1000
-
-      {:ok, _} =
-        HalC2.Streams.commit(thread_id, :thread, [
-          {"thread", thread_id, %{"s" => %{"title" => "Settle me"}}, week_ago}
-        ])
-
-      updated_at = stream(thread_id).updated_at
-      assert updated_at == week_ago
-      row = HalC2.Projection.Shell.thread_shell(stream(thread_id))
-
-      {:ok, _} = auto_settle_set(thread_id, false)
-      {:ok, _} = auto_settle_set(thread_id, true)
-
-      assert stream(thread_id).updated_at == updated_at
-
-      assert HalC2.Projection.Shell.thread_shell(stream(thread_id))["updatedAt"] ==
-               row["updatedAt"]
     end
 
     test "the sidebar row carries it, and settlement names it as the blocker", %{
