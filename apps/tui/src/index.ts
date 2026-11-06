@@ -9,8 +9,8 @@ import { installKittyClipboardExtension } from "@hal-c2/opentui-image";
 import { runShell } from "opentui-qml";
 
 import { bundledAppVersion, resolveAppVersion } from "./appVersion.ts";
-import { makeClusterClient } from "./clusterClient.ts";
-import { buildTuiRuntime, makeTuiClient, type TuiOptions } from "./connection.ts";
+import { connectTui } from "./clusterClient.ts";
+import type { TuiOptions } from "./connection.ts";
 import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraphics.ts";
 import { createHost } from "./host/host.ts";
 import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
@@ -154,11 +154,7 @@ async function main(): Promise<void> {
     mintSocketUrl: makeHttpSocketTicketMinter({ origin, bearerToken: connection.bearerToken }),
     logPath,
   };
-  const runtime = buildTuiRuntime(options);
-  // The other machines of a cluster are reached through this same MC, each by its environment id.
-  const client = makeClusterClient(makeTuiClient(runtime, origin), (environmentId) =>
-    makeTuiClient(buildTuiRuntime({ ...options, environmentId }), origin, false),
-  );
+  const client = connectTui(options);
 
   // A tmux pane can still be showing scrollback when this child starts. Return it
   // to the live screen before entering OpenTUI's alternate screen so the complete

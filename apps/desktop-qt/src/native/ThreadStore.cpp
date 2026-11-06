@@ -20,10 +20,13 @@ const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads")
 ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
-  // A fork's source, or its title, can arrive after the fork's timeline opened.
+  // Background work and a fork's source (or its title) can change on the
+  // shell's thread row after the timeline opened.
   connect(store, &ShellStore::changed, this, [this] {
-    for (const Followed& followed : std::as_const(m_threads)) {
-      if (followed.model) followed.model->threadRowsChanged();
+    for (auto it = m_threads.cbegin(); it != m_threads.cend(); ++it) {
+      if (!it->model) continue;
+      it->model->setBackgroundWork(m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray());
+      it->model->threadRowsChanged();
     }
   });
   // Threads shown from what was kept of another MC go with its thread list;
@@ -176,6 +179,7 @@ void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
   model->setLocale(m_locale);
   model->setFolds(m_folds);
+  model->setBackgroundWork(m_store->threadRow(model->threadKey()).value(QLatin1String("pendingBackgroundTasks")).toArray());
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
   const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);

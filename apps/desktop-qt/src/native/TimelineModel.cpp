@@ -50,6 +50,12 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
+// The id the MC gives a call's background task (HalC2.Projection.BackgroundWork).
+QString backgroundTaskId(const QJsonObject& item) {
+  const QString native = item.value(QLatin1String("nativeItemRef")).toObject().value(QLatin1String("nativeId")).toString();
+  return native.isEmpty() ? text(item, QLatin1String("id")) : native;
+}
+
 QDateTime timeOf(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
 }
@@ -447,6 +453,34 @@ QString planBody(const QString& markdown) {
   return lines.join(QLatin1Char('\n'));
 }
 
+// A long plan's preview (apps/web/src/proposedPlan.ts
+// buildCollapsedProposedPlanPreviewMarkdown, ProposedPlanCard's canCollapse):
+// its first ten lines with text, and "..." when there is more; empty for a plan
+// short enough to show whole.
+QString planPreview(const QString& markdown) {
+  if (markdown.size() <= 900 && markdown.count(QLatin1Char('\n')) + 1 <= 20) return {};
+  constexpr int maxLines = 10;
+  QString body = planBody(markdown);
+  while (!body.isEmpty() && body.back().isSpace()) body.chop(1);
+  QStringList preview;
+  int visible = 0;
+  bool more = false;
+  for (QString line : body.split(QRegularExpression(QStringLiteral("\\r?\\n")))) {
+    while (!line.isEmpty() && line.back().isSpace()) line.chop(1);
+    const bool shown = !line.trimmed().isEmpty();
+    if (shown && visible >= maxLines) {
+      more = true;
+      break;
+    }
+    preview.append(line);
+    if (shown) ++visible;
+  }
+  while (!preview.isEmpty() && preview.constLast().trimmed().isEmpty()) preview.removeLast();
+  if (preview.isEmpty()) return planTitle(markdown);
+  if (more) preview << QString() << QStringLiteral("...");
+  return preview.join(QLatin1Char('\n'));
+}
+
 QString legacyTaskId(const QJsonObject& item) {
   static const QRegularExpression id(QStringLiteral("scheduled-task-message:(.+):\\d+:(?:scheduled|manual)$"));
   return id.match(text(item, QLatin1String("id"))).captured(1);
@@ -589,6 +623,17 @@ void TimelineModel::setFolds(Folds folds) {
   m_folds = folds;
   restructure({});
   emit foldsChanged();
+}
+
+void TimelineModel::setBackgroundWork(const QJsonArray& tasks) {
+  QSet<QString> work;
+  for (const QJsonValue& task : tasks) {
+    const QString id = text(task.toObject(), QLatin1String("taskId"));
+    if (!id.isEmpty()) work.insert(id);
+  }
+  if (work == m_backgroundWork) return;
+  m_backgroundWork = work;
+  if (phone()) restructure({});
 }
 
 void TimelineModel::setLocale(const QLocale& locale) {
@@ -1068,6 +1113,13 @@ void TimelineModel::events(const QJsonArray& events) {
     const int row = m_rowOfItem.value(id, -1);
     if (row < 0 || !shows(m_rows.at(row), id)) continue;
     const bool textOnly = !m_reshaped.contains(id);
+    // An open phone group's subagent is also counted by the group above it.
+    if (m_rows.at(row).kind == QLatin1String("subagent")) {
+      for (int above = row - 1; above >= 0 && m_rows.at(above).kind == QLatin1String("subagent"); --above) {
+        if (above > 0 && m_rows.at(above - 1).kind == QLatin1String("subagents") && m_rows.at(above - 1).items.contains(id)) redraw.insert(above - 1, false);
+      }
+      if (row > 0 && m_rows.at(row - 1).kind == QLatin1String("subagents") && m_rows.at(row - 1).items.contains(id)) redraw.insert(row - 1, false);
+    }
     const auto known = redraw.find(row);
     if (known == redraw.end()) {
       redraw.insert(row, textOnly);
@@ -1304,7 +1356,10 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     if (phone()) {
       // A call that never said it ended once its turn settled, the
       // workspace's preparation, and a delegation its subagent's card shows.
-      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running")) return false;
+      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running") &&
+          !m_backgroundWork.contains(backgroundTaskId(item))) {
+        return false;
+      }
       if (type == QLatin1String("command_execution") && text(item, QLatin1String("input")) == QLatin1String("Preparing workspace")) return false;
       const QString task = timeline::delegatedTask(item);
       if (!task.isEmpty() && carded.contains(runId + QLatin1Char('\n') + task)) return false;
@@ -1530,26 +1585,29 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       i = next;
       continue;
     }
-    if (kind == Kind::Subagent && !phone) {
-      // Subagents one turn started together are one group (V2SubagentGroup),
-      // its members' rows shown while it is open. A lone one is its own row.
+    // Subagents one turn started together are one group that opens to their
+    // rows (V2SubagentGroup, thread-subagent-group.tsx); a lone one is its own row.
+    if (kind == Kind::Subagent) {
       const QString turnId = text(item, QLatin1String("providerTurnId"));
       QStringList members;
       qsizetype next = i;
       for (; next < shown.size(); ++next) {
         const QJsonObject& other = shown.at(next);
+        const QString otherId = text(other, QLatin1String("id"));
+        if (next > i && foldAt.contains(otherId)) break;
         const Kind otherKind = classify(other);
         if (otherKind == Kind::Checkpoint) continue;
-        if (otherKind != Kind::Subagent || folded.contains(text(other, QLatin1String("id"))) || text(other, QLatin1String("runId")) != runId ||
+        if (otherKind != Kind::Subagent || folded.contains(otherId) || text(other, QLatin1String("runId")) != runId ||
             text(other, QLatin1String("providerTurnId")) != turnId) {
           break;
         }
-        members.append(text(other, QLatin1String("id")));
+        members.append(otherId);
       }
       if (members.size() > 1) {
-        const QString groupId = QStringLiteral("subagents:") + id;
-        rows.append({groupId, QStringLiteral("subagents"), members});
-        if (m_openSubagentGroups.contains(groupId)) {
+        const QString group = QStringLiteral("subagents:") + id;
+        const bool open = m_openSubagentGroups.contains(group);
+        rows.append({group, QStringLiteral("subagents"), members, {}, {}, 0, open});
+        if (open) {
           for (const QString& member : std::as_const(members)) rows.append({member, QStringLiteral("subagent"), {member}});
         }
         i = next;
@@ -1678,19 +1736,21 @@ void TimelineModel::keepOpen(const QString& runId) {
 }
 
 void TimelineModel::toggle(const QString& rowId) {
+  if (rowId.startsWith(QLatin1String("subagents:"))) {
+    if (!m_openSubagentGroups.remove(rowId)) m_openSubagentGroups.insert(rowId);
+    restructure({});
+    return;
+  }
   if (rowId.startsWith(QLatin1String("fold:"))) {
     const QString runId = rowId.mid(5);
     if (!m_expandedFolds.remove(runId)) m_expandedFolds.insert(runId);
     restructure({});
     return;
   }
-  if (rowId.startsWith(QLatin1String("subagents:"))) {
-    if (!m_openSubagentGroups.remove(rowId)) m_openSubagentGroups.insert(rowId);
-    restructure({});
-    return;
-  }
   const int row = indexOf(rowId);
-  if (row < 0 || m_rows.at(row).kind != QLatin1String("work")) return;
+  // A work group opens to its calls, a long plan to its whole text.
+  const QString kind = row < 0 ? QString() : m_rows.at(row).kind;
+  if (kind != QLatin1String("work") && kind != QLatin1String("plan")) return;
   if (!m_expandedGroups.remove(rowId)) m_expandedGroups.insert(rowId);
   emit dataChanged(index(row), index(row), {EntriesRole, HiddenCountRole, ExpandedRole});
 }
@@ -1869,6 +1929,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {AttachmentsRole, "attachments"},
       {SentFilesRole, "sentFiles"},
       {WarningRole, "warning"},
+      {PreviewRole, "preview"},
       {ActionRole, "action"},
       {VisibilityRole, "visibility"},
       {SourceRole, "source"},
@@ -2286,6 +2347,10 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       }
       if (type == QLatin1String("user_message")) return text(item, QLatin1String("text")).mid(legacyAutomationPrefix(item));
       return text(item, QLatin1String("text"));
+    case PreviewRole:
+      return row.kind == QLatin1String("plan") ? planPreview(text(item, QLatin1String("markdown"))) : QString();
+    case ExpandedRole:
+      return row.kind == QLatin1String("plan") && m_expandedGroups.contains(row.id);
     case ScheduledTaskRole:
       return type == QLatin1String("user_message") && row.kind == QLatin1String("message") ? scheduledTaskOf(item) : QString();
     case WarningRole:

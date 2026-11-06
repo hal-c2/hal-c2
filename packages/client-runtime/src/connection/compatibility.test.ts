@@ -49,7 +49,7 @@ describe("orchestration protocol compatibility", () => {
     // 3 is the shape protocol, which this client also speaks.
     const error = orchestrationProtocolCompatibilityError(descriptor(SHAPE_PROTOCOL_VERSION + 1));
     expect(error).toMatchObject({ reason: "unsupported" });
-    expect(error?.message).toContain("This client is not supported");
+    expect(error?.message).toContain("Update HAL-C2 on this device to connect.");
   });
 
   it("accepts shape-protocol (clustered) MCs", () => {
