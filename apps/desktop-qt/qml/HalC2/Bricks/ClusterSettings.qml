@@ -49,6 +49,8 @@ Rectangle {
         required property string label
         required property string detail
         property string memberId: ""
+        // Switched off: kept, cut off from the cluster until switched on.
+        property bool off: false
 
         Layout.fillWidth: true
         spacing: Theme.space.sm
@@ -65,6 +67,18 @@ Rectangle {
             text: memberRow.detail
             color: page.muted
             font.pixelSize: Theme.type.meta.size
+        }
+
+        ShellSwitch {
+            objectName: "clusterMemberSwitch"
+            visible: memberRow.memberId.length > 0
+            enabled: page.canChange
+            checked: !memberRow.off
+            Accessible.name: qsTr("Switch %1 on or off").arg(memberRow.label)
+            onToggled: Shell.dispatch("cluster.switch", {
+                id: memberRow.memberId,
+                on: checked
+            })
         }
 
         ShellButton {
@@ -148,11 +162,12 @@ Rectangle {
                     required property var modelData
                     label: modelData.label
                     detail: {
-                        const state = modelData.connected ? qsTr("connected") : qsTr("offline");
+                        const state = modelData.off ? qsTr("off") : modelData.connected ? qsTr("connected") : qsTr("offline");
                         const other = modelData.version && modelData.version !== page.status.version;
                         return other ? qsTr("%1, on %2").arg(state).arg(modelData.version) : state;
                     }
                     memberId: modelData.id
+                    off: modelData.off === true
                 }
             }
 
