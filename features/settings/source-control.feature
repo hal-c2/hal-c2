@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14103
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
@@ -168,3 +169,31 @@ Feature: Source Control settings
     When the panel loads
     Then the hosting tools are listed
     And the rescan control is on that list
+
+  # Bitbucket credentials entered in Settings instead of the server's environment variables.
+  # The tokens live in the environment's secret store and never reach a client.
+  @backlog @desktop @mobile
+  Scenario: A Bitbucket access token is saved from Source Control settings
+    Given Bitbucket is not configured on the environment
+    When the user opens Bitbucket and saves an access token
+    Then Bitbucket is configured on the environment without a restart
+    And the token is shown as a saved, masked value
+
+  @backlog @desktop @mobile
+  Scenario: Saving a Bitbucket sign-in method clears the other one
+    Given Bitbucket has a saved API token and an Atlassian account email
+    When the user saves an access token
+    Then the API token and the email are cleared
+
+  @backlog @desktop @mobile
+  Scenario: Removing Bitbucket credentials leaves Bitbucket unconfigured
+    Given Bitbucket has a saved access token
+    When the user removes the Bitbucket credentials
+    Then Bitbucket is not configured on the environment
+
+  @backlog @mc
+  Scenario: A saved Bitbucket token stays out of the settings file and every client payload
+    Given the user saved a Bitbucket API token on the environment
+    When a client reads the server settings
+    Then the client learns only that a token is set
+    And the token is not written to the settings file

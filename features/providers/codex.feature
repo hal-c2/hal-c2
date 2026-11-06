@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13547
+#   https://github.com/pingdotgg/t3code/pull/14290
+#   https://github.com/pingdotgg/t3code/pull/14304
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/13481 (the 0.156 floor and its support ranges)
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -338,10 +340,65 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows the account's email and its ChatGPT Pro plan
 
+  @backlog
+  Scenario: A ChatGPT Pro Max plan is shown by name
+    Given Codex is signed in with a ChatGPT Pro Max subscription
+    When Codex's usage has been checked
+    Then Codex shows the account's email and its "ChatGPT Pro Max Subscription" plan
+
+  @backlog
+  Scenario: A ChatGPT plan HAL-C2 does not know still signs the account in
+    Given Codex is signed in with a ChatGPT plan named by a newer Codex
+    When Codex's account is read
+    Then Codex shows as signed in and its plan is shown by the plan's own name
+
+  @backlog @shared
+  Scenario: The Ultrafast service tier is offered for a model that lists it
+    Given the selected Codex model lists the "ultrafast" service tier
+    When the user opens the service tier choices
+    Then "Ultrafast" is offered with the description "Even faster, more expensive"
+
   Scenario: Codex signed in with an API key says so
     Given Codex is signed in with an OpenAI API key
     When Codex's usage has been checked
     Then Codex shows that it uses an OpenAI API key
+
+  # A ChatGPT account signed in through HAL-C2 rather than the Codex CLI. Its credentials
+  # move to the environment the user picks; the primary environment runs the sign-in.
+  # Contradicts provider-setup.feature "Only providers that support it sign in from HAL-C2"
+  # (Codex "does not sign in here"), which is untagged and passes today. Reconcile when
+  # this backlog item is cleared.
+  @backlog @mc
+  Scenario: Codex connects a ChatGPT account from HAL-C2 without a Codex CLI login
+    Given the user has a ChatGPT plan and Codex is not signed in on the environment
+    When the user connects ChatGPT to Codex
+    And the user approves the sign-in with OpenAI
+    Then Codex on the environment is signed in with that account
+
+  @backlog @mc
+  Scenario: A ChatGPT account connected on one environment can be moved to another
+    Given the user connected a ChatGPT account on the primary environment
+    When the user chooses another environment for that Codex account
+    Then the other environment's Codex is signed in with the account
+
+  @backlog @mc
+  Scenario: Disconnecting a ChatGPT account signs its Codex out
+    Given Codex is connected with a ChatGPT account
+    When the user disconnects the account
+    Then Codex on that environment is no longer signed in with it
+
+  @backlog @shared
+  Scenario: A connected ChatGPT account's email is hidden until the user reveals it
+    Given Codex is connected with a ChatGPT account
+    Then the account's email is not shown
+    When the user asks to show it
+    Then the email is shown
+
+  @backlog @shared
+  Scenario: The first ChatGPT connection explains that plan usage counts against the plan
+    Given the user has never connected a ChatGPT account
+    When the user connects one
+    Then HAL-C2 explains that using Codex counts against the ChatGPT plan's usage
 
   Scenario: Codex offers its compact and feedback commands in the composer
     When the user types a slash in a Codex thread

@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13118 (Claude banked resets)
+#   https://github.com/pingdotgg/t3code/pull/14209 (OpenCode Go accounts merged by API key fingerprint)
 #   https://github.com/pingdotgg/t3code/pull/13363 (a refused Codex reset credit is not reported as unconfirmed)
 #   https://github.com/pingdotgg/t3code/pull/12799 (a Grok account with no metered usage yet stays in Limits)
 #   https://github.com/pingdotgg/t3code/pull/12588 (Grok reports the account's email so one account merges)
@@ -311,6 +312,19 @@ Feature: Subscription limits
     Given the same Codex account is signed in on two environments and reported by a hub
     When the user opens Limits
     Then that account is counted once in each window
+
+  # OpenCode Go reports no account email, so a shared API key is what identifies the account.
+  @backlog @desktop @mobile
+  Scenario: OpenCode Go accounts sharing an API key on two environments count once
+    Given OpenCode Go is signed in with the same API key on two environments and reports no email
+    When the user opens Limits
+    Then the account is shown once, with the environments it is on and one pooled window for each limit
+
+  @backlog @desktop @mobile
+  Scenario: OpenCode Go accounts with different API keys stay separate
+    Given OpenCode Go is signed in with a different API key on each of two environments and reports no email
+    When the user opens Limits
+    Then each account is shown with its own limits
 
   @desktop @mobile @backlog-mobile
   Scenario: Automatic checks wait at least five minutes per environment

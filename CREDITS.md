@@ -48,6 +48,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - PB
 - [Patrik Votoček](https://github.com/Vrtak-CZ)
 - Primož Ajdišek
+- [Pujitha Paladugu](https://github.com/pujitha24)
 - [Ryan Ilano](https://github.com/ryanilano)
 - [scratchyone](https://github.com/scratchyone)
 - [SegFaultZero](https://github.com/SegFaultZero)

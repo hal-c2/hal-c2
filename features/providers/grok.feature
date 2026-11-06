@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13328
+#   https://github.com/pingdotgg/t3code/pull/10607
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13523 (one-click updates through `grok update`)
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
@@ -313,6 +314,14 @@ Feature: Grok
     Given a Grok thread with history
     When the user sends "/compact" with no attachments and the turn completes
     Then the work log shows "Context compacted" once
+
+  # Legacy: apps/server/src/provider/Layers/GrokAdapter (a dead session is retired, then resumed)
+  @backlog
+  Scenario: A Grok process that exits between turns is resumed by the next message
+    Given the Grok process ends with an error while the conversation is idle
+    When the user sends a message on the same conversation
+    Then a fresh Grok process loads the saved session and answers
+    And the earlier messages stay in the thread
 
   @backlog
   Scenario: Stopping a running Grok turn ends everything Grok started
