@@ -3594,10 +3594,16 @@ defmodule HalC2.Orchestration do
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
 
-  # Visits and mark-unread change read state only, and arranging the active list is not
-  # activity either: the thread's last activity time stays put.
+  # Visits and mark-unread change read state only, and arranging the active list or
+  # turning auto-settle off and on is not activity either: the thread's last activity
+  # time, and so its auto-settle idle clock, stays put.
   defp quiet_read_state({kind, id, patch}, type)
-       when type in ["thread.visit", "thread.mark-unread", "thread.active.reorder"],
+       when type in [
+              "thread.visit",
+              "thread.mark-unread",
+              "thread.active.reorder",
+              "thread.auto-settle.set"
+            ],
        do: {kind, id, Map.put(patch, "q", true)}
 
   defp quiet_read_state(change, _type), do: change

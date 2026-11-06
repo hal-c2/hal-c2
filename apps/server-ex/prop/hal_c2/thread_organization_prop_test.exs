@@ -331,6 +331,13 @@ defmodule HalC2.ThreadOrganizationPropTest do
         end
       end
 
+    # Arranging the active list and turning auto-settle off and on are not activity:
+    # the thread's last activity time, and so its auto-settle idle clock, stays put.
+    checks =
+      if fun in [:active_reorder, :auto_settle_set] and expected == :ok,
+        do: [{tid, now[tid].updated_at == before[tid].updated_at} | checks],
+        else: checks
+
     reply_ok? = reply == expected
 
     unless reply_ok?,
@@ -527,7 +534,8 @@ defmodule HalC2.ThreadOrganizationPropTest do
           %{
             fields: Map.new(@organization, &{&1, JS.get(thread, &1)}),
             row: Map.new(@organization -- ["activeOrderKey"], &{&1, row[&1]}),
-            running: Enum.any?(statuses, &(&1 in @active))
+            running: Enum.any?(statuses, &(&1 in @active)),
+            updated_at: state.updated_at
           }
       end
     end

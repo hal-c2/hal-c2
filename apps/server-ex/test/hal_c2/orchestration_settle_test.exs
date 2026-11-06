@@ -102,6 +102,14 @@ defmodule HalC2.OrchestrationSettleTest do
       assert thread(thread_id)["settledOverride"] == "settled"
     end
 
+    test "turning it off and on is not activity", %{thread_id: thread_id} do
+      before = stream(thread_id).updated_at
+      {:ok, _} = auto_settle_set(thread_id, false)
+      assert stream(thread_id).updated_at == before
+      {:ok, _} = auto_settle_set(thread_id, true)
+      assert stream(thread_id).updated_at == before
+    end
+
     test "settling and un-settling by hand still work and keep it off", %{thread_id: thread_id} do
       {:ok, _} = auto_settle_set(thread_id, false)
       {:ok, _} = Orchestration.dispatch(%{"type" => "thread.settle", "threadId" => thread_id})
