@@ -54,7 +54,7 @@ Rectangle {
 
         Label {
             visible: named.sensitive && named.source.length > 0
-            // The hub gives way first, so a long name leaves room for the account.
+            // The hub gives way (with the plan), so a long name leaves room for the account.
             Layout.fillWidth: true
             Layout.maximumWidth: implicitWidth
             text: named.source + " · "
