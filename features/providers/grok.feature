@@ -667,7 +667,7 @@ Feature: Grok
       | 1.0.12  | broken  |
       | 1.0.13  | unknown |
 
-  @backlog
+  @backlog @desktop
   Scenario: A broken Grok's warning names the version to update to
     Given Grok version "0.2.8" is installed
     When the user opens the Providers settings
