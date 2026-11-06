@@ -303,6 +303,8 @@ export function makeClusterClient(
     deleteThread: (threadId) => clientForThread(threadId).deleteThread(threadId),
     settleThread: (threadId) => clientForThread(threadId).settleThread(threadId),
     unsettleThread: (threadId) => clientForThread(threadId).unsettleThread(threadId),
+    setThreadAutoSettle: (threadId, enabled) =>
+      clientForThread(threadId).setThreadAutoSettle(threadId, enabled),
     stopSession: (threadId) => clientForThread(threadId).stopSession(threadId),
     revertCheckpoint: (threadId, turnCount) =>
       clientForThread(threadId).revertCheckpoint(threadId, turnCount),

@@ -22,6 +22,7 @@ import { focusPanel } from "../gitWorld.ts";
 import {
   addProject,
   addThread,
+  autoSettleSweep,
   change,
   env,
   flush,
@@ -937,6 +938,66 @@ step("the pull request is merged on GitHub", async (ctx: ThreadsWorld) => {
 step(
   "{string} moves to the settled section without the user settling it",
   async (ctx: World, title: string) => {
+    await expectSection(ctx, title, "settled");
+    expect(callsTo(ctx, "settleThread")).toEqual([]);
+  },
+);
+
+// --- Auto-settle ------------------------------------------------------------
+
+/** The auto-settle submenu's option `name` ("Enabled", "Disabled") and whether it is checked. */
+function autoSettleOption(ctx: World, name: string): { label: string; checked: boolean } {
+  const row = contextMenu(ctx)?.rows.find(
+    (candidate) => candidate.kind === "item" && candidate.label.slice(2) === name,
+  );
+  if (!row || row.kind !== "item") throw new Error(`the menu has no auto-settle "${name}"`);
+  return { label: row.label, checked: row.label.startsWith("✓") };
+}
+
+async function chooseAutoSettle(ctx: World, title: string, name: string): Promise<void> {
+  await fromMenu(ctx, title, "Auto-settle behavior…");
+  await chooseMenuItem(ctx, autoSettleOption(ctx, name).label);
+  await flush(ctx);
+}
+
+/** The thread's menu shows `name` as its auto-settle setting; the menu closes again. */
+async function expectAutoSettle(ctx: World, title: string, name: string): Promise<void> {
+  await fromMenu(ctx, title, "Auto-settle behavior…");
+  expect(autoSettleOption(ctx, name).checked).toBe(true);
+  await pressKey(ctx, "Escape");
+  await flush(ctx);
+}
+
+step(
+  /^the user turns auto-settle (off|on) for "([^"]*)"$/,
+  async (ctx: ThreadsWorld, turn, title) => {
+    ctx.subject = title;
+    await chooseAutoSettle(ctx, title, turn === "off" ? "Disabled" : "Enabled");
+    expect(statusKind(ctx)).toBe("success");
+    expect(statusText(ctx)).toBe(
+      turn === "off" ? "Auto-settle turned off." : "Auto-settle turned on.",
+    );
+  },
+);
+
+step("{string} has auto-settle turned off", (ctx: World, title: string) => {
+  change(ctx, () => {
+    threadNamed(ctx, title).autoSettleDisabledAt = iso(now(ctx) - DAY_MS);
+  });
+});
+
+step("{string} stays out of automatic settling", async (ctx: World, title: string) => {
+  expect(threadNamed(ctx, title).autoSettleDisabledAt).toBeTruthy();
+  await expectAutoSettle(ctx, title, "Disabled");
+  autoSettleSweep(ctx);
+  await expectSection(ctx, title, "active");
+});
+
+step(
+  "{string} settles automatically again after a quiet spell",
+  async (ctx: World, title: string) => {
+    await expectAutoSettle(ctx, title, "Enabled");
+    autoSettleSweep(ctx);
     await expectSection(ctx, title, "settled");
     expect(callsTo(ctx, "settleThread")).toEqual([]);
   },

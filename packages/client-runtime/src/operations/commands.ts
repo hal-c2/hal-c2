@@ -91,6 +91,11 @@ export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
 }
 
+export interface SetThreadAutoSettleInput extends ThreadCommandInput {
+  /** False keeps the thread out of automatic settlement; true lets it settle on its own again. */
+  readonly enabled: boolean;
+}
+
 export interface PinThreadInput extends ThreadCommandInput {
   /** Initial slot in the user-arranged pinned order; omit to pin keyless. */
   readonly orderKey?: string;
@@ -442,6 +447,17 @@ export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(functi
   input: SettleThreadInput,
 ) {
   return yield* simpleThreadCommand("thread.settle", input);
+});
+
+export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoSettle")(function* (
+  input: SetThreadAutoSettleInput,
+) {
+  return yield* dispatch({
+    type: "thread.auto-settle.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    enabled: input.enabled,
+  });
 });
 
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (

@@ -95,14 +95,14 @@ Feature: Settling threads
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A thread's auto-settle can be turned off and back on
     When the user turns auto-settle off for "Ship checkout"
     Then "Ship checkout" stays out of automatic settling
     When the user turns auto-settle on for "Ship checkout"
     Then "Ship checkout" settles automatically again after a quiet spell
 
-  @shared @backlog
+  @shared @backlog-desktop @backlog-mobile
   Scenario: Settling a thread with auto-settle off still works
     Given "Ship checkout" has auto-settle turned off
     When the user settles "Ship checkout"

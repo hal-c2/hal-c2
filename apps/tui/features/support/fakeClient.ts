@@ -208,6 +208,7 @@ export function fakeClient({
   deleteThread = async () => {},
   settleThread = async () => {},
   unsettleThread = async () => {},
+  setThreadAutoSettle = async () => {},
   snoozeThread = async () => {},
   unsnoozeThread = async () => {},
   stopSession = async () => {},
@@ -281,6 +282,7 @@ export function fakeClient({
   readonly deleteThread?: TuiClient["deleteThread"];
   readonly settleThread?: TuiClient["settleThread"];
   readonly unsettleThread?: TuiClient["unsettleThread"];
+  readonly setThreadAutoSettle?: TuiClient["setThreadAutoSettle"];
   readonly snoozeThread?: TuiClient["snoozeThread"];
   readonly unsnoozeThread?: TuiClient["unsnoozeThread"];
   readonly stopSession?: TuiClient["stopSession"];
@@ -600,6 +602,7 @@ export function fakeClient({
     deleteThread,
     settleThread,
     unsettleThread,
+    setThreadAutoSettle,
     snoozeThread,
     unsnoozeThread,
     stopSession,
