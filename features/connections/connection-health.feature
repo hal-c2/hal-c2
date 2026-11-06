@@ -45,9 +45,7 @@ Feature: Connection health
     Then the client retries with delays that grow up to a cap
     And reconnects when the environment answers again
 
-  # Proved by tst_ShellExamples.cpp (the notice's place) and tst_ThreadView.qml (the thread
-  # stays quiet), not yet by a step (hal-c2/hal-c2#213).
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A dropped connection is reported once, with one way to retry
     Given the user is reading a thread
     When the connection drops
@@ -55,8 +53,7 @@ Feature: Connection health
     And the thread does not say its MC cannot be reached
     And the notice covers neither the window controls, the header nor the thread
 
-  # Proved by tst_ShellExamples.cpp, not yet by a step (hal-c2/hal-c2#213).
-  @desktop @backlog-desktop
+  @desktop
   Scenario: A shell of the user's that uses the built-in layout reports a dropped connection once
     Given the user's shell fills its window with the built-in layout
     When the connection drops
@@ -296,7 +293,7 @@ Feature: Connection health
     When the user copies its trace id
     Then the trace id is on the clipboard
 
-  @backlog @desktop
+  @desktop
   Scenario: A request the MC has not answered within 15 seconds is listed in a warning
     Given the client is connected to the MC
     When a request to the MC is not answered for 15 seconds
@@ -304,14 +301,14 @@ Feature: Connection health
     When 5 minutes pass
     Then the warning is still shown until the request is answered
 
-  @backlog @desktop
+  @desktop
   Scenario: The slow-request warning lists each waiting request and when it started
     Given two requests to the MC have not been answered for 15 seconds
     When the user shows the requests in the warning
     Then the warning lists each request by its method and environment
     And says when each request started
 
-  @backlog @desktop
+  @desktop
   Scenario: Answered requests leave the slow-request warning, which closes when none are waiting
     Given two requests to the MC have not been answered for 15 seconds
     When one of them is answered
@@ -319,7 +316,7 @@ Feature: Connection health
     When the other is answered
     Then the warning is gone
 
-  @backlog @desktop
+  @desktop
   Scenario: Updating a provider or the server is reported as slow only after two minutes
     Given the user updates a provider
     When 1 minute and 59 seconds pass
@@ -327,7 +324,7 @@ Feature: Connection health
     When 1 more second passes
     Then the user sees a "warning" toast "Some requests are slow"
 
-  @backlog @desktop
+  @desktop
   Scenario: Pull request lookups and live subscriptions are never reported as slow
     When a pull request lookup is not answered for 5 minutes
     And a live subscription is not answered for 5 minutes
@@ -600,13 +597,13 @@ Feature: Connection health
     When the user chooses to reconnect it from the thread's notice
     Then the user is told "Could not reconnect environment" with the reason
 
-  @backlog @desktop
+  @desktop
   Scenario: A brief reconnect is not announced in the thread
     Given the user is looking at a thread on "studio"
     When "studio" drops and reconnects within two seconds
     Then the thread shows no notice about "studio"
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer still reconnecting after two seconds is named in the thread
     Given the user is looking at a thread on "studio"
     When "studio" has been reconnecting for more than two seconds
@@ -620,7 +617,7 @@ Feature: Connection health
     Then the thread says "studio is offline"
     And the user can ask it to reconnect
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer restarting for an update shows the update, not a reconnect warning
     Given the user is looking at a thread on "studio"
     And an update of "studio" is running
@@ -636,7 +633,7 @@ Feature: Connection health
     Then the thread says "studio is offline"
     And the user can ask it to reconnect
 
-  @backlog @desktop
+  @desktop
   Scenario: Reconnecting to a computer on another version reads as finishing an update
     Given the user is looking at a thread on "studio"
     And "studio" runs a different version than this client and no update is known to be running
