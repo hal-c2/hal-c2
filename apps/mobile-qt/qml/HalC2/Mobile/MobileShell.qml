@@ -306,12 +306,17 @@ ShellWindow {
                         }
                     }
 
+                    // Toasts rise from the bottom, where a thumb is, above
+                    // the composer on a thread: the layout already stops
+                    // short of the keyboard and the system's bars.
                     Notifications {
-                        anchors.top: parent.top
+                        objectName: "toasts"
+                        anchors.bottom: parent.bottom
                         anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.topMargin: 64
+                        anchors.bottomMargin: 12 + (root.screen === "thread" && root.threadScreen !== null && !Terminals.open ? root.threadScreen.composerHeight : 0)
                         cardWidth: Math.min(340, parent.width - 24)
-                        maximumHeight: parent.height - anchors.topMargin - 12
+                        maximumHeight: parent.height - anchors.bottomMargin - 64
+                        fromBottom: true
                         opaque: true
                     }
 

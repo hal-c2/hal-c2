@@ -305,13 +305,16 @@ const Steps steps([] {
   });
   step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     // What a viewer open over everything says (FilesSteps.cpp), how an update
-    // went, or a toast (SubagentSteps.cpp: a plan that could not be handed on).
+    // went, or a toast drawn on screen (SubagentSteps.cpp: a plan that could
+    // not be handed on; connection-health: an environment not connected).
     if (world.state(S("attachmentViewer")).toMap().isEmpty()) {
       const QString outcome = S("maintenanceOutcome-") + kOwn;
       const auto toasted = [&] {
         for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
           const QVariantMap fields = toast.toMap();
-          if (fields.value(S("title")) == c[0] || fields.value(S("description")) == c[0]) return true;
+          if ((fields.value(S("title")) == c[0] || fields.value(S("description")) == c[0]) &&
+              world.find(S("notification-") + fields.value(S("id")).toString()) != nullptr)
+            return true;
         }
         return false;
       };

@@ -65,6 +65,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/connection-health.feature:A blocked environment is tried again*"),
     QStringLiteral("connections/connection-health.feature:A connection with nothing to say*"),
     QStringLiteral("connections/connection-health.feature:An action waiting for its answer*"),
+    QStringLiteral("connections/connection-health.feature:An action for an environment that is not connected*"),
     QStringLiteral("connections/connection-health.feature:A slow MC finishes*"),
     QStringLiteral("connections/connection-health.feature:Cached data never overwrites*"),
     QStringLiteral("connections/connection-health.feature:A kept copy the client cannot read*"),
