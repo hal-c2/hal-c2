@@ -659,17 +659,10 @@ Feature: Grok
     When the MC checks Grok
     Then Grok is reported as "<status>" for this HAL-C2 release
 
-    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
+    # Statuses are the MC's (see the Claude Code outline). A CLI below 1.0.13 is refused by
+    # xAI's backend with 426 Upgrade Required, so it is broken and the warning points at >=1.0.13.
     Examples:
       | version | status  |
-      | 1.0.12  | unknown |
+      | 0.2.8   | broken  |
+      | 1.0.12  | broken  |
       | 1.0.13  | unknown |
-
-  # A Grok CLI below 1.0.13 is refused by xAI's backend with 426 Upgrade Required, which
-  # used to end the turn as an empty completed run.
-  @backlog @mc
-  Scenario: A Grok CLI older than 1.0.13 is marked broken
-    Given the installed grok command is version 0.2.8
-    When the user opens the Providers settings
-    Then Grok shows an incompatible-version warning
-    And the warning points at version 1.0.13 or newer

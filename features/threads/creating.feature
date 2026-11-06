@@ -62,9 +62,12 @@ Feature: Creating threads
     And the button's hint says Shift starts the thread in the current project
 
   @backlog @desktop
-  Scenario: The new thread button does nothing without a project
+  Scenario: The new thread button without a project starts a thread without one
     Given the environment has no projects
-    Then the new thread button in the thread list is disabled
+    And the environment offers threads without a project
+    When the user presses the new thread button in the thread list
+    Then a draft thread opens without a project
+    # Where the environment does not offer it, the button stays disabled.
 
   @backlog @desktop @mobile
   Scenario: A new thread keeps the current model and mode

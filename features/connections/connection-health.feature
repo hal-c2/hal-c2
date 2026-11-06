@@ -26,12 +26,12 @@
 #     reachability held against its interfaces, hal-c2/hal-c2#69)
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
 #   apps/desktop-qt/src/native/McClient.cpp, ThreadStore.cpp, ShellStore.cpp (each `sub` says where it resumes from)
+#   https://github.com/pingdotgg/t3code/pull/14897
+#   https://github.com/pingdotgg/t3code/pull/15034
 #   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
 #   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
 #   mc/platform/websocket-protocol.feature holds resuming streams on the MC;
 #   local-cache.feature holds what a client keeps between runs.
-#   https://github.com/pingdotgg/t3code/pull/14897
-#   https://github.com/pingdotgg/t3code/pull/15034
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with

@@ -8,9 +8,9 @@
 #   apps/mobile/src/features/threads/NewTaskDraftScreen.tsx (a task the outbox cannot save)
 #   apps/mobile/src/features/threads/new-task-context-presentation.ts (checkout, worktree and branch labels)
 #   apps/mobile/src/state/use-composer-drafts.ts (retargetNewTaskDraft), apps/mobile/src/state/pending-thread-creation.ts, apps/mobile/src/state/pending-new-tasks-model.ts (unstarted and pending tasks)
+#   https://github.com/pingdotgg/t3code/pull/14532
 # Drafting and sending are specified in features/composer/ and features/threads/. This file covers
 # the phone's new task screens: choosing where the task runs before the first message is sent.
-#   https://github.com/pingdotgg/t3code/pull/14532
 
 Feature: Starting a task from a phone
   The new task screens pick the project, the environment and the branch the task will run

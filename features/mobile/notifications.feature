@@ -6,10 +6,10 @@
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
 #   apps/mobile/modules/hal-c2-agent-notifications
 #   apps/mobile/src/Stack.tsx (notification navigation)
-# The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
-# the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 #   https://github.com/pingdotgg/t3code/pull/12048
 #   https://github.com/pingdotgg/t3code/pull/12052
+# The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
+# the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 
 Feature: Push notifications and live agent activity
   A phone is told when an agent finishes, fails, needs approval or asks a question, and can

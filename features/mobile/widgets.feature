@@ -5,9 +5,9 @@
 #   apps/mobile/src/features/usage/ (subscription usage coordinator)
 #   apps/mobile/src/widgets/ (subscriptionUsageSnapshot.ts, SubscriptionUsage.tsx, AgentActivity.tsx, SubscriptionUsageCoordinator.tsx, useSubscriptionUsage.ts)
 #   https://github.com/pingdotgg/t3code/pull/13474 (Android usage widget scrolls, counts its limits, leaves out unconfigured providers)
+#   https://github.com/pingdotgg/t3code/pull/12047
 # Provider usage limits are specified in features/providers/. This file covers the
 # home screen and lock screen widgets that show them on a phone.
-#   https://github.com/pingdotgg/t3code/pull/12047
 
 Feature: Home screen and lock screen widgets
   Widgets show subscription limits and agent activity without opening the app. They say
