@@ -1137,17 +1137,23 @@ Item {
                             color: root.messageColor
                             border.width: 1
                             border.color: root.borderColor
-                            clip: collapsed
-                            Markdown {
-                                id: userText
+                            // Clipped inside the padding, so a collapsed
+                            // message keeps its bottom margin.
+                            Item {
                                 x: Theme.space.lg
                                 y: Theme.space.md
                                 width: body.width - 2 * Theme.space.lg
-                                text: row.text ?? ""
-                                lineBreaks: true
-                                textColor: root.messageTextColor
-                                linkPreviews: root.linkPreviews
-                                onLinkActivated: (link, external) => root.linkActivated(link, external)
+                                height: bubble.height - 2 * Theme.space.md
+                                clip: bubble.collapsed
+                                Markdown {
+                                    id: userText
+                                    width: parent.width
+                                    text: row.text ?? ""
+                                    lineBreaks: true
+                                    textColor: root.messageTextColor
+                                    linkPreviews: root.linkPreviews
+                                    onLinkActivated: (link, external) => root.linkActivated(link, external)
+                                }
                             }
                         }
                         ActionLink {
