@@ -46,8 +46,11 @@ QList<sidebar::Thread> SidebarController::threads() const {
   QList<sidebar::Thread> threads = m_store->threads();
   const NativeWindow* window = NativeShell::of(this);
   const auto* plugins = window ? window->controller<McPluginController>() : nullptr;
-  for (sidebar::Thread& thread : threads) {
-    if (!thread.listed && (!plugins || !plugins->keepsUnlisted(thread.environmentId, thread.pluginId))) thread.listed = true;
+  // Read through a const list and write only what changes: the list shares the
+  // store's, and touching it mutably copies every thread.
+  for (qsizetype i = 0; i < threads.size(); ++i) {
+    const sidebar::Thread& thread = std::as_const(threads).at(i);
+    if (!thread.listed && (!plugins || !plugins->keepsUnlisted(thread.environmentId, thread.pluginId))) threads[i].listed = true;
   }
   return threads;
 }
@@ -160,6 +163,10 @@ void SidebarController::announceMigratedThreads() {
   if (!m_store->synchronized()) return;
   auto* settings = NativeShell::of(this)->controller<SettingsController>();
   if (!settings || settings->deviceSettings().value(kAnnounced).toBool()) return;
+  // Once per snapshot, not per row change: the threads a migration brought
+  // arrive with the MC's snapshot, and counting them reads every thread.
+  if (m_store->snapshots() == m_migrationChecked) return;
+  m_migrationChecked = m_store->snapshots();
   qsizetype migrated = 0;
   for (const sidebar::Thread& thread : m_store->threads()) {
     if (m_store->threadRow(thread.key()).value(QLatin1String("historyOrigin")) == QLatin1String("v1_import")) ++migrated;

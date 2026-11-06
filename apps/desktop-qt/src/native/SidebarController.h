@@ -165,6 +165,8 @@ private:
   QTimer m_minute;
   bool m_active = false;
   bool m_previewing = false;
+  // The shell snapshot announceMigratedThreads() last counted threads for.
+  quint64 m_migrationChecked = 0;
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");
