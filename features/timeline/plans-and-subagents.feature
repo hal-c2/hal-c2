@@ -85,21 +85,21 @@ Feature: Plans and subagents
     Given the agent is proposing a plan in the running turn
     Then no plan is offered
 
-  @shared @backlog-tui
+  @shared
   Scenario: The user implements the plan in a new thread
     Given the agent has proposed a plan
     When the user implements the plan in a new thread
     Then a new thread starts implementing the plan
     And the planning thread keeps the plan
 
-  @shared @backlog-tui
+  @shared
   Scenario: Starting the implementation thread fails
     Given the agent has proposed a plan
     And the environment cannot start a new thread
     When the user implements the plan in a new thread
     Then the user is told "Could not start implementation thread"
 
-  @shared @backlog-tui
+  @shared
   Scenario Outline: The user keeps a copy of the plan
     Given the agent has proposed a plan
     When the user <action>
@@ -111,7 +111,7 @@ Feature: Plans and subagents
       | downloads the plan                   | a markdown file of the plan is saved               |
       | saves the plan to "docs/tax-plan.md" | "docs/tax-plan.md" holds the plan in the workspace |
 
-  @shared @backlog-tui
+  @shared
   Scenario: Saving the plan fails when the workspace is unavailable
     Given the agent has proposed a plan
     And the thread's workspace is unavailable
@@ -348,7 +348,7 @@ Feature: Plans and subagents
     Then it names the worker
     And the user can open the worker's thread from it
 
-  @shared @backlog-tui
+  @shared
   Scenario: A result a thread stored as a user message still shows as a notification
     Given a thread stored the failed result of the delegated task "Tax tests" as a user message
     When the user reads the parent thread
@@ -369,12 +369,12 @@ Feature: Plans and subagents
       | failed               | Failed           |
       | cancelled            | Stopped          |
 
-  @shared @backlog-tui
+  @shared
   Scenario: A finished subagent shows its result, a working one its latest progress
     Given a subagent that reported "Reading the tax code" and then finished with "12 tests added"
     Then the subagent's row reads "12 tests added"
 
-  @shared @backlog-tui
+  @shared
   Scenario: A working subagent shows its latest progress
     Given a subagent that is still working after reporting "Reading the tax code"
     Then the subagent's row reads "Reading the tax code"
@@ -446,7 +446,7 @@ Feature: Plans and subagents
     Then the timeline says "acme/app#12: checks failing"
     And nothing says a message was sent by another agent
 
-  @shared @backlog-tui
+  @shared
   Scenario: A wake-up a thread stored as a user message is not from another agent either
     Given a thread stored the agent's own wake-up as a user message
     When the user reads the parent thread
@@ -477,14 +477,14 @@ Feature: Plans and subagents
       | custom/model-v2               | custom/model-v2               |
       | My Custom Model               | My Custom Model               |
 
-  @mc @shared @backlog-tui
+  @mc @shared
   Scenario: A finished subagent with work still running is shown as pending
     Given a subagent returned its result while background work it started is still running
     When the user looks at the parent thread
     Then the subagent's result is shown
     And its background work is still shown as running
 
-  @mc @shared @backlog-tui
+  @mc @shared
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
     When the user looks at the parent thread
