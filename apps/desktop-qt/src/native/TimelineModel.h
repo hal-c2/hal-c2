@@ -11,6 +11,8 @@
 #include <QPair>
 #include <QStringList>
 #include <QTimer>
+
+#include <optional>
 #include <QUrl>
 #include <QVariant>
 
@@ -184,7 +186,17 @@ public:
   // known), a project's title, and the environment's providers (the config's
   // `providers`): what a fork's inherited work, a subagent's card and a
   // handoff's ends are told by.
-  void setThreadRows(std::function<QJsonObject(const QString& threadId)> rowOf) { m_threadRow = std::move(rowOf); }
+  void setThreadRows(std::function<QJsonObject(const QString& threadId)> rowOf) {
+    m_threadRow = std::move(rowOf);
+    m_inherited.reset();
+  }
+  // The shell's rows changed: a fork whose source or its title arrived late
+  // shows its marker and "From …" then.
+  void threadRowsChanged();
+  // Whether a working group of subagents' span is moving.
+  bool spansTicking() const { return m_spanTimer.isActive(); }
+  // One second passing: working groups show their new span.
+  void tickSpans();
   void setProjectTitles(std::function<QString(const QString& projectId)> titleOf) { m_projectTitle = std::move(titleOf); }
   void setProviders(std::function<QJsonArray()> providers) { m_providers = std::move(providers); }
   // A subagent row's pointing card: {model ("Not reported" when it names
@@ -413,6 +425,9 @@ private:
   // When a row or turn item happened, or invalid.
   QDateTime rowTime(const Row& row) const;
   void redrawTimes();
+  // Ticks the spans while a group of subagents works, else stands still.
+  void updateSpanTimer();
+  bool liveGroup(const Row& row) const;
 
   QString m_threadKey;
   QString m_status = QStringLiteral("loading");
@@ -455,7 +470,11 @@ private:
   std::function<QString(const QString&)> m_projectTitle;
   std::function<QJsonArray()> m_providers;
   // The runs a fork carried over from its source (forkedFrom), else empty.
+  // Kept until the runs or the shell's rows change.
   QSet<QString> inheritedRuns() const;
+  mutable std::optional<QSet<QString>> m_inherited;
+  // The fork's source and its title as last shown.
+  QString m_forkShown;
   QJsonObject forkedFrom() const;
   // "From <source thread>".
   QString forkSource() const;
@@ -487,6 +506,7 @@ private:
   bool m_dirtyAll = false;
   bool m_cursorDirty = false;
   QTimer m_flushTimer;
+  QTimer m_spanTimer;
 };
 
 // `at` as the rows read a time that may be ahead, in the device's

@@ -20,9 +20,13 @@ const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads")
 ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
+  // Background work and a fork's source (or its title) can change on the
+  // shell's thread row after the timeline opened.
   connect(store, &ShellStore::changed, this, [this] {
     for (auto it = m_threads.cbegin(); it != m_threads.cend(); ++it) {
-      if (it->model) it->model->setBackgroundWork(!m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray().isEmpty());
+      if (!it->model) continue;
+      it->model->setBackgroundWork(!m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray().isEmpty());
+      it->model->threadRowsChanged();
     }
   });
   // Threads shown from what was kept of another MC go with its thread list;

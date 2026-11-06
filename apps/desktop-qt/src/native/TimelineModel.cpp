@@ -541,6 +541,8 @@ TimelineModel::TimelineModel(const QString& threadKey, QObject* parent)
   m_flushTimer.setSingleShot(true);
   m_flushTimer.setInterval(flushDelayMs);
   connect(&m_flushTimer, &QTimer::timeout, this, &TimelineModel::flush);
+  m_spanTimer.setInterval(1000);
+  connect(&m_spanTimer, &QTimer::timeout, this, &TimelineModel::tickSpans);
   connect(this, &QAbstractItemModel::rowsInserted, this, &TimelineModel::refreshLatest);
   connect(this, &QAbstractItemModel::rowsRemoved, this, &TimelineModel::refreshLatest);
   connect(this, &QAbstractItemModel::modelReset, this, &TimelineModel::refreshLatest);
@@ -1092,6 +1094,7 @@ void TimelineModel::events(const QJsonArray& events) {
     restructure(changed);
     return;
   }
+  if (!m_agentModels.isEmpty()) updateSpanTimer();
   // A row whose items only grew by streamed text says which role that is, so
   // a delta does not make its delegate read every other one again.
   QHash<int, bool> redraw;  // row -> only its text grew
@@ -1136,6 +1139,7 @@ bool TimelineModel::shows(const Row& row, const QString& item) const {
 
 bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObject& patch, QSet<QString>& changed) {
   if (!kKinds.contains(kind)) return false;
+  if (kind == QLatin1String("run")) m_inherited.reset();
   m_dirty.insert({kind, id});
   QHash<QString, QJsonObject>& byKind = m_entities[kind];
   const auto current = byKind.constFind(id);
@@ -1256,6 +1260,7 @@ void TimelineModel::sortItems() {
 // --- The projection ---------------------------------------------------------------
 
 void TimelineModel::restructure(const QSet<QString>& changed) {
+  m_inherited.reset();
   applyRows(project(), changed);
   m_rowOfItem.clear();
   for (int row = 0; row < m_rows.size(); ++row) {
@@ -1263,6 +1268,35 @@ void TimelineModel::restructure(const QSet<QString>& changed) {
     if (!m_rows.at(row).checkpoint.isEmpty()) m_rowOfItem.insert(m_rows.at(row).checkpoint, row);
   }
   updateWorking();
+  updateSpanTimer();
+}
+
+bool TimelineModel::liveGroup(const Row& row) const {
+  if (row.kind != QLatin1String("subagents")) return false;
+  QList<QJsonObject> members;
+  for (const QString& id : row.items) members.append(subagentOf(entity(QStringLiteral("turn-item"), id)));
+  const subagents::Span span = subagents::groupSpan(members);
+  return span.live && span.start.isValid() && !span.end.isValid();
+}
+
+void TimelineModel::tickSpans() {
+  for (int row = 0; row < m_rows.size(); ++row) {
+    if (liveGroup(m_rows.at(row))) emit dataChanged(index(row), index(row), {SpanRole});
+  }
+}
+
+void TimelineModel::updateSpanTimer() {
+  const bool live = std::any_of(m_rows.cbegin(), m_rows.cend(), [this](const Row& row) { return liveGroup(row); });
+  if (live && !m_spanTimer.isActive()) m_spanTimer.start();
+  else if (!live) m_spanTimer.stop();
+}
+
+void TimelineModel::threadRowsChanged() {
+  const QString shown = QString::fromUtf8(QJsonDocument(forkedFrom()).toJson(QJsonDocument::Compact)) + QLatin1Char('\n') + forkSource();
+  if (shown == m_forkShown) return;
+  m_forkShown = shown;
+  restructure({});
+  if (!m_rows.isEmpty()) emit dataChanged(index(0), index(int(m_rows.size()) - 1), {VisibilityRole, SourceRole, EntriesRole});
 }
 
 QList<TimelineModel::Row> TimelineModel::project() const {
@@ -2379,17 +2413,20 @@ QJsonObject TimelineModel::forkedFrom() const {
 }
 
 QSet<QString> TimelineModel::inheritedRuns() const {
-  const QJsonObject from = forkedFrom();
-  QSet<QString> inherited;
-  if (from.isEmpty()) return inherited;
-  const QHash<QString, QJsonObject> runs = m_entities.value(QStringLiteral("run"));
-  const auto at = runs.constFind(text(from, QLatin1String("runId")));
-  if (at == runs.cend()) return inherited;
-  const double point = at->value(QLatin1String("ordinal")).toDouble();
-  for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
-    if (it->value(QLatin1String("ordinal")).toDouble() <= point) inherited.insert(it.key());
-  }
-  return inherited;
+  if (!m_inherited) m_inherited = [this] {
+    const QJsonObject from = forkedFrom();
+    QSet<QString> inherited;
+    if (from.isEmpty()) return inherited;
+    const QHash<QString, QJsonObject> runs = m_entities.value(QStringLiteral("run"));
+    const auto at = runs.constFind(text(from, QLatin1String("runId")));
+    if (at == runs.cend()) return inherited;
+    const double point = at->value(QLatin1String("ordinal")).toDouble();
+    for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
+      if (it->value(QLatin1String("ordinal")).toDouble() <= point) inherited.insert(it.key());
+    }
+    return inherited;
+  }();
+  return *m_inherited;
 }
 
 QString TimelineModel::forkSource() const {
