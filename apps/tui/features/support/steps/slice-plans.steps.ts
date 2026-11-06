@@ -16,7 +16,7 @@ import {
   updateThread,
   type ThreadWorld,
 } from "../threadWorld.ts";
-import { settle, type World } from "../world.ts";
+import { pressKey, settle, type World } from "../world.ts";
 
 const planStatus = (ctx: World) => ctx.host!.state.get("planStatus") as TuiPlanStatusState | null;
 const status = (ctx: World) => ctx.host!.state.get("status") as { text: string; kind: string };
@@ -74,6 +74,9 @@ step("the plan shows which steps are done, in progress and pending", async (ctx:
 
 step("the user saves the plan as Markdown", async (ctx: ThreadWorld) => {
   await chooseCommand(ctx, "Save plan as Markdown");
+  // The path field opens on the plan's file name; Enter keeps it.
+  expect((ctx.host!.state.get("ask") as { value: string }).value).toBe("add-caching.md");
+  await pressKey(ctx, "Enter");
   await settle(ctx);
 });
 

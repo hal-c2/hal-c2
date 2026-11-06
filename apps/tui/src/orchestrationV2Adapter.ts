@@ -3,6 +3,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  type OrchestrationV2Notification,
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadMoveTarget,
@@ -372,6 +373,9 @@ function itemSummary(item: OrchestrationV2TurnItem): string {
   }
 }
 
+/** The MC's result for a subagent that ended without one (desktop TimelineSummary's subagentDetail). */
+const SUBAGENT_PLACEHOLDER = /^Child task ended with status\b/i;
+
 function itemPayload(
   item: OrchestrationV2TurnItem,
   projection: OrchestrationV2ThreadProjection,
@@ -434,7 +438,17 @@ function itemPayload(
     case "subagent": {
       // The model is the subagent's own, never the parent thread's.
       const model = projection.subagents.find((entry) => entry.id === item.subagentId)?.model;
-      const detail = [model, item.progress ?? item.result ?? item.prompt]
+      // A subagent that ended shows its answer; one at work, its latest word.
+      const settled = !["pending", "running", "waiting"].includes(item.status);
+      // The MC's "Child task ended with status …" stands in for no answer at all.
+      const words = (text: string | null | undefined) => {
+        const trimmed = text?.trim() ?? "";
+        return SUBAGENT_PLACEHOLDER.test(trimmed) ? "" : trimmed;
+      };
+      const said = settled
+        ? words(item.result) || words(item.progress)
+        : words(item.progress) || words(item.result);
+      const detail = [model, said || item.prompt]
         .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
         .join(" · ");
       return {
@@ -588,12 +602,91 @@ export interface TuiQueuedMessage {
   readonly held: boolean;
 }
 
+type ProjectedMessage = OrchestrationV2ThreadProjection["messages"][number];
+
+// <delegated_task_result taskId="…" title="…" status="…" childThreadId="…">
+const DELEGATED_RESULT =
+  /^<delegated_task_result taskId="[^"]*" title="([^\n]*)" status="(\w+)" childThreadId="[^"\n]*">/;
+
+/**
+ * The notification a thread stored as a plain user message, with none of the
+ * marks below: a delegated task's result the MC sent, or the provider waking
+ * its own agent (as the desktop's TimelineSummary noticeOf reads them).
+ */
+function storedNotice(
+  message: ProjectedMessage,
+): Pick<OrchestrationV2Notification, "source" | "outcome" | "summary"> | null {
+  if (message.role !== "user") return null;
+  if (message.createdBy === "agent") {
+    // Another agent's message names its thread, or came in over MCP.
+    if (message.creationSource !== "provider" || message.senderThreadId) return null;
+    return {
+      source: { kind: "background_task" },
+      outcome: "updated",
+      summary: "Background activity updated" as OrchestrationV2Notification["summary"],
+    };
+  }
+  if (message.createdBy !== "system") return null;
+  const match = DELEGATED_RESULT.exec(message.text);
+  if (!match) return null;
+  const title = match[1]!.trim() || "Delegated task";
+  const status = match[2]!;
+  const outcome = status === "completed" || status === "failed" ? status : "cancelled";
+  const ended = outcome === "completed" ? "finished" : outcome === "failed" ? "failed" : "stopped";
+  return {
+    source: { kind: "delegated_task", taskIds: [] },
+    outcome,
+    summary: `${title} ${ended}` as OrchestrationV2Notification["summary"],
+  };
+}
+
 // A thread stored before the MC put the notification on them has only the older marks:
 // the delegated task a result delivers, and `providerWake` on the provider's own wake-up.
-const isConversation = (message: OrchestrationV2ThreadProjection["messages"][number]) =>
+const isConversation = (message: ProjectedMessage) =>
   message.notification == null &&
   message.delegatedCompletion == null &&
-  message.providerWake !== true;
+  message.providerWake !== true &&
+  storedNotice(message) === null;
+
+/** The notification rows of messages a thread stored as the user's (see storedNotice). */
+function storedNoticeActivities(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationThreadActivity[] {
+  return projection.messages.flatMap((message, index) => {
+    if (message.notification != null) return [];
+    const notice = storedNotice(message);
+    if (notice === null) return [];
+    const item = {
+      id: `turn-item:stored-notice:${message.id}`,
+      threadId: message.threadId,
+      runId: message.runId,
+      nodeId: message.nodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: message.createdAt,
+      completedAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      type: "notification",
+      ...notice,
+    } as unknown as OrchestrationV2TurnItem;
+    const activity = presentActivity(
+      {
+        position: projection.visibleTurnItems.length + index,
+        visibility: "local",
+        sourceThreadId: message.threadId,
+        sourceItemId: item.id,
+        item,
+      },
+      projection,
+    );
+    return activity === null ? [] : [activity];
+  });
+}
 
 export function presentTuiThread(projection: OrchestrationV2ThreadProjection): OrchestrationThread {
   const thread = projection.thread;
@@ -740,6 +833,7 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
         const activity = presentActivity(item, projection);
         return activity === null ? [] : [activity];
       }),
+      ...storedNoticeActivities(projection),
       // The header's context meter reads the newest of these (src/contextWindow.ts).
       ...(contextUsage && providerThread
         ? [
