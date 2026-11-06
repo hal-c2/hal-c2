@@ -24,9 +24,11 @@
 #include "Harness.h"
 #include "LocalCache.h"
 #include "McClient.h"
+#include "MobileApp.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "Phone.h"
+#include "Resume.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadStore.h"
@@ -423,6 +425,26 @@ const Steps steps([] {
     world.sync();
     expect(world.mc.connections.size() == watch(world).connectionsBefore && phase(world) == QLatin1String("connected"),
            S("the connection was replaced: %1 connections, %2").arg(world.mc.connections.size()).arg(show(connection(world))));
+  });
+
+  // A long suspension: the socket the system froze is not waited on.
+  step(S("the app was suspended for a long time"), [](World& world, const Captures&, const Table&) {
+    Resume& resume = world.app().resume();
+    auto now = std::make_shared<qint64>(0);
+    resume.setClock([now] { return *now; });
+    watch(world).connectionsBefore = world.mc.connections.size();
+    world.background();
+    // A minute away, much longer than the stay a phone replaces its connection after.
+    *now += 60000;
+    expect(*now >= resume.threshold() && resume.threshold() == 10000, S("the phone replaces its connection after %1 ms away").arg(resume.threshold()));
+  });
+  step(S("it comes to the foreground"), [](World& world, const Captures&, const Table&) { world.foreground(); });
+  step(S("the client opens a new connection without waiting for the old one to fail"), [](World& world, const Captures&, const Table&) {
+    waitForReconnect(world, watch(world).connectionsBefore + 1);
+    // The old one never failed: it was given up on, and no check timed out.
+    world.sync();
+    expect(world.mc.connections.size() == watch(world).connectionsBefore + 1 && client(world).failure().isEmpty() && !watch(world).checks.contains(false),
+           S("%1 connections; the last failure was \"%2\"").arg(world.mc.connections.size()).arg(client(world).failure()));
   });
 
   // What the phone says of its connection.

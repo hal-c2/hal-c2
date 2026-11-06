@@ -46,6 +46,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/connection-health.feature:Removing an environment clears everything the client kept for it"),
     QStringLiteral("connections/connection-health.feature:One connection serves every MC of a cluster"),
     QStringLiteral("connections/connection-health.feature:A cluster connection resumes each stream from where it stopped"),
+    QStringLiteral("connections/connection-health.feature:A long background suspension replaces the connection"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
     QStringLiteral("mobile/composer.feature"),
     QStringLiteral("mobile/navigation-and-deep-links.feature"),

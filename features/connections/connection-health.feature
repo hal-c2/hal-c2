@@ -229,7 +229,7 @@ Feature: Connection health
     Then the client tries to connect once more
     And stays blocked with the same reason if the environment still refuses
 
-  @backlog @mobile
+  @mobile
   Scenario: A long background suspension replaces the connection
     Given the app was suspended for a long time
     When it comes to the foreground
