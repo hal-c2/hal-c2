@@ -91,7 +91,7 @@ ColumnLayout {
 
                     Label {
                         Layout.fillWidth: true
-                        text: Qt.formatDateTime(new Date(row.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))
+                        text: Format.dateTime(row.at)
                         elide: Text.ElideRight
                         font.pixelSize: Math.round(15 * Theme.fontScale)
                     }
@@ -110,7 +110,7 @@ ColumnLayout {
                     Label {
                         Layout.fillWidth: true
                         visible: row.restoredFromAt !== ""
-                        text: qsTr("Restored from %1").arg(Qt.formatDateTime(new Date(row.restoredFromAt), Qt.locale().dateTimeFormat(Locale.ShortFormat)))
+                        text: qsTr("Restored from %1").arg(Format.dateTime(row.restoredFromAt))
                         elide: Text.ElideRight
                         color: Theme.palette.color("textMuted", "#a1a1aa")
                         font.pixelSize: Math.round(13 * Theme.fontScale)

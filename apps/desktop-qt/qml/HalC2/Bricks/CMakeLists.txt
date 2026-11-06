@@ -127,6 +127,7 @@ set(hal_c2_bricks_qml_files
     Contribution.qml
     PluginSlot.qml
     PluginRegistry.qml
+    Format.qml
     PluginsSettings.qml
     ShellTabs.qml
     PluginPages.qml

@@ -21,8 +21,12 @@ Rectangle {
     border.width: 1
 
     function resets(iso) {
-        const date = new Date(iso);
-        return isNaN(date.getTime()) ? "" : qsTr("resets %1").arg(date.toLocaleString(Qt.locale(), Locale.ShortFormat).replace(/[\u202f\u00a0]/g, " ")); // plain spaces, as sidebar::plainSpaces
+        // As the timeline says when a limit resets: "18:05", "tomorrow at 18:05".
+        // Read again each minute too, so "tomorrow" turns to today at midnight.
+        const at = Format.at(iso);
+        Format.follow();
+        Format.minute;
+        return at ? qsTr("resets %1").arg(Threads.upcoming(at)) : "";
     }
 
     ColumnLayout {

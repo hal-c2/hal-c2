@@ -1,4 +1,5 @@
 #include "ThreadPullRequests.h"
+#include "TimelineModel.h"
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -267,15 +268,13 @@ QString ThreadPullRequests::syncedLabel() const {
   return latest.isEmpty() ? QString() : QStringLiteral("synced %1").arg(ago(latest));
 }
 
-// formatRelativeTimeLabel: "just now", then minutes, hours and days ago.
+// formatRelativeTimeLabel: "just now", then minutes, hours and days ago (relativeTime).
 QString ThreadPullRequests::ago(const QString& iso) const {
   const QDateTime at = QDateTime::fromString(iso, Qt::ISODate);
   if (!at.isValid()) return {};
-  const qint64 seconds = std::max<qint64>(0, at.secsTo(m_now()));
-  if (seconds < 60) return QStringLiteral("just now");
-  if (seconds < 3600) return QStringLiteral("%1m ago").arg(seconds / 60);
-  if (seconds < 86400) return QStringLiteral("%1h ago").arg(seconds / 3600);
-  return QStringLiteral("%1d ago").arg(seconds / 86400);
+  const QDateTime now = m_now();
+  // A time ahead of the clock (its skew) still reads "just now".
+  return relativeTime(std::min(at, now), now);
 }
 
 int ThreadPullRequests::indexOf(const QString& key) const {

@@ -56,8 +56,7 @@ SettingsPage {
     }
 
     function when(iso) {
-        const date = new Date(iso);
-        return isNaN(date.getTime()) ? iso : date.toLocaleString(Qt.locale(), Locale.ShortFormat).replace(/[\u202f\u00a0]/g, " "); // plain spaces, as sidebar::plainSpaces
+        return Format.dateTime(iso) || iso;
     }
 
     component Heading: Label {

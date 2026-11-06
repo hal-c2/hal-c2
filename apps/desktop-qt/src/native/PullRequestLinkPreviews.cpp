@@ -1,4 +1,5 @@
 #include "PullRequestLinkPreviews.h"
+#include "TimelineModel.h"
 
 #include <QJsonValue>
 
@@ -8,15 +9,12 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
-// "just now", then minutes, hours and days ago.
+// "just now", then minutes, hours and days ago (relativeTime).
 QString ago(const QString& iso, const QDateTime& now) {
   const QDateTime at = QDateTime::fromString(iso, Qt::ISODateWithMs);
   if (!at.isValid()) return {};
-  const qint64 seconds = std::max<qint64>(0, at.secsTo(now));
-  if (seconds < 60) return QStringLiteral("just now");
-  if (seconds < 3600) return QStringLiteral("%1m ago").arg(seconds / 60);
-  if (seconds < 86400) return QStringLiteral("%1h ago").arg(seconds / 3600);
-  return QStringLiteral("%1d ago").arg(seconds / 86400);
+  // A time ahead of the clock (its skew) still reads "just now".
+  return relativeTime(std::min(at, now), now);
 }
 
 }  // namespace

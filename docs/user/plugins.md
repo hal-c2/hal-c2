@@ -57,6 +57,30 @@ The same file works in the terminal client. Keep to `Text`, `Row`, `Column`,
 `Rectangle` and `Timer` if you want it on both. A plugin that names a place the
 app does not have is listed as loaded and shows nothing.
 
+### Show times the way the user reads them
+
+In the desktop app, `Format` from `HalC2.Bricks` writes times as the rest of the
+app does: in the user's **Time format** (**Settings → General**: System
+default, 12-hour or 24-hour) and locale. Each function takes a `Date`, an ISO
+8601 string or milliseconds since the epoch, and returns `""` for a missing or
+invalid time.
+
+| Function                | Gives                                   |
+| ----------------------- | --------------------------------------- |
+| `Format.time(at)`       | `18:05`, `6:05 PM`                      |
+| `Format.date(at)`       | `9/20`, or `9/20/2025` in another year  |
+| `Format.dateTime(at)`   | `9/20 18:05`                            |
+| `Format.relative(at)`   | `just now`, `5m ago`, `in 2h`, `3d ago` |
+
+```qml
+import HalC2.Bricks
+
+Text { text: Format.dateTime(order.placedAt) }
+```
+
+A text bound to one of them changes as soon as the user picks another time
+format, and one bound to `Format.relative` moves on once a minute.
+
 ## Plugins that run on your MC
 
 Some plugins do work on a machine rather than in one app, such as

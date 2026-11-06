@@ -7,7 +7,7 @@
 #   apps/tui/src/commands.ts (command palette entries)
 #   docs/user/plugins.md
 #   apps/desktop-qt/src/native/PluginController.cpp (plugin files, disable and enable, URL installs)
-#   apps/desktop-qt/qml/HalC2/Bricks/PluginRegistry.qml, PluginSlot.qml, PluginsSettings.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/PluginRegistry.qml, PluginSlot.qml, PluginsSettings.qml, Format.qml
 #   apps/desktop-qt/tests/native/features/PluginSteps.cpp
 
 Feature: UI plugins
@@ -214,6 +214,14 @@ Feature: UI plugins
     When it is loaded on a surface without that slot
     Then the plugin is listed as loaded with no visible contributions
     And no error is reported
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A plugin shows times in the time format the user chose
+    Given the user prefers a 24-hour clock
+    And the plugin "shift" shows 6:05 PM with Format.time in "statusbar"
+    Then the plugin shows "18:05"
+    When the user prefers a 12-hour clock
+    Then the plugin shows "6:05 PM"
 
   @backlog @desktop @mobile @tui
   Scenario: A plugin can be loaded from a paired MC

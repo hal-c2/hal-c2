@@ -132,6 +132,10 @@ add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
 add_executable(tst_ThisMachine tst_ThisMachine.cpp)
 target_link_libraries(tst_ThisMachine PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThisMachine COMMAND tst_ThisMachine)
+# What plugin pages format times with (Format.qml).
+add_executable(tst_TimeFormat tst_TimeFormat.cpp)
+target_link_libraries(tst_TimeFormat PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME TimeFormat COMMAND tst_TimeFormat)
 # Which links in the conversation are pull requests, and which project reads one.
 add_executable(tst_PullRequestLinks tst_PullRequestLinks.cpp)
 target_link_libraries(tst_PullRequestLinks PRIVATE hal_c2_native Qt6::Test)

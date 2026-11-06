@@ -106,10 +106,13 @@ QDateTime itemTime(const QJsonObject& item) {
 // (and year: "numeric" with `withYear`): "9/20", "9/20/2025".
 QString numericDate(const QDate& date, bool withYear, const QLocale& locale) {
   QString format = locale.dateFormat(QLocale::ShortFormat);
-  format.replace(QRegularExpression(QStringLiteral("d+")), QStringLiteral("d"));
-  format.replace(QRegularExpression(QStringLiteral("M+")), QStringLiteral("M"));
+  static const QRegularExpression days(QStringLiteral("d+"));
+  static const QRegularExpression months(QStringLiteral("M+"));
+  static const QRegularExpression years(QStringLiteral("y+"));
+  format.replace(days, QStringLiteral("d"));
+  format.replace(months, QStringLiteral("M"));
   if (withYear) {
-    format.replace(QRegularExpression(QStringLiteral("y+")), QStringLiteral("yyyy"));
+    format.replace(years, QStringLiteral("yyyy"));
   } else {
     // The year and the separator joining it to the day or month.
     static const QRegularExpression year(QStringLiteral("^y+[^dMy]*|[^dMy]*y+$|y+[^dMy]*"));
@@ -589,6 +592,28 @@ QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& 
   if (days == 0) return time;
   if (days == 1) return QStringLiteral("tomorrow at ") + time;
   return numericDate(local.date(), local.date().year() != today.year(), locale) + QLatin1Char(' ') + time;
+}
+
+QString shortDate(const QDateTime& at, const QDateTime& now, const QLocale& locale) {
+  if (!at.isValid()) return {};
+  const QDate date = at.toLocalTime().date();
+  return numericDate(date, date.year() != now.toLocalTime().date().year(), locale);
+}
+
+QString shortDateTime(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale) {
+  if (!at.isValid()) return {};
+  return shortDate(at, now, locale) + QLatin1Char(' ') + sidebar::timeOfDay(at.toLocalTime(), timestampFormat, locale);
+}
+
+QString relativeTime(const QDateTime& at, const QDateTime& now) {
+  if (!at.isValid()) return {};
+  const qint64 seconds = at.secsTo(now);
+  const qint64 span = seconds < 0 ? -seconds : seconds;
+  if (span < 60) return QStringLiteral("just now");
+  const QString amount = span < 3600    ? QStringLiteral("%1m").arg(span / 60)
+                         : span < 86400 ? QStringLiteral("%1h").arg(span / 3600)
+                                        : QStringLiteral("%1d").arg(span / 86400);
+  return seconds < 0 ? QStringLiteral("in ") + amount : amount + QStringLiteral(" ago");
 }
 
 // The tooltip of a row's time, in English.
