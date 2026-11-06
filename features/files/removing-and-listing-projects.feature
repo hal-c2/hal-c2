@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14912 (automatic pull no longer holds readiness)
 #   docs/user/project-settings.md (Project category, removal)
 #   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
 #   apps/web/src/components/settings/ProjectsSettings.tsx (removal)
