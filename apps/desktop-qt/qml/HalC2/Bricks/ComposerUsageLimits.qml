@@ -22,8 +22,10 @@ Rectangle {
 
     function resets(iso) {
         // As the timeline says when a limit resets: "18:05", "tomorrow at 18:05".
+        // Read again each minute too, so "tomorrow" turns to today at midnight.
         const at = Format.at(iso);
         Format.follow();
+        Format.minute;
         return at ? qsTr("resets %1").arg(Threads.upcoming(at)) : "";
     }
 
