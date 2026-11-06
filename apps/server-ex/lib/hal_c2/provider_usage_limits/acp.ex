@@ -46,7 +46,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
     env = env(instance)
 
     case HalC2.Acp.driver(instance) do
-      "grok" -> grok(env, checked_at)
+      "grok" -> grok(instance, env, checked_at)
       "cursor" -> cursor(instance, env, checked_at)
       "opencode" -> opencode(instance, env, checked_at)
     end
@@ -64,7 +64,7 @@ defmodule HalC2.ProviderUsageLimits.Acp do
 
   # --- Grok ------------------------------------------------------------------------
 
-  defp grok(env, checked_at) do
+  defp grok(instance, env, checked_at) do
     home = present(env["GROK_HOME"]) || Path.join(home(env), ".grok")
 
     cond do
@@ -80,12 +80,20 @@ defmodule HalC2.ProviderUsageLimits.Acp do
         with {:ok, %{} = credentials} <- JSON.decode(auth),
              credential = Enum.find_value(@grok_accounts, &credentials[&1]),
              token when is_binary(token) <- grok_token(credential) do
+          # The email names the account whose quota this is, so clients merge one
+          # account signed in on several environments.
+          with email when is_binary(email) <- present(credential["email"]),
+               do: HalC2.ProviderUsageLimits.remember_account(instance, %{"email" => email})
+
           case http(:get, grok_url(), token) do
             {:ok, %{"config" => %{"creditUsagePercent" => used} = config}} when is_number(used) ->
               limits(checked_at, [grok_window(used, config["currentPeriod"] || %{})])
 
+            # xAI leaves the percentage out until the account has metered use. That
+            # account can report later, so it stays listed with no windows yet rather
+            # than `unsupported`, which clients drop.
             {:ok, %{}} ->
-              unavailable(checked_at, "unsupported")
+              limits(checked_at, [])
 
             _ ->
               unavailable(checked_at, "probeFailed", "Grok could not read usage limits.")
