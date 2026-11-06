@@ -77,7 +77,7 @@ Feature: Models
   # Upstream #14152 adds Claude Sonnet 5.5. The bundled manifest does not list it yet.
   @backlog
   Scenario: The Claude catalog lists Claude Sonnet 5.5
-    Given the manifest lists "claude-sonnet-5-5" in Claude's catalog
+    Given the MC uses its bundled model manifest
     When the MC has read Claude's model list
     Then "claude-sonnet-5-5" is offered in the model picker for Claude
 
