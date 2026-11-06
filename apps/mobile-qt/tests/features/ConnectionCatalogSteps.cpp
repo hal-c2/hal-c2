@@ -7,6 +7,6 @@
 
 #include "ConnectionCatalogSteps.h"
 
-bool savedEnvironmentBlocked(World &world) {
+bool savedEnvironmentBlocked(World& world) {
   return connection_catalog::savedEnvironmentBlocked(world);
 }

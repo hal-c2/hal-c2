@@ -19,15 +19,17 @@
 
 namespace {
 
-QString q(const std::string &text) { return QString::fromStdString(text); }
+QString q(const std::string& text) {
+  return QString::fromStdString(text);
+}
 
 const std::vector<std::string> kIds{"studio", "laptop", "pi"};
 
 struct Saved {
   std::string label;
-  bool located = true;    // the record says where the environment is
-  std::string credential; // what the keyring was given for it
-  bool operator==(const Saved &) const = default;
+  bool located = true;     // the record says where the environment is
+  std::string credential;  // what the keyring was given for it
+  bool operator==(const Saved&) const = default;
 };
 
 struct Model {
@@ -41,10 +43,9 @@ struct Model {
   // Damaged files set aside so far.
   int setAside = 0;
 
-  const Saved *find(const std::string &id) const {
-    for (const auto &[key, saved] : listed) {
-      if (key == id)
-        return &saved;
+  const Saved* find(const std::string& id) const {
+    for (const auto& [key, saved] : listed) {
+      if (key == id) return &saved;
     }
     return nullptr;
   }
@@ -52,43 +53,37 @@ struct Model {
 
 struct Sut {
   QTemporaryDir dir;
-  std::shared_ptr<MemorySecretStore::Keys> keys =
-      std::make_shared<MemorySecretStore::Keys>();
+  std::shared_ptr<MemorySecretStore::Keys> keys = std::make_shared<MemorySecretStore::Keys>();
   std::unique_ptr<MemorySecretStore> store;
   std::unique_ptr<EnvironmentCatalog> catalog;
-  QStringList asides; // every damaged file the catalog set aside, oldest first
+  QStringList asides;  // every damaged file the catalog set aside, oldest first
 
   Sut() { start(); }
-  QString path() const {
-    return dir.filePath(QStringLiteral("saved-environments.json"));
-  }
+  QString path() const { return dir.filePath(QStringLiteral("saved-environments.json")); }
   // As the app starts: a store on the same keyring, the record file read.
   void start() {
     catalog.reset();
     store = std::make_unique<MemorySecretStore>(keys);
     catalog = std::make_unique<EnvironmentCatalog>(path(), store.get());
     catalog->load();
-    if (!catalog->damaged().isEmpty())
-      asides.append(catalog->damaged());
+    if (!catalog->damaged().isEmpty()) asides.append(catalog->damaged());
   }
 };
 
-void expectSame(const Model &model, Sut &sut) {
+void expectSame(const Model& model, Sut& sut) {
   const QList<SavedEnvironment> listed = sut.catalog->environments();
   RC_ASSERT(listed.size() == qsizetype(model.listed.size()));
   for (qsizetype i = 0; i < listed.size(); ++i) {
-    const auto &[id, saved] = model.listed.at(size_t(i));
+    const auto& [id, saved] = model.listed.at(size_t(i));
     RC_ASSERT(listed.at(i).id == q(id));
     RC_ASSERT(listed.at(i).label == q(saved.label));
     RC_ASSERT(listed.at(i).complete() == saved.located);
   }
   RC_ASSERT(sut.keys->secrets.size() == qsizetype(model.keyring.size()));
-  for (const auto &[id, credential] : model.keyring)
-    RC_ASSERT(sut.keys->secrets.value(q(id)) == q(credential));
+  for (const auto& [id, credential] : model.keyring) RC_ASSERT(sut.keys->secrets.value(q(id)) == q(credential));
   RC_ASSERT(sut.asides.size() == model.setAside);
   // No credential is in any file the catalog wrote or set aside.
-  QDirIterator files(sut.dir.path(), QDir::Files | QDir::Hidden,
-                     QDirIterator::Subdirectories);
+  QDirIterator files(sut.dir.path(), QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
   while (files.hasNext()) {
     QFile file(files.next());
     RC_ASSERT(file.open(QIODevice::ReadOnly));
@@ -98,11 +93,12 @@ void expectSame(const Model &model, Sut &sut) {
 
 using Command = rc::state::Command<Model, Sut>;
 
-template <typename Self> struct Step : Command {
-  void run(const Model &model, Sut &sut) const override {
+template <typename Self>
+struct Step : Command {
+  void run(const Model& model, Sut& sut) const override {
     Model next = model;
     apply(next);
-    static_cast<const Self *>(this)->act(model, sut);
+    static_cast<const Self*>(this)->act(model, sut);
     expectSame(next, sut);
   }
 };
@@ -112,135 +108,108 @@ struct Save : Step<Save> {
   std::string label = *rc::gen::element<std::string>("Studio", "", "Pi");
   bool located = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
   // A credential no one can guess, so finding it on disk is finding a leak.
-  std::string credential =
-      "secret-" + std::to_string(*rc::gen::inRange(0, 1000000)) + "-c0ffee";
+  std::string credential = "secret-" + std::to_string(*rc::gen::inRange(0, 1000000)) + "-c0ffee";
 
-  explicit Save(const Model &) {}
-  void apply(Model &model) const override {
-    if (model.refusing)
-      return;
+  explicit Save(const Model&) {}
+  void apply(Model& model) const override {
+    if (model.refusing) return;
     model.keyring[id] = credential;
-    std::erase_if(model.listed,
-                  [&](const auto &entry) { return entry.first == id; });
+    std::erase_if(model.listed, [&](const auto& entry) { return entry.first == id; });
     model.listed.emplace_back(id, Saved{label, located, credential});
     model.damagedOnDisk = false;
   }
-  void act(const Model &model, Sut &sut) const {
-    const SavedEnvironment environment{
-        q(id),
-        q(label),
-        located ? QUrl(QStringLiteral("http://%1.local:3773").arg(q(id)))
-                : QUrl(),
-        {}};
-    const std::optional<QString> refused =
-        sut.catalog->save(environment, q(credential));
+  void act(const Model& model, Sut& sut) const {
+    const SavedEnvironment environment{q(id), q(label), located ? QUrl(QStringLiteral("http://%1.local:3773").arg(q(id))) : QUrl(), {}};
+    const std::optional<QString> refused = sut.catalog->save(environment, q(credential));
     // Refused exactly when the keyring is, and saying who could not be saved.
     RC_ASSERT(refused.has_value() == model.refusing);
-    if (refused)
-      RC_ASSERT(refused->startsWith(label.empty() ? q(id) : q(label)));
+    if (refused) RC_ASSERT(refused->startsWith(label.empty() ? q(id) : q(label)));
   }
-  void show(std::ostream &os) const override {
-    os << "Save(" << id << ", \"" << label << "\""
-       << (located ? "" : ", no origin") << ")";
-  }
+  void show(std::ostream& os) const override { os << "Save(" << id << ", \"" << label << "\"" << (located ? "" : ", no origin") << ")"; }
 };
 
 struct Forget : Step<Forget> {
   std::string id = *rc::gen::elementOf(kIds);
 
-  explicit Forget(const Model &) {}
-  void apply(Model &model) const override {
+  explicit Forget(const Model&) {}
+  void apply(Model& model) const override {
     model.keyring.erase(id);
-    if (std::erase_if(model.listed,
-                      [&](const auto &entry) { return entry.first == id; }) > 0)
-      model.damagedOnDisk = false;
+    if (std::erase_if(model.listed, [&](const auto& entry) { return entry.first == id; }) > 0) model.damagedOnDisk = false;
   }
-  void act(const Model &, Sut &sut) const { sut.catalog->forget(q(id)); }
-  void show(std::ostream &os) const override { os << "Forget(" << id << ")"; }
+  void act(const Model&, Sut& sut) const { sut.catalog->forget(q(id)); }
+  void show(std::ostream& os) const override { os << "Forget(" << id << ")"; }
 };
 
 // The system's secure storage stops, or starts again, letting the app in.
 struct Refuse : Step<Refuse> {
   bool refusing = *rc::gen::arbitrary<bool>();
 
-  explicit Refuse(const Model &) {}
-  void apply(Model &model) const override { model.refusing = refusing; }
-  void act(const Model &, Sut &sut) const { sut.keys->refusing = refusing; }
-  void show(std::ostream &os) const override {
-    os << "Refuse(" << (refusing ? "on" : "off") << ")";
-  }
+  explicit Refuse(const Model&) {}
+  void apply(Model& model) const override { model.refusing = refusing; }
+  void act(const Model&, Sut& sut) const { sut.keys->refusing = refusing; }
+  void show(std::ostream& os) const override { os << "Refuse(" << (refusing ? "on" : "off") << ")"; }
 };
 
 // The keyring loses one credential (the user deleted it, or another app did).
 struct LoseCredential : Step<LoseCredential> {
   std::string id = *rc::gen::elementOf(kIds);
 
-  explicit LoseCredential(const Model &) {}
-  void apply(Model &model) const override { model.keyring.erase(id); }
-  void act(const Model &, Sut &sut) const { sut.keys->secrets.remove(q(id)); }
-  void show(std::ostream &os) const override {
-    os << "LoseCredential(" << id << ")";
-  }
+  explicit LoseCredential(const Model&) {}
+  void apply(Model& model) const override { model.keyring.erase(id); }
+  void act(const Model&, Sut& sut) const { sut.keys->secrets.remove(q(id)); }
+  void show(std::ostream& os) const override { os << "LoseCredential(" << id << ")"; }
 };
 
 // The record file is cut off, as a crash mid-write leaves it.
 struct Damage : Step<Damage> {
-  explicit Damage(const Model &) {}
-  void apply(Model &model) const override { model.damagedOnDisk = true; }
-  void act(const Model &, Sut &sut) const {
+  explicit Damage(const Model&) {}
+  void apply(Model& model) const override { model.damagedOnDisk = true; }
+  void act(const Model&, Sut& sut) const {
     QFile file(sut.path());
     RC_ASSERT(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(R"({"version": 1, "environments": [{"id": "stu)");
   }
-  void show(std::ostream &os) const override { os << "Damage"; }
+  void show(std::ostream& os) const override { os << "Damage"; }
 };
 
 // The app starts again and reads the record file.
 struct Reload : Step<Reload> {
-  explicit Reload(const Model &) {}
-  void apply(Model &model) const override {
-    if (!model.damagedOnDisk)
-      return;
+  explicit Reload(const Model&) {}
+  void apply(Model& model) const override {
+    if (!model.damagedOnDisk) return;
     // Set aside, and none listed; the keyring keeps what it had.
     model.listed.clear();
     model.damagedOnDisk = false;
     ++model.setAside;
   }
-  void act(const Model &, Sut &sut) const {
+  void act(const Model&, Sut& sut) const {
     const QStringList before = sut.asides;
     sut.start();
-    if (sut.asides.size() == before.size())
-      return;
-    // What was set aside is the damaged file, beside the one written in its
-    // place.
+    if (sut.asides.size() == before.size()) return;
+    // What was set aside is the damaged file, beside the one written in its place.
     QFile aside(sut.asides.last());
     RC_ASSERT(aside.open(QIODevice::ReadOnly));
-    RC_ASSERT(aside.readAll().startsWith(
-        R"({"version": 1, "environments": [{"id": "stu)"));
+    RC_ASSERT(aside.readAll().startsWith(R"({"version": 1, "environments": [{"id": "stu)"));
     RC_ASSERT(!before.contains(sut.asides.last()));
   }
-  void show(std::ostream &os) const override { os << "Reload"; }
+  void show(std::ostream& os) const override { os << "Reload"; }
 };
 
-// The app connects to one: with its credential, or blocked with what is
-// missing.
+// The app connects to one: with its credential, or blocked with what is missing.
 struct Connect : Step<Connect> {
   std::string id = *rc::gen::elementOf(kIds);
 
-  explicit Connect(const Model &) {}
-  void apply(Model &) const override {}
-  void act(const Model &model, Sut &sut) const {
-    const EnvironmentCatalog::Connection connection =
-        sut.catalog->connect(q(id));
-    const Saved *saved = model.find(id);
+  explicit Connect(const Model&) {}
+  void apply(Model&) const override {}
+  void act(const Model& model, Sut& sut) const {
+    const EnvironmentCatalog::Connection connection = sut.catalog->connect(q(id));
+    const Saved* saved = model.find(id);
     const auto kept = model.keyring.find(id);
     if (!saved || !saved->located) {
-      RC_ASSERT(connection.blocked ==
-                EnvironmentCatalog::profileMissing(q(id)));
+      RC_ASSERT(connection.blocked == EnvironmentCatalog::profileMissing(q(id)));
       RC_ASSERT(connection.credential.isEmpty());
     } else if (model.refusing || kept == model.keyring.end()) {
-      RC_ASSERT(connection.blocked ==
-                EnvironmentCatalog::credentialMissing(q(id)));
+      RC_ASSERT(connection.blocked == EnvironmentCatalog::credentialMissing(q(id)));
       RC_ASSERT(connection.credential.isEmpty());
     } else {
       RC_ASSERT(connection.blocked.isEmpty());
@@ -248,26 +217,22 @@ struct Connect : Step<Connect> {
       RC_ASSERT(connection.environment.id == q(id));
     }
   }
-  void show(std::ostream &os) const override { os << "Connect(" << id << ")"; }
+  void show(std::ostream& os) const override { os << "Connect(" << id << ")"; }
 };
 
-} // namespace
+}  // namespace
 
 class EnvironmentCatalogProp : public QObject {
   Q_OBJECT
 
 private slots:
   void keepsWhatWasSaved() {
-    QVERIFY(rc::check(
-        "the catalog lists what was saved, sets a damaged file aside, and "
-        "never writes a credential to disk",
-        [] {
-          Sut sut;
-          rc::state::check(Model{}, sut,
-                           rc::state::gen::execOneOfWithArgs<
-                               Save, Save, Save, Forget, Refuse, LoseCredential,
-                               Damage, Reload, Reload, Connect, Connect>());
-        }));
+    QVERIFY(rc::check("the catalog lists what was saved, sets a damaged file aside, and never writes a credential to disk", [] {
+      Sut sut;
+      rc::state::check(Model{}, sut,
+                       rc::state::gen::execOneOfWithArgs<Save, Save, Save, Forget, Refuse, LoseCredential, Damage, Reload, Reload, Connect,
+                                                         Connect>());
+    }));
   }
 };
 

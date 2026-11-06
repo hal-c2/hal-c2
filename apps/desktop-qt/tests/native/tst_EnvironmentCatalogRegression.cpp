@@ -14,15 +14,13 @@ private slots:
   // name taken, and the second damaged record was neither kept nor reported.
   void aSecondDamagedRecordIsSetAsideToo() {
     QTemporaryDir dir;
-    const QString path =
-        dir.filePath(QStringLiteral("saved-environments.json"));
+    const QString path = dir.filePath(QStringLiteral("saved-environments.json"));
     MemorySecretStore store(std::make_shared<MemorySecretStore::Keys>());
     QStringList asides;
     for (int round = 0; round < 3; ++round) {
       QFile file(path);
       QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-      file.write("{\"version\": 1, \"environments\": [{\"id\": \"r" +
-                 QByteArray::number(round));
+      file.write("{\"version\": 1, \"environments\": [{\"id\": \"r" + QByteArray::number(round));
       file.close();
       EnvironmentCatalog catalog(path, &store);
       catalog.load();

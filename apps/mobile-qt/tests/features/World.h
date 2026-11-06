@@ -37,10 +37,10 @@ public:
   // The environment ("My MacBook" unless a step renames it) and its MC, with
   // the project "shop" and one thread in it.
   PairableMc environment;
-  FakeMc &mc;
+  FakeMc& mc;
   // A second environment, for a device that moves from one to another; made
   // when a step first asks for it.
-  PairableMc &another(const QString &label);
+  PairableMc& another(const QString& label);
   bool hasAnother() const { return m_another != nullptr; }
   // The device's camera, and what the user said when asked to let the app
   // use it: kept across restarts, as the system keeps it.
@@ -48,7 +48,7 @@ public:
   // Its notifications, what reaches it through a push distributor, and the
   // user's word on them: kept across restarts too.
   std::shared_ptr<FakePushSystem> push;
-  bool checking = false; // the running step is an outcome (Step::outcome)
+  bool checking = false;  // the running step is an outcome (Step::outcome)
   // The pairing link the scenario is about: what the user enters.
   QString link;
   // The thread the user is in (its id on the MC), and its running turn.
@@ -60,8 +60,7 @@ public:
   QString clipboard;
   // The system's secure storage the saved environments' credentials go to,
   // kept across restarts as the system keeps it; never the device's own.
-  std::shared_ptr<MemorySecretStore::Keys> secrets =
-      std::make_shared<MemorySecretStore::Keys>();
+  std::shared_ptr<MemorySecretStore::Keys> secrets = std::make_shared<MemorySecretStore::Keys>();
 
   // The user opens the app; nothing when it is open.
   void open();
@@ -73,16 +72,16 @@ public:
   // The system opens the app with `link`, as following one in a browser
   // does: through QDesktopServices, where Qt for Android hands a VIEW
   // intent's address. A stopped app is started with it.
-  void followLink(const QString &link);
+  void followLink(const QString& link);
   // The app is closed: its process goes, its files stay.
   void close();
   bool isOpen() const { return m_app != nullptr; }
   // The app, opened on first use.
-  MobileApp &app();
-  ShellBridge &bridge();
-  NativeShell &native();
-  QQuickWindow &window();
-  QVariant state(const QString &key);
+  MobileApp& app();
+  ShellBridge& bridge();
+  NativeShell& native();
+  QQuickWindow& window();
+  QVariant state(const QString& key);
   // Where the phone keeps its files, across restarts.
   QString homeDir() const { return m_home.path(); }
   // The device can write nothing more where it keeps its session, as one
@@ -93,71 +92,66 @@ public:
   void resize(int width, int height);
   // The time the app's thread and composer read from now on, as a clock on
   // the wall would show it; the system's until a step sets it.
-  void setTime(const QDateTime &time);
+  void setTime(const QDateTime& time);
 
   // What is on screen. An item counts when it is visible, so an objectName
   // two screens share is the one of the screen showing.
-  QQuickItem *find(const QString &objectName);
+  QQuickItem* find(const QString& objectName);
   // The same, waited for; fails the step when it does not come.
-  QQuickItem *item(const QString &objectName);
+  QQuickItem* item(const QString& objectName);
   // The visible item for which `matches` holds, or null.
-  QQuickItem *findWhere(const std::function<bool(QQuickItem *)> &matches);
+  QQuickItem* findWhere(const std::function<bool(QQuickItem*)>& matches);
   // Whether the sheet, dialog or menu named `objectName` is on screen, on its
   // way in or out included. A popup is not an item.
-  bool popupShowing(const QString &objectName);
+  bool popupShowing(const QString& objectName);
   // The sheet, dialog or menu named `objectName`, shown or not; null when the
   // window has none.
-  QObject *popup(const QString &objectName);
+  QObject* popup(const QString& objectName);
   // Waits for it to be up, its way in finished, or (`open` false) to be gone
   // from the screen.
-  void awaitPopup(const QString &objectName, bool open = true);
+  void awaitPopup(const QString& objectName, bool open = true);
   // What the window shows, kept as a PNG; nothing while the app is closed.
-  void snapshot(const QString &path);
+  void snapshot(const QString& path);
   // Every text a visible item shows, for a failure to quote.
   QStringList texts();
   // Whether a visible item's text is `text`, or has it in it.
-  bool shows(const QString &text, bool whole = true);
+  bool shows(const QString& text, bool whole = true);
 
   // A finger on the item's middle: a touch press and release, which must
   // land inside the window. The item is waited for until it can be tapped.
-  void tap(QQuickItem *item);
-  void tap(const QString &objectName);
+  void tap(QQuickItem* item);
+  void tap(const QString& objectName);
   // The connection notice's panel, opened from its icon if it is not.
   void openConnectionNotice();
   // A finger held on the item's middle until `until` holds (a long press's
   // menu is up), then lifted.
-  void hold(QQuickItem *item, const std::function<bool()> &until,
-            const QString &what);
+  void hold(QQuickItem* item, const std::function<bool()>& until, const QString& what);
   // A finger put on the item's middle, dragged `by` and lifted; `during` runs
   // while it is still down at the end of the drag.
-  void swipe(QQuickItem *item, const QPoint &by,
-             const std::function<void()> &during = {});
+  void swipe(QQuickItem* item, const QPoint& by, const std::function<void()>& during = {});
   // A mouse or trackpad: its pointer on the item's middle, a click there, and
   // the same drag with its left button held.
-  void hover(QQuickItem *item);
-  void click(QQuickItem *item, Qt::MouseButton button = Qt::LeftButton);
-  void drag(QQuickItem *item, const QPoint &by,
-            const std::function<void()> &during = {});
+  void hover(QQuickItem* item);
+  void click(QQuickItem* item, Qt::MouseButton button = Qt::LeftButton);
+  void drag(QQuickItem* item, const QPoint& by, const std::function<void()>& during = {});
   // Keys into whatever has the keyboard.
-  void type(const QString &text);
+  void type(const QString& text);
   // A key of a hardware keyboard as keybindings.json spells it ("mod+k",
   // "Down", "Escape"), through the window's shortcuts first as a real one is.
-  void press(const QString &key);
+  void press(const QString& key);
   // Android's Back.
   void back();
 
-  // `what` is read on timeout, so it can describe the state the wait gave up
-  // on.
-  void waitFor(const std::function<bool()> &condition,
-               const std::function<QString()> &what);
-  void waitFor(const std::function<bool()> &condition, const QString &what);
+  // `what` is read on timeout, so it can describe the state the wait gave up on.
+  void waitFor(const std::function<bool()>& condition, const std::function<QString()>& what);
+  void waitFor(const std::function<bool()>& condition, const QString& what);
   // A round trip through the MC: everything the MC sent before, and every
   // answer to a call sent before, has been handled once it returns.
   void sync();
 
 private:
   // Where a finger lands on `item`: its middle, which must be on the screen.
-  QPoint middleOf(QQuickItem *item);
+  QPoint middleOf(QQuickItem* item);
 
   QTemporaryDir m_home;
   bool m_storageFull = false;
