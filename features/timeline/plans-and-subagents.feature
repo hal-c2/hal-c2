@@ -728,7 +728,7 @@ Feature: Plans and subagents
     And "Docs" is shown to have taken "1m 15s"
 
   # Upstream #13572: the banner that says agents are working links to the Agents tab.
-  @desktop @backlog
+  @desktop
   Scenario: The agents-working banner opens the Agents tab while a subagent is live
     Given the agent started the subagent "Tax tests" 12 seconds ago
     And the Agents tab is closed

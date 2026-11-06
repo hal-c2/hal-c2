@@ -164,6 +164,11 @@ void AgentsModel::apply(const QList<Row>& rows) {
     emit dataChanged(index(int(i)), index(int(i)));
   }
   if (counted) emit countChanged();
+  const int working = liveAgentCount();
+  if (working != m_liveAgents) {
+    m_liveAgents = working;
+    emit liveAgentCountChanged();
+  }
 }
 
 void AgentsModel::tick() {
@@ -208,6 +213,12 @@ void AgentsModel::updateTimer() {
 
 int AgentsModel::agentCount() const {
   return int(std::count_if(m_rows.cbegin(), m_rows.cend(), [](const Row& row) { return row.kind == QLatin1String("subagent"); }));
+}
+
+int AgentsModel::liveAgentCount() const {
+  return int(std::count_if(m_rows.cbegin(), m_rows.cend(), [](const Row& row) {
+    return row.kind == QLatin1String("subagent") && kLive.contains(text(row.entity, QLatin1String("status")));
+  }));
 }
 
 int AgentsModel::indexOf(const QString& id) const {
