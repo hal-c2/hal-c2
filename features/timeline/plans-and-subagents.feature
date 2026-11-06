@@ -36,6 +36,10 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/AgentsPanel.qml
 #   apps/desktop-qt/tests/native/features/AgentsSteps.cpp
 #   https://github.com/pingdotgg/t3code/pull/14999
+#   https://github.com/pingdotgg/t3code/pull/15189
+#   https://github.com/pingdotgg/t3code/pull/15493
+#   https://github.com/pingdotgg/t3code/pull/15334
+#   https://github.com/pingdotgg/t3code/pull/15281
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -874,3 +878,23 @@ Feature: Plans and subagents
     Given a subagent description containing a filesystem path or a "Subagent:" prefix
     When it is listed as pending background work
     Then the label is a clean display name
+
+  @backlog @shared
+  Scenario: A subagent is described with its status, model, account and workspace
+    Given a thread has delegated to subagents
+    When the user opens the subagent list or a subagent card
+    Then each shows its status and elapsed time, its provider, account and model, and its workspace when that differs from the parent
+    And progress or result takes up to three lines without hiding the status
+
+  @backlog @shared
+  Scenario: A subagent sent a follow-up shows as running
+    Given a delegated subagent finished and the parent then sent it a long task
+    When the user opens the thread's lineage
+    Then the subagent is listed as running with its timer going, not as done
+
+  @backlog @shared
+  Scenario: A subagent's finish notification looks like its card
+    Given a delegated task finished
+    When the notification appears in the parent thread
+    Then it shows the subagent's card with the outcome at that time (finished, failed, stopped or updated)
+    And selecting it opens the child thread

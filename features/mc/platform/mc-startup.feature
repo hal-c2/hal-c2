@@ -25,6 +25,7 @@
 #   docs/internals/glossary.md (HAL-C2 home)
 #   docs/internals/remote.md (environment identity survives restarts and address changes)
 #   docs/operations/development.md (state and ports)
+#   https://github.com/pingdotgg/t3code/pull/15795
 
 Feature: Starting the MC
   An MC is one Elixir release that keeps its files in the user's XDG directories, or under
@@ -458,3 +459,9 @@ Feature: Starting the MC
   Scenario: The server takes its home and mode as command-line flags
     When a user starts the server with a home directory flag
     Then the server uses that home directory
+
+  @backlog @mc
+  Scenario: The MC command line rejects an unknown word
+    When the MC command is run with a bare word that names no command or existing directory
+    Then it fails with help instead of starting a server
+    And a launch while a recorded MC is still alive is refused before it touches state

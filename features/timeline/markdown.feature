@@ -33,6 +33,9 @@
 #   https://mermaid.js.org/intro/syntax-reference.html (Mermaid diagrams in a reply)
 #   https://github.com/hal-c2/hal-c2/issues/843
 #   https://github.com/pingdotgg/t3code/pull/12615
+#   https://github.com/pingdotgg/t3code/pull/15067
+#   https://github.com/pingdotgg/t3code/pull/15509
+#   https://github.com/pingdotgg/t3code/pull/15520
 
 Feature: Formatted messages
   Messages are written in Markdown. The timeline shows headings, lists, quotes, code and
@@ -981,3 +984,17 @@ Feature: Formatted messages
     Given a message with an image destination like C:\Users\me\shot.png
     When it is shown
     Then the path is used as written, not read as escapes
+
+  @backlog @shared
+  Scenario: A descriptive file link keeps its words
+    Given a reply says "This function [validates the input](/repo/src/example.ts:12)."
+    When the reply is shown
+    Then the prose stays, beside the usual file chip
+    And a link labelled with a file name or path keeps the compact chip
+
+  @backlog @shared
+  Scenario: A local file link missing its closing bracket is repaired for display
+    Given a reply contains "[file](<local/path/file.md)"
+    When the reply is shown
+    Then the link opens the file as a normal file link
+    And the stored message and its copied text stay as the agent wrote them

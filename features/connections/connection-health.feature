@@ -32,6 +32,8 @@
 #   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
 #   mc/platform/websocket-protocol.feature holds resuming streams on the MC;
 #   local-cache.feature holds what a client keeps between runs.
+#   https://github.com/pingdotgg/t3code/pull/15470
+#   https://github.com/pingdotgg/t3code/pull/15563
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with
@@ -666,3 +668,15 @@ Feature: Connection health
     Given a subscription keeps failing for an expected reason
     Then its retries double up to 30 seconds
     And the first value after a retry resets the delay
+
+  @backlog @shared
+  Scenario: A relay disconnect is a connection blip, not a thread error
+    Given the Connect relay drops
+    When the thread would show "<environment> disconnected." followed by a network hint
+    Then it is treated as a connection problem and not shown as an error on the thread
+
+  @backlog @shared
+  Scenario: Closing a busy stream does not drop the connection
+    Given the client is receiving a fast stream
+    When the user switches away and the stream is closed
+    Then the connection keeps reading replies and heartbeats and does not reconnect

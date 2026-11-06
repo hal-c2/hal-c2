@@ -8,6 +8,8 @@
 #   apps/server/src/orchestration-v2/ThreadSettlementService.ts (several pull requests, branch lookups,
 #     reused branches, lookup failures, project-only rules)
 #   docs/user/thread-sidebar.md
+#   https://github.com/pingdotgg/t3code/pull/15355
+#   https://github.com/pingdotgg/t3code/pull/15388
 Feature: Threads settle on their own
   A thread that is done, because its pull request merged or closed or because
   nobody has touched it for days, settles itself. Anything that shows the thread
@@ -232,3 +234,17 @@ Feature: Threads settle on their own
     And the linked pull request of "t1" merged after that message
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
+
+  @backlog @mc
+  Scenario: Stop ends a dev server left by another provider
+    Given a thread moved from one provider to another left a dev server running
+    When the user stops the running command
+    Then every provider session of the thread holding background work is interrupted
+    And a command left running no longer keeps the thread from settling, though subagents and monitors do
+
+  @backlog @mc
+  Scenario: An agent waking on its own does not undo a merge settle
+    Given a thread's pull request merged and later an agent notification started a turn
+    When settle on merge is evaluated
+    Then it compares against the last message the user wrote, so the thread settles
+    And a message the user writes after the merge keeps it active

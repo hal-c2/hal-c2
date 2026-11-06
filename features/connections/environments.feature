@@ -29,6 +29,7 @@
 #   settings/local-environment.feature and settings/load-balancing.feature hold those controls;
 #   mobile/pairing-and-environments.feature holds managing environments from a phone.
 #   https://github.com/pingdotgg/t3code/pull/14972
+#   https://github.com/pingdotgg/t3code/pull/15467
 
 Feature: Managing environments on a client
   A client keeps a list of the environments it has paired with. Each shows its machine, label
@@ -416,3 +417,10 @@ Feature: Managing environments on a client
     Given a thread's project lives on one remote machine
     When the user opens the thread details
     Then the panel shows that machine's name and icon
+
+  @backlog @shared
+  Scenario: One environment keeps several routes and uses the first that answers
+    Given an environment saved with a LAN, a Tailscale and a Connect route, in order
+    When the client connects
+    Then it checks the direct routes in parallel and uses the first that answers as that environment
+    And a route that is blocked is skipped, while an incompatible server stops the walk

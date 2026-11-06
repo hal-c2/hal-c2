@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15070
 #   apps/mobile/src/features/updates/app-updates.ts (background install, prompts, flush first)
 #   apps/mobile/src/lib/foreground-handoff.ts (pickers, share sheet and sign-in pages hold back a restart)
 #   apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx (hidden update check)
@@ -175,3 +176,11 @@ Feature: Keeping the phone app up to date
     Given the user runs a development build
     When the user checks for an update by hand
     Then the user is told updates are unavailable in development builds
+
+  # Dropped: upstream's Nightly told its users to join the beta mobile apps because the store
+  # apps could not talk to its server. HAL-C2 ships its own mobile client against the MC.
+  @dropped @shared
+  Scenario: Nightly builds point to a beta mobile app
+    Given a Nightly build
+    When the user first opens it
+    Then a one-time toast and an About entry link to the beta store apps

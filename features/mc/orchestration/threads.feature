@@ -13,6 +13,7 @@
 #   apps/server/src/orchestration-v2/ResourceCleanupService.ts, ThreadDeletion.ts, EffectWorker.ts
 #     (terminals and attached files cleaned up after archive and delete)
 #   docs/internals/glossary.md
+#   https://github.com/pingdotgg/t3code/pull/14104
 Feature: Thread lifecycle in the orchestration engine
   A thread is the durable conversation for a project. The engine creates it,
   records its metadata, and moves it between active, archived and deleted, with
@@ -329,3 +330,9 @@ Feature: Thread lifecycle in the orchestration engine
       | on a node that is not the root of the creating run   | the parent node is not the root of that run        |
       | for a "child" that lives in another project          | the target thread belongs to another project       |
       | with a run that is not a run of "child"              | the target run does not belong to the thread       |
+
+  @backlog @mc
+  Scenario: An agent-only transcript can be paged back to its start
+    Given a thread of an app agent that has no user prompts and a long history
+    When a client asks for earlier turns repeatedly
+    Then each page is bounded and the full transcript is reached

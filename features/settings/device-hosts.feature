@@ -11,6 +11,7 @@
 #     and their tests, DeviceMultiHost.test.ts (the SSH transport, remote helper lifecycle, skipping a host
 #     that is this machine, several hosts side by side; all dropped with SSH hosts, a remote machine is
 #     an MC of the cluster)
+#   https://github.com/pingdotgg/t3code/pull/15435
 
 Feature: Device hosts
   Simulators and emulators on another machine used to be reached over SSH from an environment.
@@ -96,3 +97,10 @@ Feature: Device hosts
       Given saving on "Build box" fails
       When the user adds a device host
       Then the user is told the device hosts were not saved on all environments
+
+  @backlog @shared
+  Scenario: Missing platform tooling is explained before the hub is ready
+    Given devices are on and the local host has no usable platform
+    When the user opens the first wizard step or the Devices settings
+    Then each platform's diagnostics and its refresh are shown
+    And continuing still waits for a ready hub

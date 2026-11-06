@@ -18,6 +18,7 @@
 #   docs/internals/desktop-qt.md (process model)
 #   apps/web/src/legacyStorage.ts, apps/web/src/clientPersistenceStorage.ts (what a browser kept; dropped)
 #   Shared domain: connections/ owns pairing; mc/platform/ owns the MC's side of the bootstrap.
+#   https://github.com/pingdotgg/t3code/pull/15440
 
 Feature: The desktop app runs its own MC
   Started on its own, the Qt desktop app starts an MC on this machine and connects to
@@ -486,3 +487,8 @@ Feature: The desktop app runs its own MC
       When the user opens the app in that browser
       Then the other settings are as saved
       And follow-ups use the current default
+
+  @backlog @desktop
+  Scenario: The version prints without a display
+    When the desktop is started with --version and no display is available
+    Then it prints its version and exits successfully

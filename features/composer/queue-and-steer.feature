@@ -14,6 +14,7 @@
 #   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)
 #   packages/contracts/src/settings.ts (followUpBehavior)
 #   https://github.com/pingdotgg/t3code/pull/14725
+#   https://github.com/pingdotgg/t3code/pull/15417
 
 Feature: Follow-ups while the agent is working
   A message sent while a turn is running either waits in the queue or steers
@@ -409,3 +410,8 @@ Feature: Follow-ups while the agent is working
     When the user steers with one model or thinking level, then steers back to the running one
     Then the saved next-turn selection is the newest choice
     And a steer that misses the turn starts the follow-up on that choice
+
+  @backlog @mobile
+  Scenario: Tapping Remove on a swiped queued message removes it
+    When the user swipes a queued message and taps Remove
+    Then the queued message is cancelled

@@ -16,6 +16,8 @@
 #   apps/server/src/provider/CodexTurnTokenUsage.ts, apps/server/src/provider/ClaudeTurnTokenUsage.ts (per-turn usage records)
 #   apps/server/src/usage/usageScanCache.ts, usageTranscriptReader.ts, UsageService.ts (resume guard, tail lines, saved scan, shared scans, price floor)
 #   https://github.com/pingdotgg/t3code/pull/15101
+#   https://github.com/pingdotgg/t3code/pull/15333
+#   https://github.com/pingdotgg/t3code/pull/11391
 
 Feature: Usage
   Usage adds up token use and estimated API-equivalent cost from the provider CLIs' own
@@ -436,3 +438,17 @@ Feature: Usage
     Given Codex usage at Fast or Ultrafast speed
     When the Usage tab prices it
     Then Fast counts at 2x and Ultrafast at 6x the standard rate for models that bill so
+
+  @backlog @mc
+  Scenario: A preview model is folded into the model it is mapped to
+    Given the model prices map "example-preview" to "claude-opus-5-5"
+    When usage is summed
+    Then the preview model's tokens and cost count under "claude-opus-5-5" at that model's price
+    And clearing the mapping lists the preview model on its own row again
+
+  @backlog @shared
+  Scenario: Model shares and order follow the selected metric
+    Given the Usage page shows model shares
+    When the user switches the metric from cost to tokens
+    Then each model's share and the order of the list are by tokens
+    And a model with an unknown price shows its real token share

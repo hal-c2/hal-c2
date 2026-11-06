@@ -14,6 +14,9 @@
 #   packages/contracts/src/providerSetup.ts (ProviderAuthState, ProviderInstallState, ProviderSetupError)
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp (the desktop's sign-out and email)
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, server.updateProvider)
+#   https://github.com/pingdotgg/t3code/pull/15416
+#   https://github.com/pingdotgg/t3code/pull/15539
+#   https://github.com/pingdotgg/t3code/pull/15501
 
 @mc
 Feature: Provider setup, updates and sign-in
@@ -379,3 +382,24 @@ Feature: Provider setup, updates and sign-in
     Then the account is shown as signed in with the email hidden
     When the user reveals the email
     Then "me@example.com" is shown
+
+  @backlog
+  Scenario: A provider installed by its own installer is updated by its own updater
+    Given a provider whose package manager cannot be proven
+    When the user updates it
+    Then the MC runs the provider's own update command
+    And a version check afterwards reports an updater that exited without updating
+
+  @backlog @shared
+  Scenario: The copied update command matches how the MC was installed
+    Given the MC runs from a global package install
+    When the user copies the update command
+    Then the command updates that installation rather than starting a cached copy
+    And an install it cannot identify copies a relaunch command saying that it does not update the installed MC
+
+  @backlog @shared
+  Scenario: Both update icons of a provider open its version details
+    Given a provider with an update available
+    When the user taps either update icon
+    Then the version details open, with copy and update as separate actions
+    And a read-only connection can read and copy but not update

@@ -18,6 +18,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [Alex Southwell](https://github.com/saphid)
 - [Andrew Johnson](https://github.com/akj)
 - [Anton Bezdenezhnykh](https://github.com/GaMeRaM)
+- [Argo](https://github.com/argofowl)
 - [Artur](https://github.com/arturict)
 - [Bear Huddleston](https://github.com/BearHuddleston)
 - [Ben Davis](https://github.com/bmdavis419)
@@ -30,6 +31,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - chukfinley
 - [Dara Adedeji](https://github.com/SunkenInTime)
 - [Dominic Roy](https://github.com/dominic-r)
+- [eimexdev](https://github.com/eimexdev)
 - [Ephraim](https://github.com/Ephraim-9)
 - eshaan Sood
 - [Exotic](https://github.com/extoci)
@@ -51,6 +53,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - NaveDanan
 - [Nicholas Wasmiller](https://github.com/Derpedyea)
 - [Nick Anisimov](https://github.com/none23)
+- [Noé](https://github.com/znoraka)
 - [oliver](https://github.com/flamboh)
 - [Otavio Salvador](https://github.com/otavio)
 - [Patrik Votoček](https://github.com/Vrtak-CZ)

@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
+#   https://github.com/pingdotgg/t3code/pull/15427
 
 @plugin-code-review
 Feature: Agent code review
@@ -736,3 +737,9 @@ Feature: Agent code review
       When the user opens the review of #12 on the "Reviews" page
       Then the review says "Reviewing on laptop, out of reach"
       And it can be reviewed on this machine
+
+  @backlog @mc
+  Scenario: Pull request watching reads every reply in a review thread
+    Given an inline review thread has more than ten replies
+    When the watch looks for new remarks
+    Then replies on later pages count too, and a failed page holds the watermark

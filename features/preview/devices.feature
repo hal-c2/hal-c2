@@ -23,6 +23,7 @@
 #   apps/desktop-qt/tests/native/features/DeviceSteps.cpp
 #   Cross-domain: connections/device-hub.feature holds the MC's hub and proxy,
 #   mobile/usage-diagnostics-devices.feature holds the phone's device viewer.
+#   https://github.com/pingdotgg/t3code/pull/15551
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
@@ -1146,3 +1147,9 @@ Feature: Device panel
       Given the MC has given the client no device access yet
       And the user has the tools open for the iOS Simulator "iPhone 17"
       Then the tools have no "Event log"
+
+  @backlog @mobile
+  Scenario: The device viewer fills the screen
+    When the user opens a simulator or device on the phone
+    Then its stream fills the screen at the device's aspect ratio
+    And its controls sit in an overlay that shows while connecting and on tap

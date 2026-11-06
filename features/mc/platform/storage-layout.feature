@@ -22,6 +22,7 @@
 #   docs/internals/desktop-qt.md (web engine profile, shell directory)
 #   docs/operations/development.md (State and ports)
 #   docs/user/install.md (Coming from T3 Code)
+#   https://github.com/pingdotgg/t3code/pull/15009
 
 Feature: Where HAL-C2 keeps its files
   HAL-C2 follows the XDG Base Directory layout on every platform. Settings, data the
@@ -516,3 +517,9 @@ Feature: Where HAL-C2 keeps its files
         | setting                               | path                                 |
         | XDG_STATE_HOME is not set             | ~/.local/state/hal-c2/wsl-runtime    |
         | XDG_STATE_HOME is "/var/lib/me/state" | /var/lib/me/state/hal-c2/wsl-runtime |
+
+  @backlog @mc
+  Scenario: A settings file that is a symbolic link stays one when saved
+    Given settings.json is a symbolic link into a dotfiles repository
+    When settings are saved
+    Then the target file is rewritten and the link remains

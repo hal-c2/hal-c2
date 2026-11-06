@@ -24,6 +24,11 @@
 #   https://github.com/pingdotgg/t3code/pull/14726
 #   https://github.com/pingdotgg/t3code/pull/14980
 #   https://github.com/pingdotgg/t3code/pull/15055
+#   https://github.com/pingdotgg/t3code/pull/14896
+#   https://github.com/pingdotgg/t3code/pull/15224
+#   https://github.com/pingdotgg/t3code/pull/15452
+#   https://github.com/pingdotgg/t3code/pull/15462
+#   https://github.com/pingdotgg/t3code/pull/15770
 
 @plugin-claude @mc
 Feature: Claude
@@ -956,3 +961,38 @@ Feature: Claude
     Given a Claude thread waiting on a background command
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
+
+  @backlog
+  Scenario: A Claude command the user stops is recorded as interrupted
+    Given a Claude turn is running a command
+    When the user stops the turn
+    Then the command is recorded as interrupted, as Codex, Cursor and Pi record it
+    And agents reading the thread are told it was interrupted, not that it failed
+
+  @backlog
+  Scenario: A thread stays out of plan mode that Claude entered itself
+    Given Claude calls EnterPlanMode during a turn on a thread whose mode is not plan
+    When the user sends the next turn
+    Then Claude can edit again and the subagents it starts do not inherit plan mode
+    And ExitPlanMode still captures the plan as a proposed plan and denies the tool
+
+  @backlog
+  Scenario: A skill whose description holds a colon is still listed
+    Given a Claude skill whose frontmatter description contains an unquoted ": "
+    When the skill picker is opened
+    Then the skill is listed with its invocation metadata
+    And a skill with malformed structure is still left out
+
+  @backlog
+  Scenario: Slash commands are discovered in the thread's own workspace
+    Given a project with commands under its ".claude/commands"
+    When the user opens the slash menu in a thread of that project
+    Then those commands are listed, not only the ones found in the MC's directory
+    And if command discovery fails the workspace's skills are still listed
+
+  @backlog
+  Scenario: Normal and unset fast mode count as the same selection
+    Given a Claude thread has a command running in the background
+    When a follow-up arrives with fast mode off where the first turn left it unset
+    Then the follow-up is accepted and the background command keeps running
+    And a real model or settings change is still refused while that command runs

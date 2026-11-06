@@ -14,6 +14,7 @@
 #   apps/web/src/openVsxThemes.ts
 #   packages/shared/src/keybindings.ts (themeEditor.toggle)
 #   https://github.com/pingdotgg/t3code/pull/14499
+#   https://github.com/pingdotgg/t3code/pull/14498
 
 Feature: Custom themes
   Users create, import, edit, share and remove their own themes, and can pick a color
@@ -1007,3 +1008,9 @@ Feature: Custom themes
     When the user imports them
     Then each imports under a non-reserved id and keeps its own label
     And they are not paired into one dual-mode theme
+
+  @backlog @shared
+  Scenario: An imported theme keeps switches and focus rings visible
+    Given an imported theme whose input border or focus colour is transparent
+    When it is applied
+    Then switches, input borders and focus rings stay distinguishable

@@ -15,6 +15,8 @@
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header's action menu, the action run last)
 #   apps/desktop-qt/src/native/TerminalController.cpp (runs an action in the thread's drawer)
 #   apps/web/src/components/ChatView.tsx (deleting an action: the confirmation by name, the failure)
+#   https://github.com/pingdotgg/t3code/pull/15394
+#   https://github.com/pingdotgg/t3code/pull/15490
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -246,3 +248,16 @@ Feature: Project actions
         | id                               |
         | install-javascript-dependencies  |
         | A.b                              |
+
+  @backlog @shared
+  Scenario: Changing or clearing an action's shortcut leaves no stale rule
+    Given an action with a shortcut
+    When the user changes the shortcut, clears it, or deletes the action
+    Then only the new shortcut is bound, or none, and no earlier rule stays active
+
+  @backlog @shared
+  Scenario: Running an action opens its preview when asked to
+    Given an action with a preview address and "open preview automatically" on
+    When the command is written to the terminal
+    Then the preview opens at that address
+    And a failed write opens nothing
