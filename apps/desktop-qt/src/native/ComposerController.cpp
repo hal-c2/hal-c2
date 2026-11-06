@@ -3136,20 +3136,9 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
     return value.toObject().value(QLatin1String("name")) == QLatin1String("usage-limits");
   });
   if (!offered) return false;
-  QVariantList windows;
-  for (const QJsonValue& value : instance->usageLimits.value(QLatin1String("windows")).toArray()) {
-    const QJsonObject window = value.toObject();
-    const double used = window.value(QLatin1String("usedPercent")).toDouble();
-    windows.append(QVariantMap{{QStringLiteral("label"), window.value(QLatin1String("label")).toString()},
-                               {QStringLiteral("usedPercent"), used},
-                               {QStringLiteral("remainingPercent"), std::clamp(100.0 - used, 0.0, 100.0)},
-                               {QStringLiteral("resetsAt"), window.value(QLatin1String("resetsAt")).toString()}});
-  }
-  m_usageLimits.insert(target, QVariantMap{{QStringLiteral("provider"), instance->displayName},
-                                           {QStringLiteral("checkedAt"), instance->usageLimits.value(QLatin1String("checkedAt")).toString()},
-                                           {QStringLiteral("windows"), windows},
-                                           {QStringLiteral("message"), windows.isEmpty() ? tr("%1 has not reported its limits yet.").arg(instance->displayName)
-                                                                                          : QString()}});
+  const QJsonObject config = NativeShell::of(this)->controller<WorkspaceController>()->environmentConfig();
+  m_usageLimits.insert(target, composer::usageLimitsReport(instance->instanceId, config.value(QLatin1String("providers")).toArray(),
+                                                           config.value(QLatin1String("usageLimitSources")).toArray()));
   setText(target, QString(), 0);
   publish();
   return true;

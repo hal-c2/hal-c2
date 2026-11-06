@@ -50,10 +50,14 @@ defmodule HalC2.Projection.Shell do
       |> Enum.filter(&(get(&1, "role") == "user"))
       |> latest_by(&epoch_ms(get(&1, "updatedAt")))
 
+    # The session of the latest run's provider: after a switch the run's failure stands
+    # (a usage limit keeps its resume) instead of taking the new provider's session error.
+    session_instance = get(latest_run, "providerInstanceId") || get(thread, "providerInstanceId")
+
     provider_session =
       state
       |> StreamState.list("provider-session")
-      |> Enum.filter(&(get(&1, "providerInstanceId") == get(thread, "providerInstanceId")))
+      |> Enum.filter(&(get(&1, "providerInstanceId") == session_instance))
       |> latest_by(&epoch_ms(get(&1, "updatedAt")))
 
     local_count = Timeline.local_count(state)
