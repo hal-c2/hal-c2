@@ -287,7 +287,7 @@ Feature: Subscription limits
 
   # xAI omits the usage percentage until an account has metered use, so the account is
   # kept with no windows rather than dropped as one that can never report.
-  @mc @shared @backlog-mobile
+  @mc @shared @backlog-mobile @backlog-mc
   Scenario: A Grok account with no metered usage yet stays in Limits
     Given Grok is signed in with a subscription and has not used any metered credit yet
     When the user opens Limits
