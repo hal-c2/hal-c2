@@ -70,6 +70,7 @@ const QList<Row>& rows() {
       {"continueThreadsAfterServerUpdate", false, false},
       {"newWorktreesStartFromOrigin", false, true},
       {"addProjectBaseDirectory", false, QString()},
+      {"enableAgentBrowserAccess", false, true},
       {"confirmThreadUnpin", true, false},
       {"confirmThreadArchive", true, false},
       {"confirmThreadDelete", true, true},

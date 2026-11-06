@@ -69,7 +69,8 @@ public:
   // What else a page tells the user in place (an inline error), for "the user is told".
   std::function<QStringList()> toldInPlace;
   // Steps two pages share the words of: what they check on the settings page, by a name the two files agree on
-  // ("hasAction", "invalidProjectFile", "isShown", "openResult", "inView"), set while a scenario is on that page.
+  // ("hasAction", "invalidProjectFile", "isShown", "openResult", "inView", "notListed", "listedUnder", "onlyListed"),
+  // set while a scenario is on that page.
   QHash<QString, std::function<void(const QStringList& captures)>> onSettingsPage;
 
   ShellBridge& bridge() { return *m_bridge; }

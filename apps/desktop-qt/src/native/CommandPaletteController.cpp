@@ -863,6 +863,16 @@ void CommandPaletteController::rebuildCommand() {
   }
 
   const QQmlPropertyMap* state = m_bridge->state();
+  // As settingsPages.js connected(): an environment of the settings scope is
+  // online. The scope is published once settings have been opened; before
+  // that, the shell's own connection stands in.
+  const QVariant scopeState = state->value(QStringLiteral("settingsScope"));
+  bool connected = m_client->isReady();
+  if (scopeState.isValid() && !scopeState.isNull()) {
+    const QVariantList environments = scopeState.toMap().value(QStringLiteral("environments")).toList();
+    connected = std::any_of(environments.cbegin(), environments.cend(),
+                            [](const QVariant& environment) { return environment.toMap().value(QStringLiteral("online")).toBool(); });
+  }
   for (const QVariant& value : std::as_const(m_settingsSections)) {
     const QVariantMap section = value.toMap();
     // A section that needs shell state is listed once it is there
@@ -872,6 +882,12 @@ void CommandPaletteController::rebuildCommand() {
       const QVariant needed = state->value(needs);
       if (!needed.isValid() || needed.isNull()) continue;
     }
+    // Settings the search finds only for a project, or while connected
+    // (settingsPages.js searchRows), are offered alike.
+    if (section.value(QStringLiteral("project")).toBool() &&
+        scopeState.toMap().value(QStringLiteral("kind")) != QLatin1String("project"))
+      continue;
+    if (section.value(QStringLiteral("connected")).toBool() && !connected) continue;
     const QString label = section.value(QStringLiteral("label")).toString();
     // A setting on the section's page is found by its own title, and opens there.
     const QString target = section.value(QStringLiteral("targetId")).toString();

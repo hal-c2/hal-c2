@@ -23,7 +23,7 @@ SettingsPage {
     }
 
     objectName: "projectSettings"
-    title: qsTr("Project")
+    title: projectScope ? qsTr("Project") : qsTr("New threads")
 
     // Inline components cannot see `page`; the ones that need it are handed it.
     component Heading: SettingsHeading {}

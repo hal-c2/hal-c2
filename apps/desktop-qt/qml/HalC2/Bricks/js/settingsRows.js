@@ -4,7 +4,7 @@
 // and descriptions. A row's
 // `key` is a Settings row key (SettingsController rows()): Settings knows its
 // store and default. `descriptions` words a row by its value. Kinds: switch, select (`options`), number (`min`, `max`,
-// `step`, `unit`), text (`placeholder`).
+// `step`, `unit`), text (`placeholder`). `keywords` are other words the settings search finds it by.
 //
 // Rows that need logic beyond reading and writing the key:
 // A section with `folded` starts closed: its rows are listed once it is opened.
@@ -73,7 +73,7 @@ var general = [
     { key: "composerVimKeys", kind: "switch", title: "Vim keys in the composer",
       description: "Escape leaves insert mode; h, j, k, l, w, b, 0, $, x and u move and edit, and i, a, I and A insert again." },
     { key: "sendShortcut", kind: "select", title: "Send shortcut",
-      description: "Choose when Enter sends a prompt or inserts a new line",
+      description: "Choose when Enter sends a prompt or inserts a new line", keywords: "multiline enter",
       options: [option("enter", "Enter"), option("mod-enter-multiline", "Ctrl + Enter for multiline prompts"),
                 option("mod-enter", "Ctrl + Enter always")] },
     { key: "followUpBehavior", kind: "select", title: "Follow-up behavior",
@@ -91,13 +91,16 @@ var general = [
       description: "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first." },
 
     { id: "background-activity", component: "backgroundActivity", title: "Background activity",
-      description: "Gates background work such as Git refreshes and provider health probes on the selected environments. Advanced sets its own intervals." },
+      description: "Gates background work such as Git refreshes and provider health probes on the selected environments. Advanced sets its own intervals.",
+      keywords: "battery saver power profile pause" },
 
     { section: "Projects & threads" },
     { key: "newWorktreesStartFromOrigin", kind: "switch", title: "Start from origin",
       description: "Creates the worktree from the latest matching branch on origin instead of your local branch." },
     { key: "addProjectBaseDirectory", kind: "text", title: "Add project starts in",
       description: "Leave empty to use \"~/\" when the Add Project browser opens.", placeholder: "~/" },
+    { key: "enableAgentBrowserAccess", kind: "switch", title: "Agent browser access",
+      description: "Allow agents to use the shared browser. Applies when the agent session next starts." },
 
     { section: "Confirmations" },
     { key: "confirmThreadUnpin", kind: "switch", title: "Unpin confirmation",
