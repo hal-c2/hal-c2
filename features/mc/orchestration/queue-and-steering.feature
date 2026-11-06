@@ -132,6 +132,10 @@ Feature: Queueing, steering and restarting
     And a background wake from "codex" for "t1" arrives while no turn is running
     Then the turn for the woken agent runs on "codex"
     And thread "t1" is on "claudeAgent"
+    When the woken turn completes
+    And the user sends "Where were we?" to "t1" with automatic delivery
+    Then "Where were we?" runs on "claudeAgent"
+    And Claude receives the woken turn as earlier conversation before "Where were we?"
 
   @mc
   Scenario Outline: A restart interrupts the active turn and goes first
