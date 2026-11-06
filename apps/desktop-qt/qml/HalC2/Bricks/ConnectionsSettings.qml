@@ -9,7 +9,8 @@ import HalC2.Shell
 // clients), and which machine new threads start on (LoadBalancingGroup).
 // A pairing link is for any machine of the cluster that is online, and is
 // shown as a QR code when another device can reach its address.
-// Other machines join on the Cluster page.
+// Other machines join on the Cluster page; MCs outside the cluster are paired
+// with here (SavedEnvironmentsGroup).
 SettingsPage {
     id: page
 
@@ -162,6 +163,14 @@ SettingsPage {
         ServerUpdatesList {
             Layout.fillWidth: true
             Layout.topMargin: Theme.space.xs
+        }
+
+        Heading {
+            text: qsTr("Paired environments")
+        }
+
+        SavedEnvironmentsGroup {
+            Layout.fillWidth: true
         }
 
         Heading {

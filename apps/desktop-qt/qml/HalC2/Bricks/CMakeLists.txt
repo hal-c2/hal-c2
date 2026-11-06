@@ -5,6 +5,7 @@ set(hal_c2_bricks_qml_files
     ClusterSettings.qml
     ConnectionsSettings.qml
     LoadBalancingGroup.qml
+    SavedEnvironmentsGroup.qml
     Composer.qml
     ComposerAttachment.qml
     ModelPicker.qml
