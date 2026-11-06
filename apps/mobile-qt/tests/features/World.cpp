@@ -21,6 +21,7 @@
 #include "Harness.h"
 #include "Maintenance.h"
 #include "NativeShell.h"
+#include "SavedEnvironmentsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "ThreadMenuController.h"
@@ -131,6 +132,7 @@ void World::open() {
   if (m_app) return;
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
   push->opened();
+  SavedEnvironmentsController::setSecretStoreFactory([keys = secrets](const QString&) { return std::make_unique<MemorySecretStore>(keys); });
   m_app = std::make_unique<MobileApp>(
       MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera, push});
   // The scenarios' seams: a dropped connection is tried again at once, and

@@ -77,11 +77,42 @@ defmodule HalC2.Cluster do
 
   @doc """
   This machine and the other members: `%{"clustered" => true, "id", "mc", "addresses",
-  "version", "members" => [%{"id", "label", "addresses", "version", "connected"}]}`, or
-  `%{"clustered" => false, "reason"}` when the MC was not started for clustering. A
-  member's `version` is the one it last reported, nil before it reported any.
+  "version", "members" => [%{"id", "label", "addresses", "version", "connected", "off",
+  "offline"}]}`, or `%{"clustered" => false, "reason"}` when the MC was not started for
+  clustering. A member's `version` is the one it last reported, nil before it reported
+  any; `off` when it is switched off (`switch/2`), `offline` when discovery stopped
+  trying it often (`HalC2.Cluster.Discovery`).
   """
-  def status, do: GenServer.call(__MODULE__, :status)
+  def status do
+    case GenServer.call(__MODULE__, :status) do
+      %{"members" => members} = status ->
+        offline = HalC2.Cluster.Discovery.offline()
+        members = for m <- members, do: Map.put(m, "offline", m["id"] in offline)
+        %{status | "members" => members}
+
+      status ->
+        status
+    end
+  end
+
+  @doc """
+  Asks discovery to try the member `id` again at once and often, after it stopped
+  (`HalC2.Cluster.Discovery.reconnect/1`). Refused for a machine switched off, which is
+  switched on instead, or one that is not a member.
+  """
+  def reconnect(id) do
+    case status() do
+      %{"clustered" => false, "reason" => reason} ->
+        {:error, reason}
+
+      %{"members" => members} ->
+        case Enum.find(members, &(&1["id"] == id)) do
+          nil -> {:error, :not_a_member}
+          %{"off" => true} -> {:error, :switched_off}
+          _member -> HalC2.Cluster.Discovery.reconnect(id)
+        end
+    end
+  end
 
   @doc """
   Takes up the version this MC moved to in place (`HalC2.Upgrade`) and tells the
@@ -133,6 +164,15 @@ defmodule HalC2.Cluster do
 
   @doc "Stops admitting the member `id`, here and on every member, and disconnects it."
   def remove(id), do: GenServer.call(__MODULE__, {:remove, id})
+
+  @doc """
+  Switches the member `id` off (`on` false) or back on. Off, it is kept in the table
+  and listed in `status/0` but treated as removed everywhere: unpinned, disconnected,
+  its threads gone from the sidebar. Every member applies it, as with `remove/1`:
+  one MC alone could not stay apart from a member the others connect it to. On, it
+  is admitted again from what was kept, and discovery looks for it at once.
+  """
+  def switch(id, on), do: GenServer.call(__MODULE__, {:switch, id, on})
 
   @doc """
   Joins the cluster of the machine an invite (`invite/1`) is from. A pairing link that
@@ -199,6 +239,9 @@ defmodule HalC2.Cluster do
 
   def describe(:cannot_remove_self), do: "A machine cannot remove itself from its cluster."
   def describe(:not_a_member), do: "That machine is not a member of this cluster."
+  def describe(:cannot_switch_off_self), do: "A machine cannot switch itself off."
+  def describe(:not_switched_off), do: "That machine is not switched off."
+  def describe(:switched_off), do: "That machine is switched off. Switch it on first."
   def describe(:invalid_member), do: "The joining machine sent an invalid description."
 
   def describe(:other_version),
@@ -229,7 +272,7 @@ defmodule HalC2.Cluster do
   def describe(reason), do: to_string(reason)
 
   # Reasons that crossed the wire as strings.
-  @reasons ~w(not_booted_for_clustering link_lacks_access link_invalid invalid_link
+  @reasons ~w(cannot_switch_off_self not_switched_off switched_off not_booted_for_clustering link_lacks_access link_invalid invalid_link
     cannot_remove_self not_a_member invalid_member wrong_machine not_an_invite
     other_version)a
   defp describe_string(reason) do
@@ -298,11 +341,12 @@ defmodule HalC2.Cluster do
 
     Map.merge(newer, %{
       "admittedAt" => max(ours["admittedAt"], theirs["admittedAt"]),
-      "removedAt" => max_time(ours["removedAt"], theirs["removedAt"])
+      "removedAt" => max_time(ours["removedAt"], theirs["removedAt"]),
+      "offAt" => max_time(ours["offAt"], theirs["offAt"])
     })
   end
 
-  defp ties(entry), do: Map.drop(entry, ["admittedAt", "removedAt"])
+  defp ties(entry), do: Map.drop(entry, ["admittedAt", "removedAt", "offAt"])
 
   defp max_time(nil, b), do: b
   defp max_time(a, nil), do: a
@@ -311,9 +355,10 @@ defmodule HalC2.Cluster do
   defp sanitize(%{"fingerprint" => fp, "admittedAt" => admitted, "updatedAt" => updated} = entry)
        when is_binary(fp) and is_integer(admitted) and is_integer(updated) do
     removed = entry["removedAt"]
+    off = entry["offAt"]
     addresses = entry["addresses"]
 
-    if is_integer(removed) or is_nil(removed) do
+    if (is_integer(removed) or is_nil(removed)) and (is_integer(off) or is_nil(off)) do
       %{
         "fingerprint" => fp,
         "label" => if(is_binary(entry["label"]), do: entry["label"]),
@@ -325,6 +370,7 @@ defmodule HalC2.Cluster do
         "version" => if(is_binary(entry["version"]), do: entry["version"]),
         "admittedAt" => admitted,
         "removedAt" => removed,
+        "offAt" => off,
         "updatedAt" => updated
       }
     end
@@ -340,7 +386,7 @@ defmodule HalC2.Cluster do
   def stamp(members) do
     seen =
       for {_id, entry} <- members,
-          time <- [entry["admittedAt"], entry["removedAt"], entry["updatedAt"]],
+          time <- [entry["admittedAt"], entry["removedAt"], entry["offAt"], entry["updatedAt"]],
           is_integer(time),
           reduce: 0,
           do: (latest -> max(latest, time))
@@ -353,6 +399,15 @@ defmodule HalC2.Cluster do
     do: removed == nil or admitted > removed
 
   def member?(_entry), do: false
+
+  @doc """
+  Whether a member table entry is switched off (`switch/2`): its last removal is the
+  switch-off `offAt` records, so a later `remove/1` removes it for good.
+  """
+  def off?(%{"offAt" => off, "removedAt" => off} = entry) when is_integer(off),
+    do: not member?(entry)
+
+  def off?(_entry), do: false
 
   @doc false
   # The distribution handshake's `verify_fun` (see `ssl_dist_conf/1`): a certificate
@@ -416,13 +471,14 @@ defmodule HalC2.Cluster do
     connected = state.transport.connected()
 
     members =
-      for {id, entry} <- state.members, id != state.id, member?(entry) do
+      for {id, entry} <- state.members, id != state.id, member?(entry) or off?(entry) do
         %{
           "id" => id,
           "label" => entry["label"] || id,
           "addresses" => entry["addresses"] || [],
           "version" => entry["version"],
-          "connected" => mc_name(id) in connected
+          "connected" => member?(entry) and mc_name(id) in connected,
+          "off" => off?(entry)
         }
       end
 
@@ -513,13 +569,42 @@ defmodule HalC2.Cluster do
       id == state.id ->
         {:reply, {:error, :cannot_remove_self}, state}
 
-      not member?(entry) ->
+      not member?(entry) and not off?(entry) ->
         {:reply, {:error, :not_a_member}, state}
 
       true ->
         now = stamp(state.members)
-        removed = %{entry | "removedAt" => now, "updatedAt" => now}
+        removed = Map.merge(entry, %{"removedAt" => now, "updatedAt" => now})
         {:reply, :ok, merge_in(state, %{id => removed})}
+    end
+  end
+
+  def handle_call({:switch, id, on}, _from, state) do
+    entry = state.members[id]
+    now = stamp(state.members)
+
+    cond do
+      id == state.id ->
+        {:reply, {:error, :cannot_switch_off_self}, state}
+
+      not member?(entry) and not off?(entry) ->
+        {:reply, {:error, :not_a_member}, state}
+
+      on and off?(entry) ->
+        admitted = Map.merge(entry, %{"admittedAt" => now, "updatedAt" => now})
+        state = merge_in(state, %{id => admitted})
+        HalC2.Cluster.Discovery.poll()
+        {:reply, :ok, state}
+
+      on ->
+        {:reply, {:error, :not_switched_off}, state}
+
+      member?(entry) ->
+        off = Map.merge(entry, %{"removedAt" => now, "offAt" => now, "updatedAt" => now})
+        {:reply, :ok, merge_in(state, %{id => off})}
+
+      true ->
+        {:reply, {:error, :not_a_member}, state}
     end
   end
 

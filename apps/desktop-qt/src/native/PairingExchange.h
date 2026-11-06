@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QJsonObject>
 #include <QList>
 #include <QString>
@@ -76,6 +77,8 @@ struct Result {
   // The MC's descriptor (environmentId, label, orchestrationProtocolVersion),
   // once an MC answered.
   QJsonObject descriptor;
+  // When the token runs out, when the MC said (`expires_in`).
+  QDateTime expiresAt;
 };
 
 // Finds the MC among the link's origins by its descriptor
@@ -85,5 +88,8 @@ struct Result {
 // unless `context` goes first.
 void exchange(QNetworkAccessManager* http, QObject* context, const Link& link, const Client& client,
               std::function<void(const Result&)> done);
+
+// What went wrong, for the user; empty when it paired.
+QString explain(const Result& result);
 
 }  // namespace pairing

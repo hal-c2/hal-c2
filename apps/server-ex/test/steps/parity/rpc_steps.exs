@@ -624,6 +624,12 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "cluster.remove" ->
         {%{"id" => "hal-c2-none"}, context}
 
+      "cluster.switch" ->
+        {%{"id" => "hal-c2-none", "on" => false}, context}
+
+      "cluster.reconnect" ->
+        {%{"id" => "hal-c2-none"}, context}
+
       _ ->
         {%{}, context}
     end

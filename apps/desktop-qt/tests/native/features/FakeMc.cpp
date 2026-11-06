@@ -2,6 +2,7 @@
 
 #include <QJsonDocument>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QtLogging>
 
 #include <algorithm>
@@ -35,10 +36,28 @@ FakeMc::FakeMc() : m_server(QStringLiteral("fake-mc"), QWebSocketServer::NonSecu
   onShape(QStringLiteral("shell"), [this](int id, const QJsonObject&) {
     m_shellSubscription = id;
     m_have = subscriptions.last().value(QLatin1String("have")).toObject();
-    if (!holdSnapshot) sendSnapshot();
+    if (holdSnapshot) return;
+    if (buildMs > 0) {
+      busy(buildMs, [this, id] {
+        if (m_shellSubscription == id) sendSnapshot();
+      });
+    } else {
+      sendSnapshot();
+    }
   });
   onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const Rpc& rpc) { dispatchCommand(rpc); });
   for (const auto extend : std::as_const(extensions())) extend(*this);
+}
+
+void FakeMc::busy(int ms, std::function<void()> then) {
+  ++m_busy;
+  QTimer::singleShot(ms, this, [this, socket = m_socket, then = std::move(then)] {
+    --m_busy;
+    if (!socket || socket != m_socket) return;
+    then();
+    if (m_busy > 0) return;
+    for (; m_heldPongs > 0; --m_heldPongs) send({{QStringLiteral("t"), QStringLiteral("pong")}});
+  });
 }
 
 void FakeMc::onRpc(const QString& method, RpcHandler handler) {
@@ -138,7 +157,10 @@ void FakeMc::sendSnapshot() {
   QJsonArray rows;
   QJsonArray mcs{shellMc(name, true, ownEnvironment(), rows)};
   for (const QString& environment : std::as_const(members)) {
-    mcs.append(shellMc(peers.value(environment), !offline.contains(environment), peerEnvironment(environment), rows));
+    QJsonObject mc =
+        shellMc(peers.value(environment), !offline.contains(environment), peerEnvironment(environment), rows);
+    mc.insert(QStringLiteral("trying"), !givenUp.contains(environment));
+    mcs.append(mc);
   }
   const QJsonObject frame{
       {QStringLiteral("t"), QStringLiteral("shell")},
@@ -214,6 +236,7 @@ void FakeMc::sendPeerRow(const QString& environment, const QString& id, const QJ
 void FakeMc::setOnline(const QString& environment, bool online) {
   if (online) {
     offline.remove(environment);
+    givenUp.remove(environment);
   } else {
     offline.insert(environment);
   }
@@ -221,7 +244,22 @@ void FakeMc::setOnline(const QString& environment, bool online) {
   send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
         {QStringLiteral("id"), m_shellSubscription},
         {QStringLiteral("mc"), environment == environmentId ? name : peers.value(environment)},
-        {QStringLiteral("online"), online}});
+        {QStringLiteral("online"), online},
+        {QStringLiteral("trying"), !givenUp.contains(environment)}});
+}
+
+void FakeMc::setTrying(const QString& environment, bool trying) {
+  if (trying) {
+    givenUp.remove(environment);
+  } else {
+    givenUp.insert(environment);
+  }
+  if (!m_socket || m_shellSubscription < 0) return;
+  send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("mc"), peers.value(environment)},
+        {QStringLiteral("online"), !offline.contains(environment)},
+        {QStringLiteral("trying"), trying}});
 }
 
 void FakeMc::remove(const QString& environment) {
@@ -229,6 +267,7 @@ void FakeMc::remove(const QString& environment) {
   m_told.remove(peer);
   members.removeAll(environment);
   offline.remove(environment);
+  givenUp.remove(environment);
   peerRows.remove(environment);
   if (!m_socket || m_shellSubscription < 0) return;
   send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
@@ -300,10 +339,14 @@ void FakeMc::route(QTcpSocket* socket) {
       const qsizetype end = peeked.indexOf("\r\n\r\n");
       if (end < 0) return;
       const QString path = QString::fromUtf8(peeked.left(peeked.indexOf('\r')).split(' ').value(1));
+      // The longest prefix wins: `/api/auth/session/renew` is not `/api/auth/session`.
+      auto chosen = m_rawHandlers.cend();
       for (auto handler = m_rawHandlers.cbegin(); handler != m_rawHandlers.cend(); ++handler) {
-        if (!path.startsWith(handler.key())) continue;
+        if (path.startsWith(handler.key()) && (chosen == m_rawHandlers.cend() || handler.key().size() > chosen.key().size())) chosen = handler;
+      }
+      if (chosen != m_rawHandlers.cend()) {
         QObject::disconnect(*routed);
-        handler.value()(socket, peeked.left(end + 4));
+        chosen.value()(socket, peeked.left(end + 4));
         return;
       }
     }
@@ -359,6 +402,7 @@ void FakeMc::accept() {
     m_accepted.append(socket);
     m_socket = socket;
     m_shellSubscription = -1;
+    m_heldPongs = 0;
     m_live.clear();
     QObject::connect(socket, &QWebSocket::textMessageReceived, this,
                      [this, socket](const QString& text) { onMessage(socket, text); });
@@ -392,7 +436,12 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   } else if (const auto read = m_frames.constFind(type); read != m_frames.cend()) {
     (*read)(message);
   } else if (type == QLatin1String("ping")) {
-    if (answerPings) send({{QStringLiteral("t"), QStringLiteral("pong")}});
+    if (!answerPings) return;
+    if (m_busy > 0) {
+      ++m_heldPongs;
+    } else {
+      send({{QStringLiteral("t"), QStringLiteral("pong")}});
+    }
   } else if (type == QLatin1String("rpc")) {
     const Rpc rpc{id, message.value(QLatin1String("method")).toString(), message.value(QLatin1String("payload")).toObject(), socket,
                   message.value(QLatin1String("environment")).toString()};

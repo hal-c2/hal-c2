@@ -20,6 +20,7 @@ import {
   AuthRevokePairingLinkInput,
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
+  AuthSessionRenewResult,
   AuthSessionState,
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
@@ -400,6 +401,13 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("webSocketTicket", "/api/auth/websocket-ticket", {
       headers: OptionalBearerHeaders,
       success: AuthWebSocketTicketResult,
+      error: [EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("sessionRenew", "/api/auth/session/renew", {
+      headers: OptionalBearerHeaders,
+      success: AuthSessionRenewResult,
       error: [EnvironmentInternalError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

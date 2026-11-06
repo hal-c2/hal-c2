@@ -12,6 +12,7 @@
 
 #include "Brick.h"
 #include "ComposerController.h"
+#include "ComputerNoticeController.h"
 #include "DraftController.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -19,11 +20,13 @@
 #include "ProviderSettingsController.h"
 #include "ProviderUpdateNotice.h"
 #include "SettingsController.h"
+#include "SlowRequestController.h"
 #include "FileActionsController.h"
 #include "PluginController.h"
 #include "ThreadMenuController.h"
 #include "ThreadPullRequests.h"
 #include "RightPanelController.h"
+#include "SavedEnvironmentsController.h"
 #include "ServerUpdateController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
@@ -50,6 +53,7 @@ World::~World() {
 // As main.cpp wires them.
 void World::start() {
   m_bridge = std::make_unique<ShellBridge>();
+  SavedEnvironmentsController::setSecretStoreFactory([keys = secrets](const QString&) { return std::make_unique<MemorySecretStore>(keys); });
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
@@ -170,7 +174,11 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });
   m_native->controller<IdentityController>()->setClock([now] { return now.toMSecsSinceEpoch(); });
+  m_native->controller<SlowRequestController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ComputerNoticeController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
+  m_native->controller<SlowRequestController>()->expire();
+  m_native->controller<ComputerNoticeController>()->expire();
   m_native->controller<ProviderUpdateNotice>()->expire();
   // The favicon renewal timer runs on the real clock; time jumps here.
   m_native->controller<IdentityController>()->renewFavicons();

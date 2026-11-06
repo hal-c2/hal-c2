@@ -45,6 +45,17 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Pair the desktop with a machine outside your cluster
+
+To reach a machine you cannot or would rather not cluster with, paste a pairing link
+from it under **Settings → Connections → Paired environments** in the desktop app and
+choose **Pair**. That machine's projects and threads join the sidebar beside this
+machine's, on a connection of their own, so a refused or offline machine does not
+disconnect the others. Its credential goes into the system's keychain or keyring;
+when that storage is unavailable, pairing fails and says so, and nothing is saved.
+The same list shows each machine's state, with **Retry** for one that cannot
+connect and **Remove** to forget it.
+
 ## Cluster your machines
 
 Machines that run HAL-C2 can join one cluster. A client connected to any of them then
@@ -73,6 +84,13 @@ entry of that name) has each of them update to the version of the machine you ar
 which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
+
+Switching a machine off on the Cluster page hides it and its threads on every member but
+keeps it listed, so switching it back on reconnects it without a new invite. A machine
+that has not answered for five minutes is marked offline and tried only every few
+minutes; the thread notice about it offers **Reconnect** to try at once, and after 20
+seconds unavailable, **Disconnect** to switch it off. The machine the app runs on
+cannot be disconnected from there.
 
 ### Settings that follow you
 

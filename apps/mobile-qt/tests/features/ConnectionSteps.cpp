@@ -5,6 +5,7 @@
 #include <QQuickItem>
 
 #include "ConnectionHealthController.h"
+#include "ConnectionWatch.h"
 #include "Harness.h"
 #include "McClient.h"
 #include "NativeShell.h"
@@ -47,7 +48,10 @@ const Steps steps([] {
   using S = QString;
 
   // features/connections/connection-health.feature, as far as the phone runs it.
-  step(S("(?:a client paired with an environment|a paired client)"), [](World& world, const Captures&, const Table&) { pairWithEnvironment(world); });
+  step(S("(?:a client paired with an environment|a paired client)"), [](World& world, const Captures&, const Table&) {
+    pairWithEnvironment(world);
+    watch(world);
+  });
 
   // A fresh start, its first connection never coming up.
   step(S("the environment takes no connections"), [](World& world, const Captures&, const Table&) { world.mc.stopAccepting(); });
@@ -93,13 +97,13 @@ const Steps steps([] {
                   [&] { return S("the connection; it is %1").arg(show(connection(world))); });
   });
 
-  step(S("an environment connection has a trace id"), [](World& world, const Captures&, const Table&) {
+  step(S("(?:an environment connection has a trace id|a connection that failed)"), [](World& world, const Captures&, const Table&) {
     loseConnection(world);
     world.mc.part<Before>().traceId = connection(world).value(S("traceId")).toString();
     expect(!world.mc.part<Before>().traceId.isEmpty(), S("the failed connection has no trace id: %1").arg(show(connection(world))));
   });
 
-  step(S("the user copies the trace id"), [](World& world, const Captures&, const Table&) { world.tap(S("connectionCopyTraceId")); });
+  step(S("the user copies (?:the|its) trace id"), [](World& world, const Captures&, const Table&) { world.tap(S("connectionCopyTraceId")); });
 
   step(S("the trace id is on the clipboard"), [](World& world, const Captures&, const Table&) {
     expect(world.clipboard == world.mc.part<Before>().traceId, S("the clipboard has \"%1\", not %2").arg(world.clipboard, world.mc.part<Before>().traceId));

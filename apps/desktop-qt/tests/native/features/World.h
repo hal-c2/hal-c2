@@ -16,6 +16,7 @@
 
 #include "FakeMc.h"
 #include "NativeShell.h"
+#include "SecretStore.h"
 #include "ShellBridge.h"
 #include "ShellWindows.h"
 #include "ThemeStore.h"
@@ -74,6 +75,10 @@ public:
   // ("hasAction", "invalidProjectFile", "isShown", "openResult", "inView", "notListed", "listedUnder", "onlyListed"),
   // set while a scenario is on that page.
   QHash<QString, std::function<void(const QStringList& captures)>> onSettingsPage;
+
+  // The system's secure storage, as the shell sees it: never the desktop's
+  // own keyring. Kept across restarts, as a keyring is.
+  std::shared_ptr<MemorySecretStore::Keys> secrets = std::make_shared<MemorySecretStore::Keys>();
 
   ShellBridge& bridge() { return *m_bridge; }
   NativeShell& native() { return *m_native; }

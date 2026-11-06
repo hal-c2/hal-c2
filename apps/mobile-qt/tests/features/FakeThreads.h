@@ -51,6 +51,8 @@ struct FakeStreams {
   // Environments that are down (a cluster member that left): a stream on one
   // is refused.
   QSet<QString> offline;
+  // How long the MC takes to load a thread for a `sub` (FakeMc::busy()).
+  int loadMs = 0;
 };
 
 // Sets fields of an entity of the thread's stream and tells whoever follows it.

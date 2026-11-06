@@ -299,6 +299,41 @@ private slots:
     QCOMPARE(ids(again), QStringList({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("run-1")}));
   }
 
+  // A row the client can no longer read (a disk that flipped bytes, a copy
+  // written by a build that wrote it otherwise) makes the copy no copy: it is
+  // dropped, not handed out without that row and resumed from its cursor.
+  void aCopyWithARowItCannotReadIsDropped() {
+    const QString key = QStringLiteral("env-a:thread-1");
+    const QString other = QStringLiteral("env-a:thread-2");
+    {
+      auto cache = open();
+      cache->storeThread(copy(key));
+      cache->storeThread(copy(other));
+    }
+    tamper({QStringLiteral("UPDATE entities SET json = '{\"id\": \"a\", \"text' WHERE thread = 'env-a:thread-1' AND id = 'a'")});
+    auto cache = open();
+    QVERIFY(!load(*cache, key).found());
+    // Gone from the file, not only skipped.
+    {
+      QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("look"));
+      db.setDatabaseName(QDir(m_dir->path()).filePath(QStringLiteral("client-cache.sqlite")));
+      QVERIFY(db.open());
+      QSqlQuery seen(QStringLiteral("SELECT (SELECT count(*) FROM threads WHERE key = 'env-a:thread-1'),"
+                                    " (SELECT count(*) FROM entities WHERE thread = 'env-a:thread-1')"),
+                     db);
+      QVERIFY(seen.next());
+      QCOMPARE(seen.value(0).toInt(), 0);
+      QCOMPARE(seen.value(1).toInt(), 0);
+      seen.finish();
+      db.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("look"));
+    // The other thread's copy is untouched, and a snapshot makes a copy again.
+    QCOMPARE(load(*cache, other).cursor.offset, 10);
+    cache->storeThread(copy(key, 14));
+    QCOMPARE(ids(load(*cache, key)), QStringList({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("run-1")}));
+  }
+
   // The thread list goes the same way: one that missed a change is not read,
   // and the rows that changed afterwards do not pass for all of an MC's rows.
   void aThreadListThatMissedAChangeIsNeverRead() {

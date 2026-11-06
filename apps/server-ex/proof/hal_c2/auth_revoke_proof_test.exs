@@ -70,6 +70,10 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Auth.pairing_links/0" => @outside,
       "HalC2.Auth.revoke_pairing_link/1" => @outside,
       "HalC2.Auth.clients/0" => @outside,
+      "HalC2.Auth.renew/1" =>
+        "extends a session's row only while it exists, in the Auth process; a revoke deletes the row first or after, so a revoked session is never renewed",
+      "HalC2.Auth handle_call {:renew, _}" =>
+        "extends a session's row only while it exists, in the Auth process; a revoke deletes the row first or after, so a revoked session is never renewed",
       "HalC2.Auth.revoke_other_clients/1" =>
         "the same revoke as revoke_client/1, for every other session",
       "HalC2.Auth.prune/0" => @outside,

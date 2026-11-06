@@ -122,6 +122,22 @@ defmodule HalC2.ClusterServerTest do
     refute_received {:sent, _, {:settings, _, _}}
   end
 
+  test "switching on a machine that is unknown or removed answers that it is no member" do
+    assert {:error, :not_a_member} = Cluster.switch("stranger", true)
+    assert {:error, :not_a_member} = Cluster.switch("stranger", false)
+
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    {:ok, _} = Cluster.admit(entry)
+    assert {:error, :not_switched_off} = Cluster.switch("m1", true)
+    :ok = Cluster.switch("m1", false)
+    :ok = Cluster.switch("m1", true)
+
+    :ok = Cluster.remove("m1")
+    assert {:error, :not_a_member} = Cluster.switch("m1", true)
+    assert {:error, :not_a_member} = Cluster.switch("m1", false)
+  end
+
   defp flush_sent do
     receive do
       {:sent, _, _} -> flush_sent()

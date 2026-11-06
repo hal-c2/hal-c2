@@ -58,6 +58,15 @@ McClient::McClient(QObject* parent) : QObject(parent) {
   m_heldTimer.setSingleShot(true);
   m_heldTimer.setInterval(30000);
   connect(&m_heldTimer, &QTimer::timeout, this, [this] { m_attempt = 0; });
+  // A foreground check (wake()) that goes unanswered replaces the connection at
+  // once: one that died while the app was away is the likely case.
+  m_probeTimer.setSingleShot(true);
+  m_probeTimer.setInterval(15000);
+  connect(&m_probeTimer, &QTimer::timeout, this, [this] {
+    qCInfo(lcMc).noquote() << "no answer to the check in" << m_probeTimer.interval() << "ms (trace" << m_traceId + ")";
+    emit checked(false);
+    drop(QStringLiteral("check"));
+  });
 }
 
 McClient::~McClient() {
@@ -66,7 +75,7 @@ McClient::~McClient() {
   close();
 }
 
-void McClient::open(const QUrl& origin, const QString& token) {
+void McClient::open(const QUrl& origin, const QString& token, const QString& environment) {
   // Opened again (paired anew): the socket it had goes first, or both would feed it.
   if (!m_closed) close();
   QUrl url = origin;
@@ -81,9 +90,11 @@ void McClient::open(const QUrl& origin, const QString& token) {
   m_closed = false;
   m_attempt = 0;
   m_failure.clear();
+  m_failureMessage.clear();
   m_failureTraceId.clear();
   m_blockedProtocol = 0;
   m_ticketed = false;
+  m_expectedEnvironment = environment;
   connectSocket();
 }
 
@@ -94,6 +105,7 @@ void McClient::close() {
   m_pongTimer.stop();
   m_setupTimer.stop();
   m_heldTimer.stop();
+  m_probeTimer.stop();
   if (m_socket) {
     QWebSocket* socket = m_socket;
     m_socket = nullptr;
@@ -119,6 +131,8 @@ void McClient::failCalls() {
   std::sort(ids.begin(), ids.end());
   for (int id : ids) {
     const Call call = calls.value(id);
+    emit callEnded(id);
+    // Not sent again: the MC may have carried it out.
     if (call.context && call.reply) call.reply(QJsonValue(), QStringLiteral("disconnected"));
   }
 }
@@ -145,10 +159,11 @@ void McClient::setOnline(bool online) {
 
 void McClient::wake() {
   if (m_closed) return;
-  if (m_phase == Phase::Retrying) {
+  if (m_phase == Phase::Retrying || m_phase == Phase::Refused || m_phase == Phase::Blocked) {
     retryNow();
   } else if (m_ready) {
     ping();
+    m_probeTimer.start();
   }
 }
 
@@ -176,7 +191,22 @@ void McClient::drop(const QString& reason) {
   onClosed(socket);
 }
 
+McClient* McClient::routed(const QString& environment, const QString& mc) const {
+  if (!m_route || (environment.isEmpty() && mc.isEmpty())) return nullptr;
+  McClient* other = m_route(environment, mc);
+  return other == this ? nullptr : other;
+}
+
 int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume) {
+  const QString environment = shape.contains(QLatin1String("environment")) ? shape.value(QLatin1String("environment")).toString()
+                                                                         : shape.value(QLatin1String("environmentId")).toString();
+  if (McClient* other = routed(environment, shape.value(QLatin1String("mc")).toString())) {
+    const int id = m_nextId++;
+    m_forwarded.insert(id, {other, other->subscribe(context, shape, std::move(onFrame), std::move(resume))});
+    // Its id here goes once that subscription goes with its context.
+    connect(context, &QObject::destroyed, this, [this, id] { m_forwarded.remove(id); });
+    return id;
+  }
   const int id = m_nextId++;
   const auto gone = connect(context, &QObject::destroyed, this, [this, id] { unsubscribe(id); });
   m_subscriptions.insert(id, {shape, std::move(onFrame), gone, std::move(resume)});
@@ -185,16 +215,23 @@ int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler
 }
 
 void McClient::more(int id, int items) {
+  if (const auto forwarded = m_forwarded.value(id); forwarded.first) return forwarded.first->more(forwarded.second, items);
   if (!m_subscriptions.contains(id)) return;
   send({{QStringLiteral("t"), QStringLiteral("more")}, {QStringLiteral("id"), id}, {QStringLiteral("items"), items}});
 }
 
 void McClient::ack(int id, qint64 sequence) {
+  if (const auto forwarded = m_forwarded.value(id); forwarded.first) return forwarded.first->ack(forwarded.second, sequence);
   if (!m_subscriptions.contains(id)) return;
   send({{QStringLiteral("t"), QStringLiteral("ack")}, {QStringLiteral("id"), id}, {QStringLiteral("sequence"), sequence}});
 }
 
 void McClient::unsubscribe(int id) {
+  if (m_forwarded.contains(id)) {
+    const auto forwarded = m_forwarded.take(id);
+    if (forwarded.first) forwarded.first->unsubscribe(forwarded.second);
+    return;
+  }
   if (!m_subscriptions.contains(id)) return;
   endSubscription(id);
   send({{QStringLiteral("t"), QStringLiteral("unsub")}, {QStringLiteral("id"), id}});
@@ -206,6 +243,7 @@ void McClient::endSubscription(int id) {
 
 void McClient::call(QObject* context, const QString& environment, const QString& method, const QJsonValue& payload,
                       Reply reply) {
+  if (McClient* other = routed(environment, {})) return other->call(context, environment, method, payload, std::move(reply));
   if (!m_ready) {
     // Replies are never synchronous, so callers see one order either way.
     QTimer::singleShot(0, context, [reply = std::move(reply)] {
@@ -214,7 +252,8 @@ void McClient::call(QObject* context, const QString& environment, const QString&
     return;
   }
   const int id = m_nextId++;
-  m_calls.insert(id, {context, std::move(reply)});
+  m_calls.insert(id, {context, std::move(reply), environment});
+  emit callStarted(id, environment, method);
   send({
       {QStringLiteral("t"), QStringLiteral("rpc")},
       {QStringLiteral("id"), id},
@@ -229,6 +268,45 @@ void McClient::post(QObject* context, const QString& path, const QJsonObject& bo
     QTimer::singleShot(0, context, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
     return;
   }
+  if (!renewalDue()) return sendPost(context, path, body, std::move(reply));
+  renew([this, context = QPointer<QObject>(context), path, body, reply = std::move(reply)](const std::optional<QString>& error) {
+    if (!context) return;
+    if (error) return reply(QJsonValue(), error);
+    sendPost(context, path, body, reply);
+  });
+}
+
+bool McClient::renewalDue() const {
+  return m_expiresAt.isValid() && QDateTime::currentDateTimeUtc().msecsTo(m_expiresAt) <= m_renewWithinMs;
+}
+
+void McClient::renew(std::function<void(const std::optional<QString>& error)> done) {
+  m_renewing.append(std::move(done));
+  // One renewal at a time; whoever asks meanwhile waits on it.
+  if (m_renewing.size() > 1) return;
+  if (!m_http) m_http = new QNetworkAccessManager(this);
+  QNetworkRequest renewal = request(QStringLiteral("/api/auth/session/renew"));
+  renewal.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+  renewal.setTransferTimeout(15000);
+  QNetworkReply* answer = m_http->post(renewal, QByteArrayLiteral("{}"));
+  connect(answer, &QNetworkReply::finished, this, [this, answer] {
+    answer->deleteLater();
+    const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QDateTime expiresAt =
+        QDateTime::fromString(QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("expiresAt")).toString(), Qt::ISODateWithMs);
+    std::optional<QString> error;
+    if (status == 200 && expiresAt.isValid()) {
+      m_expiresAt = expiresAt;
+      emit credentialRenewed(expiresAt);
+    } else {
+      error = QStringLiteral("The environment credential could not be renewed (%1).")
+                  .arg(status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString());
+    }
+    for (const auto& waiting : std::exchange(m_renewing, {})) waiting(error);
+  });
+}
+
+void McClient::sendPost(QObject* context, const QString& path, const QJsonObject& body, Reply reply) {
   if (!m_http) m_http = new QNetworkAccessManager(this);
   QUrl url = m_origin;
   url.setPath(path);
@@ -332,6 +410,9 @@ void McClient::connectSocket() {
   m_traceId = newTraceId();
   m_dropReason.clear();
   m_retryDelay = 0;
+  // Each attempt learns afresh what the MC says of it.
+  m_failureMessage.clear();
+  m_blockedProtocol = 0;
   qCInfo(lcMc).noquote() << "connecting to" << m_origin.toString(QUrl::RemoveUserInfo) << "(attempt" << m_attempt + 1
                          << "trace" << m_traceId + ")";
   setPhase(Phase::Connecting);
@@ -356,6 +437,14 @@ void McClient::connectSocket() {
         setPhase(Phase::Blocked);
         return;
       }
+      // An address that now answers as another environment is not that one.
+      const QString environment = m_descriptor.value(QLatin1String("environmentId")).toString();
+      if (!environment.isEmpty() && m_expectedEnvironment.isEmpty()) m_expectedEnvironment = environment;
+      if (!environment.isEmpty() && environment != m_expectedEnvironment) {
+        m_failure = QStringLiteral("mismatch");
+        stop(Phase::Blocked, QStringLiteral("Connected environment %1 does not match %2.").arg(environment, m_expectedEnvironment));
+        return;
+      }
     }
     // Nobody there: the socket would only fail the same way.
     const QNetworkReply::NetworkError error = answer->error();
@@ -370,6 +459,12 @@ void McClient::connectSocket() {
     // An MC that does not describe itself is left to the socket to refuse.
     if (m_ticketed) {
       openWithTicket();
+    } else if (renewalDue()) {
+      // The bare token goes in the socket's address: renewed first, like a ticket's.
+      const quint64 generation = m_generation;
+      renew([this, generation](const std::optional<QString>&) {
+        if (generation == m_generation && !m_closed) openSocket();
+      });
     } else {
       openSocket();
     }
@@ -377,6 +472,16 @@ void McClient::connectSocket() {
 }
 
 void McClient::openWithTicket() {
+  if (!renewalDue()) return requestTicket();
+  // A credential about to run out is renewed before it buys a ticket; the
+  // ticket's answer decides what happens if it could not be.
+  const quint64 generation = m_generation;
+  renew([this, generation](const std::optional<QString>&) {
+    if (generation == m_generation && !m_closed) requestTicket();
+  });
+}
+
+void McClient::requestTicket() {
   const quint64 generation = m_generation;
   QNetworkRequest ticket = request(QStringLiteral("/api/auth/websocket-ticket"));
   ticket.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
@@ -388,17 +493,30 @@ void McClient::openWithTicket() {
     if (generation != m_generation || m_closed) return;
     const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QString issued = QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("ticket")).toString();
-    if (status == 401) {
-      // The MC no longer knows this credential: no retry mends that.
-      m_failure = QStringLiteral("refused");
-      m_failureTraceId = m_traceId;
-      qCInfo(lcMc).noquote() << "refused: the MC does not know this credential (trace" << m_traceId + ")";
-      setPhase(Phase::Refused);
-    } else if (status == 200 && !issued.isEmpty()) {
+    if (status == 200 && !issued.isEmpty()) {
       m_ticketed = true;
       openSocket(issued);
+      return;
+    }
+    m_failure = status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString();
+    // What the MC answered says whether trying again can help
+    // (client-runtime connection/errors.ts mapRemoteEnvironmentError).
+    if (status == 401) {
+      // The MC no longer knows this credential: only pairing again mends that.
+      m_failure = QStringLiteral("refused");
+      stop(Phase::Refused, QStringLiteral("The environment credential is invalid."));
+    } else if (status == 403) {
+      stop(Phase::Blocked, QStringLiteral("The environment credential does not grant the required access."));
+    } else if (status == 400) {
+      stop(Phase::Blocked, QStringLiteral("The environment rejected the authentication request."));
+    } else if (status == 404) {
+      stop(Phase::Blocked, QStringLiteral("The environment endpoint could not be found."));
     } else {
-      m_failure = status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString();
+      if (status >= 500) {
+        m_failureMessage = QStringLiteral("The environment could not authorize the connection.");
+      } else if (status == 200) {
+        m_failureMessage = QStringLiteral("Remote environment endpoint returned an invalid response.");
+      }
       m_failureTraceId = m_traceId;
       scheduleRetry();
     }
@@ -430,8 +548,9 @@ void McClient::onMessage(const QString& text) {
   const QJsonObject frame = QJsonDocument::fromJson(text.toUtf8()).object();
   const QString type = frame.value(QLatin1String("t")).toString();
   // Whatever it says, the MC is answering.
-  if (m_pongTimer.isActive()) {
+  if (m_pongTimer.isActive() || m_probeTimer.isActive()) {
     m_pongTimer.stop();
+    m_probeTimer.stop();
     emit checked(true);
   }
   if (type == QLatin1String("hello")) {
@@ -440,6 +559,7 @@ void McClient::onMessage(const QString& text) {
     m_readySince.start();
     m_ready = true;
     m_failure.clear();
+    m_failureMessage.clear();
     m_failureTraceId.clear();
     m_mc = frame.value(QLatin1String("mc")).toString();
     m_environment = frame.value(QLatin1String("environment")).toString();
@@ -455,14 +575,24 @@ void McClient::onMessage(const QString& text) {
   if (!idValue.isDouble()) return;
   const int id = idValue.toInt();
   if (type == QLatin1String("rpc.result") || type == QLatin1String("rpc.error")) {
+    const bool known = m_calls.contains(id);
     const Call call = m_calls.take(id);
+    if (known) emit callEnded(id);
     // Its context is gone, and whatever the reply would have touched with it.
     if (!call.context || !call.reply) return;
     const Reply& reply = call.reply;
     if (type == QLatin1String("rpc.result")) {
       reply(frame.value(QLatin1String("result")), std::nullopt);
     } else {
-      reply(frame.value(QLatin1String("detail")), frame.value(QLatin1String("error")).toVariant().toString());
+      QString error = frame.value(QLatin1String("error")).toVariant().toString();
+      // A cluster member the MC cannot reach: named, as the user knows it.
+      if (error == QLatin1String("MC unavailable: noconnection")) {
+        const QString environment = call.environment.isEmpty() ? m_environment : call.environment;
+        QString name = m_names ? m_names(environment) : QString();
+        if (name.isEmpty()) name = environment;
+        error = QStringLiteral("%1 is not connected.").arg(name);
+      }
+      reply(frame.value(QLatin1String("detail")), error);
     }
     return;
   }
@@ -500,6 +630,7 @@ void McClient::onClosed(QWebSocket* socket) {
   m_pongTimer.stop();
   m_setupTimer.stop();
   m_heldTimer.stop();
+  m_probeTimer.stop();
   qCInfo(lcMc).noquote() << "closed:" << reason << "code" << code
                          << (wasReady ? QStringLiteral("after %1 ms ready").arg(m_readySince.elapsed()) : QStringLiteral("before hello"))
                          << "(trace" << m_traceId + ")";
@@ -507,6 +638,7 @@ void McClient::onClosed(QWebSocket* socket) {
   if (wasReady) emit readyChanged(false);
   if (m_closed) return;
   m_failure = reason;
+  m_failureMessage.clear();
   m_failureTraceId = m_traceId;
   if (revoked) {
     qCInfo(lcMc).noquote() << "refused: the MC revoked this session (trace" << m_traceId + ")";
@@ -521,12 +653,25 @@ void McClient::onClosed(QWebSocket* socket) {
 // which needs a ticket, or one the MC refuses: asking for a ticket tells which.
 // A ticketed socket that failed is retried like any other, and so is one that
 // timed out: the MC took it, so it took its credential.
+// A connection that failed wake()'s check is replaced at once; should the new
+// one fail too, it is retried as usual.
 void McClient::failed(const QString& reason, bool wasReady) {
+  if (reason == QLatin1String("check")) {
+    connectSocket();
+    return;
+  }
   if (wasReady || m_ticketed || reason == QLatin1String("timeout")) {
     scheduleRetry();
     return;
   }
   openWithTicket();
+}
+
+void McClient::stop(Phase phase, const QString& message) {
+  m_failureMessage = message;
+  m_failureTraceId = m_traceId;
+  qCInfo(lcMc).noquote() << (phase == Phase::Refused ? "refused:" : "blocked:") << message << "(trace" << m_traceId + ")";
+  setPhase(phase);
 }
 
 void McClient::scheduleRetry() {

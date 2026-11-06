@@ -258,6 +258,9 @@ const Steps steps([] {
   });
 
   step(S("the user is told to use compatible versions of the app and server"), [](World& world, const Captures&, const Table&) {
+    // The notice says it is connecting until the MC's descriptor is read.
+    world.waitFor([&] { return world.native().client()->phase() == McClient::Phase::Blocked; },
+                  [&] { return S("the connection to be blocked; it is %1").arg(show(world.state(S("connection")))); });
     world.openConnectionNotice();
     expect(shownText(world, S("connectionNoticeTitle")) == S("This app is too old for %1").arg(world.mc.label) &&
                shownText(world, S("connectionNoticeDetail")) == S("Update HAL-C2 on this device to connect."),

@@ -4,6 +4,7 @@ FolderOperationDialog 1.0 FolderOperationDialog.qml
 ClusterSettings 1.0 ClusterSettings.qml
 ConnectionsSettings 1.0 ConnectionsSettings.qml
 LoadBalancingGroup 1.0 LoadBalancingGroup.qml
+SavedEnvironmentsGroup 1.0 SavedEnvironmentsGroup.qml
 Composer 1.0 Composer.qml
 ComposerAttachment 1.0 ComposerAttachment.qml
 ModelPicker 1.0 ModelPicker.qml

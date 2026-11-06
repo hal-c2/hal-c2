@@ -8,6 +8,9 @@ class World;
 // scenario set up (ConnectionHealthSteps.cpp): removes it from Connections
 // settings and returns true. False when the scenario has no such environment.
 bool removeSavedEnvironment(World& world);
+// When the scenario saved an environment beside its first (ConnectionCatalogSteps.cpp):
+// waits for it to be blocked, not retried, and says so; false when it saved none.
+bool savedEnvironmentBlocked(World& world);
 
 // "<command> is not offered", when the composer's command menu is open
 // (UsageLimitsCommandSteps.cpp): fails the step if the menu offers it.

@@ -323,7 +323,7 @@ int main(int argc, char* argv[]) {
     QObject::connect(&native, &NativeShell::ready, &native, [launch, launchFolders] { launch(launchFolders); }, Qt::SingleShotConnection);
   }
   BackendProcess backend(backendOptions);
-  QObject::connect(&backend, &BackendProcess::ready, &native, &NativeShell::open);
+  QObject::connect(&backend, &BackendProcess::ready, &native, [&native](const QUrl& origin, const QString& token) { native.open(origin, token); });
   QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
     qCritical().noquote() << "[shell]" << message;
     bridge.publish(QStringLiteral("backendError"), message);

@@ -26,6 +26,11 @@ class McClient;
 // another machine leaves a forwarding record (`movedTo`) on the one it left:
 // the thread is listed where it lives, and located() follows the record.
 //
+// Besides its own client's, it folds the `shell` of each saved environment the
+// shell connects to on a client of its own (addLink): every link's MCs are
+// listed together, and a link's snapshot replaces only the MCs that link
+// serves.
+//
 // The rows are kept in the LocalCache with the version the MC gave each MC's
 // (`epoch`, `rev`), so the next subscription, after a reconnect or a restart,
 // says what it holds (`have`) and is sent only the rows changed since. Rows
@@ -61,6 +66,17 @@ public:
 
   // The live threads of every MC. Built once per change of the rows, not per
   // call: every listener of changed() reads them, and a cluster holds thousands.
+  // Folds the shell of `client`, a saved environment's own connection, which
+  // serves `environmentId`.
+  void addLink(McClient* client, const QString& environmentId);
+  // Stops folding it. `forget`: the user removed it, and its MCs, rows and
+  // what the cache kept of them go; else (the app quits) they are kept.
+  void removeLink(McClient* client, bool forget);
+  // The link whose MCs serve `environmentId`, or the MC `mc`; null when it is
+  // the shell's own client's, or nobody's.
+  McClient* linkServing(const QString& environmentId) const;
+  McClient* linkOf(const QString& mc) const;
+
   QList<sidebar::Thread> threads() const;
   QList<sidebar::Project> projects() const;
   std::optional<sidebar::Project> project(const QString& key) const;
@@ -93,6 +109,9 @@ public:
   bool threadOnline(const QString& threadKey) const;
   // Whether an MC serving `environmentId` is online.
   bool environmentOnline(const QString& environmentId) const;
+  // Whether the cluster still tries to reach that MC on its own while it is
+  // down; false once it has given up (cluster.reconnect asks it again).
+  bool environmentTrying(const QString& environmentId) const;
   // Whether the MC has said what the cluster holds: only then is a row that
   // is missing a row that is gone.
   bool synchronized() const { return m_synchronized; }
@@ -115,7 +134,11 @@ signals:
   void originChanged();
 
 private:
-  void onFrame(const QJsonObject& frame);
+  struct Mc;
+  void onFrame(const QJsonObject& frame, McClient* link);
+  QJsonObject have(McClient* link) const;
+  // Whether the snapshot of `link` speaks for the MC held as `mc`.
+  bool answersFor(McClient* link, const Mc& mc) const;
   void setEnvironment(const QString& mc, const QJsonObject& environment);
   void putRows(const QString& mc, const QJsonArray& rows);
   void putRow(const QString& mc, const QString& id, const QString& kind, const QJsonObject& fields);
@@ -132,10 +155,14 @@ private:
   bool lives(const QJsonObject& row) const;
 
   struct Mc {
+    // The client whose shell lists it; null for one read from the cache that
+    // no client has listed yet this run.
+    McClient* link = nullptr;
     QString environmentId;
     QJsonObject capabilities;
     QJsonObject environment;
     bool online = false;
+    bool trying = true;
     // The version of its rows; no epoch when the MC gave none.
     QString epoch;
     qint64 rev = 0;
@@ -155,6 +182,13 @@ private:
   QHash<QString, Mc> m_mcs;
   // threads() as of the rows held; unset once they change.
   mutable std::optional<QList<sidebar::Thread>> m_threads;
+  McClient* m_client;
+  // Each link's environment and its `shell` subscription.
+  struct Link {
+    QString environmentId;
+    int subscription = 0;
+  };
+  QHash<McClient*, Link> m_links;
   LocalCache* m_cache = nullptr;
   QString m_origin;
   QHash<QString, Unsaved> m_unsaved;

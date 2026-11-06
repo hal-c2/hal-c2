@@ -23,6 +23,7 @@
 #include "McPluginController.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
+#include "SavedEnvironmentsController.h"
 #include "TerminalController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -167,6 +168,10 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
     : QObject(parent), m_client(this), m_store(&m_client, this), m_sharedBridge(bridge) {
   g_shell = this;
   bridge->setMcHere(mcHere());
+  // A call to a cluster member the MC cannot reach names it as the sidebar does.
+  m_client.setEnvironmentNames([this](const QString& environment) {
+    return m_store.environment(environment).value(QLatin1String("label")).toString();
+  });
   // Static initialisers register in link order; name order keeps it stable.
   m_registrations = nativeControllerRegistry();
   std::sort(m_registrations.begin(), m_registrations.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
@@ -215,12 +220,12 @@ NativeWindow* NativeShell::window(const QString& id) const {
   return nullptr;
 }
 
-void NativeShell::open(const QUrl& origin, const QString& token) {
+void NativeShell::open(const QUrl& origin, const QString& token, const QString& environment) {
   m_sharedBridge->setMcOrigin(origin);
   for (const auto& window : m_windows) window->bridge()->setMcOrigin(origin);
   // What the cache kept of this MC shows while the socket opens.
   m_store.open(origin);
-  m_client.open(origin, token);
+  m_client.open(origin, token, environment);
   emit opened(origin, token);
 }
 
@@ -343,6 +348,8 @@ void NativeShell::setStoreDirs(const QString& state, const QString& data, const 
   // With the route and drafts read: what was kept of the MC last used shows
   // while the host is still finding or starting it.
   m_store.showKept();
+  // The environments paired beside it connect on their own.
+  if (auto* saved = shared<SavedEnvironmentsController>()) saved->start(data);
 }
 
 void NativeShell::restoreWindows() {

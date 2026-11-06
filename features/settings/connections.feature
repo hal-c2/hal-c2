@@ -950,7 +950,7 @@ Feature: Connections settings
         | over SSH as ada@devbox   | SSH ada@devbox     |
         | through WSL              | WSL                |
 
-    @backlog @desktop
+    @desktop
     Scenario: Switching an environment off keeps it saved
       Given "Build box" is connected
       When the user switches "Build box" off

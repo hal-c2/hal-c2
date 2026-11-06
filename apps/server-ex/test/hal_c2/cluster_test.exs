@@ -355,7 +355,15 @@ defmodule HalC2.ClusterTest do
 
     :peer.stop(peer)
     {down, _, client} = WsClient.recv_until(client, &(&1["t"] == "shell.mc"), 5_000)
-    assert down == %{"t" => "shell.mc", "id" => 1, "mc" => b_name, "online" => false}
+
+    assert down == %{
+             "t" => "shell.mc",
+             "id" => 1,
+             "mc" => b_name,
+             "online" => false,
+             "trying" => true
+           }
+
     assert Enum.any?(HalC2.Shell.rows(), &match?({{^b, "remote-th"}, _}, &1))
 
     # Removed from the cluster, it is gone with its rows, for clients too.

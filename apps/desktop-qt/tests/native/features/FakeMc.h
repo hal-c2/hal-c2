@@ -83,9 +83,10 @@ public:
   // Any request under `prefix` ("/api/device-hub/"), HTTP or a socket's
   // handshake: the handler gets the connection with the request unread
   // (`head` is its request line and headers) and answers it itself, or hands
-  // it to a QWebSocketServer of its own.
+  // it to a QWebSocketServer of its own. The longest prefix that matches takes it.
   using RawHandler = std::function<void(QTcpSocket* socket, const QByteArray& head)>;
   void onRaw(const QString& prefix, RawHandler handler) { m_rawHandlers.insert(prefix, std::move(handler)); }
+  void offRaw(const QString& prefix) { m_rawHandlers.remove(prefix); }
 
   void send(const QJsonObject& frame);
   // Whether a client's socket is open: a frame sent now reaches it.
@@ -175,6 +176,13 @@ public:
       {QStringLiteral("threadPullRequestLinking"), true},
   };
   bool holdSnapshot = false;
+  // How long the MC takes to build its thread list: a shell `sub` is answered
+  // that long after it comes (busy()).
+  int buildMs = 0;
+  // The MC is busy for `ms`, as one building a large answer is: then runs
+  // `then`, unless the connection it was busy for has gone, and answers the
+  // pings that came meanwhile.
+  void busy(int ms, std::function<void()> then);
   bool answerPings = true;  // false: the MC has stopped answering, its socket still open
   bool sayHello = true;     // false: it takes sockets but never says hello on them
   // The clients' sockets still open on this MC, the current one's and any other's.
@@ -198,6 +206,8 @@ public:
   QHash<QString, QJsonObject> descriptors;
   // Members whose MC is down: their rows stay, and requests for them fail.
   QSet<QString> offline;
+  // Members the cluster has stopped trying to reach (`trying` false).
+  QSet<QString> givenUp;
   // Each member's rows, by environment then id: [id, kind, row].
   QHash<QString, QMap<QString, QJsonArray>> peerRows;
 
@@ -220,6 +230,9 @@ public:
                    const QString& kind = QStringLiteral("thread"));
   // A member's MC goes down or comes back (`shell.mc`).
   void setOnline(const QString& environment, bool online);
+  // The cluster stops trying to reach a member that is down, or starts again
+  // (`shell.mc` with `trying`).
+  void setTrying(const QString& environment, bool trying);
   // A member is removed from the cluster: the shell drops it and its rows
   // (`shell.mc` with `removed`).
   void remove(const QString& environment);
@@ -259,6 +272,9 @@ private:
   QPointer<QWebSocket> m_socket;
   QList<QPointer<QWebSocket>> m_accepted;
   int m_shellSubscription = -1;
+  // Answers busy() is still working on, and the pings waiting for them.
+  int m_busy = 0;
+  int m_heldPongs = 0;
   // The `have` of the shell subscription being answered.
   QJsonObject m_have;
   // Row frames waiting for catchUp().

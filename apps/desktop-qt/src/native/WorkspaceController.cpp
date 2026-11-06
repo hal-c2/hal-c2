@@ -173,6 +173,9 @@ void WorkspaceController::activate() {
   if (auto* settings = shell->controller<SettingsController>()) {
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::publish);
     connect(settings, &SettingsController::configChanged, this, &WorkspaceController::configChanged);
+    connect(settings, &SettingsController::configChanged, this, [this, settings] {
+      keepProviders(m_client->environment(), settings->config().value(QLatin1String("providers")));
+    });
     connect(settings, &SettingsController::deviceChanged, this, &WorkspaceController::publish);
     // The environment's default actions reach every project without its own.
     connect(settings, &SettingsController::settingsChanged, this, &WorkspaceController::refresh);
@@ -186,6 +189,13 @@ void WorkspaceController::activate() {
                           keybindings::commandLabel(QStringLiteral("composer.previousWorktree")),
                           [this] { usePreviousWorktree(); });
   }
+  shell->shell()->cache()->loadProviders(this, [this](const QHash<QString, QJsonArray>& kept) {
+    // What arrived live meanwhile is newer.
+    for (auto it = kept.cbegin(); it != kept.cend(); ++it) {
+      if (!m_keptProviders.contains(it.key())) m_keptProviders.insert(it.key(), it.value());
+    }
+    if (!kept.isEmpty()) emit configChanged();
+  });
   refresh();
 }
 
@@ -355,7 +365,7 @@ void WorkspaceController::follow(const QString& cwd) {
           {QStringLiteral("environment"), environment},
           {QStringLiteral("cwd"), cwd},
       },
-      [this](const QJsonObject& frame) {
+      [this, environment](const QJsonObject& frame) {
         if (frame.value(QLatin1String("t")).toString() == QLatin1String("error")) {
           m_git.reset();
           m_gitError = frame.value(QLatin1String("reason")).toVariant().toString();
@@ -379,6 +389,11 @@ void WorkspaceController::follow(const QString& cwd) {
           return;
         }
         m_git = git;
+        // A checkout on another branch changes which branch the kept lists
+        // mark current, wherever the switch came from.
+        if (tag == QLatin1String("localUpdated") && !previousRef.isEmpty() && previousRef != text(git.local, "refName")) {
+          NativeShell::of(this)->shell()->cache()->forgetRefs(environment);
+        }
         if (tag == QLatin1String("localUpdated")) followCheckout(previousRef, text(git.local, "refName"));
         emit gitChanged();
         if (m_optimisticBranch && !m_switching && text(git.local, "refName") == *m_optimisticBranch) {
@@ -419,6 +434,7 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
         } else {
           return;
         }
+        keepProviders(m_configEnvironment, m_configElsewhere.value(QLatin1String("providers")));
         emit configChanged();
         // Its settings resolve the project's actions.
         refresh();
@@ -426,12 +442,31 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
 }
 
 QJsonObject WorkspaceController::environmentConfig() const {
-  // Another machine that is down has none until it is back.
-  if (m_place && m_place->environmentId != m_client->environment()) {
-    return m_place->environmentId == m_configEnvironment ? m_configElsewhere : QJsonObject();
+  QJsonObject config;
+  QString environmentId = m_client->environment();
+  if (m_place && m_place->environmentId != environmentId) {
+    // Another machine that is down has none until it is back.
+    environmentId = m_place->environmentId;
+    if (environmentId == m_configEnvironment) config = m_configElsewhere;
+  } else if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    config = settings->config();
   }
-  auto* settings = NativeShell::of(this)->controller<SettingsController>();
-  return settings ? settings->config() : QJsonObject();
+  // Until it reports them, the providers it reported last, so a new task can
+  // still offer their models. Live always wins, even an empty list.
+  if (!config.contains(QLatin1String("providers")) && m_keptProviders.contains(environmentId) &&
+      m_store->servesEnvironment(environmentId)) {
+    config.insert(QStringLiteral("providers"), m_keptProviders.value(environmentId));
+  }
+  return config;
+}
+
+void WorkspaceController::keepProviders(const QString& environmentId, const QJsonValue& providers) {
+  if (environmentId.isEmpty() || !providers.isArray()) return;
+  const QJsonArray list = providers.toArray();
+  const auto kept = m_keptProviders.constFind(environmentId);
+  if (kept != m_keptProviders.cend() && *kept == list) return;
+  m_keptProviders.insert(environmentId, list);
+  NativeShell::of(this)->shell()->cache()->storeProviders(environmentId, list);
 }
 
 void WorkspaceController::loadRefs() {
@@ -441,19 +476,46 @@ void WorkspaceController::loadRefs() {
   const quint64 generation = ++m_refsGeneration;
   m_refsCwd = cwd;
   m_refsLoading = m_refs.isEmpty();
+  m_refsLive = false;
+  m_refsKept = false;
   QJsonObject input{{QStringLiteral("cwd"), cwd}, {QStringLiteral("limit"), 100}};
   const QString query = refName(m_query);
   if (!query.isEmpty()) input.insert(QStringLiteral("query"), query);
+  LocalCache* cache = NativeShell::of(this)->shell()->cache();
+  // The whole list kept from before, until the MC answers: never in place of
+  // a search's matches.
+  if (query.isEmpty()) {
+    cache->loadRefs(environmentId, cwd, this, [this, generation](const std::optional<QJsonObject>& list) {
+      if (generation != m_refsGeneration || m_refsLive || !list) return;
+      m_refsKept = true;
+      m_refsLoading = false;
+      m_refs = list->value(QLatin1String("refs")).toArray();
+      m_refsTotal = list->value(QLatin1String("totalCount")).toInt(m_refs.size());
+      m_refsNextCursor.reset();
+      publish();
+    });
+  }
   m_client->call(this, environmentId, QStringLiteral("vcs.listRefs"), input,
-                 [this, generation](const QJsonValue& result, const std::optional<QString>&) {
+                 [this, generation, cache, environmentId, cwd, whole = query.isEmpty()](const QJsonValue& result,
+                                                                                         const std::optional<QString>& error) {
                    if (generation != m_refsGeneration) return;
                    m_refsLoading = false;
+                   m_refsLoadingMore = false;
+                   // Unanswered, the kept list still stands, or may yet arrive.
+                   if (error && m_refsKept) {
+                     publish();
+                     return;
+                   }
+                   m_refsLive = !error;
                    const QJsonObject list = result.toObject();
                    m_refs = list.value(QLatin1String("refs")).toArray();
                    m_refsTotal = list.value(QLatin1String("totalCount")).toInt(m_refs.size());
                    const QJsonValue next = list.value(QLatin1String("nextCursor"));
                    m_refsNextCursor = next.isDouble() ? std::optional(next.toInt()) : std::nullopt;
-                   m_refsLoadingMore = false;
+                   // Only the whole list is kept, never a first page passing for it.
+                   if (!error && whole && !m_refsNextCursor) {
+                     cache->storeRefs(environmentId, cwd, {{QStringLiteral("refs"), m_refs}, {QStringLiteral("totalCount"), m_refsTotal}});
+                   }
                    publish();
                  });
   publish();
@@ -466,8 +528,11 @@ void WorkspaceController::loadMoreRefs() {
   QJsonObject input{{QStringLiteral("cwd"), m_place->cwd()}, {QStringLiteral("limit"), 100}, {QStringLiteral("cursor"), *m_refsNextCursor}};
   const QString query = refName(m_query);
   if (!query.isEmpty()) input.insert(QStringLiteral("query"), query);
-  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.listRefs"), input,
-                 [this, generation](const QJsonValue& result, const std::optional<QString>&) {
+  const QString environmentId = m_place->environmentId;
+  const QString cwd = m_place->cwd();
+  m_client->call(this, environmentId, QStringLiteral("vcs.listRefs"), input,
+                 [this, generation, environmentId, cwd, whole = query.isEmpty()](const QJsonValue& result,
+                                                                                  const std::optional<QString>& error) {
                    // A search or another checkout started the list over.
                    if (generation != m_refsGeneration) return;
                    m_refsLoadingMore = false;
@@ -476,6 +541,11 @@ void WorkspaceController::loadMoreRefs() {
                    m_refsTotal = list.value(QLatin1String("totalCount")).toInt(m_refsTotal);
                    const QJsonValue next = list.value(QLatin1String("nextCursor"));
                    m_refsNextCursor = next.isDouble() ? std::optional(next.toInt()) : std::nullopt;
+                   // Paged to its end, the list is whole.
+                   if (!error && whole && !m_refsNextCursor) {
+                     NativeShell::of(this)->shell()->cache()->storeRefs(
+                         environmentId, cwd, {{QStringLiteral("refs"), m_refs}, {QStringLiteral("totalCount"), m_refsTotal}});
+                   }
                    publish();
                  });
 }
@@ -1118,11 +1188,14 @@ void WorkspaceController::selectBranch(const QString& name) {
   m_switching = true;
   publish();
   const QString threadKey = m_place->threadKey();
-  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.switchRef"),
+  const QString environmentId = m_place->environmentId;
+  m_client->call(this, environmentId, QStringLiteral("vcs.switchRef"),
                  QJsonObject{{QStringLiteral("cwd"), checkoutCwd}, {QStringLiteral("refName"), name}},
-                 [this, threadKey, previous, remote, local, nextWorktree](const QJsonValue& result,
-                                                                         const std::optional<QString>& error) {
+                 [this, threadKey, environmentId, previous, remote, local, nextWorktree](const QJsonValue& result,
+                                                                                        const std::optional<QString>& error) {
                    m_switching = false;
+                   // The lists kept mark another branch current now.
+                   if (!error) NativeShell::of(this)->shell()->cache()->forgetRefs(environmentId);
                    const bool here = m_place && m_place->threadKey() == threadKey;
                    if (error) {
                      if (here) m_optimisticBranch = previous;
@@ -1151,13 +1224,17 @@ void WorkspaceController::createBranch(const QString& raw) {
   m_switching = true;
   publish();
   const QString threadKey = m_place->threadKey();
-  m_client->call(this, m_place->environmentId, QStringLiteral("vcs.createRef"),
+  const QString environmentId = m_place->environmentId;
+  m_client->call(this, environmentId, QStringLiteral("vcs.createRef"),
                  QJsonObject{{QStringLiteral("cwd"), cwd},
                              {QStringLiteral("refName"), name},
                              {QStringLiteral("switchRef"), true}},
-                 [this, threadKey, previous, name, worktree](const QJsonValue& result,
-                                                             const std::optional<QString>& error) {
+                 [this, threadKey, environmentId, previous, name, worktree](const QJsonValue& result,
+                                                                            const std::optional<QString>& error) {
                    m_switching = false;
+                   // Branches are the repository's: every list kept of it, a
+                   // worktree's too, lacks the new one.
+                   if (!error) NativeShell::of(this)->shell()->cache()->forgetRefs(environmentId);
                    const bool here = m_place && m_place->threadKey() == threadKey;
                    if (error) {
                      if (here) m_optimisticBranch = previous;

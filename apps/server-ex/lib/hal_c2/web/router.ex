@@ -207,6 +207,17 @@ defmodule HalC2.Web.Router do
     end
   end
 
+  # Extends the session's expiry, keeping its token (`HalC2.Auth.renew/1`).
+  post "/api/auth/session/renew" do
+    with {:ok, session} <- request_session(conn),
+         {:ok, expires_at} <- HalC2.Auth.renew(session) do
+      json(conn, 200, %{"expiresAt" => iso(expires_at)})
+    else
+      {:error, reason, dpop} -> json(conn, 401, auth_invalid(reason, dpop))
+      :error -> json(conn, 401, auth_invalid("invalid_credential", nil))
+    end
+  end
+
   # The `hal-c2` MCP server for agents; each thread's agent has its own bearer.
   post "/mcp" do
     {:ok, body, conn} = read_body(conn, length: 10_000_000)

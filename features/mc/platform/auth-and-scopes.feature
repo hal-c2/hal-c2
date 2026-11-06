@@ -146,6 +146,27 @@ Feature: MC authentication and scopes
     When the client asks for a socket ticket with it
     Then the MC answers unauthorized
 
+  # Clients renew a session before it runs out, so a saved environment stays signed in.
+  @mc
+  Scenario: A session can be renewed without closing its sockets
+    Given a client whose session runs out in a day, with a socket open
+    When it renews its session
+    Then its session is valid for 30 days from now, with the same token
+    And administrators watching the access list see the new expiry
+    And the socket stays open
+
+  @mc
+  Scenario: Renewing never shortens a session
+    Given a client whose session runs out in a year
+    When it renews its session
+    Then its session still runs out in a year
+
+  @mc
+  Scenario: A session that expired cannot be renewed
+    Given a session that expired
+    When it renews its session
+    Then the MC answers unauthorized
+
   @mc
   Scenario Outline: Access management needs the right scope
     Given a client whose session lacks <scope>

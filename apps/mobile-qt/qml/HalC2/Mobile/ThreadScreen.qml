@@ -33,6 +33,9 @@ Item {
     }
     readonly property bool panelShown: panelKind.length > 0
     readonly property bool muted: notifications !== null && (notifications.muted ?? []).indexOf(threadKey) >= 0
+    // How much of the screen's bottom the composer takes: what lies over the
+    // screen from below (the shell's toasts) stays above it.
+    readonly property real composerHeight: composerView.visible ? composerView.height : 0
 
     signal backRequested
 

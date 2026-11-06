@@ -80,6 +80,19 @@ bool ClusterController::handle(const QString& action, const QVariant& payload) {
     }
   } else if (action == QLatin1String("cluster.update")) {
     update();
+  } else if (action == QLatin1String("cluster.switch")) {
+    const QString id = input.value(QStringLiteral("id")).toString();
+    if (id.isEmpty()) return true;
+    const bool on = input.value(QStringLiteral("on")).toBool();
+    QString label = id;
+    for (const QVariant& member :
+         m_state.value(QStringLiteral("status")).toMap().value(QStringLiteral("members")).toList()) {
+      if (member.toMap().value(QStringLiteral("id")) == id)
+        label = member.toMap().value(QStringLiteral("label")).toString();
+    }
+    change(QStringLiteral("cluster.switch"), {{QStringLiteral("id"), id}, {QStringLiteral("on"), on}},
+           (on ? QStringLiteral("Switched %1 on.") : QStringLiteral("Switched %1 off.")).arg(label),
+           on ? QStringLiteral("Switch on failed") : QStringLiteral("Switch off failed"));
   } else if (action == QLatin1String("cluster.remove")) {
     const QString id = input.value(QStringLiteral("id")).toString();
     if (id.isEmpty()) return true;

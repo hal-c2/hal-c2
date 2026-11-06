@@ -18,6 +18,8 @@
 #include "Notifications.h"
 #include "PlatformWindow.h"
 #include "PluginController.h"
+#include "Resume.h"
+#include "SavedEnvironmentsController.h"
 #include "Scanner.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -102,12 +104,19 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
       m_theme.get());
   // The one environment the phone is paired with.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
+  // And those paired beside it (SavedEnvironmentsController) are listed as this device too.
+  if (auto* saved = m_native->shared<SavedEnvironmentsController>()) saved->setDevice(options.device);
   m_notifications = std::make_unique<Notifications>(m_bridge.get(), m_native.get(), m_pairing.get(),
                                                     options.pushSystem ? options.pushSystem : devicePushSystem(m_storage.data), m_storage.data);
   m_scanner = std::make_unique<Scanner>(m_bridge.get(), options.camera ? options.camera : deviceCamera());
   // Its environments' versions and providers, and their updates.
   m_maintenance = std::make_unique<Maintenance>(m_bridge.get(), m_native.get());
   m_terminal = std::make_unique<MobileTerminal>(m_bridge.get(), m_native.get(), QDir(configDir).filePath(QStringLiteral("terminal.json")));
+  // A connection that sat through a long suspension is replaced on return.
+  m_resume = std::make_unique<Resume>(m_native->client());
+  // A phone back in the foreground waits 3 seconds, not the desktop's 15, for
+  // its connection to answer before replacing it.
+  m_native->client()->setProbeTimeout(3000);
   // A `hal-c2:` link the system opens the app with (the manifest's
   // `hal-c2://pair`, and the `hal-c2://threads/...` a tapped notification
   // opens, which Notifications takes and passes the rest on). Qt for Android hands a running app's link, and the one

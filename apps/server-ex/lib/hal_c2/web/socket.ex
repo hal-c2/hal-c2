@@ -569,6 +569,7 @@ defmodule HalC2.Web.Socket do
 
   defp subscribe(state, id, :shell, %{have: have}) do
     %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have)
+    offline = HalC2.Cluster.Discovery.offline()
 
     frame = %{
       "t" => "shell",
@@ -578,6 +579,7 @@ defmodule HalC2.Web.Socket do
           %{
             "mc" => Atom.to_string(mc.mc),
             "online" => mc.online,
+            "trying" => mc.online or (mc.environment || %{})["environmentId"] not in offline,
             "environment" => mc.environment,
             "epoch" => mc.epoch,
             "rev" => mc.rev,
@@ -2232,7 +2234,17 @@ defmodule HalC2.Web.Socket do
       "id" => id,
       "mc" => to_string(mc),
       "online" => false,
+      "trying" => false,
       "removed" => true
+    }
+
+  defp shell_message(id, {:mc, mc, :offline}),
+    do: %{
+      "t" => "shell.mc",
+      "id" => id,
+      "mc" => to_string(mc),
+      "online" => false,
+      "trying" => false
     }
 
   defp shell_message(id, {:mc, mc, status}),
@@ -2240,6 +2252,7 @@ defmodule HalC2.Web.Socket do
       "t" => "shell.mc",
       "id" => id,
       "mc" => to_string(mc),
-      "online" => status in [:up, true]
+      "online" => status in [:up, true],
+      "trying" => true
     }
 end
