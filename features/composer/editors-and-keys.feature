@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13409
 #   https://github.com/pingdotgg/t3code/pull/13553
 #   docs/user/composer.md (prompt recall, prompt stash)
 #   docs/internals/composer-editors.md
@@ -227,6 +228,16 @@ Feature: Editing the draft
     And the composer has focus
     When the user presses the bold shortcut
     Then the sidebar stays as it was
+
+  # Upstream #13409: the layout's letter decides the shortcut, so a Cyrillic or Greek layout bolds too.
+  @backlog @desktop
+  Scenario: The bold shortcut formats the selection on a non-Latin keyboard layout
+    Given rich text editing is on
+    And the keyboard types a non-Latin letter on the bold key
+    And the composer has "word" selected
+    When the user presses the bold shortcut
+    Then "word" is bold
+    And the sidebar stays as it was
 
   @backlog @desktop
   Scenario: The sidebar shortcut still works from a plain-text composer

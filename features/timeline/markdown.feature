@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13795
 #   https://github.com/pingdotgg/t3code/pull/11477
 #   apps/web/src/components/ChatMarkdown.tsx (code block header, Copy code, line wrap, table expand and copy, streaming)
 #   apps/web/src/components/ChatMarkdown.tsx (fence file names, collapsible sections, template cards, file chips and their menu and failure toasts, website icons, pull request links)
@@ -871,6 +872,17 @@ Feature: Formatted messages
   Scenario: A web address without a scheme in a reply is opened as a web address
     When the agent's reply links to "//cdn.example.com/clip.mp4"
     Then the link opens "https://cdn.example.com/clip.mp4" and not a file on the phone
+
+  # Upstream #13795: bare addresses with a port or a one-word host were not links.
+  @backlog @shared
+  Scenario Outline: A bare address with a port or a one-word host in a reply is one link
+    When the agent's reply contains "<address>"
+    Then "<address>" is shown as one link
+
+    Examples:
+      | address               |
+      | http://localhost:5173 |
+      | http://devbox:3000/api |
 
   @backlog @mobile
   Scenario: A mention of a file does not take the punctuation after it

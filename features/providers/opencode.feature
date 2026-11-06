@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13651
+#   https://github.com/pingdotgg/t3code/pull/13368
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-opencode.md
@@ -689,3 +691,10 @@ Feature: OpenCode
     When the next message goes to "opencode-work"
     Then a process of "opencode-work" runs that turn in place of the first instance's
     And another message to "opencode-work" stays in that process
+
+  # Upstream #13651: OpenCode 2.x prints "server listening on <url>", not the 1.x line.
+  @backlog @mc @plugin-opencode
+  Scenario: OpenCode counts as started when it prints either listening line
+    Given OpenCode prints "server listening on http://127.0.0.1:4096" when it starts
+    When the MC starts an OpenCode server
+    Then the MC uses http://127.0.0.1:4096 and does not time out waiting for it

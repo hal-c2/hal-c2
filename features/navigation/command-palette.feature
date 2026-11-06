@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/keyboard-focus.md
 #   docs/user/appearance.md (Change theme, Change appearance)
 #   apps/web/src/components/CommandPalette.tsx

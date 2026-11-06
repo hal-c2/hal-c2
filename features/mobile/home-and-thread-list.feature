@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13759
 #   apps/mobile/src/features/home/ (thread list options, empty states, search, connection status)
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (status labels, shelves)
 #   apps/mobile/src/features/threads/thread-provider-instance.ts (provider account badge on a row)
@@ -562,3 +563,11 @@ Feature: Home screen and thread list on a phone
     When the icon of "shop" is changed on the environment
     Then the thread list shows the new icon
     And the old icon is not shown again
+
+  # Upstream #13759: settled threads that settled at the same moment are ordered by id, not by
+  # the order the MC sent them.
+  @desktop @mobile @backlog
+  Scenario: Settled threads with the same settle time are listed in id order
+    Given threads "t2" and "t1" settled at the same moment
+    When the settled shelf is shown
+    Then "t1" is listed before "t2" whatever order the MC sent them in

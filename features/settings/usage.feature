@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/usage.md
 #   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, transcript sources, scan cache)
 #   apps/server-ex/lib/hal_c2/usage/aggregator.ex (de-duplication, day and hour buckets)
@@ -483,3 +484,55 @@ Feature: Usage and limits
       Then the full email is shown
       When the user hides it again
       Then the email is masked
+
+  Rule: Keyboard shortcuts on the Usage page
+
+    # Upstream #10158. Letter shortcuts stay out of text fields, popups and dialogs.
+    @desktop @backlog
+    Scenario Outline: A letter key shows that usage metric
+      Given the user is on the Usage page
+      When the user presses "<key>"
+      Then the Usage page shows the <metric> metric
+
+      Examples:
+        | key | metric |
+        | C   | cost   |
+        | T   | tokens |
+        | L   | limits |
+
+    @desktop @backlog
+    Scenario Outline: Ctrl or Cmd with Shift and a number picks the usage period
+      Given the user is on the Usage page showing cost
+      When the user presses <shortcut>
+      Then usage covers the past <window>
+
+      Examples:
+        | shortcut     | window   |
+        | Ctrl+Shift+1 | 24 hours |
+        | Ctrl+Shift+2 | 7 days   |
+        | Ctrl+Shift+3 | 30 days  |
+        | Ctrl+Shift+4 | 90 days  |
+
+    @desktop @backlog
+    Scenario: The usage period shortcuts do nothing while limits is shown
+      Given the user is on the Usage page showing limits
+      When the user presses Ctrl+Shift+2
+      Then the Usage page still shows limits
+
+    @desktop @backlog
+    Scenario: Escape goes back from the Usage page to the page before it
+      Given the user opened usage from a thread
+      When the user presses Escape
+      Then the thread is shown again
+
+    @desktop @backlog
+    Scenario: Escape in a text field on the Usage page does not leave the page
+      Given the user is typing in a text field on the Usage page
+      When the user presses Escape
+      Then the Usage page stays open
+
+    @desktop @backlog
+    Scenario: A letter typed in a text field on the Usage page does not change the metric
+      Given the user is typing in a text field on the Usage page showing cost
+      When the user types "t"
+      Then the Usage page still shows cost

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11594
 #   docs/user/appearance.md (appearance, composer context, motion)
 #   apps/web/src/components/settings/ThemeSettings.tsx (mode tiles, light and dark pairing)
 #   apps/web/src/components/settings/SettingsPanels.tsx (AppearanceSettingsPanel: interface, motion, fonts)
@@ -231,6 +232,24 @@ Feature: Appearance
         | glass opacity    | maximum | 100%   |
         | panel animations | minimum | 0 ms   |
         | panel animations | maximum | 400 ms |
+
+    # Upstream #11594. Mobile has no fixed-width chat column, so the setting is desktop-only.
+    @backlog @desktop
+    Scenario Outline: The chat column follows the chat width setting
+      When the user chooses <width> as the chat width
+      Then the chat timeline and composer use <columns>
+
+      Examples:
+        | width       | columns             |
+        | Comfortable | the standard column |
+        | Wide        | a wider column      |
+        | Full        | the full window     |
+
+    @backlog @desktop
+    Scenario: Restore defaults puts the chat width back to Comfortable
+      Given the chat width is Full
+      When the user restores the default settings
+      Then the chat width is Comfortable
 
     @desktop
     Scenario Outline: The environment can be identified at a glance

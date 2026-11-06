@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/7079
+#   https://github.com/pingdotgg/t3code/pull/13339
 #   https://github.com/pingdotgg/t3code/pull/13388 (Stop ends a command left running after its turn)
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/13389 (the runtime's temp root beside the instance profile)
@@ -245,11 +247,22 @@ Feature: Antigravity
     Examples:
       | attachment                    | outcome  |
       | a 900 KiB text file           | accepted |
-      | a 2 MiB text file             | rejected |
       | a 12 MiB image                | rejected |
       | a 15 MiB audio clip           | accepted |
-      | files totalling 60 MiB        | rejected |
-      | an unsupported file format    | rejected |
+
+  # Upstream #13339: files that are over a native limit, past the 50 MiB budget, or of a kind
+  # Antigravity does not read natively go to the agent by their saved path. Images keep native
+  # handling and are still refused over their limit.
+  @backlog @plugin-antigravity
+  Scenario Outline: Antigravity receives an attachment it cannot take natively by its saved path
+    When the user attaches <attachment> to an Antigravity message
+    Then the attachment is <outcome>
+
+    Examples:
+      | attachment                 | outcome                |
+      | a 2 MiB text file          | sent by its saved path |
+      | files totalling 60 MiB     | sent by its saved path |
+      | an unsupported file format | sent by its saved path |
 
   Scenario: Antigravity reads a file of a kind it does not recognise by its path
     Given the project has a file whose kind Antigravity does not recognise
