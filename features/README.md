@@ -123,9 +123,9 @@ T3 Code keeps shipping, and its behaviour is ledgered here even though its code 
 [upstream-ledger skill](../.agents/skills/upstream-ledger/SKILL.md) turns them into scenarios.
 
 An upstream pull request named in `# Sources:` is cited for the whole file. When it covers only
-some of the file, also put an `# Upstream #<number>` line (`# Upstream <sha>` for a commit without
-one) directly above the `Feature`, `Rule`, scenario or `Examples` it covers, where a tag line
-would go. It is cited for what follows it, as a tag would be, and the rest of the line says what
+some of the file, also put an `# Upstream #<number>` line (`# Upstream <sha>` with the full
+40-character hash, for a commit without one) directly above the `Feature`, `Rule`, scenario or
+`Examples` it covers, where a tag line would go. It is cited for what follows it, as a tag would be, and the rest of the line says what
 upstream did:
 
 ```gherkin
