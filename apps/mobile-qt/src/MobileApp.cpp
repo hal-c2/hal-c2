@@ -17,6 +17,7 @@
 #include "Notifications.h"
 #include "PlatformWindow.h"
 #include "PluginController.h"
+#include "Resume.h"
 #include "Scanner.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -106,6 +107,11 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // Its environments' versions and providers, and their updates.
   m_maintenance = std::make_unique<Maintenance>(m_bridge.get(), m_native.get());
   m_terminal = std::make_unique<MobileTerminal>(m_bridge.get(), m_native.get(), QDir(configDir).filePath(QStringLiteral("terminal.json")));
+  // A connection that sat through a long suspension is replaced on return.
+  m_resume = std::make_unique<Resume>(m_native->client());
+  // A phone back in the foreground waits 3 seconds, not the desktop's 15, for
+  // its connection to answer before replacing it.
+  m_native->client()->setProbeTimeout(3000);
   // A `hal-c2:` link the system opens the app with (the manifest's
   // `hal-c2://pair`, and the `hal-c2://threads/...` a tapped notification
   // opens, which Notifications takes and passes the rest on). Qt for Android hands a running app's link, and the one
