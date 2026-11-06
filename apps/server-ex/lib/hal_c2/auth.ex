@@ -15,6 +15,8 @@ defmodule HalC2.Auth do
       a proof) makes a session bound to that key for 1 hour: each request carries
       `Authorization: DPoP <token>` and a fresh proof (`authenticate/1`); a bound token
       is never accepted as a bearer. Open sockets are unaffected when it expires.
+    * A session renews itself (`renew/1`, `POST /api/auth/session/renew`) for its own
+      lifetime from now, keeping its token, so a saved environment stays signed in.
     * With a reusable development credential (`HAL_C2_DEV_AUTH_TOKEN`, dev builds
       only), that credential is itself an administrative session in every MC's
       own store, so one browser signs in to every worktree on a host.
@@ -239,6 +241,17 @@ defmodule HalC2.Auth do
   def issue_ticket(access_token) do
     with {:ok, session} <- session(access_token), do: issue_ticket(session)
   end
+
+  @doc """
+  Renews a session `request_session/1` found: its expiry moves to now plus its own
+  lifetime (30 days bearer, 1 hour DPoP-bound), never earlier than it was, and its token
+  stays the same, so open sockets and tickets are untouched. `{:ok, expires_at}`, or
+  `:error` when it has expired or been revoked. The MC's own token (`local_session/0`)
+  has no row and keeps its expiry.
+  """
+  @spec renew(map) :: {:ok, integer} | :error
+  def renew(%{id: nil, expires_at: expires_at}), do: {:ok, expires_at}
+  def renew(%{id: id}), do: GenServer.call(__MODULE__, {:renew, id})
 
   @doc """
   The client sessions in the store at `path`, as `GET /api/auth/clients` lists them
@@ -549,6 +562,29 @@ defmodule HalC2.Auth do
   end
 
   def handle_call(:clients, _from, state), do: {:reply, clients(state), state}
+
+  def handle_call({:renew, id}, _from, state) do
+    now = now()
+
+    renewed =
+      with_db(state.path, fn db ->
+        query(
+          db,
+          """
+          UPDATE auth_sessions
+          SET expires_at = MAX(expires_at, CASE WHEN proof_jkt IS NULL THEN ?2 ELSE ?3 END)
+          WHERE id = ?1 AND expires_at > ?4
+          RETURNING expires_at
+          """,
+          [id, now + @session_ttl, now + @dpop_session_ttl, now]
+        )
+      end)
+
+    case renewed do
+      [[expires_at]] -> {:reply, {:ok, expires_at}, broadcast(state, client_events(state, id))}
+      [] -> {:reply, :error, state}
+    end
+  end
 
   def handle_call({:revoke_client, id}, _from, state) do
     revoked = revoke(state.path, "id = ?1", [id])

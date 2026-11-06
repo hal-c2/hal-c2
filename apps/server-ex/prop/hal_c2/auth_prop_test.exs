@@ -3,7 +3,8 @@ defmodule HalC2.AuthPropTest do
   `HalC2.Auth` against a model of what it promises: a pairing token redeems once and
   grants the scopes it was minted with; a session authenticates until it expires or is
   revoked, as a bearer or by DPoP proof (each proof accepted once, for the key and
-  token it names); a WebSocket ticket opens one socket for a session that is still
+  token it names), and renewing it while valid moves its expiry to now plus its
+  lifetime, never earlier; a WebSocket ticket opens one socket for a session that is still
   there; what expired is rejected, and `prune/0` drops it. Time is a fixed clock the
   commands advance. Restarting `HalC2.Auth` must keep every pairing token and session,
   and forgets tickets and proof records (they live in ETS).
@@ -152,6 +153,7 @@ defmodule HalC2.AuthPropTest do
 
           [
             {3, {:call, __MODULE__, :bearer_request, [seen]}},
+            {3, {:call, __MODULE__, :renew, [seen]}},
             {4, {:call, __MODULE__, :issue_ticket, [n, oneof([:token, :session]), seen]}},
             {3, {:call, __MODULE__, :revoke_client, [seen]}},
             {1, {:call, __MODULE__, :revoke_others, [seen]}},
@@ -334,6 +336,12 @@ defmodule HalC2.AuthPropTest do
 
   def next_state(state, _r, {:call, _, :revoke_client, [h]}), do: drop_sessions(state, [h])
 
+  def next_state(state, _r, {:call, _, :renew, [h]}) do
+    if valid?(state, h),
+      do: put_in(state.sessions[h].expires, renewed(state, h)),
+      else: state
+  end
+
   def next_state(state, _r, {:call, _, :revoke_others, [keep]}),
     do: drop_sessions(state, Map.keys(state.sessions) -- [keep])
 
@@ -390,6 +398,12 @@ defmodule HalC2.AuthPropTest do
   end
 
   def next_state(state, _r, _call), do: state
+
+  # A renewal moves the expiry to now plus the session's lifetime, never earlier.
+  defp renewed(state, h) do
+    session = state.sessions[h]
+    max(session.expires, state.clock + if(session.key, do: @dpop_ttl, else: @session_ttl))
+  end
 
   defp subset?(nil, _granted), do: true
   defp subset?(req, granted), do: Enum.all?(req, &(&1 in granted))
@@ -508,6 +522,12 @@ defmodule HalC2.AuthPropTest do
     if valid?(state, h) and state.sessions[h].key == nil,
       do: result == {:ok, h},
       else: result == {:error, "invalid_credential", nil}
+  end
+
+  def postcondition(state, {:call, _, :renew, [h]}, result) do
+    if valid?(state, h),
+      do: result == {:ok, renewed(state, h)},
+      else: result == :error
   end
 
   def postcondition(_state, {:call, _, :bad_credential, [kind]}, result) do
@@ -667,6 +687,13 @@ defmodule HalC2.AuthPropTest do
   def bearer_request(h) do
     {_, access} = Reg.get({:session, h})
     request("Bearer " <> access, nil)
+  end
+
+  # `POST /api/auth/session/renew` past authentication (modelled by `bearer_request` and
+  # `send_proof`): the session row as the request found it.
+  def renew(h) do
+    {id, _} = Reg.get({:session, h})
+    Auth.renew(%{id: id})
   end
 
   def bad_credential(:none), do: request(nil, nil)
