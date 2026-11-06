@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13463
 #   https://github.com/pingdotgg/t3code/pull/13689
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink,
@@ -22,6 +23,13 @@ Feature: Pull requests linked to a thread
   Background:
     Given an MC with a project "demo"
     And thread "t1" exists in "demo" on branch "feature/x"
+
+  # Legacy: packages/shared/src/threadPullRequests.ts (legacyLinkedPullRequestOf with no host)
+  @backlog @mc
+  Scenario: A project whose remote is a plain local path loads its threads
+    Given the project's "origin" is a local folder path with no hosting provider
+    When the MC starts
+    Then the MC starts and the project's threads load with their pull request rows
 
   @mc
   Scenario: Linking a pull request adds it to the thread

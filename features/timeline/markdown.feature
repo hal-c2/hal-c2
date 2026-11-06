@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13807
+#   https://github.com/pingdotgg/t3code/pull/13909
+#   https://github.com/pingdotgg/t3code/pull/12449 (a link to the project folder opens the Files explorer)
 #   https://github.com/pingdotgg/t3code/pull/13795
 #   https://github.com/pingdotgg/t3code/pull/11477
 #   apps/web/src/components/ChatMarkdown.tsx (code block header, Copy code, line wrap, table expand and copy, streaming)
@@ -329,6 +331,9 @@ Feature: Formatted messages
       | "192.168.1.5/admin"   | left as code                     |
       | "two words/here.ts"   | left as code                     |
       | "src/index.ts:12:4"   | a file chip                      |
+      | "z-ai/glm-5.3"        | left as code                     |
+      | "Qwen/Qwen2.5-Coder"  | left as code                     |
+      | "vendor/jquery-3.6.0.min.js" | a file chip              |
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (parseMarkdownFileLink)
   @backlog @desktop @mobile
@@ -348,6 +353,14 @@ Feature: Formatted messages
       | mailto:dev@example.com            | not a file link             |
       | https://example.com/cart.ts       | not a file link             |
       | #install                          | not a file link             |
+
+  # Legacy: apps/web/src/markdown-links.ts (workspace root links route to the explorer)
+  @backlog @desktop @mobile
+  Scenario: A link in a reply to the project's own folder opens the Files explorer
+    Given the agent's reply links to the folder of the project "shop"
+    When the user clicks the link
+    Then the Files explorer opens on the project's top folder
+    And no file read is attempted for it
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (workspaceRelativeFilePath)
   @backlog @desktop @mobile

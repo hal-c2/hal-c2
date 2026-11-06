@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/10409
+#   https://github.com/pingdotgg/t3code/pull/13650
 #   https://github.com/pingdotgg/t3code/pull/13599
 #   https://github.com/pingdotgg/t3code/pull/13731 (Cursor tier and speed suffixes priced by base model)
 #   docs/user/usage.md (Understand your usage, Set custom model prices)
@@ -171,6 +172,13 @@ Feature: Usage
     Given a Codex session re-sends the same token count at a stream boundary
     When the user opens Usage
     Then the repeated count adds nothing to the totals
+
+  @backlog @mc
+  Scenario: A transcript record too large to hold in memory still counts its usage
+    Given a Codex transcript holds a tool output of several hundred megabytes that records 10,000 tokens
+    And a Claude transcript records 2,000 tokens
+    When the user opens Usage
+    Then the usage counts all 12,000 tokens
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (tailRecords), usageScanCache.ts
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (tail)

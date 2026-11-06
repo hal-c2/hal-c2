@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13651
+#   https://github.com/pingdotgg/t3code/pull/12003
+#   https://github.com/pingdotgg/t3code/pull/14198
 #   https://github.com/pingdotgg/t3code/pull/13368
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -219,11 +221,33 @@ Feature: OpenCode
     Then the thread still shows its model
     And if OpenCode rejects the model the user can pick another and retry
 
+  @backlog
+  Scenario: Deleting a thread whose OpenCode turn was interrupted before its message was sent
+    Given the user sent a message to an OpenCode thread
+    And the turn was interrupted before OpenCode received the message
+    When the user deletes the thread
+    Then the thread is deleted
+    And the user can start a new thread straight away
+
   Scenario: An OpenCode older than the supported range is flagged as known broken
     Given OpenCode 1.14.10 is installed
     When the MC checks its providers
     Then OpenCode is reported as a known broken version for this HAL-C2 release
     And the user is told to use OpenCode 1.14.19 or newer
+
+  @backlog
+  Scenario: An OpenCode 2 or later is flagged as known broken with 1.14.19 to downgrade to
+    Given OpenCode 2.0.3 is installed
+    When the MC checks its providers
+    Then OpenCode is reported as a known broken version for this HAL-C2 release
+    And the user is told to downgrade to OpenCode 1.14.19
+
+  @backlog @shared
+  Scenario: A broken OpenCode version's notice is shown even when OpenCode also reports an error
+    Given OpenCode 2.0.3 is installed and its inventory times out
+    When the user opens the provider settings
+    Then the compatibility notice with the downgrade advice is shown before the timeout
+    And an unauthenticated OpenCode still shows its authentication error
 
   Scenario: OpenCode in the supported range carries no compatibility warning
     Given OpenCode 1.14.19 is installed

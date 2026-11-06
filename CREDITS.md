@@ -15,6 +15,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [AKolenda](https://github.com/AKolenda)
 - [Alex](https://github.com/PixPMusic)
 - [Alex Southwell](https://github.com/saphid)
+- [André Lima](https://github.com/limwa)
 - [Anton Bezdenezhnykh](https://github.com/GaMeRaM)
 - [Artur](https://github.com/arturict)
 - [Bear Huddleston](https://github.com/BearHuddleston)
@@ -31,7 +32,9 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [Gabriel De Andrade](https://github.com/gabrielelpidio)
 - [Guillermo Casanova](https://github.com/Gigioxx)
 - [Ishaan Kothari](https://github.com/ishaanko)
+- [Jaka](https://github.com/jakaskerjanc)
 - [Jake Leventhal](https://github.com/jakeleventhal)
+- [Jaroslav Brtis](https://github.com/Jardo-51)
 - [javiergusart](https://github.com/javiergusart)
 - [Julius Marminge](https://github.com/juliusmarminge)
 - [kamkm](https://github.com/Kamkmgamer)
@@ -48,6 +51,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - PB
 - [Patrik Votoček](https://github.com/Vrtak-CZ)
 - Primož Ajdišek
+- [Pujitha Paladugu](https://github.com/pujitha24)
 - [Ryan Ilano](https://github.com/ryanilano)
 - [scratchyone](https://github.com/scratchyone)
 - [SegFaultZero](https://github.com/SegFaultZero)

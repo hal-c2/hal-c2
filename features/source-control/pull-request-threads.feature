@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13061
+#   https://github.com/pingdotgg/t3code/pull/13211
 #   docs/user/source-control.md (Linked pull requests)
 #   packages/contracts/src/git.ts (GitResolvePullRequestInput, GitPreparePullRequestThreadInput, GitPreparePullRequestThreadResult)
 #   packages/contracts/src/rpc.ts (git.resolvePullRequest, git.preparePullRequestThread, pullRequests.linkedThreads, pullRequests.preview)
@@ -375,6 +376,13 @@ Feature: Threads that work on or link pull requests
   Scenario: A thread links several pull requests across repositories
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
+
+  # Mobile's badge is not tappable, so only the desktop carries the badge's open action.
+  @backlog @desktop
+  Scenario: A badge standing for several linked pull requests opens the thread's pull request list
+    Given "Tax work" links pull request 42 of "acme/shop" and pull request 7 of "acme/api"
+    When the user clicks the pull request badge of "Tax work"
+    Then the thread's Pull requests tab lists both pull requests
 
   @desktop @mobile
   Scenario: Each linked pull request names its repository, even when two share a number

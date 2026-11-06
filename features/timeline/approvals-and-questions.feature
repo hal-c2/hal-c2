@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/12900
 #   docs/user/permission-modes.md
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, thread.user-input.dismiss, approval_request, user_input_request)
 #   packages/contracts/src/providerPolicy.ts (ProviderApprovalDecision)
@@ -183,6 +184,14 @@ Feature: Approvals and agent questions
     Given the agent asks "Which database?" with three options
     When the user answers "DuckDB, in memory"
     Then the agent receives "DuckDB, in memory"
+
+  # Legacy: packages/client-runtime/src/work-log (answered question rows lead with the question)
+  @backlog @shared
+  Scenario: An answered question's timeline row leads with the question and shows the answer beside it
+    Given the agent asked "Which approach should we use?" and the user answered "Incremental migration"
+    When the timeline shows the exchange collapsed
+    Then the row reads "Which approach should we use?" and shows "Incremental migration" beside it
+    And expanding the row still shows the full question and answer
 
   @mc
   Scenario: The user dismisses a question without answering
