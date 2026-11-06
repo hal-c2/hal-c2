@@ -13,7 +13,7 @@
 //   D-Bus the shell already links, so no new library ships.
 // - macOS: the login Keychain. Windows: the Credential Manager.
 // - Android: the app's private storage, a file only the app can read, until
-//   the Keystore is used (hal-c2/hal-c2 issue named in the PR that added this).
+//   the Keystore is used (hal-c2/hal-c2#1075).
 //
 // A desktop without any of those gets one that refuses every write: a
 // credential is never written to disk in the clear.
@@ -26,6 +26,9 @@ public:
   // Nothing when the store has none under `key`, or cannot be read.
   virtual std::optional<QString> read(const QString& key) = 0;
   virtual void remove(const QString& key) = 0;
+  // The user asked for a credential (Retry): a store whose unlock they
+  // refused may ask them again. Reads otherwise do not ask twice.
+  virtual void ask() {}
 
   // This system's store; `privateDir` is the app's own data directory, used
   // only where the system has no secure storage the app can reach (Android).

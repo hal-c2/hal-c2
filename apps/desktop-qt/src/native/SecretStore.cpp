@@ -128,6 +128,8 @@ public:
   }
 
   bool write(const QString& key, const QString& secret, QString* error) override {
+    // Pairing is the user's own act: it may ask to unlock again.
+    m_refused = false;
     QString why;
     const QDBusObjectPath collection = defaultCollection(&why);
     if (collection.path().isEmpty() || !unlock({collection}, &why) || !openSession(&why)) {
@@ -152,9 +154,17 @@ public:
   }
 
   std::optional<QString> read(const QString& key) override {
+    // One refused unlock answers for every read after it: the saved
+    // environments read at start ask once, not once each.
+    if (m_refused) return std::nullopt;
     QString why;
     const QList<QDBusObjectPath> items = search(key);
-    if (items.isEmpty() || !unlock(items, &why) || !openSession(&why)) return std::nullopt;
+    if (items.isEmpty()) return std::nullopt;
+    if (!unlock(items, &why)) {
+      m_refused = true;
+      return std::nullopt;
+    }
+    if (!openSession(&why)) return std::nullopt;
     QDBusInterface item(kBus, items.first().path(), QStringLiteral("org.freedesktop.Secret.Item"), bus());
     QDBusMessage reply = item.call(QStringLiteral("GetSecret"), QVariant::fromValue(m_session));
     if (reply.type() == QDBusMessage::ErrorMessage || reply.arguments().isEmpty()) return std::nullopt;
@@ -169,6 +179,8 @@ public:
       if (reply.type() != QDBusMessage::ErrorMessage) runPrompt(qdbus_cast<QDBusObjectPath>(reply.arguments().value(0)));
     }
   }
+
+  void ask() override { m_refused = false; }
 
   // Whether a Secret Service answers on the session bus.
   static bool available() {
@@ -258,6 +270,7 @@ private:
   }
 
   QDBusObjectPath m_session;
+  bool m_refused = false;
 };
 
 }  // namespace

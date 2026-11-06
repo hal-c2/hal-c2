@@ -180,6 +180,7 @@ bool SavedEnvironmentsController::handle(const QString& action, const QVariant& 
     if (McClient* link = client(id)) {
       link->retryNow();
     } else {
+      if (m_secrets) m_secrets->ask();
       connectTo(id);
     }
     return true;
