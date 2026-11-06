@@ -718,7 +718,7 @@ const Steps steps([] {
     expect(title == c[0], QStringLiteral("the plan card is titled \"%1\"").arg(title));
   });
 
-  step(QStringLiteral("the agent has a subagent that is (.+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the agent has a subagent that is (running|waiting on a request|idle and resumable|completed|failed|cancelled)"), [](World& world, const Captures& c, const Table&) {
     const QHash<QString, QString> statuses{
         {QStringLiteral("running"), QStringLiteral("running")},
         {QStringLiteral("waiting on a request"), QStringLiteral("waiting")},

@@ -84,6 +84,8 @@ Item {
     // A thread to open: a subagent's own, or the one a message came from
     // (the model's `thread` role, an id in this thread's environment).
     signal threadActivated(string threadId)
+    // A message's "Open automation": the scheduled task that sent it.
+    signal scheduledTaskActivated(string taskId)
     // The user asked to edit from their message: the thread rewinds to before it.
     signal editRequested(string rowId)
     // Whether a user message's row can be edited from (rewindPointOf).
@@ -887,9 +889,14 @@ Item {
                         return error;
                     case "thinking":
                         return thinking;
+                    case "subagents":
+                        return subagentGroup;
+                    case "resource":
+                        return resource;
                     default:
                         // A finished worker's notification names its thread: a card.
-                        return (row.model.thread ?? "").length > 0 ? workerResult : marker;
+                        // A marker with an action of its own leads there instead.
+                        return (row.model.action ?? "").length === 0 && (row.model.thread ?? "").length > 0 ? workerResult : marker;
                     }
                 }
             }
@@ -946,6 +953,13 @@ Item {
                                 enabled: attribution.thread.length > 0
                                 onTapped: root.threadActivated(attribution.thread)
                             }
+                        }
+                        // The scheduled task that sent it opens from it.
+                        ActionLink {
+                            objectName: "openAutomation"
+                            visible: (row.model.scheduledTask ?? "").length > 0
+                            text: qsTr("Open automation")
+                            onClicked: root.scheduledTaskActivated(row.model.scheduledTask)
                         }
                         // How it reached the agent (UserMessageIntentMarker).
                         Row {
@@ -1562,6 +1576,9 @@ Item {
                             exited: entry.exitCode !== undefined && entry.exitCode !== null,
                             exitCode: entry.exitCode ?? 0,
                             preview: entry.preview ?? "",
+                            // Work a fork carried over: "Inherited", and the thread it came from.
+                            visibility: entry.visibility ?? "",
+                            source: entry.source ?? "",
                             // The rest of the details, as one value a list model keeps.
                             extra: JSON.stringify({
                                 matches: root.list(entry.matches),
@@ -1776,7 +1793,7 @@ Item {
                                     // Kept on the row, so streamed output does not close it.
                                     readonly property bool open: row.openCalls[modelData.id] === true
                                     readonly property var extra: JSON.parse(modelData.extra || "{}")
-                                    readonly property bool hasDetails: (modelData.detail ?? "").length > 0 || (modelData.command ?? "").length > 0 || (extra.matches ?? []).length > 0 || (extra.results ?? []).length > 0 || (extra.changes ?? []).length > 0 || (extra.diffPath ?? "").length > 0 || (extra.viewedPath ?? "").length > 0
+                                    readonly property bool hasDetails: (modelData.detail ?? "").length > 0 || (modelData.command ?? "").length > 0 || (extra.matches ?? []).length > 0 || (extra.results ?? []).length > 0 || (extra.changes ?? []).length > 0 || (extra.diffPath ?? "").length > 0 || (extra.viewedPath ?? "").length > 0 || (modelData.source ?? "").length > 0
                                     readonly property bool failed: modelData.status === "failed" || modelData.statusLabel === qsTr("Failed")
                                     // Reasoning opens into text, the rest into a panel
                                     // (WorkLogDetails).
@@ -1814,6 +1831,15 @@ Item {
                                             visible: (call.modelData.path ?? "").length > 0
                                             text: qsTr("Open")
                                             onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
+                                        }
+                                        RowText {
+                                            objectName: "workCallVisibility"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: text.length > 0
+                                            text: call.modelData.visibility ?? ""
+                                            wrapMode: Text.NoWrap
+                                            font.pixelSize: Theme.type.meta.size
+                                            color: root.mutedColor
                                         }
                                         RowText {
                                             anchors.verticalCenter: parent.verticalCenter
@@ -1863,6 +1889,14 @@ Item {
                                                 y: call.panel ? Theme.space.sm : Theme.space.xs
                                                 width: parent.width - x * 2
                                                 spacing: call.panel ? Theme.space.xs : Theme.space.md
+                                                RowText {
+                                                    objectName: "workCallSource"
+                                                    visible: text.length > 0
+                                                    width: parent.width
+                                                    text: call.open ? call.modelData.source ?? "" : ""
+                                                    color: root.mutedColor
+                                                    font.pixelSize: Theme.type.caption.size
+                                                }
                                                 RowText {
                                                     visible: text.length > 0
                                                     width: parent.width
@@ -2188,6 +2222,31 @@ Item {
                         enabled: subagentRow.thread.length > 0
                         onTapped: root.threadActivated(subagentRow.thread)
                     }
+                    // Pointing at it gives the facts of its work (SubagentTooltipContent),
+                    // read when it shows.
+                    HoverHandler {
+                        id: subagentHover
+                    }
+                    ToolTip {
+                        id: subagentCard
+                        readonly property var facts: visible && root.model ? root.model.subagentCard(row.rowId) : ({})
+                        visible: subagentHover.hovered
+                        delay: 500
+                        contentItem: Column {
+                            objectName: "subagentCard"
+                            spacing: Theme.space.xs
+                            Repeater {
+                                model: [subagentCard.facts.model ?? "", subagentCard.facts.elapsed ?? "", subagentCard.facts.project ?? "", subagentCard.facts.place ?? "", subagentCard.facts.preview ?? ""].filter(part => part.length > 0)
+                                delegate: RowText {
+                                    required property string modelData
+                                    objectName: "subagentCardLine"
+                                    width: Math.min(implicitWidth, 360)
+                                    text: modelData
+                                    font.pixelSize: Theme.type.caption.size
+                                }
+                            }
+                        }
+                    }
                     Rectangle {
                         id: avatar
                         x: Theme.space.sm
@@ -2383,6 +2442,138 @@ Item {
             }
 
             Component {
+                id: subagentGroup
+                // Subagents started together (V2SubagentGroup): how many, what
+                // they came to, their first avatars and the span from the
+                // first launch to the last finish; it opens to their rows.
+                Item {
+                    id: group
+                    readonly property real tail: 0
+                    objectName: "subagentGroup"
+                    implicitHeight: 36
+                    Accessible.role: Accessible.Button
+                    Accessible.name: [row.title, row.text, row.model.span ?? ""].filter(part => (part ?? "").length > 0).join(", ")
+                    Accessible.onPressAction: root.toggle(row.rowId)
+                    HoverHandler {
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler {
+                        onTapped: root.toggle(row.rowId)
+                    }
+                    Row {
+                        id: groupAvatars
+                        x: Theme.space.sm
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: -Theme.space.xs
+                        Repeater {
+                            model: row.model.avatars ?? []
+                            delegate: Rectangle {
+                                required property var modelData
+                                objectName: "subagentAvatar"
+                                width: Theme.control.sm
+                                height: Theme.control.sm
+                                radius: Theme.radiusPill
+                                color: root.mutedSurfaceColor
+                                border.color: root.canvasColor
+                                border.width: 2
+                                ShellIcon {
+                                    anchors.centerIn: parent
+                                    name: "bot"
+                                    size: Theme.icon.sm
+                                    color: root.mutedColor
+                                }
+                            }
+                        }
+                        RowText {
+                            objectName: "subagentMore"
+                            visible: (row.model.more ?? 0) > 0
+                            leftPadding: Theme.space.sm
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "+" + (row.model.more ?? 0)
+                            color: root.mutedColor
+                            font.pixelSize: Theme.type.caption.size
+                        }
+                    }
+                    Row {
+                        x: groupAvatars.x + groupAvatars.width + Theme.space.md
+                        width: parent.width - x - Theme.space.sm
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.space.sm
+                        RowText {
+                            objectName: "subagentGroupTitle"
+                            text: row.title ?? ""
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Font.Medium
+                            wrapMode: Text.NoWrap
+                        }
+                        RowText {
+                            objectName: "subagentGroupSummary"
+                            text: row.text ?? ""
+                            color: root.mutedColor
+                            font.pixelSize: Theme.type.caption.size
+                            anchors.baseline: parent.children[0].baseline
+                            wrapMode: Text.NoWrap
+                        }
+                        RowText {
+                            objectName: "subagentGroupSpan"
+                            visible: text.length > 0
+                            text: row.model.span ?? ""
+                            color: root.mutedColor
+                            font.pixelSize: Theme.type.caption.size
+                            anchors.baseline: parent.children[0].baseline
+                            wrapMode: Text.NoWrap
+                        }
+                        ShellIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: row.expanded ? "chevron-down" : "chevron-right"
+                            size: Theme.icon.sm
+                            color: root.mutedColor
+                        }
+                    }
+                }
+            }
+
+            Component {
+                id: resource
+                // A thread the turn created, repeated after its answer as a card that opens it.
+                Rectangle {
+                    readonly property real tail: 0
+                    objectName: "resourceCard"
+                    implicitHeight: resourceLine.implicitHeight + 2 * Theme.space.sm
+                    radius: Theme.radiusSm
+                    color: "transparent"
+                    border.color: root.borderColor
+                    Row {
+                        id: resourceLine
+                        x: Theme.space.md
+                        width: parent.width - 2 * Theme.space.md
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.space.sm
+                        ShellIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: row.icon || "message-square"
+                            size: Theme.icon.sm
+                            color: root.mutedColor
+                        }
+                        RowText {
+                            objectName: "resourceTitle"
+                            width: Math.min(implicitWidth, resourceLine.width - resourceAction.width - 3 * Theme.space.sm - Theme.icon.sm)
+                            text: row.title ?? ""
+                            font.pixelSize: Theme.type.meta.size
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
+                        }
+                        ActionLink {
+                            id: resourceAction
+                            objectName: "resourceAction"
+                            text: row.model.action ?? ""
+                            onClicked: root.threadActivated(row.model.thread ?? "")
+                        }
+                    }
+                }
+            }
+
+            Component {
                 id: marker
                 // One quiet line, centred in the column, with no rule
                 // (TimelineSystemDivider); the rows around it keep it 24
@@ -2395,12 +2586,22 @@ Item {
                         id: markerContent
                         anchors.horizontalCenter: parent.horizontalCenter
                         spacing: Theme.space.xs
+                        // Work HAL-C2 recorded rather than the agent (a fork's start).
                         RowText {
+                            objectName: "markerVisibility"
+                            visible: text.length > 0
+                            text: row.model.visibility ?? ""
+                            color: root.mutedColor
+                            font.pixelSize: Theme.type.caption.size
+                            anchors.baseline: markerTitle.baseline
+                        }
+                        RowText {
+                            id: markerTitle
                             objectName: "markerTitle"
                             // A notification's title names a task, as long as its author made it.
                             width: Math.min(implicitWidth, Math.max(0, root.columnWidth - (markerDetail.visible ? markerDetail.width + markerContent.spacing : 0)))
                             text: row.title ?? ""
-                            color: root.mutedColor
+                            color: row.status === "failed" ? root.errorColor : root.mutedColor
                             font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
@@ -2416,6 +2617,33 @@ Item {
                             elide: Text.ElideRight
                             // One line: a detail of several would hang over the rows around it.
                             maximumLineCount: 1
+                        }
+                        // A handoff's ends, each naming its provider and model when pointed at.
+                        Repeater {
+                            model: row.model.handoff ?? []
+                            delegate: RowText {
+                                id: handoffEnd
+                                required property var modelData
+                                required property int index
+                                objectName: "handoffEnd"
+                                text: (index > 0 ? "→ " : "") + modelData.provider
+                                color: root.mutedColor
+                                font.pixelSize: Theme.type.meta.size
+                                wrapMode: Text.NoWrap
+                                HoverHandler {
+                                    id: handoffHover
+                                }
+                                ToolTip.visible: handoffHover.hovered
+                                ToolTip.delay: 500
+                                ToolTip.text: modelData.tooltip
+                            }
+                        }
+                        // Where it leads: a fork's other end, a created thread.
+                        ActionLink {
+                            objectName: "markerAction"
+                            visible: text.length > 0
+                            text: row.model.action ?? ""
+                            onClicked: root.threadActivated(row.model.thread ?? "")
                         }
                     }
                 }

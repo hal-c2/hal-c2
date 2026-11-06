@@ -339,8 +339,8 @@ Feature: Plans and subagents
     Then the worker's first message says it is from the parent
     And the user can open the parent
 
-  # Proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread until the native runner can queue a run.
-  @desktop @backlog-desktop @backlog-mobile @backlog-tui
+  # Also proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread.
+  @desktop @backlog-mobile @backlog-tui
   Scenario: A result waiting to wake the parent names its worker and opens its thread
     Given the agent delegated a task and chose to carry on
     And the subagent finishes with "12 tests added"
@@ -394,27 +394,27 @@ Feature: Plans and subagents
     Then it says which thread it came from
     And the user can open that thread
 
-  @desktop @backlog
+  @desktop
   Scenario: A message sent by a scheduled task says so and leads to the task
     Given a scheduled task sent a message to the thread
     When the user reads the message in the thread
-    Then it says "Sent by automation"
+    Then the message says "Sent by automation"
     And the user can open that scheduled task from it
 
-  @desktop @backlog
+  @desktop
   Scenario: A message sent by automation that no task owns still says so
     Given a message was sent to the thread by automation that is not a scheduled task
     When the user reads the message in the thread
-    Then it says "Sent by automation"
+    Then the message says "Sent by automation"
 
-  @desktop @backlog
+  @desktop
   Scenario: A message from another agent without a known thread still says so
     Given another agent sent a message whose thread is not known
     When the user reads the message in the thread
-    Then it says "Sent by another agent"
+    Then the message says "Sent by another agent"
     And it cannot be opened
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: Work a fork carried over or the system added is marked as such
     Given the timeline shows work that <origin>
     Then the work is marked "<marker>"
@@ -424,11 +424,11 @@ Feature: Plans and subagents
       | the fork's source thread did before the fork | Inherited |
       | HAL-C2 recorded rather than the agent     | Synthetic |
 
-  @desktop @backlog
+  @desktop
   Scenario: Inherited work says which thread it came from
     Given the timeline shows work that the fork's source thread did before the fork
     When the user opens the work
-    Then it says which thread it came from
+    Then the work says which thread it came from
 
   @shared @backlog-mobile
   Scenario: The agent's own background wake-up is not a message from another agent
@@ -461,7 +461,7 @@ Feature: Plans and subagents
     And the parent's model is not shown for it
 
   # Legacy: packages/shared/src/model.ts (formatModelSlugName), apps/web/src/components/chat/SubagentTooltipContent.tsx
-  @backlog @desktop
+  @desktop
   Scenario Outline: A subagent's model is written the way a person would write its name
     Given the agent delegated work to a subagent on the model "<model>"
     When the user looks at the parent's subagents
@@ -505,7 +505,7 @@ Feature: Plans and subagents
       | the agent creates a thread             | Created thread    |
       | the context is compacted               | Context compacted |
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A context compaction says how it stands
     When the context compaction <state>
     Then the timeline marks "<marker>"
@@ -518,7 +518,7 @@ Feature: Plans and subagents
       | is cancelled           | Context compaction stopped  |
       | is interrupted         | Context compaction stopped  |
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A context compaction says what it did
     When the context compaction finishes <with>
     Then the marker's detail reads "<detail>"
@@ -529,19 +529,19 @@ Feature: Plans and subagents
       | from 120000 to 30000 tokens                | 120000 → 30000 tokens   |
       | knowing only that it ended at 30000 tokens | ? → 30000 tokens        |
 
-  @desktop @backlog
+  @desktop
   Scenario: A context handoff shows where the context came from and went
     Given the thread ran on "Claude · Opus" and then on "Codex · GPT"
     When the context is handed to "Codex · GPT"
     Then the marker shows "Claude" and "Codex" with their models
     And pointing at either names its provider and model
 
-  @desktop @backlog
+  @desktop
   Scenario: A context handoff that failed is marked as failed
     When the context handoff fails
     Then the marker "Context handoff" is shown as a failure
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A fork marker leads to the other end of the fork
     Given <situation>
     Then the timeline marks "<marker>"
@@ -552,31 +552,31 @@ Feature: Plans and subagents
       | this thread was forked from another     | Forked from conversation | Open source conversation |
       | another thread was forked from this one | Conversation fork        | Open fork                |
 
-  @desktop @backlog
+  @desktop
   Scenario: A created thread can be opened from where it was created
     When the agent creates the thread "Tax tests"
     Then the timeline shows "Created thread · Tax tests"
     And the user can open it with "Open chat"
 
-  @desktop @backlog
+  @desktop
   Scenario: A created thread shown as a resource opens as a card
     Given the agent created the thread "Tax tests" and the timeline shows it as a resource
     Then the card is titled "Tax tests"
     And the user can open the thread with "Open chat"
 
-  @desktop @backlog
+  @desktop
   Scenario: A thread created without a title is still named
     When the agent creates a thread that has no title
     Then the timeline shows "Created thread"
 
-  @desktop @backlog
+  @desktop
   Scenario: An interrupt shows what was asked for and when
     When the user interrupts the running turn with the message "stop, wrong branch"
     Then the timeline shows "Interrupt requested · stop, wrong branch" and the time
     When the run stops
     Then the timeline shows "Run interrupted" with the run's message
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A subagent's pointing card gives the facts of its work
     Given the agent has a subagent that is <status> and has <detail>
     When the user points at the subagent in the parent's timeline
@@ -591,26 +591,26 @@ Feature: Plans and subagents
       | running   | its own branch, other than the parent's | the subagent's branch                            |
       | running   | its own worktree with no branch         | the worktree's folder name                       |
 
-  @desktop @backlog
+  @desktop
   Scenario: A subagent that only ended is not given a note instead of an answer
     Given a subagent ended with no answer and the note "Child task ended with status completed"
     Then the subagent row shows "Completed" and not that note
 
-  @desktop @backlog
+  @desktop
   Scenario: A subagent row shows its latest word while it works and its answer when it ends
     Given the agent has a subagent that reported the progress "reading cart.ts"
     Then the row shows "Working" and "reading cart.ts"
     When the subagent finishes with the result "12 tests added"
     Then the row shows "12 tests added" instead of the progress
 
-  @desktop @backlog
+  @desktop
   Scenario: A subagent without a thread cannot be opened
     Given the agent has a subagent that has not started a thread
     Then its row is shown with its status
     And the row cannot be opened
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.tsx (V2SubagentGroup)
-  @backlog @desktop
+  @desktop
   Scenario: Subagents started together are one group in the timeline that opens to its rows
     Given the agent started the subagents "Tax tests", "Docs" and "Lint" together
     Then the timeline shows one entry reading "3 subagents" with how many are working, done, failed, stopped or idle
@@ -618,7 +618,7 @@ Feature: Plans and subagents
     And the entry stays open or closed the way the user left it while the thread is open
 
   # Legacy: packages/client-runtime/src/state/subagentDisplay.ts (summarizeSubagentStatuses)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A group of subagents counts what is still working first and then the outcomes
     Given the agent started a group of subagents of which <states>
     Then the group reads "<summary>"
@@ -631,7 +631,7 @@ Feature: Plans and subagents
       | one is working, one is done, one failed, one stopped, one idle | 1 working · 1 done · 1 failed · 1 stopped · 1 idle |
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.tsx (V2SubagentGroup, subagentGroupTiming)
-  @backlog @desktop
+  @desktop
   Scenario: A group of subagents shows one span from the first launch to the last finish
     Given the agent started the subagents "Tax tests" and "Docs" together
     And "Tax tests" started at 10:00:00 and finished at 10:01:00
@@ -640,7 +640,7 @@ Feature: Plans and subagents
     Then the group shows a span of 2m 30s
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.tsx (subagentGroupTiming)
-  @backlog @desktop
+  @desktop
   Scenario: A group's span is withheld while a finished subagent has no end time
     Given the agent started the subagents "Tax tests" and "Docs" together
     And both have finished but the end time of "Docs" was not reported
@@ -648,14 +648,14 @@ Feature: Plans and subagents
     Then the group shows no span
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.tsx (V2SubagentGroup)
-  @backlog @desktop
+  @desktop
   Scenario: A group of subagents shows three avatars and how many more
     Given the agent started five subagents together
     When the user looks at the group
     Then it shows the avatars of the first three and "+2"
 
   # Legacy: packages/client-runtime/src/state/subagentDisplay.ts (formatSubagentDisplayTitle)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A subagent's title is shown without its provider's prefix or task path
     Given a subagent whose title is "<title>"
     When the user sees it in the timeline, the lineage or the agents list

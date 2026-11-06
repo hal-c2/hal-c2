@@ -152,6 +152,10 @@ Item {
         onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
                 threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId
             })
+        onScheduledTaskActivated: taskId => Shell.dispatch("scheduledTasks.open", {
+                environmentId: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":")),
+                taskId: taskId
+            })
     }
 
     // Why the thread stopped following its MC, with a way to try again. While

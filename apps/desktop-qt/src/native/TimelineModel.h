@@ -126,6 +126,24 @@ public:
     // Whether an error row is a wait rather than a failure (a usage limit),
     // which draws in the warning colour with its title alone.
     WarningRole,
+    // What a marker or a resource card offers to do with the thread
+    // ThreadRole names ("Open fork", "Open chat"), or empty.
+    ActionRole,
+    // "Inherited" for work a fork carried over from its source, "Synthetic"
+    // for a row HAL-C2 recorded rather than the agent; else empty.
+    VisibilityRole,
+    // An inherited row's "From <source thread>".
+    SourceRole,
+    // A handoff's ends: [{side ("from" | "to"), provider, model, tooltip}].
+    HandoffRole,
+    // A subagent group's first three members' titles, and how many more.
+    AvatarsRole,
+    MoreRole,
+    // A subagent group's span from its first launch to its last finish
+    // ("2m 30s"), running to now while one works; empty when withheld.
+    SpanRole,
+    // The scheduled task that sent a user message, which opens from it; empty for any other.
+    ScheduledTaskRole,
   };
 
   // Calls shown per collapsed work group.
@@ -159,6 +177,18 @@ public:
   // Names another thread of this one's environment by id, for messages its
   // agent sent here; empty when the thread is not known.
   void setThreadTitles(std::function<QString(const QString& threadId)> titleOf) { m_threadTitle = std::move(titleOf); }
+  // The shell's row of a thread of this one's environment (empty when not
+  // known), a project's title, and the environment's providers (the config's
+  // `providers`): what a fork's inherited work, a subagent's card and a
+  // handoff's ends are told by.
+  void setThreadRows(std::function<QJsonObject(const QString& threadId)> rowOf) { m_threadRow = std::move(rowOf); }
+  void setProjectTitles(std::function<QString(const QString& projectId)> titleOf) { m_projectTitle = std::move(titleOf); }
+  void setProviders(std::function<QJsonArray()> providers) { m_providers = std::move(providers); }
+  // A subagent row's pointing card: {model ("Not reported" when it names
+  // none), elapsed, project (when not the parent's), place (its branch when
+  // not the parent's, else its worktree's folder), preview (its answer or
+  // latest word, 280 characters at most)}. Empty for any other row.
+  Q_INVOKABLE QVariantMap subagentCard(const QString& rowId) const;
   // The device's timestampFormat (locale, 12-hour, 24-hour) and the locale
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
@@ -235,7 +265,8 @@ public:
   // workspaceChanged means the files may differ.
   QString workspaceMutation() const;
 
-  // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
+  // Opens or closes a fold ("fold:<runId>"), a work group ("work:<itemId>")
+  // or a group of subagents ("subagents:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
   // The user stopped this run here: once it settles its work stays open, fold
   // and calls, so they see where it stopped. A stop from elsewhere, or one a
@@ -395,6 +426,8 @@ private:
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
+  // Groups of subagents the user opened, by row id.
+  QSet<QString> m_openSubagentGroups;
   Folds m_folds = Folds::Desktop;
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.
@@ -410,6 +443,22 @@ private:
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   std::function<bool(const QString&)> m_writeClipboard;
   std::function<QString(const QString&)> m_threadTitle;
+  std::function<QJsonObject(const QString&)> m_threadRow;
+  std::function<QString(const QString&)> m_projectTitle;
+  std::function<QJsonArray()> m_providers;
+  // The runs a fork carried over from its source (forkedFrom), else empty.
+  QSet<QString> inheritedRuns() const;
+  QJsonObject forkedFrom() const;
+  // "From <source thread>".
+  QString forkSource() const;
+  // The marker a fork's history ends at, which no stream holds.
+  QString forkMarkerId() const;
+  QJsonObject syntheticFork() const;
+  // A subagent's turn item with its entity's newer fields over it.
+  QJsonObject subagentOf(const QJsonObject& item) const;
+  QVariantList handoffEnds(const QJsonObject& item) const;
+  QString providerName(const QString& instanceId) const;
+  QString modelName(const QString& instanceId, const QString& model) const;
   std::function<QString()> m_workspaceRoot;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;

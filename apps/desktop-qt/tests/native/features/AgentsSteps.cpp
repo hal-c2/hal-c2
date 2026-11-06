@@ -110,6 +110,16 @@ const Steps steps([] {
     settleSubagent(world, id, {{QStringLiteral("status"), QStringLiteral("completed")},
                                {QStringLiteral("completedAt"), iso(QDateTime::fromString(started, Qt::ISODate).addSecs(c[1].toInt()))}});
   });
+  step(QStringLiteral("the agent delegated a task and chose to carry on"), [](World& world, const Captures&, const Table&) {
+    // The worker's thread is listed, so its result can lead to it.
+    const QJsonObject row{{QStringLiteral("id"), QStringLiteral("thread-tax-tests")}, {QStringLiteral("title"), QStringLiteral("Tax tests")},
+                          {QStringLiteral("projectId"), kProject}, {QStringLiteral("createdAt"), iso(now())}, {QStringLiteral("updatedAt"), iso(now())}};
+    world.mc.threads.insert(QStringLiteral("thread-tax-tests"), row);
+    world.mc.sendRow(QStringLiteral("thread-tax-tests"), row);
+    startSubagent(world, QStringLiteral("Tax tests"), 30);
+    // The parent's turn ends without waiting for the worker.
+    settleRun(world, QStringLiteral("completed"), 30);
+  });
   step(QStringLiteral("the subagent finishes with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     settleSubagent(world, world.mc.part<FakeAgents>().last,
                    {{QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("result"), c[0]}, {QStringLiteral("completedAt"), iso(now())}});
