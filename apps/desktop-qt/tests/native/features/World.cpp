@@ -12,6 +12,7 @@
 
 #include "Brick.h"
 #include "ComposerController.h"
+#include "ComputerNoticeController.h"
 #include "DraftController.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -19,6 +20,7 @@
 #include "ProviderSettingsController.h"
 #include "ProviderUpdateNotice.h"
 #include "SettingsController.h"
+#include "SlowRequestController.h"
 #include "FileActionsController.h"
 #include "PluginController.h"
 #include "ThreadMenuController.h"
@@ -170,7 +172,11 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });
   m_native->controller<IdentityController>()->setClock([now] { return now.toMSecsSinceEpoch(); });
+  m_native->controller<SlowRequestController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ComputerNoticeController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
+  m_native->controller<SlowRequestController>()->expire();
+  m_native->controller<ComputerNoticeController>()->expire();
   m_native->controller<ProviderUpdateNotice>()->expire();
   // The favicon renewal timer runs on the real clock; time jumps here.
   m_native->controller<IdentityController>()->renewFavicons();

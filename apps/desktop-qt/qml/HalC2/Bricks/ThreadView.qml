@@ -157,7 +157,8 @@ Item {
     // Why the thread stopped following its MC, with a way to try again. While
     // the window's own connection is down the ConnectionNotice says so, once and
     // with its one retry, so the thread stays quiet; this speaks for a thread
-    // that cannot be reached while the connection is up.
+    // that cannot be reached while the connection is up. A thread whose
+    // computer is down has the computer's notice instead.
     Rectangle {
         id: problemBar
         objectName: "threadProblem"
@@ -166,7 +167,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: visible ? problemRow.implicitHeight + 16 : 0
-        visible: view.unreachable && !view.connectionReported
+        visible: view.unreachable && !view.connectionReported && computerBar.notice === null
         color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.1)
 
         // The warning hue is the stripe; the sentence is the theme's text,
@@ -198,6 +199,62 @@ Item {
                 objectName: "threadRetry"
                 text: qsTr("Retry")
                 onClicked: Threads.reload(Threads.activeThread)
+            }
+        }
+    }
+
+    // The thread's computer is another of the cluster's and is down
+    // (ComputerNoticeController's `threadComputer`): reconnecting, an update
+    // restarting it, or a restart into another version; nothing in the first
+    // two seconds. The window's own connection speaks for itself, so this
+    // stays quiet while it does.
+    Rectangle {
+        id: computerBar
+        objectName: "threadComputerNotice"
+
+        readonly property var notice: Shell.state.threadComputer ?? null
+
+        anchors.top: problemBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? computerRow.implicitHeight + 16 : 0
+        visible: notice !== null && notice.kind.length > 0 && !view.draft && !view.connectionReported
+        color: Qt.alpha(Theme.palette.color(notice?.kind === "reconnecting" ? "warning" : "accent", "#f59e0b"), 0.1)
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 3
+            color: Theme.palette.color(computerBar.notice?.kind === "reconnecting" ? "warning" : "accent", "#f59e0b")
+        }
+
+        ColumnLayout {
+            id: computerRow
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            anchors.topMargin: 8
+            anchors.bottomMargin: 8
+            spacing: 2
+            Label {
+                objectName: "threadComputerTitle"
+                Layout.fillWidth: true
+                text: computerBar.notice?.title ?? ""
+                color: view.textColor
+                font.family: view.uiFamily
+                font.pixelSize: Theme.type.body.size
+                wrapMode: Text.Wrap
+            }
+            Label {
+                objectName: "threadComputerDetail"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: computerBar.notice?.detail ?? ""
+                color: view.mutedColor
+                font.family: view.uiFamily
+                font.pixelSize: Theme.type.meta.size
+                wrapMode: Text.Wrap
             }
         }
     }
@@ -249,7 +306,7 @@ Item {
     WorktreeSetupCard {
         id: setupCard
 
-        anchors.top: problemBar.bottom
+        anchors.top: computerBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         height: visible ? implicitHeight : 0
