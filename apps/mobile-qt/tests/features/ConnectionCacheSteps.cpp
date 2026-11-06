@@ -217,11 +217,7 @@ const Steps steps([] {
     world.mc.threads.insert(id, {{S("id"), id}, {S("title"), S("Built slowly")}, {S("projectId"), S("shop")},
                                  {S("createdAt"), S("2026-09-23T09:00:00Z")}, {S("updatedAt"), S("2026-09-23T09:00:00Z")}});
   });
-  step(S("the client connects"), [](World& world, const Captures&, const Table&) {
-    world.native().client()->reconnect();
-    world.waitFor([&] { return world.mc.connections.size() > watched(world).connections && phase(world) == QLatin1String("connected"); },
-                  [&] { return S("the phone to connect; it is %1").arg(show(world.state(S("connection")))); });
-  });
+  // "the client connects" is ConnectionClientSteps.cpp's.
   step(S("the thread list shows once the MC answers"), [](World& world, const Captures&, const Table&) {
     threadRow(world, S("Built slowly"));
     expect(world.native().store()->synchronized(), S("the thread list is not the MC's"));
