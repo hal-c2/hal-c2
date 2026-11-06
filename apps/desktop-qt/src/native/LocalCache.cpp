@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QPointer>
 #include <QSemaphore>
@@ -30,6 +31,10 @@ const char* const kTables[] = {
     " WITHOUT ROWID",
     "CREATE TABLE entities(thread TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, run_ord INTEGER, json BLOB NOT NULL,"
     " PRIMARY KEY(thread, kind, id)) WITHOUT ROWID",
+    // The providers each environment last reported, a JSON array.
+    "CREATE TABLE providers(environment TEXT PRIMARY KEY, json BLOB NOT NULL) WITHOUT ROWID",
+    // A repository's whole branch list, by the environment and the checkout it was read in.
+    "CREATE TABLE refs(environment TEXT NOT NULL, cwd TEXT NOT NULL, json BLOB NOT NULL, PRIMARY KEY(environment, cwd)) WITHOUT ROWID",
 };
 
 QByteArray json(const QJsonObject& object) {
@@ -94,6 +99,7 @@ bool dropShell(QSqlDatabase& db, const QString& origin) {
 struct Lost {
   QSet<QString> threads;  // by key
   QSet<QString> shells;   // by origin
+  QSet<QString> refs;     // by environment
   // After a commit that failed: every copy, until all of them are dropped.
   bool everything = false;
 };
@@ -109,7 +115,8 @@ bool dropEverything(QSqlDatabase& db) {
   if (threads) run(db, QStringLiteral("DELETE FROM entities"));
   const bool shells = run(db, QStringLiteral("DELETE FROM shell_mcs"));
   if (shells) run(db, QStringLiteral("DELETE FROM shell_rows"));
-  if (!threads || !shells) return false;
+  const bool kept = run(db, QStringLiteral("DELETE FROM providers")) && run(db, QStringLiteral("DELETE FROM refs"));
+  if (!threads || !shells || !kept) return false;
   lost() = {};
   return true;
 }
@@ -118,6 +125,17 @@ bool dropEverything(QSqlDatabase& db) {
 // but after a failed commit only once everything it held is dropped.
 bool usable(QSqlDatabase& db) {
   return !lost().everything || dropEverything(db);
+}
+
+// A branch list that may have changed is not offered again: false when it
+// could not be dropped, and is then not read until it is.
+bool dropRefs(QSqlDatabase& db, const QString& environmentId) {
+  if (!run(db, QStringLiteral("DELETE FROM refs WHERE environment = ?"), {environmentId})) {
+    lost().refs.insert(environmentId);
+    return false;
+  }
+  lost().refs.remove(environmentId);
+  return true;
 }
 
 QVariant nextUse(QSqlDatabase& db) {
@@ -516,7 +534,73 @@ void LocalCache::forgetEnvironment(const QString& environmentId) {
   const QString prefix = environmentId + QLatin1Char(':');
   post([prefix](QSqlDatabase& db) {
     // Their cursors first; while those stay, so do the copies they vouch for.
-    if (!usable(db) || !run(db, QStringLiteral("DELETE FROM threads WHERE substr(key, 1, ?) = ?"), {prefix.size(), prefix})) return;
+    if (!usable(db)) return;
+    const QString environmentId = prefix.chopped(1);
+    run(db, QStringLiteral("DELETE FROM providers WHERE environment = ?"), {environmentId});
+    dropRefs(db, environmentId);
+    if (!run(db, QStringLiteral("DELETE FROM threads WHERE substr(key, 1, ?) = ?"), {prefix.size(), prefix})) return;
     run(db, QStringLiteral("DELETE FROM entities WHERE substr(thread, 1, ?) = ?"), {prefix.size(), prefix});
+  });
+}
+
+void LocalCache::storeProviders(const QString& environmentId, const QJsonArray& providers) {
+  post([environmentId, providers](QSqlDatabase& db) {
+    if (!usable(db)) return;
+    run(db, QStringLiteral("INSERT OR REPLACE INTO providers(environment, json) VALUES(?, ?)"),
+        {environmentId, QJsonDocument(providers).toJson(QJsonDocument::Compact)});
+  });
+}
+
+void LocalCache::loadProviders(QObject* context, std::function<void(const QHash<QString, QJsonArray>&)> reply) {
+  if (!m_worker) {
+    QMetaObject::invokeMethod(this, [context = QPointer<QObject>(context), reply = std::move(reply)] {
+      if (context) reply({});
+    }, Qt::QueuedConnection);
+    return;
+  }
+  post([this, context = QPointer<QObject>(context), reply = std::move(reply)](QSqlDatabase& db) {
+    QHash<QString, QJsonArray> kept;
+    QSqlQuery query(db);
+    if (usable(db) && run(query, QStringLiteral("SELECT environment, json FROM providers"))) {
+      while (query.next()) kept.insert(query.value(0).toString(), QJsonDocument::fromJson(query.value(1).toByteArray()).array());
+    }
+    QMetaObject::invokeMethod(this, [context, reply, kept] {
+      if (context) reply(kept);
+    }, Qt::QueuedConnection);
+  });
+}
+
+void LocalCache::storeRefs(const QString& environmentId, const QString& cwd, const QJsonObject& list) {
+  post([environmentId, cwd, list](QSqlDatabase& db) {
+    if (!usable(db)) return;
+    if (lost().refs.contains(environmentId) && !dropRefs(db, environmentId)) return;
+    run(db, QStringLiteral("INSERT OR REPLACE INTO refs(environment, cwd, json) VALUES(?, ?, ?)"), {environmentId, cwd, json(list)});
+  });
+}
+
+void LocalCache::loadRefs(const QString& environmentId, const QString& cwd, QObject* context,
+                          std::function<void(const std::optional<QJsonObject>&)> reply) {
+  if (!m_worker) {
+    QMetaObject::invokeMethod(this, [context = QPointer<QObject>(context), reply = std::move(reply)] {
+      if (context) reply(std::nullopt);
+    }, Qt::QueuedConnection);
+    return;
+  }
+  post([this, environmentId, cwd, context = QPointer<QObject>(context), reply = std::move(reply)](QSqlDatabase& db) {
+    std::optional<QJsonObject> list;
+    QSqlQuery query(db);
+    if (usable(db) && !lost().refs.contains(environmentId) &&
+        run(query, QStringLiteral("SELECT json FROM refs WHERE environment = ? AND cwd = ?"), {environmentId, cwd}) && query.next()) {
+      list = object(query.value(0));
+    }
+    QMetaObject::invokeMethod(this, [context, reply, list] {
+      if (context) reply(list);
+    }, Qt::QueuedConnection);
+  });
+}
+
+void LocalCache::forgetRefs(const QString& environmentId) {
+  post([environmentId](QSqlDatabase& db) {
+    if (usable(db)) dropRefs(db, environmentId);
   });
 }
