@@ -80,7 +80,10 @@ void endProviderUpdate(FakeMc& mc, const FakeMc::Rpc& rpc) {
 
 const FakeMc::Extension updates([](FakeMc& mc) {
   mc.onRpc(S("server.refreshProviders"), [&mc](const FakeMc::Rpc& rpc) {
-    mc.reply(rpc, QJsonObject{{S("providers"), mc.part<FakeUpdates>().providers.value(environmentOf(mc, rpc))}});
+    // An environment maintenance knows nothing of lists what its config does.
+    const QString environment = environmentOf(mc, rpc);
+    const FakeUpdates& fake = mc.part<FakeUpdates>();
+    mc.reply(rpc, QJsonObject{{S("providers"), fake.providers.contains(environment) ? fake.providers.value(environment) : providersOn(mc, environment)}});
   });
   mc.onRpc(S("server.updateProvider"), [&mc](const FakeMc::Rpc& rpc) {
     FakeUpdates& fake = mc.part<FakeUpdates>();

@@ -306,13 +306,13 @@ Feature: Subscription limits
     When the MC checks limits
     Then OpenCode's limits are reported as not available
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: The same account on two environments counts once
     Given the same Codex account is signed in on two environments and reported by a hub
     When the user opens Limits
     Then that account is counted once in each window
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Automatic checks wait at least five minutes per environment
     Given the user opened Limits two minutes ago
     When the user opens Limits again
@@ -338,14 +338,14 @@ Feature: Subscription limits
     When a hub that cannot be read is added
     Then Pi offers "/usage-limits" so the hub's error can be shown
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario: The /usage-limits command shows the current model's limits
     Given a Codex thread
     When the user sends "/usage-limits"
     Then Codex's windows are shown above the composer without running the agent
     And they close when the user sends the next message
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario: The /usage-limits command is not offered for providers without limits
     Given an Antigravity thread
     When the user opens the composer's command menu
@@ -379,14 +379,14 @@ Feature: Subscription limits
     Then the answer is gone
     And nothing was sent to the agent
 
-  @backlog @mobile
+  @mobile
   Scenario: The subscription usage widget shows remaining quotas
     Given the user added the Subscription usage widget
     When the user looks at the home screen
     Then remaining Codex and Claude quotas are shown
     And tapping it opens Limits
 
-  @backlog @mobile
+  @mobile
   Scenario: The widget can show session, weekly or both per provider
     When the user sets the widget to show only the weekly window for Claude
     Then the widget shows Claude's weekly window only

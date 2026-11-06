@@ -8,6 +8,7 @@
 #include "ScanCamera.h"
 #include "push/PushSystem.h"
 #include "StoragePaths.h"
+#include "SubscriptionWidget.h"
 
 class Maintenance;
 class MobileTerminal;
@@ -39,6 +40,8 @@ public:
     std::shared_ptr<ScanCamera> camera;
     // The notifications pushes come through; the device's own when null.
     std::shared_ptr<PushSystem> pushSystem;
+    // The home screen the usage widget is placed on; the device's own when null.
+    std::shared_ptr<WidgetSystem> widgetSystem;
   };
 
   // What has to be chosen before any window: the software renderer when
@@ -56,6 +59,7 @@ public:
   ShellRuntime& runtime() { return *m_runtime; }
   Maintenance& maintenance() { return *m_maintenance; }
   MobileTerminal& terminal() { return *m_terminal; }
+  SubscriptionWidget& widget() { return *m_widget; }
 
   // Opens the environment the phone remembers, if it has one, and shows the
   // window.
@@ -74,4 +78,6 @@ private:
   std::unique_ptr<Scanner> m_scanner;
   std::unique_ptr<Maintenance> m_maintenance;
   std::unique_ptr<MobileTerminal> m_terminal;
+  // Hands the links it does not open to the notifications.
+  std::unique_ptr<SubscriptionWidget> m_widget;
 };

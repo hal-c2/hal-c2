@@ -106,13 +106,18 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // Its environments' versions and providers, and their updates.
   m_maintenance = std::make_unique<Maintenance>(m_bridge.get(), m_native.get());
   m_terminal = std::make_unique<MobileTerminal>(m_bridge.get(), m_native.get(), QDir(configDir).filePath(QStringLiteral("terminal.json")));
+  m_widget = std::make_unique<SubscriptionWidget>(m_bridge.get(), m_native.get(),
+                                                  options.widgetSystem ? options.widgetSystem : deviceWidgetSystem());
+  m_widget->setNext([notifications = m_notifications.get()](const QUrl& url) { notifications->openLink(url); });
   // A `hal-c2:` link the system opens the app with (the manifest's
-  // `hal-c2://pair`, and the `hal-c2://threads/...` a tapped notification
-  // opens, which Notifications takes and passes the rest on). Qt for Android hands a running app's link, and the one
+  // `hal-c2://pair`, the `hal-c2://usage/limits` the usage widget opens,
+  // which the widget takes, and the `hal-c2://threads/...` a tapped
+  // notification opens, which Notifications takes and passes the rest on).
+  // Qt for Android hands a running app's link, and the one
   // a stopped app was started with, to QDesktopServices::openUrl, which
   // calls the scheme's handler. The second comes with the event loop's first
   // turn, so the handler has to be here before that.
-  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_notifications.get(), "openLink");
+  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_widget.get(), "openLink");
 }
 
 MobileApp::~MobileApp() {

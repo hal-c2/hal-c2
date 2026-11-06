@@ -98,6 +98,7 @@ settings section when you no longer need it.
 
 ## Subscription usage widget
 
-Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
-Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
-Weekly, or both for each provider. Reopen HAL-C2 to refresh expired readings.
+On Android, add **Subscription usage** from the widget gallery to see your providers' remaining
+quotas on the home screen. Tap it to open **Usage → Limits**, where **Home screen widget** chooses
+Session, Weekly, or both for each provider. The widget shows what the app last read; open HAL-C2
+to refresh it, and a reading whose window has reset since asks you to.

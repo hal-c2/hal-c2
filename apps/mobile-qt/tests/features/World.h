@@ -14,6 +14,7 @@
 
 #include "FakeCamera.h"
 #include "FakePushSystem.h"
+#include "FakeWidgetSystem.h"
 #include "MobileApp.h"
 #include "PairableMc.h"
 
@@ -47,6 +48,8 @@ public:
   // Its notifications, what reaches it through a push distributor, and the
   // user's word on them: kept across restarts too.
   std::shared_ptr<FakePushSystem> push;
+  // The home screen and the usage widgets on it.
+  std::shared_ptr<FakeWidgetSystem> widgets = std::make_shared<FakeWidgetSystem>();
   bool checking = false;  // the running step is an outcome (Step::outcome)
   // The pairing link the scenario is about: what the user enters.
   QString link;

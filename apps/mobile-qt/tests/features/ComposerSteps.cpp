@@ -2,6 +2,7 @@
 // composer under a conversation, typed into and tapped as the user does, and
 // what the MC receives from it.
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -92,17 +93,34 @@ struct FakeConfig {
   QJsonArray providers;
   QJsonObject settings;
   int version = 0;
+  // The providers of the cluster's other environments, and every
+  // environment's usage-limit sources (hubs).
+  QHash<QString, QJsonArray> elsewhere;
+  QHash<QString, QJsonArray> sources;
 };
 
 const FakeMc::Extension config([](FakeMc& mc) {
   mc.onShape(QStringLiteral("config"), [&mc](int id, const QJsonObject& shape) {
-    if (shape.value(QLatin1String("environment")).toString() != mc.environmentId) return;
+    const QString environment = shape.value(QLatin1String("environment")).toString();
     const FakeConfig& fake = mc.part<FakeConfig>();
-    mc.send({{QStringLiteral("t"), QStringLiteral("config")},
-             {QStringLiteral("id"), id},
-             {QStringLiteral("mc"), mc.name},
-             {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), fake.providers}, {QStringLiteral("settings"), fake.settings}}}});
-    mc.send({{QStringLiteral("t"), QStringLiteral("config.themes")}, {QStringLiteral("id"), id}, {QStringLiteral("themes"), QJsonArray()}});
+    if (environment == mc.environmentId) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("mc"), mc.name},
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), fake.providers}, {QStringLiteral("settings"), fake.settings}}}});
+      mc.send({{QStringLiteral("t"), QStringLiteral("config.themes")}, {QStringLiteral("id"), id}, {QStringLiteral("themes"), QJsonArray()}});
+    } else if (fake.elsewhere.contains(environment)) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), fake.elsewhere.value(environment)}}}});
+    } else {
+      return;
+    }
+    if (fake.sources.contains(environment)) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("sources"), fake.sources.value(environment)}});
+    }
   });
   mc.onRpc(QStringLiteral("hal-c2.readSettings"), [&mc](const FakeMc::Rpc& rpc) {
     const FakeConfig& fake = mc.part<FakeConfig>();
@@ -233,10 +251,39 @@ void updateRow(FakeMc& mc, const QString& thread, const QJsonObject& fields) {
   mc.sendRow(thread, row);
 }
 
-void offerProviders(FakeMc& mc, const QJsonArray& providers) {
-  mc.part<FakeConfig>().providers = providers;
+namespace {
+// The environment a config subscription is to; the MC's own when it names none.
+QString subscribedOn(const FakeMc& mc, int id) {
+  const QString environment = mc.shapeOf(id).value(QLatin1String("environment")).toString();
+  return environment.isEmpty() ? mc.environmentId : environment;
+}
+}  // namespace
+
+void offerProviders(FakeMc& mc, const QJsonArray& providers) { offerProvidersOn(mc, mc.environmentId, providers); }
+
+void offerProvidersOn(FakeMc& mc, const QString& environment, const QJsonArray& providers) {
+  FakeConfig& fake = mc.part<FakeConfig>();
+  if (environment == mc.environmentId) {
+    fake.providers = providers;
+  } else {
+    fake.elsewhere.insert(environment, providers);
+  }
   for (const int id : mc.subscribers(QStringLiteral("config"))) {
+    if (subscribedOn(mc, id) != environment) continue;
     mc.send({{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("id"), id}, {QStringLiteral("providers"), providers}});
+  }
+}
+
+QJsonArray providersOn(FakeMc& mc, const QString& environment) {
+  const FakeConfig& fake = mc.part<FakeConfig>();
+  return environment == mc.environmentId ? fake.providers : fake.elsewhere.value(environment);
+}
+
+void offerLimitSources(FakeMc& mc, const QString& environment, const QJsonArray& sources) {
+  mc.part<FakeConfig>().sources.insert(environment, sources);
+  for (const int id : mc.subscribers(QStringLiteral("config"))) {
+    if (subscribedOn(mc, id) != environment) continue;
+    mc.send({{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")}, {QStringLiteral("id"), id}, {QStringLiteral("sources"), sources}});
   }
 }
 

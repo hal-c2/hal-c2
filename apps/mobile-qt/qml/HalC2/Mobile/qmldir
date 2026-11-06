@@ -26,3 +26,4 @@ SpaceVersionScreen 1.0 SpaceVersionScreen.qml
 TerminalContextSheet 1.0 TerminalContextSheet.qml
 TerminalScreen 1.0 TerminalScreen.qml
 ThreadScreen 1.0 ThreadScreen.qml
+UsageScreen 1.0 UsageScreen.qml
