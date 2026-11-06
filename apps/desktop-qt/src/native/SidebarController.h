@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
 
 #include "SidebarModel.h"
 
@@ -165,6 +166,10 @@ private:
   QTimer m_minute;
   bool m_active = false;
   bool m_previewing = false;
+  // The shell snapshot and thread count announceMigratedThreads() last counted for.
+  std::pair<quint64, qsizetype> m_migrationChecked{0, -1};
+  // The migrated-threads notice while it shows, so later arrivals update its count.
+  QString m_migrationToast;
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");

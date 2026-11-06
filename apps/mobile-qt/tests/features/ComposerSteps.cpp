@@ -87,29 +87,67 @@ const FakeMc::Extension streams([](FakeMc& mc) {
   });
 });
 
-// The MC's settings and what it can run turns on.
+// The MC's settings and what it can run turns on, and the settings documents
+// of the cluster's other members (SettingsDocument).
 struct FakeConfig {
   QJsonArray providers;
   QJsonObject settings;
   int version = 0;
+  QHash<QString, SettingsDocument> elsewhere;
 };
+
+// Sends `frame` to the subscribers of the environment's `config`.
+void sendConfig(FakeMc& mc, const QString& environment, QJsonObject frame) {
+  for (const int id : mc.subscribers(QStringLiteral("config"))) {
+    if (mc.shapeOf(id).value(QLatin1String("environment")).toString() != environment) continue;
+    frame.insert(QStringLiteral("id"), id);
+    mc.send(frame);
+  }
+}
 
 const FakeMc::Extension config([](FakeMc& mc) {
   mc.onShape(QStringLiteral("config"), [&mc](int id, const QJsonObject& shape) {
-    if (shape.value(QLatin1String("environment")).toString() != mc.environmentId) return;
+    const QString environment = shape.value(QLatin1String("environment")).toString();
     const FakeConfig& fake = mc.part<FakeConfig>();
-    mc.send({{QStringLiteral("t"), QStringLiteral("config")},
-             {QStringLiteral("id"), id},
-             {QStringLiteral("mc"), mc.name},
-             {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), fake.providers}, {QStringLiteral("settings"), fake.settings}}}});
+    if (environment == mc.environmentId) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("mc"), mc.name},
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), fake.providers},
+                                                      {QStringLiteral("settings"), fake.settings},
+                                                      {QStringLiteral("environment"), QJsonObject{{QStringLiteral("capabilities"), mc.capabilities}}}}}});
+    } else if (fake.elsewhere.contains(environment)) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("providers"), QJsonArray()},
+                                                      {QStringLiteral("settings"), fake.elsewhere.value(environment).settings},
+                                                      {QStringLiteral("environment"),
+                                                       QJsonObject{{QStringLiteral("capabilities"), fake.elsewhere.value(environment).capabilities}}}}}});
+    } else {
+      return;
+    }
     mc.send({{QStringLiteral("t"), QStringLiteral("config.themes")}, {QStringLiteral("id"), id}, {QStringLiteral("themes"), QJsonArray()}});
   });
   mc.onRpc(QStringLiteral("hal-c2.readSettings"), [&mc](const FakeMc::Rpc& rpc) {
     const FakeConfig& fake = mc.part<FakeConfig>();
-    mc.reply(rpc, QJsonObject{{QStringLiteral("settings"), fake.settings}, {QStringLiteral("version"), fake.version}});
+    const bool other = fake.elsewhere.contains(rpc.environment);
+    const SettingsDocument document = other ? fake.elsewhere.value(rpc.environment) : SettingsDocument{fake.settings, fake.version};
+    mc.reply(rpc, QJsonObject{{QStringLiteral("settings"), document.settings}, {QStringLiteral("version"), document.version}});
   });
   mc.onRpc(QStringLiteral("hal-c2.writeSettings"), [&mc](const FakeMc::Rpc& rpc) {
     FakeConfig& fake = mc.part<FakeConfig>();
+    if (fake.elsewhere.contains(rpc.environment)) {
+      // Another member refuses a write over a version it has moved past, as the MC does.
+      SettingsDocument& document = fake.elsewhere[rpc.environment];
+      if (rpc.payload.value(QLatin1String("version")).toInt(-1) != document.version) {
+        mc.refuse(rpc, QStringLiteral("settings changed"), {{QStringLiteral("_tag"), QStringLiteral("StaleSettings")}});
+        return;
+      }
+      document.settings = rpc.payload.value(QLatin1String("settings")).toObject();
+      mc.reply(rpc, QJsonObject{{QStringLiteral("version"), ++document.version}});
+      sendConfig(mc, rpc.environment, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), document.settings}});
+      return;
+    }
     fake.settings = rpc.payload.value(QLatin1String("settings")).toObject();
     mc.reply(rpc, QJsonObject{{QStringLiteral("version"), ++fake.version}});
     for (const int id : mc.subscribers(QStringLiteral("config"))) {
@@ -231,6 +269,21 @@ void updateRow(FakeMc& mc, const QString& thread, const QJsonObject& fields) {
   QJsonObject& row = mc.threads[thread];
   for (auto it = fields.begin(); it != fields.end(); ++it) row.insert(it.key(), it.value());
   mc.sendRow(thread, row);
+}
+
+SettingsDocument& settingsOf(FakeMc& mc, const QString& environment) {
+  return mc.part<FakeConfig>().elsewhere[environment];
+}
+
+QJsonObject ownSettings(FakeMc& mc) {
+  return mc.part<FakeConfig>().settings;
+}
+
+void saveOwnSetting(FakeMc& mc, const QString& key, const QJsonValue& value) {
+  FakeConfig& fake = mc.part<FakeConfig>();
+  fake.settings.insert(key, value);
+  fake.version++;
+  sendConfig(mc, mc.environmentId, {{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("settings"), fake.settings}});
 }
 
 void offerProviders(FakeMc& mc, const QJsonArray& providers) {

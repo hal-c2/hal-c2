@@ -11,6 +11,7 @@
 #include "SettingsController.h"
 #include "ShellStore.h"
 #include "SidebarModel.h"
+#include "WorkspaceController.h"
 
 namespace {
 const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads"), {}, "Threads");
@@ -19,6 +20,15 @@ const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads")
 ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
+  // Background work and a fork's source (or its title) can change on the
+  // shell's thread row after the timeline opened.
+  connect(store, &ShellStore::changed, this, [this] {
+    for (auto it = m_threads.cbegin(); it != m_threads.cend(); ++it) {
+      if (!it->model) continue;
+      it->model->setBackgroundWork(m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray());
+      it->model->threadRowsChanged();
+    }
+  });
   // Threads shown from what was kept of another MC go with its thread list;
   // their copies stay in the cache for when the client is opened there again.
   connect(store, &ShellStore::originChanged, this, [this] {
@@ -169,6 +179,7 @@ void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
   model->setLocale(m_locale);
   model->setFolds(m_folds);
+  model->setBackgroundWork(m_store->threadRow(model->threadKey()).value(QLatin1String("pendingBackgroundTasks")).toArray());
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
   const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);
@@ -182,6 +193,15 @@ void ThreadStore::configure(TimelineModel* model) const {
   });
   model->setThreadTitles([store = m_store, environment](const QString& threadId) {
     return store->threadRow(environment + threadId).value(QLatin1String("title")).toString();
+  });
+  model->setThreadRows([store = m_store, environment](const QString& threadId) { return store->threadRow(environment + threadId); });
+  model->setProjectTitles([store = m_store, environment](const QString& projectId) {
+    return store->projectRow(environment.chopped(1), projectId).value(QLatin1String("title")).toString();
+  });
+  // The provider names and models a handoff or subagent reads by.
+  model->setProviders([shell = NativeShell::of(this)]() -> QJsonArray {
+    const auto* workspace = shell ? shell->controller<WorkspaceController>() : nullptr;
+    return workspace ? workspace->environmentConfig().value(QLatin1String("providers")).toArray() : QJsonArray();
   });
 }
 

@@ -31,6 +31,7 @@ set(hal_c2_bricks_qml_files
     UsageModelPrices.qml
     ProviderModelList.qml
     ComposerUsageLimits.qml
+    RedactedText.qml
     ConnectionStatusRow.qml
     ServerUpdateAction.qml
     ServerUpdatesList.qml
@@ -88,6 +89,7 @@ set(hal_c2_bricks_qml_files
     EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ThreadNotice.qml
     ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml

@@ -3,7 +3,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
   A state machine over three threads driven through the commands that organize them
   (`features/mc/orchestration/thread-organization.feature`): settle, the automatic
   settle `HalC2.Orchestration.Settlement` sends, unsettle, snooze, unsnooze, pin, unpin,
-  the two reorders and turning automatic settlement off and on for the thread; with archive, unarchive and delete, a message that starts a turn
+  the two reorders and turning auto-settle off and on; with archive, unarchive and delete, a message that starts a turn
   (which brings a settled or snoozed thread back), an interrupt that ends it, and a
   restart of the streams.
 
@@ -86,7 +86,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
   # threads: id -> %{status: :live | :archived | :deleted, running, override: nil |
   #   "settled" | "active", unsettled (whether unsettledAt is set), until: nil | :tomorrow
-  #   | :next_week, pinned, pin_key, active_key, auto_off (automatic settlement off)}
+  #   | :next_week, pinned, pin_key, active_key, auto_off (auto-settle turned off)}
   # next: numbers the messages sent.
   def initial_state, do: %{threads: %{}, next: 1}
 
@@ -104,7 +104,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
       {3, {:call, __MODULE__, :unpin, [tid]}},
       {2, {:call, __MODULE__, :pin_reorder, [tid, key]}},
       {2, {:call, __MODULE__, :active_reorder, [tid, key]}},
-      {3, {:call, __MODULE__, :set_auto_settle, [tid, boolean()]}},
+      {2, {:call, __MODULE__, :auto_settle_set, [tid, boolean()]}},
       {1, {:call, __MODULE__, :archive, [tid]}},
       {1, {:call, __MODULE__, :unarchive, [tid]}},
       {1, {:call, __MODULE__, :delete, [tid]}}
@@ -201,9 +201,9 @@ defmodule HalC2.ThreadOrganizationPropTest do
   end
 
   defp organized(thread, :unpin, _), do: %{thread | pinned: false, pin_key: nil}
+  defp organized(thread, :auto_settle_set, [_, enabled]), do: %{thread | auto_off: not enabled}
   defp organized(thread, :pin_reorder, [_, key]), do: %{thread | pin_key: key}
   defp organized(thread, :active_reorder, [_, key]), do: %{thread | active_key: key}
-  defp organized(thread, :set_auto_settle, [_, enabled]), do: %{thread | auto_off: not enabled}
   defp organized(thread, :archive, _), do: %{thread | status: :archived}
   defp organized(thread, :unarchive, _), do: %{thread | status: :live}
   defp organized(thread, :delete, _), do: %{thread | status: :deleted, running: false}
@@ -231,9 +231,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
     do: if(state.threads[tid], do: {:error, "Thread #{tid} already exists."}, else: :ok)
 
   defp expected_reply(state, {:call, _, :auto_settle, [tid]}) do
-    thread = state.threads[tid]
-
-    if thread.override == nil and not thread.auto_off,
+    if state.threads[tid].override == nil and not state.threads[tid].auto_off,
       do: :ok,
       else: {:error, "Thread #{tid} changed before automatic settlement."}
   end
@@ -266,7 +264,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
               :unpin,
               :pin_reorder,
               :active_reorder,
-              :set_auto_settle
+              :auto_settle_set
             ],
        do: {:error, "Thread #{tid} is archived."}
 
@@ -295,7 +293,10 @@ defmodule HalC2.ThreadOrganizationPropTest do
     do: if(thread.until == until, do: [], else: ["snoozedAt"])
 
   defp fresh(thread, :pin, _), do: if(thread.pinned, do: [], else: ["pinnedAt"])
-  defp fresh(%{auto_off: false}, :set_auto_settle, [_, false]), do: ["autoSettleDisabledAt"]
+
+  defp fresh(thread, :auto_settle_set, [_, false]),
+    do: if(thread.auto_off, do: [], else: ["autoSettleDisabledAt"])
+
   defp fresh(_thread, :archive, _), do: ["archivedAt"]
   defp fresh(%{status: :deleted}, :delete, _), do: []
   defp fresh(_thread, :delete, _), do: ["deletedAt"]
@@ -329,6 +330,13 @@ defmodule HalC2.ThreadOrganizationPropTest do
             {t, now[t] == before[t] and matches?(thread, now[t], before[t], [], nil)}
         end
       end
+
+    # Arranging the active list and turning auto-settle off and on are not activity:
+    # the thread's last activity time, and so its auto-settle idle clock, stays put.
+    checks =
+      if fun in [:active_reorder, :auto_settle_set] and expected == :ok,
+        do: [{tid, now[tid].updated_at == before[tid].updated_at} | checks],
+        else: checks
 
     reply_ok? = reply == expected
 
@@ -423,7 +431,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
   def pin_reorder(tid, key), do: organize(tid, "thread.pin.reorder", %{"orderKey" => key})
   def active_reorder(tid, key), do: organize(tid, "thread.active.reorder", %{"orderKey" => key})
 
-  def set_auto_settle(tid, enabled),
+  def auto_settle_set(tid, enabled),
     do: organize(tid, "thread.auto-settle.set", %{"enabled" => enabled})
 
   def archive(tid), do: organize(tid, "thread.archive")
@@ -526,7 +534,8 @@ defmodule HalC2.ThreadOrganizationPropTest do
           %{
             fields: Map.new(@organization, &{&1, JS.get(thread, &1)}),
             row: Map.new(@organization -- ["activeOrderKey"], &{&1, row[&1]}),
-            running: Enum.any?(statuses, &(&1 in @active))
+            running: Enum.any?(statuses, &(&1 in @active)),
+            updated_at: state.updated_at
           }
       end
     end

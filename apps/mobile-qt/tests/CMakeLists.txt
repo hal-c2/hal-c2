@@ -70,6 +70,8 @@ add_executable(tst_Features
   ../src/MobileTerminal.h
   ../src/Pairing.cpp
   ../src/Pairing.h
+  ../src/TurnAgents.cpp
+  ../src/TurnAgents.h
   "${_harness}/FakeMc.cpp"
   "${_harness}/FakeMc.h"
   "${_harness}/FakeFiles.cpp"

@@ -39,6 +39,8 @@ interface ConnectionsWorld extends SettingsWorld {
   pairingLink?: string;
   /** The client the scenario is about. */
   subject?: string;
+  /** How "the client connects" connects, when a Given set up a client other than the in-process one. */
+  connectBy?: () => Promise<void>;
 }
 
 const PAIRING_LINK = "http://beast.example:3773/pair#token=one-time";
@@ -296,6 +298,7 @@ step(/^the environment's MC runs HAL-C2 (\S+)$/, (ctx: ConnectionsWorld, version
 });
 
 step("the client connects", async (ctx: ConnectionsWorld) => {
+  if (ctx.connectBy) return ctx.connectBy();
   await connected(ctx);
 });
 

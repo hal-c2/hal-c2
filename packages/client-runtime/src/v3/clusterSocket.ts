@@ -6,7 +6,8 @@
  *
  * Subscriptions are multiplexed by id. On reconnect every stream subscription is
  * sent again with the last offset it saw, so the MC replays only what was
- * missed; the shell is always re-sent whole because it is small. A `resync` from
+ * missed; a shell subscribed with `subscribeShell` says which rows it holds
+ * (`have`), so the MC sends only the rows changed since. A `resync` from
  * the MC (this client fell too far behind) is handled the same way. A stream the MC
  * refused with `error` because its MC is out of the cluster is asked again, from
  * its offset, once the MC says on the shell that that MC is back (`shell.mc`).
@@ -139,6 +140,8 @@ interface Subscription {
   readonly acks?: true;
   /** The MC refused the stream (its MC left the cluster) and forgot it. */
   refused?: boolean;
+  /** The shell's rows as the client holds them, read on every sub: the MC sends only what came after. */
+  readonly have?: () => Readonly<Record<string, readonly [string, number]>>;
 }
 
 /** Where a windowed thread stream is: what a subscription on another socket resumes from. */
@@ -186,6 +189,9 @@ export interface ClusterSocketOptions {
 }
 
 const OPEN = 1;
+
+/** How often a socket pings its MC. It waits on no answer: a slow MC is never asked again. */
+export const PING_INTERVAL_MS = 25_000;
 
 export class ClusterSocket {
   private socket: SocketLike | null = null;
@@ -235,6 +241,17 @@ export class ClusterSocket {
     offset: number | null = null,
   ): () => void {
     return this.add({ shape, onFrame, offset }).unsubscribe;
+  }
+
+  /**
+   * Subscribes to the cluster shell, saying on every sub (each socket's first, and a
+   * resubscription) which rows the client holds, so the MC answers with what it lacks.
+   */
+  subscribeShell(
+    onFrame: (frame: ShapeFrame) => void,
+    have: () => Readonly<Record<string, readonly [string, number]>>,
+  ): () => void {
+    return this.add({ shape: { type: "shell" }, onFrame, offset: null, have }).unsubscribe;
   }
 
   /**
@@ -404,6 +421,7 @@ export class ClusterSocket {
         shape: subscription.shape,
         offset,
         ...(subscription.acks ? { acks: true } : {}),
+        ...(subscription.have ? { have: subscription.have() } : {}),
       });
       return;
     }
@@ -434,7 +452,7 @@ export class ClusterSocket {
     this.stopPing();
     this.pingTimer = setInterval(
       () => this.send({ t: "ping" }),
-      this.options.pingIntervalMs ?? 25_000,
+      this.options.pingIntervalMs ?? PING_INTERVAL_MS,
     );
   }
 

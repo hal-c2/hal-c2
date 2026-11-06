@@ -28,6 +28,7 @@ ConnectionNotice 1.0 ConnectionNotice.qml
 UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
+RedactedText 1.0 RedactedText.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ServerUpdateAction 1.0 ServerUpdateAction.qml
 ServerUpdatesList 1.0 ServerUpdatesList.qml
@@ -83,6 +84,7 @@ PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
 EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
+ThreadNotice 1.0 ThreadNotice.qml
 ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml

@@ -268,6 +268,18 @@ defmodule HalC2.Projection.ShellTest do
              } =
                Shell.thread_shell(state(entities ++ [{"provider-session", session}]))
 
+      # The run hit its limit on codex-work and the thread was switched back to codex,
+      # whose session crashed earlier: the run's own failure stands, so its usage limit
+      # still resumes at the reset.
+      on_work = [
+        {"thread", @thread},
+        {"run", run("run-1", 1, "failed", %{"providerInstanceId" => "codex-work"})}
+        | tl(tl(entities))
+      ]
+
+      assert %{"lastErrorClass" => "usage_limit", "lastError" => "Limit reached"} =
+               Shell.thread_shell(state(on_work ++ [{"provider-session", session}]))
+
       # Once the run is retried and succeeds, the old failure no longer shows.
       recovered = entities ++ [{"run", run("run-2", 2, "completed")}]
       assert %{"lastError" => nil, "status" => "completed"} = Shell.thread_shell(state(recovered))

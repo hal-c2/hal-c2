@@ -412,6 +412,10 @@ void WorkspaceController::watchConfig(const QString& environmentId) {
           m_configElsewhere.insert(QStringLiteral("providers"), frame.value(QLatin1String("providers")));
         } else if (type == QLatin1String("config.settings")) {
           m_configElsewhere.insert(QStringLiteral("settings"), frame.value(QLatin1String("settings")));
+        } else if (type == QLatin1String("config.usageLimitSources")) {
+          // Read when "/usage-limits" answers; nothing redraws for it.
+          m_configElsewhere.insert(QStringLiteral("usageLimitSources"), frame.value(QLatin1String("sources")));
+          return;
         } else {
           return;
         }

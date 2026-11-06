@@ -29,6 +29,8 @@ class AgentsModel : public QAbstractListModel {
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
   // Subagents listed (commands aside).
   Q_PROPERTY(int agentCount READ agentCount NOTIFY countChanged)
+  // Subagents still working (pending, running, waiting): the thread's banner.
+  Q_PROPERTY(int liveAgentCount READ liveAgentCount NOTIFY liveAgentCountChanged)
 
 public:
   enum Role {
@@ -74,6 +76,7 @@ public:
   void redrawEnded();
 
   int agentCount() const;
+  int liveAgentCount() const;
   Q_INVOKABLE int indexOf(const QString& id) const;
   QVariant value(int row, int role) const { return data(index(row), role); }
 
@@ -83,6 +86,7 @@ public:
 
 signals:
   void countChanged();
+  void liveAgentCountChanged();
 
 private:
   struct Row {
@@ -96,6 +100,7 @@ private:
   void updateTimer();
 
   QString m_environment;
+  int m_liveAgents = 0;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_connection;
   QMetaObject::Connection m_timesConnection;

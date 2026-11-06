@@ -120,7 +120,7 @@ Item {
         anchors.top: pluginHeader.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
+        anchors.bottom: agentsBanner.visible ? agentsBanner.top : settledNotice.visible ? settledNotice.top : limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         sending: view.sending
@@ -151,6 +151,10 @@ Item {
         // Another thread of this one's environment.
         onThreadActivated: threadId => Shell.dispatch("rightPanel.openThread", {
                 threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + threadId
+            })
+        onScheduledTaskActivated: taskId => Shell.dispatch("scheduledTasks.open", {
+                environmentId: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":")),
+                taskId: taskId
             })
     }
 
@@ -234,6 +238,54 @@ Item {
         } : null
     }
 
+    // Subagents still working, with a way to the Agents tab while it does not
+    // show (upstream #13572). Static: it changes only as their count does.
+    Rectangle {
+        id: agentsBanner
+
+        readonly property int live: Panel.agents.liveAgentCount
+        readonly property bool agentsShown: (Shell.state.panel?.shownTabs ?? []).some(id => (Shell.state.panel?.tabs ?? []).concat(Shell.state.panel?.stage?.tabs ?? []).some(tab => tab.id === id && tab.kind === "agents"))
+
+        objectName: "agentsBanner"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: settledNotice.visible ? settledNotice.top : limitBanner.visible ? limitBanner.top : parent.bottom
+        visible: live > 0 && !view.draft
+        height: visible ? 32 : 0
+        color: Theme.palette.color("surface", "#141417")
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 8
+            spacing: 8
+
+            Rectangle {
+                width: 6
+                height: 6
+                radius: 3
+                color: Theme.palette.color("ink", "#e5e5e5")
+            }
+            Label {
+                objectName: "agentsBannerTitle"
+                Layout.fillWidth: true
+                text: agentsBanner.live === 1 ? qsTr("1 agent working") : qsTr("%1 agents working").arg(agentsBanner.live)
+                color: Theme.palette.color("ink", "#e5e5e5")
+                font.pixelSize: Theme.type.meta.size
+            }
+            Button {
+                objectName: "agentsBannerView"
+                visible: !agentsBanner.agentsShown
+                text: qsTr("View")
+                flat: true
+                Accessible.name: qsTr("View agents")
+                onClicked: Shell.dispatch("rightPanel.add", {
+                        kind: "agents"
+                    })
+            }
+        }
+    }
+
     // The agent stopped on a usage limit: when it resets and what to do until then.
     LimitRecoveryBanner {
         id: limitBanner
@@ -243,6 +295,17 @@ Item {
         anchors.bottom: parent.bottom
         height: implicitHeight
         visible: recovery !== null && !view.draft
+    }
+
+    // The open thread is settled: it says so, and un-settles from here.
+    ThreadNotice {
+        id: settledNotice
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
+        height: implicitHeight
+        visible: current !== null && !view.draft
     }
 
     // How the thread's new worktree is being prepared.

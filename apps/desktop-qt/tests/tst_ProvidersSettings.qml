@@ -112,7 +112,7 @@ Item {
             verify(email.text !== "ada@example.com");
             compare(email.text.length, "ada@example.com".length);
             compare(email.text.indexOf("@"), 3);
-            compare(email.text, page.redacted("ada@example.com"), "the same account scrambles the same way");
+            compare(email.text, email.redacted("ada@example.com"), "the same account scrambles the same way");
             mouseClick(email);
             compare(email.text, "ada@example.com");
             mouseClick(email);
