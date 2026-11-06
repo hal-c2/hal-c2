@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QObject>
 #include <QString>
 #include <QUrl>
@@ -34,7 +35,8 @@ class ShellBridge;
 //             outside the app that waits for the user; "" otherwise}
 // How the connection to a paired MC is doing is `connection`
 // (ConnectionHealthController), which also pairs again with an MC that refused
-// the session (`connection.pair`): the session that buys is remembered here too.
+// the session (`connection.pair`): the session that buys is remembered here
+// too.
 //
 // Actions: `pairing.pair {link}` and `pairing.forget`, the way back out: the
 // session is deleted from this device, the connection closes, and the shell
@@ -64,8 +66,9 @@ public:
   // `dataDir` is where the session is kept (`pairing.json`, readable by the
   // user alone): the app's private storage on a phone. `device` is what the MC
   // lists this client as.
-  Pairing(ShellBridge* bridge, NativeShell* shell, const QString& dataDir, const pairing::Client& device = thisDevice(),
-          QObject* parent = nullptr);
+  Pairing(ShellBridge *bridge, NativeShell *shell, const QString &dataDir,
+          const pairing::Client &device = thisDevice(),
+          QObject *parent = nullptr);
 
   // Connects to the remembered environment, if there is one. Once, when the
   // shell is set up.
@@ -76,10 +79,9 @@ public slots:
   // the handler of its scheme. Qt for Android calls that from Android's own
   // thread when the app is already running, so this only passes the link on
   // to the pairing's thread.
-  void openLink(const QUrl& url);
+  void openLink(const QUrl &url);
 
 public:
-
   // This device as an MC's client list should show it: "HAL-C2 on <model>",
   // what kind of device it is (a phone, a tablet, or a laptop, which the MC
   // lists as a desktop), and its OS.
@@ -96,34 +98,37 @@ private:
     QString token;
     QString label;
     QString environmentId;
-    bool operator==(const Environment&) const = default;
+    // When the session runs out, if the MC said (McClient renews it before
+    // then).
+    QDateTime expiresAt;
+    bool operator==(const Environment &) const = default;
   };
 
-  bool handle(const QString& action, const QVariant& payload);
-  void pair(const QString& link);
+  bool handle(const QString &action, const QVariant &payload);
+  void pair(const QString &link);
   // A link from outside the app: shown, never spent.
-  void offer(const QString& received);
+  void offer(const QString &received);
   void add();
   void cancel();
-  void paired(const pairing::Result& result);
+  void paired(const pairing::Result &result);
   void askToForget();
   void forget();
   // The shell connected with this credential: it is the one to remember.
-  void remember(const QUrl& origin, const QString& token);
+  void remember(const QUrl &origin, const QString &token);
   // The connected MC described itself: its label and environment may be news.
   void describe();
   void load();
   // Writes `environment` as the session the device keeps, in the place of
   // the one it kept; false, with that one still there, when it cannot.
-  bool save(const Environment& environment);
+  bool save(const Environment &environment);
   void publish();
-  QString explain(const pairing::Result& result) const;
+  QString explain(const pairing::Result &result) const;
 
-  ShellBridge* m_bridge;
-  NativeShell* m_shell;
+  ShellBridge *m_bridge;
+  NativeShell *m_shell;
   QString m_path;
   pairing::Client m_device;
-  QNetworkAccessManager* m_http;
+  QNetworkAccessManager *m_http;
   std::optional<Environment> m_paired;
   // The device keeps `m_paired` as it is here. False while it does not:
   // what the shell connected with by itself (remember) and what the MC says
