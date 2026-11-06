@@ -49,6 +49,12 @@ Pairing::Pairing(ShellBridge* bridge, NativeShell* shell, const QString& dataDir
   connect(shell->client(), &McClient::readyChanged, this, [this](bool ready) {
     if (ready) describe();
   });
+  // A renewed session lasts longer; the next start renews by the new date.
+  connect(shell->client(), &McClient::credentialRenewed, this, [this](const QDateTime& expiresAt) {
+    if (!m_paired || m_paired->expiresAt == expiresAt) return;
+    m_paired->expiresAt = expiresAt;
+    m_saved = save(*m_paired);
+  });
   // Qt for Android ships no TLS of its own: without one bundled, no https link pairs.
   if (!QSslSocket::supportsSsl()) qWarning("[pairing] this build has no TLS: https and wss addresses cannot be reached");
   load();
@@ -57,7 +63,9 @@ Pairing::Pairing(ShellBridge* bridge, NativeShell* shell, const QString& dataDir
 
 void Pairing::start() {
   // The environment it paired with, not whichever answers at its address now.
-  if (m_paired) m_shell->open(m_paired->origin, m_paired->token, m_paired->environmentId);
+  if (!m_paired) return;
+  m_shell->client()->setCredentialExpiry(m_paired->expiresAt);
+  m_shell->open(m_paired->origin, m_paired->token, m_paired->environmentId);
 }
 
 pairing::Client Pairing::thisDevice() {
@@ -184,7 +192,8 @@ void Pairing::pair(const QString& link) {
 
 void Pairing::paired(const pairing::Result& result) {
   const QString environmentId = result.descriptor.value(QLatin1String("environmentId")).toString();
-  const Environment next{result.origin, result.token, result.descriptor.value(QLatin1String("label")).toString(), environmentId};
+  const Environment next{result.origin, result.token, result.descriptor.value(QLatin1String("label")).toString(), environmentId,
+                         result.expiresAt};
   // On the device first: a session that is only in memory is gone at the
   // next start, and the one it replaced would be opened in its place. The
   // link is spent by now, and the session it bought is left with the MC.
@@ -209,6 +218,7 @@ void Pairing::paired(const pairing::Result& result) {
   m_offered.clear();
   m_error.clear();
   publish();
+  m_shell->client()->setCredentialExpiry(result.expiresAt);
   m_shell->open(result.origin, result.token);
 }
 
@@ -247,11 +257,12 @@ void Pairing::forget() {
 }
 
 void Pairing::remember(const QUrl& origin, const QString& token) {
-  Environment next{origin, token, {}, {}};
+  Environment next{origin, token, {}, {}, {}};
   // A new session at the same address is the same MC until it says otherwise.
   if (m_paired && m_paired->origin == origin) {
     next.label = m_paired->label;
     next.environmentId = m_paired->environmentId;
+    if (token == m_paired->token) next.expiresAt = m_paired->expiresAt;
   }
   if (m_paired == next) return;
   // The shell is connected with it already, so it is this device's session
@@ -293,17 +304,19 @@ void Pairing::load() {
   if (!file.open(QIODevice::ReadOnly)) return;
   const QJsonObject saved = QJsonDocument::fromJson(file.readAll()).object();
   const Environment environment{QUrl(saved.value(QLatin1String("origin")).toString()), saved.value(QLatin1String("token")).toString(),
-                                saved.value(QLatin1String("label")).toString(), saved.value(QLatin1String("environmentId")).toString()};
+                                saved.value(QLatin1String("label")).toString(), saved.value(QLatin1String("environmentId")).toString(),
+                                QDateTime::fromString(saved.value(QLatin1String("expiresAt")).toString(), Qt::ISODateWithMs)};
   if (environment.origin.isValid() && !environment.origin.host().isEmpty() && !environment.token.isEmpty()) m_paired = environment;
 }
 
 bool Pairing::save(const Environment& environment) {
   QDir().mkpath(QFileInfo(m_path).absolutePath());
   QSaveFile file(m_path);
-  const QJsonObject saved{{QStringLiteral("origin"), environment.origin.toString()},
-                          {QStringLiteral("token"), environment.token},
-                          {QStringLiteral("label"), environment.label},
-                          {QStringLiteral("environmentId"), environment.environmentId}};
+  QJsonObject saved{{QStringLiteral("origin"), environment.origin.toString()},
+                    {QStringLiteral("token"), environment.token},
+                    {QStringLiteral("label"), environment.label},
+                    {QStringLiteral("environmentId"), environment.environmentId}};
+  if (environment.expiresAt.isValid()) saved.insert(QStringLiteral("expiresAt"), environment.expiresAt.toUTC().toString(Qt::ISODateWithMs));
   // The token is the session: nobody else on the device reads it.
   const bool done = file.open(QIODevice::WriteOnly) && file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) &&
                     file.write(QJsonDocument(saved).toJson(QJsonDocument::Compact)) >= 0 && file.commit();
@@ -326,23 +339,5 @@ void Pairing::publish() {
 }
 
 QString Pairing::explain(const pairing::Result& result) const {
-  const QString address = result.origin.authority();
-  switch (result.outcome) {
-    case pairing::Outcome::Unreachable:
-      return tr("The environment at %1 could not be reached. Check the address, and that this device is on its network.").arg(address);
-    case pairing::Outcome::NotMc:
-      return tr("%1 answered, but it is not a HAL-C2 environment. Check the address.").arg(address);
-    case pairing::Outcome::Incompatible: {
-      QString label = result.descriptor.value(QLatin1String("label")).toString();
-      if (label.isEmpty()) label = address;
-      const bool appIsOlder = result.descriptor.value(QLatin1String("orchestrationProtocolVersion")).toInt() > McClient::kProtocol;
-      return appIsOlder ? tr("This app is too old for %1. Update the app: the two need compatible versions of HAL-C2.").arg(label)
-                        : tr("%1 runs an older HAL-C2 than this app. Update it: the two need compatible versions of HAL-C2.").arg(label);
-    }
-    case pairing::Outcome::Refused:
-      return tr("Pairing failed: the link was already used or has expired. Ask the environment for a fresh one.");
-    case pairing::Outcome::Paired:
-      break;
-  }
-  return {};
+  return pairing::explain(result);
 }

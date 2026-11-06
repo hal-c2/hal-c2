@@ -5,6 +5,7 @@
 #include <QJsonValue>
 #include <QList>
 #include <QNetworkRequest>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
@@ -114,6 +115,22 @@ public:
   // Names an environment for the user, for a call to one the MC cannot reach.
   using Names = std::function<QString(const QString& environment)>;
   void setEnvironmentNames(Names names) { m_names = std::move(names); }
+  // The client serving `environment`, or the cluster MC `mc`, when it is not
+  // this one: the saved environments the shell connects to beside its own
+  // (SavedEnvironments) each have a client. Calls and subscriptions addressed
+  // to one of theirs go there, so callers hold one client whichever
+  // environment they talk to. Asked once per call and per subscription.
+  using Route = std::function<McClient*(const QString& environment, const QString& mc)>;
+  void setRoute(Route route) { m_route = std::move(route); }
+
+  // When the credential runs out; invalid when it does not, or is not known
+  // (the desktop's own MC). An HTTP request made within renewWithin() of then
+  // renews it first (`/api/auth/session/renew`): the socket is not touched,
+  // and a renewal that fails fails only the request that needed it.
+  void setCredentialExpiry(const QDateTime& expiresAt) { m_expiresAt = expiresAt; }
+  QDateTime credentialExpiry() const { return m_expiresAt; }
+  void setRenewWithin(qint64 ms) { m_renewWithinMs = ms; }
+  qint64 renewWithin() const { return m_renewWithinMs; }
 
   // `context` owns the callback, as with a Qt connection: once it is destroyed
   // no reply or frame reaches it, and its subscriptions are ended.
@@ -173,6 +190,8 @@ signals:
   // requests warning, SlowRequestController).
   void callStarted(int id, const QString& environment, const QString& method);
   void callEnded(int id);
+  // The credential was renewed and runs out at `expiresAt` now.
+  void credentialRenewed(const QDateTime& expiresAt);
 
 private:
   void connectSocket();
@@ -180,6 +199,14 @@ private:
   // Asks the MC for a socket ticket and opens with it; a credential it does
   // not know is refused, and anything else is retried.
   void openWithTicket();
+  void requestTicket();
+  // The other client `environment` or `mc` is routed to; null for this one.
+  McClient* routed(const QString& environment, const QString& mc) const;
+  // Whether the credential runs out within renewWithin().
+  bool renewalDue() const;
+  // Renews the credential, then says whether it could (nothing) or why not.
+  void renew(std::function<void(const std::optional<QString>& error)> done);
+  void sendPost(QObject* context, const QString& path, const QJsonObject& body, Reply reply);
   void ping();
   void drop(const QString& reason);
   void failed(const QString& reason, bool wasReady);
@@ -229,6 +256,13 @@ private:
   // The environment the MC must serve.
   QString m_expectedEnvironment;
   Names m_names;
+  Route m_route;
+  // Subscriptions another client carries: this client's id → that one's.
+  QHash<int, std::pair<QPointer<McClient>, int>> m_forwarded;
+  QDateTime m_expiresAt;
+  qint64 m_renewWithinMs = 24LL * 60 * 60 * 1000;
+  // Who waits on the renewal in flight; empty while none is.
+  QList<std::function<void(const std::optional<QString>&)>> m_renewing;
   QString m_traceId;
   QString m_failureTraceId;
   // Why the socket is being dropped from this side ("timeout").

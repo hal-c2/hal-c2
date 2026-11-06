@@ -16,6 +16,10 @@
 
 #include "ConnectionClientSteps.h"
 
+// Whether "the connection is blocked" is about a saved environment, checked
+// as such (ConnectionCatalogSteps.cpp).
+bool savedEnvironmentBlocked(World& world);
+
 namespace connection_client {
 
 const Steps phoneSteps([] {
@@ -51,6 +55,7 @@ const Steps phoneSteps([] {
     comeToForeground();
   });
   step(QStringLiteral("(?:the connection|it) is blocked(?: before opening a socket)?"), [](World& world, const Captures&, const Table&) {
+    if (savedEnvironmentBlocked(world)) return;
     waitForPhase(world, {McClient::Phase::Blocked});
     QCoreApplication::processEvents();
     expect(world.mc.connections.size() == watch(world).connectionsBefore && client(world).phase() == McClient::Phase::Blocked,

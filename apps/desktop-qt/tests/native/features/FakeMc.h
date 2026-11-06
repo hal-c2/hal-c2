@@ -83,7 +83,7 @@ public:
   // Any request under `prefix` ("/api/device-hub/"), HTTP or a socket's
   // handshake: the handler gets the connection with the request unread
   // (`head` is its request line and headers) and answers it itself, or hands
-  // it to a QWebSocketServer of its own.
+  // it to a QWebSocketServer of its own. The longest prefix that matches takes it.
   using RawHandler = std::function<void(QTcpSocket* socket, const QByteArray& head)>;
   void onRaw(const QString& prefix, RawHandler handler) { m_rawHandlers.insert(prefix, std::move(handler)); }
   void offRaw(const QString& prefix) { m_rawHandlers.remove(prefix); }

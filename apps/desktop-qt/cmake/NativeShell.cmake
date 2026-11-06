@@ -70,7 +70,8 @@ function(hal_c2_add_native_library)
   if(APPLE AND NOT IOS)
     target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/MacPlatform.mm")
     set_source_files_properties("${_hal_c2_src}/native/MacPlatform.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(hal_c2_native PUBLIC "-framework AppKit" "-framework ApplicationServices" "-framework Carbon")
+    # Security: the Keychain the saved environments' credentials go to (SecretStore).
+    target_link_libraries(hal_c2_native PUBLIC "-framework AppKit" "-framework ApplicationServices" "-framework Carbon" "-framework Security")
   endif()
   # Snap Shot's xdg-desktop-portal backend talks D-Bus (PortalSnapShot).
   if(UNIX AND NOT APPLE AND NOT ANDROID)
@@ -88,6 +89,7 @@ function(hal_c2_add_native_library)
   # flash and flight (WindowsSnapShot); not built anywhere else.
   if(WIN32)
     target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/win/WindowsSystem.cpp")
-    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi)
+    # advapi32: the Credential Manager (SecretStore).
+    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi advapi32)
   endif()
 endfunction()

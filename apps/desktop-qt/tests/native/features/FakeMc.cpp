@@ -339,10 +339,14 @@ void FakeMc::route(QTcpSocket* socket) {
       const qsizetype end = peeked.indexOf("\r\n\r\n");
       if (end < 0) return;
       const QString path = QString::fromUtf8(peeked.left(peeked.indexOf('\r')).split(' ').value(1));
+      // The longest prefix wins: `/api/auth/session/renew` is not `/api/auth/session`.
+      auto chosen = m_rawHandlers.cend();
       for (auto handler = m_rawHandlers.cbegin(); handler != m_rawHandlers.cend(); ++handler) {
-        if (!path.startsWith(handler.key())) continue;
+        if (path.startsWith(handler.key()) && (chosen == m_rawHandlers.cend() || handler.key().size() > chosen.key().size())) chosen = handler;
+      }
+      if (chosen != m_rawHandlers.cend()) {
         QObject::disconnect(*routed);
-        handler.value()(socket, peeked.left(end + 4));
+        chosen.value()(socket, peeked.left(end + 4));
         return;
       }
     }

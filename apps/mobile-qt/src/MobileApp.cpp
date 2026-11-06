@@ -19,6 +19,7 @@
 #include "PlatformWindow.h"
 #include "PluginController.h"
 #include "Resume.h"
+#include "SavedEnvironmentsController.h"
 #include "Scanner.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -103,6 +104,8 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
       m_theme.get());
   // The one environment the phone is paired with.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
+  // And those paired beside it (SavedEnvironmentsController) are listed as this device too.
+  if (auto* saved = m_native->shared<SavedEnvironmentsController>()) saved->setDevice(options.device);
   m_notifications = std::make_unique<Notifications>(m_bridge.get(), m_native.get(), m_pairing.get(),
                                                     options.pushSystem ? options.pushSystem : devicePushSystem(m_storage.data), m_storage.data);
   m_scanner = std::make_unique<Scanner>(m_bridge.get(), options.camera ? options.camera : deviceCamera());

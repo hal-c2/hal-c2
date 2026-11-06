@@ -11,6 +11,7 @@
 #   packages/client-runtime/src/state/threads.ts (five idle minutes of thread cache)
 #   packages/client-runtime/src/connection/compatibility.ts (ConnectionBlockedError)
 #   packages/client-runtime/src/connection/errors.ts (blocked or transient by the environment's answer, identity mismatch)
+#   apps/desktop-qt/src/native/EnvironmentCatalog.cpp, SavedEnvironmentsController.cpp, McClient.cpp (saved environments, renewal)
 #   apps/web/src/versionSkew.ts (server older than the client, nightly comparison, dismissals)
 #   apps/web/src/connection/storage.ts (corrupt catalog quarantined, secure storage declining a write)
 #   apps/server-ex/lib/hal_c2/environment.ex (serverVersion in the descriptor)
@@ -115,7 +116,7 @@ Feature: Connection health
     Then the client stops retrying
     And asks the user to pair again
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Only the environment with the bad credential stops
     Given two paired environments
     And one of them revoked this client
@@ -150,7 +151,7 @@ Feature: Connection health
     And the client does not keep retrying
 
   # Legacy: packages/client-runtime/src/connection/errors.ts (profileMissingError, credentialMissingError)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario Outline: A saved environment whose record or credential has gone is blocked, not retried
     Given "studio" is saved but <missing>
     When the client connects
@@ -435,13 +436,13 @@ Feature: Connection health
     When the client reconnects
     Then the command is not sent again automatically
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An expiring credential does not close a healthy connection
     Given a connected client whose credential is about to expire
     When the client renews it for an HTTP request
     Then the connection stays open
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A failed renewal affects only its request
     Given a connected client
     When renewing its credential fails for an HTTP request
@@ -455,7 +456,7 @@ Feature: Connection health
     Then its credential, cached data and drafts are cleared
 
   # Legacy: apps/web/src/connection/storage.ts (corrupt catalog quarantined, empty catalog written back)
-  @backlog @desktop
+  @desktop
   Scenario: A damaged record of saved environments is set aside and the app starts with none
     Given the desktop app's record of saved environments is damaged
     When the app starts
@@ -464,7 +465,7 @@ Feature: Connection health
     And the user can pair again without clearing anything by hand
 
   # Legacy: apps/web/src/connection/storage.ts (makeCatalogBackend desktop secure storage declines the write)
-  @backlog @desktop
+  @desktop
   Scenario: Pairing fails when the system's secure storage refuses to keep the credential
     Given the system's secure storage is unavailable to the app
     When the user pairs a new environment

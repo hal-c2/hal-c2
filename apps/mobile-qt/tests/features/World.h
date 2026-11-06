@@ -16,6 +16,7 @@
 #include "FakePushSystem.h"
 #include "MobileApp.h"
 #include "PairableMc.h"
+#include "SecretStore.h"
 
 class NativeShell;
 class QQuickItem;
@@ -57,6 +58,9 @@ public:
   // recorded instead of reaching the system's browser and clipboard.
   QList<QUrl> openedUrls;
   QString clipboard;
+  // The system's secure storage the saved environments' credentials go to,
+  // kept across restarts as the system keeps it; never the device's own.
+  std::shared_ptr<MemorySecretStore::Keys> secrets = std::make_shared<MemorySecretStore::Keys>();
 
   // The user opens the app; nothing when it is open.
   void open();

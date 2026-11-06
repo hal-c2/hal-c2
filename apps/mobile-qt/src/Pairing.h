@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QObject>
 #include <QString>
 #include <QUrl>
@@ -96,6 +97,8 @@ private:
     QString token;
     QString label;
     QString environmentId;
+    // When the session runs out, if the MC said (McClient renews it before then).
+    QDateTime expiresAt;
     bool operator==(const Environment&) const = default;
   };
 

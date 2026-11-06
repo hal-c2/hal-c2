@@ -492,6 +492,78 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     World.put_client(context, "restarted", client)
   end
 
+  # --- renewing a session --------------------------------------------------------
+
+  defp expires_in(context, access, ms) do
+    sql(context, "UPDATE auth_sessions SET expires_at = ?1 WHERE token_hash = ?2", [
+      now() + ms,
+      sha(access)
+    ])
+  end
+
+  step "a client whose session runs out in a day, with a socket open", context do
+    access = standard!(context)
+    expires_in(context, access, :timer.hours(24))
+    admin = socket!(context, admin!(context))
+    admin = Mc.sub(admin, 42, %{"type" => "authAccess"})
+
+    {_, admin} =
+      Mc.await(admin, &(&1["t"] == "authAccess" and &1["event"]["type"] == "snapshot"))
+
+    context
+    |> World.put_client(socket!(context, access))
+    |> World.put_client("admin", admin)
+    |> Map.put(:access, access)
+  end
+
+  step "a client whose session runs out in a year", context do
+    access = standard!(context)
+    expires_in(context, access, :timer.hours(24 * 365))
+    Map.put(context, :access, access)
+  end
+
+  step "it renews its session", context do
+    response =
+      Mc.request(context.mc, :post, "/api/auth/session/renew", bearer: context.access)
+
+    Map.put(context, :response, response)
+  end
+
+  step "its session is valid for 30 days from now, with the same token", context do
+    assert {200, _, %{"expiresAt" => expires}} = context.response
+    {:ok, expires, _} = DateTime.from_iso8601(expires)
+    assert DateTime.diff(expires, DateTime.utc_now(), :hour) in (30 * 24 - 1)..(30 * 24)
+    assert {:ok, %{expires_at: stored}} = HalC2.Auth.session(context.access)
+    assert stored == DateTime.to_unix(expires, :millisecond)
+    Map.put(context, :expires_at, stored)
+  end
+
+  step "administrators watching the access list see the new expiry", context do
+    id = session_id(context.access)
+    expected = context.expires_at
+
+    {_, client} =
+      Mc.await(World.client(context, "admin"), fn frame ->
+        frame["t"] == "authAccess" and frame["event"]["type"] == "clientUpserted" and
+          frame["event"]["payload"]["sessionId"] == id and
+          ms(frame["event"]["payload"]["expiresAt"]) == expected
+      end)
+
+    World.put_client(context, "admin", client)
+  end
+
+  step "its session still runs out in a year", context do
+    assert {200, _, %{"expiresAt" => expires}} = context.response
+    {:ok, expires, _} = DateTime.from_iso8601(expires)
+    assert DateTime.diff(expires, DateTime.utc_now(), :day) in 364..365
+    context
+  end
+
+  defp ms(iso) do
+    {:ok, at, _} = DateTime.from_iso8601(iso)
+    DateTime.to_unix(at, :millisecond)
+  end
+
   # --- access management ---------------------------------------------------------
 
   step ~r/^a client whose session lacks (?<scope>\S+)$/, %{args: [scope]} = context do

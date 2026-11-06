@@ -191,7 +191,22 @@ void McClient::drop(const QString& reason) {
   onClosed(socket);
 }
 
+McClient* McClient::routed(const QString& environment, const QString& mc) const {
+  if (!m_route || (environment.isEmpty() && mc.isEmpty())) return nullptr;
+  McClient* other = m_route(environment, mc);
+  return other == this ? nullptr : other;
+}
+
 int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler onFrame, Resume resume) {
+  const QString environment = shape.contains(QLatin1String("environment")) ? shape.value(QLatin1String("environment")).toString()
+                                                                         : shape.value(QLatin1String("environmentId")).toString();
+  if (McClient* other = routed(environment, shape.value(QLatin1String("mc")).toString())) {
+    const int id = m_nextId++;
+    m_forwarded.insert(id, {other, other->subscribe(context, shape, std::move(onFrame), std::move(resume))});
+    // Its id here goes once that subscription goes with its context.
+    connect(context, &QObject::destroyed, this, [this, id] { m_forwarded.remove(id); });
+    return id;
+  }
   const int id = m_nextId++;
   const auto gone = connect(context, &QObject::destroyed, this, [this, id] { unsubscribe(id); });
   m_subscriptions.insert(id, {shape, std::move(onFrame), gone, std::move(resume)});
@@ -200,16 +215,23 @@ int McClient::subscribe(QObject* context, const QJsonObject& shape, FrameHandler
 }
 
 void McClient::more(int id, int items) {
+  if (const auto forwarded = m_forwarded.value(id); forwarded.first) return forwarded.first->more(forwarded.second, items);
   if (!m_subscriptions.contains(id)) return;
   send({{QStringLiteral("t"), QStringLiteral("more")}, {QStringLiteral("id"), id}, {QStringLiteral("items"), items}});
 }
 
 void McClient::ack(int id, qint64 sequence) {
+  if (const auto forwarded = m_forwarded.value(id); forwarded.first) return forwarded.first->ack(forwarded.second, sequence);
   if (!m_subscriptions.contains(id)) return;
   send({{QStringLiteral("t"), QStringLiteral("ack")}, {QStringLiteral("id"), id}, {QStringLiteral("sequence"), sequence}});
 }
 
 void McClient::unsubscribe(int id) {
+  if (m_forwarded.contains(id)) {
+    const auto forwarded = m_forwarded.take(id);
+    if (forwarded.first) forwarded.first->unsubscribe(forwarded.second);
+    return;
+  }
   if (!m_subscriptions.contains(id)) return;
   endSubscription(id);
   send({{QStringLiteral("t"), QStringLiteral("unsub")}, {QStringLiteral("id"), id}});
@@ -221,6 +243,7 @@ void McClient::endSubscription(int id) {
 
 void McClient::call(QObject* context, const QString& environment, const QString& method, const QJsonValue& payload,
                       Reply reply) {
+  if (McClient* other = routed(environment, {})) return other->call(context, environment, method, payload, std::move(reply));
   if (!m_ready) {
     // Replies are never synchronous, so callers see one order either way.
     QTimer::singleShot(0, context, [reply = std::move(reply)] {
@@ -245,6 +268,45 @@ void McClient::post(QObject* context, const QString& path, const QJsonObject& bo
     QTimer::singleShot(0, context, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
     return;
   }
+  if (!renewalDue()) return sendPost(context, path, body, std::move(reply));
+  renew([this, context = QPointer<QObject>(context), path, body, reply = std::move(reply)](const std::optional<QString>& error) {
+    if (!context) return;
+    if (error) return reply(QJsonValue(), error);
+    sendPost(context, path, body, reply);
+  });
+}
+
+bool McClient::renewalDue() const {
+  return m_expiresAt.isValid() && QDateTime::currentDateTimeUtc().msecsTo(m_expiresAt) <= m_renewWithinMs;
+}
+
+void McClient::renew(std::function<void(const std::optional<QString>& error)> done) {
+  m_renewing.append(std::move(done));
+  // One renewal at a time; whoever asks meanwhile waits on it.
+  if (m_renewing.size() > 1) return;
+  if (!m_http) m_http = new QNetworkAccessManager(this);
+  QNetworkRequest renewal = request(QStringLiteral("/api/auth/session/renew"));
+  renewal.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+  renewal.setTransferTimeout(15000);
+  QNetworkReply* answer = m_http->post(renewal, QByteArrayLiteral("{}"));
+  connect(answer, &QNetworkReply::finished, this, [this, answer] {
+    answer->deleteLater();
+    const int status = answer->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QDateTime expiresAt =
+        QDateTime::fromString(QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("expiresAt")).toString(), Qt::ISODateWithMs);
+    std::optional<QString> error;
+    if (status == 200 && expiresAt.isValid()) {
+      m_expiresAt = expiresAt;
+      emit credentialRenewed(expiresAt);
+    } else {
+      error = QStringLiteral("The environment credential could not be renewed (%1).")
+                  .arg(status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString());
+    }
+    for (const auto& waiting : std::exchange(m_renewing, {})) waiting(error);
+  });
+}
+
+void McClient::sendPost(QObject* context, const QString& path, const QJsonObject& body, Reply reply) {
   if (!m_http) m_http = new QNetworkAccessManager(this);
   QUrl url = m_origin;
   url.setPath(path);
@@ -397,6 +459,12 @@ void McClient::connectSocket() {
     // An MC that does not describe itself is left to the socket to refuse.
     if (m_ticketed) {
       openWithTicket();
+    } else if (renewalDue()) {
+      // The bare token goes in the socket's address: renewed first, like a ticket's.
+      const quint64 generation = m_generation;
+      renew([this, generation](const std::optional<QString>&) {
+        if (generation == m_generation && !m_closed) openSocket();
+      });
     } else {
       openSocket();
     }
@@ -404,6 +472,16 @@ void McClient::connectSocket() {
 }
 
 void McClient::openWithTicket() {
+  if (!renewalDue()) return requestTicket();
+  // A credential about to run out is renewed before it buys a ticket; the
+  // ticket's answer decides what happens if it could not be.
+  const quint64 generation = m_generation;
+  renew([this, generation](const std::optional<QString>&) {
+    if (generation == m_generation && !m_closed) requestTicket();
+  });
+}
+
+void McClient::requestTicket() {
   const quint64 generation = m_generation;
   QNetworkRequest ticket = request(QStringLiteral("/api/auth/websocket-ticket"));
   ticket.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
