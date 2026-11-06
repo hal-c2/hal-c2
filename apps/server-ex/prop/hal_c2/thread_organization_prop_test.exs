@@ -327,7 +327,7 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
           true ->
             # Untouched: the same organization, and the model still describes it.
-            {t, now[t] == before[t] and matches?(thread, now[t], before[t], [], nil)}
+            {t, same?(now[t], before[t]) and matches?(thread, now[t], before[t], [], nil)}
         end
       end
 
@@ -349,9 +349,13 @@ defmodule HalC2.ThreadOrganizationPropTest do
   # The real thread's organization against the model: its values, which stamps are
   # set, the stamps the command did not set anew kept from before, and a sidebar row
   # that shows the same.
+  # The same organization; when the stream last changed is left to `matches?`.
+  defp same?(now, before),
+    do: Map.delete(now || %{}, :updated_at) == Map.delete(before || %{}, :updated_at)
+
   defp matches?(_model, nil, _before, _fresh, _fun), do: false
 
-  defp matches?(model, %{fields: real, row: row, running: running}, before, fresh, fun) do
+  defp matches?(model, %{fields: real, row: row, running: running} = now, before, fresh, fun) do
     stamps_set =
       %{
         "settledAt" => model.override == "settled",
@@ -389,7 +393,10 @@ defmodule HalC2.ThreadOrganizationPropTest do
 
     auto? = fun != :auto_settle or real["settledAt"] == @auto_settled_at
 
-    values? and stamps? and auto? and row == Map.delete(real, "activeOrderKey")
+    # A setting, not activity: turning auto-settle off or on leaves `updatedAt` alone.
+    quiet? = fun != :auto_settle_set or now.updated_at == before.updated_at
+
+    values? and stamps? and auto? and quiet? and row == Map.delete(real, "activeOrderKey")
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -527,7 +534,8 @@ defmodule HalC2.ThreadOrganizationPropTest do
           %{
             fields: Map.new(@organization, &{&1, JS.get(thread, &1)}),
             row: Map.new(@organization -- ["activeOrderKey"], &{&1, row[&1]}),
-            running: Enum.any?(statuses, &(&1 in @active))
+            running: Enum.any?(statuses, &(&1 in @active)),
+            updated_at: state.updated_at
           }
       end
     end
