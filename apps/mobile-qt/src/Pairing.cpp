@@ -56,7 +56,8 @@ Pairing::Pairing(ShellBridge* bridge, NativeShell* shell, const QString& dataDir
 }
 
 void Pairing::start() {
-  if (m_paired) m_shell->open(m_paired->origin, m_paired->token);
+  // The environment it paired with, not whichever answers at its address now.
+  if (m_paired) m_shell->open(m_paired->origin, m_paired->token, m_paired->environmentId);
 }
 
 pairing::Client Pairing::thisDevice() {
