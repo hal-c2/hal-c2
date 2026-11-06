@@ -80,13 +80,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- hal-c2://pair?pairingUrl=<pairing link>, which an MC's /pair
-                 page offers a phone's browser. Qt hands the address to the
+                 page offers a phone's browser, and hal-c2://usage/limits, the
+                 Subscription usage widget's tap. Qt hands the address to the
                  `hal-c2` handler MobileApp sets, which only ever shows it. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="hal-c2" android:host="pair" />
+                <data android:scheme="hal-c2" android:host="usage" />
             </intent-filter>
 
             <meta-data
@@ -114,6 +116,19 @@
         <receiver
             android:name="io.github.halc2.mobile.DismissReceiver"
             android:exported="false" />
+
+        <!-- The Subscription usage widget (src/SubscriptionWidget.h). -->
+        <receiver
+            android:name="io.github.halc2.mobile.UsageWidget"
+            android:label="@string/hal_c2_usage_widget_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hal_c2_usage_widget_info" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
