@@ -13,6 +13,8 @@
 #   apps/tui/src/components/Sidebar.tsx (context menu)
 #   packages/contracts/src/shell.ts (thread.menu)
 # Moving a thread to another machine from the menu is specified in threads/moving-between-machines.feature.
+#   https://github.com/pingdotgg/t3code/pull/10637
+#   https://github.com/pingdotgg/t3code/pull/15436
 
 Feature: Thread menu and selecting several threads
   Every thread has a menu of the things the user can do to it. Selecting several threads
@@ -189,3 +191,15 @@ Feature: Thread menu and selecting several threads
     When the user deletes the selection
     Then "A" is deleted
     And no thread is selected
+
+  @backlog @desktop
+  Scenario: A draft row has its own menu
+    When the user opens the menu of a draft thread in the sidebar
+    Then it offers Copy path or branch (only what the draft has), Project settings, and Discard draft
+    And discarding shows the same undo notice as the hover discard
+
+  @backlog @shared
+  Scenario: Linking an unsent draft opens the thread picker
+    Given a draft that has not been sent
+    When the user chooses "Link to this thread"
+    Then the picker of existing threads opens and the draft's text is untouched

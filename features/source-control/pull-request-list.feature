@@ -35,6 +35,7 @@
 #   apps/server/src/pullRequest/BitbucketPullRequestApi.ts, bitbucketPullRequestJson.ts
 #   apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts (draft markers, web addresses)
 #   apps/web/src/components/ChatView.tsx (a pull request tab beside a thread on an environment that cannot read pull requests)
+#   https://github.com/pingdotgg/t3code/pull/15549
 
 Feature: Browsing pull requests
   The pull requests page gathers pull requests from every project in the workspace, with
@@ -1827,3 +1828,9 @@ Feature: Browsing pull requests
     When the user lists open pull requests
     Then its row shows no labels
     And the row claims no added or removed lines
+
+  @backlog @desktop
+  Scenario: The pull request list offers one-click actions on request
+    When the user asks for quick actions on the list
+    Then open pull requests offer close and merge, drafts close and ready for review, closed ones reopen
+    And merged ones offer none, and ending the request restores the rows

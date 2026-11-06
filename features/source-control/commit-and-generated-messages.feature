@@ -15,6 +15,8 @@
 #   apps/tui/src/store.ts (runGitAction)
 #   apps/server/src/textGeneration/TextGenerationUtils.ts (commit subject cap, PR title fallback)
 #   apps/server/src/git/GitManager.ts (runPrStep: reuse, base branch, bounded context, body file)
+#   https://github.com/pingdotgg/t3code/pull/15532
+#   https://github.com/pingdotgg/t3code/pull/15441
 
 Feature: Committing with written or generated messages
   The user reviews what goes into a commit, may leave the message to the writer model,
@@ -296,3 +298,15 @@ Feature: Committing with written or generated messages
     And the user commits with the message "Add tax"
     Then the action ran on "env-c"
     And a commit "Add tax" holds both files
+
+  @backlog @mc
+  Scenario: Failing to write a commit message leaves staging alone
+    Given some changes are unstaged
+    When generating the commit message fails
+    Then nothing was staged and no commit exists
+
+  @backlog @mc
+  Scenario: A Forgejo or Gitea pull request is not called conflicted without evidence
+    Given the host reports the pull request as not mergeable
+    When its status is read
+    Then mergeability is unknown, not conflicted

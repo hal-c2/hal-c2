@@ -23,6 +23,10 @@
 #   https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.3.1/packages/agent-core-v2/docs/wire-manifest.d.ts (Kimi's session records)
 #   apps/server-ex/lib/hal_c2/acp/kimi.ex (Kimi's subagents, read from those records)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
+#   https://github.com/pingdotgg/t3code/pull/15056
+#   https://github.com/pingdotgg/t3code/pull/15384
+#   https://github.com/pingdotgg/t3code/pull/15505
+#   https://github.com/pingdotgg/t3code/pull/15506
 
 Feature: Tool calls and file changes
   The agent's work shows as tool calls between its messages. Calls group into a short
@@ -733,3 +737,28 @@ Feature: Tool calls and file changes
     Given the turn failed with a provider error
     Then the failure row stays open with its message
     And the row has nothing more to expand
+
+  @backlog @shared
+  Scenario: The thinking row after a failed call still opens the run's tool calls
+    Given the latest tool call of a running turn failed and the live row reads "Thinking"
+    When the user opens that row
+    Then the run's tool calls show below it and close again when it is closed
+
+  @backlog @shared
+  Scenario: Tool inputs that are JSON are highlighted
+    Given a tool call whose input is valid JSON
+    When the user inspects the call
+    Then the input is highlighted for the current theme
+    And an input that is not JSON shows as plain text
+
+  @backlog @shared
+  Scenario: An expanded command or tool call shows its output
+    Given a finished command whose output was not sent with the thread
+    When the user expands the call
+    Then the MC supplies its stored output, limited to 256 KiB per value
+    And a call with nothing more to show does not expand
+
+  @backlog @shared
+  Scenario: An expanded call shows the call above a muted result
+    When the user expands a tool call
+    Then the full call shows first and its result below it, muted, without cards or labels

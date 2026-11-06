@@ -22,6 +22,7 @@
 #   apps/server/src/provider/CodexDeveloperInstructions.ts, apps/server/src/provider/CodexTurnTokenUsage.ts
 #   apps/server/src/provider/CodexToolPresentation.ts, apps/server/src/provider/Layers/codexLaunchArgs.ts
 #   packages/contracts/src/rpc.ts (provider.uploadFeedback, provider.consumeResetCredit)
+#   https://github.com/pingdotgg/t3code/pull/15389
 
 @plugin-codex @mc
 Feature: Codex
@@ -903,3 +904,10 @@ Feature: Codex
       | 0.149.0 | unsupported |
       | 0.155.0 | unsupported |
       | 0.156.0 | supported   |
+
+  @backlog
+  Scenario: A thread whose Codex session was archived outside HAL-C2 resumes it
+    Given the native Codex session of a thread was archived by Codex itself
+    When the user sends a turn
+    Then the MC unarchives that same session and resumes it once
+    And an unrelated resume error is shown as it is

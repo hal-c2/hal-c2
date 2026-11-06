@@ -31,6 +31,8 @@
 #   apps/server/src/orchestration-v2/RestartContinuation.ts (which cut-off turns are continued, once)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
 #   docs/user/ (continuing threads after an update)
+#   https://github.com/pingdotgg/t3code/pull/15323
+#   https://github.com/pingdotgg/t3code/pull/15604
 Feature: Recovering from restarts and releasing idle sessions
   Provider processes that cannot go on through a restart (reattach-after-restart.feature)
   are killed at the next boot, before any thread goes on. At boot the engine ends
@@ -515,3 +517,22 @@ Feature: Recovering from restarts and releasing idle sessions
     And "t1" records a limit recovery with auto-resume for that run and reset
     When 14:00 passes
     Then nothing is sent to "t1"
+
+  @backlog @mc
+  Scenario: A restart does not report a delegated child's interrupted result as final
+    Given "continue threads after restarts" is on
+    When the MC restarts mid-delegation
+    Then the child's interrupted result is held until its continuation settles
+
+  @backlog @mc
+  Scenario: A restart keeps queued work waiting and work the user stopped stopped
+    Given "continue threads after restarts" is on and a thread has held queued work and a stopped run
+    When the MC restarts
+    Then the queued work waits for recovery and the stopped run is not continued
+
+  @backlog @mc
+  Scenario: A settled thread stays asleep after a restart
+    Given a completed thread has leftover background tool or subagent records
+    When the MC restarts
+    Then the thread is not woken
+    And its background cleanup note reaches the provider once, on the next manual turn

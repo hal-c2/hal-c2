@@ -2,6 +2,7 @@
 #   apps/mobile/src/features/voice-input/ (on-device dictation states, errors, draft safety)
 #   packages/client-runtime/src/voice-input/controller.ts, transcription.ts (where the transcript goes, spacing)
 # Composer drafting is specified in features/composer/. Dictation is phone-only.
+#   https://github.com/pingdotgg/t3code/pull/15502
 
 Feature: Dictating a message
   The user can speak a message into the composer. Dictation only ever edits the draft; the
@@ -218,3 +219,10 @@ Feature: Dictating a message
     Given music was playing before the user started dictating
     When dictation ends
     Then the music plays again
+
+  @backlog @mobile
+  Scenario: Dictation keeps running when the user navigates away
+    Given the user is dictating into a prompt
+    When they leave that screen
+    Then recording continues behind a small pill showing the time and its target
+    And finishing returns the transcript to the prompt where it began

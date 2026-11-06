@@ -22,6 +22,7 @@
 #   docs/internals/desktop-qt.md (web engine profile, shell directory)
 #   docs/operations/development.md (State and ports)
 #   docs/user/install.md (Coming from T3 Code)
+#   https://github.com/pingdotgg/t3code/pull/15009
 
 Feature: Where HAL-C2 keeps its files
   HAL-C2 follows the XDG Base Directory layout on every platform. Settings, data the
@@ -397,6 +398,12 @@ Feature: Where HAL-C2 keeps its files
       When the user deletes "~/.cache/hal-c2" and restarts the MC
       Then the threads, settings, provider sign-ins and secrets are all still there
       And downloaded tools are fetched again when they are next needed
+
+    @backlog @mc
+    Scenario: A settings file that is a symbolic link stays one when saved
+      Given settings.json is a symbolic link into a dotfiles repository
+      When settings are saved
+      Then the target file is rewritten and the link remains
 
   Rule: The desktop app's and the hosted server's files are sorted by kind
 

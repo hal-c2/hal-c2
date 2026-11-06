@@ -21,6 +21,8 @@
 #     (queueing before the window is ready, timeouts, closing, request limits, socket privacy)
 #   https://github.com/pingdotgg/t3code/pull/13612
 #   https://github.com/pingdotgg/t3code/pull/15060
+#   https://github.com/pingdotgg/t3code/pull/15356
+#   https://github.com/pingdotgg/t3code/pull/15391
 
 Feature: Creating threads
   A thread is the durable conversation for a project. Starting one keeps the user's
@@ -418,3 +420,17 @@ Feature: Creating threads
     When the user presses the Start in Background keybinding
     Then the thread starts in the background and a fresh composer opens
     And both Mod+Enter and Mod+Alt+Enter are bound to it by default
+
+  @backlog @shared
+  Scenario: A draft without a project can switch machines
+    Given a new thread without a project
+    When the user picks another connected machine that offers a scratch folder
+    Then the draft moves to that machine's scratch folder, created on first use
+    And sending waits for that setup
+
+  @backlog @shared
+  Scenario: A keybinding steps a new thread to the next machine
+    Given a new thread draft and more than one machine
+    When the user presses the Cycle Host key
+    Then the draft moves to the next machine, as choosing it from the machine menu would
+    And no key is bound to it by default on desktop

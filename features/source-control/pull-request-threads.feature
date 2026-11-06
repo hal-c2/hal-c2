@@ -33,6 +33,8 @@
 #   apps/server/src/sourceControl/gitHubPullRequests.ts, gitLabMergeRequests.ts, bitbucketPullRequests.ts, forgejoPullRequests.ts (cross-repository detection)
 #   apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, listChangeRequests, createChangeRequest)
 #   https://github.com/pingdotgg/t3code/pull/15057
+#   https://github.com/pingdotgg/t3code/pull/15061
+#   https://github.com/pingdotgg/t3code/pull/14242
 
 Feature: Threads that work on or link pull requests
   A thread can start from a pull request, checked out locally or in its own worktree,
@@ -838,3 +840,15 @@ Feature: Threads that work on or link pull requests
     Given a watched pull request
     When it merges or closes, is unwatched, brings ten comment-only wakes in a row, or cannot be read for 15 minutes
     Then watching stops and the agent is told why
+
+  @backlog @shared
+  Scenario: The pull request panel opens for any linked pull request
+    Given a thread has a pull request linked through the MCP tool or the dialog
+    When the user opens the pull request panel
+    Then it is enabled and shows that pull request
+
+  @backlog @shared
+  Scenario: A pull request link that is really an issue says so
+    Given a chat link of the form "/pull/N" where N is an issue
+    When the user opens it
+    Then the viewer says the host has no such pull request, with no retry that cannot succeed

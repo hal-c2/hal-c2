@@ -14,6 +14,7 @@
 #   apps/web/src/openVsxThemes.ts
 #   packages/shared/src/keybindings.ts (themeEditor.toggle)
 #   https://github.com/pingdotgg/t3code/pull/14499
+#   https://github.com/pingdotgg/t3code/pull/14498
 
 Feature: Custom themes
   Users create, import, edit, share and remove their own themes, and can pick a color
@@ -906,6 +907,12 @@ Feature: Custom themes
       When the user opens it again
       Then the search box is empty and no results are shown
       And the sort order is back to Most downloaded
+
+    @backlog @shared
+    Scenario: An imported theme keeps switches and focus rings visible
+      Given an imported theme whose input border or focus colour is transparent
+      When it is applied
+      Then switches, input borders and focus rings stay distinguishable
 
   Rule: Sharing and removing
 

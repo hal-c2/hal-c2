@@ -18,6 +18,7 @@
 #   docs/internals/desktop-qt.md (process model)
 #   apps/web/src/legacyStorage.ts, apps/web/src/clientPersistenceStorage.ts (what a browser kept; dropped)
 #   Shared domain: connections/ owns pairing; mc/platform/ owns the MC's side of the bootstrap.
+#   https://github.com/pingdotgg/t3code/pull/15440
 
 Feature: The desktop app runs its own MC
   Started on its own, the Qt desktop app starts an MC on this machine and connects to
@@ -383,6 +384,11 @@ Feature: The desktop app runs its own MC
       Given the desktop settings file holds a Tailscale HTTPS port outside 1 to 65535
       When the user starts the desktop app
       Then Tailscale HTTPS uses port 443
+
+    @backlog @desktop
+    Scenario: The version prints without a display
+      When the desktop is started with --version and no display is available
+      Then it prints its version and exits successfully
 
   Rule: The app fits the desktop it runs on
 

@@ -33,6 +33,10 @@
 #   packages/client-runtime/src/state/shellReducer.ts (a repository that is not resolved yet keeps the earlier one)
 #   https://github.com/pingdotgg/t3code/pull/13926
 #   https://github.com/pingdotgg/t3code/pull/15034
+#   https://github.com/pingdotgg/t3code/pull/15346
+#   https://github.com/pingdotgg/t3code/pull/15418
+#   https://github.com/pingdotgg/t3code/pull/14768
+#   https://github.com/pingdotgg/t3code/pull/14587
 
 Feature: The thread list
   The thread list shows every thread the user can act on, grouped by how much attention
@@ -728,7 +732,7 @@ Feature: The thread list
     When a screen reader moves through the sidebar from its first thread
     Then "one" and then "two" are reached before the settled shelf and its footer
 
-  @backlog @desktop
+  @backlog @desktop @mobile
   Scenario: The Working section folds away busy threads
     Given Working section is on in General settings
     When threads are working, connecting or monitoring
@@ -741,3 +745,20 @@ Feature: The thread list
     When the user picks a Project order in General settings
     Then the sidebar sorts projects that way
     And Restore defaults resets it
+
+  @backlog @shared
+  Scenario: Working threads keep their order while agents finish and wake
+    Given several threads are in the Working section
+    When an agent run ends, or a subagent result or pull request watch wakes a thread
+    Then the section is ordered by the last message the user sent, newest first, and no row moves
+
+  @backlog @desktop
+  Scenario: Dragging across rows settles, un-settles or wakes them together
+    When the user presses a row's Settle, Un-settle or Wake button and drags across nearby rows
+    Then releasing applies the action to every row swept in that section
+    And Escape or losing focus cancels it, and a plain click keeps its single-row action
+
+  @backlog @shared
+  Scenario: A thread's status has a spoken name
+    When a screen reader reaches a thread's status marker
+    Then it announces Working, Awaiting input or Pending approval

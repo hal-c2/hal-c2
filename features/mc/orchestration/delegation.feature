@@ -15,6 +15,7 @@
 #     SubagentProjection.ts (notification summaries, result fallbacks, work states, subagent
 #     thread titles)
 #   apps/server/src/mcp/ (orchestrator toolkit)
+#   https://github.com/pingdotgg/t3code/pull/15115
 Feature: Delegating tasks to subagents
   A running agent can hand a task to a subagent. The engine starts a child thread
   marked as a subagent of the caller, records the task in the caller's timeline,
@@ -763,3 +764,10 @@ Feature: Delegating tasks to subagents
     When the provider of "parent" starts a subagent with the prompt "Check the tests"
     Then the subagent's thread opens with the message "Check the tests" written by the agent
     And the message names "parent" as the thread that sent it
+
+  @backlog @mc
+  Scenario: Each review round is a new delegated task
+    Given a delegated review task has finished
+    When the parent wants the child to review again
+    Then the instructions tell it to start a new delegated task with the full context and a new request id
+    And cancelling the finished task leaves later runs of the child thread alone
