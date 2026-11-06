@@ -39,6 +39,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/terminal.feature"),
     QStringLiteral("terminal/*.feature"),
     QStringLiteral("space/pages.feature"),
+    QStringLiteral("timeline/plans-and-subagents.feature"),
     QStringLiteral("space/page-history.feature"),
     QStringLiteral("space/agent-in-page.feature"),
     QStringLiteral("space/prompt.feature"),

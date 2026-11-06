@@ -15,7 +15,8 @@ import HalC2.Bricks
 // composer for the next message. The pull requests are the phone's git
 // overview: where they are linked, refreshed and opened, and where a thread is
 // started on one. Files dropped anywhere on the centre or the composer join
-// the draft.
+// the draft. Above the composer, the subagents of the turn while it works
+// (TurnAgents), which open to their list.
 Item {
     id: screen
 
@@ -150,6 +151,25 @@ Item {
             sourceComponent: ({ files: files, diff: diff, "pull-requests": pullRequests })[screen.panelKind] ?? review
         }
 
+        // The subagents of the turn while they or the turn work: "2 of 3
+        // agents working", which opens their list.
+        ItemDelegate {
+            objectName: "agentsStatus"
+            Layout.fillWidth: true
+            visible: turnAgents.summary.length > 0 && !screen.panelShown
+            implicitHeight: 36
+            text: turnAgents.summary
+            icon.name: "bot"
+            onClicked: agentsSheet.open()
+
+            contentItem: Label {
+                text: parent.text
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+            }
+        }
+
         Composer {
             id: composerView
 
@@ -167,6 +187,121 @@ Item {
         height: composerView.y + composerView.height - centre.y
         visible: composerView.visible
         composer: composerView
+    }
+
+    TurnAgents {
+        id: turnAgents
+
+        timeline: screen.threadKey.length > 0 ? Threads.timeline : null
+        active: agentsSheet.visible
+    }
+
+    // The turn's subagents, each with its state and how long it took; one with
+    // a thread of its own opens it, one the provider manages works in this
+    // conversation (ThreadAgentsSheet).
+    Popup {
+        id: agentsSheet
+
+        objectName: "agentsSheet"
+        parent: Overlay.overlay
+        modal: true
+        focus: true
+        x: (parent.width - width) / 2
+        y: parent.height - height
+        width: Math.min(parent.width, 520)
+        height: Math.min(implicitHeight, parent.height - 24)
+        padding: 12
+
+        background: MobileSurface {}
+        Overlay.modal: Rectangle {
+            color: Qt.rgba(0, 0, 0, 0.5)
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Agents")
+                font.weight: Font.DemiBold
+                color: Theme.palette.color("text", "#e4e4e7")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: turnAgents.count === 0
+                text: qsTr("No agents in this turn.")
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+            }
+
+            ListView {
+                objectName: "agentsList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                implicitHeight: Math.min(contentHeight, 420)
+                clip: true
+                model: turnAgents
+
+                delegate: ItemDelegate {
+                    id: agent
+
+                    required property string agentId
+                    required property string title
+                    required property string statusLabel
+                    required property string elapsed
+                    required property string thread
+                    readonly property bool opens: thread.length > 0
+
+                    objectName: "agent:" + title
+                    width: ListView.view.width
+                    enabled: opens
+                    onClicked: {
+                        agentsSheet.close();
+                        Shell.dispatch("rightPanel.openThread", { threadKey: agent.thread });
+                    }
+
+                    contentItem: RowLayout {
+                        spacing: 12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                objectName: "agentTitle"
+                                Layout.fillWidth: true
+                                text: agent.title
+                                elide: Text.ElideRight
+                                font.weight: Font.Medium
+                                color: Theme.palette.color("text", "#e4e4e7")
+                            }
+                            Label {
+                                objectName: "agentStatus"
+                                Layout.fillWidth: true
+                                text: agent.opens ? agent.statusLabel : qsTr("%1 · Its work appears in the conversation").arg(agent.statusLabel)
+                                elide: Text.ElideRight
+                                color: Theme.palette.color("textMuted", "#a1a1aa")
+                            }
+                        }
+                        Label {
+                            objectName: "agentElapsed"
+                            visible: text.length > 0
+                            text: agent.elapsed
+                            font.features: {
+                                "tnum": 1
+                            }
+                            color: Theme.palette.color("textMuted", "#a1a1aa")
+                        }
+                        ShellChevron {
+                            visible: agent.opens
+                            direction: "right"
+                            size: 12
+                            color: Theme.palette.color("textMuted", "#a1a1aa")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Component {

@@ -13,6 +13,7 @@
 #include "LocalFolderModel.h"
 #include "Maintenance.h"
 #include "MobileTerminal.h"
+#include "TurnAgents.h"
 #include "NativeShell.h"
 #include "Notifications.h"
 #include "PlatformWindow.h"
@@ -41,6 +42,7 @@ void MobileApp::prepare() {
 #endif
   qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
   qmlRegisterType<TerminalEvents>("HalC2.Shell", 1, 0, "TerminalEvents");
+  qmlRegisterType<TurnAgents>("HalC2.Shell", 1, 0, "TurnAgents");
   // The open source notices are compiled into a package (cmake/Licenses.cmake).
   // A build for this machine has none, and the page says it could not load.
   LicensesController::setManifestPath(QStringLiteral(":/hal-c2/licenses/third-party-licenses.json"));
