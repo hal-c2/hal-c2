@@ -105,15 +105,20 @@ private slots:
       QVariantList waiting;
       for (const QueuedRun& run : expected) {
         if (run.kind == 0) {
-          queue.append(QVariantMap{{QStringLiteral("runId"), run.id}, {QStringLiteral("text"), QStringLiteral("follow up ") + run.id}});
+          queue.append(QVariantMap{{QStringLiteral("runId"), run.id},
+                                   {QStringLiteral("messageId"), QStringLiteral("message-") + run.id},
+                                   {QStringLiteral("text"), QStringLiteral("follow up ") + run.id},
+                                   {QStringLiteral("attachments"), QVariantList()}});
         } else if (run.kind == 3) {
           waiting.append(QVariantMap{{QStringLiteral("runId"), run.id},
                                      {QStringLiteral("summary"), QStringLiteral("Background activity updated")},
-                                     {QStringLiteral("outcome"), QStringLiteral("updated")}});
+                                     {QStringLiteral("outcome"), QStringLiteral("updated")},
+                                     {QStringLiteral("workerThreadId"), QString()}});
         } else {
           waiting.append(QVariantMap{{QStringLiteral("runId"), run.id},
                                      {QStringLiteral("summary"), QStringLiteral("Task ") + run.id + QStringLiteral(" failed")},
-                                     {QStringLiteral("outcome"), QStringLiteral("failed")}});
+                                     {QStringLiteral("outcome"), QStringLiteral("failed")},
+                                     {QStringLiteral("workerThreadId"), QString()}});
         }
       }
 
