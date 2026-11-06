@@ -21,6 +21,9 @@ AbstractButton {
     // ids are offered, and a choice is only said (chosen).
     property var onlyInstances: null
     readonly property var catalogue: Shell.state.modelPicker ?? null
+    // Whether models can be starred: not where the picker offers what is not a
+    // chat model, such as a Space's image models.
+    readonly property bool favorites: catalogue?.favorites ?? true
     readonly property var instances: {
         const all = catalogue ? catalogue.instances : [];
         return onlyInstances === null ? all : all.filter(instance => onlyInstances.includes(instance.instanceId));
@@ -383,6 +386,8 @@ AbstractButton {
                         spacing: 4
 
                         RailButton {
+                            visible: control.favorites
+                            available: control.favorites
                             railId: Picker.FAVORITES
                             tooltip: qsTr("Favorites")
                             objectName: "modelPickerProvider:favorites"
@@ -397,6 +402,7 @@ AbstractButton {
                         }
 
                         Rectangle {
+                            visible: control.favorites
                             width: parent.width - 8
                             height: 1
                             color: control.divider
@@ -781,6 +787,7 @@ AbstractButton {
                     readonly property bool favorite: row.model !== null && row.model.isFavorite
 
                     objectName: row.instance && row.model ? "modelPickerFavorite:" + row.instance.instanceId + ":" + row.model.slug : ""
+                    visible: control.favorites
                     implicitWidth: 24
                     implicitHeight: 24
                     enabled: row.disabledReason.length === 0

@@ -75,6 +75,12 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
                              const QString& selectedModel, bool started,
                              const QString& currentInstance, const QString& currentModel);
 
+// Whether `space.image.providers`' answer offers `model` from a ready `instanceId`.
+bool offersImageModel(const QVariantMap& offer, const QString& instanceId, const QString& model);
+// `modelPicker.instances` for a Space's images: each provider of the answer,
+// drawn as the catalogue draws it, with its image models.
+QVariantList imagePickerInstances(const QVariantMap& offer, const QList<Instance>& catalogue);
+
 // The selected model's option descriptors with their current values.
 QJsonArray descriptors(const QJsonObject& model, const QJsonArray& selections, bool planModeEnabled);
 // `composer.options`.

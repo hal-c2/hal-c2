@@ -95,7 +95,7 @@ Item {
         }
 
         // Background: a project with an open thread on Codex.
-        function createPicker(instances) {
+        function createPicker(instances, favorites) {
             Shell.state = {
                 composer: Object.assign(Shell.defaultComposer(), {
                     selectedInstanceId: "codex",
@@ -103,6 +103,7 @@ Item {
                 }),
                 modelPicker: {
                     instances: instances,
+                    favorites: favorites ?? true,
                     shortcut: "Ctrl+Shift+M",
                     previousProvider: chord("arrowup", true),
                     nextProvider: chord("arrowdown", true),
@@ -288,6 +289,19 @@ Item {
             tryCompare(inPicker(picker, "modelPickerProvider:claudeAgent"), "activeFocus", true);
             keyClick(Qt.Key_Return);
             tryCompare(picker, "view", "claudeAgent");
+        }
+
+        // A picker without favorites (the images' prompt) leaves them off the
+        // rail for the keyboard too.
+        function test_the_rail_keys_skip_favorites_when_there_are_none() {
+            const picker = createPicker([codex(), claude()], false);
+            openPicker(picker);
+            keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
+            tryCompare(inPicker(picker, "modelPickerProvider:codex"), "activeFocus", true);
+            keyClick(Qt.Key_Up);
+            tryCompare(inPicker(picker, "modelPickerProvider:claudeAgent"), "activeFocus", true);
+            keyClick(Qt.Key_Down);
+            tryCompare(inPicker(picker, "modelPickerProvider:codex"), "activeFocus", true);
         }
 
         function test_the_user_jumps_to_a_model_by_its_number() {

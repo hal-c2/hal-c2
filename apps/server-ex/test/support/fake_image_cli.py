@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Fake `codex exec` and `grok -p` for image generation tests. Appends each call (argv,
-# cwd, prompt) to $FAKE_IMAGE_LOG and leaves a small PNG in the directory it runs in.
+# cwd, prompt, and the image model Grok was told to use) to $FAKE_IMAGE_LOG and leaves a small PNG in the directory it runs in.
 # $FAKE_IMAGE_MODE changes that: "none" leaves nothing, "text" leaves a file that is not
 # an image, "fail" fails the call, and "hang" outlasts the MC's patience.
 import base64, json, os, sys, time
@@ -15,7 +15,14 @@ prompt = sys.stdin.read()
 log = os.environ.get("FAKE_IMAGE_LOG")
 if log:
     with open(log, "a") as f:
-        f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt}) + "\n")
+        f.write(json.dumps(
+                {
+                    "argv": args,
+                    "cwd": os.getcwd(),
+                    "prompt": prompt,
+                    "imageModel": os.environ.get("GROK_IMAGE_GEN_MODEL_OVERRIDE"),
+                }
+            ) + "\n")
 
 mode = os.environ.get("FAKE_IMAGE_MODE") or "png"
 if mode == "fail":

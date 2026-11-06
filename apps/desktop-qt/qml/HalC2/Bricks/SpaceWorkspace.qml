@@ -169,7 +169,6 @@ Rectangle {
                 anchors.fill: parent
                 visible: workspace.imagesShown
                 onAddRequested: imageDialog.open()
-                onGenerateRequested: generateDialog.open()
                 onCloseRequested: workspace.imagesShown = false
             }
         }
@@ -232,10 +231,6 @@ Rectangle {
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp)"), qsTr("All files (*)")]
         onAccepted: Shell.dispatch("space.image.addFile", { url: selectedFile.toString() })
-    }
-
-    SpaceImageDialog {
-        id: generateDialog
     }
 
     SpaceFilePicker {}

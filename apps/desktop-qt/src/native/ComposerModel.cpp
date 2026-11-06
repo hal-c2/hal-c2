@@ -467,6 +467,66 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
   return result;
 }
 
+bool offersImageModel(const QVariantMap& offer, const QString& instanceId, const QString& model) {
+  const QVariantList providers = offer.value(QStringLiteral("providers")).toList();
+  return std::any_of(providers.cbegin(), providers.cend(), [&](const QVariant& value) {
+    const QVariantMap provider = value.toMap();
+    if (provider.value(QStringLiteral("instanceId")).toString() != instanceId ||
+        provider.value(QStringLiteral("status")).toString() != QLatin1String("ready")) {
+      return false;
+    }
+    const QVariantList models = provider.value(QStringLiteral("models")).toList();
+    return std::any_of(models.cbegin(), models.cend(),
+                       [&](const QVariant& m) { return m.toMap().value(QStringLiteral("slug")).toString() == model; });
+  });
+}
+
+QVariantList imagePickerInstances(const QVariantMap& offer, const QList<Instance>& catalogue) {
+  const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
+  QVariantList result;
+  for (const QVariant& value : offer.value(QStringLiteral("providers")).toList()) {
+    const QVariantMap provider = value.toMap();
+    const QString id = provider.value(QStringLiteral("instanceId")).toString();
+    const QString driver = provider.value(QStringLiteral("driver")).toString();
+    const bool ready = provider.value(QStringLiteral("status")).toString() == QLatin1String("ready");
+    const QString message = provider.value(QStringLiteral("message")).toString();
+    const Instance* known = find(catalogue, id);
+    const QString name = known && !known->displayName.isEmpty() ? known->displayName : id;
+    QVariantList models;
+    for (const QVariant& entry : provider.value(QStringLiteral("models")).toList()) {
+      const QVariantMap model = entry.toMap();
+      const QString slug = model.value(QStringLiteral("slug")).toString();
+      const QString shown = model.value(QStringLiteral("name")).toString();
+      models.append(QVariantMap{
+          {QStringLiteral("slug"), slug},
+          {QStringLiteral("name"), shown.isEmpty() ? slug : shown},
+          {QStringLiteral("shortName"), QVariant::fromValue(nullptr)},
+          {QStringLiteral("subProvider"), QVariant::fromValue(nullptr)},
+          {QStringLiteral("isFavorite"), false},
+          {QStringLiteral("isCustom"), false},
+          {QStringLiteral("isNew"), false},
+          {QStringLiteral("isLegacy"), false},
+          {QStringLiteral("isUnavailable"), !ready},
+          {QStringLiteral("disabledReason"), ready ? QVariant::fromValue(nullptr) : orNull(message)},
+      });
+    }
+    result.append(QVariantMap{
+        {QStringLiteral("instanceId"), id},
+        {QStringLiteral("driverKind"), known ? known->driver : driver},
+        {QStringLiteral("displayName"), name},
+        {QStringLiteral("accentColor"), orNull(known ? known->accentColor : QString())},
+        {QStringLiteral("iconUrl"), orNull(known ? known->iconUrl : QString())},
+        {QStringLiteral("initials"), initialsOf(name)},
+        {QStringLiteral("showBadge"), false},
+        {QStringLiteral("status"), ready ? QStringLiteral("ready") : QStringLiteral("error")},
+        {QStringLiteral("isAvailable"), ready},
+        {QStringLiteral("unavailableReason"), ready ? QVariant::fromValue(nullptr) : orNull(message)},
+        {QStringLiteral("models"), models},
+    });
+  }
+  return result;
+}
+
 QJsonArray descriptors(const QJsonObject& model, const QJsonArray& selections, bool planModeEnabled) {
   QJsonArray result;
   for (const QJsonValue& value : model.value(QLatin1String("capabilities")).toObject().value(QLatin1String("optionDescriptors")).toArray()) {

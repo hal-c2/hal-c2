@@ -2362,8 +2362,32 @@ step(
     await press(ctx, "n");
     await answer(ctx, prompt);
     await settle(ctx);
-    if (mode(ctx) === "select") await choose(ctx, "codex");
+    if (mode(ctx) === "select") await choose(ctx, "codex · GPT Image");
     await settle(ctx);
+  },
+);
+
+step("{word} is installed and can generate images", (ctx: SpaceWorld) => {
+  mc(ctx).imageGeneration = { kind: "available" };
+});
+
+step(
+  "the user generates an image of {string} in {string} with {word} using {string}",
+  async (ctx: SpaceWorld, prompt: string, space: string, provider: string, model: string) => {
+    await openImages(ctx, space);
+    await press(ctx, "n");
+    await answer(ctx, prompt);
+    await settle(ctx);
+    const name = { "grok-imagine-image-2.0": "Grok Imagine Image 2.0" }[model] ?? model;
+    await choose(ctx, `${provider} · ${name}`);
+  },
+);
+
+step(
+  "the image remembers it was made by {word} using {string}",
+  (ctx: SpaceWorld, provider: string, model: string) => {
+    const [image] = mc(ctx).imagesOf(currentSpaceId(ctx));
+    expect(image?.generatedBy).toEqual({ instanceId: provider, model });
   },
 );
 
@@ -2393,20 +2417,24 @@ step("the user is told image generation failed", async (ctx: SpaceWorld) => {
   );
 });
 
-step("the image providers on offer say which can generate", async (ctx: SpaceWorld) => {
-  await openImages(ctx);
-  await press(ctx, "n");
-  await answer(ctx, "a red fox");
-  await settle(ctx);
-  expect(mode(ctx)).toBe("select");
-  const offered = select(ctx).options;
-  expect(offered.find((option) => option.label === "codex")?.disabled).toBeFalsy();
-  const notHere = offered.find((option) => option.label === "claudeAgent");
-  expect(notHere?.disabled).toBe(true);
-  expect(notHere?.description).toBe("not supported here");
-  await press(ctx, "Esc");
-  expect(mc(ctx).imagesOf(currentSpaceId(ctx))).toEqual([]);
-});
+step(
+  "only the providers that can generate are offered, with their image models",
+  async (ctx: SpaceWorld) => {
+    await openImages(ctx);
+    await press(ctx, "n");
+    await answer(ctx, "a red fox");
+    await settle(ctx);
+    expect(mode(ctx)).toBe("select");
+    expect(select(ctx).options.map((option) => option.label)).toEqual([
+      "codex · GPT Image",
+      "grok · Grok Imagine",
+      "grok · Grok Imagine Image 2.0",
+      "grok · Grok Imagine Image",
+    ]);
+    await press(ctx, "Esc");
+    expect(mc(ctx).imagesOf(currentSpaceId(ctx))).toEqual([]);
+  },
+);
 
 step("the image {string} in {string}", (ctx: SpaceWorld, name: string, space: string) => {
   mc(ctx).seedImage(seedSpace(ctx, space), name);

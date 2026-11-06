@@ -1547,43 +1547,39 @@ export function fakeSpaceMc(options: {
           mimeType: "image/png",
           sizeBytes: 8,
           prompt,
-          generatedBy: input.modelSelection ?? { instanceId: "codex", model: "default" },
+          generatedBy: input.modelSelection ?? { instanceId: "codex", model: "auto" },
         },
         by,
       );
     },
-    "space.image.providers": () =>
-      mc.imageGeneration.kind === "available"
-        ? {
-            providers: [
-              { instanceId: "codex", driver: "codex", status: "ready", message: null },
-              { instanceId: "grok", driver: "grok", status: "ready", message: null },
-              {
-                instanceId: "claudeAgent",
-                driver: "claudeAgent",
-                status: "unsupported",
-                message: "Claude has no image tool.",
-              },
-            ],
-            selection: { instanceId: "codex", model: "default" },
-          }
-        : {
-            providers: [
-              {
-                instanceId: "codex",
-                driver: "codex",
-                status: "unavailable",
-                message: "Codex is not set up.",
-              },
-              {
-                instanceId: "claudeAgent",
-                driver: "claudeAgent",
-                status: "unsupported",
-                message: "Claude has no image tool.",
-              },
-            ],
-            selection: null,
-          },
+    // The MC's own offer: only the providers that can make an image, with their models.
+    "space.image.providers": () => {
+      const ready = mc.imageGeneration.kind === "available";
+      const provider = (instanceId: string, models: object[]) => ({
+        instanceId,
+        driver: instanceId,
+        status: ready ? "ready" : "unavailable",
+        message: ready ? null : `${instanceId} is not enabled or not installed.`,
+        models,
+      });
+      return {
+        providers: [
+          provider("codex", [
+            {
+              slug: "auto",
+              name: "GPT Image",
+              description: "OpenAI picks the model. Codex cannot choose it.",
+            },
+          ]),
+          provider("grok", [
+            { slug: "auto", name: "Grok Imagine", description: "Grok picks the model." },
+            { slug: "grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", description: null },
+            { slug: "grok-imagine-image", name: "Grok Imagine Image", description: null },
+          ]),
+        ],
+        selection: ready ? { instanceId: "codex", model: "auto" } : null,
+      };
+    },
     "space.image.trash": (input) => {
       const found = image(input.spaceId, input.imageId);
       if (found.trashedAt !== null) refuse("invalid", `"${found.name}" is already in the trash.`);

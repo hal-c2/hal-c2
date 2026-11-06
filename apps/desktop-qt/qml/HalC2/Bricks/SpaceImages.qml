@@ -7,6 +7,8 @@ import HalC2.Shell
 // The Space's images (Spaces.images), or those in its trash (Spaces.imageTrash),
 // as a grid of thumbnails: only the cards on screen fetch and decode anything,
 // each scaled as it is decoded. An image in the trash comes back or goes for good.
+// Under the grid, the timeline's prompt makes an image of its words with the
+// image model picked beside it (ComposerController's images prompt).
 Rectangle {
     id: browser
 
@@ -18,7 +20,6 @@ Rectangle {
     property bool trashShown: false
 
     signal addRequested
-    signal generateRequested
     signal closeRequested
 
     color: Theme.palette.color("canvas", "#09090b")
@@ -58,15 +59,6 @@ Rectangle {
             }
 
             ShellButton {
-                objectName: "spaceImageGenerate"
-                primary: true
-                iconName: "plus"
-                text: browser.space.generatingImage === true ? qsTr("Generating…") : qsTr("Generate")
-                enabled: browser.space.generatingImage !== true
-                onClicked: browser.generateRequested()
-            }
-
-            ShellButton {
                 objectName: "spaceImagesTrash"
                 subtle: true
                 iconName: browser.trashShown ? "image" : "trash"
@@ -82,7 +74,7 @@ Rectangle {
             visible: grid.count === 0
             iconName: browser.trashShown ? "trash" : "image"
             title: browser.trashShown ? qsTr("The trash is empty") : qsTr("No images yet")
-            description: browser.trashShown ? "" : qsTr("Add one from a file or generate one from a prompt.")
+            description: browser.trashShown ? "" : qsTr("Add one from a file, or describe one below to generate it.")
         }
 
         GridView {
@@ -207,6 +199,18 @@ Rectangle {
                     }
                 }
             }
+        }
+
+        Composer {
+            id: composer
+
+            objectName: "spaceImagesComposer"
+            Layout.fillWidth: true
+            Layout.leftMargin: -composer.gutter
+            Layout.rightMargin: -composer.gutter
+            imagesHost: true
+            visible: !browser.trashShown && ready
+            color: "transparent"
         }
     }
 }

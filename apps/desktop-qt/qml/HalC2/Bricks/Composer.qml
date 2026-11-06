@@ -30,7 +30,11 @@ Rectangle {
     // ready everywhere else, so a shell that shows its composer when ready
     // never draws a second prompt under a page.
     property bool pageHost: false
-    readonly property bool ready: model !== null && model.target !== null && (model.routeKind === "page") === pageHost
+    // A Space's images' prompt (SpaceImages): its words make an image, with an
+    // image model from the picker. Only it is ready while the images are open,
+    // and it offers nothing a turn carries: no attachments, options or stash.
+    property bool imagesHost: false
+    readonly property bool ready: model !== null && model.target !== null && (model.routeKind === "page") === pageHost && (model.routeKind === "images") === imagesHost
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
     readonly property int publishedCursor: ready ? model.cursor : 0
@@ -806,7 +810,7 @@ Rectangle {
                 objectName: "composerDrop"
                 anchors.fill: parent
                 z: 1
-                enabled: composer.takesDrops
+                enabled: composer.takesDrops && !composer.imagesHost
                 composer: composer
             }
 
@@ -1203,6 +1207,7 @@ Rectangle {
 
                         Chip {
                             objectName: "attachButton"
+                            visible: !composer.imagesHost
                             iconName: "paperclip"
                             enabled: composer.ready && !composer.model.editorDisabled
                             Accessible.name: qsTr("Attach files")
@@ -1333,7 +1338,7 @@ Rectangle {
                                     id: runtimeModePicker
                                     objectName: "runtimeModePicker"
 
-                                    present: composer.ready
+                                    present: composer.ready && !composer.imagesHost
                                     visible: present && !composer.folded.includes(runtimeModePicker)
                                     iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
                                     model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
@@ -1392,7 +1397,7 @@ Rectangle {
                         // The stash's count, which opens and closes its list.
                         Chip {
                             objectName: "stashBadge"
-                            visible: composer.ready && composer.stashEntries.length > 0
+                            visible: composer.ready && !composer.imagesHost && composer.stashEntries.length > 0
                             iconName: "bookmark"
                             text: composer.stashEntries.length
                             Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
