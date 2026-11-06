@@ -26,6 +26,7 @@
 #include "ThreadMenuController.h"
 #include "ThreadPullRequests.h"
 #include "RightPanelController.h"
+#include "SavedEnvironmentsController.h"
 #include "ServerUpdateController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
@@ -52,6 +53,7 @@ World::~World() {
 // As main.cpp wires them.
 void World::start() {
   m_bridge = std::make_unique<ShellBridge>();
+  SavedEnvironmentsController::setSecretStoreFactory([keys = secrets](const QString&) { return std::make_unique<MemorySecretStore>(keys); });
   m_native = std::make_unique<NativeShell>(m_bridge.get());
   m_native->client()->setRetryDelays({20});
   m_native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));

@@ -26,12 +26,68 @@ QString threadKey(const QString& environmentId, const QString& threadId) {
 
 }  // namespace
 
-ShellStore::ShellStore(McClient* client, QObject* parent) : QObject(parent) {
+ShellStore::ShellStore(McClient* client, QObject* parent) : QObject(parent), m_client(client) {
   m_flushTimer.setSingleShot(true);
   m_flushTimer.setInterval(flushDelayMs);
   connect(&m_flushTimer, &QTimer::timeout, this, &ShellStore::flush);
-  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}}, [this](const QJsonObject& frame) { onFrame(frame); },
-                    [this] { return QJsonObject{{QStringLiteral("have"), have()}}; });
+  client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}}, [this, client](const QJsonObject& frame) { onFrame(frame, client); },
+                    [this, client] { return QJsonObject{{QStringLiteral("have"), have(client)}}; });
+}
+
+void ShellStore::addLink(McClient* client, const QString& environmentId) {
+  if (m_links.contains(client)) return;
+  m_links.insert(client, {environmentId, 0});
+  m_links[client].subscription =
+      client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("shell")}}, [this, client](const QJsonObject& frame) { onFrame(frame, client); },
+                        [this, client] { return QJsonObject{{QStringLiteral("have"), have(client)}}; });
+}
+
+void ShellStore::removeLink(McClient* client, bool forget) {
+  const auto link = m_links.constFind(client);
+  if (link == m_links.cend()) return;
+  const QString environmentId = link->environmentId;
+  client->unsubscribe(link->subscription);
+  m_links.erase(link);
+  bool changes = false;
+  for (const QString& name : m_mcs.keys()) {
+    const Mc& mc = m_mcs[name];
+    if (mc.link != client && !(mc.link == nullptr && mc.environmentId == environmentId)) continue;
+    if (forget) {
+      removeMc(name);
+      changes = true;
+    } else {
+      m_mcs[name].link = nullptr;
+    }
+  }
+  if (changes) {
+    flush();
+    emit changed();
+  }
+}
+
+McClient* ShellStore::linkServing(const QString& environmentId) const {
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId == environmentId) return mc.link == m_client ? nullptr : mc.link;
+  }
+  for (auto it = m_links.cbegin(); it != m_links.cend(); ++it) {
+    if (it->environmentId == environmentId) return it.key();
+  }
+  return nullptr;
+}
+
+McClient* ShellStore::linkOf(const QString& mc) const {
+  const auto it = m_mcs.constFind(mc);
+  return it == m_mcs.cend() || it->link == m_client ? nullptr : it->link;
+}
+
+bool ShellStore::answersFor(McClient* link, const Mc& mc) const {
+  if (mc.link) return mc.link == link;
+  // Kept from the last run: the link of its environment speaks for it, and
+  // the shell's own client for any no link serves.
+  for (auto it = m_links.cbegin(); it != m_links.cend(); ++it) {
+    if (it->environmentId == mc.environmentId) return it.key() == link;
+  }
+  return link == m_client;
 }
 
 ShellStore::~ShellStore() {
@@ -83,9 +139,13 @@ bool ShellStore::reached(const QString& mc, const QString& epoch, qint64 rev) co
 }
 
 QJsonObject ShellStore::have() const {
+  return have(m_client);
+}
+
+QJsonObject ShellStore::have(McClient* link) const {
   QJsonObject have;
   for (auto it = m_mcs.cbegin(); it != m_mcs.cend(); ++it) {
-    if (!it->epoch.isEmpty()) have.insert(it.key(), QJsonArray{it->epoch, it->rev});
+    if (!it->epoch.isEmpty() && answersFor(link, *it)) have.insert(it.key(), QJsonArray{it->epoch, it->rev});
   }
   return have;
 }
@@ -376,8 +436,12 @@ bool ShellStore::clear() {
   return emptied;
 }
 
-void ShellStore::onFrame(const QJsonObject& frame) {
+void ShellStore::onFrame(const QJsonObject& frame, McClient* link) {
   const QString type = frame.value(QLatin1String("t")).toString();
+  // A frame about one MC claims it for the client it came on.
+  if (const QString mc = frame.value(QLatin1String("mc")).toString(); !mc.isEmpty() && !frame.value(QLatin1String("removed")).toBool()) {
+    m_mcs[mc].link = link;
+  }
   if (type == QLatin1String("shell")) {
     // The cluster's members, and the rows this client lacks of each: all of
     // them for an MC marked `reset` (or sent by an MC that keeps no versions),
@@ -388,26 +452,33 @@ void ShellStore::onFrame(const QJsonObject& frame) {
       const QJsonObject mc = value.toObject();
       const QString name = mc.value(QLatin1String("mc")).toString();
       listed.insert(name);
+      m_mcs[name].link = link;
       if (mc.value(QLatin1String("reset")).toBool(true)) resetRows(name, replaced);
       setEnvironment(name, mc.value(QLatin1String("environment")).toObject());
       m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
       m_mcs[name].trying = mc.value(QLatin1String("trying")).toBool(true);
       setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
     }
+    // Only the MCs this client speaks for: another link's are its own.
     for (const QString& name : m_mcs.keys()) {
-      if (!listed.contains(name)) removeMc(name);
+      if (!listed.contains(name) && answersFor(link, m_mcs.value(name))) removeMc(name);
     }
     for (const QJsonValue& value : frame.value(QLatin1String("rows")).toArray()) {
       const QJsonArray row = value.toArray();
       putRow(row.at(0).toString(), row.at(1).toString(), row.at(2).toString(), row.at(3).toObject());
     }
     forgetThreads(replaced);
-    m_synchronized = true;
-    m_previewing = false;
-    ++m_snapshots;
-    m_problem.clear();
+    // The shell's own MC is the one whose word makes the rows live.
+    if (link == m_client) {
+      m_synchronized = true;
+      m_previewing = false;
+      ++m_snapshots;
+      m_problem.clear();
+    }
     flush();
   } else if (type == QLatin1String("error")) {
+    // A saved environment's own refusal is that link's status (SavedEnvironments).
+    if (link != m_client) return;
     m_problem = frame.value(QLatin1String("reason")).toString(QStringLiteral("The MC did not send its projects and threads."));
   } else if (type == QLatin1String("shell.environment")) {
     setEnvironment(frame.value(QLatin1String("mc")).toString(),

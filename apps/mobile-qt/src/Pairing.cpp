@@ -326,23 +326,5 @@ void Pairing::publish() {
 }
 
 QString Pairing::explain(const pairing::Result& result) const {
-  const QString address = result.origin.authority();
-  switch (result.outcome) {
-    case pairing::Outcome::Unreachable:
-      return tr("The environment at %1 could not be reached. Check the address, and that this device is on its network.").arg(address);
-    case pairing::Outcome::NotMc:
-      return tr("%1 answered, but it is not a HAL-C2 environment. Check the address.").arg(address);
-    case pairing::Outcome::Incompatible: {
-      QString label = result.descriptor.value(QLatin1String("label")).toString();
-      if (label.isEmpty()) label = address;
-      const bool appIsOlder = result.descriptor.value(QLatin1String("orchestrationProtocolVersion")).toInt() > McClient::kProtocol;
-      return appIsOlder ? tr("This app is too old for %1. Update the app: the two need compatible versions of HAL-C2.").arg(label)
-                        : tr("%1 runs an older HAL-C2 than this app. Update it: the two need compatible versions of HAL-C2.").arg(label);
-    }
-    case pairing::Outcome::Refused:
-      return tr("Pairing failed: the link was already used or has expired. Ask the environment for a fresh one.");
-    case pairing::Outcome::Paired:
-      break;
-  }
-  return {};
+  return pairing::explain(result);
 }

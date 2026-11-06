@@ -766,6 +766,8 @@ const Steps steps([] {
     fake(world).protocol = McClient::kProtocol + 4;
   });
   step(QStringLiteral("(?:the connection|it) is blocked(?: before opening a socket)?"), [](World& world, const Captures&, const Table&) {
+    // A saved environment's, when the scenario has one (ConnectionCatalogSteps.cpp).
+    if (savedEnvironmentBlocked(world)) return;
     waitForPhase(world, {QStringLiteral("blocked")});
     QCoreApplication::processEvents();
     expect(world.mc.connections.size() == watch(world).connectionsBefore && client(world).phase() == McClient::Phase::Blocked,

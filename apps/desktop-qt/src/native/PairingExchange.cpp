@@ -1,5 +1,7 @@
 #include "PairingExchange.h"
 
+#include <QDateTime>
+
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -57,7 +59,11 @@ void spend(const std::shared_ptr<Attempt>& attempt, const QUrl& origin, const QJ
     reply->deleteLater();
     Result result{Outcome::Refused, origin, {}, descriptor};
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    result.token = QJsonDocument::fromJson(reply->readAll()).object().value(QLatin1String("access_token")).toString();
+    const QJsonObject answer = QJsonDocument::fromJson(reply->readAll()).object();
+    result.token = answer.value(QLatin1String("access_token")).toString();
+    if (const QJsonValue expiresIn = answer.value(QLatin1String("expires_in")); expiresIn.isDouble()) {
+      result.expiresAt = QDateTime::currentDateTimeUtc().addSecs(qint64(expiresIn.toDouble()));
+    }
     if (!answered(reply)) {
       result.outcome = Outcome::Unreachable;
     } else if (status >= 200 && status < 300 && !result.token.isEmpty()) {
@@ -161,6 +167,28 @@ std::optional<Invitation> readInvitation(const QString& received) {
 void exchange(QNetworkAccessManager* http, QObject* context, const Link& link, const Client& client,
               std::function<void(const Result&)> done) {
   describe(std::make_shared<Attempt>(Attempt{http, context, link, client, std::move(done)}), 0);
+}
+
+QString explain(const Result& result) {
+  const QString address = result.origin.authority();
+  switch (result.outcome) {
+    case Outcome::Unreachable:
+      return QStringLiteral("The environment at %1 could not be reached. Check the address, and that this device is on its network.").arg(address);
+    case Outcome::NotMc:
+      return QStringLiteral("%1 answered, but it is not a HAL-C2 environment. Check the address.").arg(address);
+    case Outcome::Incompatible: {
+      QString label = result.descriptor.value(QLatin1String("label")).toString();
+      if (label.isEmpty()) label = address;
+      const bool appIsOlder = result.descriptor.value(QLatin1String("orchestrationProtocolVersion")).toInt() > McClient::kProtocol;
+      return appIsOlder ? QStringLiteral("This app is too old for %1. Update the app: the two need compatible versions of HAL-C2.").arg(label)
+                        : QStringLiteral("%1 runs an older HAL-C2 than this app. Update it: the two need compatible versions of HAL-C2.").arg(label);
+    }
+    case Outcome::Refused:
+      return QStringLiteral("Pairing failed: the link was already used or has expired. Ask the environment for a fresh one.");
+    case Outcome::Paired:
+      break;
+  }
+  return {};
 }
 
 }  // namespace pairing

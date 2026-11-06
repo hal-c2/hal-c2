@@ -59,12 +59,23 @@ inline QVariantMap connection(World &world) {
   return world.state(QStringLiteral("connection")).toMap();
 }
 
+// What the client says of its connections: the environment it started with,
+// then each saved environment that is not connected.
 inline QString said(World &world) {
   const QVariantMap now = connection(world);
-  return QStringList{now.value(QStringLiteral("status")).toString(),
-                     now.value(QStringLiteral("title")).toString(),
-                     now.value(QStringLiteral("detail")).toString()}
-      .join(QStringLiteral(" | "));
+  QStringList words{now.value(QStringLiteral("status")).toString(),
+                    now.value(QStringLiteral("title")).toString(),
+                    now.value(QStringLiteral("detail")).toString()};
+  for (const QVariant &saved : world.state(QStringLiteral("savedEnvironments"))
+                                   .toMap()
+                                   .value(QStringLiteral("environments"))
+                                   .toList()) {
+    const QString message =
+        saved.toMap().value(QStringLiteral("message")).toString();
+    if (!message.isEmpty())
+      words.append(message);
+  }
+  return words.join(QStringLiteral(" | "));
 }
 
 inline QString describe(World &world) {

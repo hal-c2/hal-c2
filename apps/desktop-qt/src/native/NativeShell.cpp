@@ -23,6 +23,7 @@
 #include "McPluginController.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
+#include "SavedEnvironmentsController.h"
 #include "TerminalController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -347,6 +348,8 @@ void NativeShell::setStoreDirs(const QString& state, const QString& data, const 
   // With the route and drafts read: what was kept of the MC last used shows
   // while the host is still finding or starting it.
   m_store.showKept();
+  // The environments paired beside it connect on their own.
+  if (auto* saved = shared<SavedEnvironmentsController>()) saved->start(data);
 }
 
 void NativeShell::restoreWindows() {
