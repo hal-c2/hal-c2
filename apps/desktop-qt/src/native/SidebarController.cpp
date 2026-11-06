@@ -46,8 +46,11 @@ QList<sidebar::Thread> SidebarController::threads() const {
   QList<sidebar::Thread> threads = m_store->threads();
   const NativeWindow* window = NativeShell::of(this);
   const auto* plugins = window ? window->controller<McPluginController>() : nullptr;
-  for (sidebar::Thread& thread : threads) {
-    if (!thread.listed && (!plugins || !plugins->keepsUnlisted(thread.environmentId, thread.pluginId))) thread.listed = true;
+  // Read through a const list and write only what changes: the list shares the
+  // store's, and touching it mutably copies every thread.
+  for (qsizetype i = 0; i < threads.size(); ++i) {
+    const sidebar::Thread& thread = std::as_const(threads).at(i);
+    if (!thread.listed && (!plugins || !plugins->keepsUnlisted(thread.environmentId, thread.pluginId))) threads[i].listed = true;
   }
   return threads;
 }
@@ -159,15 +162,31 @@ void SidebarController::announceMigratedThreads() {
   static const QString kAnnounced = QStringLiteral("migratedThreadsAnnounced");
   if (!m_store->synchronized()) return;
   auto* settings = NativeShell::of(this)->controller<SettingsController>();
-  if (!settings || settings->deviceSettings().value(kAnnounced).toBool()) return;
+  // Announced once per device; the notice still showing counts the threads
+  // that arrive after it.
+  if (!settings || (m_migrationToast.isEmpty() && settings->deviceSettings().value(kAnnounced).toBool())) return;
+  // Counted when a snapshot lands or the list grows, not on every row change:
+  // migrated threads come with the MC's snapshot, or row by row when the
+  // import runs while the app is open, and counting them reads every thread.
+  const QList<sidebar::Thread> threads = m_store->threads();
+  const std::pair checked{m_store->snapshots(), threads.size()};
+  if (checked == m_migrationChecked) return;
+  m_migrationChecked = checked;
   qsizetype migrated = 0;
-  for (const sidebar::Thread& thread : m_store->threads()) {
+  for (const sidebar::Thread& thread : threads) {
     if (m_store->threadRow(thread.key()).value(QLatin1String("historyOrigin")) == QLatin1String("v1_import")) ++migrated;
   }
+  const QString title = QStringLiteral("Your threads were brought over");
+  const QString description =
+      migrated == 1 ? QStringLiteral("1 thread from the previous version is in the list, with its conversation.")
+                    : QStringLiteral("%1 threads from the previous version are in the list, with their conversations.").arg(migrated);
+  if (!m_migrationToast.isEmpty()) {
+    // Dismissed: the count stops there.
+    if (!toasts()->update(m_migrationToast, title, description)) m_migrationToast.clear();
+    return;
+  }
   if (migrated == 0 || !settings->writeDevice(kAnnounced, true)) return;
-  toasts()->show(QStringLiteral("info"), QStringLiteral("Your threads were brought over"),
-                 migrated == 1 ? QStringLiteral("1 thread from the previous version is in the list, with its conversation.")
-                               : QStringLiteral("%1 threads from the previous version are in the list, with their conversations.").arg(migrated));
+  m_migrationToast = toasts()->show(QStringLiteral("info"), title, description);
 }
 
 void SidebarController::visitOpenThread() {

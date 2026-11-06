@@ -1469,7 +1469,7 @@ const Steps steps([] {
     expect(!now.at(now.size() - 1).isSpace(), S("the selection ends in a space: %1").arg(show(now)));
   });
 
-  step(S("the user chooses %1").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+  step(S("the user chooses \"Select All\""), [](World& world, const Captures&, const Table&) {
     world.tap(S("terminalSelectAll"));
     world.sync();
   });

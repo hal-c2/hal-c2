@@ -57,6 +57,7 @@ void ShellStore::open(const QUrl& origin) {
 
 void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
   m_origin = origin;
+  m_threads.reset();
   const bool held = !m_mcs.isEmpty();
   m_mcs.clear();
   m_synchronized = false;
@@ -112,6 +113,7 @@ void ShellStore::flush() {
 }
 
 QList<sidebar::Thread> ShellStore::threads() const {
+  if (m_threads) return *m_threads;
   QList<sidebar::Thread> result;
   for (const Mc& mc : m_mcs) {
     // An MC whose environment is not known yet has no key for its threads.
@@ -120,6 +122,7 @@ QList<sidebar::Thread> ShellStore::threads() const {
       if (lives(row)) result.append(sidebar::threadFromRow(mc.environmentId, row));
     }
   }
+  m_threads = result;
   return result;
 }
 
@@ -365,6 +368,7 @@ bool ShellStore::clear() {
   m_unsaved.clear();
   m_origin.clear();
   m_mcs.clear();
+  m_threads.reset();
   m_problem.clear();
   m_previewing = false;
   m_synchronized = true;
@@ -378,6 +382,8 @@ bool ShellStore::clear() {
 
 void ShellStore::onFrame(const QJsonObject& frame) {
   const QString type = frame.value(QLatin1String("t")).toString();
+  // Whatever the frame changes, threads() is built again from the rows.
+  m_threads.reset();
   if (type == QLatin1String("shell")) {
     // The cluster's members, and the rows this client lacks of each: all of
     // them for an MC marked `reset` (or sent by an MC that keeps no versions),

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12537
 #   docs/user/source-control.md (GitHub sharing across environments)
 #   packages/contracts/src/pullRequest.ts (PullRequestRouting, PullRequestRoutingIdentity, expectedAccountId, allowStale)
 #   packages/contracts/src/rpc.ts (pullRequests.routing, pullRequests.routingIdentity)
@@ -201,3 +202,12 @@ Feature: Sharing GitHub access between environments
     Given "build-box" cannot read its list of projects
     When a client lists pull requests through "build-box"
     Then it is refused with "The project list could not be read."
+
+  # Upstream #12537: the port of an ssh:// remote addresses the SSH server, not the provider's web API.
+  # MC drops the port already (HalC2.PullRequests.parse_remote uses URI.host); no step definitions yet,
+  # so it stays @backlog until features:mc can run it.
+  @backlog @mc
+  Scenario: A remote reached over SSH on a custom port still finds its pull requests on the provider
+    Given the project's remote is "ssh://git@git.example.com:2222/team/app.git" on a self-hosted provider
+    When the user looks for the branch's pull request
+    Then the provider is asked at "git.example.com" with no port

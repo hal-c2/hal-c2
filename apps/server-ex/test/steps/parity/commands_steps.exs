@@ -1046,6 +1046,9 @@ defmodule HalC2.Steps.Parity.Commands do
           {[{"thread.pinned", Map.merge(at.(1), %{"pinnedAt" => iso(1), "pinOrderKey" => "a0"})}],
            {type, Map.put(at.(2), "orderKey", "b0")}}
 
+        "thread.auto-settle-set" ->
+          {[], {type, Map.put(at.(1), "autoSettleDisabledAt", iso(1))}}
+
         "thread.meta-updated" ->
           {[], {type, Map.merge(at.(1), %{"title" => "Renamed", "branch" => "feature/x"})}}
 
@@ -1188,6 +1191,9 @@ defmodule HalC2.Steps.Parity.Commands do
 
       "thread.pin-reordered" ->
         thread["pinOrderKey"] == "b0"
+
+      "thread.auto-settle-set" ->
+        thread["autoSettleDisabledAt"] == iso(1)
 
       "thread.meta-updated" ->
         thread["title"] == "Renamed" and thread["branch"] == "feature/x"

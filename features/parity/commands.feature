@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/hal_c2/import/v2.ex (how each Node event becomes an entity patch)
 #   apps/server/src/orchestration/decider.ts, apps/server/src/orchestration/projector.ts
 #   Counts: 48 commands (38 aligned, 10 dropped);
-#   42 version 2 events (all aligned); 32 version 1 events (all aligned).
+#   42 version 2 events (all aligned); 33 version 1 events (all aligned).
 #   The MC stores whole-entity changes as patches keyed by entity kind, so an event
 #   is aligned when the MC records the same entity change and streams it to clients.
 #   Shared domain: mc/orchestration/ holds what each command does to a thread.
@@ -163,7 +163,7 @@ Feature: Command and event parity with the TypeScript server
     When the MC imports the log
     Then the thread's history includes the change
 
-    Examples: 25 version 1 thread events
+    Examples: 26 version 1 thread events
       | event                                | entity |
       | thread.created                       | thread |
       | thread.deleted                       | thread |
@@ -176,6 +176,7 @@ Feature: Command and event parity with the TypeScript server
       | thread.pinned                        | thread |
       | thread.unpinned                      | thread |
       | thread.pin-reordered                 | thread |
+      | thread.auto-settle-set               | thread |
       | thread.meta-updated                  | thread |
       | thread.pull-request-linked           | thread |
       | thread.pull-request-unlinked         | thread |

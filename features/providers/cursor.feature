@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13820
+#   https://github.com/pingdotgg/t3code/pull/13870
+#   https://github.com/pingdotgg/t3code/pull/13714
 #   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
@@ -168,6 +171,38 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor does not read the keychain
     And the user is offered to enable Cursor account usage
+
+  # Upstream #13714: the keychain read is offered only where the Cursor provider is ready, so a
+  # machine without a working Cursor sees no prompt.
+  @backlog @shared @plugin-cursor
+  Scenario: The Cursor keychain prompt is offered only where Cursor is ready
+    Given Cursor is not set up in this environment
+    When the user opens the limits view
+    Then Cursor's keychain prompt is not offered
+
+  # Upstream #13820: a missing login is not a login problem; only an unreadable saved login is.
+  @backlog
+  Scenario: Cursor usage names no login problem when none is saved
+    Given Cursor has no saved login
+    When the user opens the limits view
+    Then Cursor shows no login warning
+
+  # Upstream #13870: once one environment reports Cursor account usage, another environment's
+  # keychain is not read to report the same account again.
+  @backlog
+  Scenario: The Cursor keychain is not read again for an environment that already reports the account
+    Given one selected environment already reports Cursor account usage
+    And another selected environment has Cursor signed in through the system keychain
+    When the user opens the limits view
+    Then the keychain of the other environment is not read
+
+  # Upstream #13870: a keychain request nobody answers times out and says how to allow it.
+  @backlog
+  Scenario: An unanswered Cursor keychain request times out with guidance
+    Given Cursor is signed in through the system keychain
+    And the keychain request is not answered
+    When the request times out
+    Then the user is told to allow keychain access and refresh
 
   Scenario: Cursor skills can be mentioned in the composer
     Given the project has the Cursor skill "deploy"

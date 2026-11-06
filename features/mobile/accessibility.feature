@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13356
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe accessibility hint)
 #   apps/mobile/src/features/threads/ThreadArrangementSheet.tsx (Move up and Move down actions)
@@ -161,3 +162,19 @@ Feature: Accessibility on phones and tablets
     Given the user opened a video full screen
     When a screen reader focuses the top of the screen
     Then a button labelled "Media actions" is offered
+
+  # Upstream #13491: a connection field is announced once, by the label it shows.
+  @backlog @mobile
+  Scenario: A connection field is announced once with its visible label
+    Given the user is adding an environment
+    When a screen reader focuses a connection field
+    Then the field is announced with its label once
+
+  # Upstream #13491: a switch is read as on or off, and follows each change.
+  @backlog @mobile
+  Scenario: A switch tells a screen reader whether it is on or off
+    Given a setting switch is off
+    When the user turns it on
+    Then a screen reader reads it as on
+    When the user turns it off
+    Then a screen reader reads it as off

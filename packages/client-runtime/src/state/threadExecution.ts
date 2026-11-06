@@ -94,6 +94,13 @@ export function deriveThreadRuntime(
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
+  // The error is the latest run's: after a switch, the new provider's older session error must
+  // not supersede it (a usage limit keeps its class), as in the MC's shell row.
+  const errorInstanceId =
+    latestRunProjection?.providerInstanceId ?? projection.thread.providerInstanceId;
+  const errorSession = projection.providerSessions.findLast(
+    (session) => session.providerInstanceId === errorInstanceId,
+  );
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
@@ -116,7 +123,7 @@ export function deriveThreadRuntime(
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(
       latestRootProviderFailure(latestRunProjection, projection.turnItems),
-      providerSession?.lastError ?? null,
+      errorSession?.lastError ?? null,
     ),
     updatedAt: DateTime.formatIso(projection.updatedAt),
   };

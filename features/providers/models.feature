@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14152 (carry: Claude Sonnet 5.5 in the catalog, @backlog)
 #   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list, aliases), apps/server-ex/lib/hal_c2/claude/provider.ex (the models Claude Code lists, else the manifest's Claude catalog)
 #   apps/server-ex/lib/hal_c2/model_manifest.ex (bundled, fetched and cached manifest; policies)
 #   apps/server-ex/lib/hal_c2/acp.ex (models from the model config option, subProvider)
@@ -72,6 +73,13 @@ Feature: Models
   Scenario: An invalid manifest download keeps the last usable manifest
     When the MC downloads a manifest that is not valid
     Then the last usable manifest is kept
+
+  # Upstream #14152 adds Claude Sonnet 5.5. The bundled manifest does not list it yet.
+  @backlog
+  Scenario: The Claude catalog lists Claude Sonnet 5.5
+    Given the MC uses its bundled model manifest
+    When the MC has read Claude's model list
+    Then "claude-sonnet-5-5" is offered in the model picker for Claude
 
   # ClaudeModelManifest.ts hasValidClaudeManifestAdapters: the rest of the manifest being
   # sound does not save a Claude catalog whose version range or profile is malformed.

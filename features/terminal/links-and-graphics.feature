@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13408
 #   packages/shared/src/terminalLinks.ts (extractTerminalLinks, wrapped link ranges, resolveTerminalPath)
 #   apps/tui/src/terminalView.ts (readTerminalFrame colours, cursor, OSC 8 links, scan limits)
 #   apps/tui/src/terminalView.test.ts
@@ -239,3 +240,17 @@ Feature: Links and rendering inside terminals
       And a program turns on the Kitty keyboard protocol
       When the user presses "Ctrl+A" in the terminal
       Then the program receives Ctrl+A in the enhanced report
+
+  Rule: File locations in compiler output are links
+
+    # Upstream #13408: the colon that ends a compiler's location is not part of the path.
+    @desktop @backlog
+    Scenario Outline: Ctrl-clicking a compiler's file location opens that file at its line and column
+      Given the shell prints "<output>"
+      When the user Ctrl-clicks the file location
+      Then "<file>" opens in the editor at line <line>, column <column>
+
+      Examples:
+        | output                                | file        | line | column |
+        | ./main.go:10:5: undefined: x          | ./main.go   | 10   | 5      |
+        | /src/main.c:10:5: error: expected ';' | /src/main.c | 10   | 5      |

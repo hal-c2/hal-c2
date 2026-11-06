@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13697
 #   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
 #   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
@@ -109,6 +110,14 @@ Feature: MC diagnostics
     Given tracing is enabled on the MC
     When a turn runs
     Then trace diagnostics list the turn's spans
+
+  # Upstream #13697 times Node's event loop. The MC runs on the BEAM, which has no single loop
+  # to time, so a stall recorder is not carried.
+  @dropped @mc
+  Scenario: The MC records a stall in its trace when it stops answering for seconds
+    Given tracing is enabled on the MC
+    When the MC does not answer for ten seconds
+    Then the trace records a stall with the CPU and memory use around it
 
   # Legacy: apps/server/src/observability/RpcInstrumentation.ts (RPC_SPAN_PREFIX, DEFAULT_RPC_SPAN_ATTRIBUTES)
   @backlog @mc

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13310
 #   apps/mobile/src/lib/layout.ts (split view thresholds, pane widths)
 #   apps/mobile/src/features/layout/ (sidebar, inspector pane, maximize content)
 #   apps/mobile/src/lib/useHoverGesture.ts, components/RowPressable.tsx (hover highlight for mouse and stylus)
@@ -519,3 +520,11 @@ Feature: Tablet layout and hardware keyboards
     Then the row opens
     When the user scrolls the list
     Then the list scrolls
+
+  # Upstream #13310: a folded phone's cover screen, after a split thread was left unfolded.
+  @backlog @mobile
+  Scenario: Returning to the app on a folded phone keeps the composer and Send on screen
+    Given the user is writing a draft in a thread on an unfolded phone with the keyboard open
+    When the app goes to the background, the phone folds, and the app returns on the cover screen
+    Then the composer fits the cover screen and Send is visible
+    And the draft text is still there

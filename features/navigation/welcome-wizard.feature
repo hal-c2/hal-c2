@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13935
 #   docs/user/welcome-wizard.md
 #   apps/web/src/components/onboarding/WelcomeWizard.tsx
 #   apps/web/src/components/onboarding/FirstRunGate.tsx
@@ -52,6 +53,21 @@ Feature: Welcome wizard
       Given the settings cannot be saved
       When the user finishes the wizard
       Then the user is told "Could not finish setup"
+
+    # Upstream #13935: one history that cannot be imported does not keep the wizard open.
+    @backlog @desktop
+    Scenario: A history import that partly fails still finishes setup and says so
+      Given the user imports projects and one of their histories cannot be read
+      When the user finishes the wizard
+      Then the workspace opens
+      And the user is told that one history could not be imported
+      And that message can be dismissed
+
+    @backlog @desktop
+    Scenario: A successful history import says how many threads it brought in
+      Given the user imports projects that bring in 28 threads
+      When the user finishes the wizard
+      Then the user is told "Imported 28 threads" once the workspace is open
 
     @backlog @desktop
     Scenario: Finishing setup again after a failure replaces the earlier message

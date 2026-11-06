@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10076
+#   https://github.com/pingdotgg/t3code/pull/8208
+#   https://github.com/pingdotgg/t3code/pull/13991
+#   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/usage.md
 #   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, transcript sources, scan cache)
 #   apps/server-ex/lib/hal_c2/usage/aggregator.ex (de-duplication, day and hour buckets)
@@ -263,6 +267,33 @@ Feature: Usage and limits
       Then usage says "server runs an older server version and is excluded from totals."
       And the usage of "server" is not counted
 
+    # Upstream #8208: an environment on a newer usage contract than this app is left out, and the
+    # notice says the app is the side that is behind.
+    @shared @backlog
+    Scenario: An environment on a newer usage format is left out and the app is named as behind
+      Given "server" reports usage in a newer format than this app reads
+      When the user views usage for all environments
+      Then usage says this app must be updated to show "server"
+      And the usage of "server" is not counted
+
+    # Upstream #10076: a provider this app does not know leaves the rest of the usage shown.
+    @shared @backlog
+    Scenario: A provider this app does not know leaves the rest of usage shown
+      Given "server" reports usage for a provider this app does not know, alongside Claude
+      When the user views usage for all environments
+      Then the Claude usage of "server" is shown
+      And the unknown provider's usage is left out
+
+    # Upstream #13991: a cost estimate says what share of its window has no price.
+    @shared @backlog
+    Scenario: A cost estimate says what share of its window has no price
+      Given some usage in the past 90 days has no price
+      When the user views cost for the past 90 days
+      Then the cost is labelled as an API estimate
+      And the estimate says what share of the usage it leaves out
+      When the user views cost for the past 7 days
+      Then no share of usage left out is given
+
     @shared @backlog-mobile @backlog-tui
     Scenario: Usage that could not be read can be read again
       Given the MC cannot read usage
@@ -483,3 +514,55 @@ Feature: Usage and limits
       Then the full email is shown
       When the user hides it again
       Then the email is masked
+
+  Rule: Keyboard shortcuts on the Usage page
+
+    # Upstream #10158. Letter shortcuts stay out of text fields, popups and dialogs.
+    @desktop @backlog
+    Scenario Outline: A letter key shows that usage metric
+      Given the user is on the Usage page
+      When the user presses "<key>"
+      Then the Usage page shows the <metric> metric
+
+      Examples:
+        | key | metric |
+        | C   | cost   |
+        | T   | tokens |
+        | L   | limits |
+
+    @desktop @backlog
+    Scenario Outline: Ctrl or Cmd with Shift and a number picks the usage period
+      Given the user is on the Usage page showing cost
+      When the user presses <shortcut>
+      Then usage covers the past <window>
+
+      Examples:
+        | shortcut     | window   |
+        | Ctrl+Shift+1 | 24 hours |
+        | Ctrl+Shift+2 | 7 days   |
+        | Ctrl+Shift+3 | 30 days  |
+        | Ctrl+Shift+4 | 90 days  |
+
+    @desktop @backlog
+    Scenario: The usage period shortcuts do nothing while limits is shown
+      Given the user is on the Usage page showing limits
+      When the user presses Ctrl+Shift+2
+      Then the Usage page still shows limits
+
+    @desktop @backlog
+    Scenario: Escape goes back from the Usage page to the page before it
+      Given the user opened usage from a thread
+      When the user presses Escape
+      Then the thread is shown again
+
+    @desktop @backlog
+    Scenario: Escape in a text field on the Usage page does not leave the page
+      Given the user is typing in a text field on the Usage page
+      When the user presses Escape
+      Then the Usage page stays open
+
+    @desktop @backlog
+    Scenario: A letter typed in a text field on the Usage page does not change the metric
+      Given the user is typing in a text field on the Usage page showing cost
+      When the user types "t"
+      Then the Usage page still shows cost

@@ -48,6 +48,7 @@ defmodule HalC2.Orchestration.Fork do
           "snoozedUntil" => nil,
           "snoozedAt" => nil,
           "pinnedAt" => nil,
+          "autoSettleDisabledAt" => nil,
           "lastVisitedAt" => nil,
           "deletedAt" => nil
         })

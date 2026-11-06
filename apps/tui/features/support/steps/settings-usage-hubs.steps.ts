@@ -243,6 +243,40 @@ step("Codex has a reset credit banked", (ctx: SettingsWorld) => {
 });
 
 step("the user views limits", openLimits);
+step("the user opens Limits", openLimits);
+
+// providers/usage-limits.feature: xAI leaves out the usage percentage until the
+// account has metered use, so the MC reports no windows and nothing unavailable.
+step(
+  "Grok is signed in with a subscription and has not used any metered credit yet",
+  (ctx: SettingsWorld) => {
+    setProviders(ctx, [
+      codexHere("sam@example.com", {
+        checkedAt: iso(NOW_MS),
+        windows: [limitsWindow(40, 3_600_000)],
+      }),
+      {
+        ...codexHere("dev@example.com", { checkedAt: iso(NOW_MS), windows: [] }),
+        instanceId: "grok",
+        driver: "grok",
+        displayName: "Grok",
+      },
+    ]);
+  },
+);
+
+step(
+  "Grok's account is listed with the notice {string}",
+  async (ctx: SettingsWorld, notice: string) => {
+    const lines = sectionState(ctx).lines.map((line) => line.trim());
+    expect(lines).toContain(`Grok: ${notice}`);
+    expect(await paneWords(ctx)).toContain(`Grok: ${notice}`);
+  },
+);
+
+step("it is not reported as not supported", (ctx: SettingsWorld) => {
+  expect(pageText(ctx)).not.toContain("no subscription limits");
+});
 
 step(
   "Codex limits include the account {string} of the hub",

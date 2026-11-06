@@ -139,6 +139,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the clipboard refuses the copy"), [](World& world, const Captures&, const Table&) {
     timeline(world).setClipboardWriter([](const QString&) { return false; });
+    // And the shell's, which the plan menu copies with.
+    world.clipboardFails = true;
+    world.reason = QStringLiteral("The clipboard could not be written.");
   });
   step(QStringLiteral("the copy button shows that the reply was copied"), [](World& world, const Captures&, const Table&) {
     QQuickItem* button = copyButton(world, world.mc.part<FakeTurns>().replies.value(0));

@@ -9,19 +9,24 @@ their pull requests the ledger cites and how far HAL-C2 has got with each.
 Agents and bots that co-wrote those pull requests are not listed.
 
 - [aaditagrawal](https://github.com/aaditagrawal)
+- [Adamulek123](https://github.com/Adamulek123)
 - [adeebahmad01](https://github.com/adeebahmad01)
 - [Aditya Garud](https://github.com/yashranaway)
 - [AKolenda](https://github.com/AKolenda)
 - [Alex](https://github.com/PixPMusic)
 - [Alex Southwell](https://github.com/saphid)
 - [Anton Bezdenezhnykh](https://github.com/GaMeRaM)
+- [Artur](https://github.com/arturict)
+- [Bear Huddleston](https://github.com/BearHuddleston)
 - benthecarman
 - [Bilal Bakr](https://github.com/Bil0000)
+- blinding-pixels
 - [Bob Fowler](https://github.com/bfowler)
 - chukfinley
 - [Dara Adedeji](https://github.com/SunkenInTime)
 - [Dominic Roy](https://github.com/dominic-r)
 - [Ephraim](https://github.com/Ephraim-9)
+- eshaan Sood
 - [Exotic](https://github.com/extoci)
 - [Gabriel De Andrade](https://github.com/gabrielelpidio)
 - [Guillermo Casanova](https://github.com/Gigioxx)
@@ -34,6 +39,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [MacKinley Smith](https://github.com/mackinleysmith)
 - [maco](https://github.com/macodev00)
 - [maria-rcks](https://github.com/maria-rcks)
+- [Morgana Allen](https://github.com/callmemorgan)
 - NaveDanan
 - [Nicholas Wasmiller](https://github.com/Derpedyea)
 - [Nick Anisimov](https://github.com/none23)
@@ -44,6 +50,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - Primož Ajdišek
 - [Ryan Ilano](https://github.com/ryanilano)
 - [scratchyone](https://github.com/scratchyone)
+- [SegFaultZero](https://github.com/SegFaultZero)
 - [Shirish Pothi](https://github.com/shirishpothi)
 - [shivam](https://github.com/shivamhwp)
 - [Simone](https://github.com/Lucenx9)

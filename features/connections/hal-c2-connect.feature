@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14127
 #   docs/user/remote-access.md (HAL-C2 Connect, Manage or revoke access, HAL-C2 Connect troubleshooting)
 #   https://github.com/pingdotgg/t3code/pull/12006 (dropped: an update restart keeps the tunnel)
 #   docs/internals/hal-c2-connect.md (trusted broker, DPoP-bound mint, link outlives a connector, OAuth traps)
@@ -859,3 +860,11 @@ Feature: HAL-C2 Connect
     When the user is not signed in
     Then the page asks them to sign in
     And once signed in it sends the terminal's authorization request on to the account provider
+
+  # Upstream #14127: the confirmation for removing a Connect environment. HAL-C2 Connect was
+  # removed, so there is no account registration left behind to explain.
+  @dropped
+  Scenario: Removing a Connect environment says it stays registered to the account
+    Given the environment is linked to the user's HAL-C2 Connect account
+    When the user removes the environment from this device
+    Then the confirmation says it stays registered to the account and keeps its host space

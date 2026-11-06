@@ -24,6 +24,7 @@
 #include "Stream.h"
 #include "ThemeController.h"
 #include "ThreadPullRequests.h"
+#include "Turn.h"
 #include "World.h"
 
 namespace {
@@ -423,6 +424,8 @@ const Steps steps([] {
 
   // Searching.
   step(QStringLiteral("the user types %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Feedback on a plan the composer offers (TurnSteps).
+    if (planFeedbackTypes(world, c[0])) return;
     open(world);
     palette(world).setQuery(palette(world).query() + c[0]);
   });
@@ -445,6 +448,7 @@ const Steps steps([] {
            describe(world));
   });
   step(QStringLiteral("%1 is not listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("notListed"))) return world.onSettingsPage.value(QStringLiteral("notListed"))(c);
     if (modelPickerLists(world, c[0], false)) return;
     expect(indexOf(world, c[0]) < 0, describe(world));
   });

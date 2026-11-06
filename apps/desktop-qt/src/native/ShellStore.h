@@ -11,6 +11,8 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <optional>
+
 #include "LocalCache.h"
 #include "SidebarModel.h"
 
@@ -57,6 +59,8 @@ public:
   // Hands the cache the row changes it has not been given.
   void flush();
 
+  // The live threads of every MC. Built once per change of the rows, not per
+  // call: every listener of changed() reads them, and a cluster holds thousands.
   QList<sidebar::Thread> threads() const;
   QList<sidebar::Project> projects() const;
   std::optional<sidebar::Project> project(const QString& key) const;
@@ -153,6 +157,8 @@ private:
   void hold(const cache::Shell& kept, const QString& origin);
 
   QHash<QString, Mc> m_mcs;
+  // threads() as of the rows held; unset once they change.
+  mutable std::optional<QList<sidebar::Thread>> m_threads;
   LocalCache* m_cache = nullptr;
   QString m_origin;
   QHash<QString, Unsaved> m_unsaved;

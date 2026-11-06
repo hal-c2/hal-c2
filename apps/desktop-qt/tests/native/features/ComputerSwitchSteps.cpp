@@ -16,7 +16,6 @@
 #include "NativeShell.h"
 #include "ShellStore.h"
 #include "Stream.h"
-#include "ToldReason.h"
 #include "World.h"
 
 namespace {
@@ -94,7 +93,7 @@ void downFor(World& world, const QString& name, qint64 seconds) {
 
 // The MC refuses `method` from here on, saying `reason`.
 void refuse(World& world, const QString& method, const QString& reason) {
-  world.mc.part<ToldReason>().reason = reason;
+  world.reason = reason;
   world.mc.onRpc(method, [&world, reason](const FakeMc::Rpc& rpc) {
     world.mc.refuse(rpc, reason,
                     {{QStringLiteral("_tag"), QStringLiteral("ClusterError")},

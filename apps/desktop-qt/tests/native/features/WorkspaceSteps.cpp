@@ -408,6 +408,7 @@ const Steps steps([] {
   step(QStringLiteral("the user searches the branch list for %1").arg(q), search);
   step(QStringLiteral("the user searched the branch list for %1").arg(q), search);
   step(QStringLiteral("only %1 is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.onSettingsPage.contains(QStringLiteral("onlyListed"))) return world.onSettingsPage.value(QStringLiteral("onlyListed"))(c);
     if (at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("open")).toBool()) {
       world.waitFor([&] { return archiveListsOnly(world, c[0]); },
                     [&] { return QStringLiteral("only %1 archived; the archive is %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
