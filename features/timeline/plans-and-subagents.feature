@@ -314,7 +314,7 @@ Feature: Plans and subagents
     Then the worker's notification reads "Tax tests finished"
     And the notification links to the worker's thread
 
-  @desktop
+  @desktop @mobile @backlog-mobile
   Scenario: A finished task's result is kept apart from the agent's replies until opened
     Given a task the agent delegated as "Tax tests" finished with "12 tests added"
     When the user reads the parent thread
@@ -340,7 +340,7 @@ Feature: Plans and subagents
     And the user can open the parent
 
   # Also proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread.
-  @desktop
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A result waiting to wake the parent names its worker and opens its thread
     Given the agent delegated a task and chose to carry on
     And the subagent finishes with "12 tests added"
