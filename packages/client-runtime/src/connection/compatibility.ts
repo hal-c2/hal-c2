@@ -39,8 +39,8 @@ export function orchestrationProtocolCompatibilityError(
     reason: "unsupported",
     detail:
       serverProtocolVersion > ORCHESTRATION_PROTOCOL_VERSION
-        ? `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`
-        : `This client requires a newer server. Update HAL-C2 on ${descriptor.label} to connect.`,
+        ? `${descriptor.label} runs a newer HAL-C2 protocol than this client. Update HAL-C2 on this device to connect.`
+        : `${descriptor.label} runs an older HAL-C2 protocol than this client. Update HAL-C2 on that environment to connect.`,
   });
 }
 
