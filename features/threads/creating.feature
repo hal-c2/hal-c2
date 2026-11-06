@@ -67,7 +67,12 @@ Feature: Creating threads
     And the environment offers threads without a project
     When the user presses the new thread button in the thread list
     Then a draft thread opens without a project
-    # Where the environment does not offer it, the button stays disabled.
+
+  @backlog @desktop
+  Scenario: The new thread button stays disabled where thread without a project is not offered
+    Given the environment has no projects
+    And the environment does not offer threads without a project
+    Then the new thread button in the thread list is disabled
 
   @backlog @desktop @mobile
   Scenario: A new thread keeps the current model and mode

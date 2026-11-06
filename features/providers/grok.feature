@@ -666,3 +666,10 @@ Feature: Grok
       | 0.2.8   | broken  |
       | 1.0.12  | broken  |
       | 1.0.13  | unknown |
+
+  @backlog
+  Scenario: A broken Grok's warning names the version to update to
+    Given Grok version "0.2.8" is installed
+    When the user opens the Providers settings
+    Then Grok shows an incompatible-version warning
+    And the warning names version 1.0.13 or newer
