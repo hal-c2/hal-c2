@@ -144,6 +144,10 @@ signals:
   void phaseChanged();
   // A ping was answered (`alive`), or was not in time and the socket is replaced.
   void checked(bool alive);
+  // A call went out as `id`, and later was answered or failed (the slow
+  // requests warning, SlowRequestController).
+  void callStarted(int id, const QString& environment, const QString& method);
+  void callEnded(int id);
 
 private:
   void connectSocket();

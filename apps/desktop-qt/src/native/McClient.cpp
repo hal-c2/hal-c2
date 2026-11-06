@@ -119,6 +119,7 @@ void McClient::failCalls() {
   std::sort(ids.begin(), ids.end());
   for (int id : ids) {
     const Call call = calls.value(id);
+    emit callEnded(id);
     if (call.context && call.reply) call.reply(QJsonValue(), QStringLiteral("disconnected"));
   }
 }
@@ -215,6 +216,7 @@ void McClient::call(QObject* context, const QString& environment, const QString&
   }
   const int id = m_nextId++;
   m_calls.insert(id, {context, std::move(reply)});
+  emit callStarted(id, environment, method);
   send({
       {QStringLiteral("t"), QStringLiteral("rpc")},
       {QStringLiteral("id"), id},
@@ -455,7 +457,9 @@ void McClient::onMessage(const QString& text) {
   if (!idValue.isDouble()) return;
   const int id = idValue.toInt();
   if (type == QLatin1String("rpc.result") || type == QLatin1String("rpc.error")) {
+    const bool known = m_calls.contains(id);
     const Call call = m_calls.take(id);
+    if (known) emit callEnded(id);
     // Its context is gone, and whatever the reply would have touched with it.
     if (!call.context || !call.reply) return;
     const Reply& reply = call.reply;
