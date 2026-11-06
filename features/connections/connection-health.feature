@@ -89,21 +89,21 @@ Feature: Connection health
     Then the client waits for the network
     And says the device is offline
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A network that comes back is tried at once
     Given the environment is on another machine
     And the client is waiting for the network
     When a network comes back
     Then it tries again at once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An environment on this machine is reached without a network
     Given the environment is on another machine
     And the client is waiting for the network
     When the user pairs the client with an environment on this machine
     Then it connects at once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A client opened without a network waits for it
     Given the device loses every network
     When the client is opened at an environment on another machine
@@ -235,12 +235,12 @@ Feature: Connection health
     When it comes to the foreground
     Then the client opens a new connection without waiting for the old one to fail
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A connection is ready only after the environment describes itself
     When the socket opens
     Then the client reports connecting until the environment's configuration arrives
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A failed shell subscription is not shown as reconnecting
     Given a connected environment
     When its shell subscription fails
@@ -249,7 +249,7 @@ Feature: Connection health
 
   # The client's own reason for a drop ("timeout", "HTTP 502", a socket error) goes to its
   # log under the attempt's trace id; the user reads a sentence.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: The environment's status says it is reconnecting, in plain words
     Given the connection dropped because of a timeout
     Then the environment reads "Reconnecting"
@@ -258,7 +258,7 @@ Feature: Connection health
 
   # The window shows its connection as an icon and a word; hovering it says what is going
   # on, and clicking it opens a panel with the sentence and what the user can do.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: The connection's state is an icon with a word
     Given the connection is <state>
     Then the window shows the <icon> icon with "<word>"
@@ -275,7 +275,7 @@ Feature: Connection health
   # Shown only once a reconnect is a second and a half old; most are over by then. What
   # needs the user (pairing, an update, no network) is shown at once.
   # The terminal client holds back its "reconnecting" line the same way (tui/reconnect.feature).
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A reconnect within a second and a half is not shown
     Given a connected environment
     When the connection drops and comes back at once
@@ -290,7 +290,7 @@ Feature: Connection health
     Then within a second and a half the window shows it is not connected
     And nothing said it was connected
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: The user copies a connection's trace id for a bug report
     Given a connection that failed
     When the user copies its trace id
@@ -333,7 +333,7 @@ Feature: Connection health
     And a live subscription is not answered for 5 minutes
     Then the user sees no warning
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Cached data stays readable offline without looking live
     Given threads were loaded before the connection dropped
     When the user opens one offline
@@ -392,13 +392,13 @@ Feature: Connection health
     Then the thread shows once the MC answers
     And the MC loads the thread once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A thread left for under five minutes resumes without a snapshot
     Given the user left a thread
     When the user returns within five minutes
     Then the client resumes the thread from where it stopped
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A thread left for longer comes back from what the client kept
     Given the user left a thread more than five minutes ago
     And the agent answered "Shipping is next." meanwhile
@@ -407,7 +407,7 @@ Feature: Connection health
     And the MC sends only what the client lacks
     And the thread shows "Shipping is next." after the conversation it kept
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Subscriptions follow a replaced connection
     Given a client subscribed to a thread
     When the connection is replaced
@@ -436,7 +436,7 @@ Feature: Connection health
     Then the action fails as disconnected
     And it is not sent again on the new connection
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Reconnecting does not repeat the user's actions
     Given the user sent a command just before the connection dropped
     When the client reconnects
@@ -455,7 +455,7 @@ Feature: Connection health
     Then only that request fails
     And the connection stays open
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Removing an environment clears everything the client kept for it
     Given a saved environment with cached threads and drafts
     When the user removes it
@@ -533,13 +533,13 @@ Feature: Connection health
       | 1.4.0                  | 1.4.0-nightly.20260901 | does not warn               |
       | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-tui
   Scenario: One connection serves every MC of a cluster
     Given a client connected to a cluster of three MCs
     Then the client keeps one connection for the cluster
     And streams from every MC arrive over it
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-tui
   Scenario: A cluster connection resumes each stream from where it stopped
     Given a client following threads on two cluster members
     When the cluster connection drops and returns
