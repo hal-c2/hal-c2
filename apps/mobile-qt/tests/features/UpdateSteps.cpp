@@ -304,8 +304,21 @@ const Steps steps([] {
     world.mc.announceEnvironment();
   });
   step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    // What a viewer open over everything says (FilesSteps.cpp), or how an update went.
-    if (world.state(S("attachmentViewer")).toMap().isEmpty()) return awaitText(world, S("maintenanceOutcome-") + kOwn, c[0]);
+    // What a viewer open over everything says (FilesSteps.cpp), how an update
+    // went, or a toast (SubagentSteps.cpp: a plan that could not be handed on).
+    if (world.state(S("attachmentViewer")).toMap().isEmpty()) {
+      const QString outcome = S("maintenanceOutcome-") + kOwn;
+      const auto toasted = [&] {
+        for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
+          const QVariantMap fields = toast.toMap();
+          if (fields.value(S("title")) == c[0] || fields.value(S("description")) == c[0]) return true;
+        }
+        return false;
+      };
+      world.waitFor([&] { return (world.find(outcome) != nullptr && world.find(outcome)->property("text").toString() == c[0]) || toasted(); },
+                    [&] { return S("\"%1\"; the screen says: %2; toasts are %3").arg(c[0], screenTexts(world), show(world.state(S("toasts")))); });
+      return;
+    }
     world.waitFor([&] { return world.shows(c[0], false); }, [&] { return S("\"%1\"; the screen says: %2").arg(c[0], world.texts().join(S(" | "))); });
   });
   step(S("the update of %1 can be started again").arg(kQuoted), [](World& world, const Captures&, const Table&) {
