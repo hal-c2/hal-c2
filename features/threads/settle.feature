@@ -6,6 +6,7 @@
 #   apps/web/src/components/settings/SettingsPanels.tsx (General: auto-settle rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Settled section, settled limit)
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Settle, Un-settle)
+#   apps/desktop-qt/src/native/ThreadNoticeController.cpp (settled notice), ThreadMenuController.cpp (Auto-settle behavior)
 #   apps/tui/src/components/Sidebar.logic.ts (Settled section, paging)
 #   apps/tui/src/commands.ts (Settle, Un-settle)
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.auto-settle, thread.unsettle, thread.settled, thread.unsettled)
@@ -30,7 +31,7 @@ Feature: Settling threads
     When the user un-settles "Ship checkout"
     Then "Ship checkout" returns to the top of the active threads
 
-  @backlog @desktop
+  @desktop
   Scenario: An open settled thread says so and can be un-settled there
     Given "Ship checkout" is settled
     When the user opens "Ship checkout"
@@ -38,7 +39,7 @@ Feature: Settling threads
     When the user chooses "Un-settle"
     Then "Ship checkout" returns to the active threads
 
-  @backlog @desktop
+  @desktop
   Scenario: An un-settle that fails is reported
     Given the user has opened "Ship checkout", which is settled
     And the environment rejects the un-settle
@@ -46,7 +47,7 @@ Feature: Settling threads
     Then the user is told "Failed to un-settle thread" with the reason
     And "Ship checkout" stays settled
 
-  @backlog @desktop
+  @desktop
   Scenario: A settled thread that woke earlier does not say it woke
     Given "Ship checkout" woke from a snooze and was then settled
     When the user opens "Ship checkout"
@@ -71,7 +72,7 @@ Feature: Settling threads
     When the user settles "Ship checkout"
     Then "Ship checkout" is settled and no longer pinned
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Settling dismisses questions the agent is waiting on
     Given the agent in "Ship checkout" asked a question in the background
     When the user settles "Ship checkout"
@@ -95,14 +96,14 @@ Feature: Settling threads
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: A thread's auto-settle can be turned off and back on
     When the user turns auto-settle off for "Ship checkout"
     Then "Ship checkout" stays out of automatic settling
     When the user turns auto-settle on for "Ship checkout"
     Then "Ship checkout" settles automatically again after a quiet spell
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared @backlog-mobile
   Scenario: Settling a thread with auto-settle off still works
     Given "Ship checkout" has auto-settle turned off
     When the user settles "Ship checkout"
