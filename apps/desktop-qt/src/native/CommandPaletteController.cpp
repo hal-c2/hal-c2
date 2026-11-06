@@ -872,6 +872,12 @@ void CommandPaletteController::rebuildCommand() {
       const QVariant needed = state->value(needs);
       if (!needed.isValid() || needed.isNull()) continue;
     }
+    // Settings the search finds only for a project, or while connected
+    // (settingsPages.js searchRows), are offered alike.
+    if (section.value(QStringLiteral("project")).toBool() &&
+        state->value(QStringLiteral("settingsScope")).toMap().value(QStringLiteral("kind")) != QLatin1String("project"))
+      continue;
+    if (section.value(QStringLiteral("connected")).toBool() && !m_client->isReady()) continue;
     const QString label = section.value(QStringLiteral("label")).toString();
     // A setting on the section's page is found by its own title, and opens there.
     const QString target = section.value(QStringLiteral("targetId")).toString();

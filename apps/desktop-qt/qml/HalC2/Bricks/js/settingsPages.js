@@ -164,15 +164,16 @@ function targetOf(section, targetId, os) {
 }
 
 // What the command palette offers (PaletteModel.setSettingsSections): every
-// section, and each setting on its page with its `targetId` and `detail` (its
-// section's label).
+// section, and each setting on its page with its `targetId`, `detail` (its
+// section's label), and whether it needs a project scope or a connection.
 function paletteEntries(os) {
     var entries = [];
     sections.filter(function (section) { return !section.prefix; }).forEach(function (section) {
         entries.push({ to: section.to, label: section.label, keywords: section.keywords || "", requires: section.requires || "" });
         settingsOf(section, os).forEach(function (setting) {
             entries.push({ to: section.to, label: setting.title, keywords: setting.keywords || "", requires: setting.requires || section.requires || "",
-                           targetId: setting.targetId, detail: section.label });
+                           targetId: setting.targetId, detail: section.label, project: setting.project === true,
+                           connected: setting.connected === true });
         });
     });
     return entries;

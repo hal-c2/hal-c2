@@ -41,7 +41,12 @@ Rectangle {
             const targets = scope.targets ?? [];
             const environments = scope.environments ?? [];
             const supports = environment => environment.capabilities?.[target.capability] === true;
-            const lacking = environments.some(environment => targets.indexOf(environment.id) >= 0 && !supports(environment));
+            // The rule Settings.supports() shows the row by: every target's
+            // settings are read and it has the capability. A target still
+            // loading is waited for; one offline cannot show the setting.
+            const states = targets.map(id => environments.find(candidate => candidate.id === id));
+            if (states.some(environment => environment !== undefined && environment.online && !environment.readable)) return null;
+            const lacking = states.length === 0 || states.some(environment => environment === undefined || !environment.readable || !supports(environment));
             if (!lacking) return null;
             const choices = environments.filter(environment => environment.online && supports(environment)).map(environment => ({
                 label: environment.label, action: "settingsScope.environment", payload: { id: environment.id }
@@ -140,6 +145,8 @@ Rectangle {
 
     onFocusedItemChanged: if (focusedItem !== null) revealFocus(focusedItem)
     onTargetSeqChanged: Qt.callLater(reveal)
+    // The setting a notice stood in for is shown once the notice goes.
+    onNoticeChanged: if (notice === null) Qt.callLater(reveal)
     Component.onCompleted: Qt.callLater(reveal)
     color: Theme.palette.color("canvas", "#0b0b0d")
 

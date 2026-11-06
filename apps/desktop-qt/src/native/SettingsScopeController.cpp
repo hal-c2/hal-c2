@@ -177,7 +177,7 @@ QStringList SettingsScopeController::lacking(const QString& capability) const {
   QStringList result;
   for (const QString& environmentId : targets()) {
     if (!m_documents->settings(environmentId)) continue;
-    if (m_capabilities.value(environmentId).value(capability) != QJsonValue(true)) result.append(environmentId);
+    if (capabilitiesOf(environmentId).value(capability) != QJsonValue(true)) result.append(environmentId);
   }
   return result;
 }
@@ -272,6 +272,7 @@ void SettingsScopeController::publish() {
   for (const QString& id : listed()) {
     environments.append(QVariantMap{
         {QStringLiteral("id"), id}, {QStringLiteral("label"), label(id)}, {QStringLiteral("online"), online(id)},
+        {QStringLiteral("readable"), m_documents->settings(id).has_value()},
         {QStringLiteral("capabilities"), capabilitiesOf(id).toVariantMap()}});
   }
   QVariantList projects;

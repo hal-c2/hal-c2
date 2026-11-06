@@ -542,6 +542,23 @@ const Steps steps([] {
     twoEnvironments(world, QStringLiteral("laptop"), false, world.mc.part<Environments>().scoped, false);
     scopeTo(world, world.mc.part<Environments>().scoped);
   });
+  step(QStringLiteral("%1 and %1 can settle threads").arg(q), [](World& world, const Captures& c, const Table&) {
+    settingsShell(world, QSize(900, 600));
+    twoEnvironments(world, c[0], true, c[1], true);
+  });
+  step(QStringLiteral("the user scopes the settings to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    scopeTo(world, c[0]);
+  });
+  step(QStringLiteral("%1 goes offline").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = world.mc.part<Environments>().ids.value(c[0]);
+    world.mc.setOnline(id, false);
+    world.waitFor([&] {
+      for (const QVariant& value : scopeOf(world).value(QStringLiteral("environments")).toList()) {
+        if (value.toMap().value(QStringLiteral("id")) == id) return !value.toMap().value(QStringLiteral("online")).toBool();
+      }
+      return false;
+    }, [&] { return QStringLiteral("%1 offline; the scope is %2").arg(c[0], show(scopeOf(world))); });
+  });
   step(QStringLiteral("the results are found"), [](World& world, const Captures&, const Table&) {
     const QVariantList list = rows(world);
     QStringList titles;

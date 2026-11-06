@@ -304,6 +304,15 @@ Feature: Settings search and navigation
         | no environment can settle threads | Auto-settle merged threads requires a supporting environment. Connect or update an environment to continue. |
 
     @desktop
+    Scenario: A setting on an environment that went offline is offered where it can be set
+      Given "laptop" and "server" can settle threads
+      And the user scopes the settings to "server"
+      And "server" goes offline
+      When the user opens the search result "Auto-settle merged threads"
+      Then the page says "Auto-settle merged threads requires a supporting environment. Choose one to continue." in place of the settings
+      And choosing one offers "laptop" and not "server"
+
+    @desktop
     Scenario: A setting that belongs to another scope asks the user to choose that scope
       Given the settings are scoped to the project "shop"
       When the user opens the search result of a setting that is set per environment
