@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13807
 #   https://github.com/pingdotgg/t3code/pull/13795
 #   https://github.com/pingdotgg/t3code/pull/11477
 #   apps/web/src/components/ChatMarkdown.tsx (code block header, Copy code, line wrap, table expand and copy, streaming)
@@ -117,6 +118,31 @@ Feature: Formatted messages
     When the agent answers with HTML and an image
     Then the HTML is shown as written
     And the image is a link to its address and nothing is loaded from the web
+
+  # Upstream #13807: a trailing "_" or "~" is part of a bare web address.
+  @shared @backlog
+  Scenario Outline: A bare web address in a reply keeps a trailing underscore or tilde
+    When the reply contains the bare address "<address>"
+    Then the link is "<address>" in full
+
+    Examples:
+      | address                                 |
+      | https://example.com/foo_                |
+      | https://localhost/a~                    |
+      | https://example.com/a_b_                |
+
+  # Upstream #13807: sentence punctuation after a bare web address is left outside the link.
+  @shared @backlog
+  Scenario Outline: Punctuation after a bare web address stays outside the link
+    When the reply contains the bare address "<address>" followed by "<punctuation>"
+    Then the link is "<address>"
+    And "<punctuation>" is shown after it
+
+    Examples:
+      | address               | punctuation |
+      | https://example.com/a | .           |
+      | https://example.com/a | ...         |
+      | http://localhost:3000 | ,           |
 
   @shared @backlog-mobile
   Scenario: A link to a script is not a link

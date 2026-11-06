@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13759
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
@@ -709,3 +710,18 @@ Feature: The thread list
     Given threads "t2" and "t1" settled at the same moment
     When the settled shelf is shown
     Then "t1" is listed before "t2" whatever order the MC sent them in
+
+  # Upstream #13491: a row is announced by its title first, and the open thread as current.
+  @desktop @backlog
+  Scenario: A screen reader hears a thread's title first and which thread is open
+    Given the thread "Fix checkout" is open
+    When a screen reader reads the thread list
+    Then each row is announced by its title first
+    And the open thread is announced as current
+
+  # Upstream #13491: the thread rows are reached in order, before the settled shelf and its footer.
+  @desktop @backlog
+  Scenario: A screen reader reaches the thread rows in order before the settled shelf
+    Given threads "one" and "two" are listed above a settled shelf
+    When a screen reader moves through the sidebar from its first thread
+    Then "one" and then "two" are reached before the settled shelf and its footer

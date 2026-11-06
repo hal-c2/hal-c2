@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13083
 #   https://github.com/pingdotgg/t3code/pull/13577
 #   https://github.com/pingdotgg/t3code/pull/13683 (a slow snapshot is given time before a second load)
 #   apps/web/src/hooks/useEnvironmentDisconnectDelay.ts (20 seconds before a thread offers to disconnect), apps/web/src/components/ChatView.tsx (disconnect, reconnect)
@@ -636,10 +637,11 @@ Feature: Connection health
     Then the thread says "studio is offline"
     And the user can ask it to reconnect
 
+  # Upstream #13083: a computer that is only offline is not taken for one mid-update.
   @backlog @desktop
-  Scenario: Reconnecting to a computer on another version reads as finishing an update
+  Scenario: Reconnecting to a computer on another version is not taken for an update
     Given the user is looking at a thread on "studio"
     And "studio" runs a different version than this client and no update is known to be running
     When "studio" is reconnecting
-    Then the thread shows one notice "Reconnecting to studio" with "Finishing an update"
-    And no separate notice says the versions differ
+    Then the thread shows the ordinary reconnecting notice "Reconnecting to studio"
+    And no notice says "Finishing an update"
