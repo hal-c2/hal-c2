@@ -218,7 +218,7 @@ private slots:
       for (int i = 0; i < hubCount; ++i) {
         const QString driver = *rc::gen::elementOf(drivers);
         const QString email = *rc::gen::elementOf(emails);
-        accounts.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("account-%1").arg(i)}, {QStringLiteral("driver"), driver},
+        accounts.append(QJsonObject{{QStringLiteral("id"), email.isEmpty() ? QStringLiteral("account-%1").arg(i) : email}, {QStringLiteral("driver"), driver},
                                     {QStringLiteral("email"), email}, {QStringLiteral("usageLimits"), windows}});
         if (driver == QLatin1String("codex") && !signedIn.contains(email)) ++fromHub;
       }
@@ -231,9 +231,15 @@ private slots:
       const QVariantMap summary = report.value(QStringLiteral("summary")).toMap();
       if (listed.size() == 1) {
         RC_ASSERT(summary == listed.first().toMap());
+      } else if (listed.isEmpty()) {
+        RC_ASSERT(summary.value(QStringLiteral("label")).toString().isEmpty());
       } else {
         RC_ASSERT(summary.value(QStringLiteral("label")).toString() == QStringLiteral("%1 accounts").arg(listed.size()));
       }
+      // The hub is named apart from the account, so scrambling one leaves the other.
+      int hubListed = 0;
+      for (const QVariant& value : listed) hubListed += value.toMap().value(QStringLiteral("source")).toString() == QLatin1String("Hub");
+      RC_ASSERT(hubListed == fromHub);
       for (const QVariant& value : listed) {
         const QVariantMap account = value.toMap();
         // Either windows or the reason there are none.

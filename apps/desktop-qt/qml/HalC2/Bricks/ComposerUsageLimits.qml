@@ -31,20 +31,33 @@ Rectangle {
         return at ? qsTr("resets %1").arg(Threads.upcoming(at)) : "";
     }
 
-    // An account's name and plan; an email is scrambled until clicked.
+    // An account's hub, name and plan; a name that is an email is scrambled
+    // until clicked, the hub it came through still named.
     component Account: RowLayout {
         id: named
 
         property var account: null
-        readonly property bool sensitive: account !== null && account.sensitive === true
-        readonly property string plan: account !== null ? account.plan ?? "" : ""
+        readonly property bool sensitive: !!account && account.sensitive === true
+        readonly property string source: account ? account.source ?? "" : ""
+        readonly property string plan: account ? account.plan ?? "" : ""
 
         spacing: 0
 
         Label {
             visible: !named.sensitive
             Layout.fillWidth: !named.sensitive
-            text: named.account !== null ? named.account.label + (named.plan.length > 0 ? " · " + named.plan : "") : ""
+            text: named.account ? (named.source.length > 0 ? named.source + " · " : "") + named.account.label + (named.plan.length > 0 ? " · " + named.plan : "") : ""
+            elide: Text.ElideRight
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: Theme.type.meta.size
+        }
+
+        Label {
+            visible: named.sensitive && named.source.length > 0
+            // The hub gives way (with the plan), so a long name leaves room for the account.
+            Layout.fillWidth: true
+            Layout.maximumWidth: implicitWidth
+            text: named.source + " · "
             elide: Text.ElideRight
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Theme.type.meta.size
@@ -53,7 +66,6 @@ Rectangle {
         RedactedText {
             objectName: "composerUsageLimitsAccount"
             visible: named.sensitive
-            Layout.maximumWidth: named.width
             value: named.sensitive ? named.account.label : ""
             Accessible.name: qsTr("Toggle account label visibility")
             revealTip: qsTr("Click to reveal account")

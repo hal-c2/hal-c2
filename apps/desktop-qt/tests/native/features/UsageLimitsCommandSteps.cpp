@@ -226,6 +226,8 @@ const Steps steps([] {
     QQuickItem* account = answer(world).item(QStringLiteral("composerUsageLimitsAccount"));
     expect(account->isVisible() && !showsPart(answer(world).root(), c[0]),
            QStringLiteral("the answer shows %1 as \"%2\"").arg(c[0], account->property("text").toString()));
+    // Only the account is hidden; the hub it came through is still named.
+    expect(showsPart(answer(world).root(), QStringLiteral("Team hub")), QStringLiteral("the hub's name is hidden too"));
   });
   step(QStringLiteral("the user chooses to reveal the account"), [](World& world, const Captures&, const Table&) {
     answer(world).click(QStringLiteral("composerUsageLimitsAccount"));
