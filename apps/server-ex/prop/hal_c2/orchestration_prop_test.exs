@@ -22,7 +22,10 @@ defmodule HalC2.OrchestrationPropTest do
 
   Each message names one of two Codex instances (`codex`, and `codex-work` from the
   settings); a message for the instance the running turn is not on never joins it, and
-  the thread is on the instance of the run that started last.
+  the thread is on the instance of the run that started last. The agent can switch the
+  thread to an instance, as `hal_c2_thread_configure` does: the turn in progress
+  finishes where it is, and the MC's own messages, which name no instance, run on the
+  one the thread is on when they start, never taking it back (#1048).
 
   Turns run on the fake Codex app-server in `test/support/fake_codex.py`, through the
   bundled Codex plugin as on an MC. Every
@@ -176,6 +179,7 @@ defmodule HalC2.OrchestrationPropTest do
        {:call, __MODULE__, :steer_twice,
         [tid, msg, oneof(@instances), oneof([:taken, :taken, :refused])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
+      {2, {:call, __MODULE__, :switch, [tid, oneof(@instances)]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
       {1, {:call, __MODULE__, :archive, [tid]}},
@@ -281,7 +285,21 @@ defmodule HalC2.OrchestrationPropTest do
       if(limited == [], do: [], else: [{4, {:call, __MODULE__, :recover, [oneof(limited)]}}]) ++
         if armed == [], do: [], else: [{4, {:call, __MODULE__, :sweep, []}}]
 
-    frequency(always ++ after_held_up ++ on_messages ++ on_queued ++ on_running ++ on_limits)
+    # A switch away while the MC's own message waits, which then starts on the instance
+    # switched to: too rare a run of commands to draw otherwise (#1048).
+    switchable =
+      for {t, %{status: :live} = thread} <- threads,
+          Enum.any?(thread.queue, &thread.messages[&1].notice),
+          do: {t, hd(@instances -- [thread.instance])}
+
+    on_notices =
+      if switchable == [],
+        do: [],
+        else: [{6, let({t, i} <- oneof(switchable), do: {:call, __MODULE__, :switch, [t, i]})}]
+
+    frequency(
+      always ++ after_held_up ++ on_messages ++ on_queued ++ on_running ++ on_limits ++ on_notices
+    )
   end
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
@@ -311,6 +329,10 @@ defmodule HalC2.OrchestrationPropTest do
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
       when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run],
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
+
+  # An agent switches the thread it runs in; one put away has no agent to switch it.
+  def precondition(%{threads: threads}, {:call, _, :switch, [tid, _]}),
+    do: match?(%{status: :live}, threads[tid])
 
   def precondition(_state, _call), do: true
 
@@ -454,6 +476,10 @@ defmodule HalC2.OrchestrationPropTest do
 
   # The session goes and the next message starts it again; no run changes.
   def next_state(state, _result, {:call, _, :release, [_tid]}), do: state
+
+  # The thread's next turn runs on the instance; the turn in progress finishes where it is.
+  def next_state(state, _result, {:call, _, :switch, [tid, instance]}),
+    do: update(state, tid, &%{&1 | instance: instance})
 
   # Resume at the reset: armed for the limit stop that is the thread's latest run.
   def next_state(state, _result, {:call, _, :recover, [tid]}) do
@@ -677,6 +703,8 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
 
+  defp expected_reply(_state, :switch, _args), do: :ok
+
   defp expected_reply(state, fun, [tid])
        when fun in [:archive, :unarchive, :delete, :interrupt],
        do: refusal(state, tid, fun) || :ok
@@ -792,6 +820,14 @@ defmodule HalC2.OrchestrationPropTest do
     with :live <- thread.status,
          nil <- running(thread),
          next when next != nil <- Enum.find(thread.queue, &(not MapSet.member?(held, &1))) do
+      # The MC's own message runs on the thread's instance as it starts, which a switch
+      # since it was queued may have changed; anything else takes the thread over.
+      thread =
+        if thread.messages[next].notice,
+          do:
+            set_runs(thread, &if(&1.msg == next, do: %{&1 | instance: thread.instance}, else: &1)),
+          else: thread
+
       %{thread | queue: List.delete(thread.queue, next)}
       |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == next)).instance)
       |> put_in([:messages, next, :shown], true)
@@ -881,6 +917,8 @@ defmodule HalC2.OrchestrationPropTest do
     active = running(thread)
     text = if mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"
     message = %{text: text, run: msg, shown: false, notice: mode == :notice}
+    # The MC's own message names no instance: it is on the thread's.
+    instance = if mode == :notice, do: thread.instance, else: instance
     # A message the user queues while the queue is held is held with it; a restart, or
     # the agent's own result (`:notice`), is not.
     held = mode in [:queue, :limit] and held_queue?(thread)
@@ -1108,18 +1146,27 @@ defmodule HalC2.OrchestrationPropTest do
           %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "restart"}
       end
 
-    Map.merge(
-      %{
-        "type" => "message.dispatch",
-        "threadId" => tid,
-        "messageId" => msg,
-        "text" => if(mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"),
-        "attachments" => [],
-        "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
-      },
-      extra
-    )
+    %{
+      "type" => "message.dispatch",
+      "threadId" => tid,
+      "messageId" => msg,
+      "text" => if(mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"),
+      "attachments" => [],
+      "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
+    }
+    # `Delegation` names no model: the result goes to the thread's.
+    |> then(&if(mode == :notice, do: Map.delete(&1, "modelSelection"), else: &1))
+    |> Map.merge(extra)
   end
+
+  # As `hal_c2_thread_configure` switches the agent's own thread.
+  def switch(tid, instance),
+    do:
+      thread_command(%{
+        "type" => "provider.switch",
+        "threadId" => tid,
+        "modelSelection" => %{"instanceId" => instance, "model" => "gpt-5.4"}
+      })
 
   def rename(tid, title),
     do: thread_command(%{"type" => "thread.metadata.update", "threadId" => tid, "title" => title})

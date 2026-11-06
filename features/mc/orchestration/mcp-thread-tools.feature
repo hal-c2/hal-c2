@@ -304,6 +304,7 @@ Feature: Agents working with threads through MCP tools
   Scenario Outline: Configuring the caller's model
     When the agent of "caller" configures model <selection>
     Then <result>
+    And the result names the selection for the next turn and the model of the turn in progress
 
     Examples:
       | selection                      | result                                   |
@@ -314,6 +315,13 @@ Feature: Agents working with threads through MCP tools
   Scenario: Reading a thread's configuration
     When the agent of "caller" reads the configuration of "t2"
     Then it receives the model selection, runtime mode and interaction mode of "t2"
+
+  # A switch applies from the next turn; the read tells the two apart (#1048).
+  @mc
+  Scenario: Reading the configuration of a thread switched during its turn
+    When the agent of "caller" configures model "claude-sonnet-5" on "claudeAgent"
+    And the agent of "caller" reads the configuration of "caller"
+    Then the configuration shows "claudeAgent" for the next turn and "codex" for the turn in progress
 
   @mc
   Scenario: Listing or reading a thread shows whether it can settle

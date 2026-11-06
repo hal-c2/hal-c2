@@ -201,8 +201,16 @@ defmodule HalC2.Mcp.Tools.Threads do
                  "modelSelection" =>
                    Map.put_new(selection, "instanceId", me["providerInstanceId"])
                })
-             ),
-           do: {:ok, %{"sequence" => sequence}}
+             ) do
+        thread = thread(me["id"]) || %{}
+
+        {:ok,
+         %{
+           "sequence" => sequence,
+           "modelSelection" => thread["modelSelection"],
+           "activeRun" => active_run(me["id"])
+         }}
+      end
     end
   end
 
@@ -214,6 +222,7 @@ defmodule HalC2.Mcp.Tools.Threads do
        %{
          "threadId" => row["id"],
          "modelSelection" => thread["modelSelection"],
+         "activeRun" => active_run(row["id"]),
          "runtimeMode" => thread["runtimeMode"],
          "interactionMode" => thread["interactionMode"]
        }}
@@ -374,6 +383,23 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # --- helpers ----------------------------------------------------------------------------
+
+  # The run in progress and the model it runs on. A thread's `modelSelection` is what
+  # its next turn runs on; a run already going finishes on its own (#1048).
+  defp active_run(thread_id) do
+    run =
+      thread_id
+      |> stream()
+      |> StreamState.list("run")
+      |> Enum.find(&(&1["status"] in ~w(preparing starting running waiting)))
+
+    run &&
+      %{
+        "runId" => run["id"],
+        "status" => run["status"],
+        "modelSelection" => run["modelSelection"]
+      }
+  end
 
   defp move_result({:ok, result}), do: {:ok, result}
   defp move_result({:error, %{"code" => code, "message" => message}}), do: {:error, code, message}

@@ -2650,7 +2650,7 @@
   },
   {
     "name": "hal_c2_thread_configuration",
-    "description": "Read a thread's provider/model selection and modes in the calling project. orchestrator_capabilities lists available providers and models.",
+    "description": "Read a thread's provider/model selection and modes in the calling project. modelSelection is what the thread's next turn runs on; activeRun, when a turn is in progress, names the model that turn is running on. orchestrator_capabilities lists available providers and models.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2670,7 +2670,7 @@
   },
   {
     "name": "hal_c2_thread_configure",
-    "description": "Set this calling thread's provider, model and options with the existing selection command. This does not change permission modes or other threads. Use orchestrator_capabilities to choose a selection.",
+    "description": "Set this calling thread's provider, model and options with the existing selection command. The selection applies from the thread's next turn: the turn in progress (activeRun in the result) finishes on its current model, and the next turn on another provider receives the conversation as context. A switch the thread cannot take is refused with an error. This does not change permission modes or other threads. Use orchestrator_capabilities to choose a selection.",
     "inputSchema": {
       "type": "object",
       "properties": {
