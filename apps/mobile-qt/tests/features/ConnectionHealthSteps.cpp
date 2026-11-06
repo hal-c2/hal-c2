@@ -81,6 +81,8 @@ struct Seen {
   QString draft;
   bool sawDown = false;    // whether the controller saw the client leave Ready
   bool shownDown = false;  // whether the phone said the connection was down
+  QStringList details;     // every detail the connection's status gave, in order
+  QMetaObject::Connection watching;
 };
 
 Seen& seen(World& world) {
@@ -148,11 +150,11 @@ void setNetwork(World& world, bool disconnected, bool interfaceUp) {
 
 // The connection notice's panel, opened with a tap once a reconnect is past
 // its grace (until then nothing shows), and whether it says `text`.
-bool noticeSays(World& world, const QString& text) {
+bool noticeSays(World& world, const QString& text, bool whole = true) {
   world.waitFor([&] { return !connection(world).value(S("settling")).toBool(); },
                 [&] { return S("the reconnect to be past its grace; the connection is %1").arg(show(connection(world))); });
   world.openConnectionNotice();
-  return world.shows(text);
+  return world.shows(text, whole);
 }
 
 // The thread on the phone.
@@ -401,7 +403,7 @@ const Steps steps([] {
   // A refused credential: the phone's notice offers to pair again.
   step(S("asks the user to pair again"), [](World& world, const Captures&, const Table&) {
     expect(connection(world).value(S("needsPairing")).toBool(), S("the connection is %1").arg(show(connection(world))));
-    expect(noticeSays(world, S("Pair again with a fresh pairing link from the environment.")) && world.find(S("connectionPair")) != nullptr &&
+    expect(noticeSays(world, S("Pair again with a fresh pairing link from the environment."), false) && world.find(S("connectionPair")) != nullptr &&
                world.find(S("connectionPairingLink")) != nullptr,
            S("the phone does not ask for a pairing link; the screen says: %1").arg(world.texts().join(S(" | "))));
   });
@@ -811,6 +813,35 @@ const Steps steps([] {
     // What it held is still there.
     expect(world.native().store()->thread(S("env-b:thread-env-b")).has_value() && world.native().store()->thread(seen(world).thread).has_value(),
            S("a thread went missing"));
+  });
+
+  // The phone's foreground check: three seconds, not the desktop's fifteen.
+  step(S("the phone's app comes to the foreground"), [](World& world, const Captures&, const Table&) {
+    Seen& watched = seen(world);
+    // Every status published, not only what the connection settles on: the
+    // replacement is up at once.
+    watched.watching = QObject::connect(&world.bridge(), &ShellBridge::stateEntryChanged, [&watched](const QString& key, const QVariant& value) {
+      if (key != QLatin1String("connection")) return;
+      const QString detail = value.toMap().value(S("detail")).toString();
+      if (!detail.isEmpty()) watched.details.append(detail);
+    });
+    watch(world).checks.clear();
+    watch(world).connectionsBefore = world.mc.connections.size();
+    world.background();
+    world.foreground();
+  });
+  step(S("the client gives up on the check after 3 seconds"), [](World& world, const Captures&, const Table&) {
+    const ConnectionWatch& watched = watch(world);
+    expect(watched.probeTimeout == 3000, S("the phone waits %1 ms for the check").arg(watched.probeTimeout));
+    world.waitFor([&] { return watched.checks.contains(false); }, [&] { return S("the check to fail; the connection is %1").arg(show(connection(world))); });
+    waitForReconnect(world, watched.connectionsBefore + 1);
+  });
+  step(S("the status says the environment did not respond to a connection health check"), [](World& world, const Captures&, const Table&) {
+    Seen& watched = seen(world);
+    QObject::disconnect(watched.watching);
+    const bool said = std::any_of(watched.details.cbegin(), watched.details.cend(),
+                                  [](const QString& detail) { return detail.contains(S("did not respond to a connection health check.")); });
+    expect(said, S("the status said: %1").arg(watched.details.join(S(" | "))));
   });
 });
 

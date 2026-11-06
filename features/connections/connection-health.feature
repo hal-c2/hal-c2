@@ -38,7 +38,7 @@ Feature: Connection health
   Background:
     Given a client paired with an environment
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A dropped connection retries with growing delays
     Given the environment stops answering
     When the connection drops
@@ -62,7 +62,7 @@ Feature: Connection health
     When the connection drops
     Then one notice says the environment is being reconnected
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An offline device waits instead of retrying
     Given the device has no network
     When the connection drops
@@ -72,7 +72,7 @@ Feature: Connection health
   # Android says disconnected when any one network is lost, the one a phone just left for
   # another included (hal-c2/hal-c2#69). Only an environment on another machine needs a
   # network, and which machine it is on is asked again whenever the client is opened.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A device that lost one of its two networks keeps trying
     Given the environment is on another machine
     And the environment stops answering
@@ -81,7 +81,7 @@ Feature: Connection health
     Then the client keeps retrying
     And does not say the device is offline
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A device that lost every network waits and says it is offline
     Given the environment is on another machine
     When the device loses every network
@@ -110,7 +110,7 @@ Feature: Connection health
     Then the client waits for the network
     And says the device is offline
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A refused credential waits for the user
     Given the environment refuses the client's credential
     When the client connects
@@ -164,13 +164,13 @@ Feature: Connection health
       | its connection record is gone | Connection profile studio is unavailable.     |
       | its credential is gone        | Connection credential studio is unavailable.  |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Foregrounding wakes a waiting retry
     Given the client is waiting to retry
     When the app comes to the foreground
     Then it tries again at once
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Foregrounding probes a healthy connection instead of replacing it
     Given an established connection
     When the app comes to the foreground after a moment
@@ -187,7 +187,7 @@ Feature: Connection health
     But a second failure in a row goes back to the growing delays
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (MOBILE_CONNECTION_PROBE_TIMEOUT)
-  @backlog @mobile
+  @mobile
   Scenario: The phone gives the foreground check 3 seconds, not 15
     Given an established connection that has silently died
     When the phone's app comes to the foreground
@@ -483,7 +483,7 @@ Feature: Connection health
     When the user signs out of HAL-C2 Connect
     Then the directly paired environment stays
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-tui
   Scenario Outline: A protocol mismatch blocks the connection with advice
     Given an environment whose MC speaks <protocol>
     When the client connects
@@ -515,7 +515,7 @@ Feature: Connection health
   # A different app version does not block the connection; only a server behind the client
   # warns. settings/updates.feature holds updating the server from that warning and keeping
   # a dismissed notice dismissed for its version.
-  @shared @backlog-mobile
+  @shared
   Scenario Outline: A server on another HAL-C2 version warns only when it is behind
     Given this client runs HAL-C2 <client>
     And the environment's MC runs HAL-C2 <server>
