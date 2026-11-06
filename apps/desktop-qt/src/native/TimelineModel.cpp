@@ -445,6 +445,34 @@ QString planBody(const QString& markdown) {
   return lines.join(QLatin1Char('\n'));
 }
 
+// A long plan's preview (apps/web/src/proposedPlan.ts
+// buildCollapsedProposedPlanPreviewMarkdown, ProposedPlanCard's canCollapse):
+// its first ten lines with text, and "..." when there is more; empty for a plan
+// short enough to show whole.
+QString planPreview(const QString& markdown) {
+  if (markdown.size() <= 900 && markdown.count(QLatin1Char('\n')) + 1 <= 20) return {};
+  constexpr int maxLines = 10;
+  QString body = planBody(markdown);
+  while (!body.isEmpty() && body.back().isSpace()) body.chop(1);
+  QStringList preview;
+  int visible = 0;
+  bool more = false;
+  for (QString line : body.split(QRegularExpression(QStringLiteral("\\r?\\n")))) {
+    while (!line.isEmpty() && line.back().isSpace()) line.chop(1);
+    const bool shown = !line.trimmed().isEmpty();
+    if (shown && visible >= maxLines) {
+      more = true;
+      break;
+    }
+    preview.append(line);
+    if (shown) ++visible;
+  }
+  while (!preview.isEmpty() && preview.constLast().trimmed().isEmpty()) preview.removeLast();
+  if (preview.isEmpty()) return planTitle(markdown);
+  if (more) preview << QString() << QStringLiteral("...");
+  return preview.join(QLatin1Char('\n'));
+}
+
 QString markerTitle(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("fork")) return QStringLiteral("Conversation fork");
@@ -1534,7 +1562,9 @@ void TimelineModel::toggle(const QString& rowId) {
     return;
   }
   const int row = indexOf(rowId);
-  if (row < 0 || m_rows.at(row).kind != QLatin1String("work")) return;
+  // A work group opens to its calls, a long plan to its whole text.
+  const QString kind = row < 0 ? QString() : m_rows.at(row).kind;
+  if (kind != QLatin1String("work") && kind != QLatin1String("plan")) return;
   if (!m_expandedGroups.remove(rowId)) m_expandedGroups.insert(rowId);
   emit dataChanged(index(row), index(row), {EntriesRole, HiddenCountRole, ExpandedRole});
 }
@@ -1713,6 +1743,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {AttachmentsRole, "attachments"},
       {SentFilesRole, "sentFiles"},
       {WarningRole, "warning"},
+      {PreviewRole, "preview"},
   };
 }
 
@@ -2032,6 +2063,10 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         return detail.isEmpty() ? timeline::plainDetail(text(item, QLatin1String("prompt"))) : detail;
       }
       return text(item, QLatin1String("text"));
+    case PreviewRole:
+      return row.kind == QLatin1String("plan") ? planPreview(text(item, QLatin1String("markdown"))) : QString();
+    case ExpandedRole:
+      return row.kind == QLatin1String("plan") && m_expandedGroups.contains(row.id);
     case WarningRole:
       return row.kind == QLatin1String("error") &&
              text(item.value(QLatin1String("failure")).toObject(), QLatin1String("class")) == QLatin1String("usage_limit");
