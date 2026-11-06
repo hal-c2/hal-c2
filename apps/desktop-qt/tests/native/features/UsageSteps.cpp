@@ -580,6 +580,8 @@ const Steps steps([] {
   step(QStringLiteral("%1 is offline").arg(q), [](World& world, const Captures& c, const Table&) {
     join(world, c[0], QStringLiteral("claude"));
     world.mc.setOnline(c[0], false);
+    // Long enough that the MC has stopped trying it.
+    world.mc.setTrying(c[0], false);
   });
   step(QStringLiteral("%1 runs an older server version").arg(q), [](World& world, const Captures& c, const Table&) {
     join(world, c[0], QStringLiteral("claude"));

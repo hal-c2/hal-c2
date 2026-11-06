@@ -22,6 +22,8 @@ defmodule HalC2.ShellPropTest do
     * a plain subscriber is sent the rows of every member the shell holds, even
       when it has none;
     * a forgotten member's rows are gone and stay gone;
+    * subscribers hear whether discovery still tries a member (`link/2`) only of a
+      member the shell knows and that is not connected;
     * subscribers stay subscribed across a restart of the shell;
     * a reader of the table, during a restart or a member's reset, never finds a
       row missing that is there before and after.
@@ -112,7 +114,8 @@ defmodule HalC2.ShellPropTest do
         {1, {:call, __MODULE__, :import_finished, [oneof([@importing | @streams])]}},
         {5, {:call, __MODULE__, :peer_put, [oneof(@peers), stream_id(), title()]}},
         {1, {:call, __MODULE__, :peer_restart, [oneof(@peers)]}},
-        {3, {:call, __MODULE__, :check, []}}
+        {3, {:call, __MODULE__, :check, []}},
+        {1, {:call, __MODULE__, :link, [oneof(@peers), boolean()]}}
       ] ++
         if(down != [], do: [{3, {:call, __MODULE__, :peer_up, [oneof(down)]}}], else: []) ++
         if(connected != [],
@@ -345,6 +348,15 @@ defmodule HalC2.ShellPropTest do
     ok?(Enum.sort(told) == Enum.sort(connected), {:announced, told, connected})
   end
 
+  def postcondition(state, {:call, _, :link, [p, trying]}, heard) do
+    expected =
+      if Map.has_key?(state.held, p) and not state.peers[p].connected,
+        do: [{:mc, p, if(trying, do: :down, else: :offline)}],
+        else: []
+
+    ok?(heard == expected, {:link, expected, heard})
+  end
+
   def postcondition(_state, {:call, _, :peer_other_version, _}, result),
     do: ok?(result == :ignored, {:other_version, result})
 
@@ -537,6 +549,29 @@ defmodule HalC2.ShellPropTest do
 
   # The member is removed from the cluster; rows it had already sent arrive after
   # the shell forgot it, then the connection goes.
+  # What a subscriber that joins just for it hears of the link to `p`.
+  def link(p, trying) do
+    parent = self()
+
+    listener =
+      spawn(fn ->
+        :ok = Shell.subscribe(self())
+        send(parent, :listening)
+        receive do: (:done -> :ok)
+        {:messages, messages} = Process.info(self(), :messages)
+        heard = for {:hal_c2_shell, {:mc, _, _} = m} <- messages, do: m
+        send(parent, {:heard, heard})
+      end)
+
+    assert_receive :listening, 5_000
+    Shell.link("env-#{p}", trying)
+    # Whatever the link made the shell send, it sent before answering this.
+    Shell.version()
+    send(listener, :done)
+    assert_receive {:heard, heard}, 5_000
+    heard
+  end
+
   def forget(p) do
     Shell.forget("env-#{p}")
     peer = peer(p)

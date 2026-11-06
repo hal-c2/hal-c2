@@ -89,6 +89,9 @@ public:
   bool threadOnline(const QString& threadKey) const;
   // Whether an MC serving `environmentId` is online.
   bool environmentOnline(const QString& environmentId) const;
+  // Whether the cluster still tries to reach that MC on its own while it is
+  // down; false once it has given up (cluster.reconnect asks it again).
+  bool environmentTrying(const QString& environmentId) const;
   // Whether the MC has said what the cluster holds: only then is a row that
   // is missing a row that is gone.
   bool synchronized() const { return m_synchronized; }
@@ -132,6 +135,7 @@ private:
     QJsonObject capabilities;
     QJsonObject environment;
     bool online = false;
+    bool trying = true;
     // The version of its rows; no epoch when the MC gave none.
     QString epoch;
     qint64 rev = 0;

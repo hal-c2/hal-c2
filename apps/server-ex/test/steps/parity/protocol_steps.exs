@@ -257,7 +257,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "shell" => ~w(id mcs rows),
     "shell.rows" => ~w(id mc rows epoch rev reset),
     "shell.environment" => ~w(id mc environment),
-    "shell.mc" => ~w(id mc online),
+    "shell.mc" => ~w(id mc online trying),
     "snapshot" => ~w(id offset at part rows done handle),
     "events" => ~w(id offset events),
     "live" => ~w(id offset handle),
@@ -296,7 +296,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     do:
       for(
         n <- frame["mcs"],
-        do: assert(Map.keys(n) -- ["mc"] == ~w(environment epoch online reset rev))
+        do: assert(Map.keys(n) -- ["mc"] == ~w(environment epoch online reset rev trying))
       )
 
   defp check_frame("events", frame) do

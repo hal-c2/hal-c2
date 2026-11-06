@@ -14,6 +14,7 @@
 #include <QQuickWindow>
 
 #include "Brick.h"
+#include "ComputerNotices.h"
 #include "ConnectionHealthController.h"
 #include "Harness.h"
 #include "McClient.h"
@@ -579,3 +580,17 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+namespace computerNotices {
+
+QQuickWindow* window(World& world) { return ::window(world); }
+
+QList<QQuickItem*> shownNamed(QQuickWindow* window, const QString& name) { return ::shownNamed(window, name); }
+
+void lookAt(World& world, const QString& name) { lookAtComputer(world, name); }
+
+void setOnline(World& world, const QString& name, bool online) { ::setOnline(world, name, online); }
+
+QString describe(World& world) { return describeThread(world, ::window(world)); }
+
+}  // namespace computerNotices

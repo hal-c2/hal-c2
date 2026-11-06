@@ -19,6 +19,7 @@
 #include "KeybindingController.h"
 #include "McClient.h"
 #include "SettingsController.h"
+#include "ToldReason.h"
 #include "World.h"
 
 namespace {
@@ -564,7 +565,9 @@ const Steps steps([] {
       toast(world, c[0], world.mc.refusals.cbegin().value());
       return;
     }
-    toast(world, c[0], fake().reason);
+    // Another feature's steps may have said what the reason is.
+    const QString other = world.mc.part<ToldReason>().reason;
+    toast(world, c[0], other.isEmpty() ? fake().reason : other);
   });
   step(QStringLiteral("the user is told %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     toast(world, c[0], c[1] == QLatin1String("the reason this build cannot update itself") ? fake().reason : c[1]);

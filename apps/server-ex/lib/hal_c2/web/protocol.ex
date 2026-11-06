@@ -88,16 +88,18 @@ defmodule HalC2.Web.Protocol do
 
       {"t": "hello", "protocol": 3, "mc": n, "environment": id}
         (the environment this MC serves, for RPCs about the MC itself)
-      {"t": "shell", "id", "mcs": [{"mc", "online", "environment", "epoch", "rev", "reset"}],
+      {"t": "shell", "id", "mcs": [{"mc", "online", "trying", "environment", "epoch", "rev",
+       "reset"}],
        "rows": [[mc, id, kind, row]]}
         (the rows the client lacks: all of an MC marked "reset", whose rows the
         client held are dropped, else those after the "have" it sent)
       {"t": "shell.environment", "id", "mc", "environment"}
       {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]], "epoch", "rev", "reset"}
         (they bring that MC's rows to [epoch, rev], what a client sends as "have")
-      {"t": "shell.mc", "id", "mc", "online"}
-        (with "removed": true once the machine was removed from the cluster: its
-        environment and rows are no longer part of the shell)
+      {"t": "shell.mc", "id", "mc", "online", "trying"}
+        (with "removed": true once the machine was removed or switched off: its
+        environment and rows are no longer part of the shell; "trying" is false for
+        an offline machine this MC stopped trying to reach often)
       {"t": "snapshot", "id", "offset", "at", "part", "rows": [[kind, id, entity]], "done",
        "handle", "floor"?}
         ("floor" with a window: the ordinal of its first run, null when it reaches

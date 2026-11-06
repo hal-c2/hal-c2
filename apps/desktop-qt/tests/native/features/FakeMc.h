@@ -206,6 +206,8 @@ public:
   QHash<QString, QJsonObject> descriptors;
   // Members whose MC is down: their rows stay, and requests for them fail.
   QSet<QString> offline;
+  // Members the cluster has stopped trying to reach (`trying` false).
+  QSet<QString> givenUp;
   // Each member's rows, by environment then id: [id, kind, row].
   QHash<QString, QMap<QString, QJsonArray>> peerRows;
 
@@ -228,6 +230,9 @@ public:
                    const QString& kind = QStringLiteral("thread"));
   // A member's MC goes down or comes back (`shell.mc`).
   void setOnline(const QString& environment, bool online);
+  // The cluster stops trying to reach a member that is down, or starts again
+  // (`shell.mc` with `trying`).
+  void setTrying(const QString& environment, bool trying);
   // A member is removed from the cluster: the shell drops it and its rows
   // (`shell.mc` with `removed`).
   void remove(const QString& environment);

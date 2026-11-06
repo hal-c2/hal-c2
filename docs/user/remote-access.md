@@ -74,6 +74,13 @@ which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
 
+Switching a machine off on the Cluster page hides it and its threads on every member but
+keeps it listed, so switching it back on reconnects it without a new invite. A machine
+that has not answered for five minutes is marked offline and tried only every few
+minutes; the thread notice about it offers **Reconnect** to try at once, and after 20
+seconds unavailable, **Disconnect** to switch it off. The machine the app runs on
+cannot be disconnected from there.
+
 ### Settings that follow you
 
 Settings about how you work are the same on every machine of a cluster: change one on any
