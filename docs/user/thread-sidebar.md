@@ -114,7 +114,8 @@ sending an answer or restarting the agent.
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
-prevent automatic settlement. An open pull request keeps its thread active. With
+prevent automatic settlement. An open linked pull request keeps its thread active;
+one found only on the thread's branch does not hold off settling for inactivity. With
 several linked pull requests, any one still open keeps the thread active; otherwise the one
 that finished last decides. An old closed or merged pull request does not settle work you
 resumed after it closed, and a merged pull request no longer counts once its branch has

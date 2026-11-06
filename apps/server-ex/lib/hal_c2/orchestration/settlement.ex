@@ -139,7 +139,9 @@ defmodule HalC2.Orchestration.Settlement do
   end
 
   # Settles each of `rows` from its recorded pull request or its branch's. A failed
-  # lookup holds back only the threads that needed it.
+  # lookup holds back only the threads that needed it. Each project's remote is read
+  # once a sweep, so a thread whose branch has no pull request costs only the cached
+  # branch answer.
   defp look_up(rows, settings, now) do
     refs = for row <- rows, ref = summary_ref(row), uniq: true, do: ref
 
@@ -148,10 +150,20 @@ defmodule HalC2.Orchestration.Settlement do
         do: %{},
         else: guarded(rows, %{}, fn -> HalC2.PullRequests.summaries(refs) end)
 
+    projects =
+      for row <- rows,
+          row["branch"] != nil,
+          id = row["projectId"],
+          uniq: true,
+          into: %{},
+          do: {id, guarded([row], nil, fn -> checkout(id) end)}
+
     rows
     |> Task.async_stream(
       fn row ->
-        guarded([row], false, fn -> settle_looked_up(row, summaries, settings, now) end)
+        guarded([row], false, fn ->
+          settle_looked_up(row, projects[row["projectId"]], summaries, settings, now)
+        end)
       end,
       max_concurrency: 8,
       timeout: :infinity,
@@ -160,15 +172,17 @@ defmodule HalC2.Orchestration.Settlement do
     |> Stream.run()
   end
 
-  defp settle_looked_up(row, summaries, settings, now) do
+  defp settle_looked_up(row, checkout, summaries, settings, now) do
     pull_request =
       case summary_ref(row) do
         nil ->
-          branch_pull_request(row, [])
+          branch_pull_request(row, checkout, [])
 
         ref ->
           with %{} = summary <- summaries[ref] do
-            summary |> Map.take(~w(state mergedAt closedAt)) |> reused_branch(row, settings, now)
+            summary
+            |> Map.take(~w(state mergedAt closedAt))
+            |> reused_branch(row, checkout, settings, now)
           end
       end
 
@@ -180,35 +194,51 @@ defmodule HalC2.Orchestration.Settlement do
          do: reference |> Links.legacy_key() |> Map.take(~w(host repository number))
   end
 
-  # A finished pull request that would settle the thread, unless its branch, asked
-  # fresh, now shows an open one in the project's repository: the branch was used again.
-  defp reused_branch(%{"state" => state} = finished, row, settings, now)
+  # A finished pull request that would settle the thread, unless its branch now shows an
+  # open one in the project's repository: the branch was used again. A held open answer
+  # is trusted; anything else is asked fresh, once, as the thread is about to settle.
+  defp reused_branch(%{"state" => state} = finished, row, checkout, settings, now)
        when state != "open" do
     {on_merge, after_days} = resolved(settings, row["projectId"])
 
     with true <- row["branch"] != nil,
          true <- settled_at(row, finished, now, after_days, on_merge) != nil,
-         %{"state" => "open"} = open <- branch_pull_request(row, fresh: true) do
+         %{"state" => "open"} = open <-
+           open_or_nil(branch_pull_request(row, checkout, [])) ||
+             branch_pull_request(row, checkout, fresh: true) do
       open
     else
       _ -> finished
     end
   end
 
-  defp reused_branch(pull_request, _row, _settings, _now), do: pull_request
+  defp reused_branch(pull_request, _row, _checkout, _settings, _now), do: pull_request
+
+  defp open_or_nil(%{"state" => "open"} = pull_request), do: pull_request
+  defp open_or_nil(_), do: nil
+
+  # A live project's sidebar row and its remote, or nil.
+  defp checkout(project_id) do
+    with {"project", %{"workspaceRoot" => root} = project} when is_binary(root) <-
+           HalC2.Shell.row(node(), project_id),
+         nil <- project["deletedAt"] do
+      {project, HalC2.PullRequests.Discovery.remote(root)}
+    else
+      _ -> nil
+    end
+  end
 
   # The pull request of the thread's branch, read where discovery reads it: its worktree,
-  # or the project folder once the worktree is gone. Nil when there is none or it cannot
-  # be read.
-  defp branch_pull_request(row, opts) do
+  # or the project folder once the worktree is gone. Nil when there is none, the project
+  # is not a GitHub checkout, or it cannot be read.
+  defp branch_pull_request(row, checkout, opts) do
     with branch when is_binary(branch) <- row["branch"],
-         {"project", %{"workspaceRoot" => root} = project} when is_binary(root) <-
-           HalC2.Shell.row(node(), row["projectId"]),
-         nil <- project["deletedAt"],
+         {project, %{kind: "github"} = remote} <- checkout,
          worktree = row["worktreePath"],
+         root = project["workspaceRoot"],
          cwd = if(worktree && File.dir?(worktree), do: worktree, else: root),
          {:ok, %{} = pull_request} <-
-           HalC2.PullRequests.Discovery.branch_pull_request(project, cwd, branch, opts) do
+           HalC2.PullRequests.Discovery.branch_pull_request(project, remote, cwd, branch, opts) do
       pull_request
     else
       _ -> nil
