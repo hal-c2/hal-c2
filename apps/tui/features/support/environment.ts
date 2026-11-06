@@ -68,6 +68,8 @@ export interface EnvThread {
   snoozedUntil: string | null;
   snoozedAt: string | null;
   pinnedAt: string | null;
+  /** Set while the user has turned automatic settlement off for the thread. */
+  autoSettleDisabledAt?: string | null;
   session: { status: string } | null;
   latestUserMessageAt: string | null;
   hasPendingApprovals: boolean;
@@ -84,6 +86,8 @@ export interface Environment {
   settlement: boolean;
   /** When set, every settle is rejected with this reason. */
   settleError: string | null;
+  /** The server lets a thread opt out of auto-settle (`capabilities.threadAutoSettleOptOut`). */
+  autoSettleOptOut: boolean;
   defaultThreadEnvMode: ThreadEnvMode | null;
   /** What `listRefs` answers for every project. */
   refs: VcsRef[];
@@ -120,6 +124,7 @@ export function env(ctx: World): Environment {
       threads: [],
       settlement: true,
       settleError: null,
+      autoSettleOptOut: true,
       defaultThreadEnvMode: null,
       refs: [{ name: "main", current: true, isDefault: true, worktreePath: null } as VcsRef],
       machines: [],
@@ -255,6 +260,22 @@ export function arrive(ctx: World, title: string, machine: string): void {
   });
 }
 
+/**
+ * The MC's settle sweep after a quiet spell: every active thread settles unless
+ * it is pinned or the user turned its auto-settle off.
+ */
+export function autoSettleSweep(ctx: World): void {
+  change(ctx, (environment) => {
+    for (const thread of environment.threads) {
+      if (thread.settledOverride === "settled" || thread.pinnedAt || thread.autoSettleDisabledAt) {
+        continue;
+      }
+      thread.settledOverride = "settled";
+      thread.settledAt = nowIso(ctx);
+    }
+  });
+}
+
 const errorFor = (reason: string) => Promise.reject(new Error(reason));
 
 function installClient(ctx: World): void {
@@ -274,7 +295,12 @@ function installClient(ctx: World): void {
           ...ctx.fake?.server.settings,
           defaultThreadEnvMode: environment.defaultThreadEnvMode ?? undefined,
         },
-        environment: { capabilities: { threadSettlement: environment.settlement } },
+        environment: {
+          capabilities: {
+            threadSettlement: environment.settlement,
+            threadAutoSettleOptOut: environment.autoSettleOptOut,
+          },
+        },
         keybindings: environment.keybindings,
       }) as never,
     renameThread: (id, title) =>
@@ -314,6 +340,10 @@ function installClient(ctx: World): void {
       update(id, (thread) => {
         thread.settledOverride = "active";
         thread.unsettledAt = nowIso(ctx);
+      }),
+    setThreadAutoSettle: (id, enabled) =>
+      update(id, (thread) => {
+        thread.autoSettleDisabledAt = enabled ? null : nowIso(ctx);
       }),
     stopSession: (id) =>
       update(id, (thread) => {

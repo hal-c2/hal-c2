@@ -71,6 +71,7 @@ import {
   interruptThreadTurn,
   respondToThreadApproval,
   respondToThreadUserInput,
+  setThreadAutoSettle as setThreadAutoSettleOp,
   setThreadInteractionMode,
   setThreadRuntimeMode,
   settleThread as settleThreadOp,
@@ -207,6 +208,8 @@ export interface TuiCreateThreadInput {
   readonly worktreePath: string | null;
   readonly createWorktree: boolean;
   readonly startFromOrigin: boolean;
+  /** The plan this thread implements; the MC marks it implemented there. */
+  readonly sourceProposedPlan?: { readonly threadId: ThreadId; readonly planId: string };
 }
 
 export function buildThreadReplyTurn(input: {
@@ -680,6 +683,8 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly settleThread: (threadId: ThreadId) => Promise<void>;
   /** Return a settled thread to Active, pinned there until real activity clears the pin server-side. */
   readonly unsettleThread: (threadId: ThreadId) => Promise<void>;
+  /** Turn automatic settlement off (`enabled: false`) or back on for one thread; settling by hand still works. */
+  readonly setThreadAutoSettle: (threadId: ThreadId, enabled: boolean) => Promise<void>;
   /** Hide the thread until `snoozedUntil` (ISO); the server refuses one that waits on the user. */
   readonly snoozeThread: (threadId: ThreadId, snoozedUntil: string) => Promise<void>;
   readonly unsnoozeThread: (threadId: ThreadId) => Promise<void>;
@@ -1130,6 +1135,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
             runtimeMode: input.runtimeMode,
             interactionMode: input.interactionMode,
             bootstrap: buildThreadCreationBootstrap(input, createdAt, worktreeBranch),
+            ...(input.sourceProposedPlan
+              ? {
+                  sourceProposedPlan: {
+                    threadId: input.sourceProposedPlan.threadId,
+                    planId: PlanId.make(input.sourceProposedPlan.planId),
+                  },
+                }
+              : {}),
             createdAt,
           });
           return threadId;
@@ -1228,6 +1241,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
 
     unsettleThread: (threadId) =>
       runtime.runPromise(unsettleThreadOp({ threadId, reason: "user" }).pipe(Effect.asVoid)),
+
+    setThreadAutoSettle: (threadId, enabled) =>
+      runtime.runPromise(setThreadAutoSettleOp({ threadId, enabled }).pipe(Effect.asVoid)),
 
     snoozeThread: (threadId, snoozedUntil) =>
       runtime.runPromise(snoozeThreadOp({ threadId, snoozedUntil }).pipe(Effect.asVoid)),

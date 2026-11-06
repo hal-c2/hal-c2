@@ -7,6 +7,7 @@ import type { Row } from "./sidebar.logic.ts";
 export type ThreadContextMenuAction =
   | "settle"
   | "unsettle"
+  | "auto-settle"
   | "snooze"
   | "unsnooze"
   | "rename"
@@ -18,10 +19,13 @@ export type ThreadContextMenuAction =
   | "delete";
 
 export const MOVE_THREAD_LABEL = "Move to another machine…";
+export const AUTO_SETTLE_MENU_LABEL = "Auto-settle behavior…";
 
 export function buildThreadContextMenuItems(input: {
   readonly row: Pick<Extract<Row, { kind: "thread" }>, "section" | "thread">;
   readonly settlementSupported: boolean;
+  /** The server understands thread.auto-settle.set (`capabilities.threadAutoSettleOptOut`). */
+  readonly autoSettleOptOutSupported?: boolean;
   readonly hasWorkspacePath: boolean;
   /** Whether the thread may be snoozed now; omitted by a host that cannot snooze. */
   readonly canSnooze?: boolean;
@@ -47,10 +51,14 @@ export function buildThreadContextMenuItems(input: {
               { id: "settle" as const, label: "Settle thread" },
         ]
       : []),
+    // A setting, not a lifecycle verb: it opens the Enabled / Disabled choice.
+    ...(input.autoSettleOptOutSupported
+      ? [{ id: "auto-settle" as const, label: AUTO_SETTLE_MENU_LABEL }]
+      : []),
     {
       id: "rename",
       label: "Rename thread",
-      separatorBefore: input.settlementSupported,
+      separatorBefore: input.settlementSupported || input.autoSettleOptOutSupported === true,
     },
     ...snooze,
     {

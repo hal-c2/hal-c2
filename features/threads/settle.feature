@@ -6,6 +6,7 @@
 #   apps/web/src/components/settings/SettingsPanels.tsx (General: auto-settle rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (Settled section, settled limit)
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (Settle, Un-settle)
+#   apps/desktop-qt/src/native/ThreadNoticeController.cpp (settled notice), ThreadMenuController.cpp (Auto-settle behavior)
 #   apps/tui/src/components/Sidebar.logic.ts (Settled section, paging)
 #   apps/tui/src/commands.ts (Settle, Un-settle)
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.auto-settle, thread.unsettle, thread.settled, thread.unsettled)
@@ -30,7 +31,7 @@ Feature: Settling threads
     When the user un-settles "Ship checkout"
     Then "Ship checkout" returns to the top of the active threads
 
-  @backlog @desktop
+  @desktop
   Scenario: An open settled thread says so and can be un-settled there
     Given "Ship checkout" is settled
     When the user opens "Ship checkout"
@@ -38,7 +39,7 @@ Feature: Settling threads
     When the user chooses "Un-settle"
     Then "Ship checkout" returns to the active threads
 
-  @backlog @desktop
+  @desktop
   Scenario: An un-settle that fails is reported
     Given the user has opened "Ship checkout", which is settled
     And the environment rejects the un-settle
@@ -46,7 +47,7 @@ Feature: Settling threads
     Then the user is told "Failed to un-settle thread" with the reason
     And "Ship checkout" stays settled
 
-  @backlog @desktop
+  @desktop
   Scenario: A settled thread that woke earlier does not say it woke
     Given "Ship checkout" woke from a snooze and was then settled
     When the user opens "Ship checkout"
@@ -65,19 +66,19 @@ Feature: Settling threads
     Then the status line reports that the settle failed and why
     And "Ship checkout" stays active
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Settling a pinned thread removes the pin
     Given "Ship checkout" is pinned
     When the user settles "Ship checkout"
     Then "Ship checkout" is settled and no longer pinned
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Settling dismisses questions the agent is waiting on
     Given the agent in "Ship checkout" asked a question in the background
     When the user settles "Ship checkout"
     Then the question is dismissed
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Settling a snoozed thread ends the snooze
     Given "Ship checkout" is snoozed until tomorrow
     When the user settles "Ship checkout"
@@ -89,20 +90,20 @@ Feature: Settling threads
     When the pull request is merged on GitHub
     Then "Ship checkout" moves to the settled section without the user settling it
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread whose pull request merges leaves the phone's active list on its own
     Given "Ship checkout" is linked to a pull request
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
 
-  @shared @backlog
+  @shared
   Scenario: A thread's auto-settle can be turned off and back on
     When the user turns auto-settle off for "Ship checkout"
     Then "Ship checkout" stays out of automatic settling
     When the user turns auto-settle on for "Ship checkout"
     Then "Ship checkout" settles automatically again after a quiet spell
 
-  @shared @backlog
+  @shared
   Scenario: Settling a thread with auto-settle off still works
     Given "Ship checkout" has auto-settle turned off
     When the user settles "Ship checkout"
@@ -198,7 +199,7 @@ Feature: Settling threads
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" stays active and pinned
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: Choosing auto-settle rules for an environment
     When the user sets auto-settle to <rule> for <scope>
     Then threads on <affected> follow the new rule
@@ -209,13 +210,13 @@ Feature: Settling threads
       | never on inactivity | all environments       | every environment |
       | when the PR merges  | all environments       | every environment |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Different rules across environments are shown as mixed
     Given "home" settles after 3 days and "work" settles after 7 days
     When the user looks at the auto-settle rules for all environments
     Then the quiet spell is shown as mixed
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An offline environment keeps its auto-settle rules
     Given the environment "work" is offline
     When the user changes the auto-settle rules for all environments

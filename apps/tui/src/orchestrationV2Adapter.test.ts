@@ -265,6 +265,32 @@ describe("orchestration V2 TUI presentation", () => {
     });
   });
 
+  it("shows a subagent that ended without an answer by its last progress", () => {
+    const base = projection();
+    const subagentItem = {
+      ...base.turnItems[0]!,
+      id: TurnItemId.make("item-subagent"),
+      type: "subagent",
+      status: "interrupted",
+      subagentId: "task-1",
+      origin: "app_owned",
+      driver: "codex",
+      providerInstanceId,
+      childThreadId: ThreadId.make("thread-child"),
+      title: "Tax tests",
+      prompt: "write the tax tests",
+      progress: "Reading the tax code",
+      result: "Child task ended with status interrupted.",
+    } as unknown as OrchestrationV2ThreadProjection["turnItems"][number];
+    const result = presentTuiThread({
+      ...base,
+      turnItems: [subagentItem],
+      visibleTurnItems: [{ ...base.visibleTurnItems[0]!, item: subagentItem }],
+    });
+    const detail = (result.activities[0]?.payload as { detail?: string }).detail;
+    expect(detail).toBe("Reading the tax code");
+  });
+
   it("leaves what the MC sent the agent for itself out of the user's messages", () => {
     const base = projection();
     const message = (id: string, fields: Record<string, unknown>) => ({

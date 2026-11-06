@@ -23,6 +23,7 @@
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ThreadMenuController.h"
 #include "ThreadStore.h"
 
 namespace {
@@ -154,6 +155,11 @@ void World::open() {
     return true;
   });
   m_app->native().controller<FileActionsController>()->setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
+  // What the thread's menu and a plan copy.
+  m_app->native().controller<ThreadMenuController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
   });

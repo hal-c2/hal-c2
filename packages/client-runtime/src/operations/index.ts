@@ -8,6 +8,7 @@ export {
   respondToThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,
+  setThreadAutoSettle,
   setThreadRuntimeMode,
   settleThread,
   snoozeThread,

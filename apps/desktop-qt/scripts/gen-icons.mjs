@@ -121,6 +121,7 @@ const ICONS = [
   "star",
   "terminal",
   "trash",
+  "timer",
   "undo-2",
   "wrench",
   "x",

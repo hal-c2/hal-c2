@@ -72,6 +72,8 @@ add_executable(tst_Features
   ../src/Pairing.h
   ../src/Resume.cpp
   ../src/Resume.h
+  ../src/TurnAgents.cpp
+  ../src/TurnAgents.h
   "${_harness}/FakeMc.cpp"
   "${_harness}/FakeMc.h"
   "${_harness}/FakeFiles.cpp"

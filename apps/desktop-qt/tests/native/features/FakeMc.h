@@ -170,6 +170,7 @@ public:
       {QStringLiteral("threadPinReorder"), true},
       {QStringLiteral("threadActiveReorder"), true},
       {QStringLiteral("threadTitleRegeneration"), true},
+      {QStringLiteral("threadAutoSettleOptOut"), true},
       {QStringLiteral("pullRequests"), true},
       {QStringLiteral("threadPullRequests"), true},
       {QStringLiteral("threadPullRequestLinking"), true},
