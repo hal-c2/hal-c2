@@ -11,11 +11,22 @@ import HalC2.Shell
 //   Format.time(at)      "18:05", "6:05 PM"
 //   Format.date(at)      "9/20", or "9/20/2025" in another year
 //   Format.dateTime(at)  "9/20 18:05"
-//   Format.relative(at)  "just now", "5m ago", "in 2h", "3d ago"; it does not
-//                        tick on its own, so redraw it on a Timer.
+//   Format.relative(at)  "just now", "5m ago", "in 2h", "3d ago"; moves on
+//                        once a minute.
 QtObject {
+    // Counts minutes, so a binding that calls relative() is evaluated again
+    // once a minute: one timer for every page, instead of one each.
+    property int minute: 0
+    property Timer ticker: Timer {
+        interval: 60000
+        running: true
+        repeat: true
+        onTriggered: minute++
+    }
+
     function at(value) {
-        if (value === undefined || value === null || value === "")
+        // 0 and "" are a missing time, as they were to the pages before.
+        if (!value)
             return null;
         const date = value instanceof Date ? value : new Date(value);
         return isNaN(date.getTime()) ? null : date;
@@ -41,6 +52,7 @@ QtObject {
     }
     function relative(value) {
         const date = at(value);
+        minute;
         return date ? Threads.formatRelative(date) : "";
     }
 }

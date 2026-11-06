@@ -106,10 +106,13 @@ QDateTime itemTime(const QJsonObject& item) {
 // (and year: "numeric" with `withYear`): "9/20", "9/20/2025".
 QString numericDate(const QDate& date, bool withYear, const QLocale& locale) {
   QString format = locale.dateFormat(QLocale::ShortFormat);
-  format.replace(QRegularExpression(QStringLiteral("d+")), QStringLiteral("d"));
-  format.replace(QRegularExpression(QStringLiteral("M+")), QStringLiteral("M"));
+  static const QRegularExpression days(QStringLiteral("d+"));
+  static const QRegularExpression months(QStringLiteral("M+"));
+  static const QRegularExpression years(QStringLiteral("y+"));
+  format.replace(days, QStringLiteral("d"));
+  format.replace(months, QStringLiteral("M"));
   if (withYear) {
-    format.replace(QRegularExpression(QStringLiteral("y+")), QStringLiteral("yyyy"));
+    format.replace(years, QStringLiteral("yyyy"));
   } else {
     // The year and the separator joining it to the day or month.
     static const QRegularExpression year(QStringLiteral("^y+[^dMy]*|[^dMy]*y+$|y+[^dMy]*"));

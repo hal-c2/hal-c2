@@ -23,7 +23,7 @@ Rectangle {
     signal changeRequested
 
     function clock(iso) {
-        return new Date(iso).toLocaleString(Qt.locale(), Locale.ShortFormat);
+        return Format.dateTime(iso);
     }
 
     function whenText() {

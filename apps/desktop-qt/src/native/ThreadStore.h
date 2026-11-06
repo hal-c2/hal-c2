@@ -84,7 +84,7 @@ public:
   // How the timelines read: the desktop's or the phone's (TimelineModel::setFolds).
   void setFolds(TimelineModel::Folds folds);
   // A time that may be ahead (a usage limit's reset) as the timelines read it.
-  QString upcoming(const QDateTime& at) const;
+  Q_INVOKABLE QString upcoming(const QDateTime& at) const;
   QString timestampFormat() const { return m_timestampFormat; }
   // Times as the timelines read them, for Format.qml (plugin pages): the time
   // of day, the short date, both, and how long ago. Empty for an invalid time.

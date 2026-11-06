@@ -21,6 +21,9 @@ QtObject {
     function formatDateTime(at) {
         return formatDate(at) + " " + formatTime(at);
     }
+    function upcoming(at) {
+        return formatTime(at);
+    }
     function formatRelative(at) {
         return "just now";
     }

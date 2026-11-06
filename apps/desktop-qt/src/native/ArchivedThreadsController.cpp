@@ -1,4 +1,5 @@
 #include "ArchivedThreadsController.h"
+#include "TimelineModel.h"
 
 #include <QDateTime>
 #include <QJsonObject>
@@ -24,15 +25,13 @@ const NativeControllerRegistrar<ArchivedThreadsController> registrar(QStringLite
 
 const QString kKey = QStringLiteral("archivedThreads");
 
-// "just now", then minutes, hours and days ago.
+// "just now", then minutes, hours and days ago (relativeTime).
 QString ago(const QString& iso) {
   const QDateTime at = QDateTime::fromString(iso, Qt::ISODateWithMs);
   if (!at.isValid()) return {};
-  const qint64 seconds = std::max<qint64>(0, at.secsTo(QDateTime::currentDateTimeUtc()));
-  if (seconds < 60) return QStringLiteral("just now");
-  if (seconds < 3600) return QStringLiteral("%1m ago").arg(seconds / 60);
-  if (seconds < 86400) return QStringLiteral("%1h ago").arg(seconds / 3600);
-  return QStringLiteral("%1d ago").arg(seconds / 86400);
+  const QDateTime now = QDateTime::currentDateTimeUtc();
+  // A time ahead of the clock (its skew) still reads "just now".
+  return relativeTime(std::min(at, now), now);
 }
 
 QString archivedAt(const QJsonObject& thread) {

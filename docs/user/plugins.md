@@ -78,9 +78,8 @@ import HalC2.Bricks
 Text { text: Format.dateTime(order.placedAt) }
 ```
 
-A text bound to `Format.time`, `Format.date` or `Format.dateTime` changes as
-soon as the user picks another time format. `Format.relative` does not move on
-by itself; recompute it from a `Timer` if the page stays open.
+A text bound to one of them changes as soon as the user picks another time
+format, and one bound to `Format.relative` moves on once a minute.
 
 ## Plugins that run on your MC
 

@@ -21,8 +21,10 @@ Rectangle {
     border.width: 1
 
     function resets(iso) {
-        const at = Format.dateTime(iso);
-        return at ? qsTr("resets %1").arg(at) : "";
+        // As the timeline says when a limit resets: "18:05", "tomorrow at 18:05".
+        const at = Format.at(iso);
+        Format.follow();
+        return at ? qsTr("resets %1").arg(Threads.upcoming(at)) : "";
     }
 
     ColumnLayout {

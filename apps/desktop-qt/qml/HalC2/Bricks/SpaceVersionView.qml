@@ -50,7 +50,7 @@ Rectangle {
                 Text {
                     objectName: "spaceVersionWhen"
                     Layout.fillWidth: true
-                    text: view.arrived ? qsTr("The page as it was on %1").arg(Qt.formatDateTime(new Date(view.version.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))) : qsTr("Loading this version…")
+                    text: view.arrived ? qsTr("The page as it was on %1").arg(Format.dateTime(view.version.at)) : qsTr("Loading this version…")
                     elide: Text.ElideRight
                     color: view.muted
                     font.pixelSize: Theme.type.body.size

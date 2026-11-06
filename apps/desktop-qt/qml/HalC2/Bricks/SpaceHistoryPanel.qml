@@ -119,7 +119,7 @@ Rectangle {
 
                     Text {
                         Layout.fillWidth: true
-                        text: Qt.formatDateTime(new Date(row.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))
+                        text: Format.dateTime(row.at)
                         elide: Text.ElideRight
                         color: panel.foreground
                         font.pixelSize: Theme.type.body.size
@@ -139,7 +139,7 @@ Rectangle {
                     Text {
                         Layout.fillWidth: true
                         visible: row.restoredFromAt !== ""
-                        text: qsTr("Restored from %1").arg(Qt.formatDateTime(new Date(row.restoredFromAt), Qt.locale().dateTimeFormat(Locale.ShortFormat)))
+                        text: qsTr("Restored from %1").arg(Format.dateTime(row.restoredFromAt))
                         elide: Text.ElideRight
                         color: panel.muted
                         font.pixelSize: Theme.type.caption.size
