@@ -161,6 +161,7 @@ Plugin 1.0 Plugin.qml
 Contribution 1.0 Contribution.qml
 PluginSlot 1.0 PluginSlot.qml
 singleton PluginRegistry 1.0 PluginRegistry.qml
+singleton Format 1.0 Format.qml
 PluginsSettings 1.0 PluginsSettings.qml
 ShellTabs 1.0 ShellTabs.qml
 PluginPages 1.0 PluginPages.qml

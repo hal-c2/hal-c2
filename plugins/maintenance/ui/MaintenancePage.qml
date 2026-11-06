@@ -112,7 +112,7 @@ Item {
     }
 
     function when(value) {
-        return value ? Qt.formatDateTime(new Date(value), Qt.locale().dateTimeFormat(Locale.ShortFormat)) : "";
+        return Format.dateTime(value);
     }
 
     objectName: "maintenancePage"

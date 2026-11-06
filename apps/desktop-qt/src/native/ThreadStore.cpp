@@ -10,6 +10,7 @@
 #include "McClient.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
+#include "SidebarModel.h"
 
 namespace {
 const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads"), {}, "Threads");
@@ -136,6 +137,22 @@ void ThreadStore::setFolds(TimelineModel::Folds folds) {
 
 QString ThreadStore::upcoming(const QDateTime& at) const {
   return upcomingStamp(at, now(), m_timestampFormat, m_locale);
+}
+
+QString ThreadStore::formatTime(const QDateTime& at) const {
+  return at.isValid() ? sidebar::timeOfDay(at.toLocalTime(), m_timestampFormat, m_locale) : QString();
+}
+
+QString ThreadStore::formatDate(const QDateTime& at) const {
+  return shortDate(at, now(), m_locale);
+}
+
+QString ThreadStore::formatDateTime(const QDateTime& at) const {
+  return shortDateTime(at, now(), m_timestampFormat, m_locale);
+}
+
+QString ThreadStore::formatRelative(const QDateTime& at) const {
+  return relativeTime(at, now());
 }
 
 void ThreadStore::readSettings() {

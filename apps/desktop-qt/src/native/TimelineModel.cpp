@@ -591,6 +591,28 @@ QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& 
   return numericDate(local.date(), local.date().year() != today.year(), locale) + QLatin1Char(' ') + time;
 }
 
+QString shortDate(const QDateTime& at, const QDateTime& now, const QLocale& locale) {
+  if (!at.isValid()) return {};
+  const QDate date = at.toLocalTime().date();
+  return numericDate(date, date.year() != now.toLocalTime().date().year(), locale);
+}
+
+QString shortDateTime(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale) {
+  if (!at.isValid()) return {};
+  return shortDate(at, now, locale) + QLatin1Char(' ') + sidebar::timeOfDay(at.toLocalTime(), timestampFormat, locale);
+}
+
+QString relativeTime(const QDateTime& at, const QDateTime& now) {
+  if (!at.isValid()) return {};
+  const qint64 seconds = at.secsTo(now);
+  const qint64 span = seconds < 0 ? -seconds : seconds;
+  if (span < 60) return QStringLiteral("just now");
+  const QString amount = span < 3600    ? QStringLiteral("%1m").arg(span / 60)
+                         : span < 86400 ? QStringLiteral("%1h").arg(span / 3600)
+                                        : QStringLiteral("%1d").arg(span / 86400);
+  return seconds < 0 ? QStringLiteral("in ") + amount : amount + QStringLiteral(" ago");
+}
+
 // The tooltip of a row's time, in English.
 QString TimelineModel::timeTitle(const QString& rowId, const QString& entryId) const {
   const int at = indexOf(rowId);

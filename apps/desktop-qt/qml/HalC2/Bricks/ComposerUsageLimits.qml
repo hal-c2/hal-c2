@@ -21,8 +21,8 @@ Rectangle {
     border.width: 1
 
     function resets(iso) {
-        const date = new Date(iso);
-        return isNaN(date.getTime()) ? "" : qsTr("resets %1").arg(date.toLocaleString(Qt.locale(), Locale.ShortFormat).replace(/[\u202f\u00a0]/g, " ")); // plain spaces, as sidebar::plainSpaces
+        const at = Format.dateTime(iso);
+        return at ? qsTr("resets %1").arg(at) : "";
     }
 
     ColumnLayout {

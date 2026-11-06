@@ -268,6 +268,23 @@ const Steps steps([] {
     waitShown(world, QStringLiteral("sidebar.footer"), c[0]);
   });
 
+  // Format.time on a fixed local 6:05 PM, as a plugin page would show a time.
+  step(QStringLiteral("the plugin %1 shows 6:05 PM with Format.time in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    writeFile(pluginPath(world, c[0]),
+              QStringLiteral("import OpenTUI\nimport HalC2.Bricks\nPlugin {\n  pluginId: \"%1\"\n  Contribution { slot: \"%2\"\n"
+                             "    Text { text: Format.time(new Date(2026, 8, 23, 18, 5)) } }\n}\n")
+                  .arg(c[0], c[1])
+                  .toUtf8());
+    world.mc.part<PluginWorld>().plugin = c[0];
+    waitLoaded(world, c[0]);
+  });
+  step(QStringLiteral("the plugin shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = world.mc.part<PluginWorld>().plugin;
+    world.waitFor([&] { return slotDraws(world, QStringLiteral("statusbar"), c[0]); },
+                  [&] { return QStringLiteral("the status bar to show \"%1\"; %2").arg(c[0], describe(world)); });
+    expect(shownIn(world, QStringLiteral("statusbar")) == QStringList{id}, shownIn(world, QStringLiteral("statusbar")).join(QStringLiteral(", ")));
+  });
+
   step(QStringLiteral("the plugin %1 contributes only to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     writeFile(pluginPath(world, c[0]), pluginSource(c[0], c[1]));
     world.mc.part<PluginWorld>().plugin = c[0];

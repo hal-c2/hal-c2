@@ -435,3 +435,10 @@ private:
 // `at` as the rows read a time that may be ahead, in the device's
 // timestampFormat and `locale`.
 QString upcomingStamp(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale);
+// What plugin pages format times with (Format.qml): the locale's numeric date,
+// with the year only when it is not `now`'s ("9/20", "9/20/2025"); that date
+// and the time of day in `timestampFormat` ("9/20 18:05"); and how long ago or
+// ahead `at` is ("just now", "5m ago", "in 2h", "3d ago").
+QString shortDate(const QDateTime& at, const QDateTime& now, const QLocale& locale);
+QString shortDateTime(const QDateTime& at, const QDateTime& now, const QString& timestampFormat, const QLocale& locale);
+QString relativeTime(const QDateTime& at, const QDateTime& now);

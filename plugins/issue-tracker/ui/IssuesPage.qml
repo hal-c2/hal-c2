@@ -151,7 +151,7 @@ Item {
     }
 
     function date(value) {
-        return value ? Qt.formatDate(new Date(value), Qt.locale().dateFormat(Locale.ShortFormat)) : "";
+        return Format.date(value);
     }
 
     function issueMeta(issue) {
