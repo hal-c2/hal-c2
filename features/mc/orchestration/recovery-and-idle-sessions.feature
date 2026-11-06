@@ -519,11 +519,16 @@ Feature: Recovering from restarts and releasing idle sessions
     Then nothing is sent to "t1"
 
   @backlog @mc
-  Scenario: Restarts keep delegated results, held queues and stops
+  Scenario: A restart does not report a delegated child's interrupted result as final
     Given "continue threads after restarts" is on
     When the MC restarts mid-delegation
-    Then a child's interrupted result is not reported as final and queued work waits for recovery
-    And work the user had stopped is not continued
+    Then the child's interrupted result is held until its continuation settles
+
+  @backlog @mc
+  Scenario: A restart keeps queued work waiting and work the user stopped stopped
+    Given "continue threads after restarts" is on and a thread has held queued work and a stopped run
+    When the MC restarts
+    Then the queued work waits for recovery and the stopped run is not continued
 
   @backlog @mc
   Scenario: A settled thread stays asleep after a restart

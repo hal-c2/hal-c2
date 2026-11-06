@@ -80,6 +80,13 @@ Feature: Project actions
       When the user looks at the actions of "shop"
       Then "Install" is offered
 
+    @backlog @shared
+    Scenario: Running an action opens its preview when asked to
+      Given an action with a preview address and "open preview automatically" on
+      When the command is written to the terminal
+      Then the preview opens at that address
+      And a failed write opens nothing
+
   Rule: The setup script
 
     Background:
@@ -249,15 +256,8 @@ Feature: Project actions
         | install-javascript-dependencies  |
         | A.b                              |
 
-  @backlog @shared
-  Scenario: Changing or clearing an action's shortcut leaves no stale rule
-    Given an action with a shortcut
-    When the user changes the shortcut, clears it, or deletes the action
-    Then only the new shortcut is bound, or none, and no earlier rule stays active
-
-  @backlog @shared
-  Scenario: Running an action opens its preview when asked to
-    Given an action with a preview address and "open preview automatically" on
-    When the command is written to the terminal
-    Then the preview opens at that address
-    And a failed write opens nothing
+    @backlog @shared
+    Scenario: Changing or clearing an action's shortcut leaves no stale rule
+      Given an action with a shortcut
+      When the user changes the shortcut, clears it, or deletes the action
+      Then only the new shortcut is bound, or none, and no earlier rule stays active

@@ -398,8 +398,8 @@ Feature: Provider setup, updates and sign-in
     And an install it cannot identify copies a relaunch command saying that it does not update the installed MC
 
   @backlog @shared
-  Scenario: Both update icons of a provider open its version details
+  Scenario: Wherever a provider offers an update, its version details open
     Given a provider with an update available
-    When the user taps either update icon
+    When the user selects the update offer in either place it shows
     Then the version details open, with copy and update as separate actions
     And a read-only connection can read and copy but not update

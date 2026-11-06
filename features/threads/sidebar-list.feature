@@ -732,7 +732,7 @@ Feature: The thread list
     When a screen reader moves through the sidebar from its first thread
     Then "one" and then "two" are reached before the settled shelf and its footer
 
-  @backlog @desktop
+  @backlog @desktop @mobile
   Scenario: The Working section folds away busy threads
     Given Working section is on in General settings
     When threads are working, connecting or monitoring
@@ -745,12 +745,6 @@ Feature: The thread list
     When the user picks a Project order in General settings
     Then the sidebar sorts projects that way
     And Restore defaults resets it
-
-  @backlog @mobile
-  Scenario: The Working section is available on phones
-    Given Working section is on in the phone's thread settings
-    When threads are busy
-    Then they fold into a collapsed Working section until they need the user
 
   @backlog @shared
   Scenario: Working threads keep their order while agents finish and wake

@@ -464,4 +464,9 @@ Feature: Starting the MC
   Scenario: The MC command line rejects an unknown word
     When the MC command is run with a bare word that names no command or existing directory
     Then it fails with help instead of starting a server
-    And a launch while a recorded MC is still alive is refused before it touches state
+
+  @backlog @mc
+  Scenario: A launch while a recorded MC is still alive is refused
+    Given the home records an MC that is still alive
+    When another MC is launched on that home
+    Then it is refused before it creates directories or opens state

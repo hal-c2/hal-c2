@@ -24,6 +24,7 @@
 #   Cross-domain: connections/device-hub.feature holds the MC's hub and proxy,
 #   mobile/usage-diagnostics-devices.feature holds the phone's device viewer.
 #   https://github.com/pingdotgg/t3code/pull/15551
+#   https://github.com/pingdotgg/t3code/pull/15435
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
@@ -555,6 +556,12 @@ Feature: Device panel
       When the user watches a device
       Then the tab shows the device's still pictures instead
 
+    @backlog @mobile
+    Scenario: The device viewer fills the screen
+      When the user opens a simulator or device on the phone
+      Then its stream fills the screen at the device's aspect ratio
+      And its controls sit in an overlay that shows while connecting and on tap
+
   Rule: Driving a device
 
     @desktop
@@ -859,6 +866,13 @@ Feature: Device panel
       Then the wizard shows "Port 4400 is in use" as an error
       And the user cannot continue
 
+    @backlog @desktop
+    Scenario: Missing platform tooling is explained before the hub is ready
+      Given devices are on and the local host has no usable platform
+      When the user opens the first wizard step or the Devices settings
+      Then each platform's diagnostics and its refresh are shown
+      And continuing still waits for a ready hub
+
   Rule: A machine preparing its device tools says so
     # A machine is the environment itself or a remote device host; each gets its own banner.
 
@@ -1147,9 +1161,3 @@ Feature: Device panel
       Given the MC has given the client no device access yet
       And the user has the tools open for the iOS Simulator "iPhone 17"
       Then the tools have no "Event log"
-
-  @backlog @mobile
-  Scenario: The device viewer fills the screen
-    When the user opens a simulator or device on the phone
-    Then its stream fills the screen at the device's aspect ratio
-    And its controls sit in an overlay that shows while connecting and on tap

@@ -198,6 +198,12 @@ Feature: Agent code review
       And "code-review" runs at most 4 reviews at once
       Then all four reviews run
 
+    @backlog @mc
+    Scenario: Pull request watching reads every reply in a review thread
+      Given an inline review thread has more than ten replies
+      When the watch looks for new remarks
+      Then replies on later pages count too, and a failed page holds the watermark
+
   Rule: The agent and its prompt are the user's to set
 
     @mc
@@ -737,9 +743,3 @@ Feature: Agent code review
       When the user opens the review of #12 on the "Reviews" page
       Then the review says "Reviewing on laptop, out of reach"
       And it can be reviewed on this machine
-
-  @backlog @mc
-  Scenario: Pull request watching reads every reply in a review thread
-    Given an inline review thread has more than ten replies
-    When the watch looks for new remarks
-    Then replies on later pages count too, and a failed page holds the watermark

@@ -1830,7 +1830,7 @@ Feature: Browsing pull requests
     And the row claims no added or removed lines
 
   @backlog @desktop
-  Scenario: Holding Shift on the pull request list shows one-click actions
-    When the user holds Shift over the list
+  Scenario: The pull request list offers one-click actions on request
+    When the user asks for quick actions on the list
     Then open pull requests offer close and merge, drafts close and ready for review, closed ones reopen
-    And merged ones offer none, and releasing Shift restores the rows
+    And merged ones offer none, and ending the request restores the rows

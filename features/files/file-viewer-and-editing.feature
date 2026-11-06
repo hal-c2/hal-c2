@@ -581,6 +581,13 @@ Feature: Viewing and editing files
         | an MC on another machine the client is paired with | opens "src/app.ts" in an editor |
         | an MC reached through an SSH port forward          | opens "src/app.ts" in an editor |
 
+    @backlog @shared
+    Scenario: An image or browser document is recognised by its file name's own extension
+      Given a project file named "photo.png" and another named "report.final.html"
+      When the user opens each in the file viewer
+      Then the first opens as an image and the second as a browser document
+      And a file whose name merely contains a URL-looking query or fragment is not treated as one
+
   Rule: Editing
 
     @mc
@@ -1126,10 +1133,3 @@ Feature: Viewing and editing files
         | size                    | copied                                        |
         | within the preview limit | all of its text                              |
         | over the preview limit  | only the part shown, and the action says so   |
-
-  @backlog @shared
-  Scenario: An image or browser document is recognised by its file name's own extension
-    Given a project file named "photo.png" and another named "report.final.html"
-    When the user opens each in the file viewer
-    Then the first opens as an image and the second as a browser document
-    And a file whose name merely contains a URL-looking query or fragment is not treated as one

@@ -908,6 +908,12 @@ Feature: Custom themes
       Then the search box is empty and no results are shown
       And the sort order is back to Most downloaded
 
+    @backlog @shared
+    Scenario: An imported theme keeps switches and focus rings visible
+      Given an imported theme whose input border or focus colour is transparent
+      When it is applied
+      Then switches, input borders and focus rings stay distinguishable
+
   Rule: Sharing and removing
 
     @desktop
@@ -1008,9 +1014,3 @@ Feature: Custom themes
     When the user imports them
     Then each imports under a non-reserved id and keeps its own label
     And they are not paired into one dual-mode theme
-
-  @backlog @shared
-  Scenario: An imported theme keeps switches and focus rings visible
-    Given an imported theme whose input border or focus colour is transparent
-    When it is applied
-    Then switches, input borders and focus rings stay distinguishable

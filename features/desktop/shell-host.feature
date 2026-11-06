@@ -385,6 +385,11 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then Tailscale HTTPS uses port 443
 
+    @backlog @desktop
+    Scenario: The version prints without a display
+      When the desktop is started with --version and no display is available
+      Then it prints its version and exits successfully
+
   Rule: The app fits the desktop it runs on
 
     # Legacy: apps/desktop/src/app/DesktopLinuxUrlHandler.ts
@@ -487,8 +492,3 @@ Feature: The desktop app runs its own MC
       When the user opens the app in that browser
       Then the other settings are as saved
       And follow-ups use the current default
-
-  @backlog @desktop
-  Scenario: The version prints without a display
-    When the desktop is started with --version and no display is available
-    Then it prints its version and exits successfully

@@ -966,7 +966,7 @@ Feature: Claude
   Scenario: A Claude command the user stops is recorded as interrupted
     Given a Claude turn is running a command
     When the user stops the turn
-    Then the command is recorded as interrupted, as Codex, Cursor and Pi record it
+    Then the command is recorded as interrupted, as Codex and Cursor record it
     And agents reading the thread are told it was interrupted, not that it failed
 
   @backlog

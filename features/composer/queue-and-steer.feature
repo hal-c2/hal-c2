@@ -413,5 +413,5 @@ Feature: Follow-ups while the agent is working
 
   @backlog @mobile
   Scenario: Tapping Remove on a swiped queued message removes it
-    When the user swipes a queued message and taps Remove
+    When the user removes a queued message on the phone
     Then the queued message is cancelled

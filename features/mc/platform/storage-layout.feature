@@ -399,6 +399,12 @@ Feature: Where HAL-C2 keeps its files
       Then the threads, settings, provider sign-ins and secrets are all still there
       And downloaded tools are fetched again when they are next needed
 
+    @backlog @mc
+    Scenario: A settings file that is a symbolic link stays one when saved
+      Given settings.json is a symbolic link into a dotfiles repository
+      When settings are saved
+      Then the target file is rewritten and the link remains
+
   Rule: The desktop app's and the hosted server's files are sorted by kind
 
     Background:
@@ -517,9 +523,3 @@ Feature: Where HAL-C2 keeps its files
         | setting                               | path                                 |
         | XDG_STATE_HOME is not set             | ~/.local/state/hal-c2/wsl-runtime    |
         | XDG_STATE_HOME is "/var/lib/me/state" | /var/lib/me/state/hal-c2/wsl-runtime |
-
-  @backlog @mc
-  Scenario: A settings file that is a symbolic link stays one when saved
-    Given settings.json is a symbolic link into a dotfiles repository
-    When settings are saved
-    Then the target file is rewritten and the link remains
