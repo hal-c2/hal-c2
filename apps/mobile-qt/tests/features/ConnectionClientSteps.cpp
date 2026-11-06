@@ -1,5 +1,5 @@
 // The phone's build of the connection-owner steps both surfaces share (see
-// ConnectionClientSteps.inc), and the phone's own of the steps the desktop's
+// ConnectionClientSteps.h), and the phone's own of the steps the desktop's
 // ConnectionHealthSteps.cpp has for the same texts.
 
 #include <QCoreApplication>
@@ -14,7 +14,7 @@
 #include "ShellBridge.h"
 #include "World.h"
 
-#include "ConnectionClientSteps.inc"
+#include "ConnectionClientSteps.h"
 
 namespace connection_client {
 

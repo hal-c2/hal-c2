@@ -8,7 +8,7 @@ class World;
 // call on (the Background's paired client): every retry's delay, every check's
 // outcome, and how many sockets the MC had taken before the step acting. The
 // phone's twin is apps/mobile-qt/tests/features/ConnectionWatch.h; the steps
-// both surfaces share (ConnectionClientSteps.inc) use whichever is built.
+// both surfaces share (ConnectionClientSteps.h) use whichever is built.
 struct ConnectionWatch {
   QList<int> retryDelays;
   QList<bool> checks;
