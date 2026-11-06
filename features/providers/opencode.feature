@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16142
 #   https://github.com/pingdotgg/t3code/pull/13651
 #   https://github.com/pingdotgg/t3code/pull/12003
 #   https://github.com/pingdotgg/t3code/pull/14198
@@ -729,3 +730,10 @@ Feature: OpenCode
     Given OpenCode reports a default variant its reasoning menu does not list
     When no explicit choice is saved
     Then the reasoning label reads Default rather than blank
+
+  @backlog @mc @plugin-opencode
+  Scenario: A thread's HAL-C2 tools reach OpenCode however long the thread id is
+    Given a delegated child thread whose id would make the server's name longer than OpenCode allows
+    When an OpenCode turn starts in it
+    Then the HAL-C2 tool server is registered under a shorter name that is the same on every turn
+    And the thread can use the HAL-C2 tools

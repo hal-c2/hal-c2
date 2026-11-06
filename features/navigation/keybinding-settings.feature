@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12822
 #   docs/user/keybindings.md (Settings → Keybindings)
 #   apps/web/src/components/settings/KeybindingsSettings.tsx
 #   apps/web/src/components/settings/KeybindingsSettings.logic.ts
@@ -261,3 +262,12 @@ Feature: Keybindings settings
     Then that key is recorded
     And Escape still cancels
     And afterwards Tab moves focus on so Save is reachable
+
+  Rule: Keybindings are grouped
+
+  @backlog @shared
+  Scenario: Keybindings are grouped by area
+    When the user opens the keybindings settings
+    Then bindings are grouped by area, such as chat, terminal and navigation
+    And searching hides the groups with no match
+    And editing, resetting and adding a binding work as before

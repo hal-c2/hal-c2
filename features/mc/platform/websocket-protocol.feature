@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15515 (a failing handler fails only its own request)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (protocol 3 frames)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (subscriptions, buffering, resync, state migration)
@@ -363,3 +364,12 @@ Feature: The protocol 3 WebSocket
     When an administrator revokes that session
     Then the MC closes the socket
     And the client cannot reconnect with that session
+
+  # The MC already does this (call_mc answers each request on its own); @backlog only until its steps exist.
+  @backlog @mc
+  Scenario: A handler that crashes fails only its own request
+    Given a client has a thread subscription, a terminal subscription and a pending request open
+    When the MC handler for the pending request crashes
+    Then that request fails with an error
+    And the client's other subscriptions and requests carry on
+    And the crash is logged by the MC

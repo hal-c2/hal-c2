@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14784
 #   https://github.com/pingdotgg/t3code/pull/13469 (a malformed OTEL_RESOURCE_ATTRIBUTES no longer stops startup)
 #   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/desktop-qt/host/main.ts (desktop host: MC lifecycle, the ready line)
@@ -492,3 +493,10 @@ Feature: The desktop app runs its own MC
       When the user opens the app in that browser
       Then the other settings are as saved
       And follow-ups use the current default
+
+  Rule: Browser screenshots keep their own files
+
+  @backlog @desktop
+  Scenario: Two browser screenshots of the same page never overwrite each other
+    Given the user takes two screenshots of the same page in the same instant
+    Then each is saved under its own file name

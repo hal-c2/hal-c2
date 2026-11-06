@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16741
+#   https://github.com/pingdotgg/t3code/pull/16718
+#   https://github.com/pingdotgg/t3code/pull/16337
+#   https://github.com/pingdotgg/t3code/pull/16336
+#   https://github.com/pingdotgg/t3code/pull/16335
 #   https://github.com/pingdotgg/t3code/pull/15219
 #   https://github.com/pingdotgg/t3code/pull/15947
 #   https://github.com/pingdotgg/t3code/pull/15907
@@ -489,3 +494,32 @@ Feature: The HAL-C2 MCP server agents receive
     When an agent delegates a task or creates threads on that provider
     Then the MC probes the provider once more and goes on if it is healthy
     And healthy providers are not probed again
+
+  @backlog @mc
+  Scenario: A tool is limited to the callers it declares
+    Given a thread runs in a supervised or plan mode
+    When its agent starts a thread in another project
+    Then the call is allowed
+    And the new thread never gets a higher access or interaction mode than the caller has
+
+  @backlog @mc
+  Scenario: An agent outside HAL-C2 signs in to an MC's server
+    Given the user pointed Claude Code or another agent at the MC's MCP address
+    When the agent asks to connect
+    Then it is sent through a sign-in where the user approves access with a pairing code or as an administrator
+    And the user chooses how much access it gets, from read only to full access
+    And the agent can then use the tools that access allows
+
+  @backlog @mc
+  Scenario: A hosted agent can sign in with an https callback
+    Given a hosted agent such as ChatGPT registers an https callback address
+    Then it is accepted and the callback must match exactly
+    And a loopback callback matches on any port
+    And an http callback off loopback is refused
+    And a client that asks for a secret is registered as a public client proved by PKCE
+
+  @backlog @shared
+  Scenario: Copying an environment's MCP address
+    Given the user has an environment saved
+    When the user chooses to copy its MCP address
+    Then the address is copied with an example command for adding it to an agent

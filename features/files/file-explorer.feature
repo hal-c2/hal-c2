@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11500
 #   apps/server-ex/lib/hal_c2/workspace.ex (index, list_entries)
 #   apps/web/src/components/files/FileBrowserPanel.tsx
 #   apps/web/src/components/files/useDirectoryEntries.ts
@@ -245,3 +246,17 @@ Feature: Exploring project files
     When the environment can list "shop" again
     And the user retries
     Then the top of "shop" is shown
+
+  @backlog @mc @shared
+  Scenario: A workspace too large to index in time lists what was found so far
+    Given the project's folder is too large to scan within the initial scan budget
+    When the user opens the file explorer or searches for a file
+    Then the entries found so far are listed
+    And the results are marked as incomplete until the scan finishes
+    And the list completes by itself once the scan finishes
+
+  @backlog @mc
+  Scenario: Searching file contents has no partial answer when the scan times out
+    Given the project's folder is too large to scan within the initial scan budget
+    When the user searches file contents
+    Then the search fails with a timeout instead of showing partial content results

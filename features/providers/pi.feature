@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16661
+#   https://github.com/pingdotgg/t3code/pull/16210
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
@@ -760,3 +762,15 @@ Feature: Pi
     When the next message goes to "pi-work"
     Then a process of "pi-work" runs that turn in place of the first instance's
     And another message to "pi-work" stays in that process
+
+  @backlog @mc @plugin-pi
+  Scenario: A Pi thread title takes the linked pull request into account
+    Given a Pi thread is linked to a pull request
+    When Pi writes the thread's title
+    Then the pull request's context is part of what Pi is asked
+
+  @backlog @mc @shared @plugin-pi
+  Scenario: Pi's discovered models show and search by their underlying provider
+    Given Pi discovered models from the providers "openai" and "anthropic"
+    When the user opens the model picker and searches for "anthropic"
+    Then the models from that provider are listed with its name

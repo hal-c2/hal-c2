@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15628
 #   https://github.com/pingdotgg/t3code/pull/11425
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
 #   apps/server-ex/lib/hal_c2/rpc.ex (required_scope/2: a write by full path needs terminal:operate)
@@ -1133,3 +1134,13 @@ Feature: Viewing and editing files
         | size                    | copied                                        |
         | within the preview limit | all of its text                              |
         | over the preview limit  | only the part shown, and the action says so   |
+
+  Rule: A preview that fails says what it tried
+
+  @backlog @shared
+  Scenario: A file that cannot be previewed names the path that was tried
+    Given a document links to "devices.md", which does not exist in the project
+    When the user opens the link
+    Then the preview says the file could not be read
+    And it shows the path that was tried and the workspace folder it was looked up in
+    And it does not show the platform's raw error

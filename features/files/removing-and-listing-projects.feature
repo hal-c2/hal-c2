@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14912 (automatic pull no longer holds readiness)
 #   docs/user/project-settings.md (Project category, removal)
 #   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
 #   apps/web/src/components/settings/ProjectsSettings.tsx (removal)
@@ -111,6 +112,17 @@ Feature: Removing and updating projects
       And automatic pull was never turned on for "shop"
       When the MC starts
       Then "shop" is not pulled
+
+    # The MC already does this (HalC2.Projects.auto_pull runs as a Task child after the web server);
+    # @backlog only until its steps exist.
+    @backlog @mc
+    Scenario: Automatic pull does not hold the MC's readiness
+      Given "shop" and "api" have automatic pull on
+      And pulling "shop" fails
+      When the MC starts
+      Then clients are served as soon as the MC is ready
+      And "api" is still pulled once in the background
+      And the failure to pull "shop" is logged
 
   Rule: Managing projects from the command line
 

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16322
 #   https://github.com/pingdotgg/t3code/pull/14103
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
@@ -197,3 +198,16 @@ Feature: Source Control settings
     When a client reads the server settings
     Then the client learns only that a token is set
     And the token is not written to the settings file
+
+  @backlog @shared
+  Scenario: The user chooses which GitHub account an MC uses for each host
+    Given the user is signed in to GitHub as "work" and "personal" on one host
+    When the user picks "work" for that host
+    Then the MC uses "work" for that host's requests from then on
+    And a host turned off in settings refuses its requests and says where to turn it on
+
+  @backlog @mc
+  Scenario: GitHub works from a saved token without the GitHub CLI
+    Given the user saved a GitHub token
+    When the MC talks to GitHub
+    Then it uses the token and does not need the GitHub CLI
