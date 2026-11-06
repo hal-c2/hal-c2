@@ -122,7 +122,7 @@ Feature: Connection health
     Then the other environment stays connected
 
   # Legacy: packages/client-runtime/src/connection/errors.ts (mapRemoteEnvironmentError)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario Outline: What the environment answers decides whether the client keeps trying
     Given the client is connecting to an environment
     When <answer>
@@ -139,7 +139,7 @@ Feature: Connection health
       | the environment answers with something that is not a reply | keeps retrying     | Remote environment endpoint returned an invalid response.     |
 
   # Legacy: packages/client-runtime/src/connection/errors.ts (environmentMismatchError)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An address that answers as a different environment is not used
     Given "studio" was saved at an address
     And a different environment now answers at that address
@@ -175,7 +175,7 @@ Feature: Connection health
     And keeps it when it answers
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (CONNECTION_PROBE_TIMEOUT, wakeProbeFailed)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A connection that does not answer the check on foregrounding is replaced at once
     Given an established connection that has silently died
     When the app comes to the foreground
@@ -192,9 +192,7 @@ Feature: Connection health
     And the status says the environment did not respond to a connection health check
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (CONNECTION_ESTABLISHMENT_TIMEOUT)
-  # The client both surfaces share does this, proved by tst_SyncClientRegression
-  # (aSocketWithoutHelloIsGivenUpOn) and tst_SyncClientProp; no step drives it yet.
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A connection that is not set up within 15 seconds counts as failed
     Given the environment accepts the connection but never finishes introducing itself
     When 15 seconds pass
@@ -202,10 +200,7 @@ Feature: Connection health
     And the client retries after the usual delay
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
-  # The client both surfaces share does this, proved by tst_SyncClientRegression
-  # (aConnectionThatDropsAtOnceIsRetriedMoreSlowly, aConnectionThatHeldStartsTheDelaysOver);
-  # no step drives it yet.
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario Outline: The retry delays start over only after a connection has held for 30 seconds
     Given the client has already failed to connect several times
     And it connects
@@ -218,7 +213,7 @@ Feature: Connection health
       | 5 seconds  | the next longer delay than before      |
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (blocked phase, waitForSignal)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A blocked environment is tried again when the app returns to the foreground
     Given the environment refuses the client's credential
     And the client stopped retrying
@@ -411,7 +406,9 @@ Feature: Connection health
     Then the subscription continues on the new connection
 
   # Legacy: packages/client-runtime/src/rpc/client.ts (currentSession)
-  @backlog @desktop @mobile
+  # The phone draws no toasts: the error reaches its state, but the user reads only the
+  # thread's banner that the MC cannot be reached.
+  @desktop @mobile @backlog-mobile
   Scenario: An action for an environment that is not connected fails by its name
     Given "studio" is offline
     When the user asks "studio" to do something
@@ -419,14 +416,14 @@ Feature: Connection health
     And the request is not queued for later
 
   # Legacy: packages/client-runtime/src/v3/clusterSocket.ts (ping interval, calls rejected on close)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A connection with nothing to say is kept alive every 25 seconds
     Given a connected client with nothing open that streams
     When 25 seconds pass
     Then the client has pinged the MC
 
   # Legacy: packages/client-runtime/src/v3/clusterSocket.ts (onClose rejects pending calls)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: An action waiting for its answer fails when the connection drops
     Given the user asked "studio" to do something and it has not answered
     When the connection to "studio" drops

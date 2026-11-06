@@ -28,11 +28,14 @@ class QWebSocket;
 // not speak. A socket that drops, or is not said hello to in time, is retried
 // with growing delays, which start over once a connection has held; without a
 // network it waits for one, and a credential the MC refuses waits for the
-// user (phase()). The MC's own access token opens the socket as `?token=`; a
+// user (phase()). An address that answers as another environment than the
+// one it was opened for is not used. The MC's own access token opens the socket as `?token=`; a
 // paired session's token does not, so a handshake that fails asks the MC for a
 // socket ticket (`/api/auth/websocket-ticket`): it either gets one and opens
-// with `?wsTicket=` from then on, or learns the credential is refused. wake()
-// cuts a waiting retry short and checks a connection that looks healthy.
+// with `?wsTicket=` from then on, or learns from the MC's answer whether the
+// credential is refused, the connection blocked, or the MC worth retrying.
+// wake() tries again whatever it waits for, and checks a connection that looks
+// healthy: one that does not answer in time is replaced at once.
 class McClient : public QObject {
   Q_OBJECT
 
@@ -46,7 +49,8 @@ public:
     Retrying,    // dropped or unreachable: the next attempt is scheduled (retryDelay)
     Offline,     // this device has no network: waits for it
     Refused,     // the MC refuses the credential: waits for the user to pair again
-    Blocked,     // the MC speaks another protocol (blockedProtocol): one side must update
+    Blocked,     // the MC speaks another protocol (blockedProtocol), is another environment, or turned the
+                 // credential away for good (failureMessage): retried only when asked
   };
   using FrameHandler = std::function<void(const QJsonObject& frame)>;
   // What a `sub` frame carries besides its shape: a stream's `offset`,
@@ -54,27 +58,35 @@ public:
   // sent, so whoever holds the data is the one to say where it continues.
   using Resume = std::function<QJsonObject()>;
   // `error` is set when the call failed: the MC's message, or "not connected"
-  // / "disconnected" when the socket was not there to carry it.
+  // / "disconnected" when the socket was not there to carry it. A cluster
+  // member the MC cannot reach is "<name> is not connected." (environmentNames).
   using Reply = std::function<void(const QJsonValue& result, const std::optional<QString>& error)>;
 
   explicit McClient(QObject* parent = nullptr);
   ~McClient() override;
 
   // `origin` is the MC's http(s) origin; the token is its access token.
-  void open(const QUrl& origin, const QString& token);
+  // `environment` is the environment it must serve; when empty, the one its
+  // first descriptor names is.
+  void open(const QUrl& origin, const QString& token, const QString& environment = {});
   void close();
-  // Drops the socket and connects again.
+  // Drops the socket and connects again, to the same environment.
   void reconnect() {
     const QUrl origin = m_origin;
     const QString token = m_token;
+    const QString environment = m_expectedEnvironment;
     close();
-    open(origin, token);
+    open(origin, token, environment);
   }
   bool isReady() const { return m_ready; }
   Phase phase() const { return m_phase; }
   // Why the last connection ended or could not be made ("timeout", "closed",
   // or the socket's own words); empty while none has failed since it was ready.
   QString failure() const { return m_failure; }
+  // What the last failure means to the user, when the MC said more than that
+  // it was unreachable ("The environment credential is invalid."); empty
+  // otherwise.
+  QString failureMessage() const { return m_failureMessage; }
   // The W3C trace id of the attempt that failed, sent as `traceparent` with
   // its requests; empty when none failed.
   QString failureTraceId() const { return m_failureTraceId; }
@@ -87,8 +99,9 @@ public:
   // Whether this device has a network. Offline, a drop is not retried until
   // the network is back.
   void setOnline(bool online);
-  // The app came to the foreground: a waiting retry runs now, and a ready
-  // connection is checked (checked()) and replaced if it does not answer.
+  // The app came to the foreground: a waiting, refused or blocked connection is
+  // tried now, and a ready one is checked (checked()) and replaced at once if
+  // it does not answer within probeTimeout().
   void wake();
   // Tries again now, whatever it was waiting for.
   void retryNow();
@@ -98,6 +111,9 @@ public:
   // The environment the MC itself serves, for calls about the MC (its
   // cluster); empty until the first hello.
   QString environment() const { return m_environment; }
+  // Names an environment for the user, for a call to one the MC cannot reach.
+  using Names = std::function<QString(const QString& environment)>;
+  void setEnvironmentNames(Names names) { m_names = std::move(names); }
 
   // `context` owns the callback, as with a Qt connection: once it is destroyed
   // no reply or frame reaches it, and its subscriptions are ended.
@@ -131,13 +147,21 @@ public:
 
   void setRetryDelays(const QList<int>& delaysMs) { m_retryDelaysMs = delaysMs; }
   QList<int> retryDelays() const { return m_retryDelaysMs; }
+  // How often a ready connection pings the MC, so a quiet one is kept alive.
   void setPingInterval(int ms) { m_pingTimer.setInterval(ms); }
+  int pingInterval() const { return m_pingTimer.interval(); }
   // How long a ping may go unanswered before the connection counts as dead.
   void setPongTimeout(int ms) { m_pongTimer.setInterval(ms); }
+  // How long wake()'s check may go unanswered before the connection is replaced.
+  void setProbeTimeout(int ms) { m_probeTimer.setInterval(ms); }
+  int probeTimeout() const { return m_probeTimer.interval(); }
   // How long an open socket may go without the MC's hello before it is dropped.
   void setSetupTimeout(int ms) { m_setupTimer.setInterval(ms); }
-  // How long a connection must hold before the retry delays start over.
+  int setupTimeout() const { return m_setupTimer.interval(); }
+  // How long a connection must hold before the retry delays start over; set
+  // while one is holding, it counts from then.
   void setSteadyAfter(int ms) { m_heldTimer.setInterval(ms); }
+  int steadyAfter() const { return m_heldTimer.interval(); }
 
 signals:
   void readyChanged(bool ready);
@@ -159,6 +183,8 @@ private:
   void drop(const QString& reason);
   void failed(const QString& reason, bool wasReady);
   void scheduleRetry();
+  // Stops at `phase` (Refused or Blocked) for what the MC said: no retry mends it.
+  void stop(Phase phase, const QString& message);
   void setPhase(Phase phase);
   void onMessage(const QString& text);
   void onClosed(QWebSocket* socket);
@@ -177,6 +203,7 @@ private:
   struct Call {
     QPointer<QObject> context;
     Reply reply;
+    QString environment;
   };
   void endSubscription(int id);
 
@@ -193,9 +220,14 @@ private:
   QTimer m_pongTimer;
   QTimer m_setupTimer;
   QTimer m_heldTimer;
+  QTimer m_probeTimer;
   QElapsedTimer m_readySince;
   Phase m_phase = Phase::Closed;
   QString m_failure;
+  QString m_failureMessage;
+  // The environment the MC must serve.
+  QString m_expectedEnvironment;
+  Names m_names;
   QString m_traceId;
   QString m_failureTraceId;
   // Why the socket is being dropped from this side ("timeout").

@@ -269,8 +269,9 @@ QVariant ConnectionHealthController::versionWarning() const {
 namespace {
 
 // Why a connection went, in words: the client's own reason is for its log.
-QString cause(const QString& reason) {
+QString cause(const QString& reason, const QString& label) {
   if (reason == QLatin1String("timeout")) return ConnectionHealthController::tr("It stopped answering.");
+  if (reason == QLatin1String("check")) return ConnectionHealthController::tr("%1 did not respond to a connection health check.").arg(label);
   if (reason.startsWith(QLatin1String("HTTP "))) return ConnectionHealthController::tr("It answered with an error.");
   return ConnectionHealthController::tr("The connection was lost.");
 }
@@ -281,6 +282,8 @@ void ConnectionHealthController::update() {
   using Phase = McClient::Phase;
   const Phase phase = m_client->phase();
   const QString reason = m_client->failure();
+  // What the MC said of the failure, when it said more than that it was unreachable.
+  const QString message = m_client->failureMessage();
   QString name, state, status, title, detail;
   bool canRetry = false;
   switch (phase) {
@@ -298,7 +301,7 @@ void ConnectionHealthController::update() {
         state = QStringLiteral("retrying");
         status = tr("Reconnecting");
         title = tr("Reconnecting to %1").arg(label());
-        detail = tr("%1 HAL-C2 keeps trying.").arg(cause(reason));
+        detail = tr("%1 HAL-C2 keeps trying.").arg(message.isEmpty() ? cause(reason, label()) : message);
         canRetry = phase == Phase::Retrying;
       }
       break;
@@ -335,13 +338,19 @@ void ConnectionHealthController::update() {
       status = tr("Needs pairing");
       title = tr("%1 no longer accepts this device").arg(label());
       detail = tr("Pair again with a fresh pairing link from the environment.");
+      if (!message.isEmpty()) detail = message + QLatin1Char(' ') + detail;
       canRetry = true;
       break;
     case Phase::Blocked:
       name = QStringLiteral("blocked");
       state = QStringLiteral("blocked");
       status = tr("Update needed");
-      if (m_client->blockedProtocol() > McClient::kProtocol) {
+      if (m_client->blockedProtocol() == 0) {
+        // Turned away for good by what the environment answered.
+        status = tr("Can't connect");
+        title = tr("Can't connect to %1").arg(label());
+        detail = message;
+      } else if (m_client->blockedProtocol() > McClient::kProtocol) {
         title = tr("This app is too old for %1").arg(label());
         detail = tr("Update HAL-C2 on this device to connect.");
       } else {
