@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13927
 #   docs/user/terminal.md
 #   https://github.com/pingdotgg/t3code/pull/13673 (settling closes idle shells)
 #   docs/internals/terminal-runtime.md
@@ -31,6 +32,13 @@ Feature: Terminal sessions
   Rule: The MC starts a shell where the thread works
 
     @mc
+    # Upstream #13927: on Windows a terminal opens its shell before the process reports an id.
+    @backlog @shared
+    Scenario: A terminal opened on Windows shows its shell while the shell is still starting
+      Given the user is on Windows
+      When the user opens a terminal
+      Then a shell is running in the terminal
+
     Scenario: Opening a terminal starts a shell in the requested folder
       Given a thread whose project lives in "/work/app"
       When a client opens the thread's default terminal in "/work/app"

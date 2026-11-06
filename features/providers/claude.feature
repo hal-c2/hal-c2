@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13999
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-claude.md
@@ -650,6 +651,15 @@ Feature: Claude
     Given the thread is asked to run a turn for work Claude did by itself
     And Claude wrote nothing for it
     Then the run completes without asking Claude anything
+
+  # Upstream #13999: Claude gets a few seconds to record an interrupted turn before its session
+  # closes, so the conversation it saved can be continued.
+  @backlog @mc
+  Scenario: A stopped Claude turn is recorded before its session closes
+    Given the user stopped a running Claude turn
+    When Claude records the interrupted turn within three seconds
+    Then the session closes only after that record
+    And the thread's next message continues the same conversation
 
   @mc
   Scenario: A Claude turn that does not stop within 10 seconds is settled as interrupted

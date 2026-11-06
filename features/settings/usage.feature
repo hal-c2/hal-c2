@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10076
+#   https://github.com/pingdotgg/t3code/pull/8208
+#   https://github.com/pingdotgg/t3code/pull/13991
 #   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/usage.md
 #   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, transcript sources, scan cache)
@@ -263,6 +266,33 @@ Feature: Usage and limits
       When the user views usage for all environments
       Then usage says "server runs an older server version and is excluded from totals."
       And the usage of "server" is not counted
+
+    # Upstream #8208: an environment on a newer usage contract than this app is left out, and the
+    # notice says the app is the side that is behind.
+    @shared @backlog
+    Scenario: An environment on a newer usage format is left out and the app is named as behind
+      Given "server" reports usage in a newer format than this app reads
+      When the user views usage for all environments
+      Then usage says this app must be updated to show "server"
+      And the usage of "server" is not counted
+
+    # Upstream #10076: a provider this app does not know leaves the rest of the usage shown.
+    @shared @backlog
+    Scenario: A provider this app does not know leaves the rest of usage shown
+      Given "server" reports usage for a provider this app does not know, alongside Claude
+      When the user views usage for all environments
+      Then the Claude usage of "server" is shown
+      And the unknown provider's usage is left out
+
+    # Upstream #13991: a cost estimate says what share of its window has no price.
+    @shared @backlog
+    Scenario: A cost estimate says what share of its window has no price
+      Given some usage in the past 90 days has no price
+      When the user views cost for the past 90 days
+      Then the cost is labelled as an API estimate
+      And the estimate says what share of the usage it leaves out
+      When the user views cost for the past 7 days
+      Then no share of usage left out is given
 
     @shared @backlog-mobile @backlog-tui
     Scenario: Usage that could not be read can be read again

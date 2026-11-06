@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14152
 #   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list, aliases), apps/server-ex/lib/hal_c2/claude/provider.ex (the models Claude Code lists, else the manifest's Claude catalog)
 #   apps/server-ex/lib/hal_c2/model_manifest.ex (bundled, fetched and cached manifest; policies)
 #   apps/server-ex/lib/hal_c2/acp.ex (models from the model config option, subProvider)
