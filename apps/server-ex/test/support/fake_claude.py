@@ -137,12 +137,15 @@ for line in sys.stdin:
         continue
     if msg.get("type") == "control_request":
         sub = msg["request"]["subtype"]
-        # Plan usage; FAKE_CLAUDE_USAGE=unsupported is an account without plan limits.
+        # Plan usage; FAKE_CLAUDE_USAGE=unsupported is an account without plan limits. Once
+        # the FAKE_CLAUDE_RESET_FLAG file exists a banked reset was claimed and the session
+        # window starts over.
         if sub == "get_usage":
+            reset = os.path.exists(os.environ.get("FAKE_CLAUDE_RESET_FLAG") or "/nonexistent")
             usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {
                 "rate_limits_available": True,
                 "rate_limits": {
-                    "five_hour": {"utilization": 30, "resets_at": "2026-09-24T15:00:00.123456+00:00"},
+                    "five_hour": {"utilization": 0 if reset else 30, "resets_at": "2026-09-24T15:00:00.123456+00:00"},
                     "seven_day": {"utilization": 55.5, "resets_at": None},
                     "model_scoped": [{"display_name": "Fable 1", "utilization": 12, "resets_at": "2026-09-30T00:00:00Z"}]}}
             send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": usage}})

@@ -53,8 +53,10 @@ first, or by the first available window when no account reports a 5-hour limit. 
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
-where it is signed in, and its reset time. Codex accounts with banked
-reset credits show a ticket count and the **Use reset** action in the account details. On narrow screens, numbered rows below
+where it is signed in, and its reset time. Codex and Claude accounts with banked
+reset credits show a ticket count and the **Use reset** action in the account details. Claude's
+reset credits are not offered when the environment runs on macOS, where Claude Code keeps its
+sign-in in the Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
@@ -78,7 +80,8 @@ On macOS, use `AGENT_CLI_CREDENTIAL_STORE=file` when signing in and in the provi
 to use a file-based login.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
-after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
+after signing in with `grok login`. An account that has not used any metered credit yet stays
+listed with no limits until it does. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections

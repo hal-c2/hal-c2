@@ -13,6 +13,10 @@ config :hal_c2,
   text_claude_command: "hal-c2-test-no-claude",
   text_codex_command: "hal-c2-test-no-codex"
 
+# Claude's banked resets are never read from this machine's login or anthropic.com;
+# tests that need them point this at a fake.
+config :hal_c2, claude_api_base: "hal-c2-test-no-claude-api"
+
 # Provider update checks never reach the npm registry.
 config :hal_c2, provider_update_checks: false
 

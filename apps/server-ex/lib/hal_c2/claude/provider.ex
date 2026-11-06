@@ -931,6 +931,9 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
+  @doc "The installed version of the Claude CLI at `path` (found on the PATH when bare)."
+  def cli_version(path), do: version(System.find_executable(path) || path)
+
   # Read once per executable, so each instance's binary path has its own. The run
   # has the health check's deadline, so a CLI that hangs cannot hang the list.
   defp version(path) do

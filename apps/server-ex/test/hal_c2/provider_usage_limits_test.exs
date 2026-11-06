@@ -588,7 +588,8 @@ defmodule HalC2.ProviderUsageLimitsTest do
     assert first == retry
     assert next != first
 
-    assert {:error, %{"detail" => "This provider does not bank reset credits."}} =
+    # Claude banks resets too; with none banked (no login is read here) there is none to claim.
+    assert {:ok, %{"outcome" => "noCredit"}} =
              Limits.consume_reset_credit(%{"instanceId" => "claudeAgent"})
 
     assert {:error, %{"detail" => "Provider instance not found."}} =

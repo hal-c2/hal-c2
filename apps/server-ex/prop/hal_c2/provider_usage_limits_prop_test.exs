@@ -14,7 +14,9 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   A redemption runs against its own instance's CLI: a failed one keeps that
   instance's idempotency key for its retry, whatever the other instance does
   meanwhile, a finished one starts the next attempt on a new key, and only a
-  finished one reads that instance's limits again.
+  finished one reads that instance's limits again. A Claude redemption with no
+  banked reset (the suite reads no Claude login) is refused as `noCredit`, reads
+  that instance again, and leaves every Codex attempt alone.
   """
 
   use ExUnit.Case, async: false
@@ -160,6 +162,7 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
       {2, {:call, __MODULE__, :probe, [oneof(@instances)]}},
       {1, {:call, __MODULE__, :unsupported_probe, []}},
       {2, {:call, __MODULE__, :consume, [oneof(@codex), boolean()]}},
+      {1, {:call, __MODULE__, :consume, [oneof(@claude), false]}},
       {1, {:call, __MODULE__, :code_change_old, []}},
       {4, {:call, __MODULE__, :read, []}}
     ])
@@ -223,6 +226,11 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :read, _}, view), do: view == state.windows
+
+  # Claude has no banked reset to claim, and no Codex log moves.
+  def postcondition(_state, {:call, _, :consume, [instance, _]}, {reply, before, later})
+      when instance in @claude,
+      do: reply == {:ok, %{"outcome" => "noCredit"}} and later == before
 
   # The attempt lands in its own instance's log, as the pending key or as a new one.
   def postcondition(state, {:call, _, :consume, [instance, fail?]}, {reply, before, later}) do
@@ -318,12 +326,15 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   end
 
   # Redeems on `instance`, failing once if asked; {reply, its log before, after}.
+  # A Claude instance's are both Codex instances' logs.
   def consume(instance, fail?) do
     if fail?, do: File.write!(System.get_env("FAKE_CODEX_CONSUME_FAIL"), "")
     before = consumed(instance)
     reply = Limits.consume_reset_credit(%{"instanceId" => instance})
     {reply, before, consumed(instance)}
   end
+
+  defp consumed(instance) when instance in @claude, do: Enum.map(@codex, &consumed/1)
 
   defp consumed(instance) do
     path = Path.join(Application.get_env(:hal_c2, :home), "consumed-#{instance}")
