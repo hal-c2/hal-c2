@@ -5,6 +5,7 @@
 #   apps/mobile/src/features/threads/worktree-setup-card.tsx (Work locally, background setup script, output tail)
 #   apps/mobile/src/features/threads/worktree-setup-state.ts
 #   packages/client-runtime/src/worktreeSetup.ts (which setup the conversation shows)
+#   https://github.com/pingdotgg/t3code/pull/13673 (setup shell closes after a successful script)
 
 Feature: Preparing a new thread's worktree
   A thread started in a new worktree waits while the worktree is made and the project's
@@ -96,6 +97,18 @@ Feature: Preparing a new thread's worktree
     When the setup script exits with 1
     Then the setup fails with "Setup script exited with 1."
     And the agent does not start
+
+  # Upstream #13673: an idle setup shell closes once its script succeeds, so a finished setup leaves no terminal behind.
+  @mc @backlog
+  Scenario: A setup script that succeeds closes its idle setup terminal
+    Given the setup script ran in the terminal "setup" and exited with 0
+    Then the "setup" terminal is closed
+
+  # A failed script keeps its shell so the user can read the error.
+  @mc @backlog
+  Scenario: A setup script that fails keeps its terminal open with its output
+    Given the setup script ran in the terminal "setup" and exited with 1
+    Then the "setup" terminal stays open and shows the error
 
   @mc
   Scenario: A setup script that runs alongside the agent does not stop it when it fails

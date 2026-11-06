@@ -10,6 +10,7 @@
 #   apps/web/src/hooks/useThreadVisitedMigration.ts
 #   packages/contracts/src/shell.ts (thread.markUnread)
 #   packages/contracts/src/orchestrationV2.ts (thread.visit, thread.mark-unread, thread.visited, thread.marked-unread)
+#   https://github.com/pingdotgg/t3code/pull/13673 (idle shells are not busy)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (visit, mark-unread)
 #   apps/web/src/components/ChatView.tsx (a visit for the open thread, once per change)
 #   apps/desktop-qt/src/native/SidebarController.cpp (visitOpenThread)
@@ -218,6 +219,12 @@ Feature: Unread and status in the thread list
     When the user rests the pointer on "Build search"
     Then the preview names the machine "work"
     And the preview says "2 terminal processes running"
+
+  # Upstream #13673: zsh prompt helpers made idle shells look busy.
+  @mc @desktop @tui @backlog
+  Scenario: An idle shell does not make its thread look busy
+    Given "Build search" has one terminal waiting at an idle prompt
+    Then "Build search" is not shown as busy
 
   @backlog @desktop
   Scenario: The preview lists the thread's pull requests

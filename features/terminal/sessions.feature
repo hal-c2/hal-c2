@@ -1,5 +1,6 @@
 # Sources:
 #   docs/user/terminal.md
+#   https://github.com/pingdotgg/t3code/pull/13673 (settling closes idle shells)
 #   docs/internals/terminal-runtime.md
 #   packages/contracts/src/terminal.ts (TerminalOpenInput, TerminalSessionSnapshot, DEFAULT_TERMINAL_ID)
 #   apps/server-ex/lib/hal_c2/terminal.ex (open, launch context, shell and env selection, labels)
@@ -325,3 +326,31 @@ Feature: Terminal sessions
       Given a thread with a running terminal on a paired environment
       When the user opens the thread's terminal on the phone
       Then the phone shows the same terminal and its recent output
+
+  Rule: Settling a thread closes its idle shells and leaves running commands alone
+
+    # Upstream #13673: closing every terminal on settle killed dev servers, so only shells at an idle prompt close.
+    @mc @backlog
+    Scenario: Settling a thread closes its terminals that wait at an idle prompt
+      Given a thread's only terminal is a shell waiting at an idle prompt
+      When the user settles the thread
+      Then that terminal is closed
+
+    @mc @backlog
+    Scenario: Settling a thread keeps a terminal that is running a command
+      Given a thread has a terminal running "sleep 60"
+      When the user settles the thread
+      Then that terminal keeps running
+
+    @mc @backlog
+    Scenario: A closed terminal keeps its output and a reopened one starts a new shell
+      Given a settled thread's idle terminal has been closed
+      When the user opens that terminal again
+      Then the terminal still shows the output from before it closed
+      And a new shell starts in the same folder
+
+    @mc @backlog
+    Scenario: A prompt helper forked from an idle shell is not a running command
+      Given a terminal's shell is waiting at an idle prompt and its prompt theme has forked a copy of the shell
+      When the terminal's running state is read
+      Then the terminal is not running
