@@ -125,11 +125,13 @@ void check(const Model& model, Shell& shell) {
     const QVariant now = shell.notice();
     return wanted.isNull() ? now.isNull() : now == wanted;
   };
-  RC_ASSERT(prop::until([&] { return same() && shell.failures.size() == model.toasts; }));
-  RC_ASSERT(shell.unsettles() == model.sent);
-  for (const QString& thread : kThreads) {
-    RC_ASSERT(shell.native.store()->thread(keyOf(thread))->settledOverride.has_value() == model.settled.contains(thread));
-  }
+  const auto stored = [&] {
+    for (const QString& thread : kThreads) {
+      if (shell.native.store()->thread(keyOf(thread))->settledOverride.has_value() != model.settled.contains(thread)) return false;
+    }
+    return true;
+  };
+  RC_ASSERT(prop::until([&] { return same() && stored() && shell.failures.size() == model.toasts && shell.unsettles() == model.sent; }));
 }
 
 using Command = rc::state::Command<Model, Shell>;
