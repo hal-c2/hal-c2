@@ -138,7 +138,10 @@ void FakeMc::sendSnapshot() {
   QJsonArray rows;
   QJsonArray mcs{shellMc(name, true, ownEnvironment(), rows)};
   for (const QString& environment : std::as_const(members)) {
-    mcs.append(shellMc(peers.value(environment), !offline.contains(environment), peerEnvironment(environment), rows));
+    QJsonObject mc =
+        shellMc(peers.value(environment), !offline.contains(environment), peerEnvironment(environment), rows);
+    mc.insert(QStringLiteral("trying"), !givenUp.contains(environment));
+    mcs.append(mc);
   }
   const QJsonObject frame{
       {QStringLiteral("t"), QStringLiteral("shell")},
@@ -214,6 +217,7 @@ void FakeMc::sendPeerRow(const QString& environment, const QString& id, const QJ
 void FakeMc::setOnline(const QString& environment, bool online) {
   if (online) {
     offline.remove(environment);
+    givenUp.remove(environment);
   } else {
     offline.insert(environment);
   }
@@ -221,7 +225,22 @@ void FakeMc::setOnline(const QString& environment, bool online) {
   send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
         {QStringLiteral("id"), m_shellSubscription},
         {QStringLiteral("mc"), environment == environmentId ? name : peers.value(environment)},
-        {QStringLiteral("online"), online}});
+        {QStringLiteral("online"), online},
+        {QStringLiteral("trying"), !givenUp.contains(environment)}});
+}
+
+void FakeMc::setTrying(const QString& environment, bool trying) {
+  if (trying) {
+    givenUp.remove(environment);
+  } else {
+    givenUp.insert(environment);
+  }
+  if (!m_socket || m_shellSubscription < 0) return;
+  send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
+        {QStringLiteral("id"), m_shellSubscription},
+        {QStringLiteral("mc"), peers.value(environment)},
+        {QStringLiteral("online"), !offline.contains(environment)},
+        {QStringLiteral("trying"), trying}});
 }
 
 void FakeMc::remove(const QString& environment) {
@@ -229,6 +248,7 @@ void FakeMc::remove(const QString& environment) {
   m_told.remove(peer);
   members.removeAll(environment);
   offline.remove(environment);
+  givenUp.remove(environment);
   peerRows.remove(environment);
   if (!m_socket || m_shellSubscription < 0) return;
   send({{QStringLiteral("t"), QStringLiteral("shell.mc")},

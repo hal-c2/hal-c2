@@ -543,27 +543,27 @@ Feature: Connection health
     Then each thread stream resumes from its last offset
     And the thread list asks only for the rows changed since
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread on a computer that stays unavailable offers to disconnect it after 20 seconds
     Given the user is looking at a thread on the saved computer "studio"
     And "studio" has been offline or reconnecting for 20 seconds
     Then the notice about "studio" offers to disconnect it
     And before 20 seconds it offers only to reconnect
 
-  @backlog @desktop
+  @desktop
   Scenario: The 20 seconds start again for another computer
     Given the user is looking at a thread on "studio" that has been unavailable for 15 seconds
     When the user opens a thread on "laptop" that is also unavailable
     Then disconnecting "laptop" is offered only 20 seconds after it became unavailable
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer that comes back inside the 20 seconds is never offered for disconnecting
     Given a thread on "studio" which has been unavailable for 10 seconds
     When "studio" connects again
     Then no offer to disconnect "studio" is shown
     And if it drops again the 20 seconds start over
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The computer the app runs on cannot be disconnected from a thread
     Given the user is looking at a thread on <computer>
     And <computer> has been unavailable for more than 20 seconds
@@ -574,7 +574,7 @@ Feature: Connection health
       | the computer serving this client          |
       | a backend running on this same desktop    |
 
-  @backlog @desktop
+  @desktop
   Scenario: Disconnecting from a thread's notice hides that computer and goes home
     Given "studio" has been unavailable for 20 seconds
     When the user chooses to disconnect it from the thread's notice
@@ -582,7 +582,7 @@ Feature: Connection health
     And its threads are hidden
     And the user is taken to the home screen
 
-  @backlog @desktop
+  @desktop
   Scenario: A disconnect that fails says why
     Given "studio" has been unavailable for 20 seconds
     And switching "studio" off will fail
@@ -590,7 +590,7 @@ Feature: Connection health
     Then the user is told "Could not disconnect server" with the reason
     And the user stays on the thread
 
-  @backlog @desktop
+  @desktop
   Scenario: A reconnect that fails says why
     Given "studio" is offline
     And reconnecting will fail
@@ -610,7 +610,7 @@ Feature: Connection health
     Then the thread says "studio is reconnecting"
     And reconnecting by hand is not offered while it is already trying
 
-  @backlog @desktop
+  @desktop
   Scenario: An offline computer is named in the thread with a way to reconnect
     Given the user is looking at a thread on "studio"
     When "studio" stops trying to connect
@@ -625,7 +625,7 @@ Feature: Connection health
     Then the thread shows the update's progress
     And no notice says "studio" is reconnecting
 
-  @backlog @desktop
+  @desktop
   Scenario: A computer that stops connecting during an update can still be reconnected
     Given the user is looking at a thread on "studio"
     And an update of "studio" is running

@@ -204,10 +204,11 @@ Item {
     }
 
     // The thread's computer is another of the cluster's and is down
-    // (ComputerNoticeController's `threadComputer`): reconnecting, an update
-    // restarting it, or a restart into another version; nothing in the first
-    // two seconds. The window's own connection speaks for itself, so this
-    // stays quiet while it does.
+    // (ComputerNoticeController's `threadComputer`): reconnecting, offline,
+    // an update restarting it, or a restart into another version; nothing in
+    // the first two seconds. An offline one can be asked to reconnect, and one
+    // down for 20 seconds disconnected. The window's own connection speaks for
+    // itself, so this stays quiet while it does.
     Rectangle {
         id: computerBar
         objectName: "threadComputerNotice"
@@ -219,42 +220,62 @@ Item {
         anchors.right: parent.right
         height: visible ? computerRow.implicitHeight + 16 : 0
         visible: notice !== null && notice.kind.length > 0 && !view.draft && !view.connectionReported
-        color: Qt.alpha(Theme.palette.color(notice?.kind === "reconnecting" ? "warning" : "accent", "#f59e0b"), 0.1)
+        color: Qt.alpha(Theme.palette.color(["reconnecting", "offline"].includes(notice?.kind) ? "warning" : "accent", "#f59e0b"), 0.1)
 
         Rectangle {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: 3
-            color: Theme.palette.color(computerBar.notice?.kind === "reconnecting" ? "warning" : "accent", "#f59e0b")
+            color: Theme.palette.color(["reconnecting", "offline"].includes(computerBar.notice?.kind) ? "warning" : "accent", "#f59e0b")
         }
 
-        ColumnLayout {
+        RowLayout {
             id: computerRow
             anchors.fill: parent
             anchors.leftMargin: 16
             anchors.rightMargin: 16
             anchors.topMargin: 8
             anchors.bottomMargin: 8
-            spacing: 2
-            Label {
-                objectName: "threadComputerTitle"
+            spacing: 8
+            ColumnLayout {
                 Layout.fillWidth: true
-                text: computerBar.notice?.title ?? ""
-                color: view.textColor
-                font.family: view.uiFamily
-                font.pixelSize: Theme.type.body.size
-                wrapMode: Text.Wrap
+                spacing: 2
+                Label {
+                    objectName: "threadComputerTitle"
+                    Layout.fillWidth: true
+                    text: computerBar.notice?.title ?? ""
+                    color: view.textColor
+                    font.family: view.uiFamily
+                    font.pixelSize: Theme.type.body.size
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    objectName: "threadComputerDetail"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: computerBar.notice?.detail ?? ""
+                    color: view.mutedColor
+                    font.family: view.uiFamily
+                    font.pixelSize: Theme.type.meta.size
+                    wrapMode: Text.Wrap
+                }
             }
-            Label {
-                objectName: "threadComputerDetail"
-                Layout.fillWidth: true
-                visible: text.length > 0
-                text: computerBar.notice?.detail ?? ""
-                color: view.mutedColor
-                font.family: view.uiFamily
-                font.pixelSize: Theme.type.meta.size
-                wrapMode: Text.Wrap
+            ShellButton {
+                objectName: "threadComputerReconnect"
+                visible: computerBar.notice?.canReconnect ?? false
+                text: qsTr("Reconnect")
+                onClicked: Shell.dispatch("threadComputer.reconnect", {
+                    environmentId: computerBar.notice.environmentId
+                })
+            }
+            ShellButton {
+                objectName: "threadComputerDisconnect"
+                visible: computerBar.notice?.canDisconnect ?? false
+                text: qsTr("Disconnect")
+                onClicked: Shell.dispatch("threadComputer.disconnect", {
+                    environmentId: computerBar.notice.environmentId
+                })
             }
         }
     }

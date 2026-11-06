@@ -325,6 +325,13 @@ bool ShellStore::environmentOnline(const QString& environmentId) const {
   return false;
 }
 
+bool ShellStore::environmentTrying(const QString& environmentId) const {
+  for (const Mc& mc : m_mcs) {
+    if (mc.environmentId == environmentId) return mc.online || mc.trying;
+  }
+  return true;
+}
+
 sidebar::Capabilities ShellStore::capabilities(const QString& environmentId) const {
   for (const Mc& mc : m_mcs) {
     if (mc.environmentId != environmentId) continue;
@@ -384,6 +391,7 @@ void ShellStore::onFrame(const QJsonObject& frame) {
       if (mc.value(QLatin1String("reset")).toBool(true)) resetRows(name, replaced);
       setEnvironment(name, mc.value(QLatin1String("environment")).toObject());
       m_mcs[name].online = mc.value(QLatin1String("online")).toBool();
+      m_mcs[name].trying = mc.value(QLatin1String("trying")).toBool(true);
       setVersion(name, mc.value(QLatin1String("epoch")), mc.value(QLatin1String("rev")));
     }
     for (const QString& name : m_mcs.keys()) {
@@ -411,6 +419,7 @@ void ShellStore::onFrame(const QJsonObject& frame) {
       removeMc(mc);
     } else {
       m_mcs[mc].online = frame.value(QLatin1String("online")).toBool();
+      m_mcs[mc].trying = frame.value(QLatin1String("trying")).toBool(true);
     }
   } else if (type == QLatin1String("shell.rows")) {
     const QString mc = frame.value(QLatin1String("mc")).toString();

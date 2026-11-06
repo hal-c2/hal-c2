@@ -4,9 +4,12 @@
 
 #include "McClient.h"
 #include "NativeShell.h"
+#include "NavigationController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ThisMachine.h"
 #include "ThreadStore.h"
+#include "ToastController.h"
 
 namespace {
 
@@ -25,8 +28,13 @@ ComputerNoticeController::ComputerNoticeController(ShellBridge* bridge, McClient
   connect(bridge, &ShellBridge::stateEntryChanged, this, [this](const QString& key, const QVariant& value) {
     if (key == QLatin1String("serverUpdates")) seeComputers(value);
   });
-  // The client's own MC may change hands: which computer is "another" with it.
-  connect(store, &ShellStore::changed, this, &ComputerNoticeController::showThread);
+  // Whether the cluster still tries a computer comes with the shell's frames;
+  // and the client's own MC may change hands: which computer is "another" with
+  // it.
+  connect(store, &ShellStore::changed, this, [this] {
+    seeComputers(m_bridge->state()->value(QStringLiteral("serverUpdates")));
+    showThread();
+  });
 }
 
 void ComputerNoticeController::activate() {
@@ -52,6 +60,8 @@ void ComputerNoticeController::seeComputers(const QVariant& serverUpdates) {
         machine.value(QStringLiteral("environmentId")).toString(), machine.value(QStringLiteral("label")).toString(),
         machine.value(QStringLiteral("online")).toBool(), machine.value(QStringLiteral("updating")).toBool(),
         !appVersion.isEmpty() && !version.isEmpty() && version != appVersion};
+    computer.trying = m_store->environmentTrying(computer.id);
+    computer.local = thisMachine::hosts(*m_store, *m_client, computer.id);
     seen.insert(computer.id);
     moved = m_notice.see(computer, nowMs()) || moved;
   }
@@ -70,6 +80,39 @@ void ComputerNoticeController::showThread() {
   changed(m_notice.show(environment, nowMs()));
 }
 
+bool ComputerNoticeController::handle(const QString& action, const QVariant& payload) {
+  const bool reconnect = action == QLatin1String("threadComputer.reconnect");
+  if (!reconnect && action != QLatin1String("threadComputer.disconnect")) return false;
+  const QString id = payload.toMap().value(QStringLiteral("environmentId")).toString();
+  const auto& notice = m_notice.notice();
+  // Only what the notice offers, for the computer it is about.
+  if (!notice || notice->environmentId != id || !(reconnect ? notice->canReconnect : notice->canDisconnect))
+    return true;
+  if (reconnect) {
+    ask(QStringLiteral("cluster.reconnect"), {{QStringLiteral("id"), id}}, tr("Could not reconnect environment"),
+        [] {});
+  } else {
+    ask(QStringLiteral("cluster.switch"), {{QStringLiteral("id"), id}, {QStringLiteral("on"), false}},
+        tr("Could not disconnect server"), [this] {
+          if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
+            navigation->open(NavigationController::Route::of(QStringLiteral("home")));
+          }
+        });
+  }
+  return true;
+}
+
+void ComputerNoticeController::ask(const QString& method, const QJsonObject& payload, const QString& failure,
+                                   std::function<void()> done) {
+  m_client->call(this, m_client->environment(), method, payload,
+                 [this, failure, done = std::move(done)](const QJsonValue&, const std::optional<QString>& error) {
+                   if (!error) return done();
+                   if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
+                     toasts->show(QStringLiteral("error"), failure, *error);
+                   }
+                 });
+}
+
 void ComputerNoticeController::expire() {
   changed(m_notice.advance(nowMs()));
 }
@@ -85,6 +128,8 @@ void ComputerNoticeController::changed(bool changed) {
   m_bridge->publish(kKey, notice ? QVariant(QVariantMap{{QStringLiteral("kind"), notice->kind},
                                                         {QStringLiteral("environmentId"), notice->environmentId},
                                                         {QStringLiteral("title"), notice->title},
-                                                        {QStringLiteral("detail"), notice->detail}})
+                                                        {QStringLiteral("detail"), notice->detail},
+                                                        {QStringLiteral("canReconnect"), notice->canReconnect},
+                                                        {QStringLiteral("canDisconnect"), notice->canDisconnect}})
                                  : QVariant::fromValue(nullptr));
 }
