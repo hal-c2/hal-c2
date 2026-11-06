@@ -83,7 +83,14 @@ const FakeMc::Extension streams([](FakeMc& mc) {
       mc.forget(id);
       return;
     }
-    answer(mc, id, shape, mc.subscriptions.last());
+    const QJsonObject sub = mc.subscriptions.last();
+    if (const int ms = mc.part<FakeStreams>().loadMs; ms > 0) {
+      mc.busy(ms, [&mc, id, shape, sub] {
+        if (mc.subscribers(QStringLiteral("stream")).contains(id)) answer(mc, id, shape, sub);
+      });
+      return;
+    }
+    answer(mc, id, shape, sub);
   });
 });
 

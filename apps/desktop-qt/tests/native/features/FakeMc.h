@@ -174,6 +174,13 @@ public:
       {QStringLiteral("threadPullRequestLinking"), true},
   };
   bool holdSnapshot = false;
+  // How long the MC takes to build its thread list: a shell `sub` is answered
+  // that long after it comes (busy()).
+  int buildMs = 0;
+  // The MC is busy for `ms`, as one building a large answer is: then runs
+  // `then`, unless the connection it was busy for has gone, and answers the
+  // pings that came meanwhile.
+  void busy(int ms, std::function<void()> then);
   bool answerPings = true;  // false: the MC has stopped answering, its socket still open
   bool sayHello = true;     // false: it takes sockets but never says hello on them
   // The clients' sockets still open on this MC, the current one's and any other's.
@@ -258,6 +265,9 @@ private:
   QPointer<QWebSocket> m_socket;
   QList<QPointer<QWebSocket>> m_accepted;
   int m_shellSubscription = -1;
+  // Answers busy() is still working on, and the pings waiting for them.
+  int m_busy = 0;
+  int m_heldPongs = 0;
   // The `have` of the shell subscription being answered.
   QJsonObject m_have;
   // Row frames waiting for catchUp().

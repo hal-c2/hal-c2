@@ -132,10 +132,13 @@ public:
   void setRetryDelays(const QList<int>& delaysMs) { m_retryDelaysMs = delaysMs; }
   QList<int> retryDelays() const { return m_retryDelaysMs; }
   void setPingInterval(int ms) { m_pingTimer.setInterval(ms); }
+  int pingInterval() const { return m_pingTimer.interval(); }
   // How long a ping may go unanswered before the connection counts as dead.
   void setPongTimeout(int ms) { m_pongTimer.setInterval(ms); }
+  int pongTimeout() const { return m_pongTimer.interval(); }
   // How long an open socket may go without the MC's hello before it is dropped.
   void setSetupTimeout(int ms) { m_setupTimer.setInterval(ms); }
+  int setupTimeout() const { return m_setupTimer.interval(); }
   // How long a connection must hold before the retry delays start over.
   void setSteadyAfter(int ms) { m_heldTimer.setInterval(ms); }
 
