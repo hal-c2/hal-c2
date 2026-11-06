@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15642
 #   https://github.com/pingdotgg/t3code/pull/11594
 #   docs/user/appearance.md (appearance, composer context, motion)
 #   apps/web/src/components/settings/ThemeSettings.tsx (mode tiles, light and dark pairing)
@@ -566,3 +567,10 @@ Feature: Appearance
       Given the computer does not let HAL-C2 list installed fonts
       When the user opens the interface font setting
       Then a plain field accepts a font family name
+
+  @backlog @desktop
+  Scenario: Only the chosen font family is validated
+    Given the user can list every installed font family
+    When they pick one
+    Then only that family is checked as monospace
+    And a proportional pick is refused and the previous font stays

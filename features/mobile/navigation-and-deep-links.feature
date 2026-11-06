@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15068
+#   https://github.com/pingdotgg/t3code/pull/15844
 #   docs/internals/mobile-navigation.md (root stack, overlay routes, previews)
 #   apps/mobile/src/Stack.tsx (route table, deep link prefixes, not found)
 #   apps/mobile/src/features/shortcuts/ (Android launcher shortcuts, allowlisted links)
@@ -214,3 +216,14 @@ Feature: Navigating the phone app and opening links into it
     Given the user opened a screen that has a screen behind it on an Android phone
     When the user chooses "Navigate up" in its header
     Then the screen behind it is shown
+
+  @backlog @mobile
+  Scenario Outline: Back from a subagent's thread returns to its parent
+    Given the user opened a subagent's thread from <entry> in its parent's feed
+    When the user goes back
+    Then the parent thread is shown at the scroll position they left
+
+    Examples:
+      | entry                  |
+      | the live subagent card |
+      | its finished row       |

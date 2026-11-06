@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16192
 #   docs/user/source-control.md (merge, auto-merge, revert, fork workflows, reviewers, labels)
 #   packages/contracts/src/pullRequest.ts (PullRequestAction, PullRequestMergeMethod, PullRequestUpdateMethod, PullRequestCapabilities, PullRequestViewerPermissions)
 #   packages/contracts/src/rpc.ts (pullRequests.runAction, pullRequests.reviewerCandidates, pullRequests.requestReviewers, pullRequests.labelCandidates, pullRequests.setLabels)
@@ -1131,3 +1132,11 @@ Feature: Acting on a pull request
     Then the user is told "A reviewer is named by an email address or an identity id."
     And no reviewer is added
     And the host is not asked anything
+
+  @backlog @mc @shared
+  Scenario: Merging can leave out agent credits
+    Given "Remove agent credits when merging" is on, as a default or a project override
+    When the user merges a pull request
+    Then agent co-author trailers and generated-by footers are removed from the proposed message
+    And human co-authors and Markdown examples are kept
+    And the setting is off by default

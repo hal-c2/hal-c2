@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15086
+#   https://github.com/pingdotgg/t3code/pull/15487
+#   https://github.com/pingdotgg/t3code/pull/13567
 #   https://github.com/pingdotgg/t3code/pull/14127
 #   docs/user/remote-access.md (HAL-C2 Connect, Manage or revoke access, HAL-C2 Connect troubleshooting)
 #   https://github.com/pingdotgg/t3code/pull/12006 (dropped: an update restart keeps the tunnel)
@@ -868,3 +871,17 @@ Feature: HAL-C2 Connect
     Given the environment is linked to the user's HAL-C2 Connect account
     When the user removes the environment from this device
     Then the confirmation says it stays registered to the account and keeps its host space
+
+  # Dropped with Connect: its relay forwarded webhooks to the tunnel and could hold them while
+  # the environment was offline, and said so when an idle tunnel had been removed.
+  @dropped @mc
+  Scenario: The relay forwards and holds webhooks
+    Given an environment linked to Connect with a webhook task
+    When a sender calls the relay's stable URL while the environment is offline and holding is on
+    Then the relay answers 202 and delivers the request when the environment is back
+
+  @dropped @shared
+  Scenario: An offline host says its idle tunnel was removed
+    Given a host whose tunnel the relay removed after a long idle time
+    When the user looks at it
+    Then it says to start HAL-C2 on that computer and update it to reconnect

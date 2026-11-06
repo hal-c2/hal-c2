@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15475
+#   https://github.com/pingdotgg/t3code/pull/15037
+#   https://github.com/pingdotgg/t3code/pull/16199
+#   https://github.com/pingdotgg/t3code/pull/15968
+#   https://github.com/pingdotgg/t3code/pull/16283
 #   https://github.com/pingdotgg/t3code/pull/13386 (a tool's progress does not split the answer)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/activity-log.md
@@ -762,3 +767,47 @@ Feature: Tool calls and file changes
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call
     Then the full call shows first and its result below it, muted, without cards or labels
+
+  @backlog @shared
+  Scenario: An MCP tool call reads as the integration it belongs to
+    Given an agent calls "firecrawl_scrape" on an MCP server named "Firecrawl"
+    When the call is shown
+    Then its title is readable rather than "Mcp__claude_ai_Firecrawl__firecrawl_scrape"
+    And it shows the server's logo when the provider supplies one
+    And a run of calls to that server groups as "Used Firecrawl integration"
+
+  @backlog @shared
+  Scenario: An agent's own built-in tools are not shown as an integration
+    Given an agent labels its built-in shell and edit tools like MCP tools
+    When they are shown
+    Then they keep their command and diff display and are not grouped as an integration
+
+  @backlog @shared
+  Scenario: An expanded shell command is syntax highlighted
+    Given a command row with a chained command, or a script inside a heredoc or a shell wrapper
+    When the user expands it
+    Then the command shows as it ran, wrapper included, with the shell's syntax highlighted
+    And a script inside it is highlighted in its own language
+    And a PowerShell command is highlighted as PowerShell
+    And words wrap whole, control characters show as visible symbols, and a blank command gets no blank label
+
+  @backlog @shared
+  Scenario: A tool's screenshot shows as an image
+    Given an agent took a device screenshot or a preview snapshot with an image
+    When the user expands its tool row
+    Then the image is shown, also when the output is larger than the 256 KiB the expanded read allows
+    And no base64 text is shown
+
+  @backlog @shared
+  Scenario: An agent can show an HTML page inline above its reply
+    Given an agent published a self-contained HTML page in the thread
+    When the thread is shown
+    Then the page renders inline above the agent's final reply
+    And it cannot read local files or reach the local network, and a link in it opens only after a user action in the frame
+
+  @backlog @shared
+  Scenario: An inline HTML page does not hold the thread's scroll
+    Given an inline page that wraps a few pixels taller than its frame
+    When the user scrolls the thread with the pointer over it
+    Then the thread scrolls
+    And the frame fits the page's reported content height, capped by the agent's height only when that is smaller

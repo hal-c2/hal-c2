@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16021
+#   https://github.com/pingdotgg/t3code/pull/16218
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-acp.md
 #   apps/server-ex/lib/hal_c2/acp.ex (acpRegistry driver, entries, probes, commandPath override)
@@ -2060,3 +2062,17 @@ Feature: ACP registry agents
       | setting            | told     |
       | the provider's own | not told |
       | HAL-C2 workers     | told     |
+
+  @backlog @mc @shared @plugin-acp-registry
+  Scenario: An ACP provider can be a local command
+    Given the user adds an ACP provider with a display name, an executable, literal arguments and environment values
+    When a thread uses it
+    Then the MC runs that executable without a shell on the environment
+    And the agent's models and reasoning options are discovered over ACP, values kept exactly
+    And no registry entry is needed
+
+  @backlog @mc @plugin-acp-registry
+  Scenario: An ACP mode with a null description is kept
+    Given an ACP agent sends its modes with one description null
+    When the session starts
+    Then all its modes are offered

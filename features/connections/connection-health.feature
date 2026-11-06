@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16200
 #   https://github.com/pingdotgg/t3code/pull/13083
 #   https://github.com/pingdotgg/t3code/pull/13577
 #   https://github.com/pingdotgg/t3code/pull/13683 (a slow snapshot is given time before a second load)
@@ -680,3 +681,10 @@ Feature: Connection health
     Given the client is receiving a fast stream
     When the user switches away and the stream is closed
     Then the connection keeps reading replies and heartbeats and does not reconnect
+
+  @backlog @shared
+  Scenario: A connection lost to silence says so
+    Given the client's ping to an MC went unanswered
+    When the connection is dropped
+    Then the trace says the MC stopped responding, not that it disconnected
+    And the interface still treats it as a transient drop

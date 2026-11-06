@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16291
 #   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13759
 #   docs/user/thread-sidebar.md
@@ -762,3 +763,10 @@ Feature: The thread list
   Scenario: A thread's status has a spoken name
     When a screen reader reaches a thread's status marker
     Then it announces Working, Awaiting input or Pending approval
+
+  @backlog @desktop @mobile
+  Scenario: A drop in the sidebar sticks when another machine is offline
+    Given the sidebar shows rows from a machine that is offline or asleep
+    When the user drops a thread among rows that have no order yet
+    Then the thread lands where it was dropped
+    And rows that cannot store an order are not written

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15085
+#   https://github.com/pingdotgg/t3code/pull/15087
+#   https://github.com/pingdotgg/t3code/pull/15088
 #   apps/server-ex/lib/hal_c2/scheduled_tasks.ex (store, timer, missed runs, run status)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (list_scheduled_tasks, schedule_task, update_scheduled_task, delete_scheduled_task, run_scheduled_task_now)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (scheduledTasks subscription)
@@ -444,3 +447,18 @@ Feature: Scheduled tasks
       When the user chooses to edit "Check Sentry" from the details of "Triage"
       Then the scheduled tasks settings of that environment open with "Check Sentry" ready to edit
       And "Manage scheduled tasks" opens the same settings without a task chosen
+
+  @backlog @mc @shared
+  Scenario: A task can run on a webhook
+    Given a task whose trigger is a webhook
+    When something sends the task's secret URL a request
+    Then the prompt runs with the request as its input
+    And a wrong token and an unknown task both answer 404
+    And a signature can be required, with its header, encoding and prefix set, and a write-only secret
+    And a task is limited to 60 requests a minute and 1 MiB a body
+
+  @backlog @shared
+  Scenario: A webhook task shows its URL and deliveries
+    Given a saved webhook task
+    When the user opens it
+    Then they can copy the URL, rotate it after a confirmation, and see its last 50 deliveries with outcome

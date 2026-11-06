@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15219
+#   https://github.com/pingdotgg/t3code/pull/15947
+#   https://github.com/pingdotgg/t3code/pull/15907
+#   https://github.com/pingdotgg/t3code/pull/16219
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
@@ -461,3 +465,27 @@ Feature: The HAL-C2 MCP server agents receive
     When an MCP request arrives with an unknown bearer credential
     Then the answer asks for a bearer credential
     And it forbids storing the answer
+
+  @backlog @mc
+  Scenario: Thread tools take any thread in the environment
+    Given threads in two projects
+    When an agent reads, updates or messages a thread of the other project
+    Then the tool targets it
+    And listing covers one project, the one named or else the caller's
+    And writing to another thread needs the caller's live run and modes no broader than the target's
+
+  @backlog @mc @shared
+  Scenario: An agent asks for a secret through a private card
+    Given an agent needs a credential
+    When it asks for a secret with a label and a reason
+    Then a card in its thread asks the user for the value
+    And saving it gives the agent a one-use reference, never the value
+    And the transcript never holds the value
+
+  @backlog @mc
+  Scenario: A delegation to a provider whose probe failed tries it again once
+    Given the cached state of a provider says it was not found
+    And the user has since fixed it
+    When an agent delegates a task or creates threads on that provider
+    Then the MC probes the provider once more and goes on if it is healthy
+    And healthy providers are not probed again

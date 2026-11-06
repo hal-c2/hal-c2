@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15618
+#   https://github.com/pingdotgg/t3code/pull/15824
 #   https://github.com/pingdotgg/t3code/pull/13807
 #   https://github.com/pingdotgg/t3code/pull/13909
 #   https://github.com/pingdotgg/t3code/pull/12449 (a link to the project folder opens the Files explorer)
@@ -992,9 +994,17 @@ Feature: Formatted messages
     Then the prose stays, beside the usual file chip
     And a link labelled with a file name or path keeps the compact chip
 
-  @backlog @shared
+  # Dropped: upstream added this repair (#15520) and reverted it in #15824; malformed
+  # links render as the agent wrote them.
+  @dropped @shared
   Scenario: A local file link missing its closing bracket is repaired for display
     Given a reply contains "[file](<local/path/file.md)"
     When the reply is shown
     Then the link opens the file as a normal file link
     And the stored message and its copied text stay as the agent wrote them
+
+  @backlog @mc
+  Scenario: A media link under the home directory resolves
+    Given a reply links media as "~/Downloads/repro.mp4"
+    When the media is requested
+    Then the path expands to the environment's home before project-relative resolution

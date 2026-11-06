@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15746
 #   https://github.com/pingdotgg/t3code/pull/7079
 #   https://github.com/pingdotgg/t3code/pull/13339
 #   https://github.com/pingdotgg/t3code/pull/13388 (Stop ends a command left running after its turn)
@@ -695,3 +696,18 @@ Feature: Antigravity
       | version | status  |
       | 1.1.1   | unknown |
       | 1.2.0   | unknown |
+
+  @backlog @mc @plugin-antigravity
+  Scenario Outline: The agent is downloaded for each supported platform
+    Given a <platform> machine
+    When Antigravity is set up
+    Then the 1.3.0 agent for it is downloaded and checked against its hash
+
+    Examples:
+      | platform     |
+      | darwin-arm64 |
+      | darwin-x64   |
+      | linux-x64    |
+      | linux-arm64  |
+      | win32-x64    |
+      | win32-arm64  |

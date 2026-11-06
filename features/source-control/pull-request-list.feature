@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15851
+#   https://github.com/pingdotgg/t3code/pull/16280
 #   docs/user/source-control.md (Pull requests page)
 #   packages/contracts/src/pullRequest.ts (PullRequestListInput, PullRequestListResult, PullRequestProviderSummary, PullRequestUnavailableError)
 #   packages/contracts/src/rpc.ts (pullRequests.list, pullRequests.listStats, pullRequests.summary, pullRequests.invalidate, pullRequests.subscribeRefreshes)
@@ -1834,3 +1836,22 @@ Feature: Browsing pull requests
     When the user asks for quick actions on the list
     Then open pull requests offer close and merge, drafts close and ready for review, closed ones reopen
     And merged ones offer none, and ending the request restores the rows
+
+  @backlog @desktop
+  Scenario: Fast close and merge clicks are queued
+    Given the user presses close and merge on several rows quickly
+    When the actions run
+    Then each runs once, in order, and one does not restart another's checks
+
+  @backlog @desktop
+  Scenario: Shift-drag closes a batch
+    Given the user holds Shift and presses Close
+    When they drag across rows of one group and release
+    Then the rows are closed in order, failures do not stop the rest, and one summary reports the result
+    And Escape cancels, before or after the drag starts
+
+  @backlog @shared
+  Scenario: A pull request query refreshes only while a view reads it
+    Given a pull request refresh signal arrives
+    When no view shows a query that is only kept by its idle time
+    Then it is marked stale and refreshes the next time a view reads it
