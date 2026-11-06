@@ -478,6 +478,29 @@ defmodule HalC2.PullRequests.Discovery do
     end
   end
 
+  @doc """
+  The pull request of `branch` as discovery would record it, read from checkout `cwd` of
+  `project` (a sidebar project row), whose remote is `remote` (`remote/1`), through
+  `HalC2.PullRequests.Branches` with `opts`:
+  `{:ok, %{"projectId", "repository", "number", "url", "state", "mergedAt",
+  "closedAt"} | nil}`, `:mismatch` when it belongs to another repository, or `:error`.
+  Only GitHub checkouts are asked; any other answers `{:ok, nil}`.
+  """
+  def branch_pull_request(project, remote, cwd, branch, opts \\ []) do
+    case remote do
+      %{kind: "github"} ->
+        {answer, _read?} = Branches.lookup(cwd, branch, opts)
+        p = %{group: [%{"branch" => branch}], project: project, remote: remote, cwd: cwd}
+
+        with {:ok, %{} = found} <- detected(p, answer),
+             {:ok, pr} = answer,
+             do: {:ok, Map.merge(found, Map.take(pr, ~w(mergedAt closedAt)))}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
   defp project(id) do
     case HalC2.Shell.row(node(), id) do
       {"project", row} -> if row["deletedAt"] == nil, do: row
@@ -485,7 +508,8 @@ defmodule HalC2.PullRequests.Discovery do
     end
   end
 
-  defp remote(root) do
+  @doc "The remote of the checkout at `root`, as `HalC2.PullRequests.parse_remote/1` reads it, or nil."
+  def remote(root) do
     with remote when is_binary(remote) <- HalC2.Git.primary_remote(root),
          {:ok, url} <- HalC2.Git.ok(root, ["remote", "get-url", remote]),
          do: HalC2.PullRequests.parse_remote(url),

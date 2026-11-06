@@ -185,6 +185,9 @@ defmodule HalC2.Import.V1Thread do
   defp fields("thread.pin-reordered", p, _),
     do: %{"pinOrderKey" => p["orderKey"], "updatedAt" => p["updatedAt"]}
 
+  defp fields("thread.auto-settle-set", p, _),
+    do: %{"autoSettleDisabledAt" => p["autoSettleDisabledAt"], "updatedAt" => p["updatedAt"]}
+
   defp fields("thread.runtime-mode-set", p, _),
     do: %{"runtimeMode" => p["runtimeMode"], "updatedAt" => p["updatedAt"]}
 
