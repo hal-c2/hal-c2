@@ -317,7 +317,7 @@ Feature: Formatted messages
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (inlineCodeFilePathCandidate)
   @backlog @desktop @mobile
-  Scenario Outline: A path-shaped word in code formatting is a file chip unless it is a web host
+  Scenario Outline: A path-shaped word in code formatting is a file chip unless it is a web host or a model id
     When the agent's reply holds <code> in code formatting
     Then <code> is <shown>
 

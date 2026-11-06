@@ -139,6 +139,8 @@ Feature: Provider setup, updates and sign-in
       | not installed                    |
       | installed but reports no version |
 
+  # Codex's ChatGPT sign-in from HAL-C2 is @backlog in codex.feature ("Codex connects a
+  # ChatGPT account from HAL-C2"); this line describes today's behaviour and must be reconciled then.
   Scenario: Only providers that support it sign in from HAL-C2
     When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here

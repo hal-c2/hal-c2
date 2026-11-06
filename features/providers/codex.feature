@@ -365,6 +365,9 @@ Feature: Codex
 
   # A ChatGPT account signed in through HAL-C2 rather than the Codex CLI. Its credentials
   # move to the environment the user picks; the primary environment runs the sign-in.
+  # Contradicts provider-setup.feature "Only providers that support it sign in from HAL-C2"
+  # (Codex "does not sign in here"), which is untagged and passes today. Reconcile when
+  # this backlog item is cleared.
   @backlog @mc
   Scenario: Codex connects a ChatGPT account from HAL-C2 without a Codex CLI login
     Given the user has a ChatGPT plan and Codex is not signed in on the environment
