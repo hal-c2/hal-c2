@@ -493,6 +493,15 @@ const Steps steps([] {
 
   // Fork markers.
   step(QStringLiteral("this thread was forked from another"), [](World& world, const Captures&, const Table&) { forkWithHistory(world); });
+  step(QStringLiteral("the fork's history loaded before the thread said where it was forked from"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 300);
+    addCommand(world, 1);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("The cart has a tax line.")}});
+    settleRun(world, QStringLiteral("completed"), 30);
+    listThread(world, kSource, QStringLiteral("Cart work"));
+    changeThreadRow(world, {{QStringLiteral("forkedFrom"), QJsonObject{{QStringLiteral("type"), QStringLiteral("run")}, {QStringLiteral("threadId"), kSource},
+                                                                       {QStringLiteral("runId"), QStringLiteral("run-1")}}}});
+  });
   step(QStringLiteral("another thread was forked from this one"), [](World& world, const Captures&, const Table&) {
     listThread(world, QStringLiteral("thread-2"), QStringLiteral("Cart fork"));
     startRun(world);
@@ -749,6 +758,26 @@ const Steps steps([] {
     changeSubagent(world, QStringLiteral("task-") + slugOf(c[0]),
                    {{QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("startedAt"), QStringLiteral("2026-09-23T%1Z").arg(c[1])},
                     {QStringLiteral("completedAt"), QStringLiteral("2026-09-23T%1Z").arg(c[2])}});
+  });
+  step(QStringLiteral("%1 started at (\\d\\d:\\d\\d:\\d\\d) and is still working").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeSubagent(world, QStringLiteral("task-") + slugOf(c[0]),
+                   {{QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("startedAt"), QStringLiteral("2026-09-23T%1Z").arg(c[1])}});
+  });
+  step(QStringLiteral("a second passes while the group works"), [](World& world, const Captures&, const Table&) {
+    // The model's own once-a-second timer, without waiting a second for it.
+    expect(timeline(world).spansTicking(), QStringLiteral("the group's span is not moving; %1").arg(describeGroup(world)));
+    world.setTime(world.now().addSecs(1));
+    timeline(world).tickSpans();
+  });
+  step(QStringLiteral("the group's span reads (.+) on screen"), [](World& world, const Captures& c, const Table&) {
+    drawsText(world, QStringLiteral("subagentGroupSpan"), c[0]);
+  });
+  step(QStringLiteral("the span stands still once every subagent of the group has finished"), [](World& world, const Captures&, const Table&) {
+    for (const QString& title : {QStringLiteral("Tax tests"), QStringLiteral("Docs")}) {
+      changeSubagent(world, QStringLiteral("task-") + slugOf(title),
+                     {{QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("completedAt"), iso(world.now().toUTC())}});
+    }
+    expect(!timeline(world).spansTicking(), QStringLiteral("the group's span still moves; %1").arg(describeGroup(world)));
   });
   step(QStringLiteral("both have finished but the end time of %1 was not reported").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& title : {QStringLiteral("Tax tests"), QStringLiteral("Docs")}) {

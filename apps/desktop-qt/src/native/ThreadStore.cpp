@@ -20,6 +20,12 @@ const NativeControllerRegistrar<ThreadStore> registrar(QStringLiteral("threads")
 ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObject* parent)
     : QObject(parent), m_client(client), m_store(store) {
   connect(store, &ShellStore::changed, this, &ThreadStore::retry);
+  // A fork's source, or its title, can arrive after the fork's timeline opened.
+  connect(store, &ShellStore::changed, this, [this] {
+    for (const Followed& followed : std::as_const(m_threads)) {
+      if (followed.model) followed.model->threadRowsChanged();
+    }
+  });
   // Threads shown from what was kept of another MC go with its thread list;
   // their copies stay in the cache for when the client is opened there again.
   connect(store, &ShellStore::originChanged, this, [this] {

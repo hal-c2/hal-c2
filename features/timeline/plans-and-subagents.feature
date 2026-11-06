@@ -553,6 +553,12 @@ Feature: Plans and subagents
       | another thread was forked from this one | Conversation fork        | Open fork                |
 
   @desktop
+  Scenario: A fork learns where it came from after its history loaded
+    Given the fork's history loaded before the thread said where it was forked from
+    Then the timeline marks "Forked from conversation"
+    And the work is marked "Inherited"
+
+  @desktop
   Scenario: A created thread can be opened from where it was created
     When the agent creates the thread "Tax tests"
     Then the timeline shows "Created thread · Tax tests"
@@ -646,6 +652,18 @@ Feature: Plans and subagents
     And both have finished but the end time of "Docs" was not reported
     When the user looks at the group
     Then the group shows no span
+
+  # Legacy: apps/web/src/components/chat/MessagesTimeline.tsx (subagentGroupTiming)
+  @desktop
+  Scenario: A working group's span keeps counting until the group is done
+    Given the agent started the subagents "Tax tests" and "Docs" together
+    And "Tax tests" started at 09:58:00 and is still working
+    When the user looks at the group
+    Then the group shows a span of 2m 00s
+    When a second passes while the group works
+    Then the group shows a span of 2m 01s
+    And the group's span reads 2m 01s on screen
+    And the span stands still once every subagent of the group has finished
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.tsx (V2SubagentGroup)
   @desktop

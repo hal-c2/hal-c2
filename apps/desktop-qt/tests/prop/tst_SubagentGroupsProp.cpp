@@ -10,6 +10,7 @@
 // - each group is open exactly when the user left it open, whatever arrived
 //   since, and lists its members only then;
 // - each group reads its counts;
+// - a group's span moves exactly while one of its subagents works;
 // - the Agents tab counts the subagents still working, and says so only when
 //   that count changes.
 
@@ -130,6 +131,14 @@ QList<Shown> project(const Model& model) {
   return rows;
 }
 
+// Whether a group's span is moving: some group has a working member.
+bool ticking(const Model& model) {
+  const QList<Group> groups = groupsOf(model);
+  return std::any_of(groups.cbegin(), groups.cend(), [](const Group& group) {
+    return group.members.size() > 1 && std::any_of(group.statuses.cbegin(), group.statuses.cend(), working);
+  });
+}
+
 int liveCount(const Model& model) {
   return int(std::count_if(model.entries.cbegin(), model.entries.cend(), [](const Entry& e) { return !e.turn.isEmpty() && working(e.status); }));
 }
@@ -197,6 +206,7 @@ struct Sut {
     const int live = liveCount(expected);
     RC_ASSERT(agents.liveAgentCount() == live);
     RC_ASSERT(liveSignals == (live == liveBefore ? 0 : 1));
+    RC_ASSERT(timeline->spansTicking() == ticking(expected));
   }
 };
 
