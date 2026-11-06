@@ -484,6 +484,22 @@ Feature: Plans and subagents
     Then the subagent's result is shown
     And its background work is still shown as running
 
+  # The phone drops a call a settled turn never said had ended; pending
+  # background work keeps only its own call, not every such call.
+  @mobile
+  Scenario: Background work does not bring back other calls that never ended
+    Given a subagent returned its result while background work it started is still running
+    And a later turn left "npm test" running without saying it ended
+    When the user looks at the parent thread
+    Then its background work is still shown as running
+    And the command "npm test" is not listed
+
+  @mobile
+  Scenario: A background tool with no title stays listed
+    Given a turn left the tool "browser_watch" running in the background
+    When the user looks at the parent thread
+    Then the tool is still shown as running
+
   @mc @shared
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command

@@ -53,6 +53,30 @@ describe("ClusterSocket", () => {
     socket.close();
   });
 
+  it("a shell sub says the rows the client holds as they are when it is sent", async () => {
+    vi.useFakeTimers();
+    const { socket, sockets } = setup();
+    let have: Record<string, readonly [string, number]> = {};
+    socket.subscribeShell(
+      () => {},
+      () => have,
+    );
+    sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+    expect(sockets[0]!.sent).toEqual([
+      { t: "sub", id: 1, shape: { type: "shell" }, offset: null, have: {} },
+    ]);
+
+    have = { "hal_c2@a": ["e1", 7] };
+    sockets[0]!.close();
+    await vi.advanceTimersByTimeAsync(10);
+    sockets[1]!.serve({ t: "hello", mc: "hal_c2@a" });
+    expect(sockets[1]!.sent).toEqual([
+      { t: "sub", id: 1, shape: { type: "shell" }, offset: null, have: { "hal_c2@a": ["e1", 7] } },
+    ]);
+    socket.close();
+    vi.useRealTimers();
+  });
+
   it("reconnects and resumes each stream from the last offset it saw", async () => {
     vi.useFakeTimers();
     const { socket, sockets } = setup();

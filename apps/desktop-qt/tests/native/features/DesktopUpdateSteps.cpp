@@ -559,6 +559,11 @@ const Steps steps([] {
     install(world);
   });
   step(QStringLiteral("the user is told %1 with the reason").arg(q), [](World& world, const Captures& c, const Table&) {
+    // A command the MC refused (threads/settle.feature) gave its reason there.
+    if (world.mc.refusals.size() == 1) {
+      toast(world, c[0], world.mc.refusals.cbegin().value());
+      return;
+    }
     toast(world, c[0], world.reason.isEmpty() ? fake().reason : world.reason);
   });
   step(QStringLiteral("the user is told %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {

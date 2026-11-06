@@ -54,6 +54,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/streaming.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
+    QStringLiteral("threads/settle.feature"),
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
     QStringLiteral("mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*"),
     QStringLiteral("settings/updates.feature"),

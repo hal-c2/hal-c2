@@ -16,6 +16,7 @@
 #include "DevicePanelSteps.h"
 #include "PlanCard.h"
 #include "PullRequestSteps.h"
+#include "ThreadSettle.h"
 #include "FilesIdentity.h"
 #include "FilesViewer.h"
 #include "Harness.h"
@@ -384,6 +385,8 @@ const Steps steps([] {
     if (pullRequestThreadChooses(world, c[0])) return;
     // A long plan's Expand plan / Collapse plan (TimelineSteps).
     if (planCardChooses(world, c[0])) return;
+    // The open thread's notice (Un-settle).
+    if (threadNoticeChooses(world, c[0])) return;
     // From an open command palette (its Change theme submenu among them): its
     // entry of that title.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {

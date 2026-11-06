@@ -25,7 +25,7 @@ ThreadStore::ThreadStore(ShellBridge*, McClient* client, ShellStore* store, QObj
   connect(store, &ShellStore::changed, this, [this] {
     for (auto it = m_threads.cbegin(); it != m_threads.cend(); ++it) {
       if (!it->model) continue;
-      it->model->setBackgroundWork(!m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray().isEmpty());
+      it->model->setBackgroundWork(m_store->threadRow(it.key()).value(QLatin1String("pendingBackgroundTasks")).toArray());
       it->model->threadRowsChanged();
     }
   });
@@ -179,7 +179,7 @@ void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
   model->setLocale(m_locale);
   model->setFolds(m_folds);
-  model->setBackgroundWork(!m_store->threadRow(model->threadKey()).value(QLatin1String("pendingBackgroundTasks")).toArray().isEmpty());
+  model->setBackgroundWork(m_store->threadRow(model->threadKey()).value(QLatin1String("pendingBackgroundTasks")).toArray());
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
   const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);

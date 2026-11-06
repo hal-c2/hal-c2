@@ -120,7 +120,7 @@ Item {
         anchors.top: pluginHeader.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: agentsBanner.visible ? agentsBanner.top : (limitBanner.visible ? limitBanner.top : parent.bottom)
+        anchors.bottom: agentsBanner.visible ? agentsBanner.top : settledNotice.visible ? settledNotice.top : limitBanner.visible ? limitBanner.top : parent.bottom
         visible: !view.draft
         model: view.model
         sending: view.sending
@@ -249,7 +249,7 @@ Item {
         objectName: "agentsBanner"
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
+        anchors.bottom: settledNotice.visible ? settledNotice.top : limitBanner.visible ? limitBanner.top : parent.bottom
         visible: live > 0 && !view.draft
         height: visible ? 32 : 0
         color: Theme.palette.color("surface", "#141417")
@@ -295,6 +295,17 @@ Item {
         anchors.bottom: parent.bottom
         height: implicitHeight
         visible: recovery !== null && !view.draft
+    }
+
+    // The open thread is settled: it says so, and un-settles from here.
+    ThreadNotice {
+        id: settledNotice
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
+        height: implicitHeight
+        visible: current !== null && !view.draft
     }
 
     // How the thread's new worktree is being prepared.

@@ -42,6 +42,7 @@ Feature: Running a thread's actions from its menu
         | rename               | Rename thread         |
         | regenerate-title     | Regenerate title      |
         | mark-unread          | Mark unread           |
+        | auto-settle          | Auto-settle behavior  |
         | filter-by-project    | Filter by proj-1      |
         | copy                 | Copy                  |
         | project-settings     | Project settings      |

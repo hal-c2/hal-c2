@@ -73,6 +73,7 @@ defmodule HalC2.Environment do
         "threadPinning" => true,
         "threadPinReorder" => true,
         "threadActiveReorder" => true,
+        "threadAutoSettleOptOut" => true,
         "threadVisitedTracking" => true,
         "threadTitleRegeneration" => true,
         "projectCloneTracking" => true

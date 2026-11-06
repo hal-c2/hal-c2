@@ -79,7 +79,7 @@ void TurnAgents::read() {
   bool turnActive = false;
   if (m_timeline) {
     const QString key = m_timeline->threadKey();
-    m_environment = key.left(std::max<qsizetype>(0, key.lastIndexOf(QLatin1Char(':'))));
+    m_environment = key.left(std::max<qsizetype>(0, key.indexOf(QLatin1Char(':'))));
     const QHash<QString, QJsonObject> agents = m_timeline->entities(QStringLiteral("subagent"));
     // The running turn, the latest when several are.
     QString runId;
