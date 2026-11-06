@@ -186,10 +186,7 @@ public:
   // known), a project's title, and the environment's providers (the config's
   // `providers`): what a fork's inherited work, a subagent's card and a
   // handoff's ends are told by.
-  void setThreadRows(std::function<QJsonObject(const QString& threadId)> rowOf) {
-    m_threadRow = std::move(rowOf);
-    m_inherited.reset();
-  }
+  void setThreadRows(std::function<QJsonObject(const QString& threadId)> rowOf);
   // The shell's rows changed: a fork whose source or its title arrived late
   // shows its marker and "From …" then.
   void threadRowsChanged();
@@ -475,6 +472,7 @@ private:
   mutable std::optional<QSet<QString>> m_inherited;
   // The fork's source and its title as last shown.
   QString m_forkShown;
+  QString forkShown() const;
   QJsonObject forkedFrom() const;
   // "From <source thread>".
   QString forkSource() const;

@@ -1291,8 +1291,19 @@ void TimelineModel::updateSpanTimer() {
   else if (!live) m_spanTimer.stop();
 }
 
+void TimelineModel::setThreadRows(std::function<QJsonObject(const QString& threadId)> rowOf) {
+  m_threadRow = std::move(rowOf);
+  m_inherited.reset();
+  m_forkShown = forkShown();
+}
+
+QString TimelineModel::forkShown() const {
+  const QJsonObject from = forkedFrom();
+  return from.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(from).toJson(QJsonDocument::Compact)) + QLatin1Char('\n') + forkSource();
+}
+
 void TimelineModel::threadRowsChanged() {
-  const QString shown = QString::fromUtf8(QJsonDocument(forkedFrom()).toJson(QJsonDocument::Compact)) + QLatin1Char('\n') + forkSource();
+  const QString shown = forkShown();
   if (shown == m_forkShown) return;
   m_forkShown = shown;
   restructure({});
