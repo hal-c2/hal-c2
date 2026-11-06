@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run @mc scenarios for the given globs on the MC (mix features)"
 #MISE dir="{{config_root}}/apps/server-ex"
-#MISE depends=["install:mc"]
+#MISE depends=["install:mc-deps"]
 #USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
 #USAGE arg "[glob]" var=#true help="Feature globs relative to features/, e.g. threads/*.feature"
 set -euo pipefail

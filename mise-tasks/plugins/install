@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Install or update this checkout's plugins in the dev MC, and have it load them (mix hal_c2.plugins.install)"
 #MISE dir="{{config_root}}/apps/server-ex"
-#MISE depends=["install:mc"]
+#MISE depends=["install:mc-deps"]
 #USAGE flag "--release" help="Install into the installed MC (the hal-c2 service) instead of the dev MC"
 #USAGE arg "[ids]..." help="Plugin ids under plugins/ to install instead of all of them"
 set -euo pipefail
