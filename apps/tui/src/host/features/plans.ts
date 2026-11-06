@@ -165,6 +165,13 @@ export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feat
     kit.state.set("planStatus", next);
   };
 
+  // Every plan action dispatched without a plan says so, palette or not.
+  const planOrSay = () => {
+    const plan = latestPlan();
+    if (!plan) kit.status("This thread has no plan.", "warning");
+    return plan;
+  };
+
   // The thread's worktree, else its project's folder; null when the MC knows neither.
   const workspaceOrSay = () => {
     const current = detail();
@@ -178,8 +185,8 @@ export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feat
 
   // The workspace may be another machine's: the MC writes the file there.
   const save = (path: string) => {
-    const plan = latestPlan();
-    const cwd = workspaceOrSay();
+    const plan = planOrSay();
+    const cwd = plan ? workspaceOrSay() : null;
     if (!plan || cwd === null) return;
     void kit.track(
       client.writeFile(cwd, path, planText(plan.planMarkdown)).then(
@@ -190,7 +197,7 @@ export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feat
   };
 
   const askSave = () => {
-    const plan = latestPlan();
+    const plan = planOrSay();
     if (!plan || workspaceOrSay() === null) return;
     kit.ask({
       label: "save plan to",
@@ -203,7 +210,7 @@ export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feat
   };
 
   const download = () => {
-    const plan = latestPlan();
+    const plan = planOrSay();
     if (!plan) return;
     try {
       const file = writeNewFile(
@@ -221,7 +228,7 @@ export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feat
   // starts with the plan; the MC marks the plan implemented by it.
   const implementInNewThread = () => {
     const current = detail();
-    const plan = latestPlan();
+    const plan = planOrSay();
     if (!current || !plan) return;
     const project = store.getState().shell?.projects.find((p) => p.id === current.projectId);
     if (!project) {
@@ -321,7 +328,7 @@ export function createPlansFeature(kit: FeatureKit, options: PlansOptions): Feat
           download();
           return true;
         case "plan.copy": {
-          const plan = latestPlan();
+          const plan = planOrSay();
           if (!plan) return true;
           const copied = kit.copy(planText(plan.planMarkdown));
           kit.status(

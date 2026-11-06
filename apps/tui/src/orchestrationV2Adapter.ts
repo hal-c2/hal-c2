@@ -373,6 +373,9 @@ function itemSummary(item: OrchestrationV2TurnItem): string {
   }
 }
 
+/** The MC's result for a subagent that ended without one (desktop TimelineSummary's subagentDetail). */
+const SUBAGENT_PLACEHOLDER = /^Child task ended with status\b/i;
+
 function itemPayload(
   item: OrchestrationV2TurnItem,
   projection: OrchestrationV2ThreadProjection,
@@ -437,9 +440,14 @@ function itemPayload(
       const model = projection.subagents.find((entry) => entry.id === item.subagentId)?.model;
       // A subagent that ended shows its answer; one at work, its latest word.
       const settled = !["pending", "running", "waiting"].includes(item.status);
-      const said = (
-        settled ? (item.result ?? item.progress) : (item.progress ?? item.result)
-      )?.trim();
+      // The MC's "Child task ended with status …" stands in for no answer at all.
+      const words = (text: string | null | undefined) => {
+        const trimmed = text?.trim() ?? "";
+        return SUBAGENT_PLACEHOLDER.test(trimmed) ? "" : trimmed;
+      };
+      const said = settled
+        ? words(item.result) || words(item.progress)
+        : words(item.progress) || words(item.result);
       const detail = [model, said || item.prompt]
         .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
         .join(" · ");
