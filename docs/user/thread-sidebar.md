@@ -126,6 +126,11 @@ rules to connected environments that support shared settings. Offline environmen
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
 
+To keep one thread out of automatic settlement, set **Auto-settle behavior** to **Disabled**
+in its menu (in the terminal client, also **Turn auto-settle off** in the command palette).
+The thread stays active until you settle it yourself, and settling and un-settling it keep
+the choice. Set it back to **Enabled** to let the environment's rules apply again.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your

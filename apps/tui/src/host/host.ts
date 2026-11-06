@@ -312,6 +312,7 @@ export function createHost(options: HostOptions): Host {
   let editorRows: number | undefined;
   let popoverRows = 0;
   let settlementSupported = false;
+  let autoSettleOptOutSupported = false;
   let scrollTop = 0;
   // PgUp / PgDn on a pane that scrolls itself (settings, the diff): the brick
   // named by `pane` scrolls by `by` rows each time `seq` changes.
@@ -1542,6 +1543,7 @@ export function createHost(options: HostOptions): Host {
     setMode,
     restingMode,
     settlementSupported: () => settlementSupported,
+    autoSettleOptOutSupported: () => autoSettleOptOutSupported,
     copyToClipboard: options.copyToClipboard,
     offline: () => offline(),
     now,
@@ -1593,6 +1595,7 @@ export function createHost(options: HostOptions): Host {
   const ready = client.getServerConfig().then(
     (config) => {
       settlementSupported = config.environment?.capabilities?.threadSettlement === true;
+      autoSettleOptOutSupported = config.environment?.capabilities?.threadAutoSettleOptOut === true;
       publishSidebar();
       // The shortcuts the user gave project actions join the client's own chords.
       state.set("projectActionKeys", projectActionKeymap(config.keybindings ?? []));

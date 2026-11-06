@@ -45,6 +45,8 @@ export type TuiThreadShell = Omit<OrchestrationThreadShell, "snoozedUntil" | "sn
     // Always present (null when unset) so client-runtime's snooze helpers accept it.
     readonly snoozedUntil: string | null;
     readonly snoozedAt: string | null;
+    /** Set while the user has turned automatic settlement off for the thread. */
+    readonly autoSettleDisabledAt?: string | null;
     /** The machine an MC is moving the thread to, until it arrives. */
     readonly moving?: OrchestrationV2ThreadMoveTarget | null;
     /** Set on the row a machine keeps for a thread that moved away (clusterClient.ts drops it). */
@@ -175,6 +177,7 @@ export function presentTuiThreadShell(thread: OrchestrationV2ThreadShell): TuiTh
     settledAt: nullableIso(thread.settledAt),
     snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
+    autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     titleRegeneration:

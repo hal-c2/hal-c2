@@ -44,10 +44,10 @@ defmodule HalC2.Orchestration do
                      thread.active.reorder thread.visit thread.mark-unread thread.metadata.update
                      thread.runtime-mode.set thread.interaction-mode.set thread.model-selection.set
                      provider.switch thread.pull-request.link thread.pull-request.unlink
-                     thread.title.regeneration.complete)
+                     thread.title.regeneration.complete thread.auto-settle.set)
   # Commands that arrange a thread in the lists; an archived thread takes none of them.
   @organizing ~w(thread.settle thread.unsettle thread.snooze thread.unsnooze thread.pin
-                 thread.unpin thread.pin.reorder thread.active.reorder)
+                 thread.unpin thread.pin.reorder thread.active.reorder thread.auto-settle.set)
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
@@ -526,7 +526,8 @@ defmodule HalC2.Orchestration do
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         thread = StreamState.get(state, "thread")[thread_id]
 
-        if thread == nil or JS.get(thread, "settledOverride") != nil or snapshot_at == nil or
+        if thread == nil or JS.get(thread, "settledOverride") != nil or
+             JS.get(thread, "autoSettleDisabledAt") != nil or snapshot_at == nil or
              (state.updated_at || 0) > snapshot_at do
           {[], {:error, "Thread #{thread_id} changed before automatic settlement."}}
         else
@@ -3000,6 +3001,19 @@ defmodule HalC2.Orchestration do
     }
   end
 
+  # Turning auto-settle off keeps the thread out of automatic settlement until the user
+  # turns it back on; settling and un-settling by hand leave it as it is. Turning it off
+  # again keeps when it was first turned off.
+  defp thread_fields("thread.auto-settle.set", %{"enabled" => enabled}, thread, at)
+       when is_boolean(enabled),
+       do: %{
+         "autoSettleDisabledAt" =>
+           if(enabled, do: nil, else: thread["autoSettleDisabledAt"] || at)
+       }
+
+  defp thread_fields("thread.auto-settle.set", _, _, _),
+    do: {:error, "thread.auto-settle.set needs enabled, true or false."}
+
   defp thread_fields("thread.unsettle", _, thread, at) do
     unsettled_at = if thread["settledOverride"] == "active", do: thread["unsettledAt"], else: at
     %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => unsettled_at}
@@ -3433,15 +3447,27 @@ defmodule HalC2.Orchestration do
     runs ++ attempts ++ requests
   end
 
+  # Settling also dismisses the questions the agent asked in the background, unanswered
+  # (`thread.user-input.dismiss`): nobody is going to answer them on a settled thread.
   defp archived_queue("thread.settle", state, at) do
-    for run <- queued_runs(state), automatic?(state, run) do
-      upsert(
-        state,
-        "run",
-        run["id"],
-        &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
-      )
-    end
+    runs =
+      for run <- queued_runs(state), automatic?(state, run) do
+        upsert(
+          state,
+          "run",
+          run["id"],
+          &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
+        )
+      end
+
+    questions =
+      for request <- StreamState.list(state, "runtime-request"),
+          request["status"] == "pending",
+          HalC2.Orchestration.TurnWriter.message_request?(request),
+          change <- resolve_message_request(state, request, "cancelled", nil),
+          do: change
+
+    runs ++ questions
   end
 
   defp archived_queue(_type, _state, _at), do: []
@@ -3568,10 +3594,16 @@ defmodule HalC2.Orchestration do
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
 
-  # Visits and mark-unread change read state only, and arranging the active list is not
-  # activity either: the thread's last activity time stays put.
+  # Visits and mark-unread change read state only, and arranging the active list or
+  # turning auto-settle off and on is not activity either: the thread's last activity
+  # time, and so its auto-settle idle clock, stays put.
   defp quiet_read_state({kind, id, patch}, type)
-       when type in ["thread.visit", "thread.mark-unread", "thread.active.reorder"],
+       when type in [
+              "thread.visit",
+              "thread.mark-unread",
+              "thread.active.reorder",
+              "thread.auto-settle.set"
+            ],
        do: {kind, id, Map.put(patch, "q", true)}
 
   defp quiet_read_state(change, _type), do: change
