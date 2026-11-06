@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "TimelineModel.h"
+#include "SubagentDisplay.h"
 #include "TimelineSummary.h"
 
 namespace {
@@ -35,16 +36,6 @@ QString statusLabel(const QString& status) {
   if (status == QLatin1String("failed")) return QStringLiteral("Failed");
   if (status == QLatin1String("cancelled") || status == QLatin1String("interrupted")) return QStringLiteral("Stopped");
   return {};
-}
-
-// 12s, 3m 04s, 1h 02m.
-QString formatElapsed(qint64 total) {
-  const qint64 seconds = std::max<qint64>(0, total);
-  const qint64 minutes = seconds / 60;
-  if (minutes == 0) return QStringLiteral("%1s").arg(seconds);
-  const qint64 hours = minutes / 60;
-  if (hours == 0) return QStringLiteral("%1m %2s").arg(minutes).arg(seconds % 60, 2, 10, QLatin1Char('0'));
-  return QStringLiteral("%1h %2m").arg(hours).arg(minutes % 60, 2, 10, QLatin1Char('0'));
 }
 
 }  // namespace
@@ -173,6 +164,11 @@ void AgentsModel::apply(const QList<Row>& rows) {
     emit dataChanged(index(int(i)), index(int(i)));
   }
   if (counted) emit countChanged();
+  const int working = liveAgentCount();
+  if (working != m_liveAgents) {
+    m_liveAgents = working;
+    emit liveAgentCountChanged();
+  }
 }
 
 void AgentsModel::tick() {
@@ -219,6 +215,12 @@ int AgentsModel::agentCount() const {
   return int(std::count_if(m_rows.cbegin(), m_rows.cend(), [](const Row& row) { return row.kind == QLatin1String("subagent"); }));
 }
 
+int AgentsModel::liveAgentCount() const {
+  return int(std::count_if(m_rows.cbegin(), m_rows.cend(), [](const Row& row) {
+    return row.kind == QLatin1String("subagent") && kLive.contains(text(row.entity, QLatin1String("status")));
+  }));
+}
+
 int AgentsModel::indexOf(const QString& id) const {
   for (qsizetype i = 0; i < m_rows.size(); ++i) {
     if (m_rows.at(i).id == id) return int(i);
@@ -248,7 +250,7 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
         return tool.isEmpty() ? QStringLiteral("Background work") : tool;
       }
       if (!agent) return text(entity, QLatin1String("input")).trimmed();
-      const QString title = text(entity, QLatin1String("title")).trimmed();
+      const QString title = subagents::displayTitle(text(entity, QLatin1String("title")).trimmed());
       if (!title.isEmpty()) return title;
       const QString prompt = text(entity, QLatin1String("prompt")).trimmed().section(QLatin1Char('\n'), 0, 0);
       return prompt.isEmpty() ? QStringLiteral("Subagent") : prompt;
@@ -264,7 +266,7 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
       if (!started.isValid()) return QString();
       QDateTime ended = live ? m_now() : timeOf(entity, QLatin1String("completedAt"));
       if (!ended.isValid()) ended = timeOf(entity, QLatin1String("updatedAt"));
-      return ended.isValid() ? formatElapsed(started.secsTo(ended)) : QString();
+      return ended.isValid() ? subagents::formatElapsed(started.secsTo(ended)) : QString();
     }
     case DetailRole: {
       if (row.kind == QLatin1String("background")) {
@@ -276,7 +278,7 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
       return timeline::subagentDetail(!live, text(entity, QLatin1String("progress")), text(entity, QLatin1String("result")));
     }
     case ModelRole:
-      return text(entity, QLatin1String("model"));
+      return subagents::formatModelSlugName(text(entity, QLatin1String("model")));
     case ChildThreadKeyRole: {
       const QString child = text(entity, QLatin1String("childThreadId"));
       return agent && !child.isEmpty() ? QStringLiteral("%1:%2").arg(m_environment, child) : QString();
