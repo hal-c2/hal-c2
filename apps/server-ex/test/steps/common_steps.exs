@@ -940,7 +940,7 @@ defmodule HalC2.Steps.Common do
   # What the user was told: `context.told` when a step set it, else the failure of
   # the last git action (`context.git_events`) or RPC (`context.reply`).
   step "the user is told {string}", %{args: [message]} = context do
-    if World.fakes_feature?(context) do
+    if World.fakes_feature?(context) and !context[:told] do
       text =
         case context.reply do
           {:error, text} when is_binary(text) -> text

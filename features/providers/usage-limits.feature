@@ -89,7 +89,7 @@ Feature: Subscription limits
     When the user uses the reset credit and the following check fails
     Then the user is told "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: A refused Codex reset credit is not reported as unconfirmed when the following check fails
     Given Codex refuses the reset credit because <refusal>
     When the user uses the reset credit and the following check fails
@@ -114,13 +114,13 @@ Feature: Subscription limits
     When the user uses the reset credit again
     Then Codex receives the same redemption rather than a second one
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude's banked reset credit restores the limit
     Given Claude has a banked reset credit
     When the user uses the reset credit
     Then Claude's limits are checked again and show the reset
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude's reset credits are shown with its limits
     Given Claude has a banked reset credit
     When the user views limits
@@ -128,19 +128,12 @@ Feature: Subscription limits
 
   # macOS keeps Claude's sign-in token in the Keychain, which the MC does not read, so the
   # reset credits stay off there and no request is sent.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude's reset credits are not offered on macOS and no request is sent for them
     Given the MC runs on macOS with Claude signed in
     When the user views limits
     Then Claude shows no reset credits
     And no request for Claude's reset credits is sent
-
-  # The MC does not bank Claude's reset credits yet, so this refusal still holds. Drop this
-  # scenario once the Claude redemption scenarios above pass.
-  @mc @plugin-claude
-  Scenario: Claude reset credits are refused until the MC banks them
-    When the user uses a reset credit on Claude
-    Then the user is told "This provider does not bank reset credits."
 
   @mc
   Scenario Outline: Reset credits are refused where they do not exist
@@ -202,8 +195,7 @@ Feature: Subscription limits
     Then the hub redeems it and the account's limits are read again
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (readAccounts: enabled codex and claude auth files only)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog
+  @mc
   Scenario: A hub's disabled accounts and other providers are left out
     Given a hub that lists a disabled Codex account, an enabled Claude account and a Gemini account
     When the MC reads the hub
@@ -211,15 +203,14 @@ Feature: Subscription limits
     And a reset credit cannot be redeemed on the disabled Codex account
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (credits endpoint failure keeps usage)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (credits)
-  @mc @backlog
+  @mc
   Scenario: A hub's credit lookup failing keeps the account's windows
     Given a hub whose Codex account reports its windows but whose credit lookup fails
     When the MC reads the hub
     Then the account shows its windows with no reset credits
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (failed account never publishes the upstream body)
-  @mc @backlog
+  @mc
   Scenario: What a hub's upstream said is not shown to clients
     Given a hub account whose upstream request fails with a message that holds a secret
     When the MC reads the hub
@@ -227,18 +218,16 @@ Feature: Subscription limits
     And the secret text is not in anything sent to clients
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (Claude weekly scoped windows)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog
+  @mc
   Scenario: A hub's Claude account shows its per-model weekly limits
     Given a hub Claude account that reports a weekly limit scoped to one model
     When the MC reads the hub
     Then the account shows its session and weekly windows and the model's own weekly window
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (consume outcomes)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (@outcomes)
-  @mc @backlog
+  @mc
   Scenario Outline: A hub answers a reset credit redemption with what happened
-    Given a hub account with a banked reset credit
+    Given a hub account with a banked Codex reset credit
     When the hub answers the redemption with <answer>
     Then the user is told <outcome>
     And the hub's cooldown for that account is <cooldown>
@@ -251,16 +240,15 @@ Feature: Subscription limits
       | already redeemed    | the credit was already redeemed         | cleared           |
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (cooldown clearing failure is a warning)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog
+  @mc
   Scenario: A reset applied through a hub whose cooldown cannot be cleared still succeeds
-    Given a hub account with a banked reset credit
+    Given a hub account with a banked Codex reset credit
     When the user uses the reset credit and the hub cannot clear the account's cooldown
     Then the reset is reported as applied
     And the user is warned that routing may resume only after the hub's cooldown expires
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (account in a redemption must be one the hub listed)
-  @mc @backlog
+  @mc
   Scenario: A redemption for an account the hub does not list is not forwarded
     Given a hub that lists two accounts
     When the user uses a reset credit naming an account the hub does not list
@@ -287,14 +275,14 @@ Feature: Subscription limits
 
   # xAI omits the usage percentage until an account has metered use, so the account is
   # kept with no windows rather than dropped as one that can never report.
-  @mc @shared @backlog
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Grok account with no metered usage yet stays in Limits
     Given Grok is signed in with a subscription and has not used any metered credit yet
     When the user opens Limits
     Then Grok's account is listed with the notice "No limits reported."
     And it is not reported as not supported
 
-  @mc @backlog
+  @mc
   Scenario: Grok names its limits by the signed-in account's email
     Given Grok is signed in with a subscription as "dev@example.com"
     When the MC checks limits
