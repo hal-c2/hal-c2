@@ -15,8 +15,6 @@
 //   offline          the MC no longer tries it on its own: the user may ask
 //                    it to reconnect (`canReconnect`), update or not
 //   updating         an update of it is running: the update, not a warning
-//   finishingUpdate  it runs another version than this app and no update is
-//                    known to run, so it is most likely restarting into one
 //   reconnecting     down for longer than two seconds
 //   (empty)          down for less: the thread knows, and says nothing yet
 //
@@ -38,8 +36,6 @@ public:
     QString label;
     bool online = true;
     bool updating = false;
-    // It runs another version than this app.
-    bool otherVersion = false;
     // The MC still tries to reach it while it is down.
     bool trying = true;
     // It runs on the machine this app runs on.
@@ -106,9 +102,6 @@ private:
       } else if (computer->updating) {
         next = Notice{QStringLiteral("updating"), computer->id, tr("Updating %1").arg(label),
                       tr("%1 is restarting on the new version.").arg(label)};
-      } else if (computer->otherVersion) {
-        next = Notice{QStringLiteral("finishingUpdate"), computer->id, tr("Reconnecting to %1").arg(label),
-                      tr("Finishing an update")};
       } else if (down >= kGraceMs) {
         next = Notice{QStringLiteral("reconnecting"), computer->id, tr("%1 is reconnecting").arg(label), {}};
       } else {

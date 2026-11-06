@@ -239,6 +239,7 @@ defmodule HalC2.ClusterPropTest do
     expected =
       cond do
         id == state.own -> {:error, :cannot_switch_off_self}
+        not member?(state, id) and not off?(state, id) -> {:error, :not_a_member}
         on and off?(state, id) -> :ok
         on -> {:error, :not_switched_off}
         member?(state, id) -> :ok

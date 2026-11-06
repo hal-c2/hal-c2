@@ -23,7 +23,6 @@ const std::vector<std::string> kComputers{"a", "b", "c"};
 struct Computer {
   bool online = true;
   bool updating = false;
-  bool otherVersion = false;
   bool trying = true;
   bool local = false;
   qint64 downSince = 0;
@@ -44,7 +43,6 @@ struct Model {
     if (shown.empty() || computer == computers.end() || computer->second.online) return std::nullopt;
     if (!computer->second.trying) return "offline";
     if (computer->second.updating) return "updating";
-    if (computer->second.otherVersion) return "finishingUpdate";
     if (now - computer->second.downSince >= ComputerNotice::kGraceMs) return "reconnecting";
     return "";
   }
@@ -102,7 +100,6 @@ struct See : Command {
   std::string id = *rc::gen::elementOf(kComputers);
   bool online = *rc::gen::arbitrary<bool>();
   bool updating = *rc::gen::arbitrary<bool>();
-  bool otherVersion = *rc::gen::arbitrary<bool>();
   bool trying = *rc::gen::arbitrary<bool>();
   bool local = *rc::gen::arbitrary<bool>();
 
@@ -113,7 +110,6 @@ struct See : Command {
     if (!online && computer.online) computer.downSince = model.now;
     computer.online = online;
     computer.updating = updating;
-    computer.otherVersion = otherVersion;
     computer.trying = trying;
     computer.local = local;
   }
@@ -123,14 +119,14 @@ struct See : Command {
         model, sut, [this](Model& m) { apply(m); },
         [&](qint64 now) {
           return sut.notice.see({QString::fromStdString(id), QStringLiteral("Computer ") + QString::fromStdString(id),
-                                 online, updating, otherVersion, trying, local},
+                                 online, updating, trying, local},
                                 now);
         });
   }
 
   void show(std::ostream& os) const override {
     os << "See(" << id << (online ? ", online" : ", down") << (updating ? ", updating" : "")
-       << (otherVersion ? ", otherVersion" : "") << (trying ? "" : ", given up") << (local ? ", local" : "") << ")";
+       << (trying ? "" : ", given up") << (local ? ", local" : "") << ")";
   }
 };
 

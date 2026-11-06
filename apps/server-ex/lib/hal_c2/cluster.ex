@@ -587,6 +587,9 @@ defmodule HalC2.Cluster do
       id == state.id ->
         {:reply, {:error, :cannot_switch_off_self}, state}
 
+      not member?(entry) and not off?(entry) ->
+        {:reply, {:error, :not_a_member}, state}
+
       on and off?(entry) ->
         admitted = Map.merge(entry, %{"admittedAt" => now, "updatedAt" => now})
         state = merge_in(state, %{id => admitted})

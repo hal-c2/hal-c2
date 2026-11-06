@@ -554,8 +554,13 @@ const Steps steps([] {
          expect(!machine(world, c[0]).value(QStringLiteral("updating")).toBool(),
                 QStringLiteral("an update of %1 is running").arg(c[0]));
        });
-  step(QStringLiteral("%1 is reconnecting").arg(q),
-       [](World& world, const Captures& c, const Table&) { setOnline(world, c[0], false); });
+  step(QStringLiteral("no notice says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* shell = window(world);
+    world.sync();
+    expect(!texts(shell).join(u'\n').contains(c[0]) &&
+               world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList().isEmpty(),
+           QStringLiteral("%1; %2").arg(describeThread(world, shell), describeToasts(world)));
+  });
   step(QStringLiteral("the thread shows one notice %1 with %1").arg(q),
        [](World& world, const Captures& c, const Table&) {
          QQuickWindow* shell = window(world);

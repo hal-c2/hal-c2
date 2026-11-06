@@ -630,10 +630,10 @@ Feature: Connection health
     And the user can ask it to reconnect
 
   # Upstream #13083: a computer that is only offline is not taken for one mid-update.
-  @backlog @desktop
+  @desktop
   Scenario: Reconnecting to a computer on another version is not taken for an update
     Given the user is looking at a thread on "studio"
     And "studio" runs a different version than this client and no update is known to be running
-    When "studio" is reconnecting
-    Then the thread shows the ordinary reconnecting notice "Reconnecting to studio"
+    When "studio" has been reconnecting for more than two seconds
+    Then the thread says "studio is reconnecting"
     And no notice says "Finishing an update"

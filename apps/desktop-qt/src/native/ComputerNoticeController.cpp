@@ -50,16 +50,13 @@ void ComputerNoticeController::activate() {
 
 void ComputerNoticeController::seeComputers(const QVariant& serverUpdates) {
   const QVariantMap state = serverUpdates.toMap();
-  const QString appVersion = state.value(QStringLiteral("appVersion")).toString();
   QSet<QString> seen;
   bool moved = false;
   for (const QVariant& entry : state.value(QStringLiteral("machines")).toList()) {
     const QVariantMap machine = entry.toMap();
-    const QString version = machine.value(QStringLiteral("version")).toString();
     ComputerNotice::Computer computer{
         machine.value(QStringLiteral("environmentId")).toString(), machine.value(QStringLiteral("label")).toString(),
-        machine.value(QStringLiteral("online")).toBool(), machine.value(QStringLiteral("updating")).toBool(),
-        !appVersion.isEmpty() && !version.isEmpty() && version != appVersion};
+        machine.value(QStringLiteral("online")).toBool(), machine.value(QStringLiteral("updating")).toBool()};
     computer.trying = m_store->environmentTrying(computer.id);
     computer.local = thisMachine::hosts(*m_store, *m_client, computer.id);
     seen.insert(computer.id);
