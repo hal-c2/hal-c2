@@ -158,4 +158,13 @@ struct Queued {
 };
 Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>& messages);
 
+// What "/usage-limits" answers with for `instanceId`: every account of its
+// driver, from the environment's providers and its hubs (`sources`), the same
+// account reported both ways once. Each account has a `label` ("Codex · Work";
+// `sensitive` when it holds an email, hidden until asked for), a `plan`, and its
+// `windows` ({label, usedPercent, remainingPercent, resetsAt}) or a `notice`
+// instead. `summary` is the one account, or {label: "3 accounts"}; a hub that
+// cannot be read is in `notices`.
+QVariantMap usageLimitsReport(const QString& instanceId, const QJsonArray& providers, const QJsonArray& sources);
+
 }  // namespace composer

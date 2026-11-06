@@ -275,7 +275,7 @@ Feature: Subscription limits
 
   # xAI omits the usage percentage until an account has metered use, so the account is
   # kept with no windows rather than dropped as one that can never report.
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-mobile
   Scenario: A Grok account with no metered usage yet stays in Limits
     Given Grok is signed in with a subscription and has not used any metered credit yet
     When the user opens Limits
@@ -339,7 +339,7 @@ Feature: Subscription limits
     When the user opens the composer's command menu
     Then "/usage-limits" is not offered
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The /usage-limits answer says whose limits it shows
     Given a Codex thread whose limits come from <accounts>
     When the user sends "/usage-limits"
@@ -351,7 +351,7 @@ Feature: Subscription limits
       | a second Codex instance named "Work"       | Codex · Work   |
       | three accounts pooled by a hub             | 3 accounts     |
 
-  @backlog @desktop
+  @desktop
   Scenario: An account named by its email is hidden in the /usage-limits answer until asked for
     Given a hub account is labelled "sam@example.com"
     When the user sends "/usage-limits"
@@ -360,7 +360,7 @@ Feature: Subscription limits
     Then the answer shows "sam@example.com"
     And the user can hide it again
 
-  @backlog @desktop
+  @desktop
   Scenario: The /usage-limits answer is dismissed without sending anything
     Given the answer to "/usage-limits" is shown above the composer
     When the user dismisses the usage limits

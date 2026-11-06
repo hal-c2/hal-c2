@@ -434,6 +434,11 @@ FakeConfig::Document& documentOf(FakeMc& mc, const QString& environment) {
   return fakeConfig(mc).documents[environment];
 }
 
+void publishSources(FakeMc& mc, const QJsonArray& sources) {
+  fakeConfig(mc).sources.insert(mc.environmentId, sources);
+  sendConfig(mc, mc.environmentId, {{QStringLiteral("t"), QStringLiteral("config.usageLimitSources")}, {QStringLiteral("sources"), sources}});
+}
+
 void publishProviders(FakeMc& mc, const QJsonArray& providers) {
   fakeConfig(mc).config.insert(QStringLiteral("providers"), providers);
   sendConfig(mc, mc.environmentId, {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
