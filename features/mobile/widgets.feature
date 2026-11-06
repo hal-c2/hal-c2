@@ -7,6 +7,7 @@
 #   https://github.com/pingdotgg/t3code/pull/13474 (Android usage widget scrolls, counts its limits, leaves out unconfigured providers)
 # Provider usage limits are specified in features/providers/. This file covers the
 # home screen and lock screen widgets that show them on a phone.
+#   https://github.com/pingdotgg/t3code/pull/12047
 
 Feature: Home screen and lock screen widgets
   Widgets show subscription limits and agent activity without opening the app. They say
@@ -218,3 +219,9 @@ Feature: Home screen and lock screen widgets
     Given the activity widget lists one agent working and one waiting for approval
     When the user taps the widget outside any single agent
     Then the thread waiting for approval is shown
+
+  @backlog @mobile
+  Scenario: Stale agent status says out of date
+    Given a live agent status that has not updated for ten minutes
+    Then in-flight rows read "Out of date" and the header "Agent status out of date"
+    And completed and failed rows keep their state

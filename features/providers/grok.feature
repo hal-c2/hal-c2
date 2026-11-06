@@ -12,6 +12,7 @@
 #   apps/server/src/provider/acp/XAiAcpExtension.ts, apps/server/src/orchestration-v2/Adapters/XAiBackgroundTasks.ts
 #     (x.ai/task_backgrounded, x.ai/task_completed, background subagent notices, persistent monitors)
 #   apps/server/src/provider/acp/XAiBackgroundTasks.ts (how background tasks are listed and ended)
+#   https://github.com/pingdotgg/t3code/pull/14486
 
 @plugin-grok @mc
 Feature: Grok
@@ -663,3 +664,12 @@ Feature: Grok
       | version | status  |
       | 1.0.12  | unknown |
       | 1.0.13  | unknown |
+
+  # A Grok CLI below 1.0.13 is refused by xAI's backend with 426 Upgrade Required, which
+  # used to end the turn as an empty completed run.
+  @backlog @mc
+  Scenario: A Grok CLI older than 1.0.13 is marked broken
+    Given the installed grok command is version 0.2.8
+    When the user opens the Providers settings
+    Then Grok shows an incompatible-version warning
+    And the warning points at version 1.0.13 or newer

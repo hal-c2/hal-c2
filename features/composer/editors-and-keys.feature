@@ -24,6 +24,8 @@
 #   apps/web/src/composer-list-continuation.ts, apps/web/src/composer-rich-text.ts, apps/web/src/composer-rich-text-doc.ts
 #   apps/web/src/components/composerSelection.ts, apps/web/src/components/composerInlineChip.ts
 #   apps/web/src/composerPlaceholder.ts, apps/web/src/components/chat/ChatComposer.tsx (what an empty composer asks for)
+#   https://github.com/pingdotgg/t3code/pull/10154
+#   https://github.com/pingdotgg/t3code/pull/14674
 
 Feature: Editing the draft
   The user edits the draft with the keys they are used to, in an outside
@@ -762,3 +764,17 @@ Feature: Editing the draft
     When the user cancels the comment
     Then the draft no longer quotes that paragraph
     But cancelling an edit of an older quote keeps the quote and its comment
+
+  @backlog @shared
+  Scenario: Composer suggestions are usable with a screen reader
+    Given a screen reader is running
+    When the user opens a suggestion menu for files, skills, commands or pull requests
+    Then the highlighted suggestion is announced while focus stays in the editor
+    And loading and empty results are announced
+    And closing the menu leaves nothing dangling for the reader
+
+  @backlog @shared
+  Scenario: One undo undoes one action
+    Given the user typed, pasted, then typed more
+    When the user undoes once
+    Then only the last action is undone

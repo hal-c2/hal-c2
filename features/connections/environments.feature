@@ -28,6 +28,7 @@
 #   settings/connections.feature holds the desktop Connections page (remove, switch off, icon, WSL);
 #   settings/local-environment.feature and settings/load-balancing.feature hold those controls;
 #   mobile/pairing-and-environments.feature holds managing environments from a phone.
+#   https://github.com/pingdotgg/t3code/pull/14972
 
 Feature: Managing environments on a client
   A client keeps a list of the environments it has paired with. Each shows its machine, label
@@ -409,3 +410,9 @@ Feature: Managing environments on a client
     When the app starts
     Then the saved environment is not connected with a credential the system could not unlock
     And the user is asked to pair it again
+
+  @backlog @shared
+  Scenario: The thread panel names the remote machine a thread runs on
+    Given a thread's project lives on one remote machine
+    When the user opens the thread details
+    Then the panel shows that machine's name and icon

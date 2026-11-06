@@ -32,6 +32,7 @@
 #   apps/server/src/vcs/GitVcsDriverCore.ts (refreshCheckedOutBranch, ensureRemote)
 #   apps/server/src/sourceControl/gitHubPullRequests.ts, gitLabMergeRequests.ts, bitbucketPullRequests.ts, forgejoPullRequests.ts (cross-repository detection)
 #   apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, listChangeRequests, createChangeRequest)
+#   https://github.com/pingdotgg/t3code/pull/15057
 
 Feature: Threads that work on or link pull requests
   A thread can start from a pull request, checked out locally or in its own worktree,
@@ -823,3 +824,17 @@ Feature: Threads that work on or link pull requests
     Given the previews of "acme/web" and "acme/docs" are held
     When a turn finishes in "acme/docs"
     Then the preview of "acme/web" is still answered without asking the host
+
+  @backlog @shared @mc
+  Scenario: An agent can watch a pull request and be woken
+    Given a thread linked to a pull request
+    When the agent calls watch_pull_request, or the user picks Watch for changes
+    Then the MC checks it every minute
+    And it wakes the thread when a check fails, required checks pass, someone else comments or reviews, or it starts to conflict
+    And each change is reported once
+
+  @backlog @mc
+  Scenario: Watching ends when it can no longer help
+    Given a watched pull request
+    When it merges or closes, is unwatched, brings ten comment-only wakes in a row, or cannot be read for 15 minutes
+    Then watching stops and the agent is told why

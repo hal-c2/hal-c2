@@ -13,6 +13,7 @@
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
 #   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)
 #   packages/contracts/src/settings.ts (followUpBehavior)
+#   https://github.com/pingdotgg/t3code/pull/14725
 
 Feature: Follow-ups while the agent is working
   A message sent while a turn is running either waits in the queue or steers
@@ -401,3 +402,10 @@ Feature: Follow-ups while the agent is working
     Then the queue is shown as held
     When the user resumes the queue
     Then the MC is asked to resume the queue
+
+  @backlog @mc
+  Scenario: Steers keep the newest next-turn selection
+    Given a provider that steers live but cannot restart the turn
+    When the user steers with one model or thinking level, then steers back to the running one
+    Then the saved next-turn selection is the newest choice
+    And a steer that misses the turn starts the follow-up on that choice

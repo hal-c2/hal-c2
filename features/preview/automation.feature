@@ -22,6 +22,8 @@
 #   apps/desktop/src/preview/Manager.ts (recording, snapshots, input guard, agent control errors and limits)
 #   apps/desktop/src/preview/PlaywrightInjectedRuntime.ts (locator parsing injected into the page)
 #   Cross-domain: settings/ owns the preference for whether agent-opened previews come to the front.
+#   https://github.com/pingdotgg/t3code/pull/14573
+#   https://github.com/pingdotgg/t3code/pull/15008
 
 Feature: Agents drive the preview browser
   An agent can open, read and operate the thread's browser tabs through its preview tools. The
@@ -670,3 +672,16 @@ Feature: Agents drive the preview browser
       Given an agent's current tab shows a page
       When the agent waits for text and allows ten minutes
       Then the tool refuses the request, saying the wait may be at most 60,000 milliseconds
+
+  @backlog @desktop
+  Scenario: Downloads from a page the agent drove save without a dialog
+    Given the agent last drove the preview page
+    When the page starts a download
+    Then it is saved to the browser artifacts folder with no Save dialog
+    And once the user clicks, types or navigates, downloads show the Save dialog again
+
+  @backlog @desktop
+  Scenario: Agent clicks do not steal composer focus
+    Given the user is typing in the composer
+    When the agent clicks in the preview
+    Then the composer keeps keyboard focus

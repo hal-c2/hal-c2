@@ -13,6 +13,7 @@
 #   apps/web/src/vscodeThemeImport.ts
 #   apps/web/src/openVsxThemes.ts
 #   packages/shared/src/keybindings.ts (themeEditor.toggle)
+#   https://github.com/pingdotgg/t3code/pull/14499
 
 Feature: Custom themes
   Users create, import, edit, share and remove their own themes, and can pick a color
@@ -999,3 +1000,10 @@ Feature: Custom themes
       Given the stored theme choice names a theme by its old id
       When HAL-C2 starts
       Then the renamed theme is used
+
+  @backlog @shared
+  Scenario: Dark+ and Light+ import from VS Code
+    Given the VS Code themes "Dark+" and "Light+"
+    When the user imports them
+    Then each imports under a non-reserved id and keeps its own label
+    And they are not paired into one dual-mode theme

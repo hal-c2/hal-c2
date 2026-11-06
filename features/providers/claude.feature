@@ -17,6 +17,13 @@
 #   apps/server/src/claudeModelOptions.ts (context window, thinking and effort options)
 #   apps/server/src/orchestration-v2/testkit/fixtures/claude_result_is_error, claude_local_bash_task
 #   apps/server/src/provider/Layers/claudeUsageLimits.ts
+#   https://github.com/pingdotgg/t3code/pull/14497
+#   https://github.com/pingdotgg/t3code/pull/14540
+#   https://github.com/pingdotgg/t3code/pull/14994
+#   https://github.com/pingdotgg/t3code/pull/14860
+#   https://github.com/pingdotgg/t3code/pull/14726
+#   https://github.com/pingdotgg/t3code/pull/14980
+#   https://github.com/pingdotgg/t3code/pull/15055
 
 @plugin-claude @mc
 Feature: Claude
@@ -907,3 +914,45 @@ Feature: Claude
       | 2.1.111 | graceful    |
       | 2.1.279 | graceful    |
       | 2.1.280 | unknown     |
+
+  @backlog @mc
+  Scenario: A Claude-initiated result does not end a /compact turn early
+    Given a resumed Claude thread whose previous process left a background task
+    When the user compacts the thread
+    Then the turn completes once, after the real compaction
+    And no made-up "Compacted context" row is shown
+    And the thread does not stay busy afterwards
+
+  @backlog @mc
+  Scenario: A Claude subagent shows the model its agent file picks
+    Given a subagent whose agent file sets its own model
+    When the subagent runs
+    Then its row and thread show that model, not the parent's
+    And an agent it spawns starts with its owner's model
+
+  @backlog @mc
+  Scenario: Claude MCP tool calls show their names and icons
+    When Claude calls an MCP tool
+    Then the item is titled with the tool's display name and server, with its icon
+    And the raw name like "Mcp__server__tool" is not shown
+
+  @backlog @mc
+  Scenario: A model change that would kill background agents is refused
+    Given Claude has a background agent or shell still running
+    When the user sends a message on a different model or option
+    Then the send fails with a visible reason
+    And the running background work is untouched
+    And Stop still allows the change
+
+  @backlog @shared
+  Scenario: Claude skill calls show the skill name
+    When Claude calls a skill
+    Then the row reads "Skill: <name>"
+    And expanding it shows only the arguments as plain text
+    And a call with no arguments does not expand
+
+  @backlog @mc
+  Scenario: A thread stays working while Claude starts a wake turn
+    Given a Claude thread waiting on a background command
+    When the command finishes and Claude begins reacting
+    Then the thread never leaves working in between

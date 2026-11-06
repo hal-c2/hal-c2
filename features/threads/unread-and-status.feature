@@ -14,6 +14,10 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (visit, mark-unread)
 #   apps/web/src/components/ChatView.tsx (a visit for the open thread, once per change)
 #   apps/desktop-qt/src/native/SidebarController.cpp (visitOpenThread)
+#   https://github.com/pingdotgg/t3code/pull/14910
+#   https://github.com/pingdotgg/t3code/pull/15114
+#   https://github.com/pingdotgg/t3code/pull/15029
+#   https://github.com/pingdotgg/t3code/pull/15034
 
 Feature: Unread and status in the thread list
   Each thread says whether it needs the user, is busy, or has finished work the user has
@@ -231,3 +235,28 @@ Feature: Unread and status in the thread list
     Given "Build search" is linked to pull requests 12 and 14
     When the user rests the pointer on "Build search"
     Then the preview lists both pull requests with their state
+
+  @backlog @shared
+  Scenario: A thread that left a shell running shows its unseen completion
+    Given an agent ended its turn leaving only a background shell running
+    When the user is in another thread
+    Then its row reads Done and unread, not Waiting
+
+  @backlog @shared
+  Scenario: A left-over dev server does not read as waiting
+    Given an agent ended its turn leaving a dev server running
+    Then the status strip reads "Running: <command>" with a still dot
+    And only subagents and monitors read "Waiting on" with a pulse
+    And Stop is still offered
+
+  @backlog @shared
+  Scenario: Working timers survive background wakes
+    Given a thread has been running for 30 minutes
+    When a background command finishes and wakes the agent
+    Then the Working timer keeps counting from the original start
+
+  @backlog @shared
+  Scenario: Dismissing Woke clears it on every device
+    Given a thread shows Woke
+    When the user dismisses it from the pill or the chat banner
+    Then it is dismissed on the user's other devices too

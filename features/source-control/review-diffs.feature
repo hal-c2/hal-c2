@@ -25,6 +25,7 @@
 #   apps/tui/src/diffSplit.ts
 #   apps/tui/src/features.backlog.test.ts (review-workspace)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (Diff)
+#   https://github.com/pingdotgg/t3code/pull/15005
 
 Feature: Reviewing working tree and branch changes
   Beside a thread the user reviews what changed in the checkout, either uncommitted work
@@ -410,3 +411,10 @@ Feature: Reviewing working tree and branch changes
       | for the contents of a file | inside the MC's worktrees folder               | the contents are returned                                                     |
       | for the contents of a file | outside the MC's projects and worktrees        | it is refused with "Review cwd must be inside one of this MC's projects."     |
       | for a review               | reached through a link out of the MC's projects | it is refused with "Review cwd must be inside one of this MC's projects."    |
+
+  @backlog @shared
+  Scenario: The diff panel opens on all branch changes
+    Given the agent committed and pushed everything
+    When the user opens the diff panel
+    Then it shows Changes: everything since the merge base through the working tree
+    And Working tree is still selectable

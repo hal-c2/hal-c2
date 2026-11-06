@@ -10,6 +10,7 @@
 #   apps/web/src/components/chat/ChatComposer.tsx (capability-gated controls)
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
 #   docs/user/providers-pi.md, docs/user/providers-muse.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
+#   https://github.com/pingdotgg/t3code/pull/14542
 
 @mc
 Feature: Provider capabilities
@@ -190,3 +191,12 @@ Feature: Provider capabilities
     Given a registry agent that declares it can be steered
     When the user sends a follow-up during its turn
     Then the message joins the running turn
+
+  @backlog @shared @mc
+  Scenario: Restarting the agent session loads new skills and plugins
+    Given a thread whose provider has new skills, plugins or MCP servers
+    When the user chooses Restart agent session in the command palette
+    Then the thread's provider process is stopped and the conversation stays
+    And the next message resumes it on a fresh process with the new setup
+    And the folder is scanned again so the slash and dollar menus list the new skills
+    And a failure shows an error toast

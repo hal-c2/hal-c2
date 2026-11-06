@@ -25,6 +25,7 @@
 #   apps/web/src/components/usage/usagePagePreferences.ts (environment subset)
 #   apps/web/src/components/usage/UsageLimitsPooled.tsx (account chips)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
+#   https://github.com/pingdotgg/t3code/pull/15108
 
 Feature: Usage and limits
   Usage adds up token use and estimated cost from each provider's local
@@ -566,3 +567,10 @@ Feature: Usage and limits
       Given the user is typing in a text field on the Usage page showing cost
       When the user types "t"
       Then the Usage page still shows cost
+
+  @backlog @shared
+  Scenario: Cost breaks down by token type, speed and model
+    When the user opens the Usage tab
+    Then cost is split by token type, and by speed when Fast or Ultrafast was used
+    And opening a model shows its cost, tokens, cost per million tokens, cache hit rate and trend
+    And an unpriced model offers Set price
