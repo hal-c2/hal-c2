@@ -957,7 +957,9 @@ QString accountKey(const QString& driver, const QString& email) {
   return normalized.isEmpty() ? QString() : driver + QLatin1Char(':') + normalized;
 }
 
-QVariantMap reportAccount(const QString& label, const QString& plan, const QJsonObject& limits) {
+// `source` is the hub an account came through, kept apart from its label so
+// only the label, which may be an email, is scrambled.
+QVariantMap reportAccount(const QString& source, const QString& label, const QString& plan, const QJsonObject& limits) {
   QVariantList windows;
   for (const QJsonValue& value : limits.value(QLatin1String("windows")).toArray()) {
     const QJsonObject window = value.toObject();
@@ -968,7 +970,8 @@ QVariantMap reportAccount(const QString& label, const QString& plan, const QJson
                                {QStringLiteral("resetsAt"), str(window, QLatin1String("resetsAt"))}});
   }
   const QString notice = limitsNotice(limits);
-  return {{QStringLiteral("label"), label},
+  return {{QStringLiteral("source"), source},
+          {QStringLiteral("label"), label},
           {QStringLiteral("sensitive"), label.contains(QLatin1Char('@'))},
           {QStringLiteral("plan"), plan},
           {QStringLiteral("notice"), notice},
@@ -1003,7 +1006,7 @@ QVariantMap usageLimitsReport(const QString& instanceId, const QJsonArray& provi
     QString instance = str(provider, QLatin1String("displayName")).trimmed();
     if (instance.isEmpty() && id != driver) instance = id;
     const QString label = instance.isEmpty() || instance.compare(brand, Qt::CaseInsensitive) == 0 ? brand : brand + QStringLiteral(" · ") + instance;
-    accounts.append(reportAccount(label, str(auth, QLatin1String("label")), limits));
+    accounts.append(reportAccount(QString(), label, str(auth, QLatin1String("label")), limits));
   }
   QStringList notices;
   for (const QJsonValue& value : sources) {
@@ -1015,18 +1018,19 @@ QVariantMap usageLimitsReport(const QString& instanceId, const QJsonArray& provi
       if (str(account, QLatin1String("driver")) != driver) continue;
       ++matching;
       if (native.contains(accountKey(driver, str(account, QLatin1String("email"))))) continue;
-      accounts.append(reportAccount(str(source, QLatin1String("label")) + QStringLiteral(" · ") + str(account, QLatin1String("id")),
-                                    str(account, QLatin1String("plan")), account.value(QLatin1String("usageLimits")).toObject()));
+      accounts.append(reportAccount(str(source, QLatin1String("label")), str(account, QLatin1String("id")), str(account, QLatin1String("plan")), account.value(QLatin1String("usageLimits")).toObject()));
     }
     // A hub that failed to read has no accounts left to match, so its error
     // reaches every provider rather than going unsaid.
     const QString error = str(source, QLatin1String("error"));
     if (!error.isEmpty() && (matching > 0 || all.isEmpty())) notices.append(str(source, QLatin1String("label")) + QStringLiteral(": ") + error);
   }
-  // One account is named, with its plan; more are counted.
+  // One account is named, with its plan; more are counted; none leaves the
+  // notices to say why.
   const QVariantMap summary = accounts.size() == 1
                                   ? accounts.first().toMap()
-                                  : QVariantMap{{QStringLiteral("label"), QStringLiteral("%1 accounts").arg(accounts.size())},
+                                  : QVariantMap{{QStringLiteral("source"), QString()},
+                                                {QStringLiteral("label"), accounts.isEmpty() ? QString() : QStringLiteral("%1 accounts").arg(accounts.size())},
                                                 {QStringLiteral("sensitive"), false},
                                                 {QStringLiteral("plan"), QString()}};
   return {{QStringLiteral("summary"), summary}, {QStringLiteral("accounts"), accounts}, {QStringLiteral("notices"), notices}};

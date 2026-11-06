@@ -31,12 +31,14 @@ Rectangle {
         return at ? qsTr("resets %1").arg(Threads.upcoming(at)) : "";
     }
 
-    // An account's name and plan; an email is scrambled until clicked.
+    // An account's hub, name and plan; a name that is an email is scrambled
+    // until clicked, the hub it came through still named.
     component Account: RowLayout {
         id: named
 
         property var account: null
         readonly property bool sensitive: !!account && account.sensitive === true
+        readonly property string source: account ? account.source ?? "" : ""
         readonly property string plan: account ? account.plan ?? "" : ""
 
         spacing: 0
@@ -44,7 +46,15 @@ Rectangle {
         Label {
             visible: !named.sensitive
             Layout.fillWidth: !named.sensitive
-            text: named.account ? named.account.label + (named.plan.length > 0 ? " · " + named.plan : "") : ""
+            text: named.account ? (named.source.length > 0 ? named.source + " · " : "") + named.account.label + (named.plan.length > 0 ? " · " + named.plan : "") : ""
+            elide: Text.ElideRight
+            color: Theme.palette.color("textMuted", "#a1a1aa")
+            font.pixelSize: Theme.type.meta.size
+        }
+
+        Label {
+            visible: named.sensitive && named.source.length > 0
+            text: named.source + " · "
             elide: Text.ElideRight
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Theme.type.meta.size
