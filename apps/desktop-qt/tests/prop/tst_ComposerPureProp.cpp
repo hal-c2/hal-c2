@@ -1,8 +1,10 @@
 // The composer's pure parts: what the text before the caret asks for
 // (composer::trigger), starring models (composer::toggleFavorite), what waits
 // behind the running turn (composer::queued) and the rich text drawing
-// (ComposerHighlighter).
+// (ComposerHighlighter), and whose limits "/usage-limits" shows
+// (composer::usageLimitsReport).
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -180,6 +182,63 @@ private slots:
           RC_ASSERT(range.length > 0);
           RC_ASSERT(range.start + range.length <= block.length());
         }
+      }
+    }));
+  }
+  void usageLimitsCountEachAccountOnce() {
+    QVERIFY(rc::check("/usage-limits lists each account of the driver once, and its summary names the one or counts them", [] {
+      const std::vector<QString> emails{QString(), QStringLiteral("sam@example.com"), QStringLiteral("ada@example.com")};
+      const std::vector<QString> drivers{QStringLiteral("codex"), QStringLiteral("claudeAgent")};
+      const QJsonObject windows{{QStringLiteral("checkedAt"), QStringLiteral("2026-01-01T00:00:00.000Z")},
+                                {QStringLiteral("windows"), QJsonArray{QJsonObject{{QStringLiteral("label"), QStringLiteral("5-hour")},
+                                                                                   {QStringLiteral("usedPercent"), 40}}}}};
+      const QJsonObject failed{{QStringLiteral("windows"), QJsonArray()},
+                               {QStringLiteral("unavailable"), QJsonObject{{QStringLiteral("reason"), QStringLiteral("probeFailed")}}}};
+      // Instances: a driver, an email, and limits (none, read, failed).
+      const int instanceCount = *rc::gen::inRange(1, 4);
+      QJsonArray providers;
+      QSet<QString> signedIn;  // emails of the codex accounts read natively
+      int native = 0;
+      for (int i = 0; i < instanceCount; ++i) {
+        const QString driver = i == 0 ? QStringLiteral("codex") : *rc::gen::elementOf(drivers);
+        const QString email = *rc::gen::elementOf(emails);
+        const int read = *rc::gen::inRange(0, 3);
+        QJsonObject provider{{QStringLiteral("instanceId"), driver + QString::number(i)}, {QStringLiteral("driver"), driver},
+                             {QStringLiteral("enabled"), true}, {QStringLiteral("auth"), QJsonObject{{QStringLiteral("email"), email}}}};
+        if (read > 0) provider.insert(QStringLiteral("usageLimits"), read == 1 ? windows : failed);
+        if (driver == QLatin1String("codex") && read > 0) {
+          ++native;
+          if (read == 1 && !email.isEmpty()) signedIn.insert(email);
+        }
+        providers.append(provider);
+      }
+      QJsonArray accounts;
+      int fromHub = 0;
+      const int hubCount = *rc::gen::inRange(0, 4);
+      for (int i = 0; i < hubCount; ++i) {
+        const QString driver = *rc::gen::elementOf(drivers);
+        const QString email = *rc::gen::elementOf(emails);
+        accounts.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("account-%1").arg(i)}, {QStringLiteral("driver"), driver},
+                                    {QStringLiteral("email"), email}, {QStringLiteral("usageLimits"), windows}});
+        if (driver == QLatin1String("codex") && !signedIn.contains(email)) ++fromHub;
+      }
+      const QJsonArray sources{QJsonObject{{QStringLiteral("id"), QStringLiteral("hub")}, {QStringLiteral("label"), QStringLiteral("Hub")},
+                                           {QStringLiteral("accounts"), accounts}}};
+
+      const QVariantMap report = composer::usageLimitsReport(QStringLiteral("codex0"), providers, sources);
+      const QVariantList listed = report.value(QStringLiteral("accounts")).toList();
+      RC_ASSERT(listed.size() == native + fromHub);
+      const QVariantMap summary = report.value(QStringLiteral("summary")).toMap();
+      if (listed.size() == 1) {
+        RC_ASSERT(summary == listed.first().toMap());
+      } else {
+        RC_ASSERT(summary.value(QStringLiteral("label")).toString() == QStringLiteral("%1 accounts").arg(listed.size()));
+      }
+      for (const QVariant& value : listed) {
+        const QVariantMap account = value.toMap();
+        // Either windows or the reason there are none.
+        RC_ASSERT(account.value(QStringLiteral("windows")).toList().isEmpty() != account.value(QStringLiteral("notice")).toString().isEmpty());
+        RC_ASSERT(account.value(QStringLiteral("sensitive")).toBool() == account.value(QStringLiteral("label")).toString().contains(u'@'));
       }
     }));
   }
