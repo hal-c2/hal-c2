@@ -1,5 +1,6 @@
 # Sources:
 #   docs/user/composer.md (slash commands, skills, context references, pull requests, threads, citing)
+#   https://github.com/pingdotgg/t3code/pull/13450 (focus returns to the draft after a quote's comment)
 #   docs/internals/composer-context-references.md
 #   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping, quoted replies)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
@@ -143,6 +144,22 @@ Feature: Referencing files, skills, commands and context
     When the user cites that paragraph in the composer
     Then the draft carries the quoted paragraph
     And the user can add a comment to it
+
+  # Upstream #13450: the keyboard returns to the draft after a quote's comment is saved.
+  @desktop @backlog
+  Scenario: Saving a quote's comment returns the keyboard to the draft
+    Given the user is writing the comment on a quote in the draft
+    When the user saves the comment
+    Then the caret is in the draft right after the quote
+
+  # Shift+Tab only does this directly after a quote; elsewhere it keeps switching build and plan.
+  @desktop @backlog
+  Scenario: Shift+Tab from just after a quote reaches the quote's comment control
+    Given the caret is directly after a quote in the draft
+    When the user presses Shift+Tab
+    Then the quote's comment control has focus
+    When the user presses Tab
+    Then the caret is directly after the quote again
 
   @desktop
   Scenario: A quoted response is sent with its comment

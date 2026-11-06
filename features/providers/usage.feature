@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/13599
+#   https://github.com/pingdotgg/t3code/pull/13731 (Cursor tier and speed suffixes priced by base model)
 #   docs/user/usage.md (Understand your usage, Set custom model prices)
 #   apps/server-ex/lib/hal_c2/usage.ex (server.getUsageSummary, server.refreshUsageRates, windows, fingerprints, 90-day cache)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Claude, Codex and Grok Build transcripts)
@@ -81,6 +82,19 @@ Feature: Usage
     Given a turn on a model recorded with a bracketed context-size suffix such as "[1m]"
     When the user opens Usage
     Then that model is priced at the rate of its base model
+
+  # Upstream #13731: Cursor names carry tier and speed suffixes that the price table does not key on.
+  @backlog @mc @plugin-cursor
+  Scenario: A Cursor model with a tier or speed suffix is priced at its base model's rate
+    Given a Cursor turn on a model whose name carries a tier or speed suffix
+    When the user opens Usage
+    Then the turn's cost and cache savings use the rate of its base model
+
+  @backlog @mc @plugin-cursor
+  Scenario: A Cursor turn's reported cost is kept when its model is a tier or speed variant
+    Given Cursor reported a cost for a turn on a model whose name carries a tier or speed suffix
+    When the user opens Usage
+    Then that turn's cost is the reported cost
 
   @mc
   Scenario: Usage uses a saved copy of prices when the price table cannot be fetched

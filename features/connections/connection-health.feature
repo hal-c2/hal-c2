@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13577
+#   https://github.com/pingdotgg/t3code/pull/13683 (a slow snapshot is given time before a second load)
 #   apps/web/src/hooks/useEnvironmentDisconnectDelay.ts (20 seconds before a thread offers to disconnect), apps/web/src/components/ChatView.tsx (disconnect, reconnect)
 #   docs/internals/connection-runtime.md (one retry owner, HTTP authorization, freshness)
 #   docs/internals/environment-auth.md
@@ -375,6 +376,21 @@ Feature: Connection health
     Given the client kept the branch list of "hal-c2" and of a worktree of "hal-c2"
     When a branch of "hal-c2" is created
     Then neither kept list is offered again until it is read anew
+
+  # Upstream #13683: a slow but alive MC finishes a load instead of being asked for it twice.
+  @shared @backlog
+  Scenario: A slow MC finishes the thread list instead of building it twice
+    Given the MC takes 12 seconds to build the thread list
+    When the client connects
+    Then the thread list shows once the MC answers
+    And the MC builds the thread list once
+
+  @shared @backlog
+  Scenario: A slow MC finishes opening a thread instead of loading it twice
+    Given the MC takes 12 seconds to load a thread
+    When the user opens the thread
+    Then the thread shows once the MC answers
+    And the MC loads the thread once
 
   @desktop @mobile @backlog-mobile
   Scenario: A thread left for under five minutes resumes without a snapshot

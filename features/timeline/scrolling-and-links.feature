@@ -1,5 +1,6 @@
 # Sources:
 #   docs/internals/assistant-citations.md
+#   https://github.com/pingdotgg/t3code/pull/13530 (a running thread opens at its latest output)
 #   apps/web/src/components/ChatView.tsx (Scroll to end, stream does not pull the view back)
 #   apps/web/src/components/chat/MessagesTimeline.tsx (Jump to message, Previous turn, Next turn, Load earlier turns)
 #   apps/web/src/components/chat/MessagesTimeline.logic.ts
@@ -68,6 +69,13 @@ Feature: Moving through a thread and following links
     When the user opens another thread
     Then the other thread shows its latest output
     And the composer is not resting
+
+  # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
+  @shared @backlog
+  Scenario: A running thread opens at its latest output while its messages are still loading
+    Given the user opens a thread whose agent is still working
+    When the thread's messages arrive
+    Then the view shows the latest output at the end, not the start of the thread
 
   @desktop @backlog
   Scenario: A thread opens where the user left it
