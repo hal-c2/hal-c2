@@ -533,13 +533,13 @@ Feature: Connection health
       | 1.4.0                  | 1.4.0-nightly.20260901 | does not warn               |
       | 1.4.0-nightly.20260902 | 1.4.0-nightly.20260901 | warns of a version mismatch |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: One connection serves every MC of a cluster
     Given a client connected to a cluster of three MCs
     Then the client keeps one connection for the cluster
     And streams from every MC arrive over it
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A cluster connection resumes each stream from where it stopped
     Given a client following threads on two cluster members
     When the cluster connection drops and returns

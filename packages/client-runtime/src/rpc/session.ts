@@ -43,6 +43,7 @@ import { environmentMismatchError } from "../connection/errors.ts";
 import { SHAPE_PROTOCOL_VERSION } from "../connection/compatibility.ts";
 import type { EntityStreamFrame } from "../state/streamEntities.ts";
 import { connectV3Session, ThreadResumes } from "../v3/session.ts";
+import { ShellRows } from "../v3/shellShape.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -98,6 +99,13 @@ export interface RpcSession {
    * refusal. Only protocol-3 sessions have it.
    */
   readonly subscribeStream?: (stream: string) => Stream.Stream<EntityStreamFrame, Error>;
+  /**
+   * A session for another environment of the MC's cluster, over this session's
+   * socket; it closes with this one. Only protocol-3 sessions have it.
+   */
+  readonly forEnvironment?: (
+    environmentId: string,
+  ) => Effect.Effect<RpcSession, ConnectionAttemptError>;
 }
 
 export interface RpcSessionOptions {
@@ -105,6 +113,8 @@ export interface RpcSessionOptions {
   readonly usageLimitSources?: boolean;
   /** This client answers /usage-limits itself, so the server may advertise it. */
   readonly usageLimitsCommand?: boolean;
+  /** How often a protocol-3 socket pings its MC (`PING_INTERVAL_MS`); tests shorten it. */
+  readonly pingIntervalMs?: number;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -203,9 +213,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
   // Where protocol-3 thread streams stopped, kept across this factory's sessions.
   const threadResumes = new ThreadResumes();
+  // The cluster shell's rows, so a new socket's shell asks only for what changed since.
+  const shellRows = new ShellRows();
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     if (connection.orchestrationProtocolVersion === SHAPE_PROTOCOL_VERSION) {
-      return yield* connectV3Session(connection, threadResumes);
+      return yield* connectV3Session(connection, threadResumes, shellRows, options.pingIntervalMs);
     }
 
     yield* Effect.annotateCurrentSpan({

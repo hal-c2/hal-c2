@@ -1,6 +1,12 @@
 import type { ClusterStatus } from "@hal-c2/contracts";
 
-import type { OrchestrationShellSnapshot, TuiClient } from "./connection.ts";
+import {
+  buildTuiRuntime,
+  makeTuiClient,
+  type OrchestrationShellSnapshot,
+  type TuiClient,
+  type TuiOptions,
+} from "./connection.ts";
 
 type Shell = OrchestrationShellSnapshot;
 type ThreadId = Parameters<TuiClient["interrupt"]>[0];
@@ -363,4 +369,19 @@ export function makeClusterClient(
       );
     },
   };
+}
+
+/**
+ * The terminal's client: this MC's, joined by one per other machine of its
+ * cluster, each reached by its environment id over this MC's one connection.
+ */
+export function connectTui(options: TuiOptions): TuiClient {
+  const runtime = buildTuiRuntime(options);
+  return makeClusterClient(makeTuiClient(runtime, options.origin), (environmentId) =>
+    makeTuiClient(
+      buildTuiRuntime({ ...options, environmentId, via: runtime }),
+      options.origin,
+      false,
+    ),
+  );
 }
