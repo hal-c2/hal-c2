@@ -24,6 +24,7 @@
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "PlanController.h"
 #include "McClient.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -831,7 +832,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   // A send made while an earlier one is still in flight waits its turn.
   QList<Send>& queue = m_queues[target];
   const QString messageId = str(message, QLatin1String("messageId"));
-  queue.append({target, thread->environmentId, thread->id, commands, attachments, contexts, fromDraft ? text : QString(), messageId});
+  queue.append({target, thread->environmentId, thread->id, commands, attachments, contexts, fromDraft ? text : QString(), messageId, planFollowUp});
   const bool first = queue.size() == 1;
   // Kept until the MC answers. Sending again is newer than what a restart
   // left of the thread's sends.
@@ -1327,7 +1328,12 @@ void ComposerController::sendNext(const QString& target) {
       // Only into an untouched draft: newer typing is the user's, and the
       // toast gives the prompt back once the draft is empty.
       if (restored.isEmpty() || draft(target).isEmpty()) {
-        toast(QStringLiteral("Failed to send message"), *error);
+        // A plan's feedback says so, with a reason even when the MC gave none.
+        if (unsent.constFirst().planFollowUp) {
+          toast(QStringLiteral("Plan follow-up not sent"), error->isEmpty() ? QStringLiteral("Failed to send plan follow-up.") : *error);
+        } else {
+          toast(QStringLiteral("Failed to send message"), *error);
+        }
         if (!restored.isEmpty()) setText(target, restored, int(restored.size()));
       } else {
         offerRestore(target, QStringLiteral("Failed to send message"),
@@ -2881,9 +2887,60 @@ QVariantMap ComposerController::turnState() const {
     }
     if (!latest.isEmpty()) {
       const QString markdown = str(latest, QLatin1String("markdown"));
+      // `heading` is empty for a plan with none; `fileName` and
+      // `workspaceRoot` start the dialog that saves it to the workspace.
+      const QString title = planTitle(markdown);
+      static const QRegularExpression headed(QStringLiteral("^\\s{0,3}#{1,6}\\s+\\S"), QRegularExpression::MultilineOption);
       state.insert(QStringLiteral("plan"), QVariantMap{{QStringLiteral("id"), str(latest, QLatin1String("id"))},
-                                                       {QStringLiteral("title"), planTitle(markdown)},
-                                                       {QStringLiteral("markdown"), markdown}});
+                                                       {QStringLiteral("title"), title},
+                                                       {QStringLiteral("heading"), headed.match(markdown).hasMatch() ? title : QString()},
+                                                       {QStringLiteral("markdown"), markdown},
+                                                       {QStringLiteral("fileName"), PlanController::fileName(markdown)},
+                                                       {QStringLiteral("workspaceRoot"), PlanController::workspaceRoot(m_store, m_thread)}});
+    }
+  }
+
+  // The running turn's task list (ChatView's activeComposerTasksProgress):
+  // the step in progress, else the next pending one, else the last; how many
+  // are done; and each step with its status and how long it took. Not shown
+  // while an approval or a question waits above the composer.
+  state.insert(QStringLiteral("tasks"), QVariant());
+  if (isRunning && approvals.isEmpty() && questions.isEmpty()) {
+    const QString runId = *thread->activeRunId;
+    QJsonObject list;
+    for (const QJsonObject& plan : m_timeline->entities(QStringLiteral("plan"))) {
+      if (str(plan, QLatin1String("kind")) == QLatin1String("todo_list") && str(plan, QLatin1String("runId")) == runId &&
+          str(plan, QLatin1String("status")) != QLatin1String("superseded")) {
+        list = plan;
+      }
+    }
+    const QJsonArray steps = list.value(QLatin1String("steps")).toArray();
+    if (!steps.isEmpty()) {
+      QVariantList shown;
+      QString current;
+      QString next;
+      int completed = 0;
+      for (const QJsonValue& value : steps) {
+        const QJsonObject step = value.toObject();
+        const QString text = str(step, QLatin1String("text"));
+        const QString status = str(step, QLatin1String("status"));
+        if (status == QLatin1String("completed")) ++completed;
+        if (status == QLatin1String("running") && current.isEmpty()) current = text;
+        if (status == QLatin1String("pending") && next.isEmpty()) next = text;
+        const QJsonValue duration = step.value(QLatin1String("durationMs"));
+        shown.append(QVariantMap{
+            {QStringLiteral("text"), text},
+            {QStringLiteral("status"), status},
+            {QStringLiteral("duration"), duration.isDouble() ? TimelineModel::durationText(qint64(duration.toDouble()))
+                                         : status == QLatin1String("running") ? QStringLiteral("now")
+                                                                              : QString()}});
+      }
+      if (current.isEmpty()) current = next;
+      if (current.isEmpty()) current = str(steps.last().toObject(), QLatin1String("text"));
+      state.insert(QStringLiteral("tasks"), QVariantMap{{QStringLiteral("current"), current},
+                                                        {QStringLiteral("completed"), completed},
+                                                        {QStringLiteral("total"), int(steps.size())},
+                                                        {QStringLiteral("steps"), shown}});
     }
   }
 
@@ -3587,6 +3644,11 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("pendingApprovalCount"), approvals.size()},
       {QStringLiteral("pendingUserInputCount"), questions.size()},
       {QStringLiteral("showPlanFollowUpPrompt"), showPlanFollowUp},
+      // What sending does to the offered plan (ComposerPrimaryActions):
+      // "implement" with nothing typed, "refine" with feedback, else empty.
+      {QStringLiteral("planAction"), !showPlanFollowUp ? QString()
+                                     : text.trimmed().isEmpty() ? QStringLiteral("implement")
+                                                                : QStringLiteral("refine")},
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
       {QStringLiteral("options"), shownOptions},

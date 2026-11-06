@@ -162,29 +162,48 @@ void PlanController::download(const QVariantMap& plan) {
   toasts->show(QStringLiteral("success"), QStringLiteral("Plan downloaded"), path);
 }
 
+QString PlanController::workspaceRoot(ShellStore* store, const QString& threadKey) {
+  const QJsonObject row = store->threadRow(threadKey);
+  const QString root = row.value(QLatin1String("worktreePath")).toString();
+  if (!root.isEmpty()) return root;
+  const QString environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
+  return store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString()).value(QLatin1String("workspaceRoot")).toString();
+}
+
+void PlanController::publishSave() {
+  m_bridge->publish(QStringLiteral("planSave"), QVariantMap{{QStringLiteral("saving"), m_saving}, {QStringLiteral("saved"), m_saved}});
+}
+
 void PlanController::save(const QString& threadKey, const QVariantMap& plan, const QString& path) {
   auto* toasts = NativeShell::of(this)->controller<ToastController>();
-  const QJsonObject row = m_store->threadRow(threadKey);
   const QString environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
-  QString root = row.value(QLatin1String("worktreePath")).toString();
-  if (root.isEmpty()) {
-    root = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString()).value(QLatin1String("workspaceRoot")).toString();
-  }
+  const QString root = workspaceRoot(m_store, threadKey);
   if (root.isEmpty()) {
     toasts->show(QStringLiteral("error"), QStringLiteral("Workspace path is unavailable"),
                  QStringLiteral("This thread does not have a workspace path to save into."));
     return;
   }
+  const QString relativePath = path.trimmed();
+  if (relativePath.isEmpty()) {
+    toasts->show(QStringLiteral("warning"), QStringLiteral("Enter a workspace path"), QString());
+    return;
+  }
+  if (m_saving) return;
+  m_saving = true;
+  publishSave();
   const QString markdown = plan.value(QStringLiteral("markdown")).toString();
-  const QString relativePath = path.trimmed().isEmpty() ? fileName(markdown) : path.trimmed();
   m_client->call(this, environmentId, QStringLiteral("projects.writeFile"),
                  QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("relativePath"), relativePath}, {QStringLiteral("contents"), exported(markdown)}},
-                 [toasts, relativePath](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, toasts, relativePath](const QJsonValue& result, const std::optional<QString>& error) {
+                   m_saving = false;
                    if (error) {
+                     publishSave();
                      toasts->show(QStringLiteral("error"), QStringLiteral("Could not save plan"),
                                   error->isEmpty() ? QStringLiteral("An error occurred while saving.") : *error);
                      return;
                    }
+                   ++m_saved;
+                   publishSave();
                    const QString saved = result.toObject().value(QLatin1String("relativePath")).toString(relativePath);
                    toasts->show(QStringLiteral("success"), QStringLiteral("Plan saved to workspace"), saved);
                  });

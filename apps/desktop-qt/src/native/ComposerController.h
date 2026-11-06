@@ -299,6 +299,8 @@ private:
     // The text to give back if the send fails; empty for none.
     QString prompt;
     QString messageId;
+    // Feedback on, or the implementing of, a proposed plan.
+    bool planFollowUp = false;
   };
   // A prompt on its way to the MC, kept with the drafts until the MC answers
   // it: one a quit, crash or dropped connection cut off comes back to its

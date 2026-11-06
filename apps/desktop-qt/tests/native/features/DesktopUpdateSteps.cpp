@@ -559,7 +559,7 @@ const Steps steps([] {
     install(world);
   });
   step(QStringLiteral("the user is told %1 with the reason").arg(q), [](World& world, const Captures& c, const Table&) {
-    toast(world, c[0], fake().reason);
+    toast(world, c[0], world.reason.isEmpty() ? fake().reason : world.reason);
   });
   step(QStringLiteral("the user is told %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     toast(world, c[0], c[1] == QLatin1String("the reason this build cannot update itself") ? fake().reason : c[1]);
