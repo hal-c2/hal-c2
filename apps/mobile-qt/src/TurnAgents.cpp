@@ -1,5 +1,7 @@
 #include "TurnAgents.h"
 
+#include "SubagentDisplay.h"
+
 #include <QSet>
 
 #include <algorithm>
@@ -160,7 +162,7 @@ QVariant TurnAgents::data(const QModelIndex& index, int role) const {
     case IdRole:
       return text(agent, QLatin1String("id"));
     case TitleRole: {
-      const QString title = text(agent, QLatin1String("title")).trimmed();
+      const QString title = subagents::displayTitle(text(agent, QLatin1String("title")).trimmed());
       if (!title.isEmpty()) return title;
       const QString prompt = text(agent, QLatin1String("prompt")).trimmed().section(QLatin1Char('\n'), 0, 0);
       return prompt.isEmpty() ? QStringLiteral("Subagent") : prompt;

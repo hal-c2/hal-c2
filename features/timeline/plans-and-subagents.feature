@@ -314,7 +314,7 @@ Feature: Plans and subagents
     Then the worker's notification reads "Tax tests finished"
     And the notification links to the worker's thread
 
-  @desktop @backlog-mobile
+  @desktop
   Scenario: A finished task's result is kept apart from the agent's replies until opened
     Given a task the agent delegated as "Tax tests" finished with "12 tests added"
     When the user reads the parent thread
@@ -340,7 +340,7 @@ Feature: Plans and subagents
     And the user can open the parent
 
   # Also proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread.
-  @desktop @backlog-mobile @backlog-tui
+  @desktop
   Scenario: A result waiting to wake the parent names its worker and opens its thread
     Given the agent delegated a task and chose to carry on
     And the subagent finishes with "12 tests added"
@@ -618,7 +618,7 @@ Feature: Plans and subagents
     And the entry stays open or closed the way the user left it while the thread is open
 
   # Legacy: packages/client-runtime/src/state/subagentDisplay.ts (summarizeSubagentStatuses)
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: A group of subagents counts what is still working first and then the outcomes
     Given the agent started a group of subagents of which <states>
     Then the group reads "<summary>"
@@ -655,7 +655,7 @@ Feature: Plans and subagents
     Then it shows the avatars of the first three and "+2"
 
   # Legacy: packages/client-runtime/src/state/subagentDisplay.ts (formatSubagentDisplayTitle)
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: A subagent's title is shown without its provider's prefix or task path
     Given a subagent whose title is "<title>"
     When the user sees it in the timeline, the lineage or the agents list
