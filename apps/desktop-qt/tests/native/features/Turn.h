@@ -16,3 +16,17 @@ void openTurnThread(World& world);
 // its queue behind that turn (its run is "run-queued-<text>").
 void startWorkingTurn(World& world);
 void queueTurnMessage(World& world, const QString& text);
+
+class Brick;
+
+// The plan the agent proposed last (TurnSteps' "# Tax line" unless a step
+// proposed another), in its settled turn, and the markdown it proposed.
+void proposeTurnPlan(World& world, const QString& markdown);
+QString proposedTurnPlan(World& world);
+
+// The TurnRequests brick above the composer, kept as the scenario's brick.
+Brick& turnRequestsBrick(World& world);
+
+// "the user types": into the composer, when it offers a plan's follow-up and
+// no command palette is open.
+bool planFeedbackTypes(World& world, const QString& text);
