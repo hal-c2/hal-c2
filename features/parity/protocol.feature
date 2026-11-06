@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15951
+#   https://github.com/pingdotgg/t3code/pull/16118
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (@version 3, client and server frames, shapes, decode)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (hello, snapshot, events, live, resync, end, shell.*, config.*, rpc.*)
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /ws)
@@ -217,3 +219,11 @@ Feature: Protocol 3 wire parity
     Given a client that speaks only the TypeScript server's orchestration protocol
     When it connects to the MC's socket
     Then the MC serves its requests
+
+  @backlog @shared
+  Scenario: A newer MC's unknown union member does not break an older client
+    Given the MC sends a thread item, event, attachment or project icon kind the client does not know
+    When the client decodes it
+    Then it ignores that member, or shows a project's default icon
+    And the thread still synchronizes
+    And a known kind with a broken payload still fails

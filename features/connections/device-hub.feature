@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12402
 #   apps/server-ex/lib/hal_c2/devices.ex (device.list, device.open, device.close, device.shutdown,
 #     device.detail, device.action, device.testHost, devices shape, platform reasons)
 #   apps/server-ex/lib/hal_c2/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
@@ -560,3 +561,11 @@ Feature: Device hub on an MC
     Given auto-show floating preview is off
     When an agent opens a device in the thread the user is watching
     Then the device opens as a side panel tab instead of floating
+
+  @backlog @mc
+  Scenario: The device hub finds the runtime directory on Linux
+    Given an MC on Linux started without XDG_RUNTIME_DIR
+    And "/run/user/<uid>" exists and is owned by that user
+    When the hub looks for the emulator's token
+    Then it uses that directory
+    And an explicit value is kept

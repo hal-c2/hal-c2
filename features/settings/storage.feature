@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16231
 #   apps/server-ex/lib/hal_c2/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
 #   apps/server/src/storageCleanup.ts (deletion effects finished, symbolic links, numbered rotations, settings re-read, independent steps)
 #   apps/server/src/workspace/workspaceLease.ts (removal and terminal start share one lease per folder)
@@ -254,3 +255,9 @@ Feature: Storage cleanup
       When the user turns it off
       Then the rule shows as off
       And no rotated log is deleted by age
+
+  @backlog @shared
+  Scenario: Worktree location is a per-machine setting
+    When the user opens the storage settings
+    Then the worktree location is at the top of the worktrees section, empty for the default
+    And it is hidden at project scope

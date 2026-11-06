@@ -30,13 +30,16 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [Chris Deeming](https://github.com/chrisdeeming)
 - chukfinley
 - [Dara Adedeji](https://github.com/SunkenInTime)
+- [Dipangshu Roy](https://github.com/Droyder7)
 - [Dominic Roy](https://github.com/dominic-r)
 - [eimexdev](https://github.com/eimexdev)
 - [Ephraim](https://github.com/Ephraim-9)
+- [Erik Thorelli](https://github.com/esthor)
 - eshaan Sood
 - [Exotic](https://github.com/extoci)
 - [Gabriel De Andrade](https://github.com/gabrielelpidio)
 - [Guillermo Casanova](https://github.com/Gigioxx)
+- [Hubert Bieszczad](https://github.com/Brentlok)
 - [Igor Makowski](https://github.com/Mnigos)
 - [Ishaan Kothari](https://github.com/ishaanko)
 - [Jake Leventhal](https://github.com/jakeleventhal)
@@ -45,11 +48,13 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [kamkm](https://github.com/Kamkmgamer)
 - [Khai Shern Toh](https://github.com/Leos-Khai)
 - [Kriday Dave](https://github.com/kridaydave)
+- [Lakshmi Tanmay](https://github.com/voltcrash)
 - [MacKinley Smith](https://github.com/mackinleysmith)
 - [maco](https://github.com/macodev00)
 - [maria-rcks](https://github.com/maria-rcks)
 - [Mike Olson](https://github.com/mwolson)
 - [Morgana Allen](https://github.com/callmemorgan)
+- [Muhammad Waleed](https://github.com/walid-baharwal)
 - NaveDanan
 - [Nicholas Wasmiller](https://github.com/Derpedyea)
 - [Nick Anisimov](https://github.com/none23)
@@ -60,13 +65,17 @@ Agents and bots that co-wrote those pull requests are not listed.
 - PB
 - Primož Ajdišek
 - [Pujitha Paladugu](https://github.com/pujitha24)
+- [Rahul Mishra](https://github.com/BlankParticle)
+- [Rakshith Bhat](https://github.com/RakshithBhat03)
 - [Ryan Ilano](https://github.com/ryanilano)
+- [Scott Norteman](https://github.com/ScottN-PV)
 - [scratchyone](https://github.com/scratchyone)
 - [SegFaultZero](https://github.com/SegFaultZero)
 - [Seth](https://github.com/Sethmr)
 - [Shirish Pothi](https://github.com/shirishpothi)
 - [shivam](https://github.com/shivamhwp)
 - [Simone](https://github.com/Lucenx9)
+- T3 Code Test
 - [Theo Browne](https://github.com/t3dotgg)
 - [Tristan Knight](https://github.com/tris203)
 - [Utkarsh Patil](https://github.com/UtkarshUsername)

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/8645
 #   docs/user/source-control.md (Troubleshooting)
 #   packages/contracts/src/vcs.ts (VcsProcessExitError, VcsProcessTimeoutError, VcsOutputLimitError, VcsProcessSpawnError, VcsRepositoryDetectionError, VcsUnsupportedOperationError)
 #   packages/contracts/src/git.ts (GitManagerError, GitPullRequestMaterializationError, TextGenerationError)
@@ -227,3 +228,9 @@ Feature: When source control goes wrong
       | "https://example.com/acme/shop#readme"                   | "https://example.com/acme/shop"                 |
       | "acme/shop" typed with a line break and a tab inside     | "acme/shop" with each one shown as a space      |
       | a name of 1,000 characters                               | its first 256 characters                        |
+
+  @backlog @mc
+  Scenario: A failed git command names its cause
+    Given a git command fails with a well-known error
+    When the failure is shown
+    Then the message names the cause

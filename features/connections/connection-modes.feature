@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15468
 #   docs/user/remote-access.md (Pair over a LAN or private network, Tailscale HTTPS, Hosted web app,
 #     Desktop-managed SSH)
 #   docs/internals/remote.md
@@ -457,3 +458,20 @@ Feature: How clients reach an environment
     Given the environment offers only a plain HTTP address
     When the hosted app tries to connect
     Then the browser blocks the connection
+
+  @backlog @mc @shared
+  Scenario: A client learns an environment's other addresses once connected
+    Given an MC bound to a LAN address and a tailnet address
+    And a client paired over only one of them
+    When the client's session is ready
+    Then the MC reports the addresses it is bound to
+    And the client saves the new ones as routes marked as found automatically, ranked by kind
+    And a loopback-only MC reports none
+
+  @backlog @shared
+  Scenario: A learned route follows the host's address
+    Given a client holds a route it learned from the MC
+    When the MC stops reporting that address and reports a new one
+    Then the old learned route is dropped and the new one saved
+    And a route the user paired is never rewritten
+    And the live session is not replaced by the change, only by the better-route check

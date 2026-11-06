@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15892
+#   https://github.com/pingdotgg/t3code/pull/15592
 #   https://github.com/pingdotgg/t3code/pull/13999
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -996,3 +998,17 @@ Feature: Claude
     When a follow-up arrives with fast mode off where the first turn left it unset
     Then the follow-up is accepted and the background command keeps running
     And a real model or settings change is still refused while that command runs
+
+  @backlog @mc @plugin-claude
+  Scenario: Child completion notices wait for Claude's pending tools
+    Given Claude has tool calls pending
+    When a delegated task finishes, or a scheduled prompt comes due
+    Then the notice is queued and delivered after the active run ends
+    And a tool call Claude did not execute shows as cancelled, not as denied permission
+    And the user's own steering still goes in at once
+
+  @backlog @mc @shared @plugin-claude
+  Scenario: Claude's goal shows as a work state
+    When the user sends "/goal" with an objective in a Claude thread
+    Then the goal's state and the number of checks show in the thread
+    And the goal shows complete only when Claude ends the turn normally

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15807
 #   apps/mobile/src/features/threads/ (composer send modes, queued messages, command popover)
 #   apps/mobile/src/features/threads/ThreadQueueControl.tsx (queued messages: editing, held queue, empty)
 #   apps/mobile/src/features/threads/use-composer-command-menu.ts, ComposerCommandPopover.tsx (triggers, skills, empty and loading texts)
@@ -1260,3 +1261,10 @@ Feature: Writing to an agent from a phone
     When the user opens the model or mode menu above the composer
     Then the menu is shown
     And the keyboard stays open
+
+  @backlog @mobile
+  Scenario: A message the MC rejects says why in the thread
+    Given the MC refuses a sent message
+    When the text returns to the composer
+    Then the reason shows above that thread's composer
+    And it is not shown on the add-environment screen

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15594
+#   https://github.com/pingdotgg/t3code/pull/16167
+#   https://github.com/pingdotgg/t3code/pull/16220
+#   https://github.com/pingdotgg/t3code/pull/16231
 #   https://github.com/pingdotgg/t3code/pull/13314
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
@@ -572,3 +576,29 @@ Feature: Worktrees and setup scripts
     And the project's default workspace is a new worktree
     When the user opens a new thread in "shop"
     Then that thread's worktree starts from origin
+
+  @backlog @mc
+  Scenario: A new worktree honors the submodule setting
+    Given the submodule setting is "skip" and the project has no worktree script of its own
+    When a worktree is created
+    Then submodules are not initialized
+
+  @backlog @mc
+  Scenario Outline: A temporary worktree branch gets its name from the prefix
+    Given <state>
+    When a worktree thread is provisioned
+    Then its temporary branch is <branch>
+    And the background rename to a generated name still runs for it
+
+    Examples:
+      | state                                 | branch           |
+      | no branch named after the prefix      | "<prefix>/<hex>" |
+      | a local branch named exactly <prefix> | "<prefix>-<hex>" |
+
+  @backlog @mc @shared
+  Scenario: The user chooses where new worktrees are created
+    Given the worktree location setting holds an absolute path, including on another drive
+    When a worktree is created
+    Then it is at "<location>/<repo>/<branch>" and existing worktrees stay put
+    And a path that is not absolute on the MC fails the creation, pointing to the setting
+    And storage cleanup accepts both the default and the custom folder

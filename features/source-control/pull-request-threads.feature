@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14918
+#   https://github.com/pingdotgg/t3code/pull/15415
+#   https://github.com/pingdotgg/t3code/pull/15804
+#   https://github.com/pingdotgg/t3code/pull/16002
+#   https://github.com/pingdotgg/t3code/pull/16095
+#   https://github.com/pingdotgg/t3code/pull/16203
+#   https://github.com/pingdotgg/t3code/pull/16204
+#   https://github.com/pingdotgg/t3code/pull/16208
+#   https://github.com/pingdotgg/t3code/pull/16235
+#   https://github.com/pingdotgg/t3code/pull/16270
 #   https://github.com/pingdotgg/t3code/pull/13061
 #   https://github.com/pingdotgg/t3code/pull/13211
 #   docs/user/source-control.md (Linked pull requests)
@@ -838,8 +848,91 @@ Feature: Threads that work on or link pull requests
   @backlog @mc
   Scenario: Watching ends when it can no longer help
     Given a watched pull request
-    When it merges or closes, is unwatched, brings ten comment-only wakes in a row, or cannot be read for 15 minutes
+    When it merges or closes, is unwatched, brings ten comment-only wakes in a row, or cannot be read eight times in a row
     Then watching stops and the agent is told why
+
+  @backlog @mc
+  Scenario: A rate limit never ends a watch
+    Given a watched pull request whose host refuses reads until a reset time
+    When the watch comes due before the reset
+    Then no read is made and the watch carries on
+    And reads that fail for another reason are the only ones that count toward giving up
+
+  @backlog @mc
+  Scenario: Threads watching the same pull request share one read
+    Given two threads in one project watch the same pull request
+    When the watches are checked
+    Then the pull request is read once for both
+
+  @backlog @mc
+  Scenario: A pull request with nothing in flight is read only when it changed
+    Given a watched pull request whose state, checks, mergeability and review decision have not changed
+    When the watch is checked
+    Then one cheap question about every watched pull request on the host decides whether to read it in full
+    And a pull request with checks still running is read each time
+    And one nothing seems to have changed on is still read in full every 30 minutes, to catch edited review comments
+
+  @backlog @mc
+  Scenario: A bot editing its review comment wakes the agent
+    Given a watched pull request with a bot's summary comment the agent has already seen
+    When the bot edits that comment, which keeps its id and creation time
+    Then the agent is woken once for the edit
+    And a reaction on the comment wakes nothing
+
+  @backlog @mc
+  Scenario: A required check that was never seen pending still counts
+    Given a watched pull request whose required checks all passed
+    When a required check appears and finishes between two reads
+    Then the agent is told the required checks passed again, with the new count
+    And changing the head commit or a failing gate clears what the watch remembers
+
+  @backlog @mc
+  Scenario Outline: Putting a thread away stops its watches
+    Given a thread watching a pull request
+    When the thread is <action>
+    Then every watch stops and the pull request links stay
+    And no new watch can start until the thread is brought back
+
+    Examples:
+      | action                |
+      | settled by the user   |
+      | settled automatically |
+      | archived              |
+
+  @backlog @mc
+  Scenario: Stop also stops what the thread delegated and watches
+    Given a thread with delegated tasks still running and a pull request watch
+    When the user stops the thread
+    Then the delegated tasks stop and their watches end
+    And no watch wake starts another turn on the stopped thread
+    And cancelling a finished task also ends the watches its thread left
+
+  @backlog @mc
+  Scenario: A subagent cannot watch a pull request
+    Given a subagent of a thread that owns a pull request
+    When the subagent asks to watch it
+    Then the tool says the parent thread owns the pull request
+    And a watch left on a subagent ends on the next pass
+
+  @backlog @mc
+  Scenario: A new subagent does not inherit its parent's pull request links
+    Given a parent thread linked to pull request 123
+    When it delegates a task
+    Then the child thread starts with no pull request links
+
+  @backlog @shared
+  Scenario: A thread watching a pull request stays in Working between wakes
+    Given a thread whose agent ended its turn while watching a pull request
+    When nothing has woken it yet
+    Then the thread stays in Working with a "Waiting" status and does not settle by itself
+    And it returns to the inbox when the watch ends, the pull request merges or closes, the agent asks a question, or the run fails
+
+  @backlog @desktop @mobile
+  Scenario: The thread details card shows and stops pull request watches
+    Given a thread watching an open pull request
+    When the user opens the thread's details
+    Then that pull request's row shows it is watched
+    And one click stops the watch the same way the pull request panel does
 
   @backlog @shared
   Scenario: The pull request panel opens for any linked pull request

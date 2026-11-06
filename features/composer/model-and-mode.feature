@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16069
 #   https://github.com/pingdotgg/t3code/pull/13590
 #   https://github.com/pingdotgg/t3code/pull/13555
 #   docs/user/composer.md (custom models, remembered model defaults)
@@ -521,3 +522,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user opens the model's options
     Then the agent "plan" is not offered
     And a thread saved with the agent "plan" sends its next turn without it
+
+  @backlog @shared
+  Scenario: The traits trigger names reasoning and speed in text
+    Given Fast is on with high reasoning
+    When the user looks at the traits trigger
+    Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon

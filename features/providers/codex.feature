@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15546
+#   https://github.com/pingdotgg/t3code/pull/15592
 #   https://github.com/pingdotgg/t3code/pull/13547
 #   https://github.com/pingdotgg/t3code/pull/14290
 #   https://github.com/pingdotgg/t3code/pull/14304
@@ -911,3 +913,25 @@ Feature: Codex
     When the user sends a turn
     Then the MC unarchives that same session and resumes it once
     And an unrelated resume error is shown as it is
+
+  @backlog @mc @plugin-codex
+  Scenario: Stop ends a Codex command after its thread was settled
+    Given Codex left a command running and the thread was settled
+    And Codex has since unloaded the thread
+    When the user presses Stop
+    Then the command counts as already stopped
+    And the running banner clears
+
+  @backlog @mc @shared @plugin-codex
+  Scenario Outline: /goal drives Codex's own goal
+    When the user sends "<input>" in a Codex thread
+    Then the thread uses Codex's goal for it
+    And while a goal is active, Codex's follow-up turns stay in the same run and the thread stays Working
+
+    Examples:
+      | input                |
+      | /goal ship the fix   |
+      | /goal pause          |
+      | /goal resume         |
+      | /goal clear          |
+      | /goal                |
