@@ -742,7 +742,7 @@ const Steps steps([] {
     expect(body.startsWith(QLatin1String("- Add the line")) && !body.contains(c[0]), QStringLiteral("the plan's text reads \"%1\"").arg(body));
   });
   // A long plan's preview on the Timeline brick (ProposedPlanCard).
-  step(QStringLiteral("the plan card shows (its first 10 lines followed by an ellipsis|all 5 of its lines and a way to expand them|the whole plan and no way to collapse it)"),
+  step(QStringLiteral("the plan card shows (its first 10 lines followed by an ellipsis|the whole plan and no way to collapse it)"),
        [](World& world, const Captures& c, const Table&) {
          const int row = lastRowOf(world, QStringLiteral("plan"));
          const QString preview = role(timeline(world), row, TimelineModel::PreviewRole).toString();
@@ -752,8 +752,8 @@ const Steps steps([] {
            expect(preview.isEmpty() && button.isEmpty(), QStringLiteral("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
            return;
          }
-         QStringList expected = body.split(QLatin1Char('\n')).mid(0, c[0].startsWith(QLatin1String("its first 10")) ? 10 : 5);
-         if (c[0].startsWith(QLatin1String("its first 10"))) expected << QString() << QStringLiteral("...");
+         QStringList expected = body.split(QLatin1Char('\n')).mid(0, 10);
+         expected << QString() << QStringLiteral("...");
          expect(preview == expected.join(QLatin1Char('\n')) && button == QLatin1String("Expand plan"),
                 QStringLiteral("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
        });

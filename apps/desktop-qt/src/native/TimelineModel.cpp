@@ -455,8 +455,9 @@ QString planBody(const QString& markdown) {
 
 // A long plan's preview (apps/web/src/proposedPlan.ts
 // buildCollapsedProposedPlanPreviewMarkdown, ProposedPlanCard's canCollapse):
-// its first ten lines with text, and "..." when there is more; empty for a plan
-// short enough to show whole.
+// its first ten lines with text, and "..." after them; empty for a plan short
+// enough to show whole, or one whose ten lines are all of it (the web still
+// offers Expand there, which then changes nothing).
 QString planPreview(const QString& markdown) {
   if (markdown.size() <= 900 && markdown.count(QLatin1Char('\n')) + 1 <= 20) return {};
   constexpr int maxLines = 10;
@@ -476,8 +477,9 @@ QString planPreview(const QString& markdown) {
     if (shown) ++visible;
   }
   while (!preview.isEmpty() && preview.constLast().trimmed().isEmpty()) preview.removeLast();
+  if (!more) return {};
   if (preview.isEmpty()) return planTitle(markdown);
-  if (more) preview << QString() << QStringLiteral("...");
+  preview << QString() << QStringLiteral("...");
   return preview.join(QLatin1Char('\n'));
 }
 

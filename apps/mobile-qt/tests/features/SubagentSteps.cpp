@@ -251,13 +251,20 @@ QVariantMap turnState(World& world) {
   return world.state(S("turn")).toMap();
 }
 
+// The plan card's Expand plan / Collapse plan, when it offers one.
+QString planExpandText(World& world) {
+  world.sync();
+  QQuickItem* button = world.find(S("planExpand"));
+  return button && button->isVisible() ? button->property("text").toString() : QString();
+}
+
 // A proposed plan in a settled run of the thread in plan mode.
-void proposePlan(World& world) {
+void proposePlan(World& world, const QString& markdown = kPlan) {
   startRun(world, 30);
   updateRow(world.mc, world.thread, {{S("interactionMode"), S("plan")}});
-  addItem(world, S("proposed_plan"), {{S("markdown"), kPlan}, {S("planId"), S("plan-1")}});
+  addItem(world, S("proposed_plan"), {{S("markdown"), markdown}, {S("planId"), S("plan-1")}});
   set(world, S("plan"), S("plan-1"),
-      {{S("id"), S("plan-1")}, {S("kind"), S("proposed_plan")}, {S("status"), S("active")}, {S("runId"), world.run}, {S("markdown"), kPlan}});
+      {{S("id"), S("plan-1")}, {S("kind"), S("proposed_plan")}, {S("status"), S("active")}, {S("runId"), world.run}, {S("markdown"), markdown}});
   settleRun(world);
   world.waitFor([&] { return turnState(world).value(S("plan")).isValid(); },
                 [&] { return S("the plan to be offered; the turn is %1").arg(show(turnState(world))); });
@@ -328,6 +335,39 @@ const Steps steps([] {
 
   // Implementing or refining it from the composer.
   step(S("the agent has proposed a plan"), [](World& world, const Captures&, const Table&) { proposePlan(world); });
+
+  // A long plan's preview, opened and closed again (ProposedPlanCard).
+  step(S("the agent has proposed a plan (of 30 short lines|of 1,000 characters on 5 lines|of 15 short lines)"), [](World& world, const Captures& c, const Table&) {
+    QStringList lines;
+    for (int n = 1; n <= (c[0] == S("of 30 short lines") ? 30 : c[0] == S("of 15 short lines") ? 15 : 5); ++n)
+      lines.append(S("- Step %1").arg(n) + (c[0].startsWith(S("of 1,000")) ? S(" ") + QString(200, QLatin1Char('x')) : QString()));
+    proposePlan(world, S("# Tax line\n\n") + lines.join(QLatin1Char('\n')));
+  });
+  step(S("the plan card shows (its first 10 lines followed by an ellipsis|the whole plan and no way to collapse it)"), [](World& world, const Captures& c, const Table&) {
+    const int row = rowOf(world, S("plan"));
+    const QString preview = role(timeline(world), row, TimelineModel::PreviewRole).toString();
+    const QString body = role(timeline(world), row, TimelineModel::TextRole).toString();
+    const QString button = planExpandText(world);
+    if (c[0].startsWith(S("the whole plan"))) {
+      expect(preview.isEmpty() && button.isEmpty(), S("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
+      return;
+    }
+    const QString expected = body.split(QLatin1Char('\n')).mid(0, 10).join(QLatin1Char('\n')) + S("\n\n...");
+    expect(preview == expected && button == S("Expand plan"), S("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
+  });
+  step(S("the user chooses \"(Expand plan|Collapse plan)\""), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return planExpandText(world) == c[0]; }, [&] { return S("the plan card to offer \"%1\"; it offers \"%2\"").arg(c[0], planExpandText(world)); });
+    world.tap(S("planExpand"));
+    world.sync();
+  });
+  step(S("the whole plan is shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return role(timeline(world), rowOf(world, S("plan")), TimelineModel::ExpandedRole).toBool() && planExpandText(world) == S("Collapse plan"); },
+                  [&] { return S("the plan card offers \"%1\"").arg(planExpandText(world)); });
+  });
+  step(S("the plan returns to its preview"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !role(timeline(world), rowOf(world, S("plan")), TimelineModel::ExpandedRole).toBool() && planExpandText(world) == S("Expand plan"); },
+                  [&] { return S("the plan card offers \"%1\"").arg(planExpandText(world)); });
+  });
   step(S("the user implements the plan with no feedback"), [](World& world, const Captures&, const Table&) {
     world.tap(S("planImplement"));
     world.sync();

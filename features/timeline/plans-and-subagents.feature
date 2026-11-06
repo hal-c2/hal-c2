@@ -124,7 +124,7 @@ Feature: Plans and subagents
     Then the plan card is titled "Add a tax line"
     And the plan's text starts after the "Summary" heading
 
-  @desktop
+  @desktop @mobile
   Scenario Outline: A long plan is shown as a preview that can be opened
     Given the agent has proposed a plan <size>
     Then the plan card shows <shown>
@@ -132,10 +132,10 @@ Feature: Plans and subagents
     Examples:
       | size                            | shown                                       |
       | of 30 short lines               | its first 10 lines followed by an ellipsis  |
-      | of 1,000 characters on 5 lines  | all 5 of its lines and a way to expand them |
+      | of 1,000 characters on 5 lines  | the whole plan and no way to collapse it    |
       | of 15 short lines               | the whole plan and no way to collapse it    |
 
-  @desktop
+  @desktop @mobile
   Scenario: A previewed plan is opened and closed again
     Given the agent has proposed a plan of 30 short lines
     When the user chooses "Expand plan"
