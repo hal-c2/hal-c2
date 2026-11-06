@@ -24,6 +24,14 @@ Item {
     readonly property var plan: shown ? turn.plan ?? null : null
     readonly property var queue: shown ? turn.queue : []
     readonly property var waiting: shown ? turn.waiting ?? [] : []
+    // The running turn's task list, summed up; `tasksOpen` lists every step.
+    // It closes on another thread, and when the list goes (an approval or a
+    // question takes its place, or the turn ends).
+    readonly property var tasks: shown ? turn.tasks ?? null : null
+    property bool tasksOpen: false
+    readonly property string tasksThread: shown ? turn.threadKey : ""
+    onTasksThreadChanged: tasksOpen = false
+    onTasksChanged: if (tasks === null) tasksOpen = false
     // The MC keeps the queue for the user (after a restart or a usage limit)
     // until it is resumed.
     readonly property bool queueHeld: shown && turn.queueHeld === true
@@ -46,7 +54,7 @@ Item {
 
     // Whether the turn waits on anything. The height follows this and not
     // `visible`, which a host may bind to more than this.
-    readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0 || waiting.length > 0
+    readonly property bool pending: approval !== null || question !== null || plan !== null || tasks !== null || queue.length > 0 || waiting.length > 0
 
     visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
@@ -111,6 +119,114 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - requests.gutter * 2, requests.maximumCardWidth)
         spacing: Theme.space.sm
+
+        // The agent's tasks (ComposerTasksBadge): the current step and how
+        // many are done, opening to every step with its status and time.
+        ShellCard {
+            objectName: "tasks"
+            Layout.fillWidth: true
+            visible: requests.tasks !== null
+            implicitHeight: tasksColumn.implicitHeight + 12
+
+            ColumnLayout {
+                id: tasksColumn
+
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 2
+
+                ShellButton {
+                    id: tasksToggle
+
+                    objectName: "tasksToggle"
+                    Layout.fillWidth: true
+                    implicitHeight: 28
+                    subtle: true
+                    Accessible.name: qsTr("%1: %2 of %3 complete. Current task: %4")
+                        .arg(requests.tasksOpen ? qsTr("Collapse tasks") : qsTr("Tasks"))
+                        .arg(requests.tasks?.completed ?? 0).arg(requests.tasks?.total ?? 0).arg(requests.tasks?.current ?? "")
+                    onClicked: requests.tasksOpen = !requests.tasksOpen
+                    contentItem: RowLayout {
+                        spacing: Theme.space.sm
+
+                        ShellIcon {
+                            name: "list-todo"
+                            size: Theme.icon.sm
+                            color: requests.muted
+                        }
+                        Text {
+                            text: qsTr("Tasks")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                        Text {
+                            objectName: "tasksCurrent"
+                            Layout.fillWidth: true
+                            text: requests.tasks?.current ?? ""
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            objectName: "tasksProgress"
+                            text: "%1/%2".arg(requests.tasks?.completed ?? 0).arg(requests.tasks?.total ?? 0)
+                            color: (requests.tasks?.completed ?? 0) >= (requests.tasks?.total ?? 1) ? Theme.palette.color("success", "#22c55e") : requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                        ShellIcon {
+                            name: requests.tasksOpen ? "chevron-down" : "chevron-up"
+                            size: Theme.icon.sm
+                            color: requests.muted
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: requests.tasksOpen ? requests.tasks?.steps ?? [] : []
+
+                    RowLayout {
+                        id: taskStep
+
+                        required property var modelData
+                        objectName: "taskStep"
+                        readonly property string step: modelData.text
+                        readonly property string status: modelData.status
+                        readonly property string duration: modelData.duration
+                        Layout.fillWidth: true
+                        Layout.leftMargin: Theme.space.sm
+                        Layout.rightMargin: Theme.space.sm
+                        spacing: Theme.space.sm
+                        Accessible.role: Accessible.ListItem
+                        Accessible.name: "%1: %2".arg(status === "completed" ? qsTr("Completed") : status === "running" ? qsTr("Running") : qsTr("Pending")).arg(step)
+
+                        ShellIcon {
+                            name: taskStep.status === "completed" ? "check" : taskStep.status === "running" ? "circle-dot" : "circle"
+                            size: Theme.icon.sm
+                            color: taskStep.status === "completed" ? Theme.palette.color("success", "#22c55e")
+                                : taskStep.status === "running" ? Theme.palette.color("accent", "#3b6fe0") : Qt.alpha(requests.muted, 0.5)
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: taskStep.step
+                            color: taskStep.status === "running" ? requests.foreground : requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                            wrapMode: Text.Wrap
+                        }
+                        Text {
+                            text: taskStep.duration
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                    }
+                }
+            }
+        }
 
         // The pending approval.
         ShellCard {
@@ -414,14 +530,29 @@ Item {
                     Layout.fillWidth: true
                     spacing: 2
 
-                    Text {
+                    // "Plan ready" and the plan's heading (ComposerPlanFollowUpBanner).
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: requests.plan?.title ?? ""
-                        color: requests.foreground
-                        font.family: requests.uiFont
-                        font.pixelSize: Theme.type.body.size
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
+                        spacing: Theme.space.sm
+
+                        Text {
+                            objectName: "planReady"
+                            text: qsTr("Plan ready")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.body.size
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            objectName: "planHeading"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: requests.plan?.heading ?? ""
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.body.size
+                            elide: Text.ElideRight
+                        }
                     }
 
                     Text {
@@ -471,17 +602,20 @@ Item {
                             objectName: "planSave"
                             text: qsTr("Save to workspace…")
                             iconName: "save"
-                            onTriggered: planSaveDialog.open()
+                            // Without a workspace the save only says so.
+                            onTriggered: (requests.plan?.workspaceRoot ?? "").length > 0 ? planSaveDialog.open() : Shell.dispatch("plan.save", {})
                         }
                     }
                 }
 
+                // Implements the plan, or refines it once feedback is typed.
                 ShellButton {
                     objectName: "planImplement"
+                    readonly property bool refine: requests.composerModel?.planAction === "refine"
                     implicitHeight: 28
                     primary: true
-                    text: qsTr("Implement")
-                    onClicked: Shell.dispatch("composer.plan.implement", {})
+                    text: refine ? qsTr("Refine") : qsTr("Implement")
+                    onClicked: refine ? Shell.dispatch("composer.submit", {}) : Shell.dispatch("composer.plan.implement", {})
                 }
             }
         }
@@ -826,11 +960,16 @@ Item {
         }
     }
 
-    // Where in the workspace the plan is saved; empty takes the
-    // plan's own file name.
+    // Where in the workspace the plan is saved, starting from its file name.
+    // It closes once the plan is written and stays open when the write fails
+    // or no path is given, so another can be tried.
     Popup {
         id: planSaveDialog
         objectName: "planSaveDialog"
+
+        readonly property int saved: Shell.state.planSave?.saved ?? 0
+        readonly property bool saving: Shell.state.planSave?.saving === true
+        onSavedChanged: close()
 
         parent: Overlay.overlay
         scale: Shell.state.layout?.zoom ?? 1
@@ -840,9 +979,10 @@ Item {
         width: 380
         modal: true
         padding: 16
+        onAboutToShow: planSavePath.text = requests.plan?.fileName ?? ""
         onOpened: {
-            planSavePath.text = "";
             planSavePath.forceActiveFocus();
+            planSavePath.selectAll();
         }
 
         Overlay.modal: ShellScrim {}
@@ -857,6 +997,15 @@ Item {
                 font.family: requests.uiFont
                 font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
+            }
+            Text {
+                objectName: "planSaveHint"
+                Layout.fillWidth: true
+                text: qsTr("Enter a path relative to %1.").arg(requests.plan?.workspaceRoot ?? "")
+                color: requests.muted
+                font.family: requests.uiFont
+                font.pixelSize: Theme.type.meta.size
+                wrapMode: Text.Wrap
             }
             ShellTextField {
                 id: planSavePath
@@ -883,13 +1032,11 @@ Item {
 
                     objectName: "planSaveConfirm"
                     primary: true
-                    text: qsTr("Save")
-                    onClicked: {
-                        Shell.dispatch("plan.save", {
-                            path: planSavePath.text.trim()
-                        });
-                        planSaveDialog.close();
-                    }
+                    enabled: !planSaveDialog.saving
+                    text: planSaveDialog.saving ? qsTr("Saving...") : qsTr("Save")
+                    onClicked: Shell.dispatch("plan.save", {
+                        path: planSavePath.text.trim()
+                    })
                 }
             }
         }

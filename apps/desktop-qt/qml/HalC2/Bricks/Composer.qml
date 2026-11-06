@@ -1425,7 +1425,10 @@ Rectangle {
                             hoverEnabled: true
                             scale: down ? 0.97 : 1
                             Accessible.role: Accessible.Button
-                            Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue") : qsTr("Send")
+                            // With a plan offered, sending implements it, or refines it with what was typed.
+                            readonly property string planAction: composer.model?.planAction ?? ""
+                            Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
+                                : planAction === "refine" ? qsTr("Refine") : planAction === "implement" ? qsTr("Implement") : qsTr("Send")
                             ToolTip.visible: hovered && followUp.length > 0
                             ToolTip.delay: 400
                             ToolTip.text: followUp === "steer"
