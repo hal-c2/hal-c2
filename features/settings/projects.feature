@@ -6,6 +6,9 @@
 #   apps/web/src/shell/HalC2ShellBridge.tsx (project.remove)
 #   apps/tui/src/features.backlog.test.ts (project-lifecycle)
 #   packages/contracts/src/rpc.ts (projects.mutate)
+#   https://github.com/pingdotgg/t3code/pull/14490
+#   https://github.com/pingdotgg/t3code/pull/14527
+#   https://github.com/pingdotgg/t3code/pull/14635
 
 Feature: Projects settings panel
   The Projects panel manages one project across its checkouts: its name, its icon, its
@@ -112,3 +115,57 @@ Feature: Projects settings panel
   Scenario: The panel points to other project settings
     When the user manages "shop" in settings
     Then the user is told to keep the project picked while browsing other pages to find more of its settings
+
+  @backlog @shared
+  Scenario: Add project offers only connected environments
+    Given one environment is connected and another is switched off in Connections
+    When the user starts Add project
+    Then the switched-off environment is not offered
+    And with a single connected environment the chooser is skipped
+
+  @backlog @shared
+  Scenario: Add project with no connected environment points at Connections
+    Given every environment is switched off
+    When the user starts Add project
+    Then the user is directed to Connections
+
+  @backlog @shared @mc
+  Scenario: A new project is started from just a name
+    Given a connected environment
+    When the user chooses New project and types "Pinball Stats"
+    Then the MC creates a folder "pinball-stats" under its projects directory with a README, an icon and a first commit
+    And the project is titled "Pinball Stats"
+    And a new thread opens in it
+
+  @backlog @mc
+  Scenario: A taken project folder gets a numeric suffix
+    Given a new project "Pinball Stats" already exists
+    When the user creates another new project named "Pinball Stats"
+    Then its folder is "pinball-stats-2"
+
+  @backlog @mc
+  Scenario: A new project survives a failed first commit
+    Given Git has no user name or email
+    When the user creates a new project
+    Then the project is still created
+    And a warning says why the first commit failed
+
+  @backlog @shared
+  Scenario: The new project name step names the machine
+    Given more than one environment is connected
+    When the user opens the New project name step
+    Then it lists the machines and the path line names the one chosen
+    And switching machine keeps the typed name
+
+  @backlog @shared
+  Scenario: A new project can also be published as a private repository
+    Given GitHub is signed in
+    When the user creates a new project with "Create private repository on GitHub" on
+    Then the repository is published after the project is created
+
+  @backlog @mc
+  Scenario: A cloned project shows its favicon at once
+    Given a repository with a favicon is being cloned as a project
+    When the clone finishes
+    Then the project shows the repository's favicon instead of a generated monogram
+    And no reload is needed

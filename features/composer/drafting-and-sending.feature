@@ -13,6 +13,7 @@
 #   packages/contracts/src/settings.ts (sendShortcut)
 #   apps/web/src/components/composerFooterLayout.ts, apps/web/src/components/chat/ChatComposer.tsx (when the composer shrinks to one line)
 #   apps/web/src/components/chat/CompactComposerControlsMenu.tsx (controls of a narrow composer)
+#   https://github.com/pingdotgg/t3code/pull/15050
 
 Feature: Drafting and sending a message
   The user writes a turn and sends it to the agent. Drafts survive switching
@@ -280,3 +281,10 @@ Feature: Drafting and sending a message
     Then the send control cannot be used
     When the user types "hello" into the composer
     Then the send control can be used and is the composer's accent
+
+  @backlog @shared
+  Scenario: Send and start a new thread from an existing thread
+    Given the user has written a follow-up in an existing thread
+    When the user uses Send and Start New Thread
+    Then the message is sent as usual, queued or steered while a turn runs
+    And a fresh composer opens for new work

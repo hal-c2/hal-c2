@@ -31,6 +31,8 @@
 #   apps/web/src/sidebarProjectGrouping.ts
 #   packages/client-runtime/src/state/projectGrouping.ts (the group's name, duplicate folders, the folder it opens on)
 #   packages/client-runtime/src/state/shellReducer.ts (a repository that is not resolved yet keeps the earlier one)
+#   https://github.com/pingdotgg/t3code/pull/13926
+#   https://github.com/pingdotgg/t3code/pull/15034
 
 Feature: The thread list
   The thread list shows every thread the user can act on, grouped by how much attention
@@ -725,3 +727,17 @@ Feature: The thread list
     Given threads "one" and "two" are listed above a settled shelf
     When a screen reader moves through the sidebar from its first thread
     Then "one" and then "two" are reached before the settled shelf and its footer
+
+  @backlog @desktop
+  Scenario: The Working section folds away busy threads
+    Given Working section is on in General settings
+    When threads are working, connecting or monitoring
+    Then they move into a collapsed Working section above Snoozed and Settled
+    And a thread returns to the top of the inbox when it finishes, fails or asks for approval or an answer
+    And drag reordering in the inbox is off while it is on
+
+  @backlog @shared
+  Scenario: Project order is a setting
+    When the user picks a Project order in General settings
+    Then the sidebar sorts projects that way
+    And Restore defaults resets it

@@ -26,6 +26,7 @@
 #   apps/desktop-qt/src/native/TimelineModel.cpp (windowItems, hasEarlier, loadEarlier)
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top, another thread opens at its end)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (load earlier activity control and its error)
+#   https://github.com/pingdotgg/t3code/pull/15059
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -513,3 +514,9 @@ Feature: Moving through a thread and following links
     When the client falls too far behind
     Then the client is told to resync
     And it receives everything since its last position without gaps
+
+  @backlog @shared
+  Scenario: Sending on an older thread does not jump to the top
+    Given a thread from before runs existed
+    When the user sends a message
+    Then the view stays at the bottom

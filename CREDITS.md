@@ -9,19 +9,24 @@ their pull requests the ledger cites and how far HAL-C2 has got with each.
 Agents and bots that co-wrote those pull requests are not listed.
 
 - [aaditagrawal](https://github.com/aaditagrawal)
+- [Aaron Queen](https://github.com/bompus)
 - [Adamulek123](https://github.com/Adamulek123)
 - [adeebahmad01](https://github.com/adeebahmad01)
 - [Aditya Garud](https://github.com/yashranaway)
 - [AKolenda](https://github.com/AKolenda)
 - [Alex](https://github.com/PixPMusic)
 - [Alex Southwell](https://github.com/saphid)
+- [Andrew Johnson](https://github.com/akj)
 - [Anton Bezdenezhnykh](https://github.com/GaMeRaM)
 - [Artur](https://github.com/arturict)
 - [Bear Huddleston](https://github.com/BearHuddleston)
+- [Ben Davis](https://github.com/bmdavis419)
 - benthecarman
 - [Bilal Bakr](https://github.com/Bil0000)
 - blinding-pixels
 - [Bob Fowler](https://github.com/bfowler)
+- [Cestercian](https://github.com/cestercian)
+- [Chris Deeming](https://github.com/chrisdeeming)
 - chukfinley
 - [Dara Adedeji](https://github.com/SunkenInTime)
 - [Dominic Roy](https://github.com/dominic-r)
@@ -30,28 +35,32 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [Exotic](https://github.com/extoci)
 - [Gabriel De Andrade](https://github.com/gabrielelpidio)
 - [Guillermo Casanova](https://github.com/Gigioxx)
+- [Igor Makowski](https://github.com/Mnigos)
 - [Ishaan Kothari](https://github.com/ishaanko)
 - [Jake Leventhal](https://github.com/jakeleventhal)
 - [javiergusart](https://github.com/javiergusart)
 - [Julius Marminge](https://github.com/juliusmarminge)
 - [kamkm](https://github.com/Kamkmgamer)
 - [Khai Shern Toh](https://github.com/Leos-Khai)
+- [Kriday Dave](https://github.com/kridaydave)
 - [MacKinley Smith](https://github.com/mackinleysmith)
 - [maco](https://github.com/macodev00)
 - [maria-rcks](https://github.com/maria-rcks)
+- [Mike Olson](https://github.com/mwolson)
 - [Morgana Allen](https://github.com/callmemorgan)
 - NaveDanan
 - [Nicholas Wasmiller](https://github.com/Derpedyea)
 - [Nick Anisimov](https://github.com/none23)
 - [oliver](https://github.com/flamboh)
 - [Otavio Salvador](https://github.com/otavio)
-- PB
 - [Patrik Votoček](https://github.com/Vrtak-CZ)
+- PB
 - Primož Ajdišek
 - [Pujitha Paladugu](https://github.com/pujitha24)
 - [Ryan Ilano](https://github.com/ryanilano)
 - [scratchyone](https://github.com/scratchyone)
 - [SegFaultZero](https://github.com/SegFaultZero)
+- [Seth](https://github.com/Sethmr)
 - [Shirish Pothi](https://github.com/shirishpothi)
 - [shivam](https://github.com/shivamhwp)
 - [Simone](https://github.com/Lucenx9)

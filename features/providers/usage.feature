@@ -15,6 +15,7 @@
 #   apps/server/src/usage/UsageLimitSources.ts (provider with no history folder)
 #   apps/server/src/provider/CodexTurnTokenUsage.ts, apps/server/src/provider/ClaudeTurnTokenUsage.ts (per-turn usage records)
 #   apps/server/src/usage/usageScanCache.ts, usageTranscriptReader.ts, UsageService.ts (resume guard, tail lines, saved scan, shared scans, price floor)
+#   https://github.com/pingdotgg/t3code/pull/15101
 
 Feature: Usage
   Usage adds up token use and estimated API-equivalent cost from the provider CLIs' own
@@ -429,3 +430,9 @@ Feature: Usage
     When the turn completes
     Then the turn's usage says it covers the main agent only
     And it says subagents ran
+
+  @backlog @mc
+  Scenario: Fast and Ultrafast Codex cost what they bill
+    Given Codex usage at Fast or Ultrafast speed
+    When the Usage tab prices it
+    Then Fast counts at 2x and Ultrafast at 6x the standard rate for models that bill so

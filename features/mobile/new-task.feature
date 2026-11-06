@@ -8,6 +8,7 @@
 #   apps/mobile/src/features/threads/NewTaskDraftScreen.tsx (a task the outbox cannot save)
 #   apps/mobile/src/features/threads/new-task-context-presentation.ts (checkout, worktree and branch labels)
 #   apps/mobile/src/state/use-composer-drafts.ts (retargetNewTaskDraft), apps/mobile/src/state/pending-thread-creation.ts, apps/mobile/src/state/pending-new-tasks-model.ts (unstarted and pending tasks)
+#   https://github.com/pingdotgg/t3code/pull/14532
 # Drafting and sending are specified in features/composer/ and features/threads/. This file covers
 # the phone's new task screens: choosing where the task runs before the first message is sent.
 
@@ -203,3 +204,11 @@ Feature: Starting a task from a phone
       | a pasted text is still being turned into an attachment  |
       | the voice input is still being transcribed              |
       | the task is already being sent                          |
+
+  @backlog @mobile
+  Scenario: The project picker has one No project row on top
+    Given several machines are connected
+    When the user opens the project picker
+    Then a single No project row is at the top, above the projects
+    And it starts on the selected machine when that machine offers it, otherwise on the first that does
+    And scratch projects are never listed as projects

@@ -26,6 +26,8 @@
 #     reachability held against its interfaces, hal-c2/hal-c2#69)
 #   apps/tui/src/features.backlog.test.ts (environment-connections)
 #   apps/desktop-qt/src/native/McClient.cpp, ThreadStore.cpp, ShellStore.cpp (each `sub` says where it resumes from)
+#   https://github.com/pingdotgg/t3code/pull/14897
+#   https://github.com/pingdotgg/t3code/pull/15034
 #   Shared domain: tui/reconnect.feature holds the terminal client's reconnects;
 #   mobile/offline-and-lifecycle.feature holds the phone's foreground and offline journeys;
 #   mc/platform/websocket-protocol.feature holds resuming streams on the MC;
@@ -645,3 +647,22 @@ Feature: Connection health
     When "studio" is reconnecting
     Then the thread shows the ordinary reconnecting notice "Reconnecting to studio"
     And no notice says "Finishing an update"
+
+  @backlog @shared
+  Scenario: Reconnects back off with jitter
+    Given the connection to an environment drops
+    When the client retries
+    Then waits grow with random jitter so clients do not retry in lockstep
+    And an authorization or unsupported-version failure does not retry on the same session
+
+  @backlog @shared
+  Scenario: A false offline report does not replace a healthy connection
+    Given the connection is working
+    When the device reports being offline then online
+    Then the existing connection is kept
+
+  @backlog @shared
+  Scenario: Failed subscriptions retry with growing delay
+    Given a subscription keeps failing for an expected reason
+    Then its retries double up to 30 seconds
+    And the first value after a retry resets the delay

@@ -12,6 +12,7 @@
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.auto-settle, thread.unsettle, thread.settled, thread.unsettled)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (settle, unsettle)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
+#   https://github.com/pingdotgg/t3code/pull/15024
 
 Feature: Settling threads
   Settling marks a thread as done without archiving it. Threads also settle on their own
@@ -222,3 +223,9 @@ Feature: Settling threads
     When the user changes the auto-settle rules for all environments
     Then "work" keeps its previous rules
     And the user can see "work" was not updated
+
+  @backlog @mc
+  Scenario: A thread settles when the agent merges its own pull request from a shell
+    Given the agent ran gh pr merge or close, or the glab equivalent
+    When the turn ends
+    Then the pull request is read fresh and the thread settles at once

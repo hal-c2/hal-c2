@@ -6,6 +6,7 @@
 #   apps/desktop-qt/src/native/KeybindingController.cpp (its rows, recorder and saves)
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the rows and saves against a fake MC)
 #   apps/desktop-qt/tests/tst_KeybindingsSettings.qml (runs what the page shows and how its fields take keys)
+#   https://github.com/pingdotgg/t3code/pull/14548
 
 Feature: Keybindings settings
   Settings → Keybindings lists every command with its shortcut and condition, and lets the
@@ -252,3 +253,11 @@ Feature: Keybindings settings
       Given the user is using HAL-C2 in a browser
       Then the panel warns that some shortcuts may be claimed by the browser before HAL-C2 sees them
       And suggests the desktop app for better keybinding support
+
+  @backlog @shared
+  Scenario: The shortcut recorder records plain keys and Tab
+    Given a keybinding row is recording
+    When the user presses a key without a modifier, or Tab
+    Then that key is recorded
+    And Escape still cancels
+    And afterwards Tab moves focus on so Save is reachable

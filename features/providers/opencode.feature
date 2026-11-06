@@ -15,6 +15,7 @@
 #   apps/server-ex/priv/model-manifest.json (compatibility: opencode ranges)
 #   apps/server/src/provider/providerCompatibility.ts
 #   apps/server/src/provider/Layers/openCodeUsageLimits.ts, apps/server/src/textGeneration/OpenCodeTextGeneration.ts
+#   https://github.com/pingdotgg/t3code/pull/14978
 
 @plugin-opencode @mc
 Feature: OpenCode
@@ -722,3 +723,9 @@ Feature: OpenCode
     Given OpenCode prints "server listening on http://127.0.0.1:4096" when it starts
     When the MC starts an OpenCode server
     Then the MC uses http://127.0.0.1:4096 and does not time out waiting for it
+
+  @backlog @shared
+  Scenario: A blank reasoning label shows Default
+    Given OpenCode reports a default variant its reasoning menu does not list
+    When no explicit choice is saved
+    Then the reasoning label reads Default rather than blank

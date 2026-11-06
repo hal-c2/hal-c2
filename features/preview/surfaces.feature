@@ -50,6 +50,9 @@
 #   apps/web/src/components/ChatView.tsx (an annotation sent at once while sending is unavailable)
 #   Cross-domain: settings/ owns browser profiles, browser import and preview defaults;
 #   files/ owns project scripts with preview URLs; navigation/ owns preview key chords.
+#   https://github.com/pingdotgg/t3code/pull/14601
+#   https://github.com/pingdotgg/t3code/pull/14727
+#   https://github.com/pingdotgg/t3code/pull/15034
 
 Feature: In-app preview browser
   A thread can keep browser tabs beside it for the app it is building. The MC remembers each
@@ -1873,3 +1876,15 @@ Feature: In-app preview browser
       Given the thread has preview tabs
       When the user refreshes or closes one in the terminal client
       Then the MC's tab list updates and unreachable pages are reported
+
+  @backlog @desktop
+  Scenario: Markdown and plain-text pages are readable in dark mode
+    Given dark mode and a markdown or plain-text URL
+    When the page loads in a new or existing tab, even on first load
+    Then its text is legible against a dark background
+
+  @backlog @desktop
+  Scenario: A preview tab can be muted and unmuted
+    Given a preview tab playing audio
+    When the user mutes it from the tab or its menu
+    Then it is silent until unmuted

@@ -6,6 +6,8 @@
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
 #   apps/mobile/modules/hal-c2-agent-notifications
 #   apps/mobile/src/Stack.tsx (notification navigation)
+#   https://github.com/pingdotgg/t3code/pull/12048
+#   https://github.com/pingdotgg/t3code/pull/12052
 # The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
 # the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 
@@ -622,3 +624,15 @@ Feature: Push notifications and live agent activity
     Given the user set quiet hours that let approval requests through
     When an agent needs approval during quiet hours
     Then the phone shows an alert
+
+  @backlog @mobile
+  Scenario: Agent alerts stack by thread
+    Given a thread sends many alerts
+    Then they group into one stack for that thread
+    And other threads' alerts are not pushed out of the notification list
+
+  @backlog @mobile
+  Scenario: Only the open thread's alert is suppressed
+    Given the app is in the foreground on a thread
+    When alerts arrive for that and other threads
+    Then only the open thread's alert is suppressed

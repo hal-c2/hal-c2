@@ -35,6 +35,7 @@
 #   apps/web/src/components/chat/MessagesTimeline.tsx (V2SubagentGroup: the group's entry, avatars, span)
 #   apps/desktop-qt/qml/HalC2/Bricks/AgentsPanel.qml
 #   apps/desktop-qt/tests/native/features/AgentsSteps.cpp
+#   https://github.com/pingdotgg/t3code/pull/14999
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -867,3 +868,9 @@ Feature: Plans and subagents
     And the user opens the Agents tab
     When the user opens "Tax tests" from the Agents tab
     Then the subagent's thread is shown
+
+  @backlog @shared
+  Scenario: Subagent descriptions read as display names
+    Given a subagent description containing a filesystem path or a "Subagent:" prefix
+    When it is listed as pending background work
+    Then the label is a clean display name

@@ -32,6 +32,7 @@
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   https://mermaid.js.org/intro/syntax-reference.html (Mermaid diagrams in a reply)
 #   https://github.com/hal-c2/hal-c2/issues/843
+#   https://github.com/pingdotgg/t3code/pull/12615
 
 Feature: Formatted messages
   Messages are written in Markdown. The timeline shows headings, lists, quotes, code and
@@ -974,3 +975,9 @@ Feature: Formatted messages
     Given the provider does not offer a skill called "unknown"
     When the agent's reply reads "Use $unknown for this."
     Then "$unknown" is shown as plain text
+
+  @backlog @shared
+  Scenario: Windows paths stay intact in links and images
+    Given a message with an image destination like C:\Users\me\shot.png
+    When it is shown
+    Then the path is used as written, not read as escapes

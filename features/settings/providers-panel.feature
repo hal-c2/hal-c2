@@ -30,6 +30,7 @@
 #   apps/web/src/components/settings/ProviderAuthenticationSection.tsx
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ProvidersSettings.qml
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the account email stays hidden until asked)
+#   https://github.com/pingdotgg/t3code/pull/14678
 
 Feature: Providers settings panel
   The Providers page lists the agent providers configured on one environment. The user adds
@@ -1256,3 +1257,10 @@ Feature: Providers settings panel
     Scenario: A custom option can be a switch
       When the user adds a custom option that is on or off
       Then the composer offers it as a switch
+
+  @backlog @shared
+  Scenario: Update all brings every machine's providers current
+    Given several machines have outdated providers
+    When the user presses Update all next to Refresh
+    Then each outdated provider is updated on each connected environment
+    And a machine that refuses shows as a failure line without stopping the rest

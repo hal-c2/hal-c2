@@ -19,6 +19,8 @@
 #   The basic "hal-c2 app ~/code/api" case lives in settings/install.feature.
 #   apps/desktop/src/app/DesktopAppActivationBroker.ts, DesktopAppActivation.ts, packages/shared/src/desktopAppControlSocket.ts
 #     (queueing before the window is ready, timeouts, closing, request limits, socket privacy)
+#   https://github.com/pingdotgg/t3code/pull/13612
+#   https://github.com/pingdotgg/t3code/pull/15060
 
 Feature: Creating threads
   A thread is the durable conversation for a project. Starting one keeps the user's
@@ -60,8 +62,16 @@ Feature: Creating threads
     And the button's hint says Shift starts the thread in the current project
 
   @backlog @desktop
-  Scenario: The new thread button does nothing without a project
+  Scenario: The new thread button without a project starts a thread without one
     Given the environment has no projects
+    And the environment offers threads without a project
+    When the user presses the new thread button in the thread list
+    Then a draft thread opens without a project
+
+  @backlog @desktop
+  Scenario: The new thread button stays disabled where threads without a project are not offered
+    Given the environment has no projects
+    And the environment does not offer threads without a project
     Then the new thread button in the thread list is disabled
 
   @backlog @desktop @mobile
@@ -374,3 +384,37 @@ Feature: Creating threads
       | text that is not valid JSON            |
       | a request that reuses a request's id   |
 
+  @backlog @shared @mc
+  Scenario: A thread can start without a project
+    Given a connected environment
+    When the user starts a thread with No project
+    Then the thread works in its own scratch folder named from the date and its first words
+    And the thread has no branch toolbar and no worktree mode
+    And the draft reads "What should we work on?" with a project picker to move it into a project
+
+  @backlog @shared
+  Scenario Outline: No project is reachable from every new-thread entry point
+    When the user uses "<entry>"
+    Then a thread without a project is started on the machine in use
+
+    Examples:
+      | entry                                          |
+      | the or-start-without-a-project link            |
+      | No project in the project menu                 |
+      | New thread without a project in the palette    |
+      | the new-thread-without-project keybinding      |
+      | Start without a project on the no-projects screen |
+
+  @backlog @shared
+  Scenario: No project is hidden on a machine that does not offer it
+    Given the machine in use does not offer threads without a project
+    When the user opens the project menu
+    Then No project is not listed
+    And the thread is never silently started on another machine
+
+  @backlog @shared
+  Scenario: Starting a thread in the background has a plain-Enter binding
+    Given the user is writing a new thread
+    When the user presses the Start in Background keybinding
+    Then the thread starts in the background and a fresh composer opens
+    And both Mod+Enter and Mod+Alt+Enter are bound to it by default

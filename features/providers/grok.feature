@@ -12,6 +12,7 @@
 #   apps/server/src/provider/acp/XAiAcpExtension.ts, apps/server/src/orchestration-v2/Adapters/XAiBackgroundTasks.ts
 #     (x.ai/task_backgrounded, x.ai/task_completed, background subagent notices, persistent monitors)
 #   apps/server/src/provider/acp/XAiBackgroundTasks.ts (how background tasks are listed and ended)
+#   https://github.com/pingdotgg/t3code/pull/14486
 
 @plugin-grok @mc
 Feature: Grok
@@ -658,8 +659,17 @@ Feature: Grok
     When the MC checks Grok
     Then Grok is reported as "<status>" for this HAL-C2 release
 
-    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
+    # Statuses are the MC's (see the Claude Code outline). A CLI below 1.0.13 is refused by
+    # xAI's backend with 426 Upgrade Required, so it is broken and the warning points at >=1.0.13.
     Examples:
       | version | status  |
-      | 1.0.12  | unknown |
+      | 0.2.8   | broken  |
+      | 1.0.12  | broken  |
       | 1.0.13  | unknown |
+
+  @backlog @desktop
+  Scenario: A broken Grok's warning names the version to update to
+    Given Grok version "0.2.8" is installed
+    When the user opens the Providers settings
+    Then Grok shows an incompatible-version warning
+    And the warning names version 1.0.13 or newer
