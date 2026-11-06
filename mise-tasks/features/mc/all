@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run every @mc scenario, one mix features per top-level features/ directory"
 #MISE dir="{{config_root}}/apps/server-ex"
+#MISE depends=["install:mc"]
 #USAGE flag "--backlog" help="Also run @backlog scenarios (or set INCLUDE_BACKLOG=1)"
 set -euo pipefail
 

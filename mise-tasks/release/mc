@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Build the MC release for this machine into release/: the upgrade bundle and the single-file MC whose `install` registers the background service"
 #MISE dir="{{config_root}}/apps/server-ex"
-#MISE depends=["install:js"]
+#MISE depends=["install:js", "install:mc"]
 set -euo pipefail
 # install:js: the release bundles the Cursor sidecar with packages/cursor-acp's esbuild.
 # On Linux it also builds native/machine-files with cargo into priv/bin.
