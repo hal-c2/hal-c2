@@ -68,9 +68,9 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   `# Sources:` block. A commit without a pull request is cited by the full commit URL the
   digest prints, never a bare hash. Then put `# Upstream #<n>: <what upstream did>`
   (`# Upstream <sha>: ...` with the full 40-character hash for a commit) directly above each
-  scenario, `Rule`, `Examples` table or `Feature` it covers, where a tag line would go; a pull request the whole file
-  comes from needs only the `# Sources:` line. The citation is what credits its authors: the
-  [T3 Code Tracker](https://github.com/hal-c2/t3code-tracker-plugin) plugin lists every
+  scenario, `Rule`, `Examples` table or `Feature` it covers, where a tag line would go; a pull
+  request the whole file comes from needs only the `# Sources:` line. The citation is what
+  credits its authors: the [T3 Code Tracker](https://github.com/hal-c2/t3code-tracker-plugin) plugin lists every
   cited pull request with who wrote it and how far its scenarios have got, counting only
   the scenarios under its `# Upstream` lines (see `features/README.md`, Upstream).
 - **Credit by name, not by trailer.** The digest's `By:` line is who wrote the pull request
