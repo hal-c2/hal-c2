@@ -48,6 +48,12 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
+// The id the MC gives a call's background task (HalC2.Projection.BackgroundWork).
+QString backgroundTaskId(const QJsonObject& item) {
+  const QString native = item.value(QLatin1String("nativeItemRef")).toObject().value(QLatin1String("nativeId")).toString();
+  return native.isEmpty() ? text(item, QLatin1String("id")) : native;
+}
+
 QDateTime timeOf(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
 }
@@ -399,6 +405,25 @@ QString callStatusLabel(const QString& status) {
   return QStringLiteral("Running");
 }
 
+// A phone group's statuses counted in the order a reader scans them, what
+// still works first and then the outcomes: "2 working · 1 done · 1 failed"
+// (packages/client-runtime/src/state/subagentDisplay.ts summarizeSubagentStatuses).
+QString summarizeSubagentStatuses(const QStringList& statuses) {
+  const QList<std::pair<QStringList, QString>> buckets{
+      {{QStringLiteral("pending"), QStringLiteral("running"), QStringLiteral("waiting")}, QStringLiteral("working")},
+      {{QStringLiteral("completed")}, QStringLiteral("done")},
+      {{QStringLiteral("failed")}, QStringLiteral("failed")},
+      {{QStringLiteral("cancelled"), QStringLiteral("interrupted")}, QStringLiteral("stopped")},
+      {{QStringLiteral("idle")}, QStringLiteral("idle")},
+  };
+  QStringList parts;
+  for (const auto& [members, word] : buckets) {
+    const auto count = std::count_if(statuses.cbegin(), statuses.cend(), [&](const QString& status) { return members.contains(status); });
+    if (count > 0) parts.append(QStringLiteral("%1 %2").arg(count).arg(word));
+  }
+  return parts.join(QStringLiteral(" · "));
+}
+
 // How a subagent's status reads.
 QString subagentStatusLabel(const QString& status) {
   if (status == QLatin1String("idle")) return QStringLiteral("Idle · resumable");
@@ -546,6 +571,17 @@ void TimelineModel::setFolds(Folds folds) {
   m_folds = folds;
   restructure({});
   emit foldsChanged();
+}
+
+void TimelineModel::setBackgroundWork(const QJsonArray& tasks) {
+  QSet<QString> work;
+  for (const QJsonValue& task : tasks) {
+    const QString id = text(task.toObject(), QLatin1String("taskId"));
+    if (!id.isEmpty()) work.insert(id);
+  }
+  if (work == m_backgroundWork) return;
+  m_backgroundWork = work;
+  if (phone()) restructure({});
 }
 
 void TimelineModel::setLocale(const QLocale& locale) {
@@ -994,14 +1030,18 @@ void TimelineModel::events(const QJsonArray& events) {
   if (!m_agentModels.isEmpty()) {
     const QHash<QString, QJsonObject>& items = m_entities[QStringLiteral("turn-item")];
     for (int row = 0; row < m_rows.size(); ++row) {
-      if (m_rows.at(row).kind != QLatin1String("subagent")) continue;
-      const QString agent = text(items.value(m_rows.at(row).items.value(0)), QLatin1String("subagentId"));
-      const auto was = m_agentModels.constFind(agent);
-      if (was == m_agentModels.cend()) continue;
-      const QJsonObject now = entity(QStringLiteral("subagent"), agent);
+      // A phone group counts its subagents' statuses.
+      const bool group = m_rows.at(row).kind == QLatin1String("subagents");
+      if (m_rows.at(row).kind != QLatin1String("subagent") && !group) continue;
       bool moved = false;
-      for (const auto field : {QLatin1String("model"), QLatin1String("status"), QLatin1String("progress"), QLatin1String("result")}) {
-        moved |= was->value(field) != now.value(field);
+      for (const QString& member : m_rows.at(row).items) {
+        const QString agent = text(items.value(member), QLatin1String("subagentId"));
+        const auto was = m_agentModels.constFind(agent);
+        if (was == m_agentModels.cend()) continue;
+        const QJsonObject now = entity(QStringLiteral("subagent"), agent);
+        for (const auto field : {QLatin1String("model"), QLatin1String("status"), QLatin1String("progress"), QLatin1String("result")}) {
+          moved |= (!group || field == QLatin1String("status")) && was->value(field) != now.value(field);
+        }
       }
       if (moved) emit dataChanged(index(row), index(row), {ModelRole, StatusRole, StatusLabelRole, TextRole});
     }
@@ -1018,6 +1058,13 @@ void TimelineModel::events(const QJsonArray& events) {
     const int row = m_rowOfItem.value(id, -1);
     if (row < 0 || !shows(m_rows.at(row), id)) continue;
     const bool textOnly = !m_reshaped.contains(id);
+    // An open phone group's subagent is also counted by the group above it.
+    if (m_rows.at(row).kind == QLatin1String("subagent")) {
+      for (int above = row - 1; above >= 0 && m_rows.at(above).kind == QLatin1String("subagent"); --above) {
+        if (above > 0 && m_rows.at(above - 1).kind == QLatin1String("subagents") && m_rows.at(above - 1).items.contains(id)) redraw.insert(above - 1, false);
+      }
+      if (row > 0 && m_rows.at(row - 1).kind == QLatin1String("subagents") && m_rows.at(row - 1).items.contains(id)) redraw.insert(row - 1, false);
+    }
     const auto known = redraw.find(row);
     if (known == redraw.end()) {
       redraw.insert(row, textOnly);
@@ -1212,7 +1259,10 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     if (phone()) {
       // A call that never said it ended once its turn settled, the
       // workspace's preparation, and a delegation its subagent's card shows.
-      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running")) return false;
+      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running") &&
+          !m_backgroundWork.contains(backgroundTaskId(item))) {
+        return false;
+      }
       if (type == QLatin1String("command_execution") && text(item, QLatin1String("input")) == QLatin1String("Preparing workspace")) return false;
       const QString task = timeline::delegatedTask(item);
       if (!task.isEmpty() && carded.contains(runId + QLatin1Char('\n') + task)) return false;
@@ -1413,6 +1463,32 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       i = next;
       continue;
     }
+    // On the phone, the subagents a turn started together are one group that
+    // opens to their rows; a lone one is its own row
+    // (apps/mobile/src/features/threads/thread-subagent-group.tsx).
+    if (phone && kind == Kind::Subagent) {
+      QStringList members;
+      qsizetype next = i;
+      for (; next < shown.size(); ++next) {
+        const QJsonObject& other = shown.at(next);
+        const QString otherId = text(other, QLatin1String("id"));
+        if (next > i && foldAt.contains(otherId)) break;
+        const Kind otherKind = classify(other);
+        if (otherKind == Kind::Checkpoint) continue;
+        if (otherKind != Kind::Subagent || folded.contains(otherId) || text(other, QLatin1String("runId")) != runId) break;
+        members.append(otherId);
+      }
+      if (members.size() > 1) {
+        const QString group = QStringLiteral("subagents:") + id;
+        const bool open = m_openSubagentGroups.contains(group);
+        rows.append({group, QStringLiteral("subagents"), members, {}, {}, 0, open});
+        if (open) {
+          for (const QString& member : std::as_const(members)) rows.append({member, QStringLiteral("subagent"), {member}});
+        }
+        i = next;
+        continue;
+      }
+    }
     Row row{id, kindName(kind), {id}};
     if (kind == Kind::Message && !runId.isEmpty() && turns.value(runId).terminal == id) {
       const Turn& turn = turns[runId];
@@ -1527,6 +1603,11 @@ void TimelineModel::keepOpen(const QString& runId) {
 }
 
 void TimelineModel::toggle(const QString& rowId) {
+  if (rowId.startsWith(QLatin1String("subagents:"))) {
+    if (!m_openSubagentGroups.remove(rowId)) m_openSubagentGroups.insert(rowId);
+    restructure({});
+    return;
+  }
   if (rowId.startsWith(QLatin1String("fold:"))) {
     const QString runId = rowId.mid(5);
     if (!m_expandedFolds.remove(runId)) m_expandedFolds.insert(runId);
@@ -1910,6 +1991,21 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == HiddenCountRole) return row.hidden;
     if (role == ExpandedRole) return row.expanded;
     if (role == TimeRole) return stamp(row.at);
+    return {};
+  }
+  if (row.kind == QLatin1String("subagents")) {
+    if (role == TitleRole) return QStringLiteral("%1 subagents").arg(row.items.size());
+    if (role == ExpandedRole) return row.expanded;
+    if (role == IconRole) return QStringLiteral("bot");
+    if (role == TextRole) {
+      QStringList statuses;
+      for (const QString& member : row.items) {
+        const QJsonObject item = entity(QStringLiteral("turn-item"), member);
+        const QJsonObject agent = entity(QStringLiteral("subagent"), text(item, QLatin1String("subagentId")));
+        statuses.append(text(agent.contains(QLatin1String("status")) ? agent : item, QLatin1String("status")));
+      }
+      return summarizeSubagentStatuses(statuses);
+    }
     return {};
   }
   if (row.kind == QLatin1String("thinking")) {

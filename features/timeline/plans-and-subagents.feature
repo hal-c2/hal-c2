@@ -45,27 +45,27 @@ Feature: Plans and subagents
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/proposedPlan.ts
-  @shared @backlog-mobile
+  @shared
   Scenario: A proposed plan appears as a card titled by its first heading
     When the agent proposes a plan whose first heading is "Add a tax line"
     Then the plan card is titled "Add a tax line"
     And a plan without a heading is titled "Proposed plan"
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A plan card does not repeat its title
     When the agent proposes a plan that opens with the heading "Add a tax line"
     Then the plan card is titled "Add a tax line"
     And the plan's text starts with "- Add the line"
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog-mobile
+  @shared
   Scenario: The user implements the proposed plan
     Given the agent has proposed a plan
     When the user implements the plan with no feedback
     Then the agent starts implementing it in this thread
     And the plan card is no longer offered
 
-  @shared @backlog-mobile
+  @shared
   Scenario: The user refines the plan with feedback
     Given the agent has proposed a plan
     When the user sends "split the migration into its own step" as feedback
@@ -85,21 +85,21 @@ Feature: Plans and subagents
     Given the agent is proposing a plan in the running turn
     Then no plan is offered
 
-  @shared @backlog-mobile
+  @shared
   Scenario: The user implements the plan in a new thread
     Given the agent has proposed a plan
     When the user implements the plan in a new thread
     Then a new thread starts implementing the plan
     And the planning thread keeps the plan
 
-  @shared @backlog-mobile
+  @shared
   Scenario: Starting the implementation thread fails
     Given the agent has proposed a plan
     And the environment cannot start a new thread
     When the user implements the plan in a new thread
     Then the user is told "Could not start implementation thread"
 
-  @shared @backlog-mobile
+  @shared
   Scenario Outline: The user keeps a copy of the plan
     Given the agent has proposed a plan
     When the user <action>
@@ -111,7 +111,7 @@ Feature: Plans and subagents
       | downloads the plan                   | a markdown file of the plan is saved               |
       | saves the plan to "docs/tax-plan.md" | "docs/tax-plan.md" holds the plan in the workspace |
 
-  @shared @backlog-mobile
+  @shared
   Scenario: Saving the plan fails when the workspace is unavailable
     Given the agent has proposed a plan
     And the thread's workspace is unavailable
@@ -300,14 +300,14 @@ Feature: Plans and subagents
       | edit   |
       | steer  |
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A delegated task's result shows as a notification, not a message of the user's
     Given a task the agent delegated as "Tax tests" finished
     When the user reads the parent thread
     Then the timeline says "Tax tests finished"
     And the result is not shown as a message of the user's
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A finished task's notification names its worker and links to it
     Given a task the agent delegated as "Tax tests" finished with "12 tests added"
     When the user reads the parent thread
@@ -348,14 +348,14 @@ Feature: Plans and subagents
     Then it names the worker
     And the user can open the worker's thread from it
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A result a thread stored as a user message still shows as a notification
     Given a thread stored the failed result of the delegated task "Tax tests" as a user message
     When the user reads the parent thread
     Then the timeline says "Tax tests failed"
     And the result is not shown as a message of the user's
 
-  @shared @backlog-mobile
+  @shared
   Scenario Outline: A subagent's status is shown in the parent
     Given the agent has a subagent that is <status>
     Then the subagent is shown as "<label>"
@@ -369,17 +369,17 @@ Feature: Plans and subagents
       | failed               | Failed           |
       | cancelled            | Stopped          |
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A finished subagent shows its result, a working one its latest progress
     Given a subagent that reported "Reading the tax code" and then finished with "12 tests added"
     Then the subagent's row reads "12 tests added"
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A working subagent shows its latest progress
     Given a subagent that is still working after reporting "Reading the tax code"
     Then the subagent's row reads "Reading the tax code"
 
-  @shared @backlog-mobile
+  @shared
   Scenario: The user moves between a subagent and its parent
     Given the agent has a subagent
     When the user opens the subagent's thread
@@ -387,7 +387,7 @@ Feature: Plans and subagents
     When the user opens the parent thread
     Then the parent thread is shown
 
-  @mc @shared @backlog-mobile
+  @mc @shared
   Scenario: A message from another agent says which thread it came from
     Given a subagent sent a message to its parent
     When the user reads the message in the parent thread
@@ -430,7 +430,7 @@ Feature: Plans and subagents
     When the user opens the work
     Then it says which thread it came from
 
-  @shared @backlog-mobile
+  @shared
   Scenario: The agent's own background wake-up is not a message from another agent
     Given the agent's background work woke it up
     When the user reads the parent thread
@@ -439,21 +439,21 @@ Feature: Plans and subagents
 
   # The MC wakes a thread when a pull request it owns needs attention
   # (features/mc/orchestration/pull-request-wakes.feature).
-  @shared @backlog-mobile
+  @shared
   Scenario: A pull request that woke the agent shows as a notification, not a message of the user's
     Given a pull request the thread owns woke its agent because its checks failed
     When the user reads the parent thread
     Then the timeline says "acme/app#12: checks failing"
     And nothing says a message was sent by another agent
 
-  @shared @backlog-mobile
+  @shared
   Scenario: A wake-up a thread stored as a user message is not from another agent either
     Given a thread stored the agent's own wake-up as a user message
     When the user reads the parent thread
     Then the timeline says "Background activity updated"
     And nothing says a message was sent by another agent
 
-  @mc @shared @backlog-mobile
+  @mc @shared
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
     When the user looks at the parent's subagents
@@ -477,14 +477,30 @@ Feature: Plans and subagents
       | custom/model-v2               | custom/model-v2               |
       | My Custom Model               | My Custom Model               |
 
-  @mc @shared @backlog-mobile
+  @mc @shared
   Scenario: A finished subagent with work still running is shown as pending
     Given a subagent returned its result while background work it started is still running
     When the user looks at the parent thread
     Then the subagent's result is shown
     And its background work is still shown as running
 
-  @mc @shared @backlog-mobile
+  # The phone drops a call a settled turn never said had ended; pending
+  # background work keeps only its own call, not every such call.
+  @mobile
+  Scenario: Background work does not bring back other calls that never ended
+    Given a subagent returned its result while background work it started is still running
+    And a later turn left "npm test" running without saying it ended
+    When the user looks at the parent thread
+    Then its background work is still shown as running
+    And the command "npm test" is not listed
+
+  @mobile
+  Scenario: A background tool with no title stays listed
+    Given a turn left the tool "browser_watch" running in the background
+    When the user looks at the parent thread
+    Then the tool is still shown as running
+
+  @mc @shared
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
     When the user looks at the parent thread
@@ -493,7 +509,7 @@ Feature: Plans and subagents
     Then the subagent continues with the answer
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
-  @shared @backlog-mobile
+  @shared
   Scenario Outline: Changes to the thread's context are marked in the timeline
     When <event>
     Then the timeline marks "<marker>"
@@ -668,18 +684,18 @@ Feature: Plans and subagents
       | /root/team/review_docs/     | Review Docs |
       | Review the docs             | Review the docs |
 
-  @backlog @mobile
+  @mobile
   Scenario: Subagents started together are one group that opens to its rows
     Given the agent started the subagents "Tax tests", "Docs" and "Lint" together
     Then the timeline shows one entry reading "3 subagents" with how many are working, done or failed
     And the rows of the subagents are shown only once the user opens the entry
 
-  @backlog @mobile
+  @mobile
   Scenario: A lone subagent is shown as its own row without a group
     Given the agent started the subagent "Tax tests" alone
     Then the timeline shows the row of "Tax tests" directly
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: The thread's status counts the subagents of the turn
     Given the agent started three subagents in this turn
     When <state>
@@ -690,13 +706,13 @@ Feature: Plans and subagents
       | two of them are still working   | 2 of 3 agents working |
       | all three have finished         | 3 agents done         |
 
-  @backlog @mobile
+  @mobile
   Scenario: The thread's status says nothing about subagents once the turn has settled
     Given the agent started three subagents in this turn
     When the turn settles and every subagent has finished
     Then the thread's status does not mention subagents
 
-  @backlog @mobile
+  @mobile
   Scenario: The subagents of the turn are listed with their state and time
     Given the agent started the subagents "Tax tests" and "Docs" in this turn
     And "Docs" finished 75 seconds after it started
@@ -704,14 +720,14 @@ Feature: Plans and subagents
     Then "Tax tests" is listed as working and "Docs" as completed
     And "Docs" is shown to have taken "1m 15s"
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread's subagents are listed for the latest turn only
     Given the agent started the subagent "Tax tests" in the first turn
     And the agent started the subagent "Docs" in the second turn
     When the user opens the subagents of the thread
-    Then only "Docs" is listed
+    Then only "Docs" is listed among the subagents
 
-  @backlog @mobile
+  @mobile
   Scenario: A subagent the provider manages is listed but cannot be opened
     Given the agent has a subagent that the provider manages and that has no thread
     When the user opens the subagents of the thread

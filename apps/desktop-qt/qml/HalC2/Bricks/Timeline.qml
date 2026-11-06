@@ -883,6 +883,8 @@ Item {
                         return plan;
                     case "subagent":
                         return subagent;
+                    case "subagents":
+                        return subagentGroup;
                     case "error":
                         return error;
                     case "thinking":
@@ -2144,6 +2146,58 @@ Item {
                             linkPreviews: root.linkPreviews
                             onLinkActivated: (link, external) => root.linkActivated(link, external)
                         }
+                    }
+                }
+            }
+
+            Component {
+                id: subagentGroup
+                // The phone's subagents a turn started together: "3 subagents",
+                // how they stand, and a chevron that opens to their rows
+                // (thread-subagent-group.tsx).
+                Item {
+                    objectName: "subagentGroup"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: [row.title, row.text].filter(part => (part ?? "").length > 0).join(", ")
+                    Accessible.onPressAction: root.toggle(row.rowId)
+                    implicitHeight: Math.max(Theme.control.md, groupText.implicitHeight + 12)
+                    TapHandler {
+                        onTapped: root.toggle(row.rowId)
+                    }
+                    Column {
+                        id: groupText
+                        anchors.left: parent.left
+                        anchors.leftMargin: Theme.space.sm
+                        anchors.right: groupChevron.left
+                        anchors.rightMargin: Theme.space.sm
+                        anchors.verticalCenter: parent.verticalCenter
+                        RowText {
+                            objectName: "subagentGroupTitle"
+                            width: parent.width
+                            text: row.title ?? ""
+                            color: root.textColor
+                            font.weight: Font.Medium
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
+                        }
+                        RowText {
+                            objectName: "subagentGroupSummary"
+                            width: parent.width
+                            text: row.text ?? ""
+                            color: root.mutedColor
+                            font.pixelSize: Theme.type.meta.size
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
+                        }
+                    }
+                    ShellChevron {
+                        id: groupChevron
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.space.sm
+                        anchors.verticalCenter: parent.verticalCenter
+                        direction: row.expanded ? "down" : "right"
+                        size: Theme.icon.sm
+                        color: root.mutedColor
                     }
                 }
             }
