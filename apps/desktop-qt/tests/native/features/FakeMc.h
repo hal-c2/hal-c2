@@ -86,6 +86,7 @@ public:
   // it to a QWebSocketServer of its own.
   using RawHandler = std::function<void(QTcpSocket* socket, const QByteArray& head)>;
   void onRaw(const QString& prefix, RawHandler handler) { m_rawHandlers.insert(prefix, std::move(handler)); }
+  void offRaw(const QString& prefix) { m_rawHandlers.remove(prefix); }
 
   void send(const QJsonObject& frame);
   // Whether a client's socket is open: a frame sent now reaches it.

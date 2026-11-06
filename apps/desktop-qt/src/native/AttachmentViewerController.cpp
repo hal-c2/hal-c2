@@ -137,7 +137,7 @@ void AttachmentViewerController::sign(Signed done) {
                    const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
                    if (error || relative.isEmpty()) {
                      const QString said = error.value_or(tr("The attachment is unavailable."));
-                     return done({}, said.startsWith(QLatin1String("not connected")) ? tr("Reconnect to the environment and try again.") : tr("The attachment is unavailable."), said);
+                     return done({}, (said.startsWith(QLatin1String("not connected")) || said.endsWith(QLatin1String(" is not connected."))) ? tr("Reconnect to the environment and try again.") : tr("The attachment is unavailable."), said);
                    }
                    done(relative, {}, {});
                  });
