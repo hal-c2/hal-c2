@@ -355,7 +355,7 @@ Feature: Connection health
     And "Fix checkout" loads from the MC as if nothing had been kept
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (EnvironmentCacheStore.loadServerConfig)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A new task offline still offers the models the environment last reported
     Given "studio" last reported the models "Claude Sonnet" and "GPT-5"
     And "studio" is not reachable
@@ -363,7 +363,7 @@ Feature: Connection health
     Then "Claude Sonnet" and "GPT-5" are offered
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (loadVcsRefs, clearVcsRefs)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Only the whole branch list of a repository is kept
     Given the user searched the branches of "hal-c2" for "fix"
     When the client keeps the branches of "hal-c2" for later
@@ -371,7 +371,7 @@ Feature: Connection health
     And a branch picker opened offline never presents a partial list as the whole one
 
   # Legacy: packages/client-runtime/src/platform/persistence.ts (clearVcsRefs: refs are repository-wide)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A change to a repository's branches drops every kept branch list for it
     Given the client kept the branch list of "hal-c2" and of a worktree of "hal-c2"
     When a branch of "hal-c2" is created

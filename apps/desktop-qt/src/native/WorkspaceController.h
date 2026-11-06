@@ -154,6 +154,9 @@ private:
   std::optional<Place> resolve() const;
   void follow(const QString& cwd);
   void watchConfig(const QString& environmentId);
+  // Keeps what an environment reported of its providers, for when it is not
+  // reachable.
+  void keepProviders(const QString& environmentId, const QJsonValue& providers);
   void loadRefs();
   // The next page of the ref list, after the ones shown.
   void loadMoreRefs();
@@ -232,6 +235,9 @@ private:
   int m_config = 0;
   QString m_configEnvironment;
   QJsonObject m_configElsewhere;
+  // The providers each environment last reported (LocalCache), offered while
+  // nothing live has arrived.
+  QHash<QString, QJsonArray> m_keptProviders;
   mutable std::optional<QJsonArray> m_sshEditors;
   mutable QByteArray m_sshEditorsPath;
 
@@ -245,6 +251,9 @@ private:
   bool m_refsLoadingMore = false;
   bool m_refsLoading = false;
   quint64 m_refsGeneration = 0;
+  // Of this generation: the MC answered, or the kept whole list is shown.
+  bool m_refsLive = false;
+  bool m_refsKept = false;
 
   // In memory until the shell has somewhere of its own to keep them.
   QHash<QString, QString> m_lastScript;  // by project ("env:projectId")
