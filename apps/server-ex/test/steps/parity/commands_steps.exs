@@ -341,6 +341,9 @@ defmodule HalC2.Steps.Parity.Commands do
     on_thread(context, %{"orderKey" => "b0"}, &(&1["pinOrderKey"] == "b0"))
   end
 
+  defp prepare("thread.auto-settle.set", context),
+    do: on_thread(context, %{"enabled" => false}, &(&1["autoSettleDisabledAt"] != nil))
+
   defp prepare("thread.active.reorder", context),
     do: on_thread(context, %{"orderKey" => "c0"}, &(&1["activeOrderKey"] == "c0"))
 
@@ -886,6 +889,7 @@ defmodule HalC2.Steps.Parity.Commands do
   @thread_changes %{
     "thread.active-reordered" => {%{}, %{"activeOrderKey" => "a1"}},
     "thread.archived" => {%{}, %{"archivedAt" => "2026-09-01T12:01:00.000Z"}},
+    "thread.auto-settle-set" => {%{}, %{"autoSettleDisabledAt" => "2026-09-01T12:01:00.000Z"}},
     "thread.created" => {%{}, %{}},
     "thread.deleted" => {%{}, %{"deletedAt" => "2026-09-01T12:01:00.000Z"}},
     "thread.interaction-mode-updated" => {%{}, %{"interactionMode" => "plan"}},
@@ -1042,6 +1046,9 @@ defmodule HalC2.Steps.Parity.Commands do
           {[{"thread.pinned", Map.merge(at.(1), %{"pinnedAt" => iso(1), "pinOrderKey" => "a0"})}],
            {type, Map.put(at.(2), "orderKey", "b0")}}
 
+        "thread.auto-settle-set" ->
+          {[], {type, Map.put(at.(1), "autoSettleDisabledAt", iso(1))}}
+
         "thread.meta-updated" ->
           {[], {type, Map.merge(at.(1), %{"title" => "Renamed", "branch" => "feature/x"})}}
 
@@ -1184,6 +1191,9 @@ defmodule HalC2.Steps.Parity.Commands do
 
       "thread.pin-reordered" ->
         thread["pinOrderKey"] == "b0"
+
+      "thread.auto-settle-set" ->
+        thread["autoSettleDisabledAt"] == iso(1)
 
       "thread.meta-updated" ->
         thread["title"] == "Renamed" and thread["branch"] == "feature/x"

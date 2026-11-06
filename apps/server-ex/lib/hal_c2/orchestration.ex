@@ -41,13 +41,13 @@ defmodule HalC2.Orchestration do
 
   @thread_updates ~w(thread.archive thread.unarchive thread.delete thread.settle thread.unsettle
                      thread.snooze thread.unsnooze thread.pin thread.unpin thread.pin.reorder
-                     thread.active.reorder thread.visit thread.mark-unread thread.metadata.update
+                     thread.active.reorder thread.auto-settle.set thread.visit thread.mark-unread thread.metadata.update
                      thread.runtime-mode.set thread.interaction-mode.set thread.model-selection.set
                      provider.switch thread.pull-request.link thread.pull-request.unlink
                      thread.title.regeneration.complete)
   # Commands that arrange a thread in the lists; an archived thread takes none of them.
   @organizing ~w(thread.settle thread.unsettle thread.snooze thread.unsnooze thread.pin
-                 thread.unpin thread.pin.reorder thread.active.reorder)
+                 thread.unpin thread.pin.reorder thread.active.reorder thread.auto-settle.set)
 
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
@@ -518,7 +518,8 @@ defmodule HalC2.Orchestration do
   end
 
   # Settles a thread `HalC2.Orchestration.Settlement` found idle or done, unless it was
-  # touched after the row that was judged (`snapshotAt`) or settled or unsettled by hand.
+  # touched after the row that was judged (`snapshotAt`), settled or unsettled by hand, or
+  # kept out of automatic settlement (`thread.auto-settle.set`).
   def dispatch(%{"type" => "thread.auto-settle", "threadId" => thread_id} = command) do
     snapshot_at = JS.epoch_ms(command["snapshotAt"])
 
@@ -526,7 +527,8 @@ defmodule HalC2.Orchestration do
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         thread = StreamState.get(state, "thread")[thread_id]
 
-        if thread == nil or JS.get(thread, "settledOverride") != nil or snapshot_at == nil or
+        if thread == nil or JS.get(thread, "settledOverride") != nil or
+             JS.get(thread, "autoSettleDisabledAt") != nil or snapshot_at == nil or
              (state.updated_at || 0) > snapshot_at do
           {[], {:error, "Thread #{thread_id} changed before automatic settlement."}}
         else
@@ -3048,6 +3050,19 @@ defmodule HalC2.Orchestration do
 
   defp thread_fields("thread.active.reorder", command, _, _),
     do: %{"activeOrderKey" => command["orderKey"]}
+
+  # Turns automatic settlement off for the thread (`enabled: false`) or back on. Only
+  # this command clears it: settling, unsettling and new work leave it alone. Turning
+  # it off again keeps when it was first turned off.
+  defp thread_fields("thread.auto-settle.set", %{"enabled" => true}, _, _),
+    do: %{"autoSettleDisabledAt" => nil}
+
+  defp thread_fields("thread.auto-settle.set", %{"enabled" => false}, thread, at),
+    do: %{"autoSettleDisabledAt" => thread["autoSettleDisabledAt"] || at}
+
+  defp thread_fields("thread.auto-settle.set", command, _, _),
+    do:
+      {:error, "thread.auto-settle.set for #{command["threadId"]} needs enabled: true or false."}
 
   # Visits only move forward, so a late or replayed visit changes nothing.
   defp thread_fields("thread.visit", command, thread, _) do

@@ -6,11 +6,19 @@ defmodule HalC2.Orchestration.Settlement do
   running, waiting-on-you, just-messaged and still-snoozed threads are left alone,
   and the thread is checked again as it settles, so anything newer wins.
 
-  Linked pull requests decide from their synced snapshots (`HalC2.PullRequests.Sync`); a
-  thread with none uses its branch's (`HalC2.PullRequests.Discovery`), read in one batch
-  per host. Threads are swept every minute, when the settlement settings change, and
-  one at a time when a run ends or their pull requests change. `sweep/0` runs a sweep
-  now and returns when it is done.
+  Linked pull requests decide from their synced snapshots (`HalC2.PullRequests.Sync`); one
+  open among them keeps the thread active, else the one that finished last decides. A
+  thread with none uses the pull request it recorded (`HalC2.PullRequests.Discovery`), read
+  in one batch per host, or else asks its branch, from its worktree or, once that is gone,
+  the project folder. A finished pull request that would settle the thread is checked
+  against its branch first: a branch used again for new work shows an open one, which
+  keeps the thread active. A thread settles by inactivity before anything is looked up,
+  and a lookup that fails holds back only its own thread. A thread the user turned
+  automatic settlement off for (`thread.auto-settle.set`) is never settled here.
+
+  Threads are swept every minute, when the settlement settings change, and one at a
+  time when a run ends or their pull requests change. `sweep/0` runs a sweep now and
+  returns when it is done.
   """
 
   use GenServer
@@ -116,17 +124,9 @@ defmodule HalC2.Orchestration.Settlement do
         for row <- candidates,
             not settle(row, nil, settings, now),
             Links.visible(row["pullRequests"] || []) == [],
-            reference = row["linkedPullRequest"] || row["branchPullRequest"],
-            do: {row, reference |> Links.legacy_key() |> Map.take(~w(host repository number))}
+            do: row
 
-      summaries =
-        if lookups == [],
-          do: %{},
-          else: HalC2.PullRequests.summaries(lookups |> Enum.map(&elem(&1, 1)) |> Enum.uniq())
-
-      for {row, ref} <- lookups, summary = summaries[ref] do
-        settle(row, Map.take(summary, ~w(state mergedAt closedAt)), settings, now)
-      end
+      if lookups != [], do: look_up(lookups, settings, now)
     end
 
     state
@@ -134,6 +134,97 @@ defmodule HalC2.Orchestration.Settlement do
     error ->
       Logger.warning("automatic thread settlement sweep failed: #{Exception.message(error)}")
       state
+  end
+
+  # Settles each of `rows` from its recorded pull request or its branch's. A failed
+  # lookup holds back only the threads that needed it.
+  defp look_up(rows, settings, now) do
+    refs = for row <- rows, ref = summary_ref(row), uniq: true, do: ref
+
+    summaries =
+      if refs == [],
+        do: %{},
+        else: guarded(rows, %{}, fn -> HalC2.PullRequests.summaries(refs) end)
+
+    rows
+    |> Task.async_stream(
+      fn row ->
+        guarded([row], false, fn -> settle_looked_up(row, summaries, settings, now) end)
+      end,
+      max_concurrency: 8,
+      timeout: :infinity,
+      ordered: false
+    )
+    |> Stream.run()
+  end
+
+  defp settle_looked_up(row, summaries, settings, now) do
+    pull_request =
+      case summary_ref(row) do
+        nil ->
+          branch_pull_request(row, [])
+
+        ref ->
+          with %{} = summary <- summaries[ref] do
+            summary |> Map.take(~w(state mergedAt closedAt)) |> reused_branch(row, settings, now)
+          end
+      end
+
+    pull_request != nil and settle(row, pull_request, settings, now)
+  end
+
+  defp summary_ref(row) do
+    with %{} = reference <- row["linkedPullRequest"] || row["branchPullRequest"],
+         do: reference |> Links.legacy_key() |> Map.take(~w(host repository number))
+  end
+
+  # A finished pull request that would settle the thread, unless its branch, asked
+  # fresh, now shows an open one in the project's repository: the branch was used again.
+  defp reused_branch(%{"state" => state} = finished, row, settings, now)
+       when state != "open" do
+    {on_merge, after_days} = resolved(settings, row["projectId"])
+
+    with true <- row["branch"] != nil,
+         true <- settled_at(row, finished, now, after_days, on_merge) != nil,
+         %{"state" => "open"} = open <- branch_pull_request(row, fresh: true) do
+      open
+    else
+      _ -> finished
+    end
+  end
+
+  defp reused_branch(pull_request, _row, _settings, _now), do: pull_request
+
+  # The pull request of the thread's branch, read where discovery reads it: its worktree,
+  # or the project folder once the worktree is gone. Nil when there is none or it cannot
+  # be read.
+  defp branch_pull_request(row, opts) do
+    with branch when is_binary(branch) <- row["branch"],
+         {"project", %{"workspaceRoot" => root} = project} when is_binary(root) <-
+           HalC2.Shell.row(node(), row["projectId"]),
+         nil <- project["deletedAt"],
+         worktree = row["worktreePath"],
+         cwd = if(worktree && File.dir?(worktree), do: worktree, else: root),
+         {:ok, %{} = pull_request} <-
+           HalC2.PullRequests.Discovery.branch_pull_request(project, cwd, branch, opts) do
+      pull_request
+    else
+      _ -> nil
+    end
+  end
+
+  defp guarded(rows, fallback, fun) do
+    fun.()
+  rescue
+    error -> skipped(rows, Exception.message(error), fallback)
+  catch
+    :exit, reason -> skipped(rows, inspect(reason), fallback)
+  end
+
+  defp skipped(rows, reason, fallback) do
+    ids = Enum.map_join(rows, ", ", & &1["id"])
+    Logger.warning("automatic settlement skipped for #{ids}: #{reason}")
+    fallback
   end
 
   defp settle(row, pull_request, settings, now) do
@@ -246,6 +337,7 @@ defmodule HalC2.Orchestration.Settlement do
       row["archivedAt"] != nil -> "archived"
       row["settledOverride"] == "settled" -> "already settled"
       row["settledOverride"] != nil -> "kept active by the user"
+      row["autoSettleDisabledAt"] != nil -> "auto-settle is off for it"
       row["pinnedAt"] != nil -> "pinned"
       row["pendingRuntimeRequest"] != nil -> "waiting on the user"
       row["activityRunStatus"] != nil -> "has a run in progress"

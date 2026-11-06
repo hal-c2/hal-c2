@@ -478,6 +478,28 @@ defmodule HalC2.PullRequests.Discovery do
     end
   end
 
+  @doc """
+  The pull request of `branch` as discovery would record it, read from checkout `cwd` of
+  `project` (a sidebar project row) through `HalC2.PullRequests.Branches` with `opts`:
+  `{:ok, %{"projectId", "repository", "number", "url", "state", "mergedAt",
+  "closedAt"} | nil}`, `:mismatch` when it belongs to another repository, or `:error`.
+  Only GitHub checkouts are asked; any other answers `{:ok, nil}`.
+  """
+  def branch_pull_request(project, cwd, branch, opts \\ []) do
+    case remote(project["workspaceRoot"]) do
+      %{kind: "github"} = remote ->
+        {answer, _read?} = Branches.lookup(cwd, branch, opts)
+        p = %{group: [%{"branch" => branch}], project: project, remote: remote, cwd: cwd}
+
+        with {:ok, %{} = found} <- detected(p, answer),
+             {:ok, pr} = answer,
+             do: {:ok, Map.merge(found, Map.take(pr, ~w(mergedAt closedAt)))}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
   defp project(id) do
     case HalC2.Shell.row(node(), id) do
       {"project", row} -> if row["deletedAt"] == nil, do: row

@@ -408,6 +408,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Fractional-index slot in the user-arranged active order. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Set while the user has turned automatic settlement off for this thread. */
+  autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1355,6 +1357,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pinned",
       "thread.unpinned",
       "thread.pin-reordered",
+      "thread.auto-settle-set",
       "thread.active-reordered",
       "thread.visited",
       "thread.marked-unread",
@@ -1588,6 +1591,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Set while automatic settlement is off; omitted by servers without the switch. */
+  autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /**
    * Omitted by servers that predate server-side visited tracking; clients fall
    * back to their local visited state when the field is absent.
@@ -1687,6 +1692,7 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -2095,6 +2101,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -2149,6 +2156,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.pinned",
       "thread.unpinned",
       "thread.pin-reordered",
+      "thread.auto-settle-set",
       "thread.active-reordered",
       "thread.visited",
       "thread.marked-unread",
@@ -2396,6 +2404,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    // false turns automatic settlement off for this thread, true turns it back on.
+    enabled: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),

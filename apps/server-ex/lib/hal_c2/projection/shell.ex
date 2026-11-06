@@ -133,6 +133,7 @@ defmodule HalC2.Projection.Shell do
       "snoozedAt" => get(thread, "snoozedAt"),
       "pinnedAt" => get(thread, "pinnedAt"),
       "pinOrderKey" => get(thread, "pinOrderKey"),
+      "autoSettleDisabledAt" => get(thread, "autoSettleDisabledAt"),
       "lastVisitedAt" => get(thread, "lastVisitedAt"),
       "titleRegeneration" => json(get(thread, "titleRegeneration")),
       "limitRecovery" => json(get(thread, "limitRecovery")),
