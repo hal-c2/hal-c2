@@ -72,14 +72,31 @@ const Steps steps([] {
   });
 
   // Threads from the first version.
-  step(QStringLiteral("threads were migrated from the first version"), [](World& world, const Captures&, const Table&) {
+  // The rows the import writes for two first-version threads.
+  const auto migrated = [] {
+    QList<QJsonObject> rows;
     for (const QString& title : {QStringLiteral("Legacy work"), QStringLiteral("Older legacy work")}) {
       const QString id = QStringLiteral("t-") + title.toLower().replace(QLatin1Char(' '), QLatin1Char('-'));
-      world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), title}, {QStringLiteral("projectId"), QStringLiteral("legacy")},
-                                   {QStringLiteral("historyOrigin"), QStringLiteral("v1_import")},
-                                   {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")}});
+      rows.append({{QStringLiteral("id"), id}, {QStringLiteral("title"), title}, {QStringLiteral("projectId"), QStringLiteral("legacy")},
+                   {QStringLiteral("historyOrigin"), QStringLiteral("v1_import")},
+                   {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:00:00Z")}});
     }
+    return rows;
+  };
+  step(QStringLiteral("threads were migrated from the first version"), [migrated](World& world, const Captures&, const Table&) {
+    for (const QJsonObject& row : migrated()) world.mc.threads.insert(row.value(QLatin1String("id")).toString(), row);
     world.connect();
+  });
+  // The import runs on the MC after the app has its snapshot: the rows come one by one.
+  step(QStringLiteral("threads are migrated from the first version while the app is open"), [migrated](World& world, const Captures&, const Table&) {
+    world.connect();
+    world.sync();
+    for (const QJsonObject& row : migrated()) {
+      const QString id = row.value(QLatin1String("id")).toString();
+      world.mc.threads.insert(id, row);
+      world.mc.sendRow(id, row);
+    }
+    world.sync();
   });
   step(QStringLiteral("the user is told the threads were brought over"), [](World& world, const Captures&, const Table&) {
     const auto told = [&] {

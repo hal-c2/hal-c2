@@ -135,7 +135,8 @@ struct Sut {
   }
 
   void setRow(const std::string& id, int n) {
-    const QJsonObject row{{QStringLiteral("id"), q(id)}, {QStringLiteral("n"), n}};
+    // The title says the version too, so threads() shows which one it read.
+    const QJsonObject row{{QStringLiteral("id"), q(id)}, {QStringLiteral("n"), n}, {QStringLiteral("title"), QString::number(n)}};
     (isThread(id) ? mc.threads : mc.projects).insert(q(id), row);
     mc.sendRow(q(id), row, isThread(id) ? QStringLiteral("thread") : QStringLiteral("project"));
   }
@@ -190,6 +191,19 @@ void expectSame(const Model& model, Sut& sut) {
       }
     }
   }
+
+  // The thread list every listener reads is built from the same rows, never
+  // left as it was before a change.
+  std::map<std::string, int> listed;
+  for (const sidebar::Thread& thread : sut.store->threads()) {
+    RC_ASSERT(thread.environmentId == QStringLiteral("env-a"));
+    listed[thread.id.toStdString()] = thread.title.toInt();
+  }
+  std::map<std::string, int> threads;
+  for (const auto& [id, n] : rows) {
+    if (isThread(id)) threads[id] = n;
+  }
+  if (listed != threads) RC_FAIL("threads() lists " + rc::toString(listed) + ", the rows are " + rc::toString(threads));
 
   // The cache keeps the MC's word, at the version the store resumes from.
   sut.store->flush();
