@@ -340,14 +340,14 @@ Feature: Connection health
     Then the thread shows its cached content
     And the client does not claim a live connection
 
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: Cached data never overwrites newer live data
     Given the client reconnects while cached data loads
     When live data arrives first
     Then the older cached data is not applied over it
 
   # Legacy: packages/client-runtime/src/platform/orchestrationCache.ts (decodeOrDiscardOrchestrationCache)
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A kept copy the client cannot read is dropped and never blocks live data
     Given the client kept a copy of "Fix checkout" that it can no longer read
     When the user opens "Fix checkout" while connected
@@ -378,14 +378,14 @@ Feature: Connection health
     Then neither kept list is offered again until it is read anew
 
   # Upstream #13683: a slow but alive MC finishes a load instead of being asked for it twice.
-  @shared @backlog
+  @shared
   Scenario: A slow MC finishes the thread list instead of building it twice
     Given the MC takes 12 seconds to build the thread list
     When the client connects
     Then the thread list shows once the MC answers
     And the MC builds the thread list once
 
-  @shared @backlog
+  @shared
   Scenario: A slow MC finishes opening a thread instead of loading it twice
     Given the MC takes 12 seconds to load a thread
     When the user opens the thread
