@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QTest>
 #include <QTimeZone>
 
 #include <algorithm>
@@ -250,13 +251,20 @@ QVariantMap turnState(World& world) {
   return world.state(S("turn")).toMap();
 }
 
+// The plan card's Expand plan / Collapse plan, when it offers one.
+QString planExpandText(World& world) {
+  world.sync();
+  QQuickItem* button = world.find(S("planExpand"));
+  return button && button->isVisible() ? button->property("text").toString() : QString();
+}
+
 // A proposed plan in a settled run of the thread in plan mode.
-void proposePlan(World& world) {
+void proposePlan(World& world, const QString& markdown = kPlan) {
   startRun(world, 30);
   updateRow(world.mc, world.thread, {{S("interactionMode"), S("plan")}});
-  addItem(world, S("proposed_plan"), {{S("markdown"), kPlan}, {S("planId"), S("plan-1")}});
+  addItem(world, S("proposed_plan"), {{S("markdown"), markdown}, {S("planId"), S("plan-1")}});
   set(world, S("plan"), S("plan-1"),
-      {{S("id"), S("plan-1")}, {S("kind"), S("proposed_plan")}, {S("status"), S("active")}, {S("runId"), world.run}, {S("markdown"), kPlan}});
+      {{S("id"), S("plan-1")}, {S("kind"), S("proposed_plan")}, {S("status"), S("active")}, {S("runId"), world.run}, {S("markdown"), markdown}});
   settleRun(world);
   world.waitFor([&] { return turnState(world).value(S("plan")).isValid(); },
                 [&] { return S("the plan to be offered; the turn is %1").arg(show(turnState(world))); });
@@ -278,9 +286,13 @@ void choose(World& world, const QString& entry) {
   world.sync();
 }
 
+// Saves to `path`, typed over the file name the dialog starts from. Without a
+// workspace the menu only says so, and no dialog opens.
 void saveTo(World& world, const QString& path) {
   choose(world, S("planSave"));
+  if (turnState(world).value(S("plan")).toMap().value(S("workspaceRoot")).toString().isEmpty()) return;
   world.tap(S("planSavePath"));
+  QTest::keyClick(&world.window(), Qt::Key_A, Qt::ControlModifier);
   world.type(path);
   world.tap(S("planSaveConfirm"));
   world.sync();
@@ -323,6 +335,39 @@ const Steps steps([] {
 
   // Implementing or refining it from the composer.
   step(S("the agent has proposed a plan"), [](World& world, const Captures&, const Table&) { proposePlan(world); });
+
+  // A long plan's preview, opened and closed again (ProposedPlanCard).
+  step(S("the agent has proposed a plan (of 30 short lines|of 1,000 characters on 5 lines|of 15 short lines)"), [](World& world, const Captures& c, const Table&) {
+    QStringList lines;
+    for (int n = 1; n <= (c[0] == S("of 30 short lines") ? 30 : c[0] == S("of 15 short lines") ? 15 : 5); ++n)
+      lines.append(S("- Step %1").arg(n) + (c[0].startsWith(S("of 1,000")) ? S(" ") + QString(200, QLatin1Char('x')) : QString()));
+    proposePlan(world, S("# Tax line\n\n") + lines.join(QLatin1Char('\n')));
+  });
+  step(S("the plan card shows (its first 10 lines followed by an ellipsis|the whole plan and no way to collapse it)"), [](World& world, const Captures& c, const Table&) {
+    const int row = rowOf(world, S("plan"));
+    const QString preview = role(timeline(world), row, TimelineModel::PreviewRole).toString();
+    const QString body = role(timeline(world), row, TimelineModel::TextRole).toString();
+    const QString button = planExpandText(world);
+    if (c[0].startsWith(S("the whole plan"))) {
+      expect(preview.isEmpty() && button.isEmpty(), S("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
+      return;
+    }
+    const QString expected = body.split(QLatin1Char('\n')).mid(0, 10).join(QLatin1Char('\n')) + S("\n\n...");
+    expect(preview == expected && button == S("Expand plan"), S("the plan card shows \"%1\" and offers \"%2\"").arg(preview, button));
+  });
+  step(S("the user chooses \"(Expand plan|Collapse plan)\""), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return planExpandText(world) == c[0]; }, [&] { return S("the plan card to offer \"%1\"; it offers \"%2\"").arg(c[0], planExpandText(world)); });
+    world.tap(S("planExpand"));
+    world.sync();
+  });
+  step(S("the whole plan is shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return role(timeline(world), rowOf(world, S("plan")), TimelineModel::ExpandedRole).toBool() && planExpandText(world) == S("Collapse plan"); },
+                  [&] { return S("the plan card offers \"%1\"").arg(planExpandText(world)); });
+  });
+  step(S("the plan returns to its preview"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !role(timeline(world), rowOf(world, S("plan")), TimelineModel::ExpandedRole).toBool() && planExpandText(world) == S("Expand plan"); },
+                  [&] { return S("the plan card offers \"%1\"").arg(planExpandText(world)); });
+  });
   step(S("the user implements the plan with no feedback"), [](World& world, const Captures&, const Table&) {
     world.tap(S("planImplement"));
     world.sync();
@@ -925,6 +970,64 @@ const Steps turnSteps([] {
     // A disabled row takes no tap: nothing leads to a thread.
     expect(!row->isEnabled() && row->property("thread").toString().isEmpty(), S("the subagent can be opened"));
     expect(world.popupShowing(S("agentsSheet")) && openKey(world) == key(world, world.thread), S("the phone shows %1").arg(openKey(world)));
+  });
+});
+
+const Steps displaySteps([] {
+  const QString q = kQuoted;
+
+  // A group's counts (subagentDisplay.ts summarizeSubagentStatuses).
+  step(S("the agent started a group of subagents of which (.+)"), [](World& world, const Captures& c, const Table&) {
+    const QHash<QString, QStringList> groups{
+        {S("two are working and one is done"), {S("running"), S("running"), S("completed")}},
+        {S("one is waiting for the user and one is not started yet"), {S("waiting"), S("pending")}},
+        {S("two are done, one failed and one was stopped"), {S("completed"), S("completed"), S("failed"), S("cancelled")}},
+        {S("one is working, one is done, one failed, one stopped, one idle"), {S("running"), S("completed"), S("failed"), S("cancelled"), S("idle")}},
+    };
+    if (!groups.contains(c[0])) fail(S("no such group: %1").arg(c[0]));
+    startRun(world);
+    const QStringList statuses = groups.value(c[0]);
+    for (qsizetype i = 0; i < statuses.size(); ++i) startSubagent(world, S("Agent %1").arg(i + 1), {{S("status"), statuses.at(i)}});
+  });
+  step(S("the group reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return rowsOf(timeline(world), S("subagents")).size() == 1; }, [&] { return S("one group; %1").arg(describe(timeline(world))); });
+    TimelineModel& model = timeline(world);
+    const QString summary = role(model, rowsOf(model, S("subagents")).first(), TimelineModel::TextRole).toString();
+    expect(summary == c[0], S("the group reads \"%1\"").arg(summary));
+    world.waitFor([&] {
+      QQuickItem* drawn = world.find(S("subagentGroupSummary"));
+      return drawn && drawn->property("text") == c[0];
+    }, S("the group's counts to be drawn"));
+  });
+
+  // A subagent's title (subagentDisplay.ts formatSubagentDisplayTitle): in the
+  // timeline, in the turn's subagents and in its own subagent's lineage.
+  step(S("a subagent whose title is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    startRun(world);
+    const QString child = S("thread-sub");
+    const auto list = [&](const QString& id, const QString& title, const QString& parent) {
+      world.mc.threads.insert(id, {{S("id"), id}, {S("title"), title}, {S("projectId"), S("shop")},
+                                   {S("createdAt"), S("2026-09-23T09:30:00Z")}, {S("updatedAt"), S("2026-09-23T09:30:00Z")},
+                                   {S("lineage"), QJsonObject{{S("rootThreadId"), world.thread}, {S("parentThreadId"), parent},
+                                                              {S("relationshipToParent"), S("subagent")}}}});
+      world.mc.sendRow(id, world.mc.threads.value(id));
+    };
+    list(child, c[0], world.thread);
+    // A subagent of the subagent, whose lineage names it as its parent.
+    list(S("thread-sub-sub"), S("Grandchild"), child);
+    startSubagent(world, c[0], {{S("childThreadId"), child}});
+  });
+  step(S("the user sees it in the timeline, the lineage or the agents list"), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(S("it is shown as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return rowsOf(timeline(world), S("subagent")).size() == 1; }, [&] { return S("the subagent's row; %1").arg(describe(timeline(world))); });
+    TimelineModel& model = timeline(world);
+    const QString inTimeline = role(model, rowsOf(model, S("subagent")).first(), TimelineModel::TitleRole).toString();
+    expect(inTimeline == c[0], S("the timeline shows \"%1\"").arg(inTimeline));
+    openAgents(world);
+    world.waitFor([&] { return listedAgents(world).contains(c[0]); }, [&] { return S("the subagents to list \"%1\"; %2").arg(c[0], describeAgents(world)); });
+    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(key(world, S("thread-sub-sub"))));
+    world.waitFor([&] { return at(world.state(S("lineage")), S("parent.title")) == c[0]; },
+                  [&] { return S("the lineage to name \"%1\"; it is %2").arg(c[0], show(world.state(S("lineage")))); });
   });
 });
 

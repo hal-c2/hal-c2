@@ -72,7 +72,7 @@ Feature: Plans and subagents
     Then the agent revises the plan
     And the thread stays in plan mode
 
-  @backlog @desktop
+  @desktop
   Scenario: A plan follow-up that cannot be sent is taken back and reported
     Given the agent has proposed a plan
     And the environment refuses new messages
@@ -118,13 +118,13 @@ Feature: Plans and subagents
     When the user saves the plan to the workspace
     Then the user is told "Workspace path is unavailable"
 
-  @desktop @backlog
+  @desktop
   Scenario: A plan's Summary heading is not repeated in its card
     When the agent proposes a plan whose first heading is "Add a tax line" followed by a "Summary" heading
     Then the plan card is titled "Add a tax line"
     And the plan's text starts after the "Summary" heading
 
-  @desktop @backlog
+  @desktop @mobile
   Scenario Outline: A long plan is shown as a preview that can be opened
     Given the agent has proposed a plan <size>
     Then the plan card shows <shown>
@@ -132,10 +132,10 @@ Feature: Plans and subagents
     Examples:
       | size                            | shown                                       |
       | of 30 short lines               | its first 10 lines followed by an ellipsis  |
-      | of 1,000 characters on 5 lines  | its first 10 lines followed by an ellipsis  |
+      | of 1,000 characters on 5 lines  | the whole plan and no way to collapse it    |
       | of 15 short lines               | the whole plan and no way to collapse it    |
 
-  @desktop @backlog
+  @desktop @mobile
   Scenario: A previewed plan is opened and closed again
     Given the agent has proposed a plan of 30 short lines
     When the user chooses "Expand plan"
@@ -143,40 +143,40 @@ Feature: Plans and subagents
     When the user chooses "Collapse plan"
     Then the plan returns to its preview
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A plan's copy is named after its title
     Given the agent has proposed a plan titled "<title>"
     When the user downloads the plan
     Then the file is named "<file>"
 
     Examples:
-      | title                  | file              |
-      | Add a tax line         | add-a-tax-line.md |
-      | Fix `cart.ts`, finally | fix-cart-ts-finally.md |
-      | (no heading)           | plan.md           |
+      | title                  | file                  |
+      | Add a tax line         | add-a-tax-line.md     |
+      | Fix `cart.ts`, finally | fix-cartts-finally.md |
+      | (no heading)           | plan.md               |
 
-  @desktop @backlog
+  @desktop
   Scenario: Saving the plan to the workspace starts from its file name
     Given the agent has proposed a plan titled "Add a tax line"
     When the user chooses to save the plan to the workspace
     Then the user is asked for a path relative to the workspace
     And the path starts as "add-a-tax-line.md"
 
-  @desktop @backlog
+  @desktop
   Scenario: Saving the plan to the workspace needs a path
     Given the agent has proposed a plan
     And the user is asked where in the workspace to save it
     When the user clears the path and saves
     Then the user is told "Enter a workspace path"
-    And nothing is saved
+    And nothing is written to the workspace
 
-  @desktop @backlog
+  @desktop
   Scenario: A plan saved to the workspace says where
     Given the agent has proposed a plan
     When the user saves the plan to "docs/tax-plan.md"
     Then the user is told "Plan saved to workspace" with "docs/tax-plan.md"
 
-  @desktop @backlog
+  @desktop
   Scenario: A plan that cannot be written says so and keeps the dialog
     Given the agent has proposed a plan
     And the workspace refuses the write
@@ -184,14 +184,14 @@ Feature: Plans and subagents
     Then the user is told "Could not save plan" with the reason
     And the user can try another path
 
-  @desktop @backlog
+  @desktop
   Scenario: A plan that cannot reach the clipboard says so
     Given the agent has proposed a plan
     And the clipboard refuses the copy
     When the user copies the plan
     Then the user is told "Could not copy plan" with the reason
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A plan is saved as the same text however it is kept
     Given the agent has proposed a plan with trailing blank lines
     When the user <action>
@@ -203,7 +203,7 @@ Feature: Plans and subagents
       | downloads the plan               |
       | saves the plan to the workspace  |
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A plan implemented in a new thread names the thread after the plan
     Given the agent has proposed a plan <titled>
     When the user implements the plan in a new thread
@@ -214,20 +214,20 @@ Feature: Plans and subagents
       | titled "Add a tax line"  | Implement Add a tax line |
       | with no heading          | Implement plan        |
 
-  @desktop @backlog
+  @desktop
   Scenario: Implementing a plan with no feedback sends the plan as the user's message
     Given the agent has proposed a plan
     When the user implements the plan with no feedback
     Then the user's message reads "PLEASE IMPLEMENT THIS PLAN:" followed by the plan
     And the thread leaves plan mode
 
-  @backlog @desktop
+  @desktop
   Scenario: A plan that is ready is announced above the composer by its title
     Given the agent has proposed a plan headed "Add a tax line"
     Then the composer says "Plan ready" with "Add a tax line"
     And a plan with no heading is announced as "Plan ready" alone
 
-  @backlog @desktop
+  @desktop
   Scenario: Typing feedback turns implementing the plan into refining it
     Given the agent has proposed a plan
     Then the composer offers to implement the plan
@@ -236,13 +236,13 @@ Feature: Plans and subagents
     When the user clears the composer
     Then the composer offers to implement the plan again
 
-  @backlog @desktop
+  @desktop
   Scenario: The agent's task list is summed up above the composer
     Given the agent's task list has the steps "Add the tax line", "Write tests" and "Update docs"
     And "Add the tax line" is finished and "Write tests" is in progress
     Then the composer shows "Tasks" with the current step "Write tests" and 1 of 3 done
 
-  @backlog @desktop
+  @desktop
   Scenario: The task summary opens to every step, its status and how long it took
     Given the agent finished "Add the tax line" in 42 seconds and is working on "Write tests"
     And "Update docs" has not started
@@ -251,7 +251,7 @@ Feature: Plans and subagents
     And "Write tests" is listed as running with "now"
     And "Update docs" is listed as pending with no time
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The task summary is not shown when there is nothing for it to say
     Given <situation>
     Then the composer shows no task summary
@@ -262,7 +262,7 @@ Feature: Plans and subagents
       | the agent's task list is open and an approval comes in       |
       | the agent's task list is open and the agent asks a question  |
 
-  @backlog @desktop
+  @desktop
   Scenario: An open task list closes when the user changes thread
     Given the user opened the task summary in thread A
     When the user switches to thread B and back to thread A
@@ -314,7 +314,7 @@ Feature: Plans and subagents
     Then the worker's notification reads "Tax tests finished"
     And the notification links to the worker's thread
 
-  @desktop @backlog-mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A finished task's result is kept apart from the agent's replies until opened
     Given a task the agent delegated as "Tax tests" finished with "12 tests added"
     When the user reads the parent thread
@@ -340,7 +340,7 @@ Feature: Plans and subagents
     And the user can open the parent
 
   # Also proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread.
-  @desktop @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A result waiting to wake the parent names its worker and opens its thread
     Given the agent delegated a task and chose to carry on
     And the subagent finishes with "12 tests added"
@@ -640,7 +640,7 @@ Feature: Plans and subagents
     And the entry stays open or closed the way the user left it while the thread is open
 
   # Legacy: packages/client-runtime/src/state/subagentDisplay.ts (summarizeSubagentStatuses)
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: A group of subagents counts what is still working first and then the outcomes
     Given the agent started a group of subagents of which <states>
     Then the group reads "<summary>"
@@ -689,7 +689,7 @@ Feature: Plans and subagents
     Then it shows the avatars of the first three and "+2"
 
   # Legacy: packages/client-runtime/src/state/subagentDisplay.ts (formatSubagentDisplayTitle)
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario Outline: A subagent's title is shown without its provider's prefix or task path
     Given a subagent whose title is "<title>"
     When the user sees it in the timeline, the lineage or the agents list

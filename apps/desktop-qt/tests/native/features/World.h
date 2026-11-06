@@ -57,6 +57,8 @@ public:
   // instead of touching the desktop's.
   QString clipboard;
   bool clipboardFails = false;
+  // Why the scenario's environment refused, for "the user is told … with the reason".
+  QString reason;
   // Nothing on this machine can open an address: the system browser refuses
   // what openExternal hands it.
   bool browserFails = false;

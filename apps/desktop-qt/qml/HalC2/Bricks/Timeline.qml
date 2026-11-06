@@ -2172,11 +2172,24 @@ Item {
                                 elide: Text.ElideRight
                             }
                         }
+                        // A long plan shows its first lines until it is opened.
                         Markdown {
+                            readonly property string preview: row.model.preview ?? ""
                             width: parent.width
-                            text: row.text ?? ""
+                            text: row.expanded || preview.length === 0 ? (row.text ?? "") : preview
                             linkPreviews: root.linkPreviews
                             onLinkActivated: (link, external) => root.linkActivated(link, external)
+                        }
+                        ShellButton {
+                            objectName: "planExpand"
+                            visible: (row.model.preview ?? "").length > 0
+                            height: Theme.control.sm
+                            text: row.expanded ? qsTr("Collapse plan") : qsTr("Expand plan")
+                            font.pixelSize: Theme.type.meta.size
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            Accessible.onPressAction: clicked()
+                            onClicked: root.toggle(row.rowId)
                         }
                     }
                 }
