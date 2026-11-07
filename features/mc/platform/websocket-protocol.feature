@@ -2,6 +2,8 @@
 #   https://github.com/pingdotgg/t3code/pull/14859
 #   https://github.com/pingdotgg/t3code/pull/15515 (a failing handler fails only its own request)
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/16317
+#   https://github.com/pingdotgg/t3code/pull/23758
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (protocol 3 frames)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (subscriptions, buffering, resync, state migration)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/ws upgrade)
@@ -77,6 +79,16 @@ Feature: The protocol 3 WebSocket
     When it subscribes again from that offset
     Then it receives what it missed in several frames of whole entities
     And only the last of them moves its offset
+
+  # Upstream #23758: a big settings answer on a slow link took longer than the connection's
+  # liveness check, so the phone dropped and reconnected in a loop.
+  @backlog @mc @shared @priority-high
+  Scenario: A large answer on a slow link keeps the connection alive while it arrives
+    Given a client is connected over a link of 4,000 bytes a second
+    When the MC answers it with a server config larger than one frame
+    Then the answer arrives in parts and each part keeps the connection alive
+    And the client puts the answer together once the last part arrives
+    And a client that cannot take parts is answered in one frame
 
   @mc
   Scenario: A client that kept a thread between connections resumes it by its handle
@@ -161,6 +173,15 @@ Feature: The protocol 3 WebSocket
     Given the client subscribed to a thread where many tool calls are running
     When 512 progress updates are waiting to be merged
     Then they are merged and sent at once, without waiting for the 50 milliseconds to pass
+
+  # Upstream #16317: superseded updates stayed charged to the 8 MiB buffer until the 50 ms window
+  # ended, so 150 updates of 64 KiB each overflowed it.
+  @mc @backlog @priority-high
+  Scenario: A burst of large tool progress does not overflow a subscription
+    Given the client subscribed to a thread where a command is running
+    When the command reports 150 updates of 64 KiB of output each within 50 milliseconds
+    Then the subscription stays live within its 8 MiB budget
+    And the client receives the command's latest output
 
   @mc
   Scenario: Long-lived subscriptions do not keep what they already delivered in memory

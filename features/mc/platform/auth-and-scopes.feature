@@ -38,6 +38,7 @@
 #   docs/operations/development.md (Reusable dev credential)
 #   AGENTS.md (npx hal-c2 pair, HAL_C2_DEV_AUTH_TOKEN)
 #   https://github.com/pingdotgg/t3code/pull/23782
+#   https://github.com/pingdotgg/t3code/pull/30337
 
 Feature: MC authentication and scopes
   An MC issues its own sessions. Pairing hands out a session with a set of scopes, a
@@ -298,6 +299,20 @@ Feature: MC authentication and scopes
       | Bearer |
       | bearer |
       | bEaReR |
+
+  # Upstream #30337: a DPoP token sent as "dpop" matched neither scheme and was refused as no credential.
+  @backlog @mc @priority-low
+  Scenario Outline: The DPoP scheme is read in any letter case
+    Given a client holds a DPoP-bound access token and a fresh proof from its key
+    When it sends the token with the scheme "<scheme>"
+    Then the MC says it is authenticated
+    And a refused request is challenged for DPoP whatever the scheme's case
+
+    Examples:
+      | scheme |
+      | DPoP   |
+      | dpop   |
+      | DPOP   |
 
   # Upstream #23782: refusals say which part was wrong, without repeating the credential.
   @backlog @mc @priority-low

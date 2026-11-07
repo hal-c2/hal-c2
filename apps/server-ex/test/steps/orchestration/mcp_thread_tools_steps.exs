@@ -1197,12 +1197,22 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   step ~r/^"(?<thread>[^"]+)" is (?<result>unpinned|settled|unsettled|snoozed|not snoozed|unarchived|marked unread)$/,
        %{args: [thread, result]} = context do
     # In pull-request-links these arrange the state discovery and the sync
-    # cadence then observe, rather than awaiting a tool's doing.
-    if String.contains?(context[:file] || "", "pull-request-links") and
-         result in ["settled", "unarchived"] do
-      HalC2.Steps.Orchestration.PullRequestLinks.arrange_state(context, thread, result)
-    else
-      await_organized(context, thread, result)
+    # cadence then observe, rather than awaiting a tool's doing; in
+    # recovery-and-idle-sessions, a thread settled before the MC restarts.
+    file = context[:file] || ""
+
+    cond do
+      String.contains?(file, "pull-request-links") and result in ["settled", "unarchived"] ->
+        HalC2.Steps.Orchestration.PullRequestLinks.arrange_state(context, thread, result)
+
+      String.contains?(file, "recovery-and-idle-sessions") and result == "settled" ->
+        World.patch_thread(context, thread, %{
+          "settledOverride" => "settled",
+          "settledAt" => World.iso_from_now(0)
+        })
+
+      true ->
+        await_organized(context, thread, result)
     end
   end
 

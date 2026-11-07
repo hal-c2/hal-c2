@@ -36,6 +36,18 @@ Rectangle {
     readonly property var stage: Shell.state.stage ?? null
     property Window window: null
     readonly property var projects: model ? model.projects : []
+    // The new thread buttons start in the project the list is scoped to; else,
+    // with several projects, they ask which one (DraftController) unless Shift
+    // is held, which starts it in the current project.
+    readonly property string newThreadHint: projects.length > 1 ? qsTr("New thread\nNew thread in current project: Shift+click") : qsTr("New thread")
+    function newThread() {
+        const scope = model ? model.scopeProjectKey : null;
+        Shell.dispatch("thread.new", scope ? {
+            projectKey: scope
+        } : {
+            ask: true
+        });
+    }
     readonly property var projectNames: {
         const names = {};
         for (const project of projects) {
@@ -261,11 +273,9 @@ Rectangle {
             objectName: "railNewThread"
             visible: sidebar.showScope
             iconName: "square-pen"
-            toolTip: qsTr("New thread")
+            toolTip: sidebar.newThreadHint
             Accessible.name: qsTr("New thread")
-            onClicked: Shell.dispatch("thread.new", sidebar.model && sidebar.model.scopeProjectKey !== null ? {
-                projectKey: sidebar.model.scopeProjectKey
-            } : {})
+            onClicked: sidebar.newThread()
         }
 
         Item {
@@ -411,9 +421,8 @@ Rectangle {
                     iconTint: sidebar.iconColor
                     objectName: "newThread"
                     Accessible.name: qsTr("New thread")
-                    onClicked: Shell.dispatch("thread.new", sidebar.model && sidebar.model.scopeProjectKey !== null ? {
-                        projectKey: sidebar.model.scopeProjectKey
-                    } : {})
+                    toolTip: sidebar.newThreadHint
+                    onClicked: sidebar.newThread()
                 }
             }
 

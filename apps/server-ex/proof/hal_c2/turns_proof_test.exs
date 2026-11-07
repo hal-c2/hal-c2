@@ -170,7 +170,11 @@ defmodule HalC2.TurnsProofTest do
         "saves state to a file for a later boot; no run changes",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
-        "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does"
+        "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does",
+      "HalC2.Orchestration.Recovery.cut_off?/1" =>
+        "reads whether a restart ended an item; changes nothing, and no run's status turns on it",
+      "HalC2.Orchestration.Recovery.deliverable?/2" =>
+        "checks a continuation is still wanted when its effect runs; one sent is a message as dispatch/1 has it, one not wanted sends nothing"
     },
     environment: %{
       "crash" => "the runtime's process crashes",

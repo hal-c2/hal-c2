@@ -1,7 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/28351
+#   https://github.com/pingdotgg/t3code/pull/29241
 #   https://github.com/pingdotgg/t3code/pull/17351
 #   https://github.com/pingdotgg/t3code/pull/16676
 #   https://github.com/pingdotgg/t3code/pull/16683
+#   https://github.com/pingdotgg/t3code/pull/27286
+#   https://github.com/pingdotgg/t3code/pull/30480
 #   docs/user/install.md
 #   docs/user/background-service.md (hal-c2 update, hal-c2 uninstall, macOS Full Disk Access)
 #   apps/server/src/cli (hal-c2, hal-c2 serve, hal-c2 update, hal-c2 uninstall, hal-c2 app)
@@ -29,6 +33,14 @@ Feature: Installing and uninstalling
       | with no options         | from the stable channel |
       | on the nightly channel  | from the nightly channel |
       | pinned to "1.3.0"       | at version "1.3.0"     |
+
+  # Blocked with the install script above.
+  # Upstream #29241: a relative T3CODE_HOME reported success and left a dangling t3 command.
+  @backlog @blocked @mc @priority-low
+  Scenario: Installing into a relative home gives a command that runs from any folder
+    When the user runs the install script with a relative HAL-C2 home
+    Then the home is taken relative to the folder the script ran in
+    And the installed hal-c2 command runs from another folder
 
   # Dropped: a release runs under the operating system's service manager
   # (background-service.feature) and a checkout under a mise daemon. There is no web app
@@ -64,6 +76,16 @@ Feature: Installing and uninstalling
   Scenario: Declining the restart leaves the old server running
     When the user runs "hal-c2 update" and declines the restart
     Then the old version keeps running until the user restarts the service
+
+  # Upstream #30480: `t3 up --base-dir` printed its retry and restart hints without --base-dir,
+  # so following them set up or restarted the default home instead.
+  # Blocked: how does a release reach the user's machine? The install script and the
+  # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
+  @backlog @blocked @mc @priority-low
+  Scenario: The next steps setup prints keep the home it was given
+    Given the user is setting up the HAL-C2 home "/srv/sandbox"
+    When setup fails to update the service, or the user declines its restart
+    Then the command it says to run next names the HAL-C2 home "/srv/sandbox"
 
   # Blocked: how does a release reach the user's machine? The install script and the
   # `hal-c2 update` and `hal-c2 uninstall` commands belong to the legacy CLI.
@@ -262,6 +284,8 @@ Feature: Installing and uninstalling
   # Dropped with the desktop's bundled command above: upstream #17351 refuses to link it behind
   # another t3 that comes first on the PATH. The hal-c2 command comes from the MC's install.
   # Upstream #17351: the t3 command warns instead of installing behind another t3
+  # Upstream #27286: Install is also disabled up front while another t3 blocks it, and Remove stays
+  # offered for the app's own shadowed link; dropped with the rest of the bundled command.
   @dropped @desktop
   Scenario: The desktop app will not put its command behind another one on the PATH
     Given another "t3" comes earlier on the PATH than the folder the app would link into
@@ -277,3 +301,10 @@ Feature: Installing and uninstalling
     Then the agent cannot read the project
     When the user grants Full Disk Access to the hal-c2 executable the service runs
     Then the agent can work in the project
+
+  # Upstream #28351: Electron's Linux download ships its files world-writable and the .deb kept
+  # those modes, so any local user could replace the app the next person launched.
+  @backlog @desktop @priority-high
+  Scenario: The desktop's Linux packages install no file another local user can change
+    When the desktop app is installed from its Linux package
+    Then no installed file or folder of the app can be written by other users or its group

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29245
 #   https://github.com/pingdotgg/t3code/pull/19201
 #   https://github.com/pingdotgg/t3code/pull/16191
 #   https://github.com/pingdotgg/t3code/pull/17065
@@ -52,6 +53,9 @@
 #   https://github.com/pingdotgg/t3code/pull/26240
 #   https://github.com/pingdotgg/t3code/pull/26485
 #   https://github.com/pingdotgg/t3code/pull/25754
+#   https://github.com/pingdotgg/t3code/pull/27131
+#   https://github.com/pingdotgg/t3code/pull/30367
+#   https://github.com/pingdotgg/t3code/pull/26806
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -334,6 +338,19 @@ Feature: Moving through a thread and following links
     Then the turn index marks the third and fourth turns and no other
     And moving to the next turn shows the fifth
 
+  # Upstream #26806: on a touch screen the turn index hid even when the conversation left it room.
+  @desktop @mobile @backlog @priority-low
+  Scenario Outline: The turn index stays shown on a touch screen that has room for it
+    Given the thread has ten turns
+    And the conversation leaves <room> beside it for the turn index
+    When the user switches from a mouse to touch
+    Then the turn index <shown>
+
+    Examples:
+      | room            | shown                                        |
+      | room            | stays shown                                  |
+      | too little room | shows only while it is pointed at or focused |
+
   @desktop @backlog
   Scenario: The turn index can be driven from the keyboard
     Given the thread has ten turns
@@ -493,11 +510,37 @@ Feature: Moving through a thread and following links
     When the user follows the link
     Then "notes.md" opens at line 3
 
+  # Upstream #29245: a Linux link to "a\b.txt" opened the different file "a/b.txt", because every
+  # backslash was taken for a separator.
+  @backlog @shared @priority-low
+  Scenario: On Linux a file link with a backslash in its name opens that file
+    Given the MC runs on Linux and "shop" holds both "a\b.txt" and "a/b.txt"
+    And the agent's reply links to "a\b.txt"
+    When the user follows the link
+    Then "a\b.txt" opens, not "a/b.txt"
+
   @shared @backlog-mobile @backlog-tui
   Scenario: The user cites part of a reply in the next message
     When the user selects a sentence in the agent's reply and cites it
     Then the composer holds a citation of that sentence
     And the user can add a comment to the citation
+
+  # Upstream #30367: a quote of 64 characters or more could end its chip in half of an emoji, also
+  # in the label read to screen readers and searched by find.
+  @backlog @desktop @priority-low
+  Scenario: A long citation's chip is cut before an emoji, not through it
+    Given the user's message cites 80 characters of a reply with an emoji at the 64th
+    When the message is shown
+    Then the citation's chip is cut before the emoji and ends in "…"
+
+  # Upstream #27131: with an open file being searched, selecting reply text and citing it lost the
+  # selection, because the file kept moving the caret back to its matches.
+  @backlog @desktop
+  Scenario: A reply can be cited while an open file is being searched
+    Given the user has an open file searched with matches showing
+    When the user selects a sentence in the agent's reply and cites it
+    Then the composer holds a citation of that sentence
+    And the selection in the reply is kept until the citation is made
 
   @shared @backlog
   Scenario Outline: Following a citation to its source
