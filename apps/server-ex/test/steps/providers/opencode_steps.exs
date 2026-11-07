@@ -1047,6 +1047,204 @@ defmodule HalC2.Steps.Providers.Opencode do
     |> Enum.filter(&(&1["type"] == type))
   end
 
+  # --- approval kinds ---
+
+  # What OpenCode asks before each kind of work: OpenCode 1 names the permission in
+  # the title, OpenCode 2 names the tool doing it and the paths it reaches.
+  @asks %{
+    "edit, write or patch a file" => [
+      %{"title" => "edit", "kind" => "edit", "locations" => [%{"path" => "src/app.ts"}]},
+      %{
+        "name" => "apply_patch",
+        "title" => "src/app.ts",
+        "kind" => "edit",
+        "locations" => [%{"path" => "src/app.ts"}]
+      }
+    ],
+    "read or search files" => [
+      %{
+        "name" => "read",
+        "title" => ".env",
+        "kind" => "read",
+        "rawInput" => %{"filePath" => ".env"},
+        "locations" => [%{"path" => ".env"}]
+      },
+      %{
+        "name" => "grep",
+        "title" => "TODO",
+        "kind" => "search",
+        "rawInput" => %{"pattern" => "TODO", "path" => "/srv/shared"},
+        "locations" => [%{"path" => "/srv/shared"}]
+      }
+    ],
+    "work outside the project folder" => [
+      %{
+        "title" => "external_directory",
+        "kind" => "other",
+        "rawInput" => %{"filepath" => "/srv/shared/notes.md", "parentDir" => "/srv/shared"}
+      },
+      %{
+        "name" => "read",
+        "title" => "/srv/shared/notes.md",
+        "kind" => "read",
+        "locations" => [%{"path" => "/srv/shared/notes.md"}]
+      }
+    ],
+    "do anything else" => [
+      %{"title" => "webfetch", "kind" => "other", "rawInput" => %{"url" => "https://x.dev"}},
+      %{"name" => "webfetch", "title" => "https://x.dev", "kind" => "fetch"},
+      %{"name" => "task", "title" => "Look around", "kind" => "think"}
+    ],
+    ~s(the "bash" permission without saying what for) => [
+      %{"name" => "bash", "title" => "bash", "kind" => "execute"}
+    ]
+  }
+
+  @kinds %{
+    "a file change" => "file-change",
+    "a file read" => "file-read",
+    "a command" => "command"
+  }
+
+  step ~r/^OpenCode asks for (?:permission to (?<action>.+)|(?<permission>the "bash" permission without saying what for))$/,
+       %{args: args} = context do
+    what = Enum.find(args, &(&1 not in [nil, ""]))
+    asks = Map.fetch!(@asks, what)
+
+    steps =
+      for {call, n} <- Enum.with_index(asks, 1),
+          do: %{"permission" => Map.put(call, "toolCallId", "ask-#{n}")}
+
+    context =
+      FakeAcp.configure(context, fn config ->
+        Map.update(
+          config,
+          "turns",
+          [],
+          &[%{"match" => "ask first", "steps" => steps ++ [%{"text" => "Done."}]} | &1]
+        )
+      end)
+
+    context
+    |> FakeAcp.send_message("ask first")
+    |> Map.put(:asks, length(asks))
+  end
+
+  # Each ask is answered in turn; the next comes once the last was.
+  defp approvals(context) do
+    approvals =
+      for _ <- 1..context.asks do
+        request = FakeAcp.await_request(context)
+        FakeAcp.respond(context, request["id"], %{"decision" => "accept"})
+
+        World.await_stream(World.thread_id(context, @thread), fn state ->
+          StreamState.get(state, "runtime-request")[request["id"]]["status"] != "pending"
+        end)
+
+        request
+      end
+
+    FakeAcp.await_run(context, "completed")
+    approvals
+  end
+
+  step ~r/^the user is asked to approve (?<kind>a file change|a file read|a command)$/,
+       %{args: [kind]} = context do
+    expected = Map.fetch!(@kinds, kind)
+    assert Enum.map(approvals(context), & &1["kind"]) == List.duplicate(expected, context.asks)
+    context
+  end
+
+  step "the approval's text is {string}", %{args: [text]} = context do
+    approvals(context)
+
+    assert [%{"prompt" => ^text, "requestKind" => "command"}] =
+             tool_items(context, "approval_request")
+
+    context
+  end
+
+  # --- compaction ---
+
+  # OpenCode 2 reports a compaction in the session's info (`opencode/compaction`).
+  defp compaction(status, extra \\ %{}),
+    do: %{
+      "update" => %{
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "opencode/compaction" => Map.merge(%{"status" => status, "messageId" => "msg_c"}, extra)
+        }
+      }
+    }
+
+  defp compacting(context, match, steps) do
+    context
+    |> FakeAcp.install("opencode", %{"turns" => [%{"match" => match, "steps" => steps}]},
+      enabled: true
+    )
+    |> FakeAcp.thread(@thread)
+  end
+
+  step ~r{^the user sends "/compact" by itself to an OpenCode thread$}, context do
+    context
+    |> compacting("/compact", [compaction("started"), compaction("completed")])
+    |> FakeAcp.send_message("/compact")
+  end
+
+  step "OpenCode summarizes its session", context do
+    FakeAcp.await_run(context, "completed")
+    # OpenCode runs a prompt of "/compact" alone as a compaction of the session.
+    assert [%{"params" => %{"prompt" => [%{"type" => "text", "text" => "/compact"}]}}] =
+             FakeAcp.received(context, "session/prompt")
+
+    context
+  end
+
+  @summary_failure "The model could not summarize the conversation"
+
+  step ~r{^the user sends "/compact" by itself and OpenCode cannot summarize the session$},
+       context do
+    context
+    |> compacting("/compact", [
+      compaction("started"),
+      compaction("failed", %{"error" => @summary_failure}),
+      %{"error" => %{"code" => -32603, "message" => @summary_failure}}
+    ])
+    |> FakeAcp.send_message("/compact")
+  end
+
+  step "the turn fails with OpenCode's reason", context do
+    state = FakeAcp.await_run(context, "failed")
+
+    assert Enum.any?(
+             StreamState.list(state, "provider-session"),
+             &(&1["lastError"] == @summary_failure)
+           )
+
+    refute Enum.any?(tool_items(context, "compaction"))
+    context
+  end
+
+  step "OpenCode compacts its session by itself during a turn", context do
+    twice = [compaction("started"), compaction("completed")]
+
+    context
+    |> compacting(
+      "long work",
+      [%{"text" => "Working."}] ++ twice ++ twice ++ [%{"text" => "Done."}]
+    )
+    |> FakeAcp.send_message("long work")
+  end
+
+  step "the work log shows \"Context compacted\" once for that turn", context do
+    FakeAcp.await_run(context, "completed")
+
+    assert [%{"title" => "Context compacted", "status" => "completed"}] =
+             tool_items(context, "compaction")
+
+    context
+  end
+
   # --- to-do list ---
 
   defp todos(entries) do

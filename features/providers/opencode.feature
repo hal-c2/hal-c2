@@ -823,18 +823,15 @@ Feature: OpenCode
     When the user sends "/review" and OpenCode does not start it within 10 seconds
     Then the turn fails saying "OpenCode command admission did not complete within 10 seconds."
 
-  @backlog
   Scenario: Sending /compact summarizes the OpenCode session
     When the user sends "/compact" by itself to an OpenCode thread
     Then OpenCode summarizes its session
     And the work log shows "Context compacted" once
 
-  @backlog
   Scenario: An OpenCode summary that fails fails the turn
     When the user sends "/compact" by itself and OpenCode cannot summarize the session
     Then the turn fails with OpenCode's reason
 
-  @backlog
   Scenario: OpenCode compacting on its own is shown once per turn
     When OpenCode compacts its session by itself during a turn
     Then the work log shows "Context compacted" once for that turn
@@ -1097,7 +1094,6 @@ Feature: OpenCode
     And OpenCode's notices about where the read stopped are kept
     And output from other tools is shown as it came
 
-  @backlog
   Scenario Outline: OpenCode's approval kind follows the permission it asks for
     Given the thread runs OpenCode in approval required
     When OpenCode asks for permission to <action>
@@ -1117,7 +1113,6 @@ Feature: OpenCode
     Then the approval is titled "bash"
     And it lists "npm test" and "npm run build" on separate lines
 
-  @backlog
   Scenario: An OpenCode approval without patterns names only the permission
     Given the thread runs OpenCode in approval required
     When OpenCode asks for the "bash" permission without saying what for

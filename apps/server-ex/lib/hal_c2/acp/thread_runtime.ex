@@ -1731,6 +1731,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     remember_model(state, %{"configOptions" => options})
   end
 
+  # OpenCode 2 reports a compaction, asked for (`/compact`) or its own, in the
+  # session's info.
+  defp update(
+         %{
+           "sessionUpdate" => "session_info_update",
+           "_meta" => %{"opencode/compaction" => %{"status" => "completed"}}
+         },
+         state
+       ),
+       do: compaction(state)
+
   # How full the session's context is, for the context meter.
   defp update(%{"sessionUpdate" => "usage_update", "used" => used} = u, state)
        when is_integer(used) do
@@ -2956,13 +2967,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     options = params["options"] || []
     call = params["toolCall"] || %{}
 
-    kind =
-      case call["kind"] do
-        "execute" -> "command"
-        k when k in ["edit", "delete", "move"] -> "file-change"
-        k when k in ["read", "search"] -> "file-read"
-        _ -> "permission"
-      end
+    kind = request_kind(HalC2.Acp.driver(state.agent), call)
 
     prompt = command_text(call["rawInput"] || %{}, call["title"])
 
@@ -2986,9 +2991,25 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # The approval an ACP permission asks for. OpenCode 1 names its permission in the
+  # title, OpenCode 2 in `name`: work outside the project (`external_directory`) is a
+  # read, and the rest it files under no ACP kind (web fetches, subagents, skills) is
+  # approved as a command, as T3 Code's OpenCode adapter did.
+  defp request_kind(driver, call) do
+    case {call["kind"], driver} do
+      {"execute", _} -> "command"
+      {k, _} when k in ["edit", "delete", "move"] -> "file-change"
+      {k, _} when k in ["read", "search"] -> "file-read"
+      {_, "opencode"} -> if external?(call), do: "file-read", else: "command"
+      _ -> "permission"
+    end
+  end
+
+  defp external?(call), do: "external_directory" in [call["name"], call["title"]]
+
   # Full access allows everything. OpenCode and Pi ask about every tool, so HAL-C2
   # applies the mode for them: reads go ahead (OpenCode keeps asking about .env
-  # files), edits go ahead in auto-accept-edits, and what the user allowed for the
+  # files and anything outside the project), edits go ahead in auto-accept-edits, and what the user allowed for the
   # session goes ahead again. Pi has no auto; its old auto threads ask as approval
   # required does. Antigravity runs full access as its own mode (`yolo`), so what it
   # still asks about there is its own question for the user.
@@ -3000,10 +3021,27 @@ defmodule HalC2.Acp.ThreadRuntime do
       mode == "full-access" and driver != "antigravity" -> true
       MapSet.member?(state.allowed, {kind, prompt}) -> true
       driver not in @gated -> false
+      driver == "opencode" and outside?(state.turn.cwd, call) -> false
       kind == "file-read" -> not (driver == "opencode" and env_file?(call))
       kind == "file-change" -> mode == "auto-accept-edits"
       true -> false
     end
+  end
+
+  # OpenCode 2 asks about work outside the project as the tool doing it (a read, an
+  # edit), with the paths it reaches as locations.
+  defp outside?(cwd, call) do
+    root = Path.expand(cwd)
+
+    external?(call) or
+      Enum.any?(call["locations"] || [], fn
+        %{"path" => path} when is_binary(path) ->
+          path = Path.expand(path, root)
+          path != root and not String.starts_with?(path, root <> "/")
+
+        _ ->
+          false
+      end)
   end
 
   # `.env` and `.env.local`, not `.env.example` or `.env.sample`.
@@ -3090,29 +3128,36 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
-  # `/compact` alone in an Antigravity thread compacts its conversation; the
-  # work log says so once, when the turn completes.
+  # `/compact` alone in an Antigravity or OpenCode 1 thread compacts its conversation,
+  # and neither says so; the work log does, when the turn completes.
   defp compacted(state, "completed") do
     turn = state.turn
 
-    if turn && Antigravity.antigravity?(turn.ids.driver) &&
+    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode"] &&
          String.trim(turn.text || "") == "/compact" &&
-         Map.get(turn, :attachments, []) == [] do
-      native = "compaction:#{turn.ids.run}"
-
-      state
-      |> flush()
-      |> ensure_item(native, :compaction, %{
-        "driver" => Entities.driver(turn.ids),
-        "title" => "Context compacted"
-      })
-      |> finish_item(native, "completed", & &1)
-    else
-      state
-    end
+         Map.get(turn, :attachments, []) == [],
+       do: compaction(state),
+       else: state
   end
 
   defp compacted(state, _status), do: state
+
+  # "Context compacted" in the work log, once a turn however often it happens.
+  defp compaction(state) do
+    native = "compaction:#{state.turn.ids.run}"
+
+    if Map.has_key?(state.items, native) do
+      state
+    else
+      state
+      |> flush()
+      |> ensure_item(native, :compaction, %{
+        "driver" => Entities.driver(state.turn.ids),
+        "title" => "Context compacted"
+      })
+      |> finish_item(native, "completed", & &1)
+    end
+  end
 
   defp end_turn(state, status, failure) do
     state = flush(state)
