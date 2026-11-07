@@ -2766,7 +2766,9 @@ defmodule HalC2.Orchestration do
             "snooze" => false
           }
 
-      {[upsert(state, "thread", thread["id"], &Map.put(&1, "limitRecovery", recovery))], true}
+      # A second stop changes nothing, and `upsert/4` returns nil for that.
+      {List.wrap(upsert(state, "thread", thread["id"], &Map.put(&1, "limitRecovery", recovery))),
+       true}
     else
       {[], false}
     end

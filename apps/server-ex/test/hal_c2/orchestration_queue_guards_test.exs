@@ -283,6 +283,23 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     assert shell["usageLimitResetAt"] == reset
   end
 
+  # Found by the orchestration property: the second stop leaves the recovery as it is, and
+  # its unchanged write reached the store as a nil change.
+  test "stopping a limited thread twice gives up its resume once", %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1", "usage limit m1", "start_immediately")
+    [failed] = await_statuses(thread_id, ["failed"])
+    stop = %{"type" => "run.interrupt", "threadId" => thread_id}
+
+    {:ok, _} = Orchestration.dispatch(stop)
+    recovery = HalC2.Streams.state(thread_id) |> StreamState.list("thread") |> hd()
+    assert %{"runId" => run_id, "autoResume" => false} = recovery["limitRecovery"]
+    assert run_id == failed["id"]
+
+    {:ok, _} = Orchestration.dispatch(stop)
+    again = HalC2.Streams.state(thread_id) |> StreamState.list("thread") |> hd()
+    assert again["limitRecovery"] == recovery["limitRecovery"]
+  end
+
   test "a deleted thread refuses messages, updates and queue commands", %{thread_id: thread_id} do
     {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
     deleted = "Thread #{thread_id} is deleted."
