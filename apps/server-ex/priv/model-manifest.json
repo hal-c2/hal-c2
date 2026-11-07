@@ -6,37 +6,21 @@
       "driver": "opencode",
       "halC2Range": ">=0.0.42",
       "recommendedRange": ">=1.14.19",
-      "ranges": [
-        {
-          "range": "<1.14.19",
-          "status": "broken"
-        }
-      ]
+      "ranges": [{ "range": "<1.14.19", "status": "broken" }]
     },
     {
       "driver": "claudeAgent",
       "halC2Range": ">=0.0.42",
       "recommendedRange": ">=2.1.280",
       "ranges": [
-        {
-          "range": "<2.1.111",
-          "status": "unsupported"
-        },
-        {
-          "range": ">=2.1.111 <2.1.280",
-          "status": "graceful"
-        }
+        { "range": "<2.1.111", "status": "unsupported" },
+        { "range": ">=2.1.111 <2.1.280", "status": "graceful" }
       ]
     },
     {
       "driver": "codex",
       "halC2Range": ">=0",
-      "ranges": [
-        {
-          "range": "0.128.0",
-          "status": "broken"
-        }
-      ]
+      "ranges": [{ "range": "0.128.0", "status": "broken" }]
     }
   ],
   "currentModels": {
@@ -105,7 +89,8 @@
                 "ultracode": "xhigh",
                 "ultrathink": null
               },
-              "fixedContextWindowTokens": 1000000
+              "fixedContextWindowTokens": 1000000,
+              "fixedModelSuffix": "[1m]"
             }
           }
         },
@@ -117,53 +102,28 @@
                 "label": "Reasoning",
                 "type": "select",
                 "options": [
-                  {
-                    "id": "low",
-                    "label": "Low"
-                  },
-                  {
-                    "id": "medium",
-                    "label": "Medium",
-                    "isDefault": true
-                  },
-                  {
-                    "id": "high",
-                    "label": "High"
-                  },
-                  {
-                    "id": "xhigh",
-                    "label": "Extra High"
-                  },
-                  {
-                    "id": "max",
-                    "label": "Max"
-                  },
+                  { "id": "low", "label": "Low" },
+                  { "id": "medium", "label": "Medium", "isDefault": true },
+                  { "id": "high", "label": "High" },
+                  { "id": "xhigh", "label": "Extra High" },
+                  { "id": "max", "label": "Max" },
                   {
                     "id": "ultracode",
                     "label": "Ultracode",
                     "description": "xhigh effort plus multi-agent workflow orchestration"
                   },
-                  {
-                    "id": "ultrathink",
-                    "label": "Ultrathink"
-                  }
+                  { "id": "ultrathink", "label": "Ultrathink" }
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              {
-                "id": "fastMode",
-                "label": "Fast Mode",
-                "type": "boolean"
-              }
+              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
             ]
           },
           "adapter": {
             "claudeCode": {
-              "effortMap": {
-                "ultracode": "xhigh",
-                "ultrathink": null
-              },
-              "fixedContextWindowTokens": 1000000
+              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
+              "fixedContextWindowTokens": 1000000,
+              "fixedModelSuffix": "[1m]"
             }
           }
         },
@@ -221,7 +181,8 @@
                 "ultracode": "xhigh",
                 "ultrathink": null
               },
-              "fixedContextWindowTokens": 1000000
+              "fixedContextWindowTokens": 1000000,
+              "fixedModelSuffix": "[1m]"
             }
           }
         },
@@ -489,7 +450,8 @@
               "effortMap": {
                 "ultrathink": null
               },
-              "fixedContextWindowTokens": 1000000
+              "fixedContextWindowTokens": 1000000,
+              "fixedModelSuffix": "[1m]"
             }
           }
         },
@@ -584,11 +546,7 @@
           "status": "current",
           "badge": "new",
           "profile": "opus-5-5",
-          "adapter": {
-            "claudeCode": {
-              "minVersion": "2.1.280"
-            }
-          }
+          "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
         },
         {
           "slug": "claude-fable-5-1",

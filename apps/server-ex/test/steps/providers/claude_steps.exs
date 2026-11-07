@@ -370,6 +370,8 @@ defmodule HalC2.Steps.Providers.Claude do
   step "there is no context window option and it runs {word}", %{args: [window]} = context do
     refute descriptor(context.window_model, "contextWindow")
     assert context.window_launch.context_window == window_tokens(window)
+    # A fixed 1M window still launches with the CLI's 1M suffix.
+    assert String.ends_with?(context.window_launch.model, "[1m]") == (window == "1M")
     context
   end
 
@@ -398,8 +400,8 @@ defmodule HalC2.Steps.Providers.Claude do
     World.await_runs(context, World.current_thread(context), ["completed"])
     # The first start is the CLI probe; the turn is the last.
     argv = List.last(World.claude_starts(context))
-    # No window suffix: the model's window is not something the user picks.
-    assert Enum.any?(pairs(argv), &match?(["--model", "opus"], &1))
+    # The saved 200k is not applied: the model runs under its 1M suffix.
+    assert ["--model", "claude-opus-5-5[1m]"] in pairs(argv)
 
     assert HalC2.Claude.Provider.launch("opus", %{"contextWindow" => "200k"}).context_window ==
              1_000_000
@@ -2545,11 +2547,9 @@ defmodule HalC2.Steps.Providers.Claude do
   defp rate_limit_body(message),
     do: %{"type" => "error", "error" => %{"type" => "rate_limit_error", "message" => message}}
 
-  # The clock the MC reads for a cooldown, fixed to 13:00 on the day the other scenarios use.
-  defp at_13_00(context) do
-    World.put_app_env(:claude_now_s, at_o_clock(13))
-    context
-  end
+  # The scenario's 13:00 is when the turn ends: the MC dates a cooldown from its own clock,
+  # so the steps read reset times relative to the moment the turn was told to end.
+  defp at_13_00(context), do: Map.put(context, :ended_from_s, System.system_time(:second))
 
   step ~r/^a Claude turn ends at 13:00 with a 503 rate_limit_error saying "\(reset after (?<cooldown>[^"]+)\)"$/,
        %{args: [cooldown]} = context do
@@ -2562,25 +2562,26 @@ defmodule HalC2.Steps.Providers.Claude do
   step ~r/^the thread is marked as limited with a reset time of (?<reset>[\d:]+)$/,
        %{args: [reset]} = context do
     [hour, minute, second] = reset |> String.split(":") |> Enum.map(&String.to_integer/1)
-    expected = at_o_clock(hour) + minute * 60 + second
+    cooldown = (hour - 13) * 3600 + minute * 60 + second
     World.await_runs(context, @thread, ["failed"])
 
     row =
       World.await_row(
         World.thread_id(context, @thread),
-        &(&1["lastErrorClass"] == "usage_limit" and
-            &1["usageLimitResetAt"] ==
-              DateTime.to_iso8601(DateTime.from_unix!(expected * 1000, :millisecond)))
+        &(&1["lastErrorClass"] == "usage_limit" and is_binary(&1["usageLimitResetAt"]))
       )
 
-    context |> Map.put(:limit_reset_s, expected) |> Map.put(:limited_row, row)
+    {:ok, reset_at, _} = DateTime.from_iso8601(row["usageLimitResetAt"])
+    reset_s = DateTime.to_unix(reset_at)
+    assert reset_s in (context.ended_from_s + cooldown)..(System.system_time(:second) + cooldown)
+
+    context |> Map.put(:limit_reset_s, reset_s) |> Map.put(:limited_row, row)
   end
 
   step "it resumes on its own then if resuming after usage limits is on", context do
-    # The recovery reads the thread's row; the fixed clock is in the past, so the stop is
-    # dated to the same fixed moment.
+    # The recovery reads the thread's row, with the stop dated to when the turn ended.
     row = context.limited_row
-    stopped = DateTime.to_iso8601(DateTime.from_unix!(at_o_clock(13)), :extended)
+    stopped = DateTime.to_iso8601(DateTime.from_unix!(context.ended_from_s), :extended)
     thread = Map.put(row, "latestRunCompletedAt", stopped)
 
     assert %{"type" => "message.dispatch"} =

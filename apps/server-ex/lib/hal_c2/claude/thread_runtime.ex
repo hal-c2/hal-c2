@@ -2046,7 +2046,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     with true <- text =~ "rate_limit_error",
          [_, cooldown] <- Regex.run(~r/\(reset after ((?:\d+[hms] ?)+)\)/, text),
          seconds when seconds > 0 <- cooldown_seconds(cooldown) do
-      reset_at(Application.get_env(:hal_c2, :claude_now_s, System.system_time(:second)) + seconds)
+      reset_at(System.system_time(:second) + seconds)
     else
       _ -> nil
     end

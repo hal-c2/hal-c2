@@ -605,17 +605,19 @@ defmodule HalC2.Claude.Provider do
     )
     |> Map.update("effortMap", %{}, &Map.drop(&1, levels))
     |> then(&if suffixed?(row["value"]), do: Map.delete(&1, "modelSuffixes"), else: &1)
-    |> claude_5_window(row["resolvedModel"] || row["value"])
+    |> then(&claude_5_window(&1, &1["modelId"]))
   end
 
   # The Claude 5 models always run with a 1M context window, whatever a listed row's
-  # profile says, so there is nothing to choose.
+  # profile says, so there is nothing to choose. They still launch as `<id>[1m]`: Claude
+  # Code treats the two spellings as one 1M model, and the suffix keeps a CLI that predates
+  # a model's native 1M window from starting it at 200k.
   defp claude_5_window(adapter, model) do
     if model =~ ~r/^claude-[a-z]+-5(-|$)/,
       do:
         adapter
         |> Map.drop(["modelSuffixes", "contextWindowTokens"])
-        |> Map.put("fixedContextWindowTokens", 1_000_000),
+        |> Map.merge(%{"fixedContextWindowTokens" => 1_000_000, "fixedModelSuffix" => "[1m]"}),
       else: adapter
   end
 
@@ -674,9 +676,10 @@ defmodule HalC2.Claude.Provider do
         effort = choice(descriptors, "effort", options)
 
         suffix =
-          Enum.find_value(adapter["modelSuffixes"] || %{}, "", fn {id, suffixes} ->
-            suffixes[choice(descriptors, id, options)]
-          end)
+          adapter["fixedModelSuffix"] ||
+            Enum.find_value(adapter["modelSuffixes"] || %{}, "", fn {id, suffixes} ->
+              suffixes[choice(descriptors, id, options)]
+            end)
 
         settings = %{
           "fastMode" => toggle(descriptors, "fastMode", options),
