@@ -163,6 +163,7 @@ Feature: MC authentication and scopes
       | the RPC socket     | a media stream     |
       | media streams      | the RPC socket     |
 
+  # Upstream #24554: a DPoP session's socket ticket needs a fresh proof from the session's key.
   @backlog @mc @priority-high
   Scenario Outline: A DPoP session's RPC ticket needs a fresh proof from the session's key
     Given a DPoP client bought an RPC socket ticket
@@ -176,6 +177,7 @@ Feature: MC authentication and scopes
       | a proof from another key                | refuses it       |
       | a proof that was already used           | refuses it       |
 
+  # Upstream #24554: a ticket bought without naming a route keeps opening either socket.
   @backlog @mc
   Scenario: A ticket bought without naming a route still opens either
     Given an older client bought a socket ticket without naming a route
