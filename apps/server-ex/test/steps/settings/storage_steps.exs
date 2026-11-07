@@ -341,6 +341,53 @@ defmodule HalC2.Steps.Settings.Storage do
     context
   end
 
+  step "a thread was settled 3 days ago and its session has stopped", context do
+    three_days_ago = World.iso_from_now(-World.days(3))
+
+    context =
+      context
+      |> World.fake_codex()
+      |> idle_worktree("settled work", 3)
+      |> World.add_message("settled work", "user", "Fix the login bug", three_days_ago)
+      |> World.add_message("settled work", "assistant", "Fixed it.", three_days_ago)
+      |> World.patch_thread("settled work", %{"settledAt" => three_days_ago})
+
+    assert Registry.count(HalC2.Codex.Registry) == 0
+    context
+  end
+
+  step "the thread keeps its branch and its history", context do
+    %{path: path, branch: branch} = context.worktree
+    thread = World.thread(context, "settled work")
+    assert thread["branch"] == branch
+    assert thread["worktreePath"] == path
+
+    id = World.thread_id(context, "settled work")
+
+    texts =
+      HalC2.Streams.ensure(id)
+      |> HalC2.Streams.Server.state()
+      |> HalC2.StreamState.list("message")
+      |> Enum.map(& &1["text"])
+
+    assert "Fix the login bug" in texts and "Fixed it." in texts
+    context
+  end
+
+  step "the user sends the thread a new message", context do
+    context = World.socket_message(context, "settled work", "One more thing")
+    World.await_run(context, "settled work", &(&1["status"] == "completed"))
+    context
+  end
+
+  step "its worktree is checked out again from the branch", context do
+    %{path: path, branch: branch} = context.worktree
+    assert File.dir?(path)
+    assert World.git!(path, ~w(rev-parse --abbrev-ref HEAD)) == branch
+    assert World.thread(context, "settled work")["worktreePath"] == path
+    context
+  end
+
   # --- the last look before removal --------------------------------------------------
 
   step "a worktree about to be removed is being measured", context do

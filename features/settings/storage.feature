@@ -46,7 +46,7 @@ Feature: Storage cleanup
         | deleting merged worktrees           | has a merged pull request                     |
         | deleting unchanged worktrees        | has no commits beyond the default branch      |
 
-    @backlog @mc
+    @mc
     Scenario: A settled thread's worktree is removed after the chosen days
       Given the user turned on deleting worktrees of threads settled for 2 days
       And a thread was settled 3 days ago and its session has stopped
