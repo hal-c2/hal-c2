@@ -2040,8 +2040,17 @@ bool ComposerController::attach(const QVariantList& files) {
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
     // An environment that takes no file attachments refuses files as they
-    // are chosen; images, which ride with the message, still attach.
+    // are chosen; images, which ride with the message, still attach. A
+    // large paste turned into a text file is no file to refuse: its words
+    // go into the draft where they were pasted instead.
     if (!acceptsFiles && !file.contains(QStringLiteral("base64"))) {
+      if (file.contains(QStringLiteral("text"))) {
+        const QString pasted = file.value(QStringLiteral("text")).toString();
+        const QString text = draft(target);
+        const int cursor = std::clamp(m_drafts[target].cursor, 0, int(text.size()));
+        setText(target, text.left(cursor) + pasted + text.mid(cursor), cursor + int(pasted.size()));
+        continue;
+      }
       refusedFile = true;
       continue;
     }

@@ -843,6 +843,42 @@ private slots:
     QTRY_VERIFY(!shell.composerState().value(QStringLiteral("text")).toString().contains(QStringLiteral("hal-c2-context")));
     QCOMPARE(shell.composerState().value(QStringLiteral("text")).toString().trimmed(), QStringLiteral("look"));
   }
+
+  // On an environment without file attachments, the refusal also caught a
+  // large paste: turned into pasted-text.txt it has no base64, so it was
+  // skipped with a toast and the pasted words were lost. They go inline.
+  void aLargePasteGoesInlineWhereFilesAreRefused() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    shell.mc.capabilities.remove(QStringLiteral("fileAttachments"));
+    shell.mc.announceEnvironment();
+    QTRY_VERIFY(!shell.native->store()->acceptsFileAttachments(QStringLiteral("env-a")));
+    QVERIFY(shell.open());
+    shell.type(QStringLiteral("before "));
+    const auto attach = [&shell](const QVariantMap& file) {
+      shell.bridge->dispatch(QStringLiteral("composer.attach"), QVariantMap{{QStringLiteral("files"), QVariantList{file}}});
+    };
+    const auto toastTitles = [&shell] {
+      QStringList titles;
+      for (const QVariant& toast : shell.bridge->state()->value(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+        titles.append(toast.toMap().value(QStringLiteral("title")).toString());
+      }
+      return titles;
+    };
+    attach({{QStringLiteral("name"), QStringLiteral("pasted-text.txt")},
+            {QStringLiteral("mimeType"), QStringLiteral("text/plain")},
+            {QStringLiteral("text"), QStringLiteral("a very long paste")}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("before a very long paste"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("attachments")).toList().size(), 0);
+    QVERIFY(!toastTitles().contains(QStringLiteral("File not attached")));
+
+    // A chosen file is still refused, and the draft keeps its words.
+    attach({{QStringLiteral("name"), QStringLiteral("notes.bin")}, {QStringLiteral("path"), QStringLiteral("/work/shop/notes.bin")}});
+    QTRY_VERIFY(toastTitles().contains(QStringLiteral("File not attached")));
+    QCOMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("before a very long paste"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("attachments")).toList().size(), 0);
+  }
 };
 
 int main(int argc, char** argv) {
