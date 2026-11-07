@@ -157,8 +157,15 @@ defmodule HalC2.Orchestration do
       end
 
     case tail || kept do
-      nil -> {:error, "That command is not in this thread."}
-      output -> {:ok, %{"output" => output, "running" => tail != nil}}
+      nil ->
+        {:error,
+         %{
+           "_tag" => "OrchestrationGetTurnDiffError",
+           "message" => "That command is not in this thread."
+         }}
+
+      output ->
+        {:ok, %{"output" => output, "running" => tail != nil}}
     end
   end
 
