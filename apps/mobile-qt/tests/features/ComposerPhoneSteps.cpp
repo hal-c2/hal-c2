@@ -18,6 +18,8 @@
 #include "Phone.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "ThreadStore.h"
+#include "TimelineModel.h"
 #include "World.h"
 
 namespace {
@@ -74,6 +76,10 @@ void finishUploads(World& world) {
   for (const auto& respond : pending) respond(204, QJsonObject());
   world.sync();
 }
+
+// The phone's send whose answer was lost, for the delivered-message steps.
+QString deliveredId;
+QString deliveredText;
 
 QVariantList attachmentsOf(World& world) {
   return world.state(S("composer")).toMap().value(S("attachments")).toList();
@@ -593,6 +599,93 @@ const Steps phoneSteps([] {
   });
   step(S("the user is told to set Antigravity up on the desktop or choose another model"), [told](World& world, const Captures&, const Table&) {
     told(world, S("Set up Antigravity on the desktop, or choose another model"));
+  });
+
+  // A delivered message stays delivered, however long the thread grows.
+  const auto seedMessage = [](World& world, const QString& id, const QString& text, const QString& at) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    const QString run = S("run-for-") + id;
+    setEntity(world.mc, world.thread, S("run"), run,
+              {{S("id"), run}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("completed")}, {S("requestedAt"), at}, {S("startedAt"), at}, {S("completedAt"), at}});
+    setEntity(world.mc, world.thread, S("message"), id,
+              {{S("id"), id}, {S("role"), S("user")}, {S("createdBy"), S("user")}, {S("text"), text}, {S("createdAt"), at}});
+    setEntity(world.mc, world.thread, S("turn-item"), S("item-") + id,
+              {{S("id"), S("item-") + id}, {S("type"), S("user_message")}, {S("runId"), run}, {S("ordinal"), ++fake.ordinal},
+               {S("status"), S("completed")}, {S("text"), text}, {S("updatedAt"), at}});
+  };
+  const auto atMinute = [](int n) { return S("2026-09-23T%1:%2:00Z").arg(9 + n / 60, 2, 10, QLatin1Char('0')).arg(n % 60, 2, 10, QLatin1Char('0')); };
+  const auto sendUnanswered = [dispatched](World& world, const QString& text) {
+    world.mc.hold(S("answers"));
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    world.type(text);
+    const qsizetype before = dispatched(world).size();
+    world.tap(S("primaryAction"));
+    world.waitFor([&] { return dispatched(world).size() == before + 1; }, S("the send to reach the MC"));
+    deliveredId = dispatched(world).constLast().value(QLatin1String("messageId")).toString();
+    deliveredText = text;
+  };
+  const auto restartAndSettle = [](World& world) {
+    world.background();
+    world.close();
+    world.open();
+    world.waitFor([&] { return world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected"); },
+                  S("the reopened app to connect"));
+    world.waitFor([&] { return world.find(S("threadScreen")) != nullptr || world.find(S("homeScreen")) != nullptr; }, S("a screen"));
+    if (world.find(S("threadScreen")) == nullptr) openThread(world, S("Fix checkout"));
+    world.mc.answerHeld();
+    world.waitFor([&] { return world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(); },
+                  [&] { return S("the outbox to settle; it is %1").arg(show(world.state(S("turn")))); });
+  };
+  step(S("the user sent %1 from the phone in a thread longer than the history the phone loads").arg(kQuoted),
+       [seedMessage, atMinute, sendUnanswered](World& world, const Captures& c, const Table&) {
+         for (int n = 1; n <= 30; ++n) seedMessage(world, S("old-%1").arg(n), S("earlier %1").arg(n), atMinute(n));
+         sendUnanswered(world, c[0]);
+       });
+  step(S("the MC has received it"), [seedMessage, atMinute](World& world, const Captures&, const Table&) {
+    seedMessage(world, deliveredId, deliveredText, atMinute(31));
+    world.sync();
+  });
+  step(S("the thread goes on until %1 is no longer in the loaded history").arg(kQuoted),
+       [seedMessage, atMinute, restartAndSettle](World& world, const Captures& c, const Table&) {
+         expect(c[0] == deliveredText, S("the scenario is about %1").arg(deliveredText));
+         for (int n = 32; n <= 130; ++n) seedMessage(world, S("later-%1").arg(n), S("later %1").arg(n), atMinute(n));
+         restartAndSettle(world);
+       });
+  step(S("%1 is not shown again at the bottom of the thread as waiting to send").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("%1 is waiting again").arg(c[0]));
+    expect(world.state(S("composer")).toMap().value(S("text")).toString() != c[0], S("%1 came back into the composer").arg(c[0]));
+  });
+  step(S("the user sent %1 from the phone in a thread with more than 10 of their messages").arg(kQuoted),
+       [seedMessage, atMinute, sendUnanswered](World& world, const Captures& c, const Table&) {
+         for (int n = 1; n <= 11; ++n) seedMessage(world, S("old-%1").arg(n), S("earlier %1").arg(n), atMinute(n));
+         sendUnanswered(world, c[0]);
+       });
+  step(S("the thread has caught up to it"), [seedMessage, atMinute, restartAndSettle](World& world, const Captures&, const Table&) {
+    seedMessage(world, deliveredId, deliveredText, atMinute(12));
+    restartAndSettle(world);
+  });
+  step(S("the user leaves the thread and opens it again"), [](World& world, const Captures&, const Table&) {
+    world.back();
+    world.waitFor([&] { return world.find(S("homeScreen")) != nullptr; }, S("the home screen"));
+    openThread(world, S("Fix checkout"));
+  });
+  step(S("%1 is shown once, in its place in the history").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const auto rowsWith = [&world, &c] {
+      TimelineModel* model = world.native().controller<ThreadStore>()->activeTimeline();
+      if (!model) return -1;
+      int found = 0;
+      for (int row = 0; row < model->rowCount(); ++row) {
+        if (model->data(model->index(row), TimelineModel::TextRole).toString() == c[0]) ++found;
+      }
+      return found;
+    };
+    world.waitFor([&] { return rowsWith() >= 1; }, [&] { return S("%1 in the history").arg(c[0]); });
+    expect(rowsWith() == 1, S("%1 shows on %2 rows").arg(c[0]).arg(rowsWith()));
+  });
+  step(S("it is not shown below the agent's latest reply"), [](World& world, const Captures&, const Table&) {
+    expect(world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("it waits below the history"));
   });
 
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

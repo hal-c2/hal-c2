@@ -968,7 +968,7 @@ Feature: Writing to an agent from a phone
     Then the message is sent
   # Upstream #26739: a delivered message left the loaded history of a long thread and came back
   # at the bottom as waiting to send; the phone now knows by the thread's position in its history.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A delivered message does not come back at the bottom of a long thread
     Given the user sent "add a test" from the phone in a thread longer than the history the phone loads
     And the MC has received it
@@ -977,7 +977,7 @@ Feature: Writing to an agent from a phone
 
   # Upstream #31182: a delivered message was dropped only on the next send, so a long thread
   # reopened from its start showed it again below the agent's latest reply.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A delivered message does not come back when a long thread is reopened
     Given the user sent "add a test" from the phone in a thread with more than 10 of their messages
     And the thread has caught up to it
