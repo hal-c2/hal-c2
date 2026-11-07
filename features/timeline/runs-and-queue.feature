@@ -124,6 +124,14 @@ Feature: Runs, interruptions and the queue
     When the user's steer restarts the run
     Then what the agent had written is folded under "Cut off by a steer"
 
+  # Only a steer marks the run it interrupts; a crash, an MC restart or an imported
+  # thread that stopped mid-reply leaves the reply interrupted with no mark.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A reply that stopped without a steer is not folded as cut off
+    Given the agent is in the middle of its reply
+    When the run ends interrupted without a steer
+    Then what the agent had written is not folded as cut off
+
   @backlog @shared
   Scenario: A queued run that starts after a steer shows in a thread with only recent history loaded
     Given a thread with only its recent history loaded has a queued follow-up

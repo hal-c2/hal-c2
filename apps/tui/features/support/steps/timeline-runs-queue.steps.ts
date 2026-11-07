@@ -238,17 +238,35 @@ step("the agent is in the middle of its reply", async (ctx: TurnWorld) => {
 });
 
 step(/^the user's steer restarts the run(?: before the turn closed)?$/, async (ctx: TurnWorld) => {
-  // The interrupted run ends without a request to stop; the steer starts the next one.
+  // The MC marks the run the steer interrupted with the steer's run, which starts next.
+  const interrupted = currentRun(ctx);
   await settleRun(ctx, "interrupted", 5);
   await setItem(ctx, "reply-1", { streaming: false });
-  await startRun(ctx);
+  const steer = await startRun(ctx);
+  const fixture = await turns(ctx);
+  const run = fixture.runs.find((entry) => entry.id === interrupted)!;
+  run.steeredByRunId = steer;
   await addItem(ctx, "user_message", {
     id: "steer-1",
-    messageId: `message:${currentRun(ctx)}`,
+    messageId: `message:${steer}`,
     text: "Add tax to the cart",
     inputIntent: "steer",
   });
   await addItem(ctx, "assistant_message", { id: "reply-2", text: "Tax added.", status: "running" });
+});
+
+step("the run ends interrupted without a steer", async (ctx: TurnWorld) => {
+  // A crash, an MC restart or an import stops the reply; no stop request, no steer.
+  await settleRun(ctx, "interrupted", 5);
+  await setItem(ctx, "reply-1", { streaming: false });
+  await startRun(ctx);
+  await addItem(ctx, "assistant_message", { id: "reply-2", text: "Tax added.", status: "running" });
+});
+
+step("what the agent had written is not folded as cut off", async (ctx: TurnWorld) => {
+  const screen = await snapshot(ctx);
+  expect(screen).toContain("half wri");
+  expect(screen).not.toContain("Cut off by a steer");
 });
 
 step("the finished reply stays visible as the turn's answer", async (ctx: TurnWorld) => {

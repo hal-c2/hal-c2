@@ -712,18 +712,16 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     const intent = turnItem.inputIntent;
     if (intent !== "turn_start") intents.set(turnItem.messageId as string, intent);
   }
-  // A reply a steer interrupted mid-way: its item stopped as interrupted though the
-  // user never asked to stop the run (a stop leaves an interrupt request behind).
-  const stopped = new Set(
-    projection.turnItems.flatMap((item) =>
-      item.type === "run_interrupt_request" ? [item.runId as string] : [],
-    ),
+  // A reply a steer interrupted mid-way: the MC names the steer on the run it cut off
+  // (a stop, a crash or a restart of the MC leaves no such mark).
+  const steered = new Set(
+    projection.runs.flatMap((run) => (run.steeredByRunId ? [run.id as string] : [])),
   );
   const cutOff = new Set(
     projection.turnItems.flatMap((item) =>
       item.type === "assistant_message" &&
       item.status === "interrupted" &&
-      !stopped.has(item.runId as string)
+      steered.has(item.runId as string)
         ? [item.messageId as string]
         : [],
     ),
