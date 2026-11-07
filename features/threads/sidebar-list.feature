@@ -1095,7 +1095,8 @@ Feature: The thread list
   # and failed partway; offline rows now keep their order and are not written.
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: A drop in the sidebar sticks when another machine is offline
-    Given the sidebar shows rows from a machine that is offline or asleep
+    Given the Working section is off
+    And the sidebar shows rows from a machine that is offline or asleep
     When the user drops a thread among rows that have no order yet
     Then the thread lands where it was dropped
     And rows that cannot store an order are not written
