@@ -1835,7 +1835,78 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  step "the agent is working in the worktree of {string} with two messages queued behind it",
+       %{args: [title]} = context do
+    context = worked_in_worktree(context, title, "feature/cart")
+    context = send_next(context, "wait for the cart")
+    World.await_running(context, title)
+
+    context
+    |> World.queue_message(title, "carry on")
+    |> World.queue_message(title, "and then the totals")
+  end
+
+  step "the worktree was deleted and making it again fails", context do
+    %{path: path, root: root, branch: branch} = context.lost
+    File.rm_rf!(path)
+    World.git!(root, ~w(worktree prune))
+    World.git!(root, ["switch", "-q", branch])
+    context
+  end
+
+  step "the agent's turn ends", context do
+    title = context.thread
+    running = Enum.find(World.runs(context, title), &(&1["status"] == "running"))
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, title),
+        "runId" => running["id"]
+      })
+
+    context
+  end
+
+  step "the first queued message fails, saying the worktree could not be made", context do
+    [first, _] = context.queued
+    state = World.await_thread(context, context.thread, &(run_status(&1, first) == "failed"))
+    run = HalC2.StreamState.get(state, "run")[first]
+    assert run["startedAt"] == nil
+    item = await_error_item(World.thread_id(context, context.thread))
+    assert item["title"] == "Worktree could not be made"
+    context
+  end
+
+  step "the other one waits in the queue instead of starting", context do
+    [_, second] = context.queued
+    run = HalC2.StreamState.get(World.stream(context, context.thread), "run")[second]
+    assert %{"status" => "queued", "queueHeld" => true} = run
+    # Only the turn that was working ever reached the agent.
+    assert length(World.codex_requests(context, "turn/start")) == 1
+    context
+  end
+
+  step "it starts once the worktree can be made and the user resumes the queue", context do
+    %{path: path, root: root} = context.lost
+    [_, second] = context.queued
+    World.git!(root, ~w(switch -q main))
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "queue.resume",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    World.await_thread(context, context.thread, &(run_status(&1, second) == "completed"), 15_000)
+    assert File.dir?(path)
+    assert %{"cwd" => ^path} = List.last(World.codex_requests(context, "turn/start"))
+    context
+  end
+
   # --- helpers --------------------------------------------------------------------------------
+
+  defp run_status(state, run_id), do: HalC2.StreamState.get(state, "run")[run_id]["status"]
 
   # A setup held in its checkout: a post-checkout hook keeps `git worktree add` open once
   # the files are on disk. `context.hook_pid` is the hook's.

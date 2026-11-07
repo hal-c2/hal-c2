@@ -3,9 +3,11 @@ defmodule HalC2.PreparedQueuePropTest do
   A thread's first run waits for its worktree (`Orchestration.fail_prepared/5`,
   `retry_prepared/2`), with the user's messages queued behind it. A run that ends
   without its worktree (`hold_queue: true`) holds the queue, and a message the user
-  queues meanwhile is held too, so none runs in the project's own checkout. A retry
-  is taken only while every other run is still queued, and frees the queue to follow
-  it again. No run starts while the first one waits or ended this way.
+  queues meanwhile is held too, so none runs in the project's own checkout. The user
+  can take a follow-up out of the queue at any point. A retry is taken only while no
+  other run ever started (queued, or cancelled from the queue), and frees the ones
+  still queued to follow it again. No run starts while the first one waits or ended
+  this way.
   """
 
   use ExUnit.Case, async: false
@@ -62,9 +64,10 @@ defmodule HalC2.PreparedQueuePropTest do
   def command(%{first: nil, next: next}),
     do: {:call, __MODULE__, :prepare, ["m#{next}"]}
 
-  def command(%{first: first, next: next}) do
+  def command(%{first: first, next: next} = state) do
     frequency([
       {4, {:call, __MODULE__, :follow_up, ["m#{next}"]}},
+      {1, {:call, __MODULE__, :cancel_queued, [queued_message(state)]}},
       {2, {:call, __MODULE__, :fail, [first, boolean()]}},
       {1, {:call, __MODULE__, :cancel, [first]}},
       {2, {:call, __MODULE__, :retry, [first]}}
@@ -80,6 +83,10 @@ defmodule HalC2.PreparedQueuePropTest do
   # Without a hold, the queue would start in the project's checkout; the MC never
   # ends a run that way with messages queued (`WorktreeSetup.failed/4`).
   def precondition(state, {:call, _, :fail, [_, false]}), do: queued(state) == []
+
+  def precondition(state, {:call, _, :cancel_queued, [msg]}),
+    do: state.runs[msg][:status] == "queued"
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :prepare, [msg]}),
@@ -98,12 +105,16 @@ defmodule HalC2.PreparedQueuePropTest do
   def next_state(state, _result, {:call, _, :cancel, [first]}),
     do: ended(state, first, "cancelled", true)
 
+  def next_state(state, _result, {:call, _, :cancel_queued, [msg]}),
+    do: put_in(state.runs[msg], %{status: "cancelled"})
+
   def next_state(state, _result, {:call, _, :retry, [first]}) do
     if retryable?(state) do
       runs =
         Map.new(state.runs, fn
           {^first, run} -> {first, %{run | status: "preparing"}}
-          {msg, run} -> {msg, %{run | held: false}}
+          {msg, %{status: "queued"} = run} -> {msg, %{run | held: false}}
+          other -> other
         end)
 
       %{state | runs: runs}
@@ -115,6 +126,9 @@ defmodule HalC2.PreparedQueuePropTest do
   def postcondition(state, {:call, _, kind, _} = call, result)
       when kind in [:prepare, :follow_up],
       do: match?({:ok, _}, result) and matches?(next_state(state, result, call))
+
+  def postcondition(state, {:call, _, :cancel_queued, _} = call, result),
+    do: match?({:ok, _}, result) and matches?(next_state(state, result, call))
 
   def postcondition(state, {:call, _, kind, _} = call, result) when kind in [:fail, :cancel] do
     expected = if preparing?(state), do: :ok, else: :error
@@ -145,8 +159,21 @@ defmodule HalC2.PreparedQueuePropTest do
   defp held?(state), do: Enum.any?(queued(state), & &1.held)
   defp queued(state), do: for({_, %{status: "queued"} = run} <- state.runs, do: run)
 
-  defp retryable?(%{first: first, runs: runs} = state),
-    do: runs[first][:status] == "failed" and length(queued(state)) == map_size(runs) - 1
+  # The first failed and no other run started: each is queued or was cancelled there.
+  defp retryable?(%{first: first, runs: runs}),
+    do:
+      runs[first][:status] == "failed" and
+        Enum.all?(Map.delete(runs, first), fn {_, run} ->
+          run.status in ["queued", "cancelled"]
+        end)
+
+  # A queued follow-up, or a message that is not one (refused by the precondition).
+  defp queued_message(state) do
+    case for({msg, %{status: "queued"}} <- state.runs, do: msg) do
+      [] -> "none"
+      queued -> elements(queued)
+    end
+  end
 
   defp elem_or(:ok), do: :ok
   defp elem_or({:ok, _}), do: :ok
@@ -189,6 +216,15 @@ defmodule HalC2.PreparedQueuePropTest do
     do: Orchestration.fail_prepared(@thread, run_id(msg), "cancelled", nil, hold_queue: true)
 
   def retry(msg), do: Orchestration.retry_prepared(@thread, run_id(msg))
+
+  # The composer's remove on a queued message.
+  def cancel_queued(msg),
+    do:
+      Orchestration.dispatch(%{
+        "type" => "queued-run.cancel",
+        "threadId" => @thread,
+        "runId" => run_id(msg)
+      })
 
   defp message(msg, mode) do
     %{

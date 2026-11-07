@@ -2122,20 +2122,21 @@ defmodule HalC2.Orchestration do
 
   @doc """
   Puts a run whose workspace could not be prepared back to waiting for it
-  (`HalC2.WorktreeSetup.retry/1`). Only while every other run of the thread is a
-  message queued behind it: one that ran means the thread went on without it, in the
-  worktree a retry works in. Those queued follow it again. The failure is resolved, so
-  the error item it left goes.
+  (`HalC2.WorktreeSetup.retry/1`). Only while no other run of the thread ever started:
+  one that ran means the thread went on without it, in the worktree a retry works in.
+  The messages still queued behind it follow it again; ones the user took out of the
+  queue stay out. The failure is resolved, so the error item it left goes.
   """
   def retry_prepared(thread_id, run_id) do
     HalC2.Streams.transact(thread_id, :thread, fn state ->
       runs = StreamState.get(state, "run")
       {retried, others} = Map.pop(runs, run_id)
+      others = Map.values(others)
 
       case retried do
         %{"status" => "failed"} = run ->
-          if Enum.all?(Map.values(others), &(&1["status"] == "queued")),
-            do: retry_run(state, run, Map.values(others)),
+          if Enum.all?(others, &never_started?/1),
+            do: retry_run(state, run, Enum.filter(others, &(&1["status"] == "queued"))),
             else: {[], {:error, "Run #{run_id} cannot be retried."}}
 
         _ ->
@@ -2143,6 +2144,10 @@ defmodule HalC2.Orchestration do
       end
     end)
   end
+
+  # Still queued, or cancelled from the queue before it started.
+  defp never_started?(run),
+    do: run["status"] == "queued" or (run["status"] == "cancelled" and run["startedAt"] == nil)
 
   defp retry_run(state, %{"id" => run_id} = run, queued) do
     waiting =

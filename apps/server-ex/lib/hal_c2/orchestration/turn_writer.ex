@@ -734,13 +734,18 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp queued_start_failure(_stream, _ids, _status, failure), do: failure
 
-  # A run stopped by a usage limit leaves the queue as it is: the messages behind it
-  # would only hit the same limit, so they wait, in order, until the user resumes the
-  # queue (`queue.resume`), as they do after a restart.
-  defp held_queue(stream, "failed", %{"class" => "usage_limit"}) do
-    for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
-        run["queueHeld"] != true,
-        do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+  # A run stopped by a usage limit, or by a worktree that could not be made again,
+  # leaves the queue as it is: the messages behind it would only fail the same way, so
+  # they wait, in order, until the user resumes the queue (`queue.resume`), as they do
+  # after a restart.
+  defp held_queue(stream, "failed", %{} = failure) do
+    if failure["class"] == "usage_limit" or failure["code"] == "worktree_unavailable" do
+      for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
+          run["queueHeld"] != true,
+          do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+    else
+      []
+    end
   end
 
   defp held_queue(_stream, _status, _failure), do: []

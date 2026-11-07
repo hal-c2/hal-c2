@@ -812,3 +812,13 @@ Feature: Worktrees and setup scripts
     Then the agent is not started
     And the thread says the worktree could not be made, naming the branch and the path, without raw git output
     And the user can send again to retry
+
+  # Each would only fail the same way, so the rest of the queue waits, as it does behind a usage limit.
+  @mc
+  Scenario: Messages queued behind a worktree that cannot be made again wait for the user
+    Given the agent is working in the worktree of "Fix checkout" with two messages queued behind it
+    And the worktree was deleted and making it again fails
+    When the agent's turn ends
+    Then the first queued message fails, saying the worktree could not be made
+    And the other one waits in the queue instead of starting
+    And it starts once the worktree can be made and the user resumes the queue
