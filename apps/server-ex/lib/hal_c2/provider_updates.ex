@@ -19,9 +19,15 @@ defmodule HalC2.ProviderUpdates do
   @packages %{
     "codex" => "@openai/codex",
     "claudeAgent" => "@anthropic-ai/claude-code",
-    "opencode" => "opencode-ai"
+    "opencode" => "opencode-ai",
+    "grok" => "@xai-official/grok"
   }
-  @names %{"codex" => "Codex", "claudeAgent" => "Claude", "opencode" => "OpenCode"}
+  @names %{
+    "codex" => "Codex",
+    "claudeAgent" => "Claude",
+    "opencode" => "OpenCode",
+    "grok" => "Grok"
+  }
   @ttl :timer.hours(1)
 
   @doc """
@@ -33,7 +39,8 @@ defmodule HalC2.ProviderUpdates do
     instance = instance || driver
 
     latest =
-      if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false, do: latest(driver)
+      if HalC2.Settings.settings()["enableProviderUpdateChecks"] != false,
+        do: latest_for(driver, path)
 
     update = update_command(driver, path)
     # What the user was shown; an update checks the installation still matches it.
@@ -129,7 +136,10 @@ defmodule HalC2.ProviderUpdates do
       true ->
         [program | args] = if target, do: targeted(command, target), else: command
 
-        case System.cmd(program, args, stderr_to_stdout: true) do
+        case System.cmd(program, args,
+               stderr_to_stdout: true,
+               env: update_env(driver, instance, command)
+             ) do
           {output, 0} ->
             verify(driver, instance, started, output, target)
 
@@ -197,7 +207,47 @@ defmodule HalC2.ProviderUpdates do
          "message" => reason
        }}
 
+  # Extra environment an update runs with. Grok's own updater finds the home
+  # its instance uses in the instance's environment; an npm-installed Grok's
+  # nested install needs its postinstall allowed or npm 12 skips the step
+  # that installs the new binary.
+  defp update_env("grok", instance, [_path, "update"]) do
+    HalC2.Acp.instance_env(instance) ++
+      [{"npm_config_allow_scripts", "@xai-official/grok"}]
+  end
+
+  defp update_env(_driver, _instance, _command), do: []
+
   # The updater for an executable, as argv, or nil.
+  defp update_command(_driver, nil), do: nil
+
+  # Grok updates through `grok update`, which finds the installer that owns
+  # the binary — except a Homebrew cask, which brew upgrades so no second
+  # install appears beside it. A cask counts as brew's only under the prefix
+  # whose own `bin/brew` sits beside its Caskroom; any other cask path is
+  # left to the user. A binary that cannot be resolved is never handed to
+  # an updater.
+  defp update_command("grok", path) do
+    real = real_path(path)
+
+    cond do
+      not File.exists?(real) ->
+        nil
+
+      String.contains?(real, "/Caskroom/") ->
+        case cask(real) do
+          {brew, name} when is_binary(brew) -> ["brew", "upgrade", "--cask", name]
+          _ -> nil
+        end
+
+      String.contains?(real, "/Cellar/") ->
+        ["brew", "upgrade", real |> String.split("/Cellar/") |> Enum.at(1) |> first_segment()]
+
+      true ->
+        [path, "update"]
+    end
+  end
+
   defp update_command(driver, path) do
     real = real_path(path)
     package = @packages[driver]
@@ -284,13 +334,22 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  # A Grok binary that cannot be resolved updates by hand: no executable.
+  def executable("grok", instance) do
+    case HalC2.Acp.binary_path(instance) do
+      nil -> nil
+      path -> System.find_executable(path)
+    end
+  end
+
   def executable(_driver, _instance), do: nil
 
   # Provider entries cache the version of each executable; an update makes the
   # updated one's stale, and only that one is read again. OpenCode's is read again from
   # a throwaway session of the CLI on disk; its running sessions keep the version they
   # started with.
-  defp forget_version("opencode", instance, _path), do: HalC2.Acp.reload(instance)
+  defp forget_version(driver, instance, _path) when driver in ["opencode", "grok"],
+    do: HalC2.Acp.reload(instance)
 
   defp forget_version(driver, _instance, path) do
     module = %{"codex" => HalC2.Codex.Provider, "claudeAgent" => HalC2.Claude.Provider}[driver]
@@ -301,6 +360,76 @@ defmodule HalC2.ProviderUpdates do
     end
 
     :ok
+  end
+
+  # The `brew` and cask name owning an executable under a Caskroom, or nil
+  # when that prefix has no brew of its own to prove it.
+  defp cask(real) do
+    [prefix, rest] = String.split(real, "/Caskroom/", parts: 2)
+    brew = Path.join(prefix, "bin/brew")
+    if File.exists?(brew), do: {brew, first_segment(rest)}
+  end
+
+  # A Homebrew-cask Grok is compared against the version that cask would
+  # install, read from its own brew; every other install against npm's
+  # `@xai-official/grok` latest, the channel `grok update` installs.
+  defp latest_for("grok", path) when is_binary(path) do
+    real = real_path(path)
+
+    if String.contains?(real, "/Caskroom/") do
+      case cask(real) do
+        {brew, name} -> cask_latest(brew, name)
+        _ -> nil
+      end
+    else
+      latest("grok")
+    end
+  end
+
+  defp latest_for(driver, _path), do: latest(driver)
+
+  defp cask_latest(brew, name) do
+    key = {__MODULE__, {:cask, name}}
+
+    case :persistent_term.get(key, nil) do
+      {version, read_at} ->
+        if System.monotonic_time(:millisecond) - read_at > @ttl,
+          do: refresh_cask(brew, name)
+
+        version
+
+      nil ->
+        refresh_cask(brew, name)
+        nil
+    end
+  end
+
+  defp refresh_cask(brew, name) do
+    key = {__MODULE__, {:cask, name}, :reading}
+
+    if Application.get_env(:hal_c2, :provider_update_checks, true) &&
+         :persistent_term.get(key, false) == false do
+      :persistent_term.put(key, true)
+
+      Task.start(fn ->
+        try do
+          with {out, 0} <-
+                 System.cmd(brew, ["info", "--cask", "--json=v2", name], stderr_to_stdout: true),
+               {:ok, %{"casks" => [%{"version" => version} | _]}} <- JSON.decode(out) do
+            :persistent_term.put(
+              {__MODULE__, {:cask, name}},
+              {version, System.monotonic_time(:millisecond)}
+            )
+
+            HalC2.Settings.notify_providers()
+          end
+        rescue
+          _ -> nil
+        after
+          :persistent_term.put(key, false)
+        end
+      end)
+    end
   end
 
   # The latest release as last read, starting a read when it is missing or stale.

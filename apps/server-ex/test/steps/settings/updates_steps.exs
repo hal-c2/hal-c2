@@ -695,10 +695,12 @@ defmodule HalC2.Steps.Settings.Updates do
   defp update_command(context, "Claude"),
     do: "#{Path.join([context.mc.home, "local", "bin", "claude"])} update"
 
-  @doc "Asks the MC for Codex's status again; the providers land in `context.providers`."
+  @doc "Asks the MC for the scenario's provider status again; the providers land in `context.providers`."
   def check(context) do
     {result, context} =
-      World.call!(context, "server.refreshProviders", %{"instanceId" => "codex"})
+      World.call!(context, "server.refreshProviders", %{
+        "instanceId" => context[:provider] || "codex"
+      })
 
     Map.put(context, :providers, result["providers"])
   end

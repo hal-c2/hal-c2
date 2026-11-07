@@ -573,6 +573,603 @@ defmodule HalC2.Steps.Providers.Grok do
     context
   end
 
+  # --- models on refresh -----------------------------------------------------------
+
+  defp model_config(slugs) do
+    %{
+      "configOptions" => [
+        %{
+          "id" => "model",
+          "name" => "Model",
+          "type" => "select",
+          "currentValue" => hd(slugs),
+          "options" => for(slug <- slugs, do: %{"value" => slug, "name" => slug})
+        }
+      ]
+    }
+  end
+
+  @four ~w(grok-code-fast-1 grok-4 gateway-one gateway-two)
+
+  step "Grok offered the models of a model gateway", context do
+    context = FakeAcp.install(context, "grok", model_config(@four), enabled: true)
+    {_, context} = await_models(context, @four)
+    context
+  end
+
+  step "Grok offered four models", context do
+    context = FakeAcp.install(context, "grok", model_config(@four), enabled: true)
+    {_, context} = await_models(context, @four)
+    context
+  end
+
+  step "Grok was disconnected from the gateway", context do
+    FakeAcp.configure(context, fn config ->
+      Map.merge(config, model_config(~w(grok-code-fast-1 grok-4)))
+    end)
+  end
+
+  step "the user refreshes Grok", context do
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "grok",
+        "refreshModels" => true
+      })
+
+    case reply do
+      {:ok, %{"providers" => providers}} -> Map.put(context, :providers, providers)
+      _ -> context
+    end
+  end
+
+  step "only the models Grok now offers are in the model picker", context do
+    {_, context} = await_models(context, ~w(grok-code-fast-1 grok-4))
+    context
+  end
+
+  step "the MC checks Grok and Grok lists no models", context do
+    FakeAcp.configure(context, fn config ->
+      Map.put(config, "configOptions", [
+        %{"id" => "model", "name" => "Model", "type" => "select", "options" => []}
+      ])
+    end)
+
+    FakeAcp.probe("grok")
+    context
+  end
+
+  step "the MC checks Grok and Grok fails to start a session", context do
+    FakeAcp.configure(context, fn config ->
+      Map.put(config, "sessionError", %{"code" => -32002, "message" => "no session"})
+    end)
+
+    FakeAcp.probe("grok")
+    context
+  end
+
+  step "Grok shows a warning", context do
+    {providers, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"status" => "warning"}, FakeAcp.find(providers, "grok"))
+      end)
+
+    assert FakeAcp.find(providers, "grok")["message"] =~ "Model options may be incomplete"
+    context
+  end
+
+  step "the four models are still offered", context do
+    grok = FakeAcp.find(context.providers, "grok") || FakeAcp.entry("grok")
+    assert Enum.map(grok["models"], & &1["slug"]) == @four
+    context
+  end
+
+  defp await_models(context, slugs) do
+    FakeAcp.await_providers(context, fn providers ->
+      case FakeAcp.find(providers, "grok") do
+        %{"models" => models} -> Enum.map(models, & &1["slug"]) == slugs
+        _ -> false
+      end
+    end)
+  end
+
+  # --- sign-in refreshing ----------------------------------------------------------
+
+  step "Grok's sign-in expired and Grok is refreshing it", context do
+    config =
+      Map.put(signed_in_config(), "sessionErrorOnce", %{
+        "code" => -32000,
+        "message" => "Authentication required"
+      })
+
+    FakeAcp.install(context, "grok", config)
+  end
+
+  step "the MC checks Grok and is told Grok is signed out", context do
+    FakeAcp.enable(context, "grok")
+  end
+
+  step "the MC checks once more", context do
+    {_, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"auth" => %{"status" => "authenticated"}}, FakeAcp.find(providers, "grok"))
+      end)
+
+    assert length(FakeAcp.received(context, "session/new")) >= 2
+    context
+  end
+
+  step "Grok is reported signed in", context do
+    assert %{"auth" => %{"status" => "authenticated"}} =
+             FakeAcp.find(context.providers, "grok")
+
+    context
+  end
+
+  # --- updates -----------------------------------------------------------------------
+
+  @latest "9.9.9"
+
+  # The newest Grok release, as if already read from the registry.
+  defp seed_latest(context) do
+    # What an earlier scenario's Grok was offered must not stand as this one's.
+    :persistent_term.erase({HalC2.ProviderUpdates, "grok", :offered})
+    :persistent_term.erase({HalC2.ProviderUpdates, "grok", :state})
+
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "grok"},
+      {@latest, System.monotonic_time(:millisecond)}
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <- [
+            {HalC2.ProviderUpdates, "grok"},
+            {HalC2.ProviderUpdates, "grok", :state},
+            {HalC2.ProviderUpdates, "grok", :offered},
+            {HalC2.ProviderUpdates, {:cask, "grok-build"}}
+          ],
+          do: :persistent_term.erase(key)
+    end)
+
+    context
+  end
+
+  defp outdated(context, extra \\ %{}, opts \\ []) do
+    config =
+      signed_in_config()
+      |> Map.merge(%{"version" => "1.0.0", "updatedVersion" => @latest})
+      |> Map.merge(extra)
+
+    context
+    |> seed_latest()
+    |> FakeAcp.install("grok", config, Keyword.merge([enabled: true], opts))
+  end
+
+  step "Grok was installed by its own installer and a newer version is released", context do
+    outdated(context)
+  end
+
+  step "Grok was installed by its own installer and this Grok instance has its own Grok home",
+       context do
+    home = HalC2.Test.Mc.tmp_dir(context.mc, "grok-own-home")
+
+    context
+    |> outdated()
+    |> grok_env([%{"name" => "GROK_HOME", "value" => home}])
+    |> Map.put(:grok_home, home)
+  end
+
+  step "Grok was installed with npm 12 and a newer version is released", context do
+    prefix = HalC2.Test.Mc.tmp_dir(context.mc, "grok-npm")
+    real = Path.join(prefix, "lib/node_modules/@xai-official/grok/bin/grok")
+    outdated(context, %{"updateRequiresAllowScripts" => true}, path: real)
+  end
+
+  step "Grok is reported behind the latest version with an update command", context do
+    {providers, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"version" => "1.0.0"}, FakeAcp.find(providers, "grok"))
+      end)
+
+    advisory = FakeAcp.find(providers, "grok")["versionAdvisory"]
+    assert advisory["status"] == "behind_latest"
+    assert advisory["latestVersion"] == @latest
+    assert advisory["canUpdate"] == true
+    assert String.ends_with?(advisory["updateCommand"], " update")
+    context
+  end
+
+  step "the user updates Grok", context do
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "grok"})
+
+    assert {:ok, _} = reply
+
+    context
+    |> Map.put(:reply, reply)
+    |> then(fn context ->
+      case reply do
+        {:ok, %{"providers" => providers}} -> Map.put(context, :providers, providers)
+        _ -> context
+      end
+    end)
+  end
+
+  step "Grok's updater runs against that home and not the default one", context do
+    updates =
+      Enum.filter(FakeAcp.starts(context), fn start ->
+        Enum.at(start["argv"], 1) == "update"
+      end)
+
+    assert [update] = updates
+    assert update["env"]["GROK_HOME"] == context.grok_home
+    context
+  end
+
+  step "Grok is reported current", context do
+    assert {:ok, %{"providers" => providers}} = context.reply
+    grok = FakeAcp.find(providers, "grok")
+    assert grok["version"] == @latest
+    assert grok["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  step "the new Grok binary is installed", context do
+    config =
+      context
+      |> FakeAcp.fake()
+      |> Map.fetch!(:dir)
+      |> Path.join("config.json")
+      |> File.read!()
+      |> JSON.decode!()
+
+    assert config["version"] == @latest
+    context
+  end
+
+  # A Homebrew prefix whose Caskroom holds Grok; its brew reports the cask's
+  # version when asked. The brew is written only when `brew: true`.
+  defp cask_install(context, opts) do
+    # Reading the cask's version is a local brew call, allowed in tests where
+    # the npm registry check is off.
+    Application.put_env(:hal_c2, :provider_update_checks, true)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.put_env(:hal_c2, :provider_update_checks, false)
+    end)
+
+    prefix = HalC2.Test.Mc.tmp_dir(context.mc, "homebrew")
+    real = Path.join(prefix, "Caskroom/grok-build/1.0.0/grok")
+    context = outdated(context, %{}, path: real)
+
+    if Keyword.get(opts, :brew, true) do
+      brew = Path.join(prefix, "bin/brew")
+      File.mkdir_p!(Path.dirname(brew))
+
+      File.write!(brew, """
+      #!/bin/sh
+      echo '{"casks":[{"version":"1.0.60"}]}'
+      """)
+
+      File.chmod!(brew, 0o755)
+    end
+
+    context
+  end
+
+  step "Grok's executable lives in the Homebrew cask that installed it", context do
+    cask_install(context, brew: true)
+  end
+
+  step "Grok's executable sits in a Homebrew cask under a different prefix than the brew on the path",
+       context do
+    cask_install(context, brew: false)
+  end
+
+  step "the user opens Grok's update details", context do
+    {_, context} =
+      FakeAcp.await_providers(
+        context,
+        fn providers ->
+          case FakeAcp.find(providers, "grok") do
+            %{"version" => "1.0.0", "versionAdvisory" => %{"latestVersion" => "1.0.60"}} ->
+              true
+
+            %{"version" => "1.0.0", "versionAdvisory" => %{"canUpdate" => false}} ->
+              true
+
+            _ ->
+              false
+          end
+        end,
+        15_000
+      )
+
+    context
+  end
+
+  step "Grok is compared against the version that cask would install", context do
+    advisory = FakeAcp.find(context.providers, "grok")["versionAdvisory"]
+    assert advisory["latestVersion"] == "1.0.60"
+    assert advisory["status"] == "behind_latest"
+    context
+  end
+
+  step "the update command upgrades that cask through Homebrew and not Grok's own updater",
+       context do
+    advisory = FakeAcp.find(context.providers, "grok")["versionAdvisory"]
+    assert advisory["updateCommand"] == "brew upgrade --cask grok-build"
+    context
+  end
+
+  step "no update command is offered for Grok", context do
+    advisory = FakeAcp.find(context.providers, "grok")["versionAdvisory"]
+    assert advisory["updateCommand"] == nil
+    assert advisory["canUpdate"] == false
+    context
+  end
+
+  step "the Grok instance's executable cannot be resolved", context do
+    context = outdated(context)
+
+    {_, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"version" => "1.0.0"}, FakeAcp.find(providers, "grok"))
+      end)
+
+    File.rm!(FakeAcp.fake(context).bin)
+    context
+  end
+
+  step "Grok is reported behind the latest version with no update command", context do
+    grok = FakeAcp.entry("grok")
+    assert grok["version"] == "1.0.0"
+    assert grok["versionAdvisory"]["status"] == "behind_latest"
+    assert grok["versionAdvisory"]["updateCommand"] == nil
+    assert grok["versionAdvisory"]["canUpdate"] == false
+    context
+  end
+
+  # --- health ------------------------------------------------------------------------
+
+  step "Grok is turned off in the provider settings", context do
+    FakeAcp.install(context, "grok", signed_in_config())
+  end
+
+  step "the MC is still looking for the grok command", context do
+    config = Map.put(signed_in_config(), "waitForFileOn", %{"initialize" => "release-init"})
+    context = FakeAcp.install(context, "grok", config, enabled: true)
+    gate = Path.join(FakeAcp.fake(context).dir, "release-init")
+    ExUnit.Callbacks.on_exit(fn -> File.write(gate, "") end)
+    Map.put(context, :init_gate, gate)
+  end
+
+  step "the grok version check does not finish in time", context do
+    # The probe's own limit is ten seconds; the scenario exercises what a
+    # timeout reports, so it shortens the limit rather than waiting it out.
+    Application.put_env(:hal_c2, :grok_version_timeout_ms, 200)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :grok_version_timeout_ms) end)
+    config = Map.put(signed_in_config(), "versionHang", true)
+    FakeAcp.install(context, "grok", config, enabled: true)
+  end
+
+  step "the grok version check exits with an error", context do
+    config = Map.put(signed_in_config(), "versionExit", 3)
+    FakeAcp.install(context, "grok", config, enabled: true)
+  end
+
+  step "the grok command is installed but signed out", context do
+    FakeAcp.install(context, "grok", Map.put(signed_in_config(), "authRequired", true),
+      enabled: true
+    )
+  end
+
+  step "Grok cannot report its model options", context do
+    if context[:fakes] && context.fakes["grok"] do
+      # The metadata probe fails once; a later session of Grok's still runs.
+      context = FakeAcp.configure(context, &Map.put(&1, "failInitializeTimes", 1))
+      HalC2.Acp.forget("grok")
+      context = FakeAcp.enable(context, "grok")
+
+      {_, context} =
+        FakeAcp.await_providers(context, fn providers ->
+          match?(%{"status" => "warning"}, FakeAcp.find(providers, "grok"))
+        end)
+
+      context
+    else
+      config =
+        Map.put(signed_in_config(), "initError", %{"code" => -32002, "message" => "no init"})
+
+      FakeAcp.install(context, "grok", config, enabled: true)
+    end
+  end
+
+  step "Grok is shown with the message {string}", %{args: [message]} = context do
+    {providers, context} =
+      FakeAcp.await_providers(
+        context,
+        fn providers ->
+          match?(%{"message" => ^message}, FakeAcp.find(providers, "grok"))
+        end,
+        15_000
+      )
+
+    assert FakeAcp.find(providers, "grok")["message"] == message
+    if context[:init_gate], do: File.write!(context.init_gate, "")
+    context
+  end
+
+  step "Grok takes {int} seconds to answer when it starts", %{args: [seconds]} = context do
+    config = Map.put(signed_in_config(), "delaysMs", %{"initialize" => seconds * 1_000})
+    FakeAcp.install(context, "grok", config, enabled: true)
+  end
+
+  step "the MC checks Grok", context do
+    {_, context} = FakeAcp.open_config(context)
+    context
+  end
+
+  step "Grok is reported ready", context do
+    {_, context} =
+      FakeAcp.await_providers(
+        context,
+        fn providers -> match?(%{"status" => "ready"}, FakeAcp.find(providers, "grok")) end,
+        40_000
+      )
+
+    context
+  end
+
+  step "{string} takes {int} seconds to answer", %{args: [_command, seconds]} = context do
+    config = Map.put(signed_in_config(), "versionDelayMs", seconds * 1_000)
+    FakeAcp.install(context, "grok", config, enabled: true)
+  end
+
+  step "Grok is not reported as timed out", context do
+    {providers, context} =
+      FakeAcp.await_providers(
+        context,
+        fn providers -> match?(%{"status" => "ready"}, FakeAcp.find(providers, "grok")) end,
+        20_000
+      )
+
+    refute (FakeAcp.find(providers, "grok")["message"] || "") =~ "timed out"
+    context
+  end
+
+  step "the user sends a message to Grok", context do
+    context
+    |> FakeAcp.thread()
+    |> FakeAcp.send_message("hello grok")
+  end
+
+  step "Grok answers it", context do
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "Grok is listed with a warning, not as unavailable", context do
+    grok = FakeAcp.entry("grok")
+    assert grok["status"] == "warning"
+    assert grok["availability"] == "available"
+    context
+  end
+
+  # --- probe environment ---------------------------------------------------------------
+
+  step "the MC's environment lets Grok update itself", context do
+    :persistent_term.erase({HalC2.ProviderUpdates, "grok", :offered})
+    :persistent_term.erase({HalC2.ProviderUpdates, "grok", :state})
+
+    context
+    |> FakeAcp.install("grok", signed_in_config(), enabled: true)
+    |> grok_env([%{"name" => "GROK_DISABLE_AUTOUPDATER", "value" => "0"}])
+  end
+
+  step "the MC checks Grok's health by reading its version", context do
+    FakeAcp.probe("grok")
+    Map.put(context, :probe_kind, :version)
+  end
+
+  step "the MC checks Grok's health by listing its models", context do
+    FakeAcp.probe("grok")
+    Map.put(context, :probe_kind, :models)
+  end
+
+  step "the MC checks Grok's health by starting an agent connection", context do
+    FakeAcp.probe("grok")
+    Map.put(context, :probe_kind, :connection)
+  end
+
+  step "Grok runs with its automatic updater turned off", context do
+    starts = FakeAcp.starts(context)
+    assert starts != []
+
+    relevant =
+      case context.probe_kind do
+        :version -> Enum.filter(starts, &(Enum.at(&1["argv"], 1) == "--version"))
+        _ -> Enum.reject(starts, &(Enum.at(&1["argv"], 1) == "--version"))
+      end
+
+    assert relevant != []
+    assert Enum.all?(relevant, &(&1["env"]["GROK_DISABLE_AUTOUPDATER"] == "1"))
+    context
+  end
+
+  step "Grok's health, sign-in and models are still reported", context do
+    grok = FakeAcp.entry("grok")
+    assert grok["status"] == "ready"
+    assert grok["auth"]["status"] == "authenticated"
+    assert grok["models"] != []
+    context
+  end
+
+  step "Grok writes a commit message or title", context do
+    FakeAcp.settings(
+      &Map.put(&1, "textGenerationModelSelection", %{
+        "instanceId" => "grok",
+        "model" => "grok-code-fast-1"
+      })
+    )
+
+    root = World.project(context).root
+    assert {:ok, _} = HalC2.TextGeneration.thread_title(root, "Fix the login form")
+    context
+  end
+
+  step "Grok runs with the MC's environment unchanged", context do
+    starts = FakeAcp.starts(context)
+
+    # An update is followed by a health probe of the new binary; the updater's
+    # own start is the one that must keep the caller's environment.
+    start =
+      Enum.find(Enum.reverse(starts), &(Enum.at(&1["argv"], 1) == "update")) ||
+        List.last(starts)
+
+    assert start, "Grok was not started"
+    assert start["env"]["GROK_DISABLE_AUTOUPDATER"] == "0"
+    context
+  end
+
+  # --- start-up environment and compatibility -------------------------------------------
+
+  step "the MC starts the grok command", context do
+    context = FakeAcp.install(context, "grok", signed_in_config(), enabled: true)
+    FakeAcp.probe("grok")
+    context
+  end
+
+  step "the command's environment carries {string} set to {string}",
+       %{args: [name, value]} = context do
+    starts = FakeAcp.starts(context)
+    assert starts != []
+    assert Enum.all?(starts, &(&1["env"][name] == value))
+    context
+  end
+
+  step "Grok version {string} is installed", %{args: [version]} = context do
+    config = Map.put(signed_in_config(), "version", version)
+    FakeAcp.install(context, "grok", config, enabled: true)
+  end
+
+  step "Grok is reported as {string} for this HAL-C2 release",
+       %{args: [status]} = context do
+    {providers, context} =
+      FakeAcp.await_providers(
+        context,
+        fn providers ->
+          match?(
+            %{"compatibilityAdvisory" => %{"status" => ^status}},
+            FakeAcp.find(providers, "grok")
+          )
+        end,
+        15_000
+      )
+
+    assert FakeAcp.find(providers, "grok")["compatibilityAdvisory"]["status"] == status
+    context
+  end
+
   # xAI's billing API, played by `HalC2.Test.FakeHttp`.
   defp billing(context, response) do
     {url, log} = HalC2.Test.FakeHttp.start(%{"/v1/billing" => {200, response}})

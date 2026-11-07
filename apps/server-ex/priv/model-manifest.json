@@ -18,6 +18,12 @@
       ]
     },
     {
+      "driver": "grok",
+      "halC2Range": ">=0",
+      "recommendedRange": ">=1.0.13",
+      "ranges": [{ "range": "<1.0.13", "status": "broken" }]
+    },
+    {
       "driver": "codex",
       "halC2Range": ">=0",
       "recommendedRange": ">=0.156.0",

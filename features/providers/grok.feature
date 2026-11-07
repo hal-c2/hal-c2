@@ -53,7 +53,7 @@ Feature: Grok
 
   # Upstream #22849: every Grok refresh added back cached models the CLI no longer advertised,
   # so a model gateway's models stayed listed after Grok was disconnected from it.
-  @backlog @mc @plugin-grok @priority-low
+  @mc @plugin-grok @priority-low
   Scenario: A Grok refresh drops models Grok no longer offers
     Given Grok offered the models of a model gateway
     And Grok was disconnected from the gateway
@@ -61,7 +61,7 @@ Feature: Grok
     Then only the models Grok now offers are in the model picker
 
   # Upstream #22849
-  @backlog @mc @plugin-grok @priority-low
+  @mc @plugin-grok @priority-low
   Scenario Outline: A Grok check that finds no models keeps the last known ones with a warning
     Given Grok offered four models
     When the MC checks Grok and <result>
@@ -79,7 +79,6 @@ Feature: Grok
     Then Grok is shown as signed out with a hint to sign in
 
   # Upstream #20358: a logged-out Grok probe is checked once more before Grok is reported signed out.
-  @backlog
   Scenario: A Grok refreshing its sign-in is not reported signed out
     Given Grok's sign-in expired and Grok is refreshing it
     When the MC checks Grok and is told Grok is signed out
@@ -114,14 +113,12 @@ Feature: Grok
 
   # Grok's own installer owns the binary, so its own updater is the update command.
   # Upstream #13523: Grok is updated through `grok update`
-  @backlog
   Scenario: An outdated Grok is offered an update through Grok's own updater
     Given Grok was installed by its own installer and a newer version is released
     When the MC checks provider versions
     Then Grok is reported behind the latest version with an update command
 
   # Upstream #13523: Grok is updated through `grok update`
-  @backlog
   Scenario: Updating Grok runs its updater against the home its instance uses
     Given Grok was installed by its own installer and this Grok instance has its own Grok home
     When the user updates Grok
@@ -130,7 +127,6 @@ Feature: Grok
 
   # Upstream #24246: with npm 12 an npm-installed Grok's update succeeded but skipped the step that
   # installs the new binary, so the old Grok kept running.
-  @backlog
   Scenario: Updating an npm-installed Grok installs its new binary
     Given Grok was installed with npm 12 and a newer version is released
     When the user updates Grok
@@ -138,7 +134,6 @@ Feature: Grok
     And Grok is reported current
 
   # Upstream #18772: a Homebrew-cask Grok is compared against the cask and upgraded with brew.
-  @backlog
   Scenario: A Grok installed as a Homebrew cask is updated through that cask
     Given Grok's executable lives in the Homebrew cask that installed it
     When the user opens Grok's update details
@@ -146,7 +141,6 @@ Feature: Grok
     And the update command upgrades that cask through Homebrew and not Grok's own updater
 
   # Upstream #18772: a cask the MC cannot prove owns Grok is left to the user.
-  @backlog
   Scenario: A Grok in a Homebrew cask that cannot be proven is updated by hand
     Given Grok's executable sits in a Homebrew cask under a different prefix than the brew on the path
     When the user opens Grok's update details
@@ -154,14 +148,12 @@ Feature: Grok
 
   # A binary that cannot be resolved is never handed to an updater it does not belong to.
   # Upstream #13523: Grok is updated through `grok update`
-  @backlog
   Scenario: A Grok binary that cannot be resolved is updated by hand
     Given the Grok instance's executable cannot be resolved
     When the MC checks provider versions
     Then Grok is reported behind the latest version with no update command
 
   # Health states of GrokProvider.ts checkGrokProviderStatus.
-  @backlog
   Scenario Outline: Grok's health states are explained
     Given <situation>
     When the user opens the provider list
@@ -177,7 +169,6 @@ Feature: Grok
       | Grok cannot report its model options           | Grok CLI is installed but ACP initialize failed. Model options may be incomplete. |
 
   # Upstream #18771: Grok gets up to 20 seconds to answer initialize before it is reported failing.
-  @backlog
   Scenario: A Grok that is slow to start is not reported as failing
     Given Grok takes 15 seconds to answer when it starts
     When the MC checks Grok
@@ -185,13 +176,11 @@ Feature: Grok
 
   # Upstream #28400: "grok --version" had 4 seconds, so a healthy CLI that started slowly behind a
   # shim, a version manager or a virus scan showed as unavailable.
-  @backlog
   Scenario: A Grok whose version check takes 8 seconds is not shown as unavailable
     Given "grok --version" takes 8 seconds to answer
     When the MC checks Grok
     Then Grok is not reported as timed out
 
-  @backlog
   Scenario: Grok that cannot report its model options stays usable
     Given the grok command is installed and signed in
     And Grok cannot report its model options
@@ -215,7 +204,6 @@ Feature: Grok
       | listing a project's skills     |
 
   # Upstream #18075: sessions, text generation and updates keep the caller's environment
-  @backlog
   Scenario Outline: Grok updates itself as configured outside health checks
     Given the MC's environment lets Grok update itself
     When <use>
@@ -552,7 +540,6 @@ Feature: Grok
     Then the instance fails with "Failed to create Grok ACP adapter."
 
   # GrokAcpSupport.ts: how HAL-C2 starts and addresses the grok command.
-  @backlog
   Scenario: Grok is told that HAL-C2 started it
     When the MC starts the grok command
     Then the command's environment carries "GROK_OAUTH2_REFERRER" set to "hal-c2"
@@ -831,7 +818,6 @@ Feature: Grok
     Then its task tool is passed as disallowed
 
   # Upstream #13328: restore a compatibility policy for every harness (Grok supported at 1.0.13)
-  @backlog
   Scenario Outline: The version Grok runs decides whether this HAL-C2 release supports it
     Given Grok version "<version>" is installed
     When the MC checks Grok
