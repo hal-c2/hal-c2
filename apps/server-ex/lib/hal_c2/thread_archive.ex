@@ -133,7 +133,7 @@ defmodule HalC2.ThreadArchive do
       try do
         case write_file(path, archive) do
           :ok -> {:ok, archive |> summary() |> Map.put(:path, path)}
-          {:error, :eexist} -> new_file(path)
+          {:error, :eexist} -> exists(path)
           {:error, reason} -> {:error, "Could not write #{path}: #{:file.format_error(reason)}."}
         end
       after
@@ -144,10 +144,12 @@ defmodule HalC2.ThreadArchive do
 
   defp new_file(path) do
     case File.lstat(path) do
-      {:ok, _} -> {:error, "The output file #{path} already exists. Nothing was exported."}
+      {:ok, _} -> exists(path)
       _ -> :ok
     end
   end
+
+  defp exists(path), do: {:error, "The output file #{path} already exists. Nothing was exported."}
 
   @doc "Removes the files `build/2` made for an archive."
   def discard(archive) do
