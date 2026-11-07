@@ -332,9 +332,9 @@ Feature: Streaming the agent's reply
     Then the reply shows no text and no "(empty response)"
 
   # Upstream #27420: every visible row of the timeline redrew on each streamed update, not
-  # Upstream #27419: same change as #27420.
   # just the streaming one (210 history row renders before, 0 after; 32 timeline renders across 30
   # updates before, at most 3 after).
+  # Upstream #27419: same change as #27420.
   @backlog @shared @priority-low
   Scenario: A streaming reply redraws only its own row
     Given the thread shows earlier turns above a reply that is streaming

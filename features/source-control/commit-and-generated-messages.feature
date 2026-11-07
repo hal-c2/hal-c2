@@ -264,8 +264,8 @@ Feature: Committing with written or generated messages
     Then the writer is given the commits and changes since "origin/main"
 
   # Upstream #22503: the writer was given the
-  # Upstream #23164: same change as #22503.
   # output of the repository's text conversion diff driver, which git also ran to make it.
+  # Upstream #23164: same change as #22503.
   @mc @backlog
   Scenario Outline: The writer of a <text> is given the source lines, not a text conversion's output
     Given the repository shows "notes.doc" through a text conversion diff driver

@@ -275,8 +275,8 @@ Feature: Runs, interruptions and the queue
       | video/vnd.dlna.mpeg-tts |
 
   # Upstream #27306: images and videos sent with words were squeezed into the text bubble
-  # Upstream #27373: same change as #27306.
   # as small thumbnails, unlike the same media sent alone.
+  # Upstream #27373: same change as #27306.
   @backlog @shared @mobile
   Scenario Outline: Images and videos sent with text sit above the text bubble
     When the user sent <media> with the text "Here is the bug"
@@ -319,8 +319,8 @@ Feature: Runs, interruptions and the queue
     Then the composer attaches "cart.png"
 
   # Upstream #27305: two steers in a row each repeated their label with a full message gap
-  # Upstream #27373: same change as #27305.
   # between them, so the follow-up did not read as part of the same thought.
+  # Upstream #27373: same change as #27305.
   @backlog @shared @mobile
   Scenario: Messages the user sends back to back sit together under one steer label
     Given the user steered the running turn twice in a row

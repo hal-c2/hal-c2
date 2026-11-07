@@ -1010,8 +1010,8 @@ Feature: Formatted messages
     Then it plays in a large preview
 
   # Upstream #21363: audio in a reply or attached to a message plays where it is,
-  # Upstream #21353: same change as #21363.
   # instead of only in the file viewer.
+  # Upstream #21353: same change as #21363.
   @backlog @shared
   Scenario Outline: Audio <where> plays in the conversation
     Given <given>

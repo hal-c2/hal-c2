@@ -1,6 +1,5 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/27197
-#   apps/server/src/policy (T3 Code's managed policy: loading, settings overlay, limits)
+#   https://github.com/pingdotgg/t3code/pull/27197 (T3 Code's managed policy: loading, settings overlay, limits)
 
 # Upstream #27197: an organization's administrator deploys a policy with their device management
 # tool, and the machine's server enforces it for every client, agent, scheduled task and the CLI.

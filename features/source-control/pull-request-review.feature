@@ -3097,8 +3097,8 @@ Feature: Reviewing a pull request
       Then the split of pull request 42 shows under its changed files
 
     # Upstream #22189: the phone's changed files say the same split, and hiding
-    # Upstream #22255: same change as #22189.
     # test files hides mocks and fixtures too.
+    # Upstream #22255: same change as #22189.
     @backlog @mobile
     Scenario: The phone's changed files of a pull request show its split
       When the user opens the changed files of pull request 42 on the phone

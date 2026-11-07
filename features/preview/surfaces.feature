@@ -2442,9 +2442,9 @@ Feature: In-app preview browser
     # Upstream #22639: the suggested setup command named whichever t3 was on the PATH rather
     # than this install's. Dropped with the setup command itself.
     # Upstream #22892: an MC running as root could not start its own browser's
-    # Upstream #23646: same change as #22892.
     # sandbox, so the browser error and "t3 browser setup" explained the server-side opt-out.
     # Dropped: the MC runs no browser of its own, the desktop draws every page.
+    # Upstream #23646: same change as #22892.
     @dropped @mc
     Scenario: The browser setup explains how to run the MC's browser as root
       Given the MC runs as root

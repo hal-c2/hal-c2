@@ -717,8 +717,8 @@ Feature: Delegating tasks to subagents
     And the task, its node and its turn item are "cancelled"
 
   # Upstream #22581: Stop on a subagent that was never given a run clears its task on
-  # Upstream #22653: same change as #22581.
   # the caller even while the caller is idle, whatever else the subagent is doing.
+  # Upstream #22653: same change as #22581.
   @backlog @mc @shared @priority-high
   Scenario: Stopping a stuck subagent clears its task even when the caller is idle
     Given "parent" is idle and lists a delegated task as running

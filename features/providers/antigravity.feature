@@ -905,8 +905,8 @@ Feature: Antigravity
     Then their activity is shown as a subagent batch
 
   # Upstream #26910: Antigravity marks every open read failed with an unrelated step error,
-  # Upstream #26928: same change as #26910.
   # and never completes a subagent's read that HAL-C2 served.
+  # Upstream #26928: same change as #26910.
   @backlog @priority-high
   Scenario Outline: A file read HAL-C2 served for Antigravity is shown as it went
     Given an Antigravity subagent asks HAL-C2 to read "src/cart.ts"

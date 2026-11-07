@@ -510,8 +510,8 @@ Feature: Claude
     Then the turn's work shows no failed tool call for the question
 
   # Upstream #16631: a stale Claude thread compacts on send. The composer shows a
-  # Upstream #17127: same change as #16631.
   # chip with the token count; switching it to the full history is a choice for one send.
+  # Upstream #17127: same change as #16631.
   @backlog @shared
   Scenario: Sending to a long idle Claude thread compacts it first
     Given a Claude thread with 140,000 tokens of history that has been idle for 2 hours

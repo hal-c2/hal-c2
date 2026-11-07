@@ -378,8 +378,8 @@ Feature: Navigating the phone app and opening links into it
     And going back again returns to the home screen
 
   # Upstream #23841: Usage was reached only through Settings, and Settings opened as
-  # Upstream #24524: same change as #23841.
   # a separate card outside the workspace's columns.
+  # Upstream #24524: same change as #23841.
   @backlog @mobile
   Scenario: The workspace's navigation reaches chats, pull requests, usage and settings
     When the user looks at the phone's workspace navigation
