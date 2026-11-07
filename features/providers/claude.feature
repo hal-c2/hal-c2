@@ -2296,7 +2296,11 @@ Feature: Claude
     And the log names the servers but none of the error text
 
   # Upstream #24654: tool search set to an auto mode sent every tool schema and missed the cache.
-  @backlog @mc @plugin-claude
+  # Dropped: Claude Code keeps tool search on when ENABLE_TOOL_SEARCH is unset, and once an
+  # auto mode turns it on in a conversation it stays on, so the schemas are not sent again
+  # (https://code.claude.com/docs/en/mcp, "Configure tool search"). The MC leaves the
+  # variable to the user's settings rather than overriding a threshold they chose.
+  @dropped @mc @plugin-claude
   Scenario Outline: Claude keeps tool search on unless the user's settings turn it off
     Given the user's Claude settings set ENABLE_TOOL_SEARCH to <value>
     When a Claude turn starts
