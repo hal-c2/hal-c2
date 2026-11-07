@@ -178,7 +178,7 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     # What follows the end runs in a task of its own; once it is over, the queue waits.
     assert_receive {:trace, ^ender, :spawn, task, _}
     ref = Process.monitor(task)
-    assert_receive {:DOWN, ^ref, :process, ^task, _}
+    assert_receive {:DOWN, ^ref, :process, ^task, _}, 15_000
     assert ["failed", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
@@ -211,8 +211,10 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     :erlang.trace(stream, false, [:receive])
     :ok = :sys.resume(stream)
-    assert_receive {:DOWN, ^failed, :process, ^failer, :normal}
-    assert_receive {:DOWN, ^stopped, :process, ^stopper, :normal}
+    # The stop captures a checkpoint (git) before its transaction, which can outlast
+    # assert_receive's 100ms default on a busy machine: wait on each end's exit.
+    assert_receive {:DOWN, ^failed, :process, ^failer, :normal}, 15_000
+    assert_receive {:DOWN, ^stopped, :process, ^stopper, :normal}, 15_000
 
     state = current(thread_id)
     assert ["failed"] = Enum.map(runs(state), & &1["status"])

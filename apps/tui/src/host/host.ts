@@ -9,6 +9,7 @@ import { projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
+import type { TuiThreadExtras } from "../orchestrationV2Adapter.ts";
 import type { ImageDecoder } from "../composerAttachments.ts";
 import { resolveSidebarListViewport } from "../layout.ts";
 import { buildRows, nextSidebarRefreshAt, SIDEBAR_SETTLED_SECTION_ID } from "../sidebar.logic.ts";
@@ -1055,6 +1056,10 @@ export function createHost(options: HostOptions): Host {
           context.threadId !== null &&
           detail?.id === context.threadId &&
           latestActionableProposedPlan(detail) !== null,
+        queueHeld:
+          context.threadId !== null &&
+          detail?.id === context.threadId &&
+          (detail as typeof detail & TuiThreadExtras).queueHeld === true,
       };
     },
     // After the composer's own entries: thread lifecycle and scope, then the

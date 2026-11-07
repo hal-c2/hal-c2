@@ -370,7 +370,9 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": text[len("say and wait "):]}}})
             waiting_ctx = ctx
             continue
-        if "wait" in text or "finishing" in text or "closing" in text:
+        # While the file FAKE_CODEX_HOLD_TURN_FILE names exists, every turn waits as "wait" does.
+        held_turn = os.path.exists(os.environ.get("FAKE_CODEX_HOLD_TURN_FILE", "/nonexistent"))
+        if "wait" in text or "finishing" in text or "closing" in text or held_turn:
             # FAKE_CODEX_STDERR_FLOOD writes far more than a pipe buffer holds.
             if os.environ.get("FAKE_CODEX_STDERR_FLOOD"):
                 sys.stderr.write("x" * 300_000 + "\n")
