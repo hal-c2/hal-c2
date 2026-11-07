@@ -1286,9 +1286,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # A session that opens without saying its model gets the turn's model set again.
-  # Whether it offers a way to switch models is recorded on the provider session
-  # (`canSwitchModel`): a new session's answer says so, a continued one only when it
-  # names its model.
+  # Whether it offers a way to switch models is recorded on the provider thread
+  # (`canSwitchModel`), which outlives the process and its session record: a new
+  # session's answer says so, a continued one only when it names its model.
   defp opened(state, result, turn, new? \\ false) do
     named? =
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
@@ -1298,13 +1298,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp record_model_switch(state, turn, switches?) do
-    id = Entities.provider_session_id(Entities.instance(turn.ids), state.thread_id)
-
     commit(state, fn stream ->
       [
-        Orchestration.upsert(stream, "provider-session", id, fn
+        Orchestration.upsert(stream, "provider-thread", turn.ids.provider_thread, fn
           nil -> nil
-          session -> Map.put(session, "canSwitchModel", switches?)
+          thread -> Map.put(thread, "canSwitchModel", switches?)
         end)
       ]
     end)

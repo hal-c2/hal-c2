@@ -3,7 +3,7 @@ defmodule HalC2.AcpModelSwitchPropTest do
   Model changes on an ACP agent whose session may not offer switching models. Once
   such a session is open, a model change, by a message or by setting the thread's
   model, is refused and leaves the thread's model alone, across session resets and
-  runtime restarts. A session that offers switching takes every change.
+  runtime restarts, and the session being stopped. A session that offers switching takes every change.
 
   A restart may also lose the agent's sessions. The next turn then runs in a new
   session that is handed every earlier turn, and the new session switches models as
@@ -65,6 +65,7 @@ defmodule HalC2.AcpModelSwitchPropTest do
       {4, {:call, __MODULE__, :turn, [state.sends, oneof(@models)]}},
       {3, {:call, __MODULE__, :set_model, [oneof(@models)]}},
       {1, {:call, __MODULE__, :reset, []}},
+      {1, {:call, __MODULE__, :detach, []}},
       {1, {:call, __MODULE__, :restart, [boolean()]}}
     ])
   end
@@ -99,11 +100,6 @@ defmodule HalC2.AcpModelSwitchPropTest do
     end
   end
 
-  # The model an agent that cannot switch reports is its own business.
-  defp handed?({"completed", "model: " <> said}, ""), do: not String.contains?(said, " with ")
-  defp handed?({"completed", "model: " <> said}, handed), do: String.ends_with?(said, handed)
-  defp handed?(_result, _handed), do: false
-
   def postcondition(state, {:call, _, :set_model, [model]}, result) do
     expected = if refused?(state, model), do: state.model, else: model
     reply = if refused?(state, model), do: {:error, @refused}, else: :ok
@@ -111,12 +107,31 @@ defmodule HalC2.AcpModelSwitchPropTest do
   end
 
   def postcondition(_state, {:call, _, :reset, []}, result), do: result == :ok
+  def postcondition(_state, {:call, _, :detach, []}, result), do: result == :ok
   def postcondition(_state, {:call, _, :restart, [_]}, result), do: result == :ok
+
+  # The model an agent that cannot switch reports is its own business.
+  defp handed?({"completed", "model: " <> said}, ""), do: not String.contains?(said, " with ")
+  defp handed?({"completed", "model: " <> said}, handed), do: String.ends_with?(said, handed)
+  defp handed?(_result, _handed), do: false
 
   defp refused?(state, model), do: not state.switchable and state.opened and model != state.model
 
   def reset do
     {:ok, _} = HalC2.Acp.ThreadRuntime.rollback(@tid, %{})
+    :ok
+  end
+
+  # "Stop session": the provider process stops and its session record goes; the next
+  # turn resumes the agent's session, which still cannot switch models.
+  def detach do
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "provider-session.detach",
+        "threadId" => @tid,
+        "providerSessionId" => HalC2.Orchestration.Entities.provider_session_id("grok", @tid)
+      })
+
     :ok
   end
 

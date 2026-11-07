@@ -3570,18 +3570,18 @@ defmodule HalC2.Orchestration do
   defp refusal(_type, _command, _thread, _state), do: nil
 
   # An ACP agent's session switches models only when it offers a way to (a `model`
-  # config option or a model list); its runtime records whether it did on the session
-  # (`canSwitchModel`).
+  # config option or a model list); its runtime records whether it did on the provider
+  # thread (`canSwitchModel`), so the answer holds while the session is stopped.
   defp model_switch_refusal(state, thread, command, instance) do
     model = get_in(command, ["modelSelection", "model"])
 
-    session =
-      StreamState.get(state, "provider-session")[
-        Entities.provider_session_id(instance, thread["id"])
+    provider_thread =
+      StreamState.get(state, "provider-thread")[
+        Entities.provider_thread_id(instance, thread["id"])
       ]
 
     if is_binary(model) and model != get_in(thread, ["modelSelection", "model"]) and
-         session["canSwitchModel"] == false,
+         provider_thread["canSwitchModel"] == false,
        do: {:error, "The active ACP session does not expose a model-switch capability."}
   end
 
@@ -4554,12 +4554,14 @@ defmodule HalC2.Orchestration do
       end
 
     # Its earlier runs' native turns are in the native thread it no longer has
-    # (`HalC2.Orchestration.Fork`).
+    # (`HalC2.Orchestration.Fork`), and what that thread's session could do is not
+    # known of the new one until it opens.
     taken_over =
       if foreign,
         do: %{
           "providerInstanceId" => instance,
           "nativeThreadRef" => nil,
+          "canSwitchModel" => nil,
           "nativeSinceRunOrdinal" => ordinal
         },
         else: %{}

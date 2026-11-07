@@ -159,7 +159,7 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   end
 
   # The fake ACP agent answers `session/new` without a `model` config option or a model
-  # list. OpenCode runs on it here; the thread's session records what it offers.
+  # list. OpenCode runs on it here; the thread's provider thread records what it offers.
   step "{string} runs on an ACP agent whose session does not offer switching models",
        %{args: [thread]} = context do
     System.put_env("FAKE_ACP_NO_MODEL_SWITCH", "1")
@@ -169,12 +169,12 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context = run(context, thread, "Carry on")
     assert %{"status" => "completed"} = World.latest_run(context, thread)
 
-    session =
-      World.state(context, thread).entities["provider-session"][
-        Entities.provider_session_id("opencode", World.thread_id(context, thread))
+    provider_thread =
+      World.state(context, thread).entities["provider-thread"][
+        Entities.provider_thread_id("opencode", World.thread_id(context, thread))
       ]
 
-    assert session["canSwitchModel"] == false
+    assert provider_thread["canSwitchModel"] == false
     context
   end
 
