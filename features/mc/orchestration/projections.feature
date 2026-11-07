@@ -266,7 +266,7 @@ Feature: What the engine projects for clients
     Then nothing the user can act on is left out
     And the snapshot is marked as over its payload budget
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: Bulky item bodies are left out of what a thread subscriber is sent
     Given "t1" has <item>
     When a client reads or follows "t1"
@@ -277,22 +277,31 @@ Feature: What the engine projects for clients
       | item                                  | left out                               | kept                                           |
       | a command that printed a long output  | the output                             | the command and its exit code                  |
       | a file change                         | the before and after text and the diff | the file and its change counts                 |
-      | a call to a tool the provider defined | the tool's raw output                  | the ids the result named and whether it failed |
       | a handoff to another provider         | the handoff summary                    | the providers and models it went between       |
 
-  @mc @backlog
+  # The MC keeps a provider-defined tool's output up to 16,384 bytes on the wire, and the
+  # clients show it (TimelineModel.cpp, the TUI's toolSummary); dropping it for the ids it
+  # named and whether it failed needs the clients to stop reading `output` first.
+  @mc @backlog @priority-high
+  Scenario: A provider-defined tool's raw output is left out of what a subscriber is sent
+    Given "t1" has a call to a tool the provider defined
+    When a client reads or follows "t1"
+    Then the item arrives without the tool's raw output
+    And it still carries the ids the result named and whether it failed
+
+  @mc
   Scenario: A command whose output shows a failure is still sent as failed
     Given a command in "t1" exited with code 0 but its output reports an error
     When a client reads or follows "t1"
     Then the command arrives without its output
     And it is marked as having failed
 
-  @mc @backlog
+  @mc
   Scenario: Long subagent text is cut for transport and says so
     Given a subagent in "t1" has a prompt, progress or result longer than 32,768 bytes
     When a client reads or follows "t1"
     Then the text is cut at 32,768 bytes without splitting a character
-    And it ends with "… output truncated for transport"
+    And each cut text ends with "… output truncated for transport"
 
   @mc
   Scenario: Subagent text that grows is cut to the same text a snapshot shows
@@ -301,14 +310,14 @@ Feature: What the engine projects for clients
     Then the progress it holds is the cut text a fresh read of "t1" shows
     And the appends past the limit are not sent
 
-  @mc @backlog
+  @mc
   Scenario: A large tool input is sent as its first line
     Given a call to a provider-defined tool in "t1" has an input larger than 16,384 bytes
     When a client reads or follows "t1"
     Then the input arrives as its first non-blank line, cut to 160 characters, marked truncated
     And a smaller input arrives unchanged
 
-  @mc @backlog
+  @mc
   Scenario: A context handoff is sent without the transcript it carries
     Given "t1" was handed off with its conversation history and a summary
     When a client reads or follows "t1"

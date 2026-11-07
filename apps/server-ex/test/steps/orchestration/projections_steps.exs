@@ -909,6 +909,200 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
+  # --- bulky bodies off the wire ---------------------------------------------------------
+
+  @bulky %{
+    "a command that printed a long output" =>
+      {"turn-item", "command_execution",
+       %{"command" => "mix test", "exitCode" => 2, "output" => String.duplicate("log\n", 5_000)},
+       ["output"], ["command", "exitCode"]},
+    "a file change" =>
+      {"turn-item", "file_change",
+       %{
+         "path" => "lib/a.ex",
+         "additions" => 3,
+         "deletions" => 1,
+         "oldStr" => "old",
+         "newStr" => "new",
+         "diffStr" => "@@ -1 +1 @@\n-old\n+new"
+       }, ~w(oldStr newStr diffStr), ~w(path additions deletions)},
+    "a handoff to another provider" =>
+      {"context-handoff", nil,
+       %{
+         "sourceProviderInstanceId" => "codex",
+         "targetProviderInstanceId" => "claudeAgent",
+         "summaryText" => "the whole summary of the conversation",
+         "history" => [%{"role" => "user", "text" => "hello"}],
+         "delivery" => %{"sent" => true},
+         "status" => "ready"
+       }, ~w(history delivery), ~w(sourceProviderInstanceId targetProviderInstanceId status)}
+  }
+
+  step ~r/^"(?<thread>[^"]+)" has (?<item>a command that printed a long output|a file change|a handoff to another provider)$/,
+       %{args: [thread, item]} = context do
+    {kind, type, fields, left_out, kept} = Map.fetch!(@bulky, item)
+    id = "bulky-1"
+    entity = Map.merge(%{"id" => id, "runId" => "run-1", "type" => type}, fields)
+    entity = if type, do: entity, else: Map.delete(entity, "type")
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, kind, id, %{"s" => entity})
+    |> Map.merge(%{thread: thread, bulky: {kind, id, fields, left_out, kept}})
+  end
+
+  step ~r/^a client reads or follows "(?<thread>[^"]+)"$/, %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
+    context |> World.put_client(client) |> Map.merge(%{frames: frames, thread: thread})
+  end
+
+  step ~r/^the item arrives without (?<what>.+)$/, %{args: [_what]} = context do
+    {kind, id, _fields, left_out, _kept} = context.bulky
+    entity = held(context.frames, kind, id)
+
+    for key <- left_out do
+      # A handoff's summary text is emptied; everything else is absent.
+      assert entity[key] in [nil, ""], "#{key} was sent: #{inspect(entity[key])}"
+    end
+
+    context
+  end
+
+  step ~r/^it still carries (?<what>.+)$/, %{args: [_what]} = context do
+    {kind, id, fields, _left_out, kept} = context.bulky
+    entity = held(context.frames, kind, id)
+    for key <- kept, do: assert(entity[key] == fields[key], "#{key} is missing")
+    context
+  end
+
+  step ~r/^a command in "(?<thread>[^"]+)" exited with code 0 but its output reports an error$/,
+       %{args: [thread]} = context do
+    item = %{
+      "id" => "cmd-1",
+      "runId" => "run-1",
+      "type" => "command_execution",
+      "command" => "make",
+      "exitCode" => 0,
+      "output" => "error: build failed",
+      "outputIndicatesFailure" => true
+    }
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, "turn-item", "cmd-1", %{"s" => item})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the command arrives without its output", context do
+    assert held(context.frames, "turn-item", "cmd-1")["output"] == nil
+    context
+  end
+
+  step "it is marked as having failed", context do
+    assert held(context.frames, "turn-item", "cmd-1")["outputIndicatesFailure"] == true
+    context
+  end
+
+  step ~r/^a subagent in "(?<thread>[^"]+)" has a prompt, progress or result longer than 32,768 bytes$/,
+       %{args: [thread]} = context do
+    # Multi-byte characters, so a cut at the limit may land inside one.
+    long = String.duplicate("é", 20_000)
+
+    item = %{
+      "id" => "sub-long",
+      "runId" => "run-1",
+      "type" => "subagent",
+      "prompt" => long,
+      "progress" => long,
+      "result" => long
+    }
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, "turn-item", "sub-long", %{"s" => item})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the text is cut at 32,768 bytes without splitting a character", context do
+    entity = held(context.frames, "turn-item", "sub-long")
+    suffix = "\n… output truncated for transport"
+
+    for key <- ~w(prompt progress result) do
+      text = entity[key]
+      assert String.valid?(text)
+      body = String.replace_suffix(text, suffix, "")
+      assert byte_size(body) <= 32_768 and byte_size(body) > 32_760
+    end
+
+    context
+  end
+
+  step ~r/^each cut text ends with "(?<tail>… output truncated for transport)"$/,
+       %{args: [tail]} = context do
+    entity = held(context.frames, "turn-item", "sub-long")
+    for key <- ~w(prompt progress result), do: assert(String.ends_with?(entity[key], tail))
+    context
+  end
+
+  step ~r/^a call to a provider-defined tool in "(?<thread>[^"]+)" has an input larger than 16,384 bytes$/,
+       %{args: [thread]} = context do
+    big = "\n\n  " <> String.duplicate("x", 300) <> "\n" <> String.duplicate("y", 20_000)
+    tool = %{"id" => "tool-big", "runId" => "run-1", "type" => "dynamic_tool", "input" => big}
+    small = %{"id" => "tool-small", "runId" => "run-1", "type" => "dynamic_tool", "input" => "ls"}
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, "turn-item", "tool-big", %{"s" => tool})
+    |> World.put_entity(thread, "turn-item", "tool-small", %{"s" => small})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the input arrives as its first non-blank line, cut to 160 characters, marked truncated",
+       context do
+    assert %{"summary" => summary, "truncated" => true} =
+             held(context.frames, "turn-item", "tool-big")["input"]
+
+    assert summary == String.duplicate("x", 160)
+    context
+  end
+
+  step "a smaller input arrives unchanged", context do
+    assert held(context.frames, "turn-item", "tool-small")["input"] == "ls"
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" was handed off with its conversation history and a summary$/,
+       %{args: [thread]} = context do
+    handoff = %{
+      "id" => "handoff-1",
+      "status" => "ready",
+      "summaryText" => "everything that was said",
+      "history" => [%{"role" => "user", "text" => "hi"}],
+      "delivery" => %{"sent" => true}
+    }
+
+    context
+    |> World.put_entity(thread, "context-handoff", "handoff-1", %{"s" => handoff})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the handoff arrives with its status", context do
+    assert held(context.frames, "context-handoff", "handoff-1")["status"] == "ready"
+    context
+  end
+
+  step "without the history, the delivery record or the summary text", context do
+    handoff = held(context.frames, "context-handoff", "handoff-1")
+    refute Map.has_key?(handoff, "history")
+    refute Map.has_key?(handoff, "delivery")
+    assert handoff["summaryText"] == ""
+    context
+  end
+
+  defp held(frames, kind, id),
+    do: hd(for frame <- frames, [^kind, ^id, entity] <- frame["rows"] || [], do: entity)
+
   defp shape(stream),
     do: %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}
 
