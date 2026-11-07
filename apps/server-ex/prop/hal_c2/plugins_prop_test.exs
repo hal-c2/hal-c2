@@ -122,7 +122,7 @@ defmodule HalC2.PluginsPropTest do
   # held entry's `run` its own. queue: the Slack events handed to each id and not yet
   # heard to the end, `{run, n}` in order; next: the number of the next event. broken:
   # settings.json cannot be read; unrevoked: the ids whose dropped permissions a scan
-  # could not take back while it was.
+  # could not take back while it was (hal-c2/hal-c2#1225).
   def initial_state,
     do: %{
       broken: false,

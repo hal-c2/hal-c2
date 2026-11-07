@@ -4,7 +4,9 @@ defmodule HalC2.SettingsPropTest do
   next `put/2` must name, what settings.json holds, and the notifications a watcher
   is owed. Commands write through the RPC a client uses (validate, then a versioned
   put), merge and drop keys with `update/1`, edit the file from outside as
-  `mix hal_c2.theme` does, break it, and restart the server, which must keep the
+  `mix hal_c2.theme` does, edit it by hand just before a client saves the document it
+  read (the save keeps every setting the client left alone, nested ones too), break it,
+  and restart the server, which must keep the
   document but starts counting versions again. Some keys are shared with the cluster
   (`HalC2.Settings.Shared`), and so are the keybinding rules: every change to one is
   stamped, and members' records arrive in any order, from clocks behind or ahead of
@@ -119,6 +121,7 @@ defmodule HalC2.SettingsPropTest do
         else
           [
             {2, {:call, __MODULE__, :external_edit, [doc(), boolean()]}},
+            {3, {:call, __MODULE__, :put_over_hand_edit, [edits(), edits()]}},
             {1, {:call, __MODULE__, :external_garbage, [oneof(["{not json", "[]", "7", ""])]}},
             {2, {:call, __MODULE__, :saved, []}},
             {2, {:call, __MODULE__, :watch, []}},
@@ -155,6 +158,19 @@ defmodule HalC2.SettingsPropTest do
   end
 
   defp shared_value, do: oneof(["x", "y", true])
+
+  # Settings set or removed, at the top or inside `nest`'s objects, as a hand edit or a
+  # client changes them.
+  defp edits do
+    path =
+      frequency([
+        {1, ["h1"]},
+        {1, ["h2"]},
+        {4, ["nest", oneof(["p", "q"]), oneof(["x", "y"])]}
+      ])
+
+    resize(3, list({path, oneof([1, 2, "v", :delete])}))
+  end
 
   # What a member sends: a record per shared key, some of them resets, and sometimes
   # its keybinding rules.
@@ -199,6 +215,12 @@ defmodule HalC2.SettingsPropTest do
   # What `HalC2.Keybindings.upsert/1` makes of keys bound one after another.
   defp rules(keys), do: Enum.reduce(keys, [], &bound(&2, &1))
   defp bound(rules, key), do: Enum.reject(rules, &(&1 == rule(key))) ++ [rule(key)]
+
+  def precondition(state, {:call, _, :put_over_hand_edit, _}), do: state.file != :garbage
+
+  # A shrunk sequence can leave a version that is no longer stale.
+  def precondition(%{parallel: false} = state, {:call, _, :put_stale, [version, _]}),
+    do: version != state.version
 
   def precondition(_state, _call), do: true
 
@@ -259,6 +281,26 @@ defmodule HalC2.SettingsPropTest do
 
   def next_state(state, _result, {:call, _, :bind_racing, [key, incoming]}),
     do: state |> gossiped(incoming) |> bound_rules(key)
+
+  # Every setting the client changed from what it read is its; the rest is the hand
+  # edit's, setting by setting, inside `nest` too.
+  def next_state(state, _result, {:call, _, :put_over_hand_edit, [hand, client]}) do
+    state = accepted(state, nested(state.doc))
+    {base, disk, client} = {state.doc, change(state.doc, hand), change(state.doc, client)}
+
+    saved =
+      for path <- Enum.uniq(Map.keys(leaves(client)) ++ Map.keys(leaves(base))),
+          Map.fetch(leaves(client), path) != Map.fetch(leaves(base), path),
+          reduce: disk do
+        doc ->
+          case Map.fetch(leaves(client), path) do
+            {:ok, value} -> put_in(doc, path, value)
+            :error -> doc |> pop_in(path) |> elem(1)
+          end
+      end
+
+    accepted(state, saved)
+  end
 
   def next_state(state, _result, {:call, _, :watch, []}), do: %{state | watching: true}
   def next_state(state, _result, {:call, _, :unwatch, []}), do: %{state | watching: false}
@@ -363,6 +405,31 @@ defmodule HalC2.SettingsPropTest do
     }
   end
 
+  # A document with `nest`'s two objects, which the edits work inside.
+  defp nested(%{"nest" => %{"p" => %{}, "q" => %{}}} = doc), do: doc
+  defp nested(doc), do: Map.put(doc, "nest", %{"p" => %{}, "q" => %{}})
+
+  defp change(doc, edits) do
+    Enum.reduce(edits, doc, fn
+      {path, :delete}, doc -> doc |> pop_in(path) |> elem(1)
+      {path, value}, doc -> put_in(doc, path, value)
+    end)
+  end
+
+  # Each setting by its path: the top-level ones, and those inside `nest`'s objects.
+  defp leaves(doc) do
+    for {key, value} <- doc, reduce: %{} do
+      acc when key == "nest" ->
+        for {object, settings} <- value,
+            {name, v} <- settings,
+            into: acc,
+            do: {[key, object, name], v}
+
+      acc ->
+        Map.put(acc, [key], value)
+    end
+  end
+
   defp stamp(records, values, units) do
     # After the latest time held when that is a member's clock running ahead.
     at =
@@ -393,6 +460,9 @@ defmodule HalC2.SettingsPropTest do
 
   def postcondition(state, {:call, _, :put_retry, _}, result),
     do: result == {:ok, state.version + 1}
+
+  def postcondition(state, {:call, _, :put_over_hand_edit, _}, result),
+    do: result == {:ok, state.version + 2}
 
   def postcondition(state, {:call, _, op, _}, result) when op in [:merge, :drop],
     do: result == {:ok, state.version + 1}
@@ -516,6 +586,19 @@ defmodule HalC2.SettingsPropTest do
   def external_edit(doc, in_place?) do
     write_file(JSON.encode!(doc), in_place?)
     check()
+  end
+
+  # A save making sure `nest` holds its objects, then a hand edit the file check has not
+  # read, then a client's save of the document it read before the edit.
+  def put_over_hand_edit(hand, client) do
+    {:ok, _} = Settings.update(&nested/1)
+    {base, version} = Settings.get()
+    write_file(JSON.encode!(change(base, hand)), false)
+
+    case write(change(base, client), version) do
+      {:ok, %{"version" => version}} -> {:ok, version}
+      other -> other
+    end
   end
 
   def external_garbage(text) do

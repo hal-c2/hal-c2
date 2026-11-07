@@ -693,7 +693,9 @@ defmodule HalC2.Settings do
   end
 
   # What a client changed from the `base` it read, put on the `disk` document: a hand edit
-  # the MC has not noticed yet stays unless the client changed that very setting.
+  # the MC has not noticed yet stays unless the client changed that very setting. Objects
+  # all three hold are merged the same way, key by key (`providers.codex` kept beside a
+  # client's change to `providers.claude`).
   defp carry_over(client, base, disk) when disk == base, do: client
 
   defp carry_over(client, base, disk) do
@@ -701,9 +703,15 @@ defmodule HalC2.Settings do
         client[key] != base[key],
         reduce: disk do
       acc ->
-        case Map.fetch(client, key) do
-          {:ok, value} -> Map.put(acc, key, value)
-          :error -> Map.delete(acc, key)
+        case {Map.fetch(client, key), base[key], acc[key]} do
+          {{:ok, %{} = value}, %{} = read, %{} = held} ->
+            Map.put(acc, key, carry_over(value, read, held))
+
+          {{:ok, value}, _, _} ->
+            Map.put(acc, key, value)
+
+          {:error, _, _} ->
+            Map.delete(acc, key)
         end
     end
   end

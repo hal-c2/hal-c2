@@ -265,6 +265,41 @@ defmodule HalC2.Steps.Settings.ScopesAndInheritance do
     context
   end
 
+  step "the user edited one provider's settings in settings.json by hand a moment ago",
+       context do
+    providers = %{"codex" => %{"enabled" => true}, "claudeAgent" => %{"enabled" => true}}
+    context = World.update_settings(context, %{"providers" => providers})
+    context = read(context, "default")
+
+    File.write!(
+      settings_path(),
+      JSON.encode!(put_in(saved(), ["providers", "codex", "binaryPath"], "/opt/codex"))
+    )
+
+    context
+  end
+
+  step "a client saves another provider's setting before the MC has read the edit", context do
+    %{"settings" => settings, "version" => version} = context.read["default"]
+    document = put_in(settings, ["providers", "claudeAgent", "binaryPath"], "/opt/claude")
+
+    {reply, context} =
+      World.call(context, "hal-c2.writeSettings", %{"settings" => document, "version" => version})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "settings.json holds both providers' changes", context do
+    assert {:ok, _} = context.reply
+
+    assert %{
+             "codex" => %{"enabled" => true, "binaryPath" => "/opt/codex"},
+             "claudeAgent" => %{"enabled" => true, "binaryPath" => "/opt/claude"}
+           } = saved()["providers"]
+
+    context
+  end
+
   step "settings.json holds a hand edit that is not valid JSON", context do
     context = World.update_settings(context, %{"timestampFormat" => "24-hour"})
     context = read(context, "default")

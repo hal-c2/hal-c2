@@ -211,6 +211,13 @@ Feature: Settings scopes and inheritance
       When a client saves a different setting before the MC has read the edit
       Then settings.json holds both the hand edit and the client's change
 
+    # Upstream #18582: the hand edit kept may sit inside an object the client changed too.
+    @mc
+    Scenario: A client's save to one provider keeps a hand edit to another
+      Given the user edited one provider's settings in settings.json by hand a moment ago
+      When a client saves another provider's setting before the MC has read the edit
+      Then settings.json holds both providers' changes
+
     # Upstream #18582: a save over a settings.json that is not valid JSON is refused.
     @mc
     Scenario: A save over a settings file that is not valid JSON is refused and leaves it unchanged
