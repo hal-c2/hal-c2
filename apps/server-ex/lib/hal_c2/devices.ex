@@ -447,6 +447,10 @@ defmodule HalC2.Devices do
       %{root: root, emulator: false} ->
         "Android Emulator is missing from #{root}. Install it in Android Studio's SDK Manager."
 
+      %{root: root, avdmanager: false, legacy_avdmanager: true} ->
+        "The Android SDK command-line tools in #{root} appear to be an older, unsupported version. " <>
+          "Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools."
+
       %{root: root, avdmanager: false} ->
         "Android SDK Command-line Tools (latest) are missing from #{root}. Install them in Android Studio's SDK Manager."
 
@@ -512,7 +516,16 @@ defmodule HalC2.Devices do
         avdmanager =
           File.exists?(Path.join([root, "cmdline-tools", "latest", "bin", "avdmanager"]))
 
-        %{root: root, adb: adb, emulator: emulator, avdmanager: avdmanager}
+        # The SDK Tools package before cmdline-tools; its avdmanager needs Java 8.
+        legacy = not avdmanager and File.exists?(Path.join([root, "tools", "bin", "avdmanager"]))
+
+        %{
+          root: root,
+          adb: adb,
+          emulator: emulator,
+          avdmanager: avdmanager,
+          legacy_avdmanager: legacy
+        }
       end
     end)
   end
