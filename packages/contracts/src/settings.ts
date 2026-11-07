@@ -960,7 +960,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Server password",
-        description: "Stored in plain text on disk.",
+        description: "Kept in the secret store, never in the settings file.",
         providerSettingsForm: {
           control: "password",
           placeholder: "Optional",

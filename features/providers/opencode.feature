@@ -246,7 +246,7 @@ Feature: OpenCode
     But a server the user set up elsewhere is never sent the MC's own OpenCode password
 
   # Upstream #20446: the OpenCode server password moves to the secret store and is never read back.
-  @backlog @priority-high
+  @priority-high
   Scenario: The external OpenCode server's password is kept as a secret
     Given the user saved a password for the external OpenCode server
     When a client reads the settings or is told they changed
@@ -255,12 +255,12 @@ Feature: OpenCode
     And saving other settings keeps the stored password
 
   # Upstream #20446: a password saved in plain text by an older version moves to the secret store.
-  @backlog @priority-high
+  @priority-high
   Scenario: An OpenCode password saved in plain text moves to the secret store
     Given the settings file holds the OpenCode server password in plain text
     When the MC reads the settings
     Then the password is kept in the secret store and removed from the settings file
-    And OpenCode threads still reach the external server
+    And OpenCode still reaches the external server with it
 
   Scenario: A wrong password for an external OpenCode server is explained
     Given the OpenCode instance points at a server with the wrong password

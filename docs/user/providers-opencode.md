@@ -16,6 +16,8 @@ To use an existing OpenCode server, set **Server URL** and its password in provi
 settings. HAL-C2 uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
+The password is kept in the environment's secret store, not in the settings file;
+settings show only that one is saved. Clear the field to remove it.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.

@@ -646,9 +646,22 @@ defmodule HalC2.Acp do
     {driver, entry} = instance(id)
 
     case driver == "opencode" && setting(id, "serverUrl") do
-      url when is_binary(url) -> read_server(id, url, setting(id, "serverPassword"))
+      url when is_binary(url) -> read_server(id, url, server_password(id, driver, entry))
       _ -> read_agent(id, dir, driver, entry)
     end
+  end
+
+  # The instance's own server password, else the driver's, read back from the secret
+  # store when sealed (HalC2.ProviderSecrets.seal_server_passwords/2).
+  defp server_password(id, driver, entry) do
+    HalC2.ProviderSecrets.server_password(
+      {:instance, id},
+      get_in(entry, ["config", "serverPassword"])
+    ) ||
+      HalC2.ProviderSecrets.server_password(
+        {:provider, driver},
+        get_in(HalC2.Settings.settings(), ["providers", driver, "serverPassword"])
+      )
   end
 
   # Antigravity's agent unpacks about a gigabyte per launch, so a status

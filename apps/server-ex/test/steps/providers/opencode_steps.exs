@@ -541,6 +541,139 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- the server password as a secret ------------------------------------------------
+
+  @marker "••••••"
+
+  defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
+
+  defp password_file,
+    do:
+      Path.join([
+        HalC2.Paths.data_dir(),
+        "secrets",
+        "server-password-#{Base.url_encode64("provider-opencode", padding: false)}.bin"
+      ])
+
+  # The settings watchers were last told, once they say what `done?` waits for.
+  defp told_settings(done?) do
+    receive do
+      {:hal_c2_settings, _, settings} ->
+        if done?.(settings), do: settings, else: told_settings(done?)
+    after
+      5_000 -> flunk("the settings watchers were not told")
+    end
+  end
+
+  step "the user saved a password for the external OpenCode server", context do
+    context = external(context, "secret", &inventory/1)
+    :ok = HalC2.Settings.watch(self())
+    context
+  end
+
+  step "a client reads the settings or is told they changed", context do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings")
+
+    # Another setting saved as a client saves: the document it read, sent back.
+    {_, context} =
+      World.call!(context, "hal-c2.writeSettings", %{
+        "settings" => Map.put(settings, "confirmThreadDelete", false),
+        "version" => version
+      })
+
+    told = told_settings(&(&1["confirmThreadDelete"] == false))
+    Map.merge(context, %{read_settings: settings, told_settings: told})
+  end
+
+  step "the password is not in what it receives, only that one is stored", context do
+    for settings <- [context.read_settings, context.told_settings] do
+      assert get_in(settings, ["providers", "opencode", "serverPassword"]) == @marker
+      refute JSON.encode!(settings) =~ "secret"
+    end
+
+    context
+  end
+
+  step "the password is not written to the settings file", context do
+    refute File.read!(settings_file()) =~ "secret"
+    assert File.read!(password_file()) == "secret"
+    context
+  end
+
+  step "saving other settings keeps the stored password", context do
+    assert context.told_settings["confirmThreadDelete"] == false
+    assert File.read!(password_file()) == "secret"
+    # The server is still asked with it.
+    requests = length(HalC2.Test.FakeHttp.requests(context.server_log))
+
+    {{:ok, %{"providers" => providers}}, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "opencode",
+        "refreshModels" => true
+      })
+
+    assert FakeAcp.find(providers, "opencode")["status"] != "error"
+
+    assert [%{"authorization" => auth} | _] =
+             HalC2.Test.FakeHttp.requests(context.server_log) |> Enum.drop(requests)
+
+    assert auth == "Basic " <> Base.encode64("opencode:secret")
+    context
+  end
+
+  step "the settings file holds the OpenCode server password in plain text", context do
+    context = external(context, "secret", &inventory/1)
+    path = settings_file()
+
+    # As an older MC wrote it, while this one is stopped.
+    mc =
+      HalC2.Test.Mc.restart(context.mc, fn ->
+        File.rm(password_file())
+        settings = JSON.decode!(File.read!(path))
+
+        File.write!(
+          path,
+          JSON.encode!(put_in(settings, ["providers", "opencode", "serverPassword"], "secret"))
+        )
+      end)
+
+    %{context | mc: mc, clients: %{}}
+  end
+
+  step "the MC reads the settings", context do
+    assert get_in(HalC2.Settings.settings(), ["providers", "opencode", "serverPassword"]) ==
+             @marker
+
+    context
+  end
+
+  step "the password is kept in the secret store and removed from the settings file", context do
+    assert File.read!(password_file()) == "secret"
+    refute File.read!(settings_file()) =~ "secret"
+    context
+  end
+
+  step "OpenCode still reaches the external server with it", context do
+    requests = length(HalC2.Test.FakeHttp.requests(context.server_log))
+
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "opencode",
+        "refreshModels" => true
+      })
+
+    assert {:ok, %{"providers" => providers}} = reply
+    opencode = FakeAcp.find(providers, "opencode")
+    refute opencode["status"] == "error", inspect(opencode)
+
+    assert [%{"authorization" => auth} | _] =
+             HalC2.Test.FakeHttp.requests(context.server_log) |> Enum.drop(requests)
+
+    assert auth == "Basic " <> Base.encode64("opencode:secret")
+    context
+  end
+
   # --- OpenCode Go limits -------------------------------------------------------------
 
   step "OpenCode is signed in to OpenCode Go and runs locally", context do

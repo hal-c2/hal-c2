@@ -366,7 +366,8 @@ defmodule HalC2.Settings do
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
     {settings, changed} = HalC2.UsageLimitSources.seal_keys(settings, %{})
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, settings)
-    if changed or secrets_changed, do: write!(path, settings)
+    {settings, password_changed} = HalC2.ProviderSecrets.seal_server_passwords(settings, settings)
+    if changed or secrets_changed or password_changed, do: write!(path, settings)
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
@@ -663,7 +664,12 @@ defmodule HalC2.Settings do
   defp save(state, settings, write?, shared \\ nil) do
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
-    if write? or keys_changed or secrets_changed, do: write!(state.path, settings)
+
+    {settings, password_changed} =
+      HalC2.ProviderSecrets.seal_server_passwords(settings, state.settings)
+
+    if write? or keys_changed or secrets_changed or password_changed,
+      do: write!(state.path, settings)
 
     state =
       put_shared(
@@ -682,7 +688,8 @@ defmodule HalC2.Settings do
       &((get_in(&1, ["providers", "opencode"]) || %{})
         |> Map.take(["serverUrl", "serverPassword"]))
 
-    if server.(settings) != server.(state.settings), do: HalC2.Acp.forget("opencode")
+    if password_changed or server.(settings) != server.(state.settings),
+      do: HalC2.Acp.forget("opencode")
 
     # Pi run from another binary or with other launch arguments is read again.
     pi = &((get_in(&1, ["providers", "pi"]) || %{}) |> Map.take(["binaryPath", "launchArgs"]))
