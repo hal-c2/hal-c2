@@ -114,16 +114,14 @@ Feature: The protocol 3 WebSocket
     Then the client is sent the latest state of "Fix checkout" once
     And the other listed threads' updates arrive in the order they happened
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A client that falls more than 1,000 changes behind is told to resync
     Given the client subscribed to a busy thread
     When more than 1,000 small changes wait unsent for that subscription
     Then the MC sends a resync for that subscription
     And the client subscribes again from its last offset
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A long history replayed to a client that keeps up is not a resync
     Given the client subscribed from an offset far behind a thread with 5,000 changes since
     When the MC replays them and the client acknowledges each batch

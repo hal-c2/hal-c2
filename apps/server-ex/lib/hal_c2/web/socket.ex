@@ -6,8 +6,8 @@ defmodule HalC2.Web.Socket do
   server sends straight to this process, already trimmed to what the client holds
   (`HalC2.Streams.Server`). Incoming events are buffered and flushed
   once the mailbox is drained, merged per entity, so a burst of streaming tokens
-  becomes one frame. A subscription whose unsent buffer passes `@max_buffered` is
-  dropped with a `resync`; the client resubscribes from its offset and the stream
+  becomes one frame. A subscription whose unsent buffer passes `@max_buffered`, or
+  holds more than `@max_buffered_events` events, is dropped with a `resync`; the client resubscribes from its offset and the stream
   replays from the log instead of this process holding the backlog. That replay is
   never itself cut short by a resync, or a client behind by more than the limit would
   be told to resync forever.
@@ -37,6 +37,7 @@ defmodule HalC2.Web.Socket do
   require Logger
 
   @max_buffered 8 * 1024 * 1024
+  @max_buffered_events 1_000
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
@@ -2110,6 +2111,8 @@ defmodule HalC2.Web.Socket do
   defp stream_message(state, id, {:events, events, seq}) do
     buffer = Map.get(state.buffers, id, %{events: [], bytes: 0})
     bytes = buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
+    # Buffers from before the count was kept count from what they hold.
+    count = Map.get_lazy(buffer, :count, fn -> length(buffer.events) end) + length(events)
 
     cond do
       # A part of what the client lacks goes out as it comes, as a snapshot's parts
@@ -2118,7 +2121,7 @@ defmodule HalC2.Web.Socket do
       Map.get(buffer, :replay, false) ->
         {:push, events_frame(id, events, seq), state}
 
-      bytes > @max_buffered ->
+      bytes > @max_buffered or count > @max_buffered_events ->
         # The client has everything before the oldest event it has not been sent.
         oldest = List.last(buffer.events) || hd(events)
         state = unsubscribe(state, id)
@@ -2127,7 +2130,12 @@ defmodule HalC2.Web.Socket do
 
       true ->
         buffer =
-          Map.merge(buffer, %{events: Enum.reverse(events, buffer.events), bytes: bytes, seq: seq})
+          Map.merge(buffer, %{
+            events: Enum.reverse(events, buffer.events),
+            bytes: bytes,
+            count: count,
+            seq: seq
+          })
 
         state = %{state | buffers: Map.put(state.buffers, id, buffer)}
         {:ok, schedule_flush(state)}
@@ -2150,7 +2158,9 @@ defmodule HalC2.Web.Socket do
           do: events_frame(id, Enum.reverse(events), seq)
 
     buffers =
-      Map.new(state.buffers, fn {id, buffer} -> {id, %{buffer | events: [], bytes: 0}} end)
+      Map.new(state.buffers, fn {id, buffer} ->
+        {id, Map.merge(buffer, %{events: [], bytes: 0, count: 0})}
+      end)
 
     {frames, %{state | buffers: buffers}}
   end

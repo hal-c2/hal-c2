@@ -277,6 +277,59 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     Map.put(context, :missed, seqs)
   end
 
+  step "more than 1,000 small changes wait unsent for that subscription", context do
+    :ok = :sys.suspend(context.socket)
+
+    # Eleven commits of 91 notes: 1,001 events, each a few bytes.
+    seqs =
+      for _ <- 1..11, reduce: [] do
+        seqs ->
+          {:ok, last} =
+            HalC2.Streams.commit(context.stream, :thread, for(_ <- 1..91, do: note("small")))
+
+          seqs ++ Enum.to_list((last - 90)..last)
+      end
+
+    :ok = :sys.resume(context.socket)
+    Map.put(context, :missed, seqs)
+  end
+
+  step "the client subscribed from an offset far behind a thread with 5,000 changes since",
+       context do
+    stream = stream_id()
+    {:ok, offset} = HalC2.Streams.commit(stream, :thread, [note("first")])
+
+    {:ok, _last} =
+      Enum.reduce(1..10, {:ok, offset}, fn _, {:ok, _} ->
+        HalC2.Streams.commit(stream, :thread, for(_ <- 1..500, do: note("since")))
+      end)
+
+    client = World.client(context) |> sub(1, stream, offset)
+    context |> Map.merge(%{stream: stream, offset: offset}) |> World.put_client(client)
+  end
+
+  step "the MC replays them and the client acknowledges each batch", context do
+    {live, frames, client} =
+      WsClient.recv_until(World.client(context), &(&1["t"] == "live" and &1["id"] == 1), 30_000)
+
+    context |> Map.merge(%{live: live, frames: frames}) |> World.put_client(client)
+  end
+
+  step "the client receives every change", context do
+    since = Enum.to_list((context.offset + 1)..(context.offset + 5_000))
+    assert Enum.sort(event_seqs(context.frames, 1)) == since
+    assert context.live["offset"] == List.last(since)
+    context
+  end
+
+  step "the MC does not send a resync for that subscription", context do
+    refute Enum.any?(context.frames, &(&1["t"] == "resync"))
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("after")])
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] in ["events", "resync"]))
+    assert %{"t" => "events", "id" => 1, "events" => [[^seq | _]]} = frame
+    World.put_client(context, client)
+  end
+
   step "the MC sends a resync for that subscription", context do
     {frame, client} =
       Mc.await(World.client(context), &(&1["t"] == "resync" and &1["id"] == 1), 10_000)
