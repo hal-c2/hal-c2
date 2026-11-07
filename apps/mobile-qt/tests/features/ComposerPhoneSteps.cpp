@@ -30,8 +30,11 @@ const QString kNow = S("2026-09-23T10:00:00Z");
 struct FakePhoneUploads {
   QStringList asked;
   QStringList stored;
+  QStringList deleted;
   bool refuse = false;
-  bool hold = false;
+  // The bytes arrive but the answer waits, as a slow upload's does.
+  bool holdReply = false;
+  QList<std::function<void(int, const QJsonObject&)>> pending;
 };
 
 const FakeMc::Extension phoneUploads([](FakeMc& mc) {
@@ -48,18 +51,28 @@ const FakeMc::Extension phoneUploads([](FakeMc& mc) {
         return;
       }
       fake.stored.append(id);
+      if (fake.holdReply) {
+        fake.pending.append(std::move(respond));
+        return;
+      }
       respond(204, {});
     });
-    const auto answer = [&mc, rpc, id, url] {
-      mc.reply(rpc, QJsonObject{{S("attachmentId"), id}, {S("relativeUrl"), url}, {S("expiresAt"), 4102444800000.0}});
-    };
-    if (fake.hold) {
-      mc.defer(answer);
-    } else {
-      answer();
-    }
+    mc.reply(rpc, QJsonObject{{S("attachmentId"), id}, {S("relativeUrl"), url}, {S("expiresAt"), 4102444800000.0}});
+  });
+  mc.onRpc(S("attachments.delete"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakePhoneUploads>().deleted.append(rpc.payload.value(QLatin1String("attachmentId")).toString());
+    mc.reply(rpc, QJsonValue::Null);
   });
 });
+
+// Lets every held upload land.
+void finishUploads(World& world) {
+  FakePhoneUploads& fake = world.mc.part<FakePhoneUploads>();
+  fake.holdReply = false;
+  const auto pending = std::exchange(fake.pending, {});
+  for (const auto& respond : pending) respond(204, QJsonObject());
+  world.sync();
+}
 
 QVariantList attachmentsOf(World& world) {
   return world.state(S("composer")).toMap().value(S("attachments")).toList();
@@ -252,6 +265,80 @@ const Steps phoneSteps([] {
           return false;
         },
         S("the MC to be told to restart the turn with the message"));
+  });
+
+  // A large upload still going up, and a send that waits for it.
+  const auto attachUploading = [](World& world, const QString& name, const QString& mimeType) {
+    world.mc.part<FakePhoneUploads>().holdReply = true;
+    attachFile(world, name, QByteArray(2 * 1024 * 1024, 'v'), mimeType);
+    world.waitFor([&] { return attachmentNamed(world, name).value(S("status")).toString() == QLatin1String("uploading"); },
+                  [&] { return S("%1 to be uploading; the composer is %2").arg(name, show(world.state(S("composer")))); });
+  };
+  const auto sendDraft = [](World& world) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    if (input->property("text").toString().isEmpty()) world.type(S("see this"));
+    world.tap(S("primaryAction"));
+    world.sync();
+  };
+  const auto dispatched = [](World& world) {
+    QList<QJsonObject> found;
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+      if (command.value(QLatin1String("type")) == QLatin1String("message.dispatch")) found.append(command);
+    }
+    return found;
+  };
+  step(S("the user attaches a large video"), [attachUploading](World& world, const Captures&, const Table&) {
+    attachUploading(world, S("clip.mp4"), S("video/mp4"));
+  });
+  step(S("the attachment shows how much has uploaded"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return attachmentNamed(world, S("clip.mp4")).value(S("progress"), -1.0).toDouble() >= 0; },
+                  [&] { return S("the progress; the composer is %1").arg(show(world.state(S("composer")))); });
+    QQuickItem* chip = world.item(S("attachment:clip.mp4"));
+    expect(chip->property("text").toString().contains(QLatin1Char('%')), S("the chip reads %1").arg(chip->property("text").toString()));
+  });
+  step(S("only a failed upload stops the message from being sent"), [sendDraft, dispatched](World& world, const Captures&, const Table&) {
+    const qsizetype before = dispatched(world).size();
+    sendDraft(world);
+    expect(dispatched(world).size() == before, S("the message went before its upload"));
+    expect(!world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("the message is not waiting either; the turn is %1").arg(show(world.state(S("turn")))));
+    finishUploads(world);
+    world.waitFor([&] { return dispatched(world).size() == before + 1; }, S("the message to go once the upload landed"));
+  });
+  step(S("the draft has a large video attached that is still uploading"), [attachUploading](World& world, const Captures&, const Table&) {
+    attachUploading(world, S("clip.mp4"), S("video/mp4"));
+  });
+  step(S("the user sends the message"), [sendDraft](World& world, const Captures&, const Table&) { sendDraft(world); });
+  step(S("the message is delivered to %1 once the upload finishes").arg(kQuoted), [dispatched](World& world, const Captures& c, const Table&) {
+    expect(dispatched(world).isEmpty(), S("the message went to %1 before its upload").arg(c[0]));
+    finishUploads(world);
+    world.waitFor([&] { return dispatched(world).size() == 1; }, [&] { return S("the message to reach %1").arg(c[0]); });
+    const QJsonArray files = dispatched(world).constFirst().value(QLatin1String("attachments")).toArray();
+    expect(files.size() == 1 && files.at(0).toObject().value(QLatin1String("id")).toString().startsWith(S("pending-")),
+           S("the message carries %1").arg(show(files.toVariantList())));
+  });
+
+  // Deleting a waiting message takes its uploads with it.
+  step(S("a message with %1 is waiting to send and its upload has started").arg(kQuoted), [attachUploading, sendDraft](World& world, const Captures& c, const Table&) {
+    attachUploading(world, c[0], S("application/pdf"));
+    sendDraft(world);
+    world.waitFor([&] { return !world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(); },
+                  [&] { return S("the message to wait; the turn is %1").arg(show(world.state(S("turn")))); });
+  });
+  step(S("the user deletes the waiting message"), [](World& world, const Captures&, const Table&) {
+    const QString id = world.state(S("turn")).toMap().value(S("outbox")).toList().constFirst().toMap().value(S("messageId")).toString();
+    world.tap(S("outboxDelete-") + id);
+    world.sync();
+  });
+  step(S("the upload is stopped"), [dispatched](World& world, const Captures&, const Table&) {
+    expect(world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("the message still waits"));
+    finishUploads(world);
+    expect(dispatched(world).isEmpty(), S("the deleted message was sent"));
+  });
+  step(S("%1 is asked to discard what had already arrived").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !world.mc.part<FakePhoneUploads>().deleted.isEmpty(); },
+                  [&] { return S("%1 to be asked to discard the upload; it deleted %2").arg(c[0], world.mc.part<FakePhoneUploads>().deleted.join(S(", "))); });
   });
 
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

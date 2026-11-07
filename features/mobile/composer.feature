@@ -433,7 +433,7 @@ Feature: Writing to an agent from a phone
     When the user chooses a file from the files app whose provider reports no name
     Then the file is attached named "file"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Upload progress is shown until the attachment is ready
     When the user attaches a large video
     Then the attachment shows how much has uploaded
@@ -445,7 +445,7 @@ Feature: Writing to an agent from a phone
     When the user retries the upload
     Then the attachment uploads to "My MacBook"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message sent while an attachment is still uploading goes out when the upload finishes
     Given the draft has a large video attached that is still uploading
     When the user sends the message
@@ -472,7 +472,7 @@ Feature: Writing to an agent from a phone
     When the user sends the message to a project on another environment
     Then "bug.png" is uploaded to that environment
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A waiting message the user deletes takes its uploads with it
     Given a message with "design.pdf" is waiting to send and its upload has started
     When the user deletes the waiting message

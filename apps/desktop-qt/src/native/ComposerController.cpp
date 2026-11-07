@@ -539,6 +539,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!target.isEmpty()) editWaiting(target, map.value(QStringLiteral("messageId")).toString());
     return true;
   }
+  if (action == QLatin1String("composer.outbox.delete")) {
+    if (!target.isEmpty()) deleteWaiting(target, map.value(QStringLiteral("messageId")).toString());
+    return true;
+  }
   if (action == QLatin1String("composer.queue.edit.cancel")) {
     if (m_queuedEdit && m_queuedEdit->thread == target) endQueuedEdit();
     return true;
@@ -786,12 +790,17 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
                                   bool fromDraft) {
   const auto thread = m_store->thread(target);
   if (!thread) return false;
-  // The outbox takes a message the MC cannot be reached for, and one written
-  // behind a message still waiting there, which must go first.
+  // The outbox takes a message the MC cannot be reached for, one whose files
+  // are still going up, and one written behind a message still waiting there,
+  // which must go first.
   const bool connected = m_client->isReady() && m_store->threadOnline(target);
+  const QList<Attachment> carrying = m_drafts.value(target).attachments;
+  const bool uploading = fromDraft && std::any_of(carrying.cbegin(), carrying.cend(), [](const Attachment& a) {
+                           return a.upload == QLatin1String("uploading");
+                         });
   const bool waits =
       m_waitsOffline && fromDraft &&
-      (!connected || m_outboxHeld.contains(target) ||
+      (!connected || uploading || m_outboxHeld.contains(target) ||
        std::any_of(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& u) { return u.waiting && u.target == target; }));
   // Else nothing leaves while the MC is out of reach: the draft stays as it is.
   if (!connected && !waits) {
@@ -800,7 +809,12 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
         QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
     return true;
   }
-  if (fromDraft && filesBlock(m_drafts.value(target).attachments, QStringLiteral("sending"))) return true;
+  // A failed upload stops the send; one still going up holds it in the
+  // outbox where the shell waits offline, and stops it where it does not.
+  if (fromDraft) {
+    const bool failed = std::any_of(carrying.cbegin(), carrying.cend(), [](const Attachment& a) { return a.upload == QLatin1String("failed"); });
+    if ((failed || (uploading && !waits)) && filesBlock(carrying, QStringLiteral("sending"))) return true;
+  }
   // Nor while the thread is on its way to another machine, which would refuse it.
   if (thread->movingTo) {
     NativeShell::of(this)->controller<ToastController>()->show(
@@ -1521,9 +1535,18 @@ void ComposerController::drainOutbox() {
   }
   QStringList targets;
   QSet<QString> gone;
+  QSet<QString> blocked;
   for (const Unsent& unsent : std::as_const(m_kept.unsent)) {
-    if (!unsent.waiting || targets.contains(unsent.target) || gone.contains(unsent.target)) continue;
+    if (!unsent.waiting || targets.contains(unsent.target) || gone.contains(unsent.target) || blocked.contains(unsent.target)) continue;
     if (m_queues.contains(unsent.target) || m_outboxHeld.contains(unsent.target)) continue;
+    // A send whose files have not all arrived waits for them, in its order.
+    const bool filesReady = std::all_of(unsent.attachments.cbegin(), unsent.attachments.cend(), [](const Attachment& a) {
+      return a.upload != QLatin1String("uploading") && a.upload != QLatin1String("failed");
+    });
+    if (!filesReady) {
+      blocked.insert(unsent.target);
+      continue;
+    }
     if (!m_store->environmentOnline(unsent.target.section(QLatin1Char(':'), 0, 0))) continue;
     // The environment has said what it holds, and the thread is not there.
     if (!m_store->thread(unsent.target)) {
@@ -1642,6 +1665,27 @@ bool ComposerController::editWaiting(const QString& target, const QString& messa
   const QString typed = draft(target);
   const QString text = typed.isEmpty() ? unsent.prompt : unsent.prompt.isEmpty() ? typed : unsent.prompt + QStringLiteral("\n\n") + typed;
   setText(target, text, int(text.size()));
+  save();
+  publish();
+  return true;
+}
+
+bool ComposerController::deleteWaiting(const QString& target, const QString& messageId) {
+  const auto found = std::find_if(m_kept.unsent.cbegin(), m_kept.unsent.cend(), [&](const Unsent& unsent) {
+    return unsent.messageId == messageId && unsent.target == target && unsent.waiting;
+  });
+  if (found == m_kept.unsent.cend()) return true;
+  const Unsent unsent = *found;
+  m_kept.unsent.erase(found);
+  // What had already arrived for it is the MC's to drop; an upload still in
+  // flight finds nothing holding it when it lands and is dropped then
+  // (uploadFile), and its copies going here stops the send being drained.
+  for (const Attachment& attachment : unsent.attachments) {
+    if (attachment.remoteId.isEmpty()) continue;
+    m_client->call(this, attachment.environmentId, QStringLiteral("attachments.delete"),
+                   QJsonObject{{QStringLiteral("attachmentId"), attachment.remoteId}},
+                   [](const QJsonValue&, const std::optional<QString>&) {});
+  }
   save();
   publish();
   return true;
@@ -2016,7 +2060,39 @@ ComposerController::Attachment* ComposerController::findAttachment(const QString
       }
     }
   }
+  for (Unsent& unsent : m_kept.unsent) {
+    for (Attachment& attachment : unsent.attachments) {
+      if (attachment.id == id) return &attachment;
+    }
+  }
+  for (QList<Send>& queue : m_queues) {
+    for (Send& send : queue) {
+      for (Attachment& attachment : send.attachments) {
+        if (attachment.id == id) return &attachment;
+      }
+    }
+  }
   return nullptr;
+}
+
+int ComposerController::updateAttachmentCopies(const QString& id, const std::function<void(Attachment&)>& change) {
+  int copies = 0;
+  const auto apply = [&](QList<Attachment>& held) {
+    for (Attachment& attachment : held) {
+      if (attachment.id != id) continue;
+      change(attachment);
+      ++copies;
+    }
+  };
+  for (Draft& draft : m_drafts) apply(draft.attachments);
+  for (auto& questions : m_answerFiles) {
+    for (QList<Attachment>& files : questions) apply(files);
+  }
+  for (Unsent& unsent : m_kept.unsent) apply(unsent.attachments);
+  for (QList<Send>& queue : m_queues) {
+    for (Send& send : queue) apply(send.attachments);
+  }
+  return copies;
 }
 
 QString ComposerController::environmentOf(const QString& target) const {
@@ -2034,10 +2110,11 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
   Attachment* attachment = findAttachment(id);
   if (!attachment) return;
   const auto failed = [this, id](const QString& why) {
-    if (Attachment* found = findAttachment(id)) {
-      found->upload = QStringLiteral("failed");
-      found->error = why;
-    }
+    updateAttachmentCopies(id, [&](Attachment& held) {
+      held.upload = QStringLiteral("failed");
+      held.error = why;
+      held.progress = -1;
+    });
     save();
     publish();
   };
@@ -2045,6 +2122,7 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
   attachment->error.clear();
   attachment->remoteId.clear();
   attachment->environmentId = environmentId;
+  attachment->progress = -1;
   QByteArray bytes = attachment->content;
   if (!attachment->path.isEmpty()) {
     QFile file(attachment->path);
@@ -2063,25 +2141,48 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
                              {QStringLiteral("name"), attachment->name},
                              {QStringLiteral("mimeType"), mimeType},
                              {QStringLiteral("sizeBytes"), bytes.size()}},
-                 [this, id, bytes, mimeType, failed](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, id, bytes, mimeType, environmentId, failed](const QJsonValue& result, const std::optional<QString>& error) {
                    const QString url = result.toObject().value(QLatin1String("relativeUrl")).toString();
                    const QString remoteId = result.toObject().value(QLatin1String("attachmentId")).toString();
                    if (error || url.isEmpty() || remoteId.isEmpty()) {
                      failed(error.value_or(tr("The environment did not take the upload.")));
                      return;
                    }
-                   m_client->upload(this, url, bytes, mimeType, [this, id, remoteId, failed](const QJsonValue&, const std::optional<QString>& error) {
-                     if (error) {
-                       failed(*error);
-                       return;
-                     }
-                     if (Attachment* found = findAttachment(id)) {
-                       found->upload.clear();
-                       found->remoteId = remoteId;
-                     }
-                     save();
-                     publish();
-                   });
+                   m_client->upload(
+                       this, url, bytes, mimeType,
+                       [this, id, remoteId, environmentId, failed](const QJsonValue&, const std::optional<QString>& error) {
+                         if (error) {
+                           failed(*error);
+                           return;
+                         }
+                         const int copies = updateAttachmentCopies(id, [&](Attachment& held) {
+                           held.upload.clear();
+                           held.remoteId = remoteId;
+                           held.progress = -1;
+                         });
+                         if (copies == 0) {
+                           // What it was uploading for went while it went up:
+                           // the upload is the MC's to drop again.
+                           m_client->call(this, environmentId, QStringLiteral("attachments.delete"),
+                                          QJsonObject{{QStringLiteral("attachmentId"), remoteId}},
+                                          [](const QJsonValue&, const std::optional<QString>&) {});
+                         }
+                         save();
+                         publish();
+                         // A send waiting on this upload can go now.
+                         drainOutbox();
+                       },
+                       [this, id](qint64 sent, qint64 total) {
+                         if (total <= 0) return;
+                         const double gone = double(sent) / double(total);
+                         bool steps = false;
+                         updateAttachmentCopies(id, [&](Attachment& held) {
+                           if (int(held.progress * 100) == int(gone * 100)) return;
+                           held.progress = gone;
+                           steps = true;
+                         });
+                         if (steps) publish();
+                       });
                  });
 }
 
@@ -2151,6 +2252,7 @@ QVariantList ComposerController::shownAttachments(const QList<Attachment>& attac
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")},
                       {QStringLiteral("status"), attachment.upload},
+                      {QStringLiteral("progress"), attachment.progress},
                       {QStringLiteral("error"), attachment.error},
                       {QStringLiteral("source"), source}};
     if (previews && !attachment.file) {

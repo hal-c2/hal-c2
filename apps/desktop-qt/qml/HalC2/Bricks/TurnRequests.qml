@@ -887,6 +887,17 @@ Item {
                                 messageId: waitingRow.modelData.messageId
                             })
                         }
+                        ShellButton {
+                            objectName: "outboxDelete-" + waitingRow.modelData.messageId
+                            implicitHeight: 24
+                            subtle: true
+                            text: qsTr("Delete")
+                            // On its way, the environment may already have it.
+                            enabled: !waitingRow.modelData.sending
+                            onClicked: Shell.dispatch("composer.outbox.delete", {
+                                messageId: waitingRow.modelData.messageId
+                            })
+                        }
                     }
                 }
             }

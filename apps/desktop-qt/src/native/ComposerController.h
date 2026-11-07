@@ -245,9 +245,15 @@ private:
     QString error;
     QString remoteId;
     QString environmentId;
+    // How much of an uploading file has gone, 0 to 1; negative while unknown.
+    double progress = -1;
   };
-  // The attachment `id` of any draft or answer; null when it is gone.
+  // The attachment `id` of any draft, answer, waiting send or send in flight;
+  // null when it is gone.
   Attachment* findAttachment(const QString& id);
+  // Runs `change` on every held copy of the attachment `id` (a draft's, an
+  // answer's, a waiting send's, a send in flight's); how many there were.
+  int updateAttachmentCopies(const QString& id, const std::function<void(Attachment&)>& change);
   // Sends a file's bytes to the environment `target` runs on.
   void uploadFile(const QString& id, const QString& environmentId);
   // The environment a thread's or a new thread's files go to.
@@ -456,6 +462,8 @@ private:
   QVariantList outboxState(const QString& target) const;
   // Pulls a waiting message back into the composer.
   bool editWaiting(const QString& target, const QString& messageId);
+  // Drops a waiting send and what it had already uploaded for it.
+  bool deleteWaiting(const QString& target, const QString& messageId);
   // A refused outbox send: its prompt ahead of what was typed since, with the
   // model and modes it was written with.
   void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error);
