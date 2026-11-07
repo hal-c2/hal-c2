@@ -276,7 +276,9 @@ for line in sys.stdin:
             continue
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "model/list":
-        # FAKE_CODEX_MODELS replaces the default catalogue.
+        # FAKE_CODEX_MODELS_HANG never answers; FAKE_CODEX_MODELS replaces the catalogue.
+        if os.environ.get("FAKE_CODEX_MODELS_HANG"):
+            continue
         send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
             {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
             {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
@@ -321,7 +323,8 @@ for line in sys.stdin:
             with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as f:
                 f.write(json.dumps(params["input"]) + "\n")
         turns += 1
-        turn_id = f"{INSTANCE or 'native'}-turn-{turns}"
+        # FAKE_CODEX_REPEAT_TURN_ID answers every turn/start with the first turn's id.
+        turn_id = f"{INSTANCE or 'native'}-turn-{1 if os.environ.get('FAKE_CODEX_REPEAT_TURN_ID') else turns}"
         prompt = params["input"][0]["text"]
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).

@@ -398,7 +398,6 @@ Feature: Codex
       | delegates a task to Codex                     |
 
   # Upstream #26188: a turn running when the app-server is killed fails at once instead of hanging.
-  @backlog @priority-high
   Scenario: A turn running when Codex's app-server is killed fails at once
     Given a Codex turn is running
     When the Codex app-server is killed by a signal
@@ -406,7 +405,6 @@ Feature: Codex
     And the next Codex turn starts a new app-server
 
   # Upstream #25224: Codex answering a new run's start with an earlier run's turn left the new run running forever.
-  @backlog @priority-high
   Scenario: A turn start that Codex answers with an earlier run's turn is not taken as started
     Given a Codex thread whose earlier run had a turn
     When a new run starts a turn and Codex answers with the earlier run's turn
@@ -475,7 +473,6 @@ Feature: Codex
       | service tier | standard or fast                                      |
 
   # Upstream #20991: an unset effort follows the model's default instead of being forced to medium
-  @backlog
   Scenario: A Codex turn with no reasoning chosen runs at the model's own default
     Given a Codex model whose default reasoning is "high"
     And the thread has no reasoning level chosen
@@ -683,7 +680,6 @@ Feature: Codex
     And a model that does not offer Fast keeps its own default
 
   # Upstream #20537: slow model discovery threw away a successful account check.
-  @backlog @priority-high
   Scenario: A signed-in Codex stays signed in when its model list is slow to arrive
     Given Codex's account check succeeds
     And Codex's model list does not arrive before the check's deadline
@@ -810,7 +806,7 @@ Feature: Codex
       | "example.com:1455/auth/callback?code=abc"              | the address is refused as not the callback |
 
   # Upstream #22541: a patch touching several files listed only the first.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Codex change to several files lists every file
     When Codex applies one patch that edits "a.ts", adds "b.ts" and renames "c.ts" to "d.ts"
     Then the change in the timeline lists "a.ts", "b.ts" and "d.ts"
@@ -899,7 +895,7 @@ Feature: Codex
     Then the next message carries HAL-C2's runtime and tool instructions again
 
   # Upstream #17265: unfinished Codex compactions settle when their turn ends; failed and stopped labels win.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A compaction Codex never finished ends with its turn
     Given Codex started compacting the thread and never reported the compaction finished
     When the turn <ends>
@@ -1003,7 +999,6 @@ Feature: Codex
       | change files  | no reason and no files, a root  | the folder Codex wants to write under       |
 
   # Upstream #24257: a permission request naming only glob or special paths showed as a command approval.
-  @backlog
   Scenario Outline: A Codex request for file access by pattern is a file approval
     When Codex asks for extra access to <access> naming only "<path>"
     Then the approval shows as <kind>
@@ -1022,7 +1017,6 @@ Feature: Codex
 
   # Upstream #18248: Codex's approval request carries no file names, only the change it belongs
   # to; the files come from when Codex started that change.
-  @backlog
   Scenario: A Codex approval names the files Codex said it would change
     Given Codex started a change to edit "src/cart.ts" and delete "src/old.ts"
     When Codex asks without a reason to approve that change, naming no files
@@ -1347,7 +1341,6 @@ Feature: Codex
 
   # Upstream #28040: an error code missing from the schema made Codex's failure notifications
   # undecodable, so the run stayed running with no error.
-  @backlog @priority-high
   Scenario: A Codex turn that fails with an error code HAL-C2 does not know fails
     Given a ChatGPT-account Codex rejects the thread's model with the code "modelNotFound"
     When the user sends a turn
@@ -1431,7 +1424,7 @@ Feature: Codex
     Then the approval is shown to the user
 
   # Upstream #23234: Codex settling a request frees the MC's wait on it.
-  @backlog @mc
+  @mc
   Scenario: A request Codex settles itself is no longer waited on
     Given the MC is waiting on the user for a Codex approval
     When Codex reports that the request is resolved
@@ -1601,7 +1594,7 @@ Feature: Codex
       | 0.156.0 | supported   |
 
   # Upstream #21443: a Codex too old for app-server failed its probe with no version, so no advisory.
-  @backlog @mc @priority-high
+  @mc
   Scenario: A Codex too old to start its app-server still reports its version
     Given the installed Codex prints version "0.1.4161006"
     And Codex exits with code 1 when its app-server starts
@@ -1610,7 +1603,7 @@ Feature: Codex
     And the user is offered the update before the probe's failure message
 
   # Upstream #21443: the version is read the same way when the probe fails.
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: A Codex whose app-server fails reports what its version command says
     Given Codex exits with code 1 when its app-server starts
     And its version command <answer>
@@ -1624,14 +1617,12 @@ Feature: Codex
       | does not answer within 4 seconds   | unknown | no version                |
 
   # Upstream #27281: a broken Codex version failed turns with a protocol decode error.
-  @backlog @priority-high
   Scenario: A turn on a broken Codex version says to update Codex
     Given the installed Codex is version "0.144.3", which this HAL-C2 release marks broken
     When the user sends a turn to Codex
     Then the turn fails with "Codex 0.144.3 does not work with this HAL-C2 release. Update Codex to >=0.159.0, then retry."
 
   # Upstream #27281: after updating Codex, the next message in the same thread runs on it.
-  @backlog @priority-high
   Scenario: The next message after updating a broken Codex runs on the new version
     Given a turn failed because the installed Codex version is broken
     And the user updated Codex to a supported version
@@ -1671,7 +1662,6 @@ Feature: Codex
     And the running banner clears
 
   # Upstream #19936: a dead command stayed running after Codex closed its native thread.
-  @backlog @priority-high
   Scenario: A Codex command left running is interrupted when Codex closes the thread
     Given Codex left a command running in a finished turn
     When Codex closes its native thread

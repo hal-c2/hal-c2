@@ -31,7 +31,7 @@ defmodule HalC2.Steps.Providers.Codex do
   end
 
   step "Codex is listed as ready with its installed version", context do
-    assert %{"status" => "ready", "installed" => true, "version" => "0.50.0"} =
+    assert %{"status" => "ready", "installed" => true, "version" => "0.160.0"} =
              codex(context.providers)
 
     context
@@ -907,7 +907,7 @@ Red"} <- StreamState.get(state, "message")[message],
     World.reset_provider_caches()
     assert World.provider_log(context, "codex") == []
     HalC2.Codex.Provider.load()
-    assert %{"version" => "0.50.0", "models" => [_ | _]} = HalC2.Codex.Provider.entry()
+    assert %{"version" => "0.160.0", "models" => [_ | _]} = HalC2.Codex.Provider.entry()
     context
   end
 
@@ -2448,7 +2448,8 @@ Red"} <- StreamState.get(state, "message")[message],
     "the folder Codex wants to write under" => "/tmp/root"
   }
 
-  step ~r/^the approval shows (?<shown>.+)$/, %{args: [shown]} = context do
+  step ~r/^the approval shows (?<shown>Codex's reason|the command|each file with what would be done to it|the file's old path and its new path|the folder Codex wants to write under)$/,
+       %{args: [shown]} = context do
     assert approval_prompt(context) == Map.fetch!(@approval_shown, shown)
     context
   end
@@ -4065,8 +4066,8 @@ Red"} <- StreamState.get(state, "message")[message],
   step "Codex's status is reported from the manifest the MC already has", context do
     entry = codex(context.providers)
     assert entry["status"] == "ready"
-    # The bundled policy's: the fake Codex is older than its floor.
-    assert entry["compatibilityAdvisory"]["status"] == "broken"
+    # The bundled policy's verdict on the fake's version.
+    assert entry["compatibilityAdvisory"]["status"] == "supported"
     context
   end
 
@@ -4082,7 +4083,7 @@ Red"} <- StreamState.get(state, "message")[message],
 
     File.write!(
       cmd,
-      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"codex-cli 0.50.0\"; exit 0; fi\nexec python3 -u #{fake} \"$@\"\n"
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"codex-cli 0.160.0\"; exit 0; fi\nexec python3 -u #{fake} \"$@\"\n"
     )
 
     File.chmod!(cmd, 0o755)
@@ -4095,6 +4096,560 @@ Red"} <- StreamState.get(state, "message")[message],
     World.await_runs(context, @thread, ["completed"])
     assert "Hello from codex" in World.replies(context, @thread)
     context
+  end
+
+  # --- a killed app-server, a closed thread ------------------------------------------------
+
+  step "the Codex app-server is killed by a signal", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    Map.put(context, :killed_conn, runtime.conn)
+  end
+
+  step "the turn fails within seconds", context do
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the next Codex turn starts a new app-server", context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["failed", "completed"])
+    {_, runtime} = World.codex_runtime(context, @thread)
+    assert runtime.conn != nil and runtime.conn != context.killed_conn
+    context
+  end
+
+  step "Codex left a command running in a finished turn", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "run the dev server in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert tool_status(context, "cmd-bg") == "running"
+    context
+  end
+
+  step "Codex closes its native thread", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "thread/closed", %{
+      "threadId" => runtime.native_thread_id
+    })
+
+    context
+  end
+
+  step "the turn stays completed", context do
+    assert %{"status" => "completed"} = World.latest_run(context, @thread)
+    context
+  end
+
+  step "a late completion for that command does not bring it back", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "item/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "item" => %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => "npm run dev",
+        "status" => "completed",
+        "aggregatedOutput" => "done\n",
+        "exitCode" => 0
+      }
+    })
+
+    {pid, _} = World.codex_runtime(context, @thread)
+    :sys.get_state(pid)
+    assert tool_status(context, "cmd-bg") == "interrupted"
+    context
+  end
+
+  # --- an error code HAL-C2 does not know ----------------------------------------------------
+
+  step "a ChatGPT-account Codex rejects the thread's model with the code {string}",
+       %{args: [code]} = context do
+    context = World.fake_providers(context)
+    Map.merge(context, %{error_code: code, error_message: "The model is not available."})
+  end
+
+  step "the user sends a turn", context do
+    context = start_waiting(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    codex_error(
+      context,
+      %{"message" => context.error_message, "codexErrorInfo" => context.error_code},
+      false
+    )
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{
+        "id" => runtime.turn.native_turn_id,
+        "status" => "failed",
+        "error" => %{"message" => context.error_message, "codexErrorInfo" => context.error_code}
+      }
+    })
+
+    context
+  end
+
+  step "the turn fails with Codex's message", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+    assert error =~ context.error_message
+    context
+  end
+
+  step "the thread does not stay working", context do
+    refute Enum.any?(
+             World.runs(context, @thread),
+             &(&1["status"] in ["preparing", "starting", "running", "waiting"])
+           )
+
+    World.await_row(World.thread_id(context, @thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  # --- a turn start answered with an earlier run's turn ---------------------------------------
+
+  step "a Codex thread whose earlier run had a turn", context do
+    World.put_env("FAKE_CODEX_REPEAT_TURN_ID", "1")
+    context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "say one")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "a new run starts a turn and Codex answers with the earlier run's turn", context do
+    World.post_message(context, @thread, "say two")
+  end
+
+  step "the new run does not take that turn as its own", context do
+    state = World.await_runs(context, @thread, ["completed", "failed"])
+    assert World.replies(context, @thread) == ["one"]
+
+    # Only the first run has a provider turn: the repeated one was never adopted.
+    assert length(StreamState.list(state, "provider-turn")) == 1
+    context
+  end
+
+  step "the new run is not left running", context do
+    assert %{"status" => "failed"} = World.latest_run(context, @thread)
+    World.await_row(World.thread_id(context, @thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  # --- compaction that never finishes -----------------------------------------------------------
+
+  # The turn's endings are the existing global steps ("the turn is stopped by
+  # the user", "the turn fails"); `:codex_compaction` tells them this turn is
+  # Codex's, on this thread.
+  step "Codex started compacting the thread and never reported the compaction finished",
+       context do
+    context = start_waiting(context)
+    notify_item(context, "started", %{"type" => "contextCompaction", "id" => "compaction-1"})
+    await_item(context, &(&1["type"] == "compaction" and &1["status"] == "running"))
+    Map.put(context, :codex_compaction, @thread)
+  end
+
+  step "the compaction no longer reads as running", context do
+    item = await_item(context, &(&1["type"] == "compaction" and &1["status"] != "running"))
+    Map.put(context, :compaction_status, item["status"])
+  end
+
+  step "it reads {string}", %{args: [label]} = context do
+    assert context.compaction_status == %{"Stopped" => "interrupted", "Failed" => "failed"}[label]
+    context
+  end
+
+  # --- one patch, several files -------------------------------------------------------------------
+
+  step "Codex applies one patch that edits {string}, adds {string} and renames {string} to {string}",
+       %{args: [edited, added, from, to]} = context do
+    context = start_waiting(context)
+
+    notify_item(context, "completed", %{
+      "type" => "fileChange",
+      "id" => "patch-1",
+      "status" => "completed",
+      "changes" => [
+        %{"path" => edited, "kind" => %{"type" => "update"}, "diff" => "@@ -1 +1 @@\n-a\n+b\n"},
+        %{"path" => added, "kind" => %{"type" => "add"}, "diff" => "@@ -0 +1 @@\n+b\n"},
+        %{"path" => from, "kind" => %{"type" => "update", "move_path" => to}, "diff" => ""}
+      ]
+    })
+
+    item = await_item(context, &(&1["type"] == "file_change"))
+    Map.put(context, :file_change, item)
+  end
+
+  step "the change in the timeline lists {string}, {string} and {string}",
+       %{args: [first, second, third]} = context do
+    paths = Enum.map(context.file_change["changes"], & &1["path"])
+    assert paths == [first, second, third]
+    context
+  end
+
+  step "the rename shows it came from {string}", %{args: [from]} = context do
+    rename = Enum.find(context.file_change["changes"], &(&1["oldPath"] != nil))
+    assert rename["oldPath"] == from
+    context
+  end
+
+  # --- approvals: files from the started change, file access by pattern ---------------------------
+
+  step "Codex started a change to edit {string} and delete {string}",
+       %{args: [edited, deleted]} = context do
+    context = start_waiting(context)
+
+    notify_item(context, "started", %{
+      "type" => "fileChange",
+      "id" => "file-x",
+      "status" => "inProgress",
+      "changes" => [
+        %{"path" => edited, "kind" => %{"type" => "update"}, "diff" => ""},
+        %{"path" => deleted, "kind" => %{"type" => "delete"}, "diff" => ""}
+      ]
+    })
+
+    Map.merge(context, %{change_edit: edited, change_delete: deleted})
+  end
+
+  step "Codex asks without a reason to approve that change, naming no files", context do
+    codex_request(context, "approval-x", "item/fileChange/requestApproval", %{
+      "itemId" => "file-x"
+    })
+  end
+
+  step "the approval lists {string} to edit and {string} to delete",
+       %{args: [edited, deleted]} = context do
+    prompt = approval_prompt(context)
+    lines = String.split(prompt, "\n")
+    assert Enum.any?(lines, &(&1 =~ edited and &1 =~ "update"))
+    assert Enum.any?(lines, &(&1 =~ deleted and &1 =~ "delete"))
+    context
+  end
+
+  step ~r/^Codex asks for extra access to (?<access>write files|read files) naming only "(?<path>[^"]+)"$/,
+       %{args: [access, path]} = context do
+    context = start_waiting(context)
+    kind = if access == "write files", do: "write", else: "read"
+
+    codex_request(context, "approval-perm", "item/permissions/requestApproval", %{
+      "itemId" => "perm-1",
+      "permissions" => %{
+        "fileSystem" => %{
+          "entries" => [%{"access" => kind, "path" => %{"type" => "glob", "value" => path}}]
+        }
+      }
+    })
+  end
+
+  step ~r/^the approval shows as (?<kind>a file change approval|a file read approval)$/,
+       %{args: [kind]} = context do
+    expected = %{"a file change approval" => "file-change", "a file read approval" => "file-read"}
+    assert context.request["kind"] == Map.fetch!(expected, kind)
+    context
+  end
+
+  step "Codex is answered as before", context do
+    respond(context, "accept")
+    answer = codex_answer(context, "approval-perm")
+    assert get_in(answer, ["result", "decision"]) == "accept"
+    context
+  end
+
+  # --- a request Codex settles itself -----------------------------------------------------------------
+
+  step "the MC is waiting on the user for a Codex approval", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "approve", %{"runtimeMode" => "approval-required"})
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "Codex reports that the request is resolved", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "serverRequest/resolved", %{
+      "threadId" => runtime.native_thread_id,
+      "requestId" => "approval-1"
+    })
+
+    context
+  end
+
+  step "the MC stops waiting on it without answering Codex", context do
+    World.await_value(context, @thread, fn _state ->
+      {_pid, runtime} = World.codex_runtime(context, @thread)
+      runtime.requests == %{}
+    end)
+
+    request =
+      StreamState.get(World.stream(context, @thread), "runtime-request")[context.request["id"]]
+
+    assert request["status"] != "pending"
+
+    # Nothing was sent back for the request Codex settled.
+    refute Enum.any?(
+             World.provider_log(context, "codex"),
+             &(get_in(&1, ["in", "id"]) == "approval-1" and get_in(&1, ["in", "method"]) == nil)
+           )
+
+    context
+  end
+
+  step "answering that approval afterwards fails as no longer pending", context do
+    reply =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => "accept"
+      })
+
+    assert {:error, message} = reply
+    assert message =~ "pending"
+    context
+  end
+
+  # --- reasoning defaults --------------------------------------------------------------------------------
+
+  step "a Codex model whose default reasoning is {string}", %{args: [effort]} = context do
+    models = [
+      %{
+        "model" => "gpt-6-luna",
+        "displayName" => "GPT-6 Luna",
+        "isDefault" => true,
+        "defaultReasoningEffort" => effort,
+        "supportedReasoningEfforts" =>
+          for(e <- ~w(low medium high), do: %{"reasoningEffort" => e})
+      }
+    ]
+
+    World.put_env("FAKE_CODEX_MODELS", JSON.encode!(models))
+    context = World.fake_providers(context)
+    HalC2.Codex.Provider.load()
+    Map.put(context, :default_effort, effort)
+  end
+
+  step "the thread has no reasoning level chosen", context do
+    Map.put(context, :pending_launch, %{
+      instance: "codex",
+      fields: %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-6-luna"}}
+    })
+  end
+
+  step "the turn runs at {string}", %{args: [effort]} = context do
+    turn =
+      World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+
+    params = turn["in"]["params"]
+    assert params["model"] == "gpt-6-luna"
+    # No effort is forced: Codex runs the turn at the model's own default.
+    refute Map.has_key?(params, "effort")
+
+    descriptor = reasoning_descriptor(context)
+    assert descriptor["currentValue"] == effort
+    context
+  end
+
+  step "a reasoning level the user picks is used instead, in plan mode too", context do
+    title = World.current_thread(context)
+    thread_id = World.thread_id(context, title)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.model-selection.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "modelSelection" => %{
+          "instanceId" => "codex",
+          "model" => "gpt-6-luna",
+          "options" => [%{"id" => "reasoningEffort", "value" => "low"}]
+        }
+      })
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.interaction-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "interactionMode" => "plan"
+      })
+
+    starts_before =
+      Enum.count(
+        World.provider_log(context, "codex"),
+        &(get_in(&1, ["in", "method"]) == "turn/start")
+      )
+
+    context = World.post_message(context, title, "make a plan")
+
+    turn =
+      World.await_provider_log(context, "codex", fn entry ->
+        get_in(entry, ["in", "method"]) == "turn/start" and
+          get_in(entry, ["in", "params", "effort"]) == "low" and
+          Enum.count(
+            World.provider_log(context, "codex"),
+            &(get_in(&1, ["in", "method"]) == "turn/start")
+          ) > starts_before
+      end)
+
+    assert get_in(turn, ["in", "params", "collaborationMode", "mode"]) == "plan"
+    context
+  end
+
+  # --- versions: too old to start, broken, slow to list models --------------------------------
+
+  # A wrapper Codex whose `--version` behaves as the scenario says and whose
+  # app-server exits at once, as a Codex too old for it does.
+  defp dying_codex(context, version_line) do
+    context = World.fake_providers(context)
+    wrapper = Path.join(context.fakes.dir, "dying-codex")
+
+    File.write!(
+      wrapper,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then #{version_line}; fi\nexit 1\n"
+    )
+
+    File.chmod!(wrapper, 0o755)
+    World.put_app_env(:codex_command, [wrapper])
+    World.reset_provider_caches()
+    context
+  end
+
+  step "the installed Codex prints version {string}", %{args: [version]} = context do
+    Map.put(context, :printed_version, version)
+  end
+
+  step "Codex exits with code 1 when its app-server starts", context do
+    if context[:printed_version] do
+      dying_codex(context, ~s(echo "codex-cli #{context.printed_version}"; exit 0))
+    else
+      context
+    end
+  end
+
+  step ~r/^its version command (?<answer>prints ".+"|exits with code 1|does not answer within 4 seconds)$/,
+       %{args: [answer]} = context do
+    case answer do
+      "prints \"" <> rest ->
+        dying_codex(context, ~s(echo "#{String.trim_trailing(rest, "\"")}"; exit 0))
+
+      "exits with code 1" ->
+        dying_codex(context, "exit 1")
+
+      "does not answer within 4 seconds" ->
+        # The version read's bound, shortened for the scenario.
+        World.put_app_env(:codex_version_timeout_ms, 300)
+        dying_codex(context, "exec sleep 30")
+    end
+  end
+
+  step "Codex is reported as {string} for this HAL-C2 release with version {string}",
+       %{args: [status, version]} = context do
+    entry = codex(context.providers)
+    assert entry["compatibilityAdvisory"]["status"] == status
+    assert entry["version"] == version
+    context
+  end
+
+  step ~r{^Codex is reported as "(?<status>[^"]+)" with (?<version>version "[^"]+"|no version)$},
+       %{args: [status, version]} = context do
+    entry = codex(context.providers)
+    assert entry["compatibilityAdvisory"]["status"] == status
+
+    case version do
+      "no version" -> assert entry["version"] in [nil, "unknown"]
+      "version \"" <> rest -> assert entry["version"] == String.trim_trailing(rest, "\"")
+    end
+
+    context
+  end
+
+  step "the user is offered the update before the probe's failure message", context do
+    entry = codex(context.providers)
+    # The entry carries the update the advisory recommends alongside the
+    # probe's own failure, which is what clients show first.
+    assert entry["compatibilityAdvisory"]["message"] =~ "Use >="
+    assert entry["message"] =~ "Could not start Codex CLI"
+    context
+  end
+
+  step "the installed Codex is version {string}, which this HAL-C2 release marks broken",
+       %{args: [version]} = context do
+    World.fake_providers(context, codex_version: version)
+  end
+
+  step "the user sends a turn to Codex", context do
+    World.launch_on(context, "Work", "codex", "hello")
+  end
+
+  step "a turn failed because the installed Codex version is broken", context do
+    context = World.fake_providers(context, codex_version: "0.144.3")
+    context = World.launch_on(context, "Work", "codex", "hello")
+    World.await_runs(context, "Work", ["failed"])
+    context
+  end
+
+  step "the user updated Codex to a supported version", context do
+    # The fake reads its version from this file, as an updated install would.
+    File.write!(Path.join(context.fakes.dir, "codex.version"), "0.160.0")
+    context
+  end
+
+  step "the user sends another message in the same thread", context do
+    World.post_message(context, "Work", "hello again")
+  end
+
+  step "the turn runs on the updated Codex", context do
+    World.await_runs(context, "Work", ["failed", "completed"])
+    assert "Hello from codex" in World.replies(context, "Work")
+    assert HalC2.Codex.Provider.entry()["version"] == "0.160.0"
+    context
+  end
+
+  step "Codex's account check succeeds", context do
+    context = World.fake_providers(context)
+
+    models = [%{"model" => "gpt-6-luna", "displayName" => "GPT-6 Luna", "isDefault" => true}]
+    World.put_env("FAKE_CODEX_MODELS", JSON.encode!(models))
+    HalC2.Codex.Provider.load()
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "Codex's model list does not arrive before the check's deadline", context do
+    World.put_os_env("FAKE_CODEX_MODELS_HANG", "1")
+    World.put_app_env(:codex_probe_timeout_ms, 300)
+    HalC2.Codex.Provider.load()
+    context
+  end
+
+  step "Codex is shown as signed in with a warning", context do
+    entry = codex(context.providers)
+    assert entry["status"] == "warning"
+    assert entry["auth"]["email"] == "me@example.com"
+    context
+  end
+
+  step "the last model list Codex gave is still offered", context do
+    assert [%{"slug" => "gpt-6-luna"}] = codex(context.providers)["models"]
+    context
+  end
+
+  defp reasoning_descriptor(context) do
+    {providers, _context} = World.provider_list(context)
+    model = Enum.find(codex(providers)["models"], &(&1["slug"] == "gpt-6-luna"))
+    Enum.find(model["capabilities"]["optionDescriptors"], &(&1["id"] == "reasoningEffort"))
   end
 
   # --- helpers ---------------------------------------------------------------------------
