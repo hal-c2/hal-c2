@@ -1125,7 +1125,7 @@ Feature: Claude
   Scenario: A Claude thread in auto on a model without it keeps working on follow-ups
     Given a Claude thread in auto on a model that Claude runs without its auto mode
     And Claude ran the first turn in its default mode
-    When the user sends a follow-up
+    When the user sends a follow-up to that thread
     Then the follow-up runs in the mode Claude reported for the first turn
     And it does not fail asking for auto again
 
