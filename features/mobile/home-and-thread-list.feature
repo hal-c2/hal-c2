@@ -155,14 +155,14 @@ Feature: Home screen and thread list on a phone
     Background:
       Given the phone is paired with "My MacBook"
 
-    @backlog @mobile
+    @mobile
     Scenario: The user narrows the list to one project and back
       When the user shows only the project "shop"
       Then only threads in "shop" are listed
       When the user shows all projects
       Then threads from every project are listed
 
-    @backlog @mobile
+    @mobile
     Scenario: A project that is gone stops narrowing the list
       Given the list shows only the project "docs"
       When "docs" is removed from its environment
@@ -231,7 +231,7 @@ Feature: Home screen and thread list on a phone
         | the only environment is still connecting       | Connecting to environment     |
         | the only environment is unavailable            | Environment unavailable       |
 
-    @backlog @mobile @priority-high
+    @mobile @priority-high
     Scenario Outline: Each thread shows the status that needs the user most
       Given a thread <state>
       Then the thread is labelled "<label>"
@@ -253,7 +253,7 @@ Feature: Home screen and thread list on a phone
       Then "Fix cart" is shown quieter than "Fix tax"
       And a working thread the user has open is not shown quieter
 
-    @backlog @mobile @priority-high
+    @mobile @priority-high
     Scenario: Opening a finished thread on another device clears its Done label on the phone
       Given a thread is labelled "Done"
       When the user opens that thread on the desktop
@@ -469,13 +469,13 @@ Feature: Home screen and thread list on a phone
       When the user searches archived threads for "checkout"
       Then only matching archived threads are listed
 
-    @backlog @mobile @priority-high
+    @mobile @priority-high
     Scenario: The user unarchives a thread from the phone
       Given the thread "Fix checkout" is archived
       When the user unarchives "Fix checkout"
       Then "Fix checkout" is listed on the home screen again
 
-    @backlog @mobile
+    @mobile
     Scenario: No archived threads says where they will appear
       Given the user has no archived threads
       When the user opens archived threads
@@ -514,19 +514,19 @@ Feature: Home screen and thread list on a phone
       Then the user is told there are no matching threads
       And the user is told to try another search or environment
 
-    @backlog @mobile @priority-high
+    @mobile @priority-high
     Scenario: Archived threads are fetched again each time the user opens them
       Given the user archived "Fix checkout" on another device after the phone last listed archived threads
       When the user opens archived threads
       Then "Fix checkout" is listed
 
-    @backlog @mobile @priority-low
+    @mobile @priority-low
     Scenario: Archived threads say they are loading the first time
       Given the phone has not yet heard back about archived threads
       When the user opens archived threads
       Then the user is told the archive is loading
 
-    @backlog @mobile
+    @mobile
     Scenario: A failed archive load can be tried again
       Given the user was told not every archive could be loaded
       When the user chooses to try again
