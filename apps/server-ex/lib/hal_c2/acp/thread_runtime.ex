@@ -1843,6 +1843,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         |> running_search(id, call)
         |> running_file(id, call)
         |> running_tool(id, call)
+        |> running_web(id, call)
     end
   end
 
@@ -1920,6 +1921,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp running_tool(state, _id, _call), do: state
+
+  # A web call announced before its input (OpenCode's) says what it looked for once
+  # it runs.
+  defp running_web(state, id, call) do
+    with %{kind: :web, id: item_id} = item <- state.items[id],
+         true <- item["patterns"] in [nil, []],
+         %{"patterns" => [_ | _]} = fields <- web_fields(call) do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.merge(&1, fields))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.merge(item, fields))}
+    else
+      _ -> state
+    end
+  end
 
   # --- provider subagents -----------------------------------------------------------
 
@@ -2627,6 +2644,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp tool_kind(call) do
     input = call["rawInput"] || %{}
+    name = call["title"]
     path = get_in(call, ["locations", Access.at(0), "path"])
 
     case call["kind"] do
@@ -2645,11 +2663,25 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:search, search_fields(call)}
 
       "fetch" ->
-        {:web, %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}}
+        {:web, web_fields(call)}
+
+      # OpenCode announces its web search and language-server tools by name, as
+      # `other`.
+      _ when name in ["websearch", "codesearch"] ->
+        {:web, web_fields(call)}
+
+      _ when name == "lsp" ->
+        {:search, file_search(input["query"] || input["operation"] || path, path)}
 
       _ ->
         {:tool, %{"toolName" => call["title"] || call["kind"] || "tool", "input" => input}}
     end
+  end
+
+  # What a web call looked for, from whatever the call says so far.
+  defp web_fields(call) do
+    input = call["rawInput"] || %{}
+    %{"patterns" => Enum.filter([input["url"], input["query"]], &is_binary/1)}
   end
 
   # What a search or read looked for, from whatever the call says so far.
@@ -2673,12 +2705,17 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
 
+    # OpenCode reports a shell command's exit in its metadata, and a non-zero one as
+    # completed like any other.
+    exit_code = kind == :command && reported_exit(call["rawOutput"])
+
     status =
       cond do
         call["status"] == "failed" -> "failed"
         # A command the user's stop cut off was stopped, though its agent reports it
         # done like any other.
         kind == :command and state.interrupted -> "interrupted"
+        is_integer(exit_code) and exit_code != 0 -> "failed"
         true -> "completed"
       end
 
@@ -2709,12 +2746,12 @@ defmodule HalC2.Acp.ThreadRuntime do
             end
           end)
           |> then(&if(native[:cwd], do: Map.put(&1, "cwd", native.cwd), else: &1))
-          |> then(
-            &if(is_integer(native[:exit_code]),
-              do: Map.put(&1, "exitCode", native.exit_code),
-              else: &1
-            )
-          )
+          |> then(fn entity ->
+            case native[:exit_code] || exit_code do
+              code when is_integer(code) -> Map.put(entity, "exitCode", code)
+              _ -> entity
+            end
+          end)
 
         :file ->
           Map.put(entity, "diffStr", output || "")
@@ -2730,6 +2767,12 @@ defmodule HalC2.Acp.ThreadRuntime do
         # What the call named when it was announced stays; the end fills in the rest.
         :search ->
           Map.merge(search_fields(call), entity)
+
+        # OpenCode announces a web call before its input.
+        :web ->
+          if entity["patterns"] in [nil, []],
+            do: Map.merge(entity, web_fields(call)),
+            else: entity
 
         _ ->
           entity
@@ -2758,6 +2801,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp content_text(_), do: nil
+
+  defp reported_exit(%{"metadata" => %{"exit" => code}}) when is_integer(code), do: code
+  defp reported_exit(_), do: nil
 
   defp raw_output(%{"output" => output}) when is_binary(output), do: output
 

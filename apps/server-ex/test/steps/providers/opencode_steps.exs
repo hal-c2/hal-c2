@@ -989,6 +989,224 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- tool calls ------------------------------------------------------------------------
+
+  # A tool as OpenCode's ACP mode reports it: announced by name with no input, then
+  # running with its input, then done with `done`'s fields.
+  defp opencode_tool(id, kind, name, input, done, locations \\ []) do
+    [
+      %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => id,
+        "title" => name,
+        "kind" => kind,
+        "status" => "pending",
+        "rawInput" => %{},
+        "locations" => locations
+      },
+      %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => id,
+        "status" => "in_progress",
+        "rawInput" => input
+      },
+      Map.merge(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id}, done)
+    ]
+  end
+
+  defp completed(output, metadata \\ %{}),
+    do: %{
+      "status" => "completed",
+      "content" => [%{"type" => "content", "content" => %{"type" => "text", "text" => output}}],
+      "rawOutput" => %{"output" => output, "metadata" => metadata}
+    }
+
+  defp run_tools(context, updates) do
+    turn = %{
+      "match" => "use the tools",
+      "steps" => Enum.map(updates, &%{"update" => &1}) ++ [%{"text" => "Done."}]
+    }
+
+    context =
+      context
+      |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("use the tools")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  defp tool_items(context, type) do
+    World.thread_id(context, @thread)
+    |> HalC2.Streams.state()
+    |> StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] == type))
+  end
+
+  step "OpenCode runs a shell command", context do
+    run_tools(
+      context,
+      opencode_tool("bash-1", "execute", "bash", %{"command" => "ls src"}, %{
+        "title" => "List the sources",
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "app.ts\n"}}
+        ],
+        "rawOutput" => %{
+          "output" => "app.ts\n",
+          "metadata" => %{"exit" => 0, "output" => "app.ts\n", "description" => "List"}
+        }
+      })
+    )
+  end
+
+  step "OpenCode edits, writes or patches a file", context do
+    diff = %{"type" => "diff", "path" => "src/app.ts", "oldText" => "a", "newText" => "b"}
+
+    run_tools(
+      context,
+      opencode_tool(
+        "edit-1",
+        "edit",
+        "edit",
+        %{"filePath" => "src/app.ts", "oldString" => "a", "newString" => "b"},
+        %{"status" => "completed", "content" => [diff]},
+        [%{"path" => "src/app.ts"}]
+      )
+    )
+  end
+
+  step "OpenCode fetches a web page or searches the web", context do
+    run_tools(
+      context,
+      opencode_tool(
+        "fetch-1",
+        "fetch",
+        "webfetch",
+        %{"url" => "https://example.com/docs"},
+        completed("the docs")
+      ) ++
+        opencode_tool(
+          "web-1",
+          "other",
+          "websearch",
+          %{"query" => "opencode acp"},
+          completed("results")
+        )
+    )
+  end
+
+  step "OpenCode reads a file, searches files or asks the language server", context do
+    run_tools(
+      context,
+      opencode_tool(
+        "read-1",
+        "read",
+        "read",
+        %{"filePath" => "src/app.ts"},
+        completed("1: a"),
+        [%{"path" => "src/app.ts"}]
+      ) ++
+        opencode_tool("grep-1", "search", "grep", %{"pattern" => "TODO"}, completed("none")) ++
+        opencode_tool(
+          "lsp-1",
+          "other",
+          "lsp",
+          %{"operation" => "hover", "filePath" => "src/app.ts"},
+          completed("a: string"),
+          [%{"path" => "src/app.ts"}]
+        )
+    )
+  end
+
+  step "OpenCode uses any other tool", context do
+    run_tools(
+      context,
+      opencode_tool("skill-1", "other", "skill", %{"name" => "greet"}, completed("loaded"))
+    )
+  end
+
+  step "the thread shows a command with its output and exit code", context do
+    assert [command] = tool_items(context, "command_execution")
+
+    assert %{"input" => "ls src", "status" => "completed", "exitCode" => 0} = command
+    assert command["output"] =~ "app.ts"
+    context
+  end
+
+  step "the thread shows a file change with the file and its diff", context do
+    assert [%{"fileName" => "src/app.ts", "diffStr" => diff, "status" => "completed"}] =
+             tool_items(context, "file_change")
+
+    assert diff =~ "--- before\na\n+++ after\nb"
+    context
+  end
+
+  step "the thread shows a web search with what it looked for", context do
+    patterns = for item <- tool_items(context, "web_search"), do: item["patterns"]
+    assert patterns == [["https://example.com/docs"], ["opencode acp"]]
+    context
+  end
+
+  step "the thread shows a file search with what it looked for", context do
+    assert [read, grep, lsp] = tool_items(context, "file_search")
+    assert %{"pattern" => "src/app.ts", "results" => [%{"fileName" => "src/app.ts"}]} = read
+    assert grep["pattern"] == "TODO"
+    assert %{"results" => [%{"fileName" => "src/app.ts"}]} = lsp
+    assert tool_items(context, "dynamic_tool") == []
+    context
+  end
+
+  step "the thread shows a tool call with its input and output", context do
+    assert [%{"toolName" => "skill", "input" => %{"name" => "greet"}, "output" => "loaded"}] =
+             tool_items(context, "dynamic_tool")
+
+    context
+  end
+
+  step "OpenCode runs {string} and it exits with code {int}",
+       %{args: [command, code]} = context do
+    run_tools(
+      context,
+      opencode_tool("bash-1", "execute", "bash", %{"command" => command}, %{
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "1 test failed\n"}}
+        ],
+        "rawOutput" => %{
+          "output" => "1 test failed\n",
+          "metadata" => %{"exit" => code, "output" => "1 test failed\n"}
+        }
+      })
+    )
+    |> Map.put(:command, command)
+  end
+
+  step "the thread shows the command as failed with exit code {int}",
+       %{args: [code]} = context do
+    input = context.command
+
+    assert [%{"input" => ^input, "status" => "failed", "exitCode" => ^code}] =
+             tool_items(context, "command_execution")
+
+    context
+  end
+
+  step "an agent reading the thread is told the command failed", context do
+    {:ok, %{"items" => items}} =
+      World.mcp_tool(
+        context,
+        @thread,
+        "hal_c2_thread_read",
+        %{"threadId" => World.thread_id(context, @thread), "view" => "activity"},
+        "opencode"
+      )
+
+    assert [%{"status" => "failed"}] = Enum.filter(items, &(&1["type"] == "command_execution"))
+    context
+  end
+
   # --- the server's owner ---------------------------------------------------------------
 
   # The thread's `opencode acp --port` process serves its HTTP API; the thread's runtime

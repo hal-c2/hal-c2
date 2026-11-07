@@ -1062,7 +1062,6 @@ Feature: OpenCode
     Then OpenCode receives the message with the skill "greet" attached
 
   # OpenCodeAdapterV2.ts: how OpenCode's own tools, permissions and to-dos read in the thread.
-  @backlog
   Scenario Outline: OpenCode's tool calls are shown by kind
     When OpenCode <does>
     Then the thread shows <shown>
@@ -1077,7 +1076,7 @@ Feature: OpenCode
 
   # Upstream #29824: OpenCode reports a shell command that exits non-zero as completed, so a failing
   # test run was stored, and read by agents, as a command that succeeded.
-  @backlog @priority-high
+  @priority-high
   Scenario: An OpenCode command that exits non-zero is shown as failed
     When OpenCode runs "vp test" and it exits with code 1
     Then the thread shows the command as failed with exit code 1
