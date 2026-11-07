@@ -91,7 +91,7 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
     Then the message is marked "<marker>"
@@ -111,14 +111,14 @@ Feature: Runs, interruptions and the queue
     Then the message is marked "From queue"
     And the marker explains "Queued while the agent was busy"
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A reply that finished before a steer stays the turn's answer
     Given the agent finished its reply
     When the user's steer restarts the run before the turn closed
     Then the finished reply stays visible as the turn's answer
     And it is not folded away as partial output
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A reply cut off by a steer is folded as cut off
     Given the agent is in the middle of its reply
     When the user's steer restarts the run
@@ -140,19 +140,19 @@ Feature: Runs, interruptions and the queue
     When the MC acknowledges the message
     Then the message shows the time it was sent
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A sent message shows its images
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: An image is still shown after its address stops working
     Given the user sent the image "cart.png" with a message
     And the message shows the image "cart.png" from its MC
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A sent file shows its name, kind and size
     When the user sent the file "report.pdf" of 2 MB with a message
     Then the message shows "report.pdf" with its kind and size
@@ -221,7 +221,7 @@ Feature: Runs, interruptions and the queue
     When the provider exits before the turn starts
     Then the run fails with "The provider stopped while starting the turn."
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A finished turn that left work running says what it is waiting on
     Given the turn has finished and left <tasks> running in the background
     Then the thread says "<notice>"
@@ -233,20 +233,20 @@ Feature: Runs, interruptions and the queue
       | the task "watch tests"             | Waiting on background task    |
       | the tasks "watch tests" and "lint" | Waiting on 2 background tasks |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
     Then the thread shows no notice about background work
     And stopping the turn is the way to stop them
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Stopping background work can be asked again
     Given the turn has finished and left the task "watch tests" running
     When the user stops the background work and the environment accepts
     And "watch tests" is still running
     Then the user can ask to stop it again
 
-  @backlog @desktop
+  @desktop
   Scenario: Background work that cannot be stopped says why
     Given the turn has finished and left the task "watch tests" running
     And the environment rejects the stop
@@ -254,14 +254,14 @@ Feature: Runs, interruptions and the queue
     Then the thread shows the reason as its error
     And the notice about "watch tests" stays
 
-  @shared @backlog @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: The user dismisses a thread's error
     Given the thread shows the error "Rate limited"
     When the user dismisses the error
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A usage limit is one warning line naming when to retry
     Given the provider stopped the turn at its usage limit, resetting at the top of an hour
     Then the timeline shows one warning line naming when to retry
@@ -278,8 +278,8 @@ Feature: Runs, interruptions and the queue
       | chooses to resume at reset | the thread continues at 3 pm             |
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
-  # The MC reports contextUsage and the TUI draws the meter (apps/tui/src/contextWindow.ts); the Qt clients do not show it yet.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  # The MC reports contextUsage on the thread's provider thread; the clients draw it as a meter behind the "Context window indicator" setting.
+  @shared @priority-high
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>
     Then the context window reads "<reading>"
@@ -290,7 +290,7 @@ Feature: Runs, interruptions and the queue
       | of an unknown window      | 144k used       |
 
   # Upstream #17539: counts just under a million rounded up inside the thousands and read "1000k".
-  @shared @backlog-desktop @backlog-mobile @priority-low
+  @shared @priority-low
   Scenario Outline: A context count that rounds up to a million reads as a million
     Given the agent has used <tokens> tokens of an unknown window
     Then the context window reads "<reading>"
@@ -301,7 +301,7 @@ Feature: Runs, interruptions and the queue
       | 999,500   | 1m used   |
       | 1,000,000 | 1m used   |
 
-  @backlog @desktop
+  @desktop
   Scenario: The context window reading is shown only when its setting is on
     Given the context window meter setting is off
     When the agent has used 144,000 tokens of a 200,000 token window
@@ -309,7 +309,7 @@ Feature: Runs, interruptions and the queue
     When the user turns the context window meter setting on
     Then the context window reads "72% · 144k/200k"
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: A context window under a tenth full is read to one decimal
     Given the agent has used <used> tokens of a 200,000 token window
     Then the context window is "<percent>" full
@@ -320,7 +320,7 @@ Feature: Runs, interruptions and the queue
       | 4,000   | 2%      |
       | 25,000  | 13%     |
 
-  @backlog @desktop
+  @desktop
   Scenario: A context window more than nine tenths full is flagged
     Given the agent has used 184,000 tokens of a 200,000 token window
     Then the context window reading is marked as nearly full
@@ -349,7 +349,7 @@ Feature: Runs, interruptions and the queue
     Then the context window reads "40k used"
     And the window's size is not known
 
-  @backlog @desktop
+  @desktop
   Scenario: The context window's details show what the thread has processed and cost
     Given the agent has used 144,000 tokens of a 200,000 token window
     And the thread has processed 1,200,000 tokens in all at a cost of 0.42 US dollars

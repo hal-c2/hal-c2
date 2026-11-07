@@ -33,6 +33,9 @@
 #include "TimelineModel.h"
 #include "World.h"
 
+// The time the MC signs attachment addresses at (FilesSteps.cpp).
+void signAttachmentsAt(FakeMc& mc, const QDateTime& time);
+
 namespace {
 
 using S = QString;
@@ -909,6 +912,165 @@ const Steps steps([] {
     world.waitFor([&] { return !visible(world, S("copyCode")).isEmpty(); }, S("the code block to be drawn"));
     const qsizetype offered = visible(world, S("runCode")).size();
     expect(offered == 0, S("the code block offers Run %1 times").arg(offered));
+  });
+
+  // Runs and the queue (features/timeline/runs-and-queue.feature): how a sent
+  // message reached the agent, what it carried, and a steer's restart.
+  step(S("the user's message was (.+)"), [](World& world, const Captures& c, const Table&) {
+    const QHash<QString, QString> intents{
+        {S("queued behind the active turn"), S("queued_turn")},
+        {S("sent as a steer"), S("steer")},
+        {S("queued and later promoted to a steer"), S("promoted_queued_to_steer")},
+    };
+    if (!intents.contains(c[0])) fail(S("unknown way of sending: %1").arg(c[0]));
+    const QString run = startRun(world, 0, S("queued"));
+    set(world, S("turn-item"), S("message:") + run, {{S("inputIntent"), intents.value(c[0])}});
+  });
+  step(S("the message is marked %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    TimelineModel& model = timeline(world);
+    const QString marker = role(model, rowShowing(world, S("message:") + turn(world).run), TimelineModel::MarkerRole).toString();
+    expect(marker == c[0], S("the message is marked \"%1\"").arg(marker));
+    // The phone draws the short word; the marker is its tooltip.
+    onScreen(world, marker.startsWith(QLatin1String("Queued")) ? S("Queued") : S("Steer"));
+  });
+  step(S("the user sent the image %1 with a message").arg(q), [](World& world, const Captures& c, const Table&) {
+    signAttachmentsAt(world.mc, now());
+    const QString run = startRun(world);
+    const QJsonObject image{{S("type"), S("image")}, {S("id"), S("image-1")}, {S("name"), c[0]}, {S("mimeType"), S("image/png")}, {S("sizeBytes"), 2048}};
+    set(world, S("turn-item"), S("message:") + run, {{S("attachments"), QJsonArray{image}}});
+  });
+  // The image of the run's message, once the phone has asked for its address
+  // and the MC has signed the `count`th one (FilesSteps.cpp signs them).
+  const auto expectImage = [](World& world, const QString& name, int count) {
+    TimelineModel& model = timeline(world);
+    const int row = rowShowing(world, S("message:") + turn(world).run);
+    QVariantMap image;
+    world.waitFor([&] {
+      image = role(model, row, TimelineModel::AttachmentsRole).toList().value(0).toMap();
+      if (image.value(S("url")).toUrl().isEmpty()) model.loadAttachment(image.value(S("id")).toString());
+      return image.value(S("name")) == name && image.value(S("url")).toUrl().path().endsWith(S("/image-1/%1").arg(count));
+    }, [&] { return S("the image's address number %1; the message shows %2").arg(count).arg(show(image)); });
+  };
+  step(S("the message shows the image %1 from its MC").arg(q), [expectImage](World& world, const Captures& c, const Table&) { expectImage(world, c[0], 1); });
+  step(S("more than an hour passes"), [](World& world, const Captures&, const Table&) {
+    signAttachmentsAt(world.mc, now().addSecs(3660));
+    world.setTime(now().addSecs(3660));
+  });
+  step(S("the message shows the image %1 from a new address").arg(q),
+       [expectImage](World& world, const Captures& c, const Table&) { expectImage(world, c[0], 2); });
+  step(S("the user sent the file %1 of 2 MB with a message").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString run = startRun(world);
+    const QJsonObject file{{S("type"), S("file")}, {S("id"), S("file-1")}, {S("name"), c[0]}, {S("mimeType"), S("application/pdf")},
+                           {S("sizeBytes"), 2 * 1024 * 1024}};
+    set(world, S("turn-item"), S("message:") + run, {{S("attachments"), QJsonArray{file}}});
+  });
+  step(S("the message shows %1 with its kind and size").arg(q), [](World& world, const Captures& c, const Table&) {
+    TimelineModel& model = timeline(world);
+    const QVariantList files = role(model, rowShowing(world, S("message:") + turn(world).run), TimelineModel::SentFilesRole).toList();
+    const QVariantMap file = files.value(0).toMap();
+    expect(files.size() == 1 && file.value(S("name")) == c[0] && file.value(S("detail")) == S("PDF · 2.0 MiB"),
+           S("the message shows %1").arg(show(files)));
+    onScreen(world, c[0]);
+  });
+
+  // A steer restarts the run: the interrupted run ends without a request to
+  // stop, its reply stopping where it was; the steer starts the next run.
+  step(S("the agent finished its reply"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addReply(world, S("reply-1"), S("The cart total is done."));
+  });
+  step(S("the agent is in the middle of its reply"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addItem(world, S("assistant_message"),
+            {{S("id"), S("reply-1")}, {S("text"), S("The cart total is half wri")}, {S("status"), S("running")}, {S("streaming"), true}});
+  });
+  step(S("the user's steer restarts the run(?: before the turn closed)?"), [](World& world, const Captures&, const Table&) {
+    settleRun(world, S("interrupted"), 5);
+    const QJsonObject reply = world.mc.part<FakeStreams>().threads.value(turn(world).thread).value(S("turn-item\nreply-1"));
+    if (reply.value(QLatin1String("status")).toString() == QLatin1String("running")) {
+      set(world, S("turn-item"), S("reply-1"), {{S("status"), S("interrupted")}, {S("streaming"), false}});
+    }
+    const QString run = startRun(world);
+    set(world, S("turn-item"), S("message:") + run, {{S("text"), S("Add tax to the cart")}, {S("inputIntent"), S("steer")}});
+    addItem(world, S("assistant_message"), {{S("id"), S("reply-2")}, {S("text"), S("Tax added.")}, {S("status"), S("running")}, {S("streaming"), true}});
+  });
+  step(S("the finished reply stays visible as the turn's answer"), [](World& world, const Captures&, const Table&) {
+    expectAnswer(world, S("The cart total is done."));
+    onScreen(world, S("The cart total is done."));
+  });
+  step(S("it is not folded away as partial output"), [](World& world, const Captures&, const Table&) {
+    expect(noFoldStartingWith(world, S("Cut off by a steer")), S("the reply is folded; %1").arg(describe(timeline(world))));
+    const int row = rowShowing(world, S("reply-1"));
+    expect(role(timeline(world), row, TimelineModel::KindRole).toString() == QLatin1String("message"),
+           S("the reply is not a message; %1").arg(describe(timeline(world))));
+  });
+  step(S("what the agent had written is folded under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    TimelineModel& model = timeline(world);
+    int fold = -1;
+    for (const int row : rowsOf(model, S("fold"))) {
+      if (role(model, row, TimelineModel::TitleRole).toString() == c[0]) fold = row;
+    }
+    expect(fold >= 0, S("no fold reads \"%1\"; %2").arg(c[0], describe(model)));
+    for (int row = 0; row < model.rowCount(); ++row) {
+      expect(role(model, row, TimelineModel::IdRole).toString() != QLatin1String("reply-1"), S("the cut-off reply is shown; %1").arg(describe(model)));
+    }
+    onScreen(world, c[0]);
+    model.toggle(role(model, fold, TimelineModel::IdRole).toString());
+    expect(role(model, rowShowing(world, S("reply-1")), TimelineModel::TextRole).toString() == QLatin1String("The cart total is half wri"),
+           S("the opened fold shows %1").arg(describe(model)));
+  });
+
+  // A usage limit on the thread's timeline.
+  step(S("the provider stopped the turn at its usage limit, resetting at the top of an hour"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addItem(world, S("error"),
+            {{S("status"), S("failed")},
+             {S("failure"), QJsonObject{{S("class"), S("usage_limit")}, {S("message"), S("You've hit your usage limit.")}, {S("resetAt"), iso(now().addSecs(3 * 3600))}}}});
+    settleRun(world, S("failed"), 5);
+  });
+  step(S("the timeline shows one warning line naming when to retry"), [](World& world, const Captures&, const Table&) {
+    TimelineModel& model = timeline(world);
+    const int row = lastRowOf(world, S("error"));
+    const QString title = role(model, row, TimelineModel::TitleRole).toString();
+    expect(rowsOf(model, S("error")).size() == 1 && title.startsWith(QLatin1String("Usage limit reached. Retry after ")) && title.endsWith(QLatin1Char('.')) &&
+               role(model, row, TimelineModel::TextRole).toString().isEmpty() && role(model, row, TimelineModel::WarningRole).toBool(),
+           S("the error row is %1").arg(describe(model)));
+    onScreen(world, title);
+  });
+
+  // The thread's error over its conversation (ThreadErrorController).
+  const auto showError = [](World& world, const QString& message) {
+    updateRow(world.mc, world.thread, {{S("lastError"), message}});
+    world.sync();
+    onScreen(world, message);
+    world.waitFor([&] { return visible(world, S("threadError")).size() == 1; },
+                  [&] { return S("the error over the conversation; the screen says: %1").arg(world.texts().join(S(" | "))); });
+  };
+  step(S("the thread shows the error %1").arg(q), [showError](World& world, const Captures& c, const Table&) { showError(world, c[0]); });
+  step(S("the user dismisses the error"), [](World& world, const Captures&, const Table&) { world.tap(S("threadErrorDismiss")); });
+  step(S("the error is hidden for this thread"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return visible(world, S("threadError")).isEmpty(); },
+                  [&] { return S("the error to go; the screen says: %1").arg(world.texts().join(S(" | "))); });
+  });
+  step(S("a different error on the same thread is still shown"), [showError](World& world, const Captures&, const Table&) {
+    showError(world, S("Provider crashed"));
+  });
+
+  // How full the context window is: the provider thread's latest report,
+  // which the composer's meter reads with its setting on.
+  step(S("the agent has used ([\\d,]+) tokens of (?:a ([\\d,]+) token window|an unknown window)"), [](World& world, const Captures& c, const Table&) {
+    const auto count = [](QString digits) { return digits.remove(QLatin1Char(',')).toDouble(); };
+    world.native().controller<SettingsController>()->set(S("contextWindowMeterEnabled"), true);
+    QJsonObject usage{{S("usedTokens"), count(c[0])}};
+    if (!c[1].isEmpty()) usage.insert(S("maxTokens"), count(c[1]));
+    set(world, S("provider-thread"), S("provider-thread-1"),
+        {{S("id"), S("provider-thread-1")}, {S("appThreadId"), world.thread}, {S("contextUsage"), usage}, {S("updatedAt"), iso(now())}});
+  });
+  step(S("the context window reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return timeline(world).contextWindow().value(S("reading")) == c[0] && visible(world, S("contextWindowMeter")).size() == 1; },
+                  [&] { return S("the context window to read \"%1\"; it is %2").arg(c[0], show(timeline(world).contextWindow())); });
+    world.tap(visible(world, S("contextWindowMeter")).first());
+    onScreen(world, c[0]);
   });
 });
 

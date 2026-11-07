@@ -48,6 +48,12 @@ class TimelineModel : public QAbstractListModel {
   Q_PROPERTY(bool loadingEarlier READ loadingEarlier NOTIFY earlierChanged)
   Q_PROPERTY(QString latest READ latest NOTIFY latestChanged)
   Q_PROPERTY(bool phone READ phone NOTIFY foldsChanged)
+  // How full the thread's context window is, from its provider thread's
+  // latest report: {} before one, else {usedTokens, maxTokens (0 unknown),
+  // percent (-1 unknown), percentLabel, reading ("72% · 144k/200k", or
+  // "144k used"), nearlyFull (over nine tenths), processed ("1.2m", empty
+  // when none), cost ("USD 0.42", empty when none)}.
+  Q_PROPERTY(QVariantMap contextWindow READ contextWindow NOTIFY contextWindowChanged)
 
 public:
   enum Role {
@@ -168,6 +174,7 @@ public:
   QString problem() const { return m_problem; }
   void setStatus(const QString& status, const QString& problem = {});
   bool working() const { return m_workingSince.isValid(); }
+  QVariantMap contextWindow() const;
   QDateTime workingSince() const { return m_workingSince; }
   // The newest row in one line, for a strip standing in for the timeline: the
   // agent's reply, what its calls did, or the user's message ("You: ...").
@@ -339,6 +346,8 @@ signals:
   // After a snapshot, or a command or file change starting or settling: the
   // workspace's files may have changed (WorkspaceFiles lists them again).
   void workspaceChanged();
+  // After a snapshot, or events that touched a provider thread.
+  void contextWindowChanged();
   // After the time format or locale changed: stamp() reads differently.
   void timesChanged();
   // An image on screen has no address yet (loadAttachment).
@@ -459,6 +468,7 @@ private:
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
   bool m_agentsTouched = false;
+  bool m_contextTouched = false;
   // The subagents the events being applied touch, and each as it was before them.
   QHash<QString, QJsonObject> m_agentModels;
   bool m_workspaceTouched = false;

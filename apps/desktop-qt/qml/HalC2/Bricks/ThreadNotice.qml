@@ -3,12 +3,14 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// What the open thread says of its place in the list (Shell.state.threadNotice,
-// ThreadNoticeController): a settled thread says so, and un-settles from here.
+// What the open thread says under its conversation (Shell.state.threadNotice,
+// ThreadNoticeController): work its finished turn left running in the
+// background, which stops from here, or that it is settled, which un-settles.
 Rectangle {
     id: notice
 
     readonly property var current: Shell.state.threadNotice ?? null
+    readonly property bool background: current?.kind === "background"
     readonly property color info: Theme.palette.color("info", "#3b82f6")
 
     objectName: "threadNotice"
@@ -28,7 +30,7 @@ Rectangle {
         spacing: 8
 
         ShellIcon {
-            name: "circle-check"
+            name: notice.background ? "circle-dashed" : "circle-check"
             size: 14
             color: notice.info
         }
@@ -52,7 +54,7 @@ Rectangle {
             subtle: true
             enabled: notice.current?.busy !== true
             text: notice.current?.actionLabel ?? ""
-            onClicked: Shell.dispatch("threadNotice.unsettle", {})
+            onClicked: Shell.dispatch(notice.background ? "threadNotice.stop" : "threadNotice.unsettle", {})
         }
     }
 }

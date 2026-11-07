@@ -1,9 +1,13 @@
 // ThreadNoticeController as a state machine over which thread is open, the MC
-// settling and un-settling threads, the notice's Un-settle and the MC's
-// answers held, refused or late. The notice speaks for the open thread only:
-// it shows while that thread is settled, reads "Un-settling..." only while
-// that thread's own un-settle is unanswered, sends one un-settle per thread at
-// a time, and a refused one leaves the thread settled with one toast.
+// settling and un-settling threads and leaving background work running, the
+// notice's Un-settle and Stop, and the MC's answers held, refused or late.
+// The notice speaks for the open thread only: background work a finished turn
+// left comes first (none while a turn runs) and reads "Stopping..." only
+// while that thread's own stop is unanswered; then a settled thread, reading
+// "Un-settling..." only while its own un-settle is unanswered. Each is sent
+// once per thread at a time; a refused un-settle leaves the thread settled
+// with one toast, a refused stop is the thread's error (ThreadErrorController)
+// and Stop is offered again.
 
 #include "Prop.h"
 
@@ -15,6 +19,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
+#include <QJsonArray>
 #include <QSet>
 #include <QTemporaryDir>
 
@@ -26,6 +31,7 @@ namespace {
 
 const QStringList kThreads = {QStringLiteral("t1"), QStringLiteral("t2")};
 const QString kFailed = QStringLiteral("Failed to un-settle thread");
+const QString kStopRefused = QStringLiteral("The provider session has already exited.");
 
 QString keyOf(const QString& thread) { return QStringLiteral("env-a:") + thread; }
 
@@ -39,6 +45,16 @@ struct Model {
   QMap<QString, bool> pending;
   int sent = 0;
   int toasts = 0;
+  // Background tasks the MC says each thread's turn left, and the threads
+  // whose turn is running.
+  QMap<QString, int> tasks;
+  QSet<QString> running;
+  bool refusingStop = false;
+  // Stops sent and not answered, by thread: whether the MC refuses it.
+  QMap<QString, bool> stopping;
+  int interrupts = 0;
+  // The threads a refused stop gave an error.
+  QSet<QString> errors;
 };
 
 struct Shell {
@@ -99,6 +115,26 @@ struct Shell {
     mc.sendRow(thread, row);
   }
 
+  // The MC's row says `thread`'s turn left `tasks` running, or is running.
+  void setBackground(const QString& thread, int tasks, bool running) {
+    QJsonObject row = mc.threads.value(thread);
+    QJsonArray pending;
+    for (int i = 1; i <= tasks; ++i) {
+      pending.append(QJsonObject{{QStringLiteral("taskId"), QStringLiteral("task-%1").arg(i)}, {QStringLiteral("description"), QStringLiteral("Task %1").arg(i)}});
+    }
+    row.insert(QStringLiteral("pendingBackgroundTasks"), pending);
+    row.insert(QStringLiteral("latestRunId"), QStringLiteral("run-1"));
+    row.insert(QStringLiteral("activeRunId"), running ? QJsonValue(QStringLiteral("run-1")) : QJsonValue());
+    mc.threads.insert(thread, row);
+    mc.sendRow(thread, row);
+  }
+
+  int count(const QString& type) const {
+    int n = 0;
+    for (const QJsonObject& command : mc.commands) n += command.value(QLatin1String("type")) == type;
+    return n;
+  }
+
   int unsettles() const {
     int n = 0;
     for (const QJsonObject& command : mc.commands) n += command.value(QLatin1String("type")) == QLatin1String("thread.unsettle");
@@ -106,9 +142,26 @@ struct Shell {
   }
 
   QVariant notice() const { return bridge.state()->value(QStringLiteral("threadNotice")); }
+  QVariant error() const { return bridge.state()->value(QStringLiteral("threadError")); }
 };
 
+bool hasBackground(const Model& model, const QString& thread) {
+  return !thread.isEmpty() && model.tasks.value(thread) > 0 && !model.running.contains(thread);
+}
+
 QVariant expectedNotice(const Model& model) {
+  if (hasBackground(model, model.open)) {
+    const int tasks = model.tasks.value(model.open);
+    QStringList names;
+    for (int i = 1; i <= tasks; ++i) names.append(QStringLiteral("Task %1").arg(i));
+    const bool busy = model.stopping.contains(model.open);
+    return QVariantMap{{QStringLiteral("threadKey"), keyOf(model.open)},
+                       {QStringLiteral("kind"), QStringLiteral("background")},
+                       {QStringLiteral("title"), tasks == 1 ? QStringLiteral("Waiting on background task") : QStringLiteral("Waiting on %1 background tasks").arg(tasks)},
+                       {QStringLiteral("description"), names.join(QStringLiteral(", "))},
+                       {QStringLiteral("actionLabel"), busy ? QStringLiteral("Stopping...") : QStringLiteral("Stop")},
+                       {QStringLiteral("busy"), busy}};
+  }
   if (model.open.isEmpty() || !model.settled.contains(model.open)) return QVariant::fromValue(nullptr);
   const bool busy = model.pending.contains(model.open);
   return QVariantMap{{QStringLiteral("threadKey"), keyOf(model.open)},
@@ -119,8 +172,14 @@ QVariant expectedNotice(const Model& model) {
                      {QStringLiteral("busy"), busy}};
 }
 
+QVariant expectedError(const Model& model) {
+  if (model.open.isEmpty() || !model.errors.contains(model.open)) return QVariant::fromValue(nullptr);
+  return QVariantMap{{QStringLiteral("threadKey"), keyOf(model.open)}, {QStringLiteral("message"), kStopRefused}, {QStringLiteral("warning"), false}};
+}
+
 void check(const Model& model, Shell& shell) {
   const QVariant wanted = expectedNotice(model);
+  const QVariant wantedError = expectedError(model);
   const auto same = [&] {
     const QVariant now = shell.notice();
     return wanted.isNull() ? now.isNull() : now == wanted;
@@ -131,7 +190,14 @@ void check(const Model& model, Shell& shell) {
     }
     return true;
   };
-  RC_ASSERT(prop::until([&] { return same() && stored() && shell.failures.size() == model.toasts && shell.unsettles() == model.sent; }));
+  const auto error = [&] {
+    const QVariant now = shell.error();
+    return wantedError.isNull() ? now.isNull() : now == wantedError;
+  };
+  RC_ASSERT(prop::until([&] {
+    return same() && error() && stored() && shell.failures.size() == model.toasts && shell.unsettles() == model.sent &&
+           shell.count(QStringLiteral("run.interrupt")) == model.interrupts;
+  }));
 }
 
 using Command = rc::state::Command<Model, Shell>;
@@ -168,6 +234,63 @@ struct McSets : Command {
     check(expected, shell);
   }
   void show(std::ostream& os) const override { os << "McSets(" << thread.toStdString() << ", " << (settled ? "settled" : "active") << ")"; }
+};
+
+// The MC says a thread's turn left background work running, or that a turn
+// of it is running (whose stop stops that work).
+struct McBackground : Command {
+  QString thread = *rc::gen::elementOf(std::vector<QString>(kThreads.begin(), kThreads.end()));
+  int tasks = *rc::gen::inRange(0, 3);
+  bool running = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override {
+    model.tasks.insert(thread, tasks);
+    if (running) model.running.insert(thread);
+    else model.running.remove(thread);
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.setBackground(thread, tasks, running);
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override {
+    os << "McBackground(" << thread.toStdString() << ", " << tasks << (running ? ", running" : "") << ")";
+  }
+};
+
+// The notice's Stop, clicked twice before the MC answers.
+struct Stop : Command {
+  void apply(Model& model) const override {
+    if (!hasBackground(model, model.open) || model.stopping.contains(model.open)) return;
+    ++model.interrupts;
+    if (model.holding) {
+      model.stopping.insert(model.open, model.refusingStop);
+    } else if (model.refusingStop) {
+      model.errors.insert(model.open);
+    }
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.bridge.dispatch(QStringLiteral("threadNotice.stop"), {});
+    shell.bridge.dispatch(QStringLiteral("threadNotice.stop"), {});
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override { os << "Stop"; }
+};
+
+// The MC starts or stops refusing stops.
+struct RefusingStop : Command {
+  bool refusing = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.refusingStop = refusing; }
+  void run(const Model& model, Shell& shell) const override {
+    if (refusing) shell.mc.refusals.insert(QStringLiteral("run.interrupt"), kStopRefused);
+    else shell.mc.refusals.remove(QStringLiteral("run.interrupt"));
+    Model expected = model;
+    apply(expected);
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override { os << "RefusingStop(" << refusing << ")"; }
 };
 
 // The notice's Un-settle, clicked twice before the MC answers.
@@ -229,6 +352,10 @@ struct Answer : Command {
       else model.settled.remove(it.key());
     }
     model.pending.clear();
+    for (auto it = model.stopping.cbegin(); it != model.stopping.cend(); ++it) {
+      if (it.value()) model.errors.insert(it.key());
+    }
+    model.stopping.clear();
     model.holding = false;
   }
   void run(const Model& model, Shell& shell) const override {
@@ -246,6 +373,14 @@ class ThreadNoticeProp : public QObject {
   Q_OBJECT
 
 private slots:
+  void backgroundNotice() {
+    QVERIFY(rc::check("background work comes first, one stop at a time, a refused stop is the thread's error", [] {
+      Shell shell;
+      rc::state::check(Model{}, shell,
+                       rc::state::gen::execOneOfWithArgs<Open, McSets, McBackground, McBackground, Unsettle, Stop, Stop, Refusing, RefusingStop, Hold, Answer>());
+    }));
+  }
+
   void settledNotice() {
     QVERIFY(rc::check("the notice speaks for the open thread, one un-settle at a time, a refusal leaves it settled", [] {
       Shell shell;

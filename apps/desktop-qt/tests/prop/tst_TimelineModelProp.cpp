@@ -48,6 +48,8 @@ QDateTime clock() {
 }
 
 const QStringList kAgents{QStringLiteral("agent-1"), QStringLiteral("agent-2")};
+// The thread's provider threads (one per provider it ran on).
+const QStringList kProviderThreads{QStringLiteral("provider-thread-1"), QStringLiteral("provider-thread-2")};
 
 // One of `values` (RapidCheck's elementOf finds no begin() for a QList).
 QString pick(const QStringList& values) {
@@ -243,6 +245,15 @@ struct Thread {
   QMap<QString, Item> items;
   // Each subagent's model, by agent id.
   QMap<QString, QString> agents;
+  // Each provider thread's latest context report: tokens used, the window
+  // (0: unknown), and when (a count, so later reports sort later).
+  struct Usage {
+    int used = 0;
+    int max = 0;
+    int at = 0;
+    bool operator==(const Usage&) const = default;
+  };
+  QMap<QString, Usage> usage;
   bool operator==(const Thread&) const = default;
 };
 
@@ -345,7 +356,7 @@ bool holds(const Thread& thread, const QString& run, std::optional<int> floor) {
 
 // What a client with the window from `floor` holds of `thread`.
 Thread window(const Thread& thread, std::optional<int> floor) {
-  Thread held{thread.runs, {}, thread.agents};
+  Thread held{thread.runs, {}, thread.agents, thread.usage};
   for (const Item& item : thread.items) {
     if (holds(thread, item.run, floor)) held.items.insert(item.id, item);
   }
@@ -439,12 +450,18 @@ QString kindOf(const Item& item) {
 // A settled turn folds its calls and commentary behind "Worked" ("You stopped
 // this response" for the latest, interrupted), leaving its last reply and any
 // call still running in view; while one of its replies streams it stays open.
+// A reply a steer cut off (it stopped as interrupted) is none of its turn's:
+// it folds on its own under "Cut off by a steer".
 // Consecutive calls of a turn make one group, which a settled turn with
 // several calls summarizes; a group shows its latest call until opened.
 // The phone's also keeps a turn's first reply in view, and leaves a failed
 // turn open with a row per call; a settled turn leaves out the calls that
 // never ended, and a starting or running latest turn ends in "Thinking"
 // unless its last call is running or went well, or its reply is streaming.
+bool cutOff(const Item& item) {
+  return item.type == QLatin1String("assistant_message") && item.status == QLatin1String("interrupted");
+}
+
 QList<Row> project(const Model& model) {
   const Thread& thread = model.held;
   QList<Item> shown;
@@ -474,7 +491,7 @@ QList<Row> project(const Model& model) {
   QHash<QString, QString> first;     // run -> its first item after the user's message
   QHash<QString, QString> firstReply;
   for (const Item& item : std::as_const(shown)) {
-    if (item.opener) continue;
+    if (item.opener || cutOff(item)) continue;
     if (!first.contains(item.run)) first.insert(item.run, item.id);
     if (item.type == QLatin1String("assistant_message")) {
       if (!firstReply.contains(item.run)) firstReply.insert(item.run, item.id);
@@ -493,7 +510,7 @@ QList<Row> project(const Model& model) {
     if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id) || failed(run.id)) continue;
     QStringList hidden;
     for (const Item& item : std::as_const(shown)) {
-      if (item.run != run.id || item.opener || item.id == terminal.value(run.id)) continue;
+      if (item.run != run.id || item.opener || cutOff(item) || item.id == terminal.value(run.id)) continue;
       if (model.phone && item.id == firstReply.value(run.id)) continue;
       const QString kind = kindOf(item);
       if ((kind == QLatin1String("work") && item.status != QLatin1String("running")) || kind == QLatin1String("message")) {
@@ -518,6 +535,18 @@ QList<Row> project(const Model& model) {
       row.hidden = fold->hidden;
       row.expanded = model.foldsOpen.contains(run.id);
       rows.append(row);
+    }
+    if (cutOff(item)) {
+      const QString fold = QStringLiteral("cut-off:") + item.id;
+      Row row{QStringLiteral("fold:") + fold, QStringLiteral("fold")};
+      row.title = QStringLiteral("Cut off by a steer");
+      row.hidden = 1;
+      row.expanded = model.foldsOpen.contains(fold);
+      rows.append(row);
+      if (!row.expanded) {
+        ++i;
+        continue;
+      }
     }
     if (folded.contains(item.id)) {
       ++i;
@@ -734,6 +763,18 @@ struct Sut {
     }
     RC_ASSERT(model->working() == since.isValid());
     RC_ASSERT(model->workingSince() == since);
+    // The context window is the latest report of any of its provider threads.
+    std::optional<Thread::Usage> latest;
+    for (const Thread::Usage& usage : expected.held.usage) {
+      if (!latest || usage.at > latest->at) latest = usage;
+    }
+    const QVariantMap context = model->contextWindow();
+    RC_ASSERT(context.isEmpty() == !latest.has_value());
+    if (latest) {
+      RC_ASSERT(context.value(QStringLiteral("usedTokens")).toInt() == latest->used);
+      RC_ASSERT(context.value(QStringLiteral("maxTokens")).toInt() == latest->max);
+      RC_ASSERT(context.value(QStringLiteral("nearlyFull")).toBool() == (latest->max > 0 && latest->used * 10 > latest->max * 9));
+    }
     for (const Row& row : want) {
       const Item item = expected.held.items.value(row.id);
       if (item.type != QLatin1String("user_message") || !item.legacy.isEmpty()) continue;
@@ -785,6 +826,14 @@ QJsonObject agentJson(const QString& id, const QString& model) {
   return {{QStringLiteral("id"), id}, {QStringLiteral("model"), model}};
 }
 
+QJsonObject providerThreadJson(const QString& id, const Thread::Usage& usage) {
+  QJsonObject report{{QStringLiteral("usedTokens"), usage.used}};
+  if (usage.max > 0) report.insert(QStringLiteral("maxTokens"), usage.max);
+  return {{QStringLiteral("id"), id},
+          {QStringLiteral("contextUsage"), report},
+          {QStringLiteral("updatedAt"), QStringLiteral("2026-09-01T09:%1:00Z").arg(usage.at, 4, 10, QLatin1Char('0'))}};
+}
+
 // The entity rows of `thread` a window from `floor` holds, or only the turn
 // items of `runs`.
 QJsonArray entityRows(const Thread& thread, std::optional<int> floor, const QSet<QString>* runs = nullptr) {
@@ -793,6 +842,9 @@ QJsonArray entityRows(const Thread& thread, std::optional<int> floor, const QSet
     for (const Run& run : thread.runs) rows.append(QJsonValue(QJsonArray{QStringLiteral("run"), run.id, json(run)}));
     for (auto it = thread.agents.cbegin(); it != thread.agents.cend(); ++it) {
       rows.append(QJsonValue(QJsonArray{QStringLiteral("subagent"), it.key(), agentJson(it.key(), *it)}));
+    }
+    for (auto it = thread.usage.cbegin(); it != thread.usage.cend(); ++it) {
+      rows.append(QJsonValue(QJsonArray{QStringLiteral("provider-thread"), it.key(), providerThreadJson(it.key(), *it)}));
     }
   }
   for (const Item& item : thread.items) {
@@ -1152,6 +1204,20 @@ struct AgentModel : Change {
   void show(std::ostream& os) const override { os << "AgentModel(" << agent.toStdString() << " = " << name.toStdString() << ")"; }
 };
 
+// A provider thread reports how full the context window is, its size
+// known or not.
+struct ContextReport : Change {
+  QString thread = pick(kProviderThreads);
+  int used = *rc::gen::element(0, 5000, 144000, 184000, 200000);
+  int max = *rc::gen::element(0, 200000);
+  void apply(Model& model) const override {
+    const Thread::Usage usage{used, max, model.seq + 1};
+    model.mc.usage.insert(thread, usage);
+    commit(model, {event(model, QStringLiteral("provider-thread"), thread, {{QStringLiteral("s"), providerThreadJson(thread, usage)}})});
+  }
+  void show(std::ostream& os) const override { os << "ContextReport(" << thread.toStdString() << ", " << used << "/" << max << ")"; }
+};
+
 // A reply finishes streaming, or a call ends (completed or failed).
 struct Finish : Change {
   QString item;
@@ -1181,6 +1247,29 @@ struct Finish : Change {
     commit(model, {event(model, QStringLiteral("turn-item"), item, {{QStringLiteral("s"), set}}, target.run)});
   }
   void show(std::ostream& os) const override { os << "Finish(" << item.toStdString() << ", " << status.toStdString() << ")"; }
+};
+
+// A steer restarts the turn while a reply streams: the reply stops as
+// interrupted, with no request to stop its run.
+struct CutOff : Change {
+  QString item;
+  explicit CutOff(const Model& model) {
+    const QStringList ids = itemsWhere(model, [](const Item& item) { return item.type == QLatin1String("assistant_message") && item.streaming; });
+    RC_PRE(!ids.isEmpty());
+    item = pick(ids);
+  }
+  void checkPreconditions(const Model& model) const override {
+    const Item found = model.mc.items.value(item);
+    RC_PRE(found.streaming && model.mc.runs.value(found.run).status == QLatin1String("running"));
+  }
+  void apply(Model& model) const override {
+    Item& target = model.mc.items[item];
+    target.streaming = false;
+    target.status = QStringLiteral("interrupted");
+    commit(model, {event(model, QStringLiteral("turn-item"), item,
+                         {{QStringLiteral("s"), QJsonObject{{QStringLiteral("streaming"), false}, {QStringLiteral("status"), target.status}}}}, target.run)});
+  }
+  void show(std::ostream& os) const override { os << "CutOff(" << item.toStdString() << ")"; }
 };
 
 // The MC takes back an item of a running turn.
@@ -1610,9 +1699,9 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, Begin, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Begin, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, CutOff, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
-                                                         LoadEarlier, LoadEarlier, KeepFrom, KeepFrom, Toggle, Layout, Restart, AgentModel, SignIcon>());
+                                                         LoadEarlier, LoadEarlier, KeepFrom, KeepFrom, Toggle, Layout, Restart, AgentModel, SignIcon, ContextReport>());
     }));
   }
 

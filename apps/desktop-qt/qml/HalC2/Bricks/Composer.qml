@@ -1394,6 +1394,10 @@ Rectangle {
                             Accessible.name: qsTr("Vim mode: %1").arg(text)
                         }
 
+                        ContextWindowMeter {
+                            available: composer.ready && !composer.imagesHost && !composer.pageHost
+                        }
+
                         // The stash's count, which opens and closes its list.
                         Chip {
                             objectName: "stashBadge"

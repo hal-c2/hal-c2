@@ -375,6 +375,16 @@ Item {
         visible: recovery !== null && !view.draft
     }
 
+    // The open thread's error, over the top of its conversation.
+    ThreadErrorBanner {
+        anchors.top: timeline.top
+        anchors.left: timeline.left
+        anchors.right: timeline.right
+        z: 2
+        height: implicitHeight
+        visible: current !== null && !view.draft
+    }
+
     // The open thread is settled: it says so, and un-settles from here.
     ThreadNotice {
         id: settledNotice

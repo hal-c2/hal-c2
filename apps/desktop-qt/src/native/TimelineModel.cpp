@@ -31,7 +31,8 @@ namespace {
 // (agentsChanged); they draw no rows.
 const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
                            QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
-                           QStringLiteral("checkpoint"),      QStringLiteral("subagent")};
+                           QStringLiteral("checkpoint"),      QStringLiteral("subagent"),
+                           QStringLiteral("provider-thread")};
 // The kinds a window bounds (HalC2.Streams.View): the client holds those of
 // the runs from its floor on. The rest are held whole.
 const QSet<QString> kWindowed{QStringLiteral("turn-item"), QStringLiteral("message")};
@@ -827,6 +828,7 @@ void TimelineModel::everythingChanged(const QSet<QString>& changed) {
   emit checkpointsChanged();
   emit agentsChanged();
   emit workspaceChanged();
+  emit contextWindowChanged();
 }
 
 void TimelineModel::eventsFrame(const QJsonObject& frame) {
@@ -1068,6 +1070,7 @@ void TimelineModel::events(const QJsonArray& events) {
   m_turnTouched = false;
   m_checkpointsTouched = false;
   m_agentsTouched = false;
+  m_contextTouched = false;
   m_workspaceTouched = false;
   m_reshaped.clear();
   m_agentModels.clear();
@@ -1080,6 +1083,7 @@ void TimelineModel::events(const QJsonArray& events) {
   if (m_turnTouched) emit turnChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
   if (m_agentsTouched) emit agentsChanged();
+  if (m_contextTouched) emit contextWindowChanged();
   // A subagent's row shows its entity's model, status and latest words.
   if (!m_agentModels.isEmpty()) {
     const QHash<QString, QJsonObject>& items = m_entities[QStringLiteral("turn-item")];
@@ -1138,6 +1142,67 @@ void TimelineModel::events(const QJsonArray& events) {
   }
 }
 
+namespace {
+
+// A token count as the web's composer wrote it: 940, 8.5k, 144k, 1.2m.
+// Counts just under a million round up to a million, not "1000k".
+QString tokens(double value) {
+  const auto trimmed = [](double v) {
+    QString text = QString::number(v, 'f', 1);
+    if (text.endsWith(QLatin1String(".0"))) text.chop(2);
+    return text;
+  };
+  if (value < 1000) return QString::number(qRound64(value));
+  if (value < 10000) return trimmed(value / 1000) + QLatin1Char('k');
+  if (value < 999500) return QString::number(qRound64(value / 1000)) + QLatin1Char('k');
+  return trimmed(value / 1000000) + QLatin1Char('m');
+}
+
+}  // namespace
+
+QVariantMap TimelineModel::contextWindow() const {
+  // The latest report of the thread's provider threads (a thread that
+  // changed provider has one for each).
+  QJsonObject usage;
+  QString latest;
+  const QHash<QString, QJsonObject> threads = m_entities.value(QStringLiteral("provider-thread"));
+  for (auto it = threads.cbegin(); it != threads.cend(); ++it) {
+    const QJsonValue used = it->value(QLatin1String("contextUsage"))[QLatin1String("usedTokens")];
+    if (!used.isDouble() || used.toDouble() < 0) continue;
+    const QString at = text(*it, QLatin1String("updatedAt")) + QChar(0) + it.key();
+    if (!usage.isEmpty() && at < latest) continue;
+    latest = at;
+    usage = it->value(QLatin1String("contextUsage")).toObject();
+  }
+  if (usage.isEmpty()) return {};
+  const double used = usage.value(QLatin1String("usedTokens")).toDouble();
+  const double max = usage.value(QLatin1String("maxTokens")).toDouble();
+  const double percent = max > 0 ? std::min(100.0, used / max * 100) : -1;
+  QString percentLabel;
+  if (percent >= 0) {
+    percentLabel = percent < 10 ? QString::number(percent, 'f', 1) : QString::number(qRound64(percent));
+    if (percentLabel.endsWith(QLatin1String(".0"))) percentLabel.chop(2);
+    percentLabel += QLatin1Char('%');
+  }
+  const double processed = usage.value(QLatin1String("totalProcessedTokens")).toDouble();
+  QString cost;
+  const QJsonObject spent = usage.value(QLatin1String("cost")).toObject();
+  if (spent.value(QLatin1String("amount")).isDouble() && !text(spent, QLatin1String("currency")).isEmpty()) {
+    const double amount = spent.value(QLatin1String("amount")).toDouble();
+    const bool tiny = std::abs(amount) > 0 && std::abs(amount) < 0.01;
+    cost = text(spent, QLatin1String("currency")) + QLatin1Char(' ') + QString::number(amount, 'f', tiny ? 4 : 2);
+  }
+  return {{QStringLiteral("usedTokens"), used},
+          {QStringLiteral("maxTokens"), max > 0 ? max : 0},
+          {QStringLiteral("percent"), percent},
+          {QStringLiteral("percentLabel"), percentLabel},
+          {QStringLiteral("reading"), percent >= 0 ? QStringLiteral("%1 · %2/%3").arg(percentLabel, tokens(used), tokens(max))
+                                                   : QStringLiteral("%1 used").arg(tokens(used))},
+          {QStringLiteral("nearlyFull"), percent > 90},
+          {QStringLiteral("processed"), processed > 0 ? tokens(processed) : QString()},
+          {QStringLiteral("cost"), cost}};
+}
+
 QVariantMap TimelineModel::liveEntry(const Row& row) const {
   if (row.kind != QLatin1String("work") || row.items.isEmpty()) return {};
   const bool live = row.live && m_expandedGroups.contains(row.id) == row.startsOpen;
@@ -1158,6 +1223,15 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   const auto current = byKind.constFind(id);
   const bool existed = current != byKind.cend();
   const std::optional<QJsonObject> next = patched(existed ? *current : QJsonObject(), patch);
+  if (kind == QLatin1String("provider-thread")) {
+    m_contextTouched = true;
+    if (next) {
+      byKind.insert(id, *next);
+    } else {
+      byKind.remove(id);
+    }
+    return false;
+  }
   if (kind == QLatin1String("checkpoint") || kind == QLatin1String("subagent")) {
     (kind == QLatin1String("subagent") ? m_agentsTouched : m_checkpointsTouched) = true;
     if (kind == QLatin1String("checkpoint")) m_workspaceTouched = true;
