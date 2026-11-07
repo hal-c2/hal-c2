@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24617
 #   https://github.com/pingdotgg/t3code/pull/17789
 #   https://github.com/pingdotgg/t3code/pull/15783
 #   https://github.com/pingdotgg/t3code/pull/18232
@@ -104,6 +105,23 @@ Feature: Threads settle on their own
     And thread "t1" finished its last turn 10 days ago
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
+
+  # Upstream #24617: a linked open pull request skipped the inactivity rule, whatever
+  # "Keep threads with a PR" said.
+  # Replaces the scenario above once the MC carries it.
+  @backlog @mc
+  Scenario Outline: An open pull request keeps a quiet thread active only when the user keeps such threads
+    Given the MC settles threads after 3 days of inactivity
+    And "Keep threads with a PR" is <keep>
+    And thread "t1" links an open pull request
+    And thread "t1" finished its last turn 10 days ago
+    When the MC sweeps for threads to settle
+    Then thread "t1" <outcome>
+
+    Examples:
+      | keep | outcome          |
+      | on   | is not settled   |
+      | off  | is settled       |
 
   @mc
   Scenario: A linked pull request that has not synced yet keeps the thread active

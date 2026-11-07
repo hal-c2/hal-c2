@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23999
 #   https://github.com/pingdotgg/t3code/pull/15625
 #   https://github.com/pingdotgg/t3code/pull/18862
 #   docs/user/source-control.md
@@ -149,6 +150,26 @@ Feature: Recommended git action and the git menu
       | host   | name                 |
       | GitHub | Create PR            |
       | GitLab | Create MR            |
+
+  # Upstream #23999: GitLab merge requests were called "pull request" and "PR" almost everywhere.
+  @backlog @desktop @mobile @tui
+  Scenario Outline: A GitLab merge request is called one wherever it is the only one shown
+    Given the thread is linked to a GitLab merge request
+    When the user looks at <surface>
+    Then it says "merge request" or "MR", not "pull request" or "PR"
+
+    Examples:
+      | surface                                       |
+      | the linked merge request's row and badge      |
+      | the merge request's details and review controls |
+      | the result of a git action                    |
+      | a merge request referenced in the composer    |
+
+  @backlog @desktop @mobile @tui @priority-low
+  Scenario: Pages about every host's pull requests keep calling them pull requests
+    Given one project is on GitHub and another on GitLab
+    When the user opens the pull requests page
+    Then the page and its rows are titled "Pull requests"
 
   @backlog @mobile @priority-high
   Scenario: Running the recommended action from the phone

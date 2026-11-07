@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/17901
 #   https://github.com/pingdotgg/t3code/pull/16322
 #   https://github.com/pingdotgg/t3code/pull/14103
+#   https://github.com/pingdotgg/t3code/pull/22495
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
@@ -236,6 +237,14 @@ Feature: Source Control settings
     When the user saves a GitCafe token
     Then GitCafe works at once, using the saved token before any from the environment or the CLI
     And the token is only sent to git.cafe, never to its staging host
+
+  # Upstream #22495: creating a GitCafe repository or pull request still needed the cafe CLI
+  # when a token covered everything else.
+  @backlog @mc @priority-low
+  Scenario: A GitCafe token alone creates repositories and pull requests
+    Given the user saved a GitCafe token and the cafe CLI is not installed
+    When the user publishes a project as a new GitCafe repository and opens a pull request from a fork
+    Then the repository and the pull request are created
 
   # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @shared

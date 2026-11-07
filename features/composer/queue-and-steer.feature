@@ -1,8 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24972
+#   https://github.com/pingdotgg/t3code/pull/25128
 #   https://github.com/pingdotgg/t3code/pull/19007
 #   https://github.com/pingdotgg/t3code/pull/18999
 #   https://github.com/pingdotgg/t3code/pull/20929
 #   https://github.com/pingdotgg/t3code/pull/18834
+#   https://github.com/pingdotgg/t3code/pull/22790
 #   docs/user/composer.md (follow-up behaviour, queued messages, editing a queued message)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
 #   apps/web/src/components/chat/QueuedRunsControl.tsx
@@ -20,6 +23,10 @@
 #   packages/contracts/src/settings.ts (followUpBehavior)
 #   https://github.com/pingdotgg/t3code/pull/14725
 #   https://github.com/pingdotgg/t3code/pull/15417
+#   https://github.com/pingdotgg/t3code/pull/25468
+#   https://github.com/pingdotgg/t3code/pull/25593
+#   https://github.com/pingdotgg/t3code/pull/25426
+#   https://github.com/pingdotgg/t3code/pull/25169
 
 Feature: Follow-ups while the agent is working
   A message sent while a turn is running either waits in the queue or steers
@@ -238,6 +245,16 @@ Feature: Follow-ups while the agent is working
     Then the MC is asked to change the queued run of "fix typo" to "fix all typos"
     And the composer holds "unrelated draft" again
 
+  # Upstream #25169: starting or ending an edit let a second save go out while the first was
+  # still on its way, and the older one could land last.
+  @backlog @shared @priority-high
+  Scenario: A second save of a queued message waits for the first
+    Given "fix typo" is queued
+    And the user saved "fix all typos" over it and the MC has not answered yet
+    When the user edits it again and saves "fix every typo"
+    Then "fix every typo" is sent only after the MC answered the first save
+    And the queued message ends as "fix every typo"
+
   @desktop
   Scenario: An edit the MC refuses stays in the composer
     Given "fix typo" is queued
@@ -298,6 +315,68 @@ Feature: Follow-ups while the agent is working
     And the user switches to thread B and back to thread A
     Then the composer holds "unrelated draft" again
     And the queued message still reads "fix typo"
+
+  # Upstream #24972: leaving the thread dropped an open edit of a queued message.
+  # Replaces the scenario above once desktop carries it.
+  @backlog @desktop @mobile
+  Scenario: Leaving the thread keeps the edit
+    Given "fix typo" is queued
+    When the user starts editing the last queued message from the start of the composer
+    And the user changes the edit to "fix all typos"
+    And the user switches to thread B and back to thread A
+    Then the user is still editing the queued message, reading "fix all typos"
+
+  # Upstream #25128: a slow save from before leaving the thread ended the edit begun after
+  # coming back, and cleared its draft.
+  @backlog @desktop @mobile
+  Scenario: A save that finishes after a newer edit began leaves the newer edit alone
+    Given the user saved "fix all typos" over the queued "fix typo" and the MC has not answered yet
+    And the user switched to thread B and back to thread A
+    When the user edits the queued message again to "fix every typo"
+    And the first save finishes
+    Then the user is still editing the queued message, reading "fix every typo"
+
+  # Upstream #25468: a queued edit ends when its run leaves the queue, even with its thread closed.
+  # Upstream #24972: the same on the desktop, and the message names the thread.
+  @backlog @desktop @mobile
+  Scenario: An edit whose message starts while its thread is closed ends then
+    Given the user is editing the queued "fix typo" with a change
+    And the user has gone to another thread
+    When the queued run of "fix typo" starts
+    Then the edit has ended
+    And the changed edit waits in the thread's composer if it was empty, with a message naming the thread
+
+  # Upstream #25468: an unchanged edit whose run starts closes without a message.
+  @backlog @desktop @mobile @priority-low
+  Scenario: An unchanged edit whose message starts running closes quietly
+    Given "fix typo" is queued
+    When the user starts editing the last queued message from the start of the composer
+    And the queued run of "fix typo" starts
+    Then the edit has ended
+    And no message about the edit is shown
+
+  # Upstream #25468: deleting the thread ends its open queued edit.
+  @backlog @desktop @mobile
+  Scenario: Deleting a thread ends its queued edit
+    Given the user is editing a queued message in thread A
+    When thread A is deleted
+    Then the edit has ended
+
+  # Upstream #25593: editing a queued message is unavailable while the agent's question is open.
+  @backlog @desktop @mobile @priority-high
+  Scenario: A queued message cannot be edited while a question is open
+    Given "fix typo" is queued
+    And the agent has asked the user a question
+    Then editing "fix typo" is unavailable, saying "Answer the question to edit queued messages"
+    And the edit-latest shortcut does nothing
+
+  # Upstream #25593: an edit already open when a question arrives comes back once it is answered.
+  @backlog @desktop @mobile
+  Scenario: An edit open when a question arrives comes back after the answer
+    Given the user is editing the queued "fix typo"
+    When the agent asks the user a question
+    And the user answers it
+    Then the user is editing the queued "fix typo" again
 
   @backlog @desktop @priority-high
   Scenario Outline: The send control says what sending will do
@@ -361,11 +440,39 @@ Feature: Follow-ups while the agent is working
     When the user focuses the handle of "c" and presses Up twice
     Then the queue order is "c", "a", "b"
 
-  @backlog @desktop @priority-high
-  Scenario: A queued message cannot steer when no turn is running
-    Given the queue is held after a restart and the turn is no longer running
-    When the user looks at a queued message
-    Then steering it is unavailable and says "There is no active run to steer"
+  # Upstream #22790: a stopped thread offers Send now on a held queued message instead of a
+  # disabled Steer; a running thread keeps Steer.
+  @backlog @shared @priority-high
+  Scenario: A queued message on a stopped thread is offered to send now
+    Given "a", "b" and "c" are queued and held, and the turn is no longer running
+    When the user looks at "b" in the queue
+    Then the user is offered to send "b" now instead of steering it
+
+  # Upstream #22790: sending a held queued message now starts that message first.
+  @backlog @mc @priority-high
+  Scenario: Sending a held queued message now starts it and keeps the rest in order
+    Given "a", "b" and "c" are queued and held, and the turn is no longer running
+    When the user sends "b" now
+    Then a turn starts with "b"
+    And the queue holds "a" then "c"
+
+  # Upstream #22790: a send now that races a turn that started meanwhile leaves the message queued.
+  @backlog @mc
+  Scenario: Sending a queued message now after another turn started keeps it queued
+    Given "a" and "b" are queued and held, and the turn is no longer running
+    And another turn starts before the MC handles the user's request
+    When the user's request to send "b" now arrives
+    Then "b" stays queued
+    And no second turn is started
+
+  # Upstream #22790: the steer-queued-message shortcut acts on the selected message whether or
+  # not a turn is running.
+  @backlog @desktop
+  Scenario: The steer shortcut sends the selected queued message now on a stopped thread
+    Given "a" and "b" are queued and held, and the turn is no longer running
+    And "b" is selected in the queue
+    When the user presses the shortcut that steers the queued message
+    Then a turn starts with "b"
 
   @backlog @desktop @priority-high
   Scenario: One queue action at a time
@@ -455,3 +562,62 @@ Feature: Follow-ups while the agent is working
   Scenario: A queued message can be removed on the phone
     When the user removes a queued message on the phone
     Then the queued message is cancelled
+
+  Rule: A goal command takes over the running turn on Codex and Claude
+
+    # Upstream #25426: a new goal, or /goal resume, sent into a running turn stops it and runs first.
+    @backlog @mc @shared @plugin-codex @plugin-claude @priority-high
+    Scenario Outline: A goal sent while the agent works stops the turn and runs first
+      Given the thread runs on <provider>
+      When the user sends "<command>" from the composer, the queue's Steer or a HAL-C2 tool
+      Then the running turn stops
+      And "<command>" runs next, ahead of the rest of the queue
+
+      Examples:
+        | provider | command            |
+        | Codex    | /goal ship the fix |
+        | Codex    | /goal resume       |
+        | Claude   | /goal ship the fix |
+
+    # Upstream #25426: clear and pause stop only a turn the goal drives.
+    @backlog @mc @plugin-codex @plugin-claude
+    Scenario Outline: Clearing or pausing a goal stops only the goal's own turn
+      Given the thread runs on Codex
+      And <turn>
+      When the user sends "<command>"
+      Then <outcome>
+
+      Examples:
+        | turn                                          | command     | outcome                                  |
+        | the goal drives the running turn              | /goal clear | the running turn stops                   |
+        | the goal drives the running turn              | /goal pause | the running turn stops                   |
+        | a turn the user started is running            | /goal clear | the running turn keeps working           |
+        | the turn is only finishing its background work | /goal clear | the background work keeps running        |
+
+    # Upstream #25426: an explicit queue still queues a goal.
+    @backlog @mc
+    Scenario: A goal the user queues on purpose waits its turn
+      When the user queues "/goal ship the fix"
+      Then "/goal ship the fix" is queued behind the running turn
+
+    # Upstream #25426: a goal on any other provider keeps the old behaviour.
+    @backlog @mc @priority-low
+    Scenario: A goal on another provider does not stop the turn
+      Given the thread runs on OpenCode
+      When the user sends "/goal ship the fix"
+      Then the running turn keeps working
+
+    # Upstream #25426: the goal's Clear stays available while the agent works; Resume waits.
+    @backlog @shared
+    Scenario: A goal can be cleared while the agent works
+      Given the agent is working toward a goal
+      Then the user can clear the goal
+      And resuming a paused goal waits until the turn ends
+
+    # Upstream #25426: setting or clearing a goal is not echoed back as a reply.
+    @backlog @mc @shared @plugin-codex @plugin-claude
+    Scenario: Setting or clearing a goal shows its state, not an echoed reply
+      When the user sets a goal and later clears it
+      Then the thread shows the goal's state
+      And no "Goal set", "Goal cleared" or "Goal paused" reply appears in the conversation
+      And "No goal set" still answers a goal command with nothing to act on

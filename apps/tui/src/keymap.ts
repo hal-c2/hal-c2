@@ -45,6 +45,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       },
       { keys: "PgUp/PgDn", description: "Scroll the conversation", chords: ["pageup", "pagedown"] },
       {
+        keys: "Ctrl+End",
+        description: "Back to the end of the conversation",
+        chords: ["ctrl+end"],
+      },
+      {
         keys: "Enter",
         description: "Send the reply · on a Space page: write a block, or ask an agent",
         chords: ["return"],
@@ -281,6 +286,8 @@ const COMPOSE: KeymapLayer = {
   ...THREAD_JUMPS,
   pageup: "timeline.pageUp",
   pagedown: "timeline.pageDown",
+  // Plain End stays the prompt's own cursor-to-end.
+  "ctrl+end": "timeline.showEnd",
   up: "approval.previous",
   down: "approval.next",
   "ctrl+up": "composer.grow",

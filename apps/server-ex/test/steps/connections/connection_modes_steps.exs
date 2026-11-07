@@ -54,7 +54,7 @@ defmodule HalC2.Steps.Connections.ConnectionModes do
   end
 
   step "clients on the LAN can pair with it", context do
-    assert [link] = Mc.run_task(Mix.Tasks.HalC2.Pair, [context.lan_base])
+    assert [link, _expires] = Mc.run_task(Mix.Tasks.HalC2.Pair, [context.lan_base])
     token = token_after(link, "#{context.lan_base}/?token=")
 
     assert {200, %{"access_token" => access}} = Mc.pair_http(context.lan_base, token)

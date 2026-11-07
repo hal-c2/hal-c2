@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20372
 #   https://github.com/pingdotgg/t3code/pull/17149
 #   https://github.com/pingdotgg/t3code/pull/12810
 #   docs/user/project-settings.md (Project icons)
@@ -235,6 +236,13 @@ Feature: Project and environment identity
       When the user searches the project for an icon image named "logo"
       Then "assets/logo.png" is offered
       And "src/logo.ts" is not offered
+
+    # Upstream #20372: every image in the picker showed the same generic icon.
+    @backlog @desktop @priority-low
+    Scenario: The icon image search shows each image's thumbnail
+      When the user searches the project for an icon image named "logo"
+      Then "assets/logo.png" is shown with a thumbnail of the image
+      And an image that cannot be read keeps the generic file icon
 
     # Legacy: apps/web/src/components/settings/ProjectFaviconPickerDialog.tsx (emptyMessage)
     @backlog @desktop @priority-low

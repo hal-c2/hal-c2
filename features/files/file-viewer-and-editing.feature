@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20950
+#   https://github.com/pingdotgg/t3code/pull/24627
+#   https://github.com/pingdotgg/t3code/pull/23106
+#   https://github.com/pingdotgg/t3code/pull/18092
+#   https://github.com/pingdotgg/t3code/pull/22853
+#   https://github.com/pingdotgg/t3code/pull/22188
 #   https://github.com/pingdotgg/t3code/pull/19526
 #   https://github.com/pingdotgg/t3code/pull/19898
 #   https://github.com/pingdotgg/t3code/pull/18819
@@ -67,6 +73,12 @@
 #   apps/tui/features/support/steps/files.steps.ts, files-viewer.steps.ts
 #   apps/desktop-qt/tests/native/features/FilesViewerSteps.cpp
 #   https://github.com/pingdotgg/t3code/pull/10311
+#   https://github.com/pingdotgg/t3code/pull/21362
+#   https://github.com/pingdotgg/t3code/pull/21466
+#   https://github.com/pingdotgg/t3code/pull/21467
+#   https://github.com/pingdotgg/t3code/pull/21469
+#   https://github.com/pingdotgg/t3code/pull/25804
+#   https://github.com/pingdotgg/t3code/pull/25702
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -157,6 +169,42 @@ Feature: Viewing and editing files
       When the user opens the link
       Then the files panel shows a tree rooted at "/home/sam/study"
       And its files open read-only
+
+    # Upstream #22853: a "../" link that climbs out of the project was read as a project path,
+    # which the MC refused, so it failed to open.
+    @shared @backlog
+    Scenario Outline: A relative file link resolves inside or outside the project by where it lands
+      Given a thread in "shop" at "/home/sam/shop"
+      And the agent linked "<link>"
+      When the user opens the link
+      Then <outcome>
+
+      Examples:
+        | link                | outcome                                                  |
+        | ../other/notes.md   | "/home/sam/other/notes.md" opens read-only as a host file |
+        | docs/a/../b.md      | "docs/b.md" opens as a project file                      |
+
+    # Upstream #20950: "~/" links opened in an external editor instead of the file panel.
+    @shared @mc @backlog
+    Scenario: A home-relative file link opens read-only in the file panel
+      Given the thread's MC runs as the user "sam" with the home "/home/sam"
+      And the agent linked "~/notes/todo.txt"
+      When the user opens the link
+      Then "/home/sam/notes/todo.txt" opens read-only in the file panel
+      And the home is the thread's MC's, not the client machine's
+
+    # Upstream #22188: a relative link to a folder ending in "/" did nothing when clicked.
+    @shared @backlog @priority-low
+    Scenario Outline: A relative link to a folder is a folder link
+      Given the agent's reply holds <text>
+      Then <outcome>
+
+      Examples:
+        | text                                | outcome                                        |
+        | the link "[patches/](patches/)"     | the link opens the folder "patches"            |
+        | the link "[My Folder](docs/My Folder/)" | the link opens the folder "docs/My Folder" |
+        | the link "[src](./apps/web/src/)"   | the link opens the folder "apps/web/src"       |
+        | the inline code "patches/"          | "patches/" is plain code, not a link           |
 
     # Upstream #15045: folder breadcrumbs navigate to parent folders
     @shared @backlog
@@ -285,12 +333,33 @@ Feature: Viewing and editing files
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
+    # Upstream #25702: a phrase that wraps across lines in a PDF was not found.
+    @backlog @desktop @mobile
+    Scenario Outline: Searching a PDF finds a phrase across a line break
+      Given "docs/report.pdf" has <text> where the line breaks
+      When the user searches the document for "<search>"
+      Then the phrase is found and both of its parts are highlighted
+
+      Examples:
+        | text                                          | search            |
+        | "quarterly" ending one line and "outlook" starting the next | quarterly outlook |
+        | "quar-" ending one line and "terly" starting the next       | quarterly         |
+
     @desktop @mobile
     Scenario: Media files of a thread on another machine are previewed
       Given the thread is on another machine of the cluster
       When the user opens "assets/logo.png"
       Then the file is previewed as an image
       And the image comes from the machine the thread is on
+
+    # Upstream #23106: a paused video jumped back to its first frame whenever the agent ran a
+    # command, even one that never touched it.
+    @backlog @desktop
+    Scenario: A paused video keeps its place until its file changes
+      Given the user paused "media/intro.mp4" at 5 seconds in the preview
+      When the agent runs a command that does not touch the video
+      Then the video stays paused at 5 seconds
+      But once the agent changes "media/intro.mp4" the new video loads, once
 
     # Upstream #17352: images, video, HTML and PDF preview before a thread's first message
     @backlog @desktop @mobile
@@ -448,6 +517,112 @@ Feature: Viewing and editing files
         | data/a.csv    | application/json          | the file is not shown as a table         |
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
+
+    # Upstream #21362: Word, Excel and PowerPoint files are previewed in the Files tab.
+    @backlog @desktop @priority-low
+    Scenario Outline: An office file is shown rendered
+      When the user opens "<path>" rendered
+      Then <shown>
+
+      Examples:
+        | path             | shown                                                                       |
+        | docs/plan.docx   | its pages are shown with the page count, and their text can be selected     |
+        | data/budget.xlsx | its sheets are shown as tabs, and a selection of cells copies with its format |
+        | docs/pitch.pptx  | its slides are shown with their notes, and previous and next step through them |
+
+    @backlog @desktop @priority-low
+    Scenario: Next stops at a deck's last slide
+      Given "docs/pitch.pptx" is open rendered
+      When the user steps to the last slide
+      Then the last slide is the one shown as current
+      And next can no longer be chosen
+
+    @backlog @desktop @priority-low
+    Scenario: Refreshing reloads an office file that was overwritten
+      Given "docs/plan.docx" is open rendered
+      And the file is overwritten with new pages
+      When the user refreshes the Files tab
+      Then the new pages are shown
+
+    # Upstream #21466: large text, CSV and TSV previews load as they scroll and describe the whole file.
+    @backlog @desktop @priority-low
+    Scenario: A large text file says how long it is
+      When the user opens "logs/build.log" of 45,000 lines
+      Then the number of lines and the file's size are shown
+      And each line shows its number
+
+    @backlog @desktop @priority-low
+    Scenario: A line far down a large file is revealed when it is asked for
+      Given an agent's reply links to line 500,000 of "logs/build.log"
+      When the user opens the link
+      Then line 500,000 is shown and marked
+
+    @backlog @desktop @priority-low
+    Scenario: End reaches the last line of a large wrapped file
+      Given "logs/build.log" is open with word wrap on
+      When the user presses End
+      Then the last line of the file is shown in full
+
+    @backlog @desktop @priority-low
+    Scenario: A large file whose access was refused can be tried again
+      Given "logs/build.log" is open
+      And reading more of it was refused because its access ran out
+      When the user chooses Try again
+      Then the rest of the file is shown
+
+    # Upstream #21467: images, SQLite databases and archives get previews of their own.
+    @backlog @desktop @priority-low
+    Scenario: An image in the Files tab shows its size and can be zoomed
+      When the user opens "assets/scan.tiff"
+      Then its width and height in pixels are shown
+      And it can be fitted to the tab, zoomed, or shown at its actual size
+
+    # Upstream #24627: an image outside the project said "Unable to load workspace image."
+    @backlog @desktop @mobile
+    Scenario: An image outside the project previews in the file panel
+      Given the host has the image "/home/sam/screens/bug.png"
+      When the user opens "/home/sam/screens/bug.png" in the file panel
+      Then the image is shown
+
+    @backlog @desktop @priority-low
+    Scenario: A SQLite database shows its tables
+      When the user opens "data/shop.sqlite"
+      Then the rows of one of its tables are shown with their columns
+      And the number of rows and columns and the file's size are shown
+      And the user can switch to another table
+
+    @backlog @desktop @priority-low
+    Scenario: An archive lists what is in it
+      When the user opens "data/export.zip"
+      Then its folders and files are listed and can be opened like folders
+      And the number of entries and the archive's size are shown
+
+    @backlog @desktop @priority-low
+    Scenario: A file that is not the database or archive it claims to be says so
+      When the user opens "data/shop.sqlite" that is not a SQLite database
+      Then the user is told the file could not be read
+
+    # Upstream #21469: OpenDocument files, e-books, rich text and notebooks are previewed.
+    @backlog @desktop @priority-low
+    Scenario Outline: A document is shown rendered
+      When the user opens "<path>" rendered
+      Then <shown>
+
+      Examples:
+        | path                  | shown                                                         |
+        | docs/minutes.odt      | its text is shown with the spaces and tabs it holds           |
+        | data/figures.ods      | its sheets are shown, without empty styled rows and columns   |
+        | docs/review.odp       | its slides are shown                                          |
+        | docs/letter.rtf       | its text and tables are shown                                 |
+        | notebooks/study.ipynb | its cells and their saved output are shown as they come into view |
+
+    @backlog @desktop @priority-low
+    Scenario: An e-book keeps its reading size from chapter to chapter
+      Given "books/handbook.epub" is open rendered
+      And the user made its text larger
+      When the user moves to the next chapter
+      Then the chapter and the position in the book are shown
+      And the text stays at the size the user chose
 
     @desktop
     Scenario: An open file sits beside the file tree
@@ -704,6 +879,14 @@ Feature: Viewing and editing files
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
 
+    # Upstream #18092: remote editor links dropped the SSH login, so the editor tried the local account.
+    @backlog @desktop
+    Scenario: A remote workspace opens in the local editor as the environment's SSH user
+      Given the thread's environment is reachable over SSH as "deploy" at "devbox"
+      When the user opens the thread's workspace in "VS Code", "Zed" or a JetBrains IDE
+      Then the editor connects to "devbox" as "deploy"
+      And an SSH alias with no user still takes its user from the SSH config
+
     # Upstream #19898: a previewed file of a remote environment opens as that file in VS Code.
     @backlog @desktop
     Scenario: A remote environment's file opens as that file in the local editor
@@ -923,6 +1106,16 @@ Feature: Viewing and editing files
         | from                     |
         | from the viewer          |
         | from the command palette |
+
+    # Upstream #25804: a Markdown preview showed YAML frontmatter as a rule and a heading.
+    @backlog @desktop @mobile
+    Scenario: A Markdown preview starts at the body, after its frontmatter
+      Given "SKILL.md" starts with YAML frontmatter and has the unticked task "Ship cart"
+      When the user opens "SKILL.md" in the rendered view
+      Then the preview starts at the document's body, without the frontmatter
+      When the user ticks "Ship cart"
+      Then "SKILL.md" records "Ship cart" as done and its frontmatter is unchanged
+      And the source view still shows the frontmatter
 
     @desktop
     Scenario: Ticking a Markdown task writes the file

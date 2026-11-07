@@ -452,7 +452,8 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
       "fj" ->
         context
         |> fj_storage_file(JSON.encode!(keys_map(%{"codeberg.org" => fj_host("ada-token")})))
-        |> fj_installed()
+        # fj's sign-in check answers here, not from another scenario's cached token.
+        |> fj_installed([whoami_rule("ada")])
         |> Map.put(:forgejo_cli, :fj)
 
       "tea" ->

@@ -7,7 +7,8 @@ defmodule Mix.Tasks.HalC2.Thread.Import do
       mix hal_c2.thread.import FILE [--project PROJECT]
 
   Without `--project` the thread goes into the one project that is a checkout of the
-  same repository. Nothing is written unless the whole file checks out.
+  same repository. Nothing is written unless the whole file checks out, and an import
+  that fails part way removes the files it copied.
   """
 
   use Mix.Task

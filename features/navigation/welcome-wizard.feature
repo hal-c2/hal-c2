@@ -1,9 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16688
+#   https://github.com/pingdotgg/t3code/pull/23226
 #   https://github.com/pingdotgg/t3code/pull/12474
 #   https://github.com/pingdotgg/t3code/pull/14584
 #   https://github.com/pingdotgg/t3code/pull/16887
 #   https://github.com/pingdotgg/t3code/pull/19354
 #   https://github.com/pingdotgg/t3code/pull/13935
+#   https://github.com/pingdotgg/t3code/pull/25805
 #   docs/user/welcome-wizard.md
 #   apps/web/src/components/onboarding/WelcomeWizard.tsx
 #   apps/web/src/components/onboarding/FirstRunGate.tsx
@@ -72,6 +75,15 @@ Feature: Welcome wizard
       Given the user imports projects that bring in 28 threads
       When the user finishes the wizard
       Then the user is told "Imported 28 threads" once the workspace is open
+
+    # Upstream #25805: the wizard stayed on "Importing…" when the landing project never arrived.
+    @backlog @desktop
+    Scenario: Importing finishes even when the landing project never arrives
+      Given the user imports projects and the MC accepts them
+      And the project to land in has not reached the client after 10 seconds
+      When the user finishes the wizard
+      Then setup finishes and the workspace opens without landing in that project
+      And a wizard the user closed does not finish setup behind their back
 
     @backlog @desktop
     Scenario: Finishing setup again after a failure replaces the earlier message
@@ -481,6 +493,14 @@ Feature: Welcome wizard
         | under Documents/Codex         |
         | under Downloads               |
 
+    # Upstream #16688: worktrees of a bare repository have no main checkout to offer instead.
+    @backlog @mc
+    Scenario: A worktree of a bare repository is offered as its own project
+      Given an agent used a linked worktree of a bare repository with no main checkout
+      When the wizard lists projects
+      Then that worktree is offered as a project of its own
+      And a worktree HAL-C2 made for a thread is still not offered
+
     @mc
     Scenario: A scan that hits its limit keeps what it found and warns
       Given an agent history too large to scan fully
@@ -502,6 +522,7 @@ Feature: Welcome wizard
       Then that conversation is skipped
       And the other conversations are imported
 
+      # Upstream #23226: the user guide still said 16 MiB; the limit is 4 GiB.
       # Both servers skip transcripts over 4 GiB (MAX_IMPORTED_TRANSCRIPT_BYTES); 16 MiB was an older limit.
       Examples:
         | problem                    |
