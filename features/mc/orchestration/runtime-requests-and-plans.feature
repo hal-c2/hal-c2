@@ -346,6 +346,19 @@ Feature: Approvals, questions and plans
     Then the resend is accepted
     And no second run starts for the plan
 
+  # The MC can stop between claiming the plan and sending the message, by a crash or
+  # a restart; the client resends the message once it reconnects.
+  @mc
+  Scenario: A message lost after claiming its plan is sent when it is resent
+    Given thread "t2" has an active proposed plan "p2"
+    And the MC stopped sending a message to "t1" referring to plan "p2" of "t2" once it claimed the plan
+    Then plan "p2" is completed
+    And "t1" does not have the message
+    When the client resends that message under a new command id
+    Then the resend is accepted
+    And "t1" has the message
+    And plan "p2" records that message as the one that implemented it
+
   @mc
   Scenario: Two messages implementing the same plan at once implement it once
     Given thread "t2" has an active proposed plan "p2"

@@ -35,7 +35,9 @@ defmodule HalC2.OrchestrationPropTest do
   implements (the composer's "Implement it" and "Implement in a new thread"): the plan
   is completed once, and a second message for it is refused, also one sent while Codex
   still holds the first one's steer. A message that was refused gives its plan back,
-  and a resend of one that implemented a plan is a resend like any other.
+  and a resend of one that implemented a plan is a resend like any other. The plan
+  records the message that implemented it: a send that stops after claiming the plan,
+  as at a crash, sends when it is resent, and only that message may.
 
   Each message names one of two Codex instances (`codex`, and `codex-work` from the
   settings); a message for the instance the running turn is not on never joins it, and
@@ -177,9 +179,11 @@ defmodule HalC2.OrchestrationPropTest do
   #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
   #     notice: the MC's own message to the agent}
   #   held_up: the thread whose last stop left a task held up, whose next commands favour it
-  def initial_state, do: %{threads: %{}, next: 1, held_up: nil}
+  #   plans: plan -> %{status, by: the message that implemented it}
+  # lost: {thread, msg} -> {plan's thread, plan}, sends that stopped after claiming the plan
+  def initial_state, do: %{threads: %{}, next: 1, held_up: nil, lost: %{}}
 
-  def command(%{threads: threads, next: next, held_up: held_up}) do
+  def command(%{threads: threads, next: next, held_up: held_up, lost: lost}) do
     tid = oneof(@threads)
     msg = "m#{next}"
 
@@ -286,6 +290,21 @@ defmodule HalC2.OrchestrationPropTest do
              let(
                [{pt, p} <- oneof(plans), t <- oneof(live ++ [tid])],
                do: {:call, __MODULE__, :implement_twice, [t, msg, pt, p]}
+             )},
+            {4,
+             let(
+               {pt, p} <- oneof(plans),
+               do: {:call, __MODULE__, :implement_lost, [tid, msg, pt, p]}
+             )}
+          ]
+        ) ++
+        if(lost == %{},
+          do: [],
+          else: [
+            {8,
+             let(
+               [{{t, m}, {pt, p}} <- oneof(Map.to_list(lost)), mode <- oneof([:queue, :auto])],
+               do: {:call, __MODULE__, :implement, [t, m, mode, "codex", pt, p]}
              )}
           ]
         ) ++
@@ -447,6 +466,9 @@ defmodule HalC2.OrchestrationPropTest do
   def precondition(%{threads: threads}, {:call, _, :implement, [tid, _, _, _, pt, plan]}),
     do: threads[tid] != nil and planned?(threads, pt, plan)
 
+  def precondition(%{threads: threads}, {:call, _, :implement_lost, [tid, _, pt, plan]}),
+    do: threads[tid] != nil and planned?(threads, pt, plan)
+
   def precondition(%{threads: threads}, {:call, _, :implement_twice, [tid, _, pt, plan]}),
     do: match?(%{status: :live}, threads[tid]) and planned?(threads, pt, plan)
 
@@ -540,22 +562,49 @@ defmodule HalC2.OrchestrationPropTest do
   defp step(state, _result, {:call, _, :resend, _}), do: state
 
   defp step(state, _result, {:call, _, :propose, [tid, plan]}),
-    do: update(%{state | next: state.next + 1}, tid, &put_in(&1.plans[plan], "active"))
+    do: update(%{state | next: state.next + 1}, tid, &put_in(&1.plans[plan], open_plan()))
 
-  # A message that implements a plan is sent as any other and completes it.
+  # A message that implements a plan is sent as any other and completes it. One the
+  # thread refuses gives back the plan it claimed, also one that claimed it before.
   defp step(state, result, {:call, m, :implement, [tid, msg, mode, instance, pt, plan]}) do
-    case implement_refusal(state, tid, pt, plan) do
+    case implement_refusal(state, tid, msg, pt, plan) do
       nil ->
         state
         |> step(result, {:call, m, :send, [tid, msg, mode, instance]})
-        |> update(pt, &put_in(&1.plans[plan], "completed"))
+        |> update(pt, &put_in(&1.plans[plan], %{status: "completed", by: msg}))
         |> update(
           tid,
           &update_in(&1, [:messages, msg], fn sent -> Map.put(sent, :plan, {pt, plan}) end)
         )
+        |> Map.update!(:lost, &Map.delete(&1, {tid, msg}))
+
+      {:error, "Proposed plan" <> _} ->
+        %{state | next: state.next + 1}
 
       _ ->
         %{state | next: state.next + 1}
+        |> update(pt, fn thread ->
+          if thread.plans[plan].by == msg,
+            do: put_in(thread.plans[plan], open_plan()),
+            else: thread
+        end)
+        |> Map.update!(:lost, &Map.delete(&1, {tid, msg}))
+    end
+  end
+
+  # The send stops once it has claimed the plan: the plan is completed by a message the
+  # thread does not have.
+  defp step(state, _result, {:call, _, :implement_lost, [tid, msg, pt, plan]}) do
+    state = %{state | next: state.next + 1}
+
+    case implement_refusal(state, tid, msg, pt, plan) do
+      {:error, "Proposed plan" <> _} ->
+        state
+
+      _ ->
+        state
+        |> update(pt, &put_in(&1.plans[plan], %{status: "completed", by: msg}))
+        |> Map.update!(:lost, &Map.put(&1, {tid, msg}, {pt, plan}))
     end
   end
 
@@ -958,11 +1007,18 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(_state, :resend, _args), do: :ok
 
-  defp expected_reply(state, :implement, [tid, _, _, _, pt, plan]),
-    do: implement_refusal(state, tid, pt, plan) || :ok
+  defp expected_reply(state, :implement, [tid, msg, _, _, pt, plan]),
+    do: implement_refusal(state, tid, msg, pt, plan) || :ok
 
-  defp expected_reply(state, :implement_twice, [tid, _, pt, plan]),
-    do: implement_refusal(state, tid, pt, plan) || :ok
+  defp expected_reply(state, :implement_twice, [tid, msg, pt, plan]),
+    do: implement_refusal(state, tid, msg, pt, plan) || :ok
+
+  defp expected_reply(state, :implement_lost, [tid, msg, pt, plan]) do
+    case implement_refusal(state, tid, msg, pt, plan) do
+      {:error, "Proposed plan" <> _} = refused -> refused
+      _ -> :lost
+    end
+  end
 
   # A stop for the latest run, which completed as the stop arrived, counts as
   # done: the provider had nothing active to stop (commands.feature).
@@ -1033,9 +1089,13 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp update(state, tid, fun), do: update_in(state.threads[tid], fun)
 
+  defp open_plan, do: %{status: "active", by: nil}
+
   # The plan is checked before the message is sent; a message refused gives it back.
-  defp implement_refusal(state, tid, pt, plan) do
-    if state.threads[pt].plans[plan] == "active",
+  defp implement_refusal(state, tid, msg, pt, plan) do
+    claimed = state.threads[pt].plans[plan]
+
+    if claimed.status == "active" or claimed.by == msg,
       do: refusal(state, tid, :send),
       else: {:error, "Proposed plan #{plan} is not active."}
   end
@@ -1413,6 +1473,44 @@ defmodule HalC2.OrchestrationPropTest do
 
     reply(result, if(match?({:ok, _}, result), do: steers, else: []))
   end
+
+  # A message implementing the plan whose send stops once it has claimed the plan, as
+  # at a crash: a streams hook ends the dispatching process at its next call into a
+  # stream. The send can also be refused before it claims anything.
+  def implement_lost(tid, msg, pt, plan) do
+    command = planned(message(tid, msg, :queue, "codex"), {pt, plan})
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :lose_after_claim, [pt, plan]})
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        Process.put(:lose_after_claim, msg)
+        exit({:sent, Orchestration.dispatch(command)})
+      end)
+
+    result =
+      receive do
+        {:DOWN, ^ref, :process, ^pid, :lost_after_claim} -> :lost
+        {:DOWN, ^ref, :process, ^pid, {:sent, sent}} -> sent
+        {:DOWN, ^ref, :process, ^pid, other} -> {:unexpected, other}
+      after
+        @wait_ms -> {:unexpected, :timeout}
+      end
+
+    Application.delete_env(:hal_c2, :streams_hook)
+    reply(result, [])
+  end
+
+  def lose_after_claim(pt, plan, :ensured, _stream_id) do
+    msg = Process.get(:lose_after_claim)
+    claimed = pt |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+
+    if msg &&
+         match?(%{"implementedByMessageId" => ^msg}, StreamState.fetch(claimed, "plan", plan)),
+       do: exit(:lost_after_claim),
+       else: :ok
+  end
+
+  def lose_after_claim(_pt, _plan, _stage, _stream_id), do: :ok
 
   def propose(tid, plan) do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
@@ -2130,6 +2228,7 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   defp outcome({:ok, %{}}), do: :ok
+  defp outcome(:lost), do: :lost
   defp outcome({:error, message}), do: {:error, message}
   defp outcome(other), do: {:unexpected, other}
 
@@ -2279,7 +2378,7 @@ defmodule HalC2.OrchestrationPropTest do
               {"plan-" <> _ = id, %{"kind" => "proposed_plan"} = plan} <-
                 StreamState.get(state, "plan"),
               into: %{},
-              do: {id, plan["status"]}
+              do: {id, %{status: plan["status"], by: plan["implementedByMessageId"]}}
             )
         }
     end

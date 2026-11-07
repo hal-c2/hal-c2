@@ -209,14 +209,18 @@ defmodule HalC2.Orchestration do
     ref = command["sourcePlanRef"]
     plan = unless ref == nil or delivered?(thread_id, command["messageId"]), do: ref
 
-    with :ok <- claim_plan(thread_id, plan) do
+    with :ok <- claim_plan(thread_id, command["messageId"], plan) do
       # Uploads join the thread before the message names them.
       sent =
         with {:ok, attachments} <-
                HalC2.Attachments.claim(thread_id, command["attachments"] || []),
              do: dispatch_message(thread_id, claimed(command, attachments))
 
-      with {:error, _} <- sent, do: reopen_plan(plan)
+      # A message refused for good gives its plan back. One refused only for now (a
+      # map: the same message is still being sent) leaves it with the send under way.
+      with {:error, reason} when is_binary(reason) <- sent,
+           do: reopen_plan(command["messageId"], plan)
+
       sent
     end
   end
@@ -4665,10 +4669,10 @@ defmodule HalC2.Orchestration do
   # its own project: this thread's own or another's ("Implement in a new thread").
   # Checking the plan and completing it is one step on the plan's thread, taken before
   # the message is sent, so two devices pressing "implement" start one run, not two.
-  # The message starting, queueing or steering a run all count. A resend that arrives
-  # between the claim and the send is refused as well: the plan is no longer active,
-  # and the message is not in the thread yet.
-  defp claim_plan(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
+  # The message starting, queueing or steering a run all count. The plan records the
+  # message that claimed it, so a resend of that message, after a crash between the
+  # claim and the send or while the first send is still on its way, sends it.
+  defp claim_plan(thread_id, message_id, %{"threadId" => plan_thread, "planId" => plan_id})
        when is_binary(plan_thread) do
     project = fn state, id -> (StreamState.fetch(state, "thread", id) || %{})["projectId"] end
     project_id = project.(HalC2.Streams.state(thread_id), thread_id)
@@ -4682,11 +4686,18 @@ defmodule HalC2.Orchestration do
                {:error,
                 "Proposed plan '#{plan_id}' belongs to thread '#{plan_thread}' in a different project."}}
 
+            plan["status"] == "completed" and is_binary(message_id) and
+                plan["implementedByMessageId"] == message_id ->
+              {[], :ok}
+
             plan["status"] != "active" ->
               {[], {:error, "Proposed plan #{plan_id} is not active."}}
 
             true ->
-              {[upsert(state, "plan", plan_id, &Map.put(&1, "status", "completed"))], :ok}
+              claimed =
+                &Map.merge(&1, %{"status" => "completed", "implementedByMessageId" => message_id})
+
+              {[upsert(state, "plan", plan_id, claimed)], :ok}
           end
 
         _ ->
@@ -4695,15 +4706,17 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  defp claim_plan(_thread_id, _ref), do: :ok
+  defp claim_plan(_thread_id, _message_id, _ref), do: :ok
 
-  # A message that was not sent gives its plan back.
-  defp reopen_plan(%{"threadId" => plan_thread, "planId" => plan_id})
+  # A message that was not sent gives back the plan it claimed.
+  defp reopen_plan(message_id, %{"threadId" => plan_thread, "planId" => plan_id})
        when is_binary(plan_thread) do
+    reopened = &(&1 |> Map.put("status", "active") |> Map.delete("implementedByMessageId"))
+
     HalC2.Streams.transact(plan_thread, :thread, fn state ->
       case StreamState.fetch(state, "plan", plan_id) do
-        %{"status" => "completed"} ->
-          {[upsert(state, "plan", plan_id, &Map.put(&1, "status", "active"))], :ok}
+        %{"status" => "completed", "implementedByMessageId" => ^message_id} ->
+          {[upsert(state, "plan", plan_id, reopened)], :ok}
 
         _ ->
           {[], :ok}
@@ -4711,7 +4724,7 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  defp reopen_plan(_ref), do: :ok
+  defp reopen_plan(_message_id, _ref), do: :ok
 
   @doc "The next free turn-item ordinal in a thread."
   def next_ordinal(state) do

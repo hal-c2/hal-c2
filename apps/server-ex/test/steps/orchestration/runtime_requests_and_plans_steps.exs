@@ -688,6 +688,61 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  step "the MC stopped sending a message to {string} referring to plan {string} of {string} once it claimed the plan",
+       %{args: [thread, plan, plan_thread]} = context do
+    command = implementation(context, thread, "Implement it", plan_thread, plan)
+    hook = {__MODULE__, :lose_after_claim, [World.thread_id(context, plan_thread), plan]}
+    Application.put_env(:hal_c2, :streams_hook, hook)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        Process.put(:lose_after_claim, command["messageId"])
+        HalC2.Orchestration.dispatch(Map.put(command, "commandId", "cmd-lost"))
+      end)
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, :lost_after_claim}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+    Map.put(context, :sent, command)
+  end
+
+  step "{string} does not have the message", %{args: [thread]} = context do
+    refute StreamState.fetch(World.state(context, thread), "message", context.sent["messageId"])
+    context
+  end
+
+  step "{string} has the message", %{args: [thread]} = context do
+    assert %{"text" => "Implement it"} =
+             StreamState.fetch(World.state(context, thread), "message", context.sent["messageId"])
+
+    context
+  end
+
+  step "plan {string} records that message as the one that implemented it",
+       %{args: [plan]} = context do
+    recorded = World.state(context, context.plans[plan]).entities["plan"][plan]
+    assert recorded["implementedByMessageId"] == context.sent["messageId"]
+    context
+  end
+
+  # A streams hook: the dispatch that set `:lose_after_claim` dies at its first call
+  # into a stream once its message has claimed the plan, before the message is sent.
+  def lose_after_claim(plan_thread, plan, :ensured, _stream_id) do
+    message_id = Process.get(:lose_after_claim)
+
+    claimed =
+      plan_thread
+      |> HalC2.Streams.ensure()
+      |> HalC2.Streams.Server.state()
+      |> StreamState.fetch("plan", plan)
+
+    if message_id && match?(%{"implementedByMessageId" => ^message_id}, claimed),
+      do: exit(:lost_after_claim),
+      else: :ok
+  end
+
+  def lose_after_claim(_plan_thread, _plan, _stage, _stream_id), do: :ok
+
   step "the client resends that message under a new command id", context do
     World.command(context, Map.delete(context.sent, "commandId"))
   end
@@ -1000,7 +1055,12 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
 
   # Keeps the command as `context.sent`, for a resend.
   defp implement(context, thread, text, plan_thread, plan) do
-    command = %{
+    command = implementation(context, thread, text, plan_thread, plan)
+    context |> World.command(command) |> Map.put(:sent, command)
+  end
+
+  defp implementation(context, thread, text, plan_thread, plan) do
+    %{
       "type" => "message.dispatch",
       "threadId" => World.thread_id(context, thread),
       "messageId" => "msg-#{System.unique_integer([:positive])}",
@@ -1008,7 +1068,5 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
       "attachments" => [],
       "sourcePlanRef" => %{"threadId" => World.thread_id(context, plan_thread), "planId" => plan}
     }
-
-    context |> World.command(command) |> Map.put(:sent, command)
   end
 end
