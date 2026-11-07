@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24738
+#   https://github.com/pingdotgg/t3code/pull/18823
 #   https://github.com/pingdotgg/t3code/pull/19801
+#   https://github.com/pingdotgg/t3code/pull/24808
 #   https://github.com/pingdotgg/t3code/pull/20533
 #   https://github.com/pingdotgg/t3code/pull/15007
 #   https://github.com/pingdotgg/t3code/pull/18432
@@ -568,6 +571,23 @@ Feature: Threads that work on or link pull requests
     When the user clicks that link
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
+  # Upstream #24738: the phone opened a pull request link in the app only for a project cloned
+  # from that exact repository, so a mirror's link went to the GitHub app.
+  @backlog @desktop @mobile
+  Scenario Outline: A pull request link opens in HAL-C2 when a project can read it
+    Given the only project is cloned from <project>
+    And a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
+    When the user opens that link
+    Then <outcome>
+
+    Examples:
+      | project                                                  | outcome                                              |
+      | "github.com/acme/shop"                                   | pull request 42 opens in HAL-C2                      |
+      | "github.com/acme/tools", and the MC reads by host        | pull request 42 opens in HAL-C2                      |
+      | "git.cafe/acme/shop", which mirrors the GitHub one       | pull request 42 opens in HAL-C2                      |
+      | "gitlab.com/acme/shop"                                   | the link opens outside HAL-C2                        |
+      | "github.com/acme/shop", on an MC that reads no pull requests | the link opens outside HAL-C2                    |
+
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (shouldOpenPullRequestExternally)
   @desktop
   Scenario: A click with the modifier key opens a pull request link in the browser
@@ -953,6 +973,16 @@ Feature: Threads that work on or link pull requests
     And it wakes the thread when a check fails, required checks pass, someone else comments or reviews, or it starts to conflict
     And each change is reported once
 
+  # Upstream #24808: a delegated child's watch was refused, yet children kept calling it, so the
+  # tools are now hidden from them; their parent owns the pull request.
+  @backlog @mc
+  Scenario: A delegated child cannot see the pull request watch tools
+    Given a thread delegated a task to a subagent
+    When the subagent lists its MCP tools
+    Then watch_pull_request and unwatch_pull_request are not among them
+    And calling watch_pull_request from the subagent fails as an unknown tool
+    But the delegating thread still lists both tools
+
   @backlog @mc
   Scenario: Watching ends when it can no longer help
     Given a watched pull request
@@ -1064,6 +1094,15 @@ Feature: Threads that work on or link pull requests
     Given a thread has a pull request linked through the MCP tool or the dialog
     When the user opens the pull request panel
     Then it is enabled and shows that pull request
+
+  # Upstream #18823: switching threads carried another thread's pull request tab into the panel.
+  @backlog @shared @priority-low
+  Scenario: Each thread's pull request panel keeps the tab chosen in it
+    Given the pull request panel of "Cart totals" shows its files
+    And the pull request panel of "Checkout" shows its summary
+    When the user switches from "Checkout" to "Cart totals"
+    Then the panel of "Cart totals" shows its files
+    And a tab its pull request no longer has falls back to the summary without forgetting the choice
 
   @backlog @shared @priority-low
   Scenario: A pull request link that is really an issue says so

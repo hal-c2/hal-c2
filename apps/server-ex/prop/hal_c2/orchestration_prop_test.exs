@@ -55,7 +55,8 @@ defmodule HalC2.OrchestrationPropTest do
   ended, then compares each thread's projection with the model: thread state, runs
   and their statuses in ordinal order (the order they started), the queue's order and
   positions, at most one active run, and every user message exactly once, in the run
-  it belongs to. A message that steered a turn reached Codex once (the fake logs every
+  it belongs to, and the run a restart or a promote interrupted names the message's
+  run (`steeredByRunId`). A message that steered a turn reached Codex once (the fake logs every
   `turn/steer`) and is in the transcript ahead of the answer it got. A message of the
   MC's own is in the transcript as a notification, never as a user message; it queues
   ahead of the user's messages, and while it is queued it cannot be edited, moved or
@@ -1182,6 +1183,10 @@ defmodule HalC2.OrchestrationPropTest do
       Enum.find(thread.runs, &(&1.msg == msg)).instance == run.instance
   end
 
+  # The running turn is interrupted for `msg`, which it names (`steeredByRunId`).
+  defp steered_by(thread, msg),
+    do: set_runs(thread, &if(&1.status == :running, do: Map.put(&1, :by, msg), else: &1))
+
   defp end_running(thread, status),
     do: set_runs(thread, &if(&1.status == :running, do: %{&1 | status: status}, else: &1))
 
@@ -1328,6 +1333,7 @@ defmodule HalC2.OrchestrationPropTest do
       mode == :restart ->
         %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
         |> put_in([:messages, msg], message)
+        |> steered_by(msg)
         |> end_running(:interrupted)
         |> start_next()
 
@@ -1367,6 +1373,7 @@ defmodule HalC2.OrchestrationPropTest do
 
       %{instance: other} when other != instance or how == :refused ->
         %{thread | queue: first(thread, msg)}
+        |> steered_by(msg)
         |> end_running(:interrupted)
         |> start_next()
 
@@ -1392,7 +1399,7 @@ defmodule HalC2.OrchestrationPropTest do
       runs:
         for(
           run <- thread.runs,
-          do: {run.msg, Atom.to_string(run.status), run.held, run.instance}
+          do: {run.msg, Atom.to_string(run.status), run.held, run.instance, Map.get(run, :by)}
         ),
       queue: thread.queue,
       foreign: [],
@@ -2360,7 +2367,7 @@ defmodule HalC2.OrchestrationPropTest do
               run <- runs,
               do:
                 {run["userMessageId"], run["status"], run["queueHeld"] == true,
-                 run["providerInstanceId"]}
+                 run["providerInstanceId"], by_id[run["steeredByRunId"]]["userMessageId"]}
             ),
           queue: queue,
           foreign: foreign(state, runs),

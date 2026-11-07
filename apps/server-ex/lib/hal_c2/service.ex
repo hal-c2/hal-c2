@@ -228,10 +228,42 @@ defmodule HalC2.Service do
 
   defp restart_pending_path, do: Path.join(HalC2.Paths.state_dir(), ".restart-pending")
 
-  @doc "Stops the service and removes it from startup. Projects and settings stay."
+  @doc """
+  Stops the service and removes it from startup, and the provider programs it kept
+  through its restarts with it. Projects and settings stay.
+  """
   def uninstall do
     with manager when manager != nil <- manager() || {:error, unsupported()},
-         do: remove(manager, installed(manager))
+         units = installed(manager),
+         homes = Enum.map(units, fn {_name, path} -> unit_state(path) end),
+         :ok <- remove(manager, units) do
+      # Only a removed service's programs: an MC in the foreground keeps its own.
+      for state when is_binary(state) <- homes,
+          do: HalC2.Subprocess.Durable.stop_all(Path.join(state, "durable"))
+
+      :ok
+    end
+  end
+
+  # The state dir the MC a unit runs keeps its files in, which its log names
+  # (`log_path/0`). Nil for a unit that does not log there: one T3 Code or the Node
+  # server wrote, neither of which kept programs through a restart, so it has none to
+  # stop. The path is one `installed/1` built under the user's home, never a caller's.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp unit_state(path) do
+    case Regex.run(
+           ~r{(?:StandardOutput=append:|<key>StandardOutPath</key>\s*<string>)([^\n<]+)/logs/boot-service\.log},
+           File.read!(path)
+         ) do
+      [_, dir] ->
+        dir
+        |> String.replace("&lt;", "<")
+        |> String.replace("&gt;", ">")
+        |> String.replace("&amp;", "&")
+
+      nil ->
+        nil
+    end
   end
 
   defp remove(_manager, []), do: :ok

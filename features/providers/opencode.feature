@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23939
+#   https://github.com/pingdotgg/t3code/pull/15672
+#   https://github.com/pingdotgg/t3code/pull/19636
+#   https://github.com/pingdotgg/t3code/pull/21007
+#   https://github.com/pingdotgg/t3code/pull/22938
 #   https://github.com/pingdotgg/t3code/pull/20446
 #   https://github.com/pingdotgg/t3code/pull/20882
 #   https://github.com/pingdotgg/t3code/pull/17922
@@ -38,6 +43,7 @@
 #   apps/server/src/provider/providerCompatibility.ts
 #   apps/server/src/provider/Layers/openCodeUsageLimits.ts, apps/server/src/textGeneration/OpenCodeTextGeneration.ts
 #   https://github.com/pingdotgg/t3code/pull/14978
+#   https://github.com/pingdotgg/t3code/pull/22596
 
 @plugin-opencode @mc
 Feature: OpenCode
@@ -87,6 +93,21 @@ Feature: OpenCode
     Given OpenCode 2 lists its models but its list of providers cannot be read
     When the MC checks OpenCode's status
     Then its models are offered, each with its provider's id
+
+  # Upstream #23939: a failed version check or model list left OpenCode unusable until the user
+  # refreshed providers.
+  @backlog @mc
+  Scenario: An OpenCode whose models could not be read is checked again until it recovers
+    Given an installed and enabled OpenCode whose model list could not be read
+    When the provider health check interval passes
+    Then the MC reads OpenCode's models again, each interval, until they are listed
+    And the reason each read failed is in the MC's log
+
+  @backlog @mc @priority-low
+  Scenario: An OpenCode server that rejects the MC's password is not retried
+    Given an OpenCode server refuses the MC's password
+    Then OpenCode is shown as signed out
+    And the MC does not keep retrying it in the background
 
   Scenario: OpenCode is only offered when the opencode command is installed
     Given the opencode command is not installed on the MC
@@ -303,6 +324,30 @@ Feature: OpenCode
     When the user opens the limits view
     Then OpenCode Go shows its session, weekly and monthly windows
 
+  # Upstream #21007: OpenCode 2 running Go through a Console API key showed "could not read usage".
+  @backlog @priority-low
+  Scenario: OpenCode Go limits are read through a connected Console API key
+    Given a local OpenCode runs Go through a connected Console API key
+    And its separate OpenCode Go key has expired
+    When the user opens the limits view
+    Then OpenCode Go shows its windows read through the Console API key
+
+  # Upstream #19636: a probe timeout cached an empty command list for good.
+  @backlog @priority-low
+  Scenario: OpenCode's workspace commands are read again after a probe times out
+    Given OpenCode's workspace command list did not arrive within ten seconds
+    When the MC checks OpenCode again
+    Then the commands it read before are still offered
+    And the command list is asked for again
+
+  # Upstream #15672: OpenCode 2 waiting to retry a failed model request looked silently busy.
+  @backlog
+  Scenario: An OpenCode turn waiting to retry its model request says so
+    Given an OpenCode turn is running
+    When OpenCode schedules a retry of a failed model request
+    Then the turn shows one retry row that updates with each attempt
+    And the row settles when the request recovers, fails or is interrupted
+
   # Upstream #18315: OpenCode's quota and rate-limit stops read as provider errors; they are now
   # usage limits, with no reset time made up.
   @backlog
@@ -316,6 +361,18 @@ Feature: OpenCode
       | reason             |
       | an exhausted quota |
       | a rate limit       |
+
+  # Upstream #22596: a quota stop that is a payment problem (HTTP 402) is not a usage limit.
+  @backlog
+  Scenario Outline: An OpenCode quota stop shows as a usage limit only when it is one
+    Given an OpenCode turn is running
+    When OpenCode stops it for its quota with status <status> and the message "<message>"
+    Then the turn shows <shown>
+
+    Examples:
+      | status | message                      | shown                                              |
+      | 429    | Too many requests            | it hit a usage limit                               |
+      | 402    | Add credits to keep going    | a provider error saying "Add credits to keep going" |
 
   Scenario: OpenCode Go limits are unsupported on an external server
     Given the OpenCode instance uses an external server
@@ -838,6 +895,14 @@ Feature: OpenCode
     When OpenCode updates its to-do list with one item in progress and one done
     Then the thread shows a "Todo list" with one step running and one done
     And the list is finished only once every item is done
+
+  # Upstream #22938: a cancelled OpenCode to-do was shown as pending, so the list never finished.
+  @backlog
+  Scenario: A cancelled OpenCode to-do is left out and the list can finish
+    When OpenCode updates its to-do list with two items done and one cancelled
+    Then the thread's "Todo list" shows the two done steps
+    And the list is finished
+    And a list whose every item was cancelled is finished too
 
   @backlog @priority-low
   Scenario: An OpenCode to-do without text is numbered

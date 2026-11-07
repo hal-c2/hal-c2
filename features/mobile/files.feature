@@ -3,6 +3,9 @@
 #   https://github.com/pingdotgg/t3code/pull/19241
 #   https://github.com/pingdotgg/t3code/pull/16729
 #   https://github.com/pingdotgg/t3code/pull/15047
+#   https://github.com/pingdotgg/t3code/pull/24268
+#   https://github.com/pingdotgg/t3code/pull/25156
+#   https://github.com/pingdotgg/t3code/pull/24270
 #   apps/mobile/src/features/files/ (tree, search, previews, copy, save or share, attachments)
 #   apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 #   apps/mobile/src/features/files/FileTreeBrowser.tsx
@@ -115,6 +118,14 @@ Feature: Browsing a thread's files on a phone
     When the user refreshes the files
     Then "src/tax.ts" is listed
 
+  # Upstream #24270: a file tree kept its loads and errors across workspace switches.
+  @backlog @mobile
+  Scenario: Each workspace keeps its own file tree
+    Given the files of "Fix checkout" are still loading
+    When the user opens the files of a thread in another workspace
+    Then that workspace's tree is listed, with nothing from "Fix checkout"
+    And an error listing "Fix checkout" does not show in the other workspace
+
   @backlog @mobile
   Scenario: An empty workspace says so
     Given the thread's workspace has no files
@@ -147,6 +158,15 @@ Feature: Browsing a thread's files on a phone
     Then long lines wrap
     When the user turns word wrap off
     Then long lines scroll sideways
+
+  # Upstream #25156: with word wrap on, a link to a line far down a file crashed the app.
+  @backlog @mobile @priority-high
+  Scenario: A link to a line far down a wrapped file opens at that line
+    Given word wrap is on
+    And "model.py" has 1,200 lines, many of them long
+    When the user opens a link to "model.py" line 900
+    Then "model.py" opens with line 900 in view
+    And dragging the file before it gets there leaves it where the user dragged it
 
   @backlog @mobile
   Scenario Outline: Media files open in a native preview
@@ -569,6 +589,20 @@ Feature: Browsing a thread's files on a phone
     Given the user is watching "demo.mp4" in the thread
     When the user switches to another app
     Then the video is paused
+
+  # Upstream #24268: a video kept playing after its thread or pull request section left the screen.
+  @backlog @mobile @priority-low
+  Scenario Outline: A video pauses when the content it is in is no longer shown
+    Given the user is watching "demo.mp4" in <place>
+    When the user <leaves>
+    Then the video is paused
+    When the user comes back
+    Then the video is still paused where it stopped
+
+    Examples:
+      | place                                  | leaves                                    |
+      | the thread "Checkout"                  | opens another thread                      |
+      | a section of pull request 42           | switches to another section of pull request 42 |
 
   @backlog @mobile @priority-low
   Scenario: A video shown full screen is not paused by the phone's own full-screen view

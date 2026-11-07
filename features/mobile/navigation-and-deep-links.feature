@@ -1,8 +1,18 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24262
+#   https://github.com/pingdotgg/t3code/pull/24750
+#   https://github.com/pingdotgg/t3code/pull/24742
+#   https://github.com/pingdotgg/t3code/pull/23795
+#   https://github.com/pingdotgg/t3code/pull/23841
+#   https://github.com/pingdotgg/t3code/pull/24524
+#   https://github.com/pingdotgg/t3code/pull/24644
+#   https://github.com/pingdotgg/t3code/pull/21033
 #   https://github.com/pingdotgg/t3code/pull/14697
 #   https://github.com/pingdotgg/t3code/pull/17268
 #   https://github.com/pingdotgg/t3code/pull/15068
 #   https://github.com/pingdotgg/t3code/pull/15844
+#   https://github.com/pingdotgg/t3code/pull/19292
+#   https://github.com/pingdotgg/t3code/pull/22526
 #   docs/internals/mobile-navigation.md (root stack, overlay routes, previews)
 #   apps/mobile/src/Stack.tsx (route table, deep link prefixes, not found)
 #   apps/mobile/src/features/shortcuts/ (Android launcher shortcuts, allowlisted links)
@@ -28,6 +38,100 @@ Feature: Navigating the phone app and opening links into it
   Scenario: Opening a thread keeps the home screen one step back
     When the user opens "Fix checkout" from the home screen
     Then going back returns to the home screen
+
+  # Upstream #19292: on Android, Back from a thread whose turn was running often froze the app.
+  @backlog @mobile @priority-high
+  Scenario: Going back from a thread whose agent is working returns home at once
+    Given an agent is working in "Fix checkout"
+    And the user opened "Fix checkout" from the home screen
+    When the user goes back
+    Then the home screen is shown
+    And the row for "Fix checkout" keeps counting how long it has been working
+
+  # Upstream #22526: on a folded phone the list came back after Back, but picking another row
+  # changed nothing.
+  @backlog @mobile @priority-low
+  Scenario: After going back on a folded phone another row opens
+    Given the phone is folded and the user opened "Fix checkout"
+    When the user goes back to the list
+    And the user picks the thread "Port tests"
+    Then "Port tests" is shown
+
+  # Upstream #22526
+  @backlog @mobile @priority-low
+  Scenario: A back swipe the user cancels keeps the thread open
+    Given the phone is folded and the user opened "Fix checkout"
+    When the user starts a back swipe and lets it go back
+    Then "Fix checkout" is still shown
+    And going back afterwards returns to the list
+
+  # Upstream #24742: on a split layout, picking a thread after the sidebar came back pushed a
+  # new page each time, so Back stepped through every thread picked.
+  @backlog @mobile
+  Scenario Outline: Picking a thread from <where> replaces the page shown
+    Given the user opened "Fix checkout"
+    When the user picks the thread "Port tests" from <where>
+    Then "Port tests" is shown
+    And going back once returns to the home screen
+
+    Examples:
+      | where                                     |
+      | the sidebar after unfolding the phone     |
+      | the sidebar after hiding and showing it   |
+      | the command palette                       |
+      | a notification                            |
+      | a link                                    |
+
+  # Upstream #24742
+  @backlog @mobile
+  Scenario: A thread opened from inside a thread is a step forward
+    Given the user opened "Fix checkout"
+    When the user opens a pull request from "Fix checkout"
+    And the user goes back
+    Then "Fix checkout" is shown
+
+  # Upstream #24262: opening a pull request while its environment was connecting moved it for
+  # good to another connected copy of the repository.
+  @backlog @mobile
+  Scenario Outline: A pull request opens on the environment it was asked for while it <state>
+    Given "My MacBook" and "Office Mac" both have the project "shop"
+    And "Office Mac" <state>
+    When the user opens pull request 42 of "shop" on "Office Mac"
+    Then <outcome>
+
+    Examples:
+      | state             | outcome                                              |
+      | is connecting     | it opens on "Office Mac" once it has connected       |
+      | is reconnecting   | it opens on "Office Mac" once it has connected       |
+      | is offline        | it opens on "My MacBook"                             |
+      | was removed       | it opens on "My MacBook"                             |
+
+  # Upstream #24742: a cold launch switched from Settings back to Chats showed the thread, then
+  # an empty page.
+  @backlog @mobile @priority-low
+  Scenario: Returning to Chats after a fresh start shows the reopened thread once
+    Given the app started again on "Fix checkout"
+    When the user opens Settings and goes back to Chats
+    Then "Fix checkout" is shown, with no empty page and no second transition
+
+  # Upstream #24750: returning to Chats after leaving a new task's draft opened the last thread
+  # instead of the draft.
+  @backlog @mobile
+  Scenario: Chats reopens the draft the user left it on
+    Given the user was writing a new task in Chats
+    When the user opens Settings and goes back to Chats
+    Then the new task's draft is shown
+    When the user opens "Fix checkout" and later leaves Chats and comes back
+    Then "Fix checkout" is shown
+
+  # Upstream #21033: Android Back from a subagent thread dropped its parent.
+  @backlog @mobile
+  Scenario: Back from a subagent's thread returns to the thread that started it
+    Given the user opened "Fix checkout" from the home screen
+    When the user opens a subagent's thread from "Fix checkout"
+    And the user goes back
+    Then "Fix checkout" is shown
+    And going back again returns to the home screen
 
   # Upstream #17268: navigation is preserved after a native swipe back
   @backlog @mobile @priority-low
@@ -248,3 +352,54 @@ Feature: Navigating the phone app and opening links into it
       | entry                  |
       | the live subagent card |
       | its finished row       |
+
+  # Upstream #23795: Open thread on a subagent's row, and thread links, swapped out the thread
+  # they were tapped in, so Back skipped it.
+  @backlog @mobile
+  Scenario Outline: Back from a thread opened from another thread returns to it
+    Given the user is reading "Fix checkout"
+    When the user opens "Add tests" from <entry> in "Fix checkout"
+    And the user goes back
+    Then "Fix checkout" is shown
+
+    Examples:
+      | entry                                    |
+      | "Open thread" on its expanded row        |
+      | a thread link in a reply                 |
+      | a thread mention in a message's context  |
+      | the composer's thread chip               |
+
+  @backlog @mobile @priority-low
+  Scenario: Opening the thread just behind goes back to it
+    Given the user opened the subagent thread "Add tests" from "Fix checkout"
+    When the user opens "Fix checkout" from a message in "Add tests"
+    Then "Fix checkout" is shown
+    And going back again returns to the home screen
+
+  # Upstream #23841 and #24524: Usage was reached only through Settings, and Settings opened as
+  # a separate card outside the workspace's columns.
+  @backlog @mobile
+  Scenario: The workspace's navigation reaches chats, pull requests, usage and settings
+    When the user looks at the phone's workspace navigation
+    Then it offers Chats, Pull requests, Usage and Settings
+    And the section that is open is marked
+
+  @backlog @mobile
+  Scenario: Settings on a split layout keeps its list beside the page
+    Given the layout is split
+    When the user opens Settings and chooses "Environments"
+    Then the settings list stays in the sidebar with "Environments" marked
+    And the "Environments" page opens beside it
+
+  @backlog @mobile
+  Scenario: Switching sections never lands on an empty page
+    Given the layout is split and the user was last on the "Environments" settings page
+    When the user switches from Settings to Chats and back
+    Then the "Environments" page is shown, not a "Select a…" placeholder
+
+  # Upstream #24644: returning to Settings showed nothing marked for a moment.
+  @backlog @mobile @priority-low
+  Scenario: Returning to Settings shows the page it reopens on marked from the start
+    Given the layout is split and Settings was last on "Environments"
+    When the user returns to Settings from Chats
+    Then "Environments" is marked in the settings list as soon as it shows
