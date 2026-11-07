@@ -1332,7 +1332,10 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
-  step "the message runs once that turn is interrupted", context do
+  # A Stop holds the queue (queue-and-steering.feature), so the queued message runs
+  # once the user resumes it.
+  step "the message runs once that turn is interrupted and the user resumes the queue",
+       context do
     [%{"id" => run_id, "status" => "running"} | _] =
       Turns.runs(state(context.thread_id))
 
@@ -1341,6 +1344,14 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
                "type" => "run.interrupt",
                "threadId" => context.thread_id,
                "runId" => run_id
+             })
+
+    [_, _] = Turns.await_runs(context.thread_id, ["interrupted", "queued"])
+
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "queue.resume",
+               "threadId" => context.thread_id
              })
 
     [_, _] = Turns.await_runs(context.thread_id, ["interrupted", "completed"])
