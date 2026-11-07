@@ -1668,6 +1668,11 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
+  defp target(%{"modelSelection" => %{"options" => [_ | _]} = selection}, nil),
+    do:
+      {:ok,
+       Map.put(selection, "options", model_options(HalC2.Environment.providers(), selection))}
+
   defp target(thread, nil), do: {:ok, thread["modelSelection"]}
 
   defp target(thread, target) do
@@ -1702,7 +1707,7 @@ defmodule HalC2.Orchestration.Delegation do
            :ok <- options_valid(models, instance, model, options) do
         options =
           if instance == inherited["instanceId"] and model == inherited["model"],
-            do: merge_options(inherited["options"], options),
+            do: merge_options(model_options(providers, inherited), options),
             else: options
 
         {:ok,
@@ -1784,6 +1789,34 @@ defmodule HalC2.Orchestration.Delegation do
   # The requested options against the model's descriptors (upstream
   # `invalidOptionSelections`): duplicates always fail; without descriptors the
   # rest is the provider's to judge.
+  @doc """
+  The options of `selection` its model has, by the model's option descriptors among
+  `providers`: an option stored for an earlier model, or off by default, is not the
+  caller's to pass on. All of them when the model lists no descriptors; nil for none.
+  """
+  def model_options(providers, %{"options" => [_ | _] = options} = selection) do
+    descriptors =
+      Enum.find_value(providers, fn provider ->
+        provider["instanceId"] == selection["instanceId"] &&
+          Enum.find_value(
+            provider["models"] || [],
+            &(&1["slug"] == selection["model"] &&
+                get_in(&1, ["capabilities", "optionDescriptors"]))
+          )
+      end)
+
+    case descriptors do
+      [_ | _] ->
+        ids = MapSet.new(descriptors, & &1["id"])
+        Enum.filter(options, &MapSet.member?(ids, &1["id"]))
+
+      _ ->
+        options
+    end
+  end
+
+  def model_options(_providers, _selection), do: nil
+
   # On the caller's own model the task's options go over the caller's, so naming the
   # effort keeps fast mode; an empty list clears them.
   defp merge_options(inherited, options) when inherited in [nil, []] or options == [],
@@ -1933,6 +1966,12 @@ defmodule HalC2.Orchestration.Delegation do
       type == "root" ->
         {:ok, {"root", %{"type" => "root"}}}
 
+      type == "worktree" and outside?(thread["worktreePath"], root) ->
+        {:error, "workspace_outside_project",
+         "This thread works in #{thread["worktreePath"]}, which is not a checkout of the " <>
+           "project's repository, so no worktree can be made from it. Leave workspace out " <>
+           "to share the caller's checkout."}
+
       type == "worktree" ->
         new_worktree(thread, root, asked)
 
@@ -2025,6 +2064,10 @@ defmodule HalC2.Orchestration.Delegation do
     do: match?({:ok, _}, HalC2.Git.ok(root, ["check-ref-format", "--branch", branch]))
 
   # Two checkouts of one repository share a common git dir.
+  # A caller's checkout that is there and is not of the project's repository.
+  defp outside?(cwd, root),
+    do: is_binary(cwd) and File.dir?(cwd) and common_dir(cwd) != common_dir(root)
+
   defp common_dir(cwd) do
     case HalC2.Git.ok(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) do
       {:ok, dir} -> String.trim(dir)

@@ -798,12 +798,23 @@ defmodule HalC2.Mcp.Tools do
 
       {"thread", row} ->
         # The stream's modes: the sidebar row trails a change.
+        # So is its running turn: a send just after a turn starts steers it.
         with :ok <- no_escalation(sender, thread(id) || row),
-             do: dispatch_message(row, sender["id"], args)
+             do: dispatch_message(Map.put(row, "activeRunId", active_run(id)), sender["id"], args)
 
       nil ->
         {:error, "thread_not_found", "The thread was not found."}
     end
+  end
+
+  # The thread's newest turn that can still be steered or interrupted, as the sidebar
+  # row's `activeRunId` names it once the projection catches up.
+  defp active_run(id) do
+    stream(id)
+    |> StreamState.list("run")
+    |> Enum.filter(&(&1["status"] in ~w(preparing starting running)))
+    |> Enum.max_by(&(&1["ordinal"] || 0), fn -> %{} end)
+    |> Map.get("id")
   end
 
   defp dispatch_message(row, sender, args) do

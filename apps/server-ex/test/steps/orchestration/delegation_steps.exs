@@ -564,6 +564,28 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :local_commit, World.git!(path, ["rev-parse", "HEAD"]))
   end
 
+  step "a caller thread whose checkout is not part of its project's repository", context do
+    dir = Mc.tmp_dir(context.mc, "elsewhere")
+    World.git!(dir, ["init", "-q"])
+    World.patch_thread(context, "parent", %{"worktreePath" => dir, "branch" => "main"})
+    context
+  end
+
+  step "it delegates a task in a new worktree", context do
+    delegate(context, "parent", %{"workspace" => %{"type" => "worktree"}})
+  end
+
+  step "the delegation is refused with advice to share the caller's workspace", context do
+    assert {:error, "workspace_outside_project", message} = context.mcp_result
+    assert message =~ "Leave workspace out to share the caller's checkout."
+    context
+  end
+
+  step "no task is created", context do
+    assert StreamState.list(World.state(context, "parent"), "subagent") == []
+    context
+  end
+
   step "the project has another worktree {string} on branch {string}",
        %{args: [path, branch]} = context do
     dir = Mc.tmp_dir(context.mc, "other")
@@ -1433,9 +1455,9 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   # --- review rounds ----------------------------------------------------------------
 
   step "a delegated review task has finished", context do
+    context = delegate(context, "parent", %{"mode" => "async", "task" => "say Looks good"})
+    await_task(context, &(&1["status"] == "completed"))
     context
-    |> delegate("parent", %{"task" => "Review the change"})
-    |> complete("Looks good")
   end
 
   step "the parent wants the child to review again", context do
@@ -2387,7 +2409,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "the result tells the agent how to read and answer the question on the subagent's thread",
        context do
-    {:ok, %{"pendingRequest" => %{"next" => next}}} = context.wait_result
+    %{"pendingRequest" => %{"next" => next}} = context.wait_result
     assert next =~ "hal_c2_pending_request_read"
     assert next =~ "hal_c2_pending_request_respond"
     assert next =~ World.thread_id(context, "subagent")
@@ -2416,7 +2438,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context |> delegate(caller, %{"mode" => "async"}) |> child_async_question()
   end
 
-  step ~r/^the task ends (?<ending>cancelled|interrupted|completed)$/,
+  step ~r/^the task ends (?<ending>cancelled|interrupted|completed|failed)$/,
        %{args: [ending]} = context do
     case ending do
       "cancelled" ->
@@ -2432,6 +2454,9 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
       "completed" ->
         World.send_turn(context, "subagent", "say Done")
+
+      "failed" ->
+        World.send_turn(context, "subagent", "fail")
     end
 
     await_task(context, &(&1["status"] == ending))

@@ -365,6 +365,8 @@ defmodule HalC2.Mcp.Tools.Threads do
          "parentThreadId" => me["id"],
          "inheritedProviderInstanceId" => get_in(parent, ["modelSelection", "instanceId"]),
          "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
+         "inheritedOptions" =>
+           HalC2.Orchestration.Delegation.model_options(providers, parent["modelSelection"]),
          "runtimeMode" => parent["runtimeMode"],
          "interactionMode" => parent["interactionMode"],
          "maxWaitMs" => HalC2.Mcp.max_wait_ms(caller.instance),

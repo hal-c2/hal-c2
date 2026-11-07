@@ -136,7 +136,7 @@ Feature: Delegating tasks to subagents
     And "parent" has no subagent task
 
   # Upstream #20213: worktree delegation from a checkout outside the project is refused
-  @backlog @mc
+  @mc
   Scenario: A new worktree is refused for a caller working outside the project's repository
     Given a caller thread whose checkout is not part of its project's repository
     When it delegates a task in a new worktree

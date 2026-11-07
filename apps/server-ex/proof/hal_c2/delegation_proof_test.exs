@@ -44,6 +44,8 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.task_status/2" => "reads a task; changes nothing",
       "HalC2.Orchestration.Delegation.running_next/0" =>
         "the hint a result of a task still working carries; changes nothing",
+      "HalC2.Orchestration.Delegation.model_options/2" =>
+        "filters a selection's options by its model; changes nothing",
       "HalC2.Orchestration.Delegation.working_task?/2" =>
         "reads whether a thread works on a task of the caller; changes nothing",
       "HalC2.Orchestration.Delegation.settled?/1" =>
