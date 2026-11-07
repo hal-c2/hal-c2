@@ -797,13 +797,13 @@ Feature: Claude
     And its resume prompt, tool calls and final answer appear in its own thread
     And the subagent's thread and the parent's waiting list agree on its state
 
-  @shared
+  @shared @backlog-mobile
   Scenario: A Claude monitor shows as background work, not as a command
     Given Claude starts a monitor in the thread
     Then the thread lists the monitor as background work
     And the monitor is not shown as a command
 
-  @shared
+  @shared @backlog-mobile
   Scenario: A Claude monitor stays listed while the next turn runs
     Given Claude starts a monitor in the thread
     When the user sends another message and its turn is running

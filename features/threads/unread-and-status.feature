@@ -188,7 +188,7 @@ Feature: Unread and status in the thread list
     When the user looks at the thread list
     Then the row for "Build search" reads "Waiting" and shows 3 minutes
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: An idle thread shows its age
     Given the last activity in "Build search" was <ago>
     When the user looks at the thread list
@@ -220,26 +220,26 @@ Feature: Unread and status in the thread list
     When the environment records that "Build search" was pinned just now
     Then the row for "Build search" counts its age from that message
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The age keeps up while nothing changes
     Given the last activity in "Build search" was 5 minutes ago
     When a minute passes without any update
     Then the row for "Build search" shows "6m"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Threads that need nothing step back
     Given "Build search" is idle and read
     And "Fix cart" finished work the user has not seen
     When the user looks at the thread list
     Then "Fix cart" stands out more than "Build search"
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Pointing at a row does not flash it
     Given the user uses a light theme
     When the user moves the pointer onto "Build search"
     Then the row highlights without flashing gray
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Moving across a row's actions keeps the row highlighted
     When the user moves the pointer across the actions of "Build search"
     Then the row stays highlighted the whole time
