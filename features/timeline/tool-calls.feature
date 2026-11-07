@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23595
+#   https://github.com/pingdotgg/t3code/pull/20101
+#   https://github.com/pingdotgg/t3code/pull/21146
+#   https://github.com/pingdotgg/t3code/pull/24521
+#   https://github.com/pingdotgg/t3code/pull/19238
+#   https://github.com/pingdotgg/t3code/pull/15674
+#   https://github.com/pingdotgg/t3code/pull/15747
+#   https://github.com/pingdotgg/t3code/pull/18831
+#   https://github.com/pingdotgg/t3code/pull/19810
+#   https://github.com/pingdotgg/t3code/pull/19767
 #   https://github.com/pingdotgg/t3code/pull/17561
 #   https://github.com/pingdotgg/t3code/pull/17211
 #   https://github.com/pingdotgg/t3code/pull/17948
@@ -44,6 +54,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15384
 #   https://github.com/pingdotgg/t3code/pull/15505
 #   https://github.com/pingdotgg/t3code/pull/15506
+#   https://github.com/pingdotgg/t3code/pull/22131
+#   https://github.com/pingdotgg/t3code/pull/22895
 
 Feature: Tool calls and file changes
   The agent's work shows as tool calls between its messages. Calls group into a short
@@ -317,6 +329,14 @@ Feature: Tool calls and file changes
     When the user reads the activity group
     Then the command is shown as succeeded
 
+  # Upstream #21146: reasoning rows are no longer scanned for failure text.
+  @backlog @desktop @mobile @tui
+  Scenario: Reasoning that mentions a failed exit code is not shown as a failed call
+    Given the agent's reasoning says "the last command exited with exit code 1"
+    When the user reads the activity group
+    Then the reasoning is not marked as failed
+    And the group is not marked as having a failure
+
   @shared
   Scenario: A group opens into each call's details
     Given a collapsed group of tool calls
@@ -324,6 +344,25 @@ Feature: Tool calls and file changes
     Then each call shows its command or input, its status and its exit code
     When the user closes the group
     Then the calls collapse back into the summary
+
+  # Upstream #15674: one visible tool call is shown as its own row that opens with one tap;
+  # several calls keep their summary group, and a live row keeps its state when a second arrives.
+  @backlog @mobile
+  Scenario: A lone tool call opens its details with one tap
+    Given the agent made a single tool call between two messages
+    When the user taps the tool call
+    Then its details are shown
+    And no group of one call is shown around it
+    When the agent makes a second call beside it
+    Then the two calls are grouped and the call the user opened stays open
+
+  # Upstream #18831: Enter on a control inside an open tool row collapsed the row instead.
+  @backlog @desktop @priority-low
+  Scenario: A control inside an open tool row works from the keyboard
+    Given the user opened a tool call that offers "Open diff"
+    When the user moves the keyboard focus to "Open diff" and presses Enter
+    Then the diff opens
+    And the tool call stays open
 
   @desktop
   Scenario Outline: A command's details say how it ended
@@ -351,6 +390,14 @@ Feature: Tool calls and file changes
     Then the output printed so far is shown
     And new output is added as it is printed, at most every 100 ms
     And once the command ends the output is replaced by the output the thread kept
+
+  # Upstream #19810: the Running banner offers the full command when its title is clipped.
+  @backlog @shared
+  Scenario: A background command too long for the Running banner can be read in full
+    Given the agent runs a background command too long for the Running banner
+    When the user asks for the command's details from the banner
+    Then the whole command is shown
+    And no details are offered when the command fits
 
   @mc @shared @backlog @priority-high
   Scenario: A finished command's output is fetched when it is opened
@@ -440,6 +487,21 @@ Feature: Tool calls and file changes
     When the user opens the activity group
     Then the command is labelled "git status" and the file change "src/cart.ts"
 
+  # Upstream #19767: unwatch, review guide and task cancel calls read as plain sentences.
+  @backlog @shared @priority-low
+  Scenario Outline: An orchestration call reads as a plain sentence
+    Given the agent's call <did>
+    When the user opens the activity group
+    Then the call reads "<label>"
+
+    Examples:
+      | did                                         | label                                      |
+      | to unwatch a pull request is still running  | Unwatching a pull request                  |
+      | to unwatch a pull request was interrupted   | Stopped unwatching a pull request          |
+      | to write review guides finished             | Started writing review guides              |
+      | to cancel a delegated task is still running | Canceling a delegated task                 |
+      | to cancel a delegated task finished         | Requested cancellation of a delegated task |
+
   # TUI: implemented in apps/tui/src/worklog.ts
   @shared
   Scenario Outline: A tool call shows how it ended
@@ -486,6 +548,14 @@ Feature: Tool calls and file changes
     Then its text is copied and the row says "Copied" for a moment
     When the user long presses the failure
     Then the failure message is copied and the row says "Copied" for a moment
+
+  # Upstream #19238: long commands no longer freeze work-log taps on Android.
+  @backlog @mobile
+  Scenario: A tool call with a very long command stays quick to open
+    Given the agent ran a command thousands of characters long
+    When the user taps its row in the activity log
+    Then the row opens at once
+    And its one-line label shows at most 200 characters while its details show the whole command
 
   @mobile
   Scenario Outline: A turn that failed says why in the activity log
@@ -586,6 +656,14 @@ Feature: Tool calls and file changes
     Given a turn changed "src/cart.ts" and "src/checkout.ts"
     When the user opens "src/cart.ts" from the list of changed files
     Then the diff shows only "src/cart.ts"
+
+  # Upstream #20101: a file clicked in a completed turn opened the diff with it still collapsed.
+  @backlog @shared
+  Scenario: A file opened from a turn's changed files is expanded in the diff
+    Given the user collapsed "src/cart.ts" in the diff
+    When the user opens "src/cart.ts" from a turn's list of changed files
+    Then the diff shows "src/cart.ts" expanded, once its changes have loaded
+    And a later refresh of the diff leaves its folds as the user sets them
 
   @desktop
   Scenario: A turn's changed files are folded under their folders
@@ -766,6 +844,14 @@ Feature: Tool calls and file changes
     Then the image is shown
     And the details show neither "[image]" nor "No output"
 
+  # Upstream #23595: a result with more than eight images showed eight and hid the rest.
+  @backlog @shared @priority-low
+  Scenario: A tool result's images past the first eight are marked
+    Given a tool call returned ten images
+    When the user opens the call's details
+    Then the first eight images are shown
+    And the other two are each marked "[image]"
+
   @backlog @shared @priority-low
   Scenario: A computer-use or script call reads as the action the agent named
     Given the agent ran a computer-use or JavaScript call titled "Open the billing page"
@@ -800,6 +886,13 @@ Feature: Tool calls and file changes
     When the user has scrolled up in the group and the agent adds another call
     Then the group stays where it is
     And a call changing its status or output never moves the group
+
+  # Upstream #15747: an open group of tool calls on the phone stopped following calls the agent added.
+  @backlog @mobile
+  Scenario: An open group on the phone follows new calls while the user is at its end
+    Given the user has a long group of tool calls open on the phone and is looking at its last call
+    When the agent adds another call to the group
+    Then the group scrolls to show the new call
 
   @mobile
   Scenario Outline: Some rows stand alone between groups of tool calls
@@ -919,12 +1012,34 @@ Feature: Tool calls and file changes
     Then the page renders inline above the agent's final reply
     And it cannot read local files or reach the local network, and a link in it opens only after a user action in the frame
 
+  # Upstream #22131: the measured height wins over the agent's, up to 20,000 pixels; the agent's
+  # height came from a preview with other fonts, so pages were cropped and scrolled inside.
   @backlog @shared @priority-low
   Scenario: An inline HTML page does not hold the thread's scroll
     Given an inline page that wraps a few pixels taller than its frame
     When the user scrolls the thread with the pointer over it
     Then the thread scrolls
-    And the frame fits the page's reported content height, capped by the agent's height only when that is smaller
+    And the frame grows to the page's measured height, up to 20,000 pixels, whatever height the agent gave
+
+  # Upstream #22131: a page sized from the viewport would grow its frame without end.
+  @backlog @mc @priority-low
+  Scenario: An HTML page sized in viewport units is refused
+    When an agent publishes or previews an HTML page whose style uses "vh", "svh", "lvh" or "dvh" units
+    Then the tool refuses it and tells the agent to use fixed pixel heights
+
+  # Upstream #22895: a browser blocked from starting showed the agent an internal error.
+  @backlog @mc @priority-low
+  Scenario: An HTML preview whose browser cannot start says so
+    Given the browser that renders HTML previews is blocked from starting
+    When an agent previews or publishes an HTML page
+    Then the tool fails saying the browser could not be started
+
+  # Upstream #24521: an HTML preview kept the light color scheme on a dark theme.
+  @backlog @mc @priority-low
+  Scenario: An agent's HTML preview renders in the appearance it was asked for
+    Given an agent's HTML page styles itself by the light or dark color scheme
+    When the agent previews it in the dark appearance
+    Then the page is rendered with the dark color scheme
 
   @backlog @mobile @priority-low
   Scenario: Dragging over an inline HTML page taller than its frame scrolls the page, then the thread

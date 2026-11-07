@@ -1,4 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19201
+#   https://github.com/pingdotgg/t3code/pull/16191
+#   https://github.com/pingdotgg/t3code/pull/17065
+#   https://github.com/pingdotgg/t3code/pull/24622
+#   https://github.com/pingdotgg/t3code/pull/19627
+#   https://github.com/pingdotgg/t3code/pull/18423
+#   https://github.com/pingdotgg/t3code/pull/19663
+#   https://github.com/pingdotgg/t3code/pull/16015
+#   https://github.com/pingdotgg/t3code/pull/15818
+#   https://github.com/pingdotgg/t3code/pull/16014
+#   https://github.com/pingdotgg/t3code/pull/21505
+#   https://github.com/pingdotgg/t3code/pull/21560
 #   https://github.com/pingdotgg/t3code/pull/16748
 #   https://github.com/pingdotgg/t3code/pull/18238
 #   https://github.com/pingdotgg/t3code/pull/17713
@@ -35,6 +47,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top, another thread opens at its end)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (load earlier activity control and its error)
 #   https://github.com/pingdotgg/t3code/pull/15059
+#   https://github.com/pingdotgg/t3code/pull/25371
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -44,47 +57,95 @@ Feature: Moving through a thread and following links
     Given a connected environment with the project "shop"
     And the user is looking at a long thread in "shop"
 
-  # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui @priority-high
+  # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
+  @shared @backlog-mobile @priority-high
   Scenario: The view follows new output while the user is at the end
     Given the user is at the end of the thread
     When the agent writes more of its reply
     Then the new text stays in view
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: The end of the thread holds still while nothing new is written
     Given the user is at the end of the thread
     And a reply with a table sits just above the end
     When nothing new is written
     Then the view does not move
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message
     Then the view stays on that message while the reply grows
     And the user is offered a way to scroll to the end
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  # Upstream #17065: scrolling over an inline HTML page moved the thread without the view noticing,
+  # so following snapped it back to the end.
+  @shared @backlog @priority-low
+  Scenario: Scrolling up over an inline HTML page stops the view from following
+    Given the agent is writing its reply below an inline HTML page
+    When the user scrolls up with the pointer over the page
+    Then the view stays where the user scrolled while the reply grows
+
+  @shared @backlog-mobile @priority-high
   Scenario: The user returns to the end of the thread
     Given the user has scrolled away from the end while the agent writes
     When the user scrolls to the end
     Then the latest output is shown
     And the view follows new output again
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  # The terminal windows a long thread to its newest 80 rows; the window slides as rows stream in.
+  @tui @priority-high
+  Scenario: A long thread streaming new rows does not move the row being read
+    Given the user is reading a row in a thread of more than 80 rows
+    When the agent streams more rows into the thread
+    Then the row being read stays where it was
+
+  @tui @priority-high
+  Scenario: Scroll to end returns from an older window of a long thread
+    Given the user has paged back to an older window of a long thread
+    When the user presses Ctrl+End
+    Then the newest rows are shown at the end
+    And "Scroll to end" is no longer offered
+
+  @tui @priority-high
+  Scenario: A thread whose rows mount over several turns still opens at its end
+    When the user opens another thread whose rows arrive in two turns
+    Then the other thread shows its latest output
+
+  # Upstream #19663: a long thread opened from an empty or loading pane stopped well above its end.
+  @shared @backlog-mobile @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled
     Given the user has scrolled away from the end of the thread
     When the user opens another thread
     Then the other thread shows its latest output
     And the composer is not resting
 
-  # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
+  # Upstream #24622: a tall reply that arrived while the user was away left the switched thread,
+  # and "Scroll to end", hundreds of pixels short of the end.
   @shared @backlog @priority-high
+  Scenario Outline: <action> lands on the real end of a thread with a tall new reply
+    Given "Fix checkout" got a long reply while the user was in another thread
+    When <action>
+    Then the end of the reply is in view, with no "Scroll to end" left to press
+
+    Examples:
+      | action                                               |
+      | the user switches to "Fix checkout"                  |
+      | the user presses "Scroll to end" in "Fix checkout"   |
+
+  # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A running thread opens at its latest output while its messages are still loading
     Given the user opens a thread whose agent is still working
     When the thread's messages arrive
     Then the view shows the latest output at the end, not the start of the thread
+
+  # Upstream #21560: switching threads never shows the previous thread's messages.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: Switching threads shows only the chosen thread's messages
+    Given the user is reading "Tax fix"
+    When the user switches to "Docs" while its messages are still loading
+    Then no message of "Tax fix" is shown under "Docs"
 
   @desktop @backlog @priority-high
   Scenario: A thread opens where the user left it
@@ -142,15 +203,15 @@ Feature: Moving through a thread and following links
     Then the client asks its MC for the newest turns only
     And only those turns are sent and shown
 
-  # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile @backlog-tui @priority-high
+  # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
+  @shared @backlog-mobile @priority-high
   Scenario: Earlier turns load when the user reaches the top
     Given the thread has more turns than are loaded
     When the user loads earlier turns
     Then the user sees that earlier turns are loading
     And the earlier turns appear above without moving the message being read
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A thread that does not fill the view loads earlier turns by itself
     Given the thread has more turns than are loaded
     When what is loaded leaves room in the view
@@ -191,6 +252,24 @@ Feature: Moving through a thread and following links
     Then "Scroll to end" is a raised button the keyboard reaches
     And pressing it with the keyboard returns to the end
 
+  # Upstream #16015: on the phone, Scroll to end and the scroll after sending glided with Reduce
+  # Motion on; they now jump.
+  # Upstream #16014: on the desktop, Scroll to end, page keys, turn index jumps and the scroll after
+  # sending glided with reduced motion; they now jump.
+  @backlog @shared @priority-low
+  Scenario Outline: Jumps through the conversation do not glide with reduced motion
+    Given the operating system asks for reduced motion
+    And the user has scrolled away from the end
+    When the user <does>
+    Then the conversation jumps there without gliding
+
+    Examples:
+      | does                                |
+      | presses Scroll to end               |
+      | sends a message                     |
+      | presses Page Down from the composer |
+      | picks a turn from the turn index    |
+
   @desktop @backlog
   Scenario: The user jumps between turns
     Given the thread has ten turns
@@ -209,6 +288,14 @@ Feature: Moving through a thread and following links
     And the start of that turn's final reply is previewed beneath it
     When the user chooses it
     Then the fourth turn is shown
+
+  # Upstream #16191: the turn index lit turns far off screen from positions it had measured earlier.
+  @desktop @backlog @priority-low
+  Scenario: The turn index marks only the turns on screen
+    Given the thread has ten turns
+    And the third and fourth turns are on screen
+    Then the turn index marks the third and fourth turns and no other
+    And moving to the next turn shows the fifth
 
   @desktop @backlog
   Scenario: The turn index can be driven from the keyboard
@@ -276,7 +363,7 @@ Feature: Moving through a thread and following links
     Then the thread scrolls instead
 
   # TUI: implemented in apps/tui/src/timelineLinks.ts
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A bare web address in a message can be opened
     When the agent writes "see https://example.com/docs"
     Then "https://example.com/docs" can be opened as a link
@@ -347,6 +434,28 @@ Feature: Moving through a thread and following links
       | open it in the editor  | "src/cart.ts" opens in the user's editor |
       | copy its full path     | the absolute path is on the clipboard    |
 
+  # Upstream #19201: a Windows path the agent wrote with forward slashes was copied that way,
+  # which Windows file dialogs refuse.
+  @backlog @shared @mobile @priority-low
+  Scenario Outline: A copied file path uses the separators of the machine that holds the file
+    Given the thread's MC runs on <host>
+    And the agent's reply links to the file "<link>"
+    When the user copies its full path
+    Then "<copied>" is on the clipboard
+
+    Examples:
+      | host    | link                      | copied                    |
+      | Windows | C:/Users/ana/shop/cart.ts | C:\Users\ana\shop\cart.ts |
+      | Linux   | /home/ana/shop/cart.ts    | /home/ana/shop/cart.ts    |
+
+  # Upstream #19627: home-relative file links match a Windows home folder in any case.
+  @backlog @shared @priority-low
+  Scenario: A home-relative file link resolves on Windows whatever the folder's case
+    Given the MC runs on Windows in "C:\users\ana\shop"
+    And the agent's reply links to "~/shop/notes.md:3"
+    When the user follows the link
+    Then "notes.md" opens at line 3
+
   @shared @backlog-mobile @backlog-tui
   Scenario: The user cites part of a reply in the next message
     When the user selects a sentence in the agent's reply and cites it
@@ -365,6 +474,22 @@ Feature: Moving through a thread and following links
       | is unchanged               | the earlier reply is shown with the sentence highlighted                     |
       | has been edited            | the earlier reply is shown with "The quoted text has changed"                |
       | is no longer in the thread | the quote is still readable and "Could not open the cited response" is shown |
+
+  # Upstream #25371: a citation to a reply older than the loaded history loads history until it finds it.
+  @shared @backlog
+  Scenario Outline: Following a citation to a reply older than what is loaded
+    Given the user's message cites a sentence from a reply older than the loaded history
+    And <history>
+    When the user follows the citation
+    Then <result>
+
+    Examples:
+      | history                                        | result                                                              |
+      | the reply is a few pages back                  | older history loads until the reply is shown, highlighted           |
+      | the thread has no older history                | the cited response is shown as unavailable                          |
+      | loading older history fails                    | "Could not load the cited response" is shown                        |
+      | the reply is further back than 20 pages        | loading stops and the cited response is shown as unavailable        |
+      | the user follows another link while it loads   | loading stops and the citation does not take the user back          |
 
   # Upstream #15703: a quote in a sent message opens to what it quoted and what the user said.
   @shared @backlog
@@ -398,6 +523,14 @@ Feature: Moving through a thread and following links
     Given a reply links to thread "t2" with its id percent-encoded
     When the user follows the link
     Then thread "t2" opens
+
+  # Upstream #21505: thread links open threads on other connected environments.
+  @shared @backlog @priority-low
+  Scenario: A thread link opens a thread on another connected environment
+    Given the client is connected to "laptop" and "server"
+    And a reply on "laptop" links to thread "t9", which lives on "server"
+    When the user follows the link
+    Then thread "t9" on "server" opens
 
   @desktop @backlog @priority-low
   Scenario: A selection too long to cite says so
@@ -452,11 +585,28 @@ Feature: Moving through a thread and following links
 
     Examples:
       | does                       |
-      | scrolls the thread         |
       | right-clicks               |
       | resizes the window         |
       | switches to another window |
       | presses Escape             |
+
+  # Upstream #15818: Cite never came back after a scroll; it now goes away while the thread
+  # scrolls and returns beside the selection once scrolling stops, unless the selection is out of
+  # view or the user pressed Escape.
+  @backlog @desktop
+  Scenario Outline: The cite action comes back once scrolling stops
+    Given the cite action is shown for a selected sentence
+    And <beforehand>
+    When the user scrolls the thread
+    Then the cite action goes away
+    When the scrolling stops with the sentence <view>
+    Then the cite action <result>
+
+    Examples:
+      | beforehand                     | view        | result                      |
+      | the user has done nothing else | in view     | returns beside the sentence |
+      | the user has done nothing else | out of view | stays away                  |
+      | the user pressed Escape        | in view     | stays away                  |
 
   # Legacy: apps/web/src/lib/assistantTextSelection.ts (findAssistantCitationText)
   @backlog @desktop
@@ -536,6 +686,15 @@ Feature: Moving through a thread and following links
     When the user follows the citation
     Then earlier turns are loaded until the cited reply is found
     And the cited reply is shown with the sentence highlighted
+
+  # Upstream #18423: opening a citation unfolds the imported reply it quotes.
+  @desktop @backlog
+  Scenario: Following a citation to a folded reply of an imported thread unfolds it
+    Given the thread was imported from another agent and its earlier replies are folded
+    And the user's message cites a sentence from one of those replies
+    When the user follows the citation
+    Then the cited reply is unfolded
+    And it is shown with the sentence highlighted
 
   @desktop @backlog
   Scenario: Following a citation gives up after 20 pages of earlier turns

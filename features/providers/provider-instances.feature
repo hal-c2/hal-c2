@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19525
+#   https://github.com/pingdotgg/t3code/pull/22918
+#   https://github.com/pingdotgg/t3code/pull/14545
+#   https://github.com/pingdotgg/t3code/pull/16580
+#   https://github.com/pingdotgg/t3code/pull/14319
 #   https://github.com/pingdotgg/t3code/pull/16772
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
@@ -141,6 +146,14 @@ Feature: Provider instances
       | two agents from the ACP registry that are different agents                  | have no badge               |
       | two instances of the same agent from the ACP registry                       | have a badge with initials  |
 
+  # Upstream #14545: disabled instances counted toward the badge of their enabled sibling.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A disabled instance does not make its sibling carry a badge
+    Given "Codex" and "Codex Work" are instances of the same provider with no accent colour
+    When the user disables "Codex Work"
+    Then "Codex" has no badge
+    And the threads that ran on "Codex Work" still show its badge
+
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, normalizeProviderAccentColor)
   @backlog @desktop @mobile @priority-low
   Scenario Outline: A badge shows up to two initials of the instance's name
@@ -155,6 +168,12 @@ Feature: Provider instances
       | codex_work     | CW       |
       | Claude Code CLI | CC      |
       | 🙂 Smile       | 🙂S      |
+
+    # Upstream #22918: punctuation in a name was taken as an initial, so "Codex (hub)" read "C(".
+    Examples: punctuation is not an initial
+      | name           | initials |
+      | Codex (hub)    | CH       |
+      | Codex 'hub'    | CH       |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (normalizeProviderAccentColor)
   @backlog @desktop @mobile @priority-low
@@ -220,6 +239,14 @@ Feature: Provider instances
     When settings are saved that one instance cannot start with
     Then that instance is listed as unavailable
     And later settings changes are still applied
+
+  # Upstream #16580: provider settings saved while the provider list is starting are not lost
+  @backlog
+  Scenario: An instance saved while the MC is still starting is not lost
+    Given the MC is still reading its provider instances at startup
+    When the user saves a new provider instance
+    Then the instance appears in the provider list once startup finishes
+    And settings saved earlier never replace it
 
   Scenario: Sensitive environment variables are stored separately and never sent back
     When the user adds the sensitive variable "ANTHROPIC_AUTH_TOKEN" to a Claude instance
@@ -461,3 +488,25 @@ Feature: Provider instances
     Given the Antigravity instance is disabled
     When the user signs in or out of Antigravity elsewhere
     Then the Antigravity instance shows no account and no model list
+
+  # Upstream #19525: an escaped quote in launch arguments stays a literal character.
+  @backlog @priority-low
+  Scenario: An escaped quote in launch arguments is kept as written
+    Given a provider's launch arguments are `--name it\'s --verbose`
+    When the provider starts
+    Then it is given "--name", "it's" and "--verbose" as three arguments
+
+  # Upstream #14319: cached discovery hid new models after a CLI update.
+  @backlog
+  Scenario: Updating a provider's CLI refreshes the models of every account using it
+    Given two Codex accounts use the same Codex CLI
+    When the user updates the Codex CLI from one of them
+    Then both accounts list the models the new CLI offers
+    And only one update command runs
+
+  # Upstream #14319: a failed discovery after an update no longer reports success.
+  @backlog
+  Scenario: An update whose new CLI cannot be checked is not reported as done
+    Given the user updates the Codex CLI
+    When reading the updated CLI's models fails
+    Then the user is told the update finished but could not be verified

@@ -1,7 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18850
+#   https://github.com/pingdotgg/t3code/pull/14786
 #   https://github.com/pingdotgg/t3code/pull/14595
 #   https://github.com/pingdotgg/t3code/pull/13344
 #   https://github.com/pingdotgg/t3code/pull/11580
+#   https://github.com/pingdotgg/t3code/pull/23752
+#   https://github.com/pingdotgg/t3code/pull/23839
+#   https://github.com/pingdotgg/t3code/pull/23676
+#   https://github.com/pingdotgg/t3code/pull/23780
 #   docs/user/keyboard-focus.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
@@ -29,6 +35,14 @@ Feature: Keyboard focus and keyboard-only use
       Given the command palette is open
       When a background update changes the thread list
       Then the command palette search still has keyboard focus
+
+    # Upstream #18850: with no composer on screen, dismissing the palette returns focus to
+    # what had it before; with a composer, focus goes to the composer as before.
+    @backlog @desktop
+    Scenario: Dismissing the palette away from a thread returns focus to where it was
+      Given the settings search has keyboard focus
+      When the user opens the command palette and dismisses it with Escape
+      Then the settings search has keyboard focus again
 
     @desktop
     Scenario Outline: Thread shortcuts do nothing while the command palette is open
@@ -255,6 +269,14 @@ Feature: Keyboard focus and keyboard-only use
       When the user focuses the "Files" tab and presses Enter
       Then the "Files" tab is active
 
+    # Upstream #14786: closing the right panel moves the focus out of it.
+    @backlog @desktop @priority-low
+    Scenario: Closing the right panel from the keyboard leaves the focus on its toggle
+      Given the focus is inside the right panel
+      When the user closes the right panel
+      Then the focus is on the control that opens the right panel
+      And Tab does not reach the controls of the closing panel
+
     @desktop
     Scenario Outline: Window controls are announced by name
       Then the window control "<name>" is available to assistive technology
@@ -303,3 +325,101 @@ Feature: Keyboard focus and keyboard-only use
         | before | after |
         | off    | on    |
         | on     | off   |
+
+  # Upstream #23780: a screen reader's heading wrap landed mid-thread, because only rows near the
+  # view were there to be read.
+  Rule: A long thread can be read from end to end
+
+    @backlog @desktop
+    Scenario Outline: A screen reader wraps to the first and last message of a long thread
+      Given a screen reader is running in a thread of 400 messages, scrolled to the middle
+      When the user moves to the <direction> heading past the <end>
+      Then the screen reader lands on the thread's <target> message
+      And it does so after a thread switch or a restart too
+
+      Examples:
+        | direction | end            | target |
+        | next      | last message   | first  |
+        | previous  | first message  | last   |
+
+    @backlog @desktop @priority-low
+    Scenario: A folded automation prompt or agent message still has its heading
+      Given a scheduled task's thread starts with its automation prompt folded
+      When a screen reader moves through the thread's headings
+      Then the first heading is "Automation", outside the fold
+      And a folded message from another agent is headed by that agent's name
+
+  Rule: Thread status changes are spoken
+
+    # Upstream #23752: the open thread had no live region; its status changes were silent.
+    @backlog @desktop @mobile
+    Scenario Outline: A screen reader hears the open thread's status change
+      Given a screen reader is running with "Fix checkout" open
+      When the thread <change>
+      Then the screen reader hears "<spoken>" once
+
+      Examples:
+        | change                     | spoken           |
+        | starts working             | Working          |
+        | asks for an approval       | Needs approval   |
+        | asks the user a question   | Needs your input |
+        | finishes its run           | Done             |
+        | fails its run              | Failed           |
+        | is stopped                 | Stopped          |
+
+    # Upstream #23752: opening a thread reads its title, not its old status.
+    @backlog @desktop @mobile
+    Scenario: Opening a thread does not replay its status
+      Given a screen reader is running
+      When the user opens a thread that finished earlier
+      Then the screen reader does not hear "Done"
+
+    # Upstream #23839: background threads were silent while the sidebar was collapsed, and said
+    # "Done" without their title while it was open.
+    @backlog @desktop @mobile
+    Scenario Outline: A screen reader hears which background thread changed, sidebar open or not
+      Given a screen reader is running with "Update README" open
+      And the sidebar is <sidebar>
+      When the background thread "Fix checkout" <change>
+      Then the screen reader hears "<spoken>: Fix checkout" once
+
+      Examples:
+        | sidebar   | change               | spoken         |
+        | collapsed | finishes its run     | Done           |
+        | open      | finishes its run     | Done           |
+        | collapsed | asks for an approval | Needs approval |
+        | open      | fails its run        | Failed         |
+
+    # Upstream #23839: connecting or a snoozed thread read out every thread's status.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: Background threads stay quiet when nothing new happened to them
+      Given a screen reader is running
+      When <event>
+      Then no background thread's status is spoken
+
+      Examples:
+        | event                                              |
+        | the client connects and loads the thread list      |
+        | a snoozed thread finishes its run before its timer |
+        | a thread is marked unread                          |
+
+    # Upstream #23676: a thread switch by shortcut read only "Message" for every thread.
+    @backlog @desktop @mobile
+    Scenario: A screen reader hears which thread a switch landed on
+      Given a screen reader is running
+      When the user switches to "Fix checkout" with the next-thread shortcut
+      Then the focused composer is announced as "Message Fix checkout"
+
+    # Upstream #23676: settling, cycling providers and open in editor gave no spoken feedback.
+    @backlog @desktop @priority-low
+    Scenario Outline: Shortcuts that do not move focus are spoken
+      Given a screen reader is running
+      When the user <action>
+      Then the screen reader hears "<spoken>"
+
+      Examples:
+        | action                                         | spoken                            |
+        | settles the open thread                        | Settled 1 thread, Ctrl+Z to undo  |
+        | cycles the model picker to the next provider   | Claude                            |
+        | picks "Claude Sonnet 5.5" by its number        | Model: Claude Sonnet 5.5          |
+        | opens the project in the preferred editor      | Opened in VS Code                 |

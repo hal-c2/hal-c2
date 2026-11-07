@@ -1,8 +1,18 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24588
+#   https://github.com/pingdotgg/t3code/pull/19666
+#   https://github.com/pingdotgg/t3code/pull/23647
+#   https://github.com/pingdotgg/t3code/pull/20272
+#   https://github.com/pingdotgg/t3code/pull/15630
+#   https://github.com/pingdotgg/t3code/pull/20059
+#   https://github.com/pingdotgg/t3code/pull/15753
+#   https://github.com/pingdotgg/t3code/pull/18832
+#   https://github.com/pingdotgg/t3code/pull/20445
 #   https://github.com/pingdotgg/t3code/pull/17158
 #   https://github.com/pingdotgg/t3code/pull/19372
 #   https://github.com/pingdotgg/t3code/pull/19432
 #   https://github.com/pingdotgg/t3code/pull/15468
+#   https://github.com/pingdotgg/t3code/pull/25239
 #   docs/user/remote-access.md (Pair over a LAN or private network, Tailscale HTTPS, Hosted web app,
 #     Desktop-managed SSH)
 #   docs/internals/remote.md
@@ -137,6 +147,15 @@ Feature: How clients reach an environment
     When the user adds it as an SSH environment
     Then the server is downloaded to the host's runtime folder before it starts
 
+  # Upstream #15630: discovery listed both a configured alias and its known-hosts address.
+  @backlog @desktop
+  Scenario: A configured SSH host is suggested by its alias only
+    Given the SSH config names "build" with the address "10.0.0.5" and a user and port of its own
+    And "10.0.0.5" is in the known hosts
+    When the user looks for an SSH host to add
+    Then "build" is suggested and "10.0.0.5" is not
+    And searching for "10.0.0.5" finds "build"
+
   # Legacy: apps/desktop/src/main.ts (resolveDesktopSshCliRunner: the release the app is on, no Node on the host)
   @backlog @desktop
   Scenario: An SSH host runs the same release as the desktop app
@@ -159,6 +178,16 @@ Feature: How clients reach an environment
     When the user adds it as an SSH environment
     Then the desktop app connects to that server
     And no second server is started on the host
+
+  # Upstream #23647: after an update, an older server reused on the host could not read the
+  # pairing the desktop made, and the environment showed reconnecting for good.
+  @backlog @desktop
+  Scenario: An SSH host running an older server it cannot pair with says why
+    Given the host already runs a HAL-C2 server older than the desktop app
+    And that server cannot accept the pairing the desktop app makes
+    When the user connects to the SSH environment
+    Then the connection is blocked, naming both versions and asking to restart or update the host's server
+    And it does not keep reconnecting
 
   @backlog @desktop
   Scenario: An SSH launch ignores a runtime record whose server has gone
@@ -199,6 +228,14 @@ Feature: How clients reach an environment
     When the user connects to the SSH environment
     Then the connection fails saying the server did not become ready
 
+  # Upstream #19666: retrying an interrupted SSH pairing started a second setup on a slow host.
+  @backlog @desktop @priority-low
+  Scenario: Retrying an interrupted SSH connection finishes the setup already under way
+    Given the user's first connection to an SSH host was interrupted while the host was still setting up
+    When the user connects to the SSH environment again
+    Then the desktop app waits for that setup and pairs with it once
+    And no second setup is started on the host
+
   @backlog @desktop @priority-high
   Scenario: An SSH host that asks for a password
     Given an SSH host that needs a password
@@ -212,6 +249,14 @@ Feature: How clients reach an environment
     When the desktop app connects
     Then the prompt names "olafur@build-box"
     And it says the password is used for this connection attempt only and is not saved
+
+  # Upstream #20272: the SSH prompt asks for a password or verification code.
+  @backlog @desktop
+  Scenario: An SSH host that asks for a verification code gets one
+    Given an SSH host that asks for a verification code after the password
+    When the user connects to it
+    Then the prompt asks for a password or verification code
+    And the code the user enters is sent to the host
 
   @backlog @desktop @priority-low
   Scenario: A password prompt that was not answered in time expires
@@ -243,6 +288,15 @@ Feature: How clients reach an environment
     Then the window is restored and brought forward
     And the user is asked for the password
 
+  # Upstream #25239: a prompt that came while pairing, signing in or on any page outside the
+  # main window's views was dropped.
+  @backlog @desktop @priority-low
+  Scenario: A password prompt that comes before the app is ready is still shown
+    Given an SSH host that needs a password
+    And the user is still pairing or signing in
+    When the desktop app connects to that host
+    Then the user is asked for the password once the app can show it
+
   @backlog @desktop @priority-low
   Scenario: Closing the window cancels a waiting password prompt
     Given the user is being asked for an SSH host's password
@@ -273,6 +327,43 @@ Feature: How clients reach an environment
     Given a saved SSH environment
     When the desktop app restarts
     Then it reconnects over SSH without a new pairing link
+
+  # Upstream #20445: one host session per desktop and SSH route, instead of a new one per connect.
+  @backlog @desktop @priority-high
+  Scenario: Reconnecting to an SSH environment reuses its session on the host
+    Given a saved SSH environment the desktop app has connected to once
+    When the desktop app reconnects or restarts
+    Then it signs in with the session it saved for that route
+    And the host has no new session for this desktop
+
+  # Upstream #20445: a session that can no longer be used is replaced by pairing once.
+  @backlog @desktop
+  Scenario Outline: An SSH environment whose saved session cannot be used pairs once more
+    Given a saved SSH environment whose session on the host <state>
+    When the desktop app reconnects
+    Then it pairs once and saves the new session
+    And the next reconnect reuses that session
+
+    Examples:
+      | state                      |
+      | was revoked                |
+      | has expired                |
+      | lacks a scope clients need |
+
+  # Upstream #20445: a failed session check is retried and never pairs.
+  @backlog @desktop
+  Scenario: A failed check of a saved SSH session is retried without pairing
+    Given a saved SSH environment whose host cannot answer the session check
+    When the desktop app reconnects
+    Then the connection attempt fails and is tried again
+    And the desktop app does not pair
+
+  # Upstream #20445: a saved SSH route that now reaches another environment is refused.
+  @backlog @desktop @priority-high
+  Scenario: A saved SSH route that reaches a different environment is refused
+    Given a saved SSH environment whose host now runs a different environment
+    When the desktop app reconnects
+    Then the connection fails before pairing or sending the saved session
 
   # Legacy: apps/desktop/src/ipc/methods/sshEnvironment.ts (DesktopSshEnvironmentRequestError)
   @backlog @desktop @priority-low
@@ -331,6 +422,13 @@ Feature: How clients reach an environment
     Then a new forward is opened to the same server
     And the server on the host is not stopped
 
+  # Upstream #18832: an SSH tunnel keeps working while ssh keeps printing diagnostics.
+  @backlog @mc @priority-low
+  Scenario: A talkative SSH connection keeps forwarding
+    Given the user's SSH configuration makes ssh print verbose diagnostics
+    When an SSH environment's tunnel is ready and ssh keeps printing
+    Then the environment stays reachable through the tunnel
+
   # Upstream #19432: reconnecting keeps the remote server and its agents running
   @backlog @desktop @priority-high
   Scenario: A crashed launched server is replaced on reconnect
@@ -379,6 +477,7 @@ Feature: How clients reach an environment
     When the user adds it as an SSH environment
     Then the connection fails saying the host needs curl or wget to download the server
 
+  # Upstream #20059: two installs racing on a mkdir that wrongly succeeds no longer unpack the server twice.
   # Legacy: packages/ssh/src/tunnel.ts (REMOTE_RUNNER_SCRIPT install lock)
   @backlog @desktop @priority-low
   Scenario: Two launches onto one host install the server once
@@ -523,6 +622,33 @@ Feature: How clients reach an environment
     And a route the user paired is never rewritten
     And the live session is not replaced by the change, only by the better-route check
 
+  # Upstream #24588: a dead LAN address held up every other route for the whole check. The
+  # same change made upstream's background service listen on private networks by default; the
+  # MC keeps listening on loopback unless told otherwise.
+  @backlog @shared
+  Scenario: A dead route does not hold up the others
+    Given a client holds a learned LAN route that never answers and a tailnet route
+    When the client checks its routes
+    Then the tailnet route is tried after a head start of half a second, not after the LAN check gives up
+    And a route that answered late is tried before routes that are still silent
+
+  # Upstream #20445: a credential paired over HTTPS, loopback or the tailnet is not copied to a
+  # learned plain-HTTP address on the local network or the internet; tailnet addresses are still learned.
+  @backlog @shared @priority-high
+  Scenario Outline: A credential paired over a secure route is not lent to a plain HTTP address off the tailnet
+    Given a client paired with the environment over <paired>
+    When the client learns a plain HTTP address on <learned>
+    Then the learned address <outcome>
+
+    Examples:
+      | paired                          | learned           | outcome                           |
+      | HTTPS                           | the local network | is not saved with that credential |
+      | loopback                        | the internet      | is not saved with that credential |
+      | the tailnet                     | the local network | is not saved with that credential |
+      | plain HTTP on the local network | the local network | is saved with that credential     |
+      | HTTPS                           | the tailnet       | is saved with that credential     |
+
+  # Upstream #15753: a Proton VPN address in 100.64/10 is no longer advertised as Tailscale in pairing links
   # Upstream #17158: Cloudflare and other VPN addresses no longer show as Tailscale
   @backlog @mc @priority-low
   Scenario Outline: An address in the shared 100.64/10 range is a tailnet address only on Tailscale's own interface

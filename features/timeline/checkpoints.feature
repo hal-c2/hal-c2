@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18982
+#   https://github.com/pingdotgg/t3code/pull/19775
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (hidden commit per run, private index, 10 MB diff limit)
 #   apps/server-ex/lib/hal_c2/orchestration/rollback.ex (checkpoint.rollback, restoreFiles, errors)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (rolled_back runs hidden)
@@ -52,6 +54,13 @@ Feature: Checkpoints and rewinding
       | the diff panel | Keep files       | the MC is asked to leave the files as they are |
       | the diff panel | Revert files too | the workspace files match the end of turn 1    |
 
+  # Upstream #19775: the Edit from here confirmation warns that reverting files also undoes the user's own edits.
+  @backlog @desktop
+  Scenario: Restoring files warns that the user's own edits go too
+    Given the user edited "src/cart.ts" by hand after turn 1
+    When the user asks to revert to turn 1 from its reply
+    Then the confirmation warns that "Revert files too" also undoes the user's own edits since then
+
   @mc
   Scenario: Rewinding hides the later turns from the timeline
     When the thread is rolled back to the checkpoint after turn 1
@@ -64,6 +73,22 @@ Feature: Checkpoints and rewinding
     When the user edits from the second message and reverts the files too
     Then the conversation rewinds to before the second message
     And the second message's prompt and attachments are added to the draft
+
+  # Upstream #18982: after an earlier rewind, Edit from here aimed at history that was gone.
+  @shared @backlog @priority-high
+  Scenario: Editing from a message works after an earlier rewind
+    Given the thread was rewound to turn 1 and has since run turns 2 and 3 again
+    When the user edits from the third message and reverts the files too
+    Then the conversation rewinds to the end of the new turn 2
+    And the workspace matches the end of the new turn 2
+
+  # Upstream #18982: the first message of a thread whose older turns are not loaded yet.
+  @shared @backlog @priority-low
+  Scenario: Editing from the first message rewinds to the thread's start
+    Given the thread's older turns are not loaded
+    When the user loads the whole thread and edits from its first message
+    Then the conversation rewinds to before the first message
+    And the first message's prompt is added to the draft
 
   @mc
   Scenario Outline: Rewinding can keep or restore the files

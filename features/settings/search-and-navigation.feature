@@ -1,7 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20764
 #   https://github.com/pingdotgg/t3code/pull/17396
 #   https://github.com/pingdotgg/t3code/pull/17859
 #   https://github.com/pingdotgg/t3code/pull/13516 (Escape in settings returns to the last main page)
+#   https://github.com/pingdotgg/t3code/pull/25651
+#   https://github.com/pingdotgg/t3code/pull/25686
 #   apps/web/src/components/settings/settingsSearch.ts
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts
 #   apps/web/src/components/settings/SettingsSidebarNav.tsx
@@ -141,6 +144,54 @@ Feature: Settings search and navigation
       When the user presses escape
       Then the conversation is shown again
 
+  # Upstream #25651: the desktop's settings regrouped by concern, under headed groups.
+  # Upstream #25686: the phone's settings follow the same groups.
+  # HAL-C2's own sections (Cluster and the like) join the group of their concern.
+  Rule: Settings are grouped by concern
+
+    @backlog @desktop @mobile
+    Scenario Outline: Each settings group holds the sections of one concern
+      When the user opens settings
+      Then the "<group>" group lists <sections>
+
+      Examples:
+        | group       | sections                                                   |
+        | Agents      | Providers, Threads, Browser, Devices and Scheduled tasks    |
+        | Code        | Projects, Source control and Worktrees                     |
+        | Connections | Environments and Sharing & access                          |
+
+    @backlog @desktop @mobile
+    Scenario Outline: A setting is found in the section of its concern
+      When the user looks for <setting>
+      Then it is in the <section> section
+
+      Examples:
+        | setting                                         | section                |
+        | where new worktrees go and worktree cleanup     | Worktrees              |
+        | the composer's and the conversation's settings  | Chat                   |
+        | diff and pull request settings                  | Diffs & pull requests  |
+        | artifact and log cleanup                        | Maintenance            |
+        | who may reach this machine                      | Sharing & access       |
+        | the machines this client connects to            | Environments           |
+        | features still in testing                       | Labs                   |
+
+    @backlog @desktop @priority-low
+    Scenario: Projects settings open to a project picker
+      When the user opens the Projects section without a project chosen
+      Then the user is asked to choose a project
+
+    @backlog @desktop @mobile
+    Scenario: A link to a section that moved opens where its setting went
+      Given a link to the old Integrations, Storage or Beta section, or to a setting that moved
+      When the user follows it
+      Then the section that now holds it opens, at that setting
+
+    @backlog @desktop @priority-low
+    Scenario: Advanced settings sit in one fold at the end of a section
+      When the user opens a section with advanced settings
+      Then they are in one "Advanced" fold at the end of the section
+      And a settings search for one of them opens the fold
+
   Rule: Searching settings
 
     @desktop
@@ -166,6 +217,15 @@ Feature: Settings search and navigation
       When the user presses escape in the search
       Then the search is empty
       And the list of sections is shown again
+
+    # Upstream #20764: the highlight stays clamped when the results shrink and come back.
+    @backlog @desktop @priority-low
+    Scenario: The highlighted result stays within the results when they shrink
+      Given the user has searched settings and highlighted the eighth of eight results
+      When the results shrink to two
+      Then the second result is highlighted
+      When the results grow back to eight without the user moving the highlight
+      Then the second result is still highlighted
 
     # The native runner drives the settings navigation beside its page (SettingsSearchSteps.cpp).
     @desktop

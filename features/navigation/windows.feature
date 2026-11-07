@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21200
 #   https://github.com/pingdotgg/t3code/pull/13713
 #   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
 #   docs/user/keybindings.md (Desktop quit shortcut, mod+w)
@@ -317,6 +318,21 @@ Feature: Windows, zoom and quitting
       Given the app is zoomed in
       When the user presses mod+0
       Then the app content is back to its actual size
+
+    # Upstream #21200: the keypad's plus, minus and zero and Ctrl with the mouse wheel zoom the
+    # app like the number-row keys.
+    @backlog @desktop
+    Scenario Outline: The keypad and the mouse wheel zoom the app
+      When the user <does>
+      Then the app content is <result>
+
+      Examples:
+        | does                                | result                  |
+        | presses mod with keypad plus        | larger                  |
+        | presses mod with keypad minus       | smaller                 |
+        | presses mod with keypad zero        | back to its actual size |
+        | scrolls up with Ctrl held           | larger                  |
+        | scrolls down with Ctrl held         | smaller                 |
 
     @desktop
     Scenario: Every window follows the app's zoom

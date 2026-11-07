@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24718
+#   https://github.com/pingdotgg/t3code/pull/13608
+#   https://github.com/pingdotgg/t3code/pull/21682
+#   https://github.com/pingdotgg/t3code/pull/14705
 #   https://github.com/pingdotgg/t3code/pull/18461
 #   https://github.com/pingdotgg/t3code/pull/14642
 #   https://github.com/pingdotgg/t3code/pull/19722
+#   https://github.com/pingdotgg/t3code/pull/22857
 #   apps/web/src/components/settings/SettingsPanels.tsx (GeneralSettingsPanel, LegacyFeaturesSection, AboutVersionTitle, update track)
 #   apps/web/src/components/settings/ScopedSwitch.tsx
 #   apps/web/src/components/ui/draft-input.tsx, apps/web/src/hooks/useCommitOnBlur.ts (typed text settings)
@@ -245,6 +250,15 @@ Feature: General settings
       When the user opens another thread with a linked pull request
       Then the pull request panel opens with that thread
 
+    # Upstream #14705: a proactive diff the user closed reopened on returning to the thread.
+    @backlog @desktop @priority-low
+    Scenario: A proactive diff the user closed stays closed when the user comes back
+      Given proactive panels are on
+      And a turn finished with large changes and its diff opened by itself
+      When the user closes the diff, opens another thread and comes back
+      Then the diff stays closed, after a restart too
+      And the next turn that finishes with large changes may open it again
+
     @backlog @desktop @priority-low
     Scenario: A thread with several pull requests opens their list
       Given proactive panels are on
@@ -278,6 +292,15 @@ Feature: General settings
       Then the panel shows pull request 14
       But a panel showing anything else is left as it is
 
+    # Upstream #13608: returning to a thread switched to its pull request tab or reopened a hidden panel.
+    @backlog @desktop @priority-low
+    Scenario: Returning to a thread leaves the panel the user chose
+      Given proactive panels are on
+      And the user switched the side panel of a thread with a linked pull request to the file explorer
+      When the user opens another thread and comes back
+      Then the file explorer is still shown
+      And a side panel the user hid stays hidden
+
     @desktop
     Scenario Outline: Composer preferences change how the composer behaves
       When the user turns "<setting>" <state>
@@ -306,6 +329,7 @@ Feature: General settings
         | Modifier and Enter for multiline prompts | multiline   | gets a new line        |
         | Modifier and Enter always               | single line | gets a new line        |
 
+    # Upstream #22857: queued messages follow this setting (documented).
     @desktop @mobile @backlog-mobile @priority-high
     Scenario Outline: Follow-up behaviour decides what a message sent during a run does
       Given the follow-up behaviour is "<mode>"
@@ -316,6 +340,18 @@ Feature: General settings
         | mode  | result                              |
         | Queue | waits until the run ends            |
         | Steer | is sent into the current run        |
+
+    # Upstream #24718: a message sent during a run used to queue unless the user chose otherwise.
+    @backlog @desktop @mobile
+    Scenario Outline: Follow-ups steer the running turn unless the user chose to queue them
+      Given <saved>
+      When the user sends a message while the agent is running
+      Then the message <result>
+
+      Examples:
+        | saved                                           | result                        |
+        | the user never chose a follow-up behaviour      | is sent into the current run  |
+        | the user saved the follow-up behaviour "Queue"  | waits until the run ends      |
 
     @mc
     Scenario: A turn cut off by a restart continues when continuation is on
@@ -349,6 +385,14 @@ Feature: General settings
       Given the settings scope includes an environment that cannot continue threads after restarts
       Then the continuation switch is disabled
       And it explains that every selected environment must support restart continuation
+
+    # Upstream #21682: an opt-in beta row compacts idle Claude threads before the prompt cache expires.
+    @backlog @mc @shared @plugin-claude
+    Scenario: Compacting idle Claude threads is off until the user turns it on
+      Given the user never changed "Compact idle Claude threads (beta)"
+      Then "Compact idle Claude threads (beta)" is off
+      When the user turns it on
+      Then idle Claude threads are compacted before their prompt cache expires
 
   Rule: Projects and threads
 

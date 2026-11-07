@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20748
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (orchestration.dispatchCommand, result sequence)
 #   apps/server-ex/lib/hal_c2/streams.ex (one writer per stream, transactions)
@@ -76,6 +77,21 @@ Feature: How the engine accepts commands
     When recording a command on "t1" fails part way through
     Then "t1" has none of its events, no receipt for it and none of its side effects
     And the same command can be dispatched again
+
+  # Upstream #20748: a storage failure says what to check on the MC's machine.
+  @backlog @mc @shared
+  Scenario Outline: A message that fails on the MC's storage says what to do
+    Given the MC's database <problem>
+    When the user sends a message
+    Then the user is told <guidance> on the machine running the MC
+    And the database's own error text is not shown
+    And the full explanation can be opened from the thread's error
+
+    Examples:
+      | problem              | guidance                                                 |
+      | cannot be opened     | to check free space and that its data folder is writable |
+      | has run out of space | to free disk space and try again                         |
+      | is read-only         | to make the data folder writable                         |
 
   @mc
   Scenario: A side effect that fails is retried with growing delays and then given up

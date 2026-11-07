@@ -1,9 +1,25 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21352
+#   https://github.com/pingdotgg/t3code/pull/23096
+#   https://github.com/pingdotgg/t3code/pull/24363
+#   https://github.com/pingdotgg/t3code/pull/20803
+#   https://github.com/pingdotgg/t3code/pull/21473
+#   https://github.com/pingdotgg/t3code/pull/15719
+#   https://github.com/pingdotgg/t3code/pull/17964
+#   https://github.com/pingdotgg/t3code/pull/20910
+#   https://github.com/pingdotgg/t3code/pull/19590
+#   https://github.com/pingdotgg/t3code/pull/18846
+#   https://github.com/pingdotgg/t3code/pull/19281
 #   https://github.com/pingdotgg/t3code/pull/15856
 #   https://github.com/pingdotgg/t3code/pull/15841
 #   https://github.com/pingdotgg/t3code/pull/17492
 #   https://github.com/pingdotgg/t3code/pull/17879
 #   https://github.com/pingdotgg/t3code/pull/15807
+#   https://github.com/pingdotgg/t3code/pull/25176
+#   https://github.com/pingdotgg/t3code/pull/25376
+#   https://github.com/pingdotgg/t3code/pull/25681
+#   https://github.com/pingdotgg/t3code/pull/20812
+#   https://github.com/pingdotgg/t3code/pull/21390
 #   apps/mobile/src/features/threads/ (composer send modes, queued messages, command popover)
 #   apps/mobile/src/features/threads/ThreadQueueControl.tsx (queued messages: editing, held queue, empty)
 #   apps/mobile/src/features/threads/use-composer-command-menu.ts, ComposerCommandPopover.tsx (triggers, skills, empty and loading texts)
@@ -49,6 +65,26 @@ Feature: Writing to an agent from a phone
     When the user starts typing a message
     Then the message being written stays visible above the keyboard
     And the latest messages stay visible above the composer
+
+  # Upstream #20803: an input that keeps its focus through an app switch stays above the
+  # keyboard Android brings back with it.
+  @backlog @mobile
+  Scenario Outline: Coming back to the app with the keyboard up keeps the input above it
+    Given the user is writing in <input> with the keyboard up
+    When the user switches to another app and back
+    Then <input> is still shown above the keyboard
+
+    Examples:
+      | input                              |
+      | the composer                       |
+      | the answer to the agent's question |
+
+  # Upstream #20803: the case the keyboard check guards, a send followed at once by leaving the app.
+  @backlog @mobile
+  Scenario: Leaving the app right after sending leaves the composer at rest
+    Given the user sent a message and the keyboard is closing
+    When the user leaves the app within a second and comes back
+    Then the composer rests where it does with the keyboard closed
 
   @mobile
   Scenario: Dismissing the keyboard keeps the draft
@@ -105,9 +141,7 @@ Feature: Writing to an agent from a phone
       | the agent is working and the follow-up setting is steer             | Steer                  |
       | the user is editing a queued message                                | Update queued message  |
 
-  # A message written with no connection is not queued by the composer yet: it stays in the draft
-  # with a "Not connected" notice (see "A message written with no connection is sent once the connection returns").
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The send control reads Queue when the message must wait for a connection
     Given the agent is idle but the message must wait for a connection
     Then the send control reads "Queue"
@@ -141,6 +175,16 @@ Feature: Writing to an agent from a phone
     When the user edits it to "also update the changelog"
     Then "also update the changelog" runs after the current turn
 
+  # Upstream #18846: typing during the save was lost when the edit closed.
+  # Upstream #21390: the lock covers pasting, attaching, commands, dictation and sending too,
+  # and voice input holds the same lock.
+  @backlog @mobile
+  Scenario: The composer takes no typing while an edited queued message saves
+    Given the user is saving an edit to a queued message
+    Then the composer takes no typing, paste, attachment, command, dictation or send until the save ends
+    When the save fails
+    Then the user can type in the composer again
+
   @mobile
   Scenario: The user cancels a queued message
     Given the message "also update docs" is waiting for the current turn
@@ -158,6 +202,34 @@ Feature: Writing to an agent from a phone
       | a photo      | the photo library |
       | a video      | the photo library |
       | a PDF        | the files app     |
+
+  # Upstream #21352: an image picked from the files app stayed a plain file, skipping the
+  # photo picker's scaling.
+  @backlog @mobile
+  Scenario Outline: An image picked from the files app is attached as an image
+    When the user attaches <file> from the files app
+    Then it is attached as <kind>
+
+    Examples:
+      | file                    | kind                                         |
+      | a 3 KB PNG              | an image the agent sees                      |
+      | a 4 MB JPEG             | an image the agent sees                      |
+      | a 12 MB PNG             | a file, still shown in the draft             |
+      | a PNG the phone calls a generic file | an image the agent sees         |
+
+  # Upstream #25376: a pick or paste still running lands in the draft it was started for.
+  @backlog @mobile
+  Scenario Outline: An attachment still being added lands only in the draft it was started for
+    Given the user is attaching "photo.jpg" to the draft of "Fix checkout"
+    When <change> before "photo.jpg" is ready
+    Then <result>
+
+    Examples:
+      | change                                                   | result                                                         |
+      | the user opens another thread                            | "photo.jpg" is in the draft of "Fix checkout" only             |
+      | the user clears the draft                                | "photo.jpg" is not added and its copy on the phone is removed  |
+      | the user starts the new task the draft was for           | "photo.jpg" is not added to the started task                   |
+      | the draft's machine is removed from the phone            | "photo.jpg" is not added and its copy on the phone is removed  |
 
   # New behaviour: the React Native app offers the photo library and files but no camera.
   @backlog @mobile @priority-high
@@ -410,6 +482,13 @@ Feature: Writing to an agent from a phone
     Then the user is told the pasted text is too large
     And the draft and the selection are unchanged
 
+  # Upstream #19590: only the clipboard's first item was pasted.
+  @backlog @mobile @priority-low
+  Scenario: Pasting a clipboard of several text items keeps them all
+    Given the Android clipboard holds three text items
+    When the user pastes into the composer
+    Then all three are in the draft, one per line
+
   @backlog @mobile @priority-low
   Scenario: Paste as Text pastes copied references as their text
     Given the clipboard holds references copied from another draft
@@ -446,6 +525,49 @@ Feature: Writing to an agent from a phone
     When the composer is widened
     Then the whole hint is shown again
 
+  # Upstream #20812: focusing the phone's composer always turned it into a tall card.
+  @backlog @mobile @priority-high
+  Scenario: The composer stays one row until the draft wraps
+    Given the user is typing a one-word reply in "Fix checkout"
+    Then the composer is one row with the model picker in it
+    When the draft no longer fits on one row
+    Then the draft sits above the composer's controls, showing two to four lines before it scrolls
+    When the user deletes back to a draft that fits
+    Then the composer is one row again
+
+  # Upstream #20812
+  @backlog @mobile @priority-low
+  Scenario: The model picker shows the model's name only while the draft is empty
+    Given the composer of "Fix checkout" is one row
+    When the draft is empty
+    Then the model picker names the model
+    When the user types
+    Then the model picker shows only the provider's icon
+
+  # Upstream #20812: on an Android tablet's split view the soft keyboard leaves the thread the
+  # room; a hardware keyboard changes nothing.
+  @backlog @mobile @priority-low
+  Scenario: The soft keyboard on a split view gives the thread the room
+    Given the phone shows the sidebar beside "Fix checkout"
+    When the user types in the composer with the on-screen keyboard
+    Then the sidebar steps aside while the keyboard is open
+    When the keyboard closes
+    Then the sidebar is back
+
+  # Upstream #20812: it used to take two taps, and flipped the user's sidebar preference.
+  @backlog @mobile
+  Scenario: The sidebar button while typing closes the keyboard and opens the sidebar
+    Given the user hid the sidebar and is typing in "Fix checkout"
+    When the user presses the sidebar button once
+    Then the keyboard closes and the sidebar is shown
+
+  # Upstream #25176: the phone's hint, "Ask the repo agent, or run a command…", never fit one row.
+  @backlog @mobile @priority-low
+  Scenario: An empty composer on the phone asks "Ask anything"
+    Given nothing is waiting on the user
+    When the composer of a thread or of a new-thread draft is empty
+    Then its hint reads "Ask anything"
+
   # Upstream #17492: with FUTO or HeliBoard, or a saved draft reopened, the editor stopped
   # following the caret after three lines.
   @backlog @mobile @priority-high
@@ -460,6 +582,22 @@ Feature: Writing to an agent from a phone
       | FUTO      | a new thread with no project                   |
       | HeliBoard | a new thread with no project                   |
       | Gboard    | a saved draft reopened from the thread list    |
+
+  # Upstream #23096: tapping a long draft after closing the keyboard opened it at its first line.
+  @backlog @mobile @priority-low
+  Scenario: A long draft reopens where the user left it
+    Given the user closed the keyboard with the caret near the end of a long draft on an iPhone
+    When the user taps the composer again
+    Then the composer opens to its full size with the caret where it was
+    But in a draft short enough to fit one row the caret goes where the user taps
+
+  # Upstream #25681: one caret was shared by every draft, so context landed at the end of the first.
+  @backlog @mobile
+  Scenario: Context added to a draft goes to that draft's caret
+    Given the user left the caret in the middle of the draft of "Fix checkout"
+    And the user then moved the caret in the draft of "Docs" on a tablet beside it
+    When the user adds terminal output to the draft of "Fix checkout"
+    Then the output is inserted at the caret of "Fix checkout", not at its end
 
   @backlog @mobile
   Scenario: Pictures dropped onto the composer are attached
@@ -500,6 +638,14 @@ Feature: Writing to an agent from a phone
     Given typing "$" offers skills
     When the agent asks a question and its card replaces the composer
     Then the list of skills is no longer shown
+
+  # Upstream #24363: the question card always set aside a keyboard's height, leaving a narrow strip.
+  @backlog @mobile @priority-low
+  Scenario: A question card uses the room the keyboard leaves
+    Given the agent asked a question with three options on a short screen
+    When the keyboard is closed
+    Then the card can grow to all the room below the header
+    And it shrinks with the keyboard as the keyboard rises
 
   @backlog @mobile
   Scenario Outline: Provider commands are offered only at the start of a message
@@ -576,6 +722,13 @@ Feature: Writing to an agent from a phone
     Then the command is removed from the draft
     And the thread's usage limits are shown
 
+  # Upstream #20910: the open keyboard pushed the panel's close button under the header.
+  @backlog @mobile @priority-low
+  Scenario: The usage limits panel can be closed while the keyboard is open
+    Given the keyboard is open
+    When the user opens the usage limits from the composer
+    Then the user can close the usage limits without closing the keyboard first
+
   @backlog @mobile
   Scenario Outline: Choosing a built-in command changes the thread instead of sending
     Given the Build and Plan toggle setting is on
@@ -651,6 +804,16 @@ Feature: Writing to an agent from a phone
     Then the suggestion list shows why pull requests could not be read
     And no pull request is offered
 
+  # Upstream #17964: the floating thread status sat over the suggestion list and caught its taps.
+  @backlog @mobile @priority-low
+  Scenario: The thread's status stays clear of the composer's suggestions
+    Given the agent is working
+    When the user types "/" in the composer
+    Then the thread's status covers none of the suggestions
+    And every suggestion can be chosen
+    When the suggestion list closes
+    Then the thread's status is shown where it was
+
   @backlog @mobile @priority-low
   Scenario: A Codex feedback notice can be dismissed unless it is still sending
     Given the user sent "/feedback The agent stopped early" in a Codex thread
@@ -688,7 +851,7 @@ Feature: Writing to an agent from a phone
     Then "add a test" is back in the composer
     And the user is pointed to the project's provider settings rather than to setting the provider up
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message written with no connection is sent once the connection returns
     Given "My MacBook" is unreachable
     When the user sends "add a test"
@@ -734,6 +897,15 @@ Feature: Writing to an agent from a phone
     Then the user is told the queue is held
     When the user resumes the queue
     Then "also update docs" runs after the current turn
+
+  # Upstream #21473: a queue holding only the agent's own wakes showed no way to resume on the phone.
+  @backlog @mobile @priority-high
+  Scenario: A queue held with only the agent's own wakes can be resumed on the phone
+    Given the user stopped a turn while a delegated task result was queued in the thread
+    And no message of the user's is queued
+    Then the composer offers to resume the queue
+    When the user resumes the queue
+    Then the turn carrying the task result starts
 
   @backlog @mobile
   Scenario: An empty queue says nothing is waiting
@@ -1246,6 +1418,7 @@ Feature: Writing to an agent from a phone
     When the user starts a new task
     Then the task starts on a model of a provider that is signed in
 
+  # Upstream #15719: the model sheet showed catalog defaults until Save; it now shows the remembered options as soon as the model is picked.
   @backlog @mobile @priority-low
   Scenario: The options chosen for a model come back when that model is chosen again
     Given the user chose "Opus 4" with high effort in "Fix checkout"
@@ -1325,3 +1498,12 @@ Feature: Writing to an agent from a phone
     When the text returns to the composer
     Then the reason shows above that thread's composer
     And it is not shown on the add-environment screen
+
+  # Upstream #19281: the composer came back empty and rejected typing after a question card.
+  @backlog @mobile
+  Scenario: The draft comes back after answering a question
+    Given the draft holds "also check refunds"
+    And the agent asks a question
+    When the user answers it
+    Then the composer shows "also check refunds"
+    And the user can go on typing after it

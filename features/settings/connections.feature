@@ -1,7 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18085
+#   https://github.com/pingdotgg/t3code/pull/18758
+#   https://github.com/pingdotgg/t3code/pull/16026
+#   https://github.com/pingdotgg/t3code/pull/18563
+#   https://github.com/pingdotgg/t3code/pull/21057
+#   https://github.com/pingdotgg/t3code/pull/15840
+#   https://github.com/pingdotgg/t3code/pull/21396
 #   https://github.com/pingdotgg/t3code/pull/17370
 #   https://github.com/pingdotgg/t3code/pull/19354
 #   https://github.com/pingdotgg/t3code/pull/20432
+#   https://github.com/pingdotgg/t3code/pull/22900
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
@@ -103,6 +111,12 @@ Feature: Connections settings
         | only a loopback address and a link-local address starting 169.254             | none                              |
         | a wired address, and the operator named the host "desk.local" at launch       | "desk.local"                      |
 
+      # Upstream #18085: local network pairing links skip idle bridges, tunnels and VM adapters.
+      Examples:
+        | addresses                                                                       | offered                      |
+        | a Wi-Fi address and others on a container bridge, a VPN tunnel and a VM adapter | the Wi-Fi address            |
+        | only an address on a container bridge                                           | the container bridge address |
+
     @backlog @desktop
     Scenario: HTTPS addresses an operator configured are listed as custom addresses
       Given the operator launched the app with two HTTPS addresses for this machine and one that is not a valid address
@@ -116,6 +130,14 @@ Feature: Connections settings
       And Tailscale HTTPS is off
       When the user opens the Connections settings
       Then HAL-C2 does not query the Tailscale app for this machine's tailnet name
+
+    # Upstream #22900: a timed-out Tailscale probe left Tailscale running, and on macOS it opened
+    # the menu-bar app.
+    @backlog @mc @priority-low
+    Scenario: A Tailscale check that times out leaves nothing running
+      Given asking Tailscale for this machine's status does not answer in time
+      When the check gives up
+      Then no Tailscale process it started is left running, even one that ignores being asked to stop
 
     @backlog @desktop
     Scenario: A tailnet HTTPS name is available only while Tailscale Serve actually answers on it
@@ -263,6 +285,15 @@ Feature: Connections settings
         | listening only on this machine                                     | Limited to this machine.                                            |
         | still reading its network state                                    | Loading…                                                            |
 
+    # Upstream #16026: reopening Connections reads this machine's addresses again once they are stale.
+    # Upstream #15840: a changed set of network addresses is looked up again instead of cached.
+    @backlog @desktop @priority-low
+    Scenario: Reopening Connections shows the addresses this machine has now
+      Given the user opened the Connections settings with network access on
+      And this machine then joined a tailnet
+      When the user opens the Connections settings again
+      Then this machine's Tailscale address and tailnet name are listed
+
     @backlog @desktop
     Scenario: Several reachable addresses are folded behind the default one
       Given this machine is reachable at three addresses
@@ -317,6 +348,25 @@ Feature: Connections settings
         | Tailscale is running and HTTPS is off    | Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL.       | off                      |
         | Tailscale is running and HTTPS is on     | https://desk.tail5e3a.ts.net                                                   | on                       |
         | Tailscale is not running                 | Start Tailscale to set up HTTPS access through MagicDNS.                       | not offered              |
+
+    # Upstream #18758: with network access off the desktop does not ask Tailscale, and the row
+    # said to start a Tailscale that was running.
+    @backlog @desktop
+    Scenario: The Tailscale HTTPS row says detection is off while network access is off
+      Given network access is off and Tailscale HTTPS is off
+      When the user opens the Connections settings
+      Then the Tailscale HTTPS row says "Turn on Network access to detect Tailscale."
+      And it does not tell the user to start Tailscale
+
+    # Upstream #21057: Tailscale's status is given 3.5 seconds before it counts as not running
+    # (was 1.5); pairing and MagicDNS lookups wait as long.
+    @backlog @desktop @priority-low
+    Scenario: A slow Tailscale is still found running
+      Given Tailscale is running and HTTPS is off
+      And Tailscale takes two and a half seconds to report its status
+      When the user opens the Connections settings
+      Then the Tailscale HTTPS row says "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+      And its switch is off
 
     @backlog @desktop
     Scenario: Setting up Tailscale HTTPS shows where it will be served
@@ -1065,6 +1115,16 @@ Feature: Connections settings
       Then its row reads "Client not supported"
       And its switch cannot be changed and says "Client not supported"
 
+    # Upstream #18563: Update on a blocked environment that was already updated some other way
+    # skips the update and switches it back on, instead of failing until the client restarts.
+    @backlog @desktop @mobile
+    Scenario: An environment updated by other means is switched back on by Update
+      Given "Build box" was switched off because its server was too old for this client
+      And "Build box" has since been updated by hand to a version this client supports
+      When the user updates "Build box"
+      Then no update is run on "Build box"
+      And "Build box" is switched on and connects
+
     @backlog @desktop
     Scenario: Only a connected, switched-on environment offers its update
       Given "Build box" runs an older server than this client
@@ -1189,6 +1249,14 @@ Feature: Connections settings
     @backlog @desktop @priority-low
     Scenario: Hosts from files the SSH config includes are suggested
       Given the user's SSH config includes another file that names the host "buildbox"
+      When the user opens the SSH host field
+      Then "buildbox" is suggested
+
+    # Upstream #21396: SSH host discovery follows quoted Include paths.
+    @backlog @desktop @priority-low
+    Scenario: Hosts from an included file whose path is quoted are suggested
+      Given the user's SSH config includes "~/.ssh/work hosts/config" by a quoted path
+      And that file names the host "buildbox"
       When the user opens the SSH host field
       Then "buildbox" is suggested
 

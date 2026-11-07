@@ -1,4 +1,19 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25068
+#   https://github.com/pingdotgg/t3code/pull/17244
+#   https://github.com/pingdotgg/t3code/pull/19919
+#   https://github.com/pingdotgg/t3code/pull/19579
+#   https://github.com/pingdotgg/t3code/pull/17736
+#   https://github.com/pingdotgg/t3code/pull/14039
+#   https://github.com/pingdotgg/t3code/pull/18441
+#   https://github.com/pingdotgg/t3code/pull/19648
+#   https://github.com/pingdotgg/t3code/pull/20237
+#   https://github.com/pingdotgg/t3code/pull/13799
+#   https://github.com/pingdotgg/t3code/pull/17943
+#   https://github.com/pingdotgg/t3code/pull/21095
+#   https://github.com/pingdotgg/t3code/pull/19452
+#   https://github.com/pingdotgg/t3code/pull/14955
+#   https://github.com/pingdotgg/t3code/pull/20290
 #   https://github.com/pingdotgg/t3code/pull/16952
 #   https://github.com/pingdotgg/t3code/pull/17264
 #   https://github.com/pingdotgg/t3code/pull/16963 (the server-hosted browser's identity and NixOS libraries do not apply: only the desktop draws pages)
@@ -61,6 +76,9 @@
 #   https://github.com/pingdotgg/t3code/pull/14601
 #   https://github.com/pingdotgg/t3code/pull/14727
 #   https://github.com/pingdotgg/t3code/pull/15034
+#   https://github.com/pingdotgg/t3code/pull/25491
+#   https://github.com/pingdotgg/t3code/pull/25462
+#   https://github.com/pingdotgg/t3code/pull/25521
 
 Feature: In-app preview browser
   A thread can keep browser tabs beside it for the app it is building. The MC remembers each
@@ -112,19 +130,23 @@ Feature: In-app preview browser
         | localhost:5173          | "http://localhost:5173"                       |
         | 127.0.0.1:3000/path     | "http://127.0.0.1:3000/path"                  |
 
+    # Upstream #17943: an address carrying another URL in its query, path or fragment opens instead of searching.
+    @backlog @desktop @priority-low
+    Scenario: An address that contains another address opens it
+      When the user types "localhost:3000/?next=https://example.com" in a browser tab's address bar
+      Then the tab loads "http://localhost:3000/?next=https://example.com"
+
     @mc
     Scenario: A tab opens under the requested browser profile
       When a client opens a browser tab under the profile "work"
       Then the tab remembers the profile "work"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (open takes the viewport)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A tab can be opened at the size the client asks for
       When a client opens a browser tab for the thread at the "iphone-se" preset
       Then the tab's viewport is the "iphone-se" preset from the start
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (snapshots are merged)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A tab keeps its profile and size when it navigates and reports its status
       Given a browser tab under the profile "work" resized to 1024 by 768
       When the desktop reports it navigated to "http://localhost:5173/resized"
@@ -164,7 +186,7 @@ Feature: In-app preview browser
       Then the tab's viewport is the "iphone-se" preset
       And every watching client is told the tab resized
 
-    @backlog @mc
+    @mc
     Scenario Outline: A viewport outside what a page can be rendered at is refused
       Given a browser tab that fills its space
       When a client resizes the tab to <width> by <height>
@@ -178,7 +200,7 @@ Feature: In-app preview browser
         | 3841  | 800    |
         | 3840  | 2161   |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: A viewport at the edge of the limits is accepted
       Given a browser tab that fills its space
       When a client resizes the tab to <width> by <height>
@@ -189,13 +211,13 @@ Feature: In-app preview browser
         | 240   | 240    |
         | 3840  | 2160   |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario: An address of more than 2048 characters is refused
       When a client opens a browser tab at an address of 2049 characters
       Then no tab opens
       And the client is told the address is too long
 
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: A refused address is described without repeating it
       When a client opens a browser tab at <address>
       Then no tab opens
@@ -207,7 +229,7 @@ Feature: In-app preview browser
         | "   "                                                                    |
         | "https://user:password@example.com:bad/path?access_token=secret#fragment" |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario: A page title of more than 512 characters is refused
       Given a browser tab showing a page
       When the desktop reports a navigation titled with 513 characters
@@ -233,8 +255,7 @@ Feature: In-app preview browser
       When a client closes the thread's browser tabs without naming one
       Then the thread has no browser tabs
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (close)
-    @backlog @mc @priority-high
+    @mc
     Scenario Outline: Closing a tab or thread that has no tabs succeeds quietly
       When a client closes <what>
       Then the request succeeds
@@ -246,8 +267,7 @@ Feature: In-app preview browser
         | a tab the thread does not have           |
         | the tabs of a thread that has none       |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (close emits one event per tab)
-    @backlog @mc @priority-high
+    @mc
     Scenario: Closing every tab of a thread gives each tab its own change number
       Given a thread with two browser tabs
       And a client is watching browser tab changes
@@ -299,6 +319,13 @@ Feature: In-app preview browser
         | report status on |
         | resize           |
         | refresh          |
+
+    # Upstream #14955: known preview tabs stay while the tab list refreshes
+    @backlog @desktop @priority-low
+    Scenario: A tab an agent opened stays listed while the tabs refresh
+      Given an agent opened a browser tab in the background
+      When the user opens the preview panel while its tabs are being refreshed
+      Then the agent's tab is listed
 
   Rule: The MC suggests local web servers to preview
 
@@ -365,16 +392,14 @@ Feature: In-app preview browser
       When a client watches for local servers
       Then "https://localhost:8443" is suggested
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/local_servers.ex (autoredirect false)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A listener that redirects elsewhere is suggested without following the redirect
       Given a program listening on port 3000 that redirects to "https://example.com"
       When a client watches for local servers
       Then port 3000 is suggested
       And the MC never asks "example.com" for anything
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/local_servers.ex (probe timeout)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A listener that does not answer within a second is not suggested
       Given a program listening on port 7000 that accepts connections and never answers
       When a client watches for local servers
@@ -603,6 +628,14 @@ Feature: In-app preview browser
       When the user zooms the whole app in
       Then the page in the tab stays at 100% zoom
 
+    # Upstream #14039: a fixed preview size grew and shrank with the app's zoom; it now renders at
+    # the size chosen.
+    @backlog @desktop
+    Scenario: A fixed device size stays that size when the app is zoomed
+      Given the preview is set to a device size of 800 by 400
+      When the user zooms the app to 125%
+      Then the page still renders at 800 by 400
+
     @desktop
     Scenario: The user previews the page at a device size
       Given a browser tab that fills its space
@@ -743,6 +776,14 @@ Feature: In-app preview browser
       When the tab moves to a page on another site
       Then the first site's icon is no longer shown for it
 
+    # Upstream #25068: a page's icon in a new thread's draft was filed only once the conversation
+    # view had told it the draft's project, so it often never showed.
+    @backlog @desktop @priority-low
+    Scenario: A browser tab in a draft thread shows the page's icon
+      Given the user is writing a new thread in "shop" that has not started
+      When a browser tab of the draft loads a page with its own icon
+      Then the tab shows that icon
+
     @backlog @desktop @priority-low
     Scenario: No outside service is asked for the icon of a private address
       Given a browser tab shows a page on "localhost:5173" that gave no icon
@@ -835,6 +876,8 @@ Feature: In-app preview browser
       When the popup tries to open another popup
       Then the second popup is refused
 
+    # Upstream #20237: sites were granted notifications and could raise system notifications
+    # in the app's name; notifications are now refused like the other unlisted permissions.
     @backlog @desktop
     Scenario Outline: A page may ask for some things and not others
       Given a page in a browser tab asks for <permission>
@@ -844,12 +887,20 @@ Feature: In-app preview browser
         | permission                         | outcome |
         | the clipboard's text               | allowed |
         | to put text on the clipboard       | allowed |
-        | to show notifications              | allowed |
+        | to show notifications              | refused |
         | the user's location                | allowed |
         | the camera                         | refused |
         | the microphone                     | refused |
         | the list of installed fonts        | refused |
         | anything else a page can ask for   | refused |
+
+    # Upstream #20237: refusing a page notifications leaves the app's own notifications alone.
+    @backlog @desktop @priority-high
+    Scenario: A page cannot raise a system notification in the app's name
+      Given a page in a browser tab asks to show notifications
+      When the page tries to raise a system notification
+      Then no system notification appears
+      And the app's own notifications, such as a finished turn, still appear
 
     # Upstream #16952: on macOS a passkey prompt in a tab showed nothing and hung until it timed out.
     @backlog @desktop @priority-low
@@ -993,6 +1044,22 @@ Feature: In-app preview browser
         | Ctrl+Y on Windows              | the page's undone edit is redone                    |
         | Command+Option+Shift+V on macOS | the clipboard is pasted without its formatting     |
         | any other key                  | the page alone handles it and the app's menu does not |
+
+    # Upstream #19452: editing shortcuts follow the focused browser tab, including popups.
+    @backlog @desktop @priority-low
+    Scenario: Editing shortcuts work in whichever browser tab has the focus
+      Given the thread has two browser tabs open and a sign-in popup from one of them
+      When the user pastes into the older tab after clicking into it
+      Then the text is pasted into the older tab
+      And pasting into the sign-in popup works the same way
+
+    # Upstream #19452: keys an agent sends to a tab never act as the user's shortcuts.
+    @backlog @desktop @priority-low
+    Scenario: Keys an agent sends to a browser tab do not trigger shortcuts
+      Given the user is typing in the composer
+      When an agent sends the keys for paste and for a HAL-C2 shortcut to a browser tab
+      Then nothing is pasted from the user's clipboard
+      And no HAL-C2 shortcut runs
 
     @backlog @desktop @priority-low
     Scenario: The mouse's back and forward buttons move through the tab's history
@@ -1283,6 +1350,14 @@ Feature: In-app preview browser
       When the user attaches the annotation
       Then the picture covers the marked element with twenty pixels around it, kept inside the page
 
+    # Upstream #18441: a mark off the visible page attached an edge strip or padding as its picture.
+    @backlog @desktop @priority-low
+    Scenario: An annotation's picture holds only the part of the mark that is on screen
+      Given the user marked an element partly scrolled off the top of the page
+      When the user attaches the annotation
+      Then the picture holds only the part of the element that is on screen
+      But a mark wholly off screen is attached without a picture, saying the screenshot failed
+
     @backlog @desktop @priority-low
     Scenario: The comment box sits next to what was marked
       Given the user marked an element on a page
@@ -1377,6 +1452,15 @@ Feature: In-app preview browser
       Then the user sees "Unable to start recording"
       When the user cancels the recording's choice of what to share
       Then the user is not told of any failure
+
+    # Upstream #17244: a native capture failure lost its cause and showed a generic toast.
+    @backlog @desktop @priority-low
+    Scenario: A recording the system will not let start says why and how to fix it
+      Given a browser tab showing a page
+      When the system refuses to let the desktop capture the screen
+      Then the user sees "Unable to start recording" with the system's reason
+      And the user is told what to change before trying again
+      And that reason is kept even when cleaning up the failed recording also fails
 
     @backlog @desktop @priority-low
     Scenario: Only one browser tab is recorded at a time
@@ -1700,6 +1784,42 @@ Feature: In-app preview browser
       When the user opens a new browser tab in another thread of that project
       Then "http://localhost:5173" is among the recent pages
 
+    # Upstream #25491: visits were not filed under the thread's project, so Recently used stayed empty.
+    @backlog @desktop
+    Scenario Outline: Pages visited in a draft or a thread are remembered with their titles
+      Given the user visits "http://localhost:5173/docs" titled "Docs" in a browser tab of <thread>
+      When the user restarts HAL-C2 and opens a new browser tab in that project
+      Then "Docs" at "http://localhost:5173/docs" is among the recent pages
+
+      Examples:
+        | thread                        |
+        | a thread of the project       |
+        | a new thread's draft          |
+
+    # Upstream #25462: titles were recorded only while the panel was open.
+    @backlog @desktop
+    Scenario: A page's title is remembered while its browser is not shown
+      Given an agent loads "http://localhost:5173/docs" titled "Docs" in a thread's browser tab
+      And the browser is not shown for that thread
+      When the user opens a new browser tab in that project
+      Then "Docs" is the title of "http://localhost:5173/docs" among the recent pages
+
+    # Upstream #25521: returning to a thread replayed the title it last saw for a shared page.
+    @backlog @desktop @priority-low
+    Scenario: Returning to a thread keeps a page's newest title
+      Given thread "A" loaded "http://localhost:5173/x" titled "Old"
+      And thread "B" of the same project later loaded it titled "New"
+      When the user switches back to thread "A"
+      Then "http://localhost:5173/x" is titled "New" among the recent pages
+
+    # Upstream #25462: a browser resized by its own handles failed while no panel showed it.
+    @backlog @desktop
+    Scenario: A browser tab resizes while no panel shows it
+      Given a thread's browser tab is not shown in a panel
+      When its viewport is resized from its own resize handles or a device toolbar
+      Then the page takes the new size
+      And "No visible browser viewport handler" is not shown
+
     @backlog @desktop
     Scenario: The history of one project does not appear in another
       Given the user visited "http://localhost:5173" in a project's browser tab
@@ -1923,6 +2043,15 @@ Feature: In-app preview browser
       When the user opens "docs/manual.pdf" in the preview browser
       Then the tab opens at 390 by 844 under the profile "Work"
 
+    # Upstream #21095: PDFs are shown by the client's own PDF viewer through its connection,
+    # back and forward still work, and links inside the PDF open externally.
+    @backlog @desktop @mobile
+    Scenario: A PDF linked from a local page is shown in the preview browser
+      Given the user has the page "public/index.html" open in the preview browser
+      When the user follows its link to "docs/manual.pdf"
+      Then the PDF is shown in the tab
+      And going back returns to "public/index.html"
+
     @backlog @desktop
     Scenario: A file cannot be opened in the preview when saved browser settings cannot be read
       Given the saved browser settings cannot be loaded
@@ -2025,6 +2154,30 @@ Feature: In-app preview browser
       When the tab at "http://localhost:5173" is closed on the MC
       Then no browser tabs are listed
 
+    # Upstream #13799: a browser tab keeps its page when the tab list is reordered by recency.
+    @backlog @desktop
+    Scenario: A browser tab keeps its page when another tab becomes the most recent
+      Given the thread has browser tabs "Docs" and then "App", each showing its page
+      When the user navigates "Docs" so that it becomes the most recently updated tab
+      Then "App" still shows its page without loading it again
+      And "Docs" shows its new page
+
+    # Upstream #17736: an HTML preview keeps the user's input when its address renews.
+    @backlog @desktop
+    Scenario: An HTML preview keeps what the user typed when its address renews
+      Given the user typed into a form in a previewed HTML file
+      When the preview's address is renewed
+      Then the page is not reloaded
+      And the form still holds what the user typed
+
+    # Upstream #19919: agent-opened tabs in background threads open in the desktop browser.
+    @backlog @desktop
+    Scenario: A tab an agent opens in a background thread is ready when the user goes there
+      Given the user is looking at thread "a"
+      When the agent of thread "b" opens "http://localhost:5173"
+      And the user opens thread "b"
+      Then the page at "http://localhost:5173" is already loaded beside the thread
+
   Rule: Only the desktop draws pages
 
     # The phone and the TUI have no in-app browser; a page they open goes to
@@ -2044,6 +2197,15 @@ Feature: In-app preview browser
       When another device starts viewing the same tab
       Then the phone still shows the reply the user typed
 
+    # Upstream #19648 added Paste to the phone's Browser menu, sending the phone's clipboard into
+    # the streamed page. The phone does not stream or control browser tabs here; its pages go to
+    # the system's browser, which has its own paste.
+    @dropped @mobile
+    Scenario: The phone pastes its clipboard into a page it controls
+      Given the user controls a browser tab on the phone
+      When the user chooses Paste from the tab's menu
+      Then the text on the phone's clipboard is typed into the page's focused field
+
     @tui
     Scenario: The terminal client lists preview addresses without an embedded browser
       Given a project with configured and discovered preview addresses
@@ -2055,6 +2217,24 @@ Feature: In-app preview browser
       Given the thread has preview tabs
       When the user refreshes or closes one in the terminal client
       Then the MC's tab list updates and unreachable pages are reported
+
+    # Upstream #20290: on a slow link, browser control replies no longer wait behind old
+    # streamed frames. Dropped: the MC streams no pages, the desktop draws them.
+    @dropped @mc
+    Scenario: A streamed page's control replies do not wait behind old frames
+      Given a page is streamed to a client over a slow link
+      When the client clicks in the page
+      Then the reply to the click is not held behind frames already out of date
+
+    # Upstream #19579: the phone closes a thread's browser tabs; the last one closed returns to the thread,
+    # and a user without permission to operate previews cannot close them.
+    @backlog @mobile @priority-low
+    Scenario: The phone closes a thread's browser tab
+      Given the thread has browser tabs "http://localhost:5173" and "http://localhost:3000"
+      When the user closes "http://localhost:5173" on the phone
+      Then only "http://localhost:3000" is listed
+      When the user closes "http://localhost:3000"
+      Then the phone shows the thread
 
   @backlog @desktop @priority-low
   Scenario: Markdown and plain-text pages are readable in dark mode

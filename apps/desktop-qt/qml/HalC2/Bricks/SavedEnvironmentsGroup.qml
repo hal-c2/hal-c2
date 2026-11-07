@@ -8,8 +8,15 @@ import HalC2.Shell
 // publishes `savedEnvironments`): other MCs this app paired with by a pairing
 // link, each on a connection of its own, with why one is not connected, a way
 // to try it again, and a way to remove it. Pasting a link pairs a new one.
+// A client that pairs with its own screen (the phone's PairingSettings) lists
+// them without the paste field and asks before removing one (`removeAction`).
 ColumnLayout {
     id: group
+
+    // Whether a link pasted here pairs a new one.
+    property bool pasting: true
+    // What Remove dispatches with the environment's `{id}`.
+    property string removeAction: "savedEnvironments.remove"
 
     readonly property var model: Shell.state.savedEnvironments ?? null
     readonly property var environments: model ? model.environments : []
@@ -51,6 +58,7 @@ ColumnLayout {
 
     Label {
         Layout.fillWidth: true
+        visible: group.pasting
         text: qsTr("Paste a pairing link from another machine to connect to it from here, beside this machine.")
         color: group.muted
         font.pixelSize: Theme.type.meta.size
@@ -59,6 +67,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
+        visible: group.pasting
         spacing: Theme.space.sm
 
         ShellTextField {
@@ -108,6 +117,7 @@ ColumnLayout {
 
             required property var modelData
 
+            objectName: "savedEnvironment:" + modelData.id
             Layout.fillWidth: true
             spacing: 2
 
@@ -130,6 +140,7 @@ ColumnLayout {
                 }
 
                 ShellButton {
+                    objectName: "savedEnvironmentRetry:" + entry.modelData.id
                     visible: entry.modelData.state !== "connected" && entry.modelData.state !== "connecting"
                     subtle: true
                     text: qsTr("Retry")
@@ -140,10 +151,11 @@ ColumnLayout {
                 }
 
                 ShellButton {
+                    objectName: "savedEnvironmentRemove:" + entry.modelData.id
                     subtle: true
                     text: qsTr("Remove")
                     Accessible.name: qsTr("Remove %1").arg(entry.modelData.label)
-                    onClicked: Shell.dispatch("savedEnvironments.remove", {
+                    onClicked: Shell.dispatch(group.removeAction, {
                         id: entry.modelData.id
                     })
                 }

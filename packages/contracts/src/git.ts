@@ -230,6 +230,8 @@ const VcsStatusLocalShape = {
         path: TrimmedNonEmptyStringSchema,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
+        /** Set for a renamed file: where it was before. */
+        previousPath: Schema.optional(Schema.String),
       }),
     ),
     insertions: NonNegativeInt,

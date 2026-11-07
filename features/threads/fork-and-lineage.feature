@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18603
+#   https://github.com/pingdotgg/t3code/pull/22075
+#   https://github.com/pingdotgg/t3code/pull/20747
 #   docs/orchestration-v2/thread-lineage-and-context-transfer.md
 #   docs/orchestration-v2/feature-lifecycles.md (fork, merge back, provider switch)
 #   docs/internals/context-handoffs.md
@@ -212,6 +215,14 @@ Feature: Forking threads and merging work back
     Then the deleted fork is listed after "Webhooks"
     And it says "This related thread is unavailable"
 
+  # Upstream #20747: opening a deleted thread from the timeline stays on the current thread.
+  @backlog @shared
+  Scenario: Opening a related thread that was deleted stays where the user is
+    Given the timeline of "Plan billing" links to a thread that has been deleted
+    When the user opens the link
+    Then "Plan billing" stays open
+    And the user is told the thread is no longer available
+
   @backlog @desktop @priority-low
   Scenario: Relatives from archived threads are listed too
     Given "Try Stripe" is a fork of "Plan billing" and "Plan billing" is archived
@@ -227,6 +238,15 @@ Feature: Forking threads and merging work back
     And "Docs" and "Lint" are under a closed "Previous agents" heading showing 2 and "1 failed"
     When the user opens the "Previous agents" heading
     Then "Docs" and "Lint" are listed
+
+  # Upstream #18603: a supervisor whose own turn ended while its worker ran moved under Previous agents.
+  @backlog @desktop
+  Scenario: A subagent waiting on its own worker is still listed as working
+    Given "Plan billing" has the subagent "Tax tests"
+    And "Tax tests" ended its own turn while a task it delegated is still running
+    When the user looks at the relatives of "Plan billing"
+    Then "Tax tests" is listed as working, with its task's progress and time
+    And it moves under "Previous agents" only once its task has finished
 
   @backlog @desktop
   Scenario: A long list of relatives is shown a part at a time
@@ -278,3 +298,11 @@ Feature: Forking threads and merging work back
     Given the agent session of "Plan billing" is stopped
     When the user looks at the lineage actions of "Plan billing"
     Then "Disconnect agent session" is not offered
+
+  # Upstream #22075: a forked Claude thread lost the context count and Compact until it reported usage.
+  @backlog @mc @desktop
+  Scenario: A fork keeps its source's context usage until it reports its own
+    Given "Plan billing" used 60% of its context at the turn the user chooses
+    When the user forks "Plan billing" at that turn
+    Then the fork shows 60% of its context used and offers Compact
+    And a fork handed to another provider does not reuse it

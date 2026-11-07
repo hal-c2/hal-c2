@@ -1,4 +1,18 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18466
+#   https://github.com/pingdotgg/t3code/pull/24063
+#   https://github.com/pingdotgg/t3code/pull/19186
+#   https://github.com/pingdotgg/t3code/pull/18843
+#   https://github.com/pingdotgg/t3code/pull/18786
+#   https://github.com/pingdotgg/t3code/pull/22011
+#   https://github.com/pingdotgg/t3code/pull/18841
+#   https://github.com/pingdotgg/t3code/pull/17435
+#   https://github.com/pingdotgg/t3code/pull/14332
+#   https://github.com/pingdotgg/t3code/pull/21763
+#   https://github.com/pingdotgg/t3code/pull/21510
+#   https://github.com/pingdotgg/t3code/pull/20350
+#   https://github.com/pingdotgg/t3code/pull/19450
+#   https://github.com/pingdotgg/t3code/pull/17614
 #   https://github.com/pingdotgg/t3code/pull/14677
 #   https://github.com/pingdotgg/t3code/pull/19651
 #   https://github.com/pingdotgg/t3code/pull/13217
@@ -29,6 +43,7 @@
 #   apps/web/src/composerPlaceholder.ts, apps/web/src/components/chat/ChatComposer.tsx (what an empty composer asks for)
 #   https://github.com/pingdotgg/t3code/pull/10154
 #   https://github.com/pingdotgg/t3code/pull/14674
+#   https://github.com/pingdotgg/t3code/pull/21503
 
 Feature: Editing the draft
   The user edits the draft with the keys they are used to, in an outside
@@ -164,6 +179,16 @@ Feature: Editing the draft
     When the user moves forward again
     Then the draft reads "second"
 
+  # Upstream #21510: prompt recall skips messages sent by automations, agents and the app.
+  @backlog @desktop @mobile
+  Scenario: Recalling earlier prompts skips messages the user did not type
+    Given the user sent "first" in this thread
+    And a scheduled task then sent "Run the nightly check"
+    And the user then sent "second"
+    And the composer is empty
+    When the user recalls the previous prompt twice
+    Then the draft reads "first"
+
   @desktop
   Scenario: Stashing a prompt clears the composer and it can be restored
     Given the draft reads "half-finished idea"
@@ -227,12 +252,25 @@ Feature: Editing the draft
       | macOS    | Cmd+B  |
       | Linux    | Ctrl+B |
 
+  # Upstream #24063: the composer is focused most of the time, so the bold shortcut bolds only
+  # a selection; with just a caret it toggles the sidebar.
   @backlog @desktop
-  Scenario: The bold shortcut does not toggle the sidebar while rich text is on
+  Scenario: The bold shortcut does not toggle the sidebar while text is selected
     Given rich text editing is on
-    And the composer has focus
+    And the composer has "word" selected
     When the user presses the bold shortcut
-    Then the sidebar stays as it was
+    Then "word" is bold
+    And the sidebar stays as it was
+
+  # Upstream #24063: the composer ignores the bold chord on an empty selection, even when the
+  # sidebar toggle is moved to another key.
+  @backlog @desktop
+  Scenario: The bold shortcut with only a caret toggles the sidebar instead of bolding
+    Given rich text editing is on
+    And the composer has focus with nothing selected
+    When the user presses the bold shortcut
+    Then the sidebar toggles
+    And nothing in the draft turns bold
 
   # Upstream #13409: the layout's letter decides the shortcut, so a Cyrillic or Greek layout bolds too.
   @backlog @desktop @priority-low
@@ -370,6 +408,28 @@ Feature: Editing the draft
       | and holds it so the key repeats                    |
       | with the keyboard focus on a task's checkbox       |
 
+  # Upstream #21763: a narrow or zoomed window disabled the composer's send keys.
+  @backlog @desktop @priority-high
+  Scenario: Enter sends in a narrow window
+    Given the window is narrowed to the width of a phone
+    And the draft reads "fix the tax line"
+    When the user presses Enter
+    Then "fix the tax line" is sent
+
+  # Upstream #21763: with an on-screen keyboard open, Return is for new lines; a hardware
+  # keyboard sends with Enter.
+  @backlog @mobile @priority-high
+  Scenario Outline: Return on the phone follows the keyboard in use
+    Given the send shortcut setting is "Enter"
+    And the draft reads "fix the tax line"
+    When the user presses Return on <keyboard>
+    Then <outcome>
+
+    Examples:
+      | keyboard                 | outcome                                  |
+      | the on-screen keyboard   | a new line starts and nothing is sent    |
+      | an attached keyboard     | "fix the tax line" is sent               |
+
   @backlog @desktop @priority-high
   Scenario Outline: Enter in a list starts the next item
     Given the draft's last line reads "<line>" with the caret at its end
@@ -404,6 +464,14 @@ Feature: Editing the draft
     When the user adds a new line
     Then the draft reads "- milk" and then "- and eggs" on the next line
 
+  # Upstream #14332: an item inserted into a numbered list left duplicate numbers after it.
+  @backlog @desktop @priority-low
+  Scenario: A new item in a numbered list renumbers the items after it
+    Given the draft reads "1. milk", "2. eggs" and "3. bread" on three lines
+    When the user adds a new line after "1. milk"
+    Then the draft numbers its items 1, 2, 3 and 4
+    And the caret is in the new item "2."
+
   @backlog @desktop
   Scenario: A reference in a list item is never split
     Given a list item holds a file reference
@@ -432,6 +500,16 @@ Feature: Editing the draft
       | `code`        | "code" as code                 |
       | - [ ] milk    | "milk" as an unchecked task    |
       | - [x] milk    | "milk" as a checked task       |
+
+  # Upstream #17435: filling a typed pair of backticks left them literal; moving past the closing
+  # backtick now makes the text code.
+  @backlog @desktop
+  Scenario: Text typed between a pair of backticks becomes code
+    Given rich text editing is on
+    And the user typed "``" and moved back between the backticks
+    When the user types "hello world" and moves past the closing backtick
+    Then the draft shows "hello world" as code
+    And text typed after it is plain
 
   # Upstream #14677: blocks, not only words, are styled, and the draft keeps every delimiter.
   @backlog @desktop
@@ -507,6 +585,15 @@ Feature: Editing the draft
     Then the caret stops outside the bold markers
     And text the user types lands outside the bold text
 
+  # Upstream #22011: macOS Command-arrow stops outside styled markers at line and draft edges
+  @backlog @desktop
+  Scenario: Command-arrow on macOS leaves the caret outside styled markers
+    Given the user is on macOS
+    And rich text editing is on and the draft ends with "bold" in bold
+    When the user presses Command-Right or Command-Down
+    Then the caret stops outside the bold markers
+    And Shift with the same keys extends the selection to that edge
+
   @backlog @desktop
   Scenario: A task in the draft is ticked with the keyboard or the pointer
     Given rich text editing is on and the draft holds an unchecked task "milk"
@@ -531,6 +618,14 @@ Feature: Editing the draft
       | <    | <world>   |
       | *    | *world*   |
       | _    | _world_   |
+
+  # Upstream #20350: text the input method is still composing is not a selection, so a
+  # Compose or dead-key sequence leaves only the composed letter.
+  @backlog @desktop
+  Scenario: Composing an accented letter adds no quotes
+    Given the draft reads "sch"
+    When the user types Compose, then ", then o
+    Then the draft reads "schö"
 
   @backlog @desktop
   Scenario Outline: Typing an opening mark over a reference or styled text replaces it
@@ -573,6 +668,14 @@ Feature: Editing the draft
     Then the composer holds no text, image, file or excerpt
     When the user restores the stashed prompt
     Then the draft reads "look at this" and carries the image, the file and the terminal excerpt again
+
+  # Upstream #18843: stashed prompts keep their thread-context references and restoring resolves them.
+  @backlog @desktop
+  Scenario: A stashed prompt keeps the threads it refers to
+    Given the draft refers to the thread "Checkout redesign"
+    When the user stashes the prompt and restores it later
+    Then the draft refers to "Checkout redesign" again
+    And sending it gives the agent that thread's context
 
   @backlog @desktop
   Scenario: A prompt stashed in one thread is restored in another and keeps that thread's model
@@ -700,6 +803,15 @@ Feature: Editing the draft
     When the user deletes "first idea" as well
     Then the stash closes
 
+  # Upstream #18841: stash shortcuts only act in the composer and the stash drawer
+  @backlog @desktop @priority-low
+  Scenario: Stash keys do nothing while the user works in another dialog or field
+    Given the user has stashed "first idea"
+    And the user is typing in a dialog outside the composer
+    When the user presses a stash key
+    Then nothing is stashed or restored
+    And the dialog keeps the keypress
+
   @backlog @desktop @priority-low
   Scenario: An empty stash says how to fill it
     Given nothing is stashed
@@ -760,10 +872,12 @@ Feature: Editing the draft
     And <state>
     Then the composer reads "<hint>"
 
+    # Upstream #21503: an approval no longer locks the composer; its hint says a message
+    # declines the approval and redirects the agent.
     Examples:
       | state                                              | hint                                                                 |
       | nothing is waiting on the user                     | Ask anything, @tag files/folders, $use skills, or / for commands     |
-      | an approval is waiting for an answer               | Resolve this approval request to continue                            |
+      | an approval is waiting for an answer               | Send a message to decline and redirect the agent                     |
       | a question with only fixed choices is waiting      | Choose an option above                                               |
       | a question that takes a typed answer is waiting    | Type your own answer, or leave this blank to use the selected option |
       | a proposed plan is waiting to be implemented       | Add feedback to refine the plan, or leave this blank to implement it |
@@ -815,6 +929,13 @@ Feature: Editing the draft
     Then the draft no longer quotes that paragraph
     But cancelling an edit of an older quote keeps the quote and its comment
 
+  # Upstream #19450: a comment written under a quote is sent as its own paragraph.
+  @backlog @shared
+  Scenario: A comment under a quote is sent apart from the quote
+    Given the composer holds a quote from the agent's reply
+    When the user types a comment on the line under it and sends the message
+    Then the quote and the comment arrive as separate paragraphs
+
   @backlog @shared
   Scenario: Composer suggestions are usable with a screen reader
     Given a screen reader is running
@@ -829,9 +950,39 @@ Feature: Editing the draft
     When the user undoes once
     Then only the last action is undone
 
+  # Upstream #18466: undo after a thread switch put a deleted chip from the other draft back.
+  @backlog @shared @priority-low
+  Scenario: Undo does not reach into another thread's draft
+    Given the user deleted a file chip from the draft of "Alpha"
+    When the user switches to "Beta" and undoes
+    Then nothing from the draft of "Alpha" is put into the draft of "Beta"
+    But undoing in "Alpha" before switching brings the chip back whole
+
+  # Upstream #17614: an input method composing before a skill mention keeps its text.
+  @backlog @shared @priority-low
+  Scenario: Typing with an input method before a skill mention keeps the composition
+    Given the composer holds a skill mention
+    When the user types pinyin directly before it with a Chinese input method
+    Then the letters stay a composition until the user picks a candidate
+    And the picked characters are inserted before the mention
+
   @backlog @shared @priority-low
   Scenario: Typing before or after bold at a line's edge can be plain
     Given rich text editing is on and a line starts with bold text
     When the user moves the caret to the start of the line
     Then the caret can be placed to type plain text in front of the bold
     And the arrow keys step between typing plain and typing bold before moving on
+
+  # Upstream #19186: typed underscores stay literal; only asterisks italicise.
+  @backlog @desktop
+  Scenario: Typed underscores stay as they are
+    When the user types "rename _old_name_ to new_name"
+    Then the draft reads "rename _old_name_ to new_name"
+    And nothing in it is italic
+
+  # Upstream #18786: a bare marker without a space was taken for an empty list item and deleted.
+  @backlog @shared @priority-low
+  Scenario: Enter after a number with no space keeps it
+    Given the draft's last line is "2."
+    When the user starts a new line
+    Then the line "2." is kept and a new line starts below it

@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19523
+#   https://github.com/pingdotgg/t3code/pull/24349
+#   https://github.com/pingdotgg/t3code/pull/20785
+#   https://github.com/pingdotgg/t3code/pull/20786
+#   https://github.com/pingdotgg/t3code/pull/18099
+#   https://github.com/pingdotgg/t3code/pull/15710
+#   https://github.com/pingdotgg/t3code/pull/15477
+#   https://github.com/pingdotgg/t3code/pull/18149
+#   https://github.com/pingdotgg/t3code/pull/18142
 #   https://github.com/pingdotgg/t3code/pull/17723
 #   https://github.com/pingdotgg/t3code/pull/18369
 #   https://github.com/pingdotgg/t3code/pull/16878
@@ -55,6 +64,9 @@
 #   https://github.com/pingdotgg/t3code/pull/15493
 #   https://github.com/pingdotgg/t3code/pull/15334
 #   https://github.com/pingdotgg/t3code/pull/15281
+#   https://github.com/pingdotgg/t3code/pull/25759
+#   https://github.com/pingdotgg/t3code/pull/24587
+#   https://github.com/pingdotgg/t3code/pull/21393
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -65,6 +77,7 @@ Feature: Plans and subagents
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/proposedPlan.ts
+  # Upstream #21393: the phone showed proposed plans as JSON; they are cards with copy and save.
   @shared
   Scenario: A proposed plan appears as a card titled by its first heading
     When the agent proposes a plan whose first heading is "Add a tax line"
@@ -334,6 +347,14 @@ Feature: Plans and subagents
     Then the worker's notification reads "Tax tests finished"
     And the notification links to the worker's thread
 
+  # Upstream #18099: a resumed subagent's notification shows it running again.
+  @backlog @shared
+  Scenario: A failed subagent that is resumed shows as running
+    Given a subagent's notification says it failed
+    When the parent resumes that subagent
+    Then the notification shows the subagent running
+    And it no longer says it failed
+
   @desktop @mobile @backlog-mobile
   Scenario: A finished task's result is kept apart from the agent's replies until opened
     Given a task the agent delegated as "Tax tests" finished with "12 tests added"
@@ -406,6 +427,14 @@ Feature: Plans and subagents
     Then the thread says it is a subagent of the parent
     When the user opens the parent thread
     Then the parent thread is shown
+
+  # Upstream #18149: a parent whose work the provider ran itself showed as Idle in its subagent's
+  # thread; its own turn's status is shown when it has no later run.
+  @backlog @desktop @priority-low
+  Scenario: A subagent's thread shows how its parent is doing
+    Given the provider of "Plan checkout" started a subagent and "Plan checkout" then completed
+    When the user opens the subagent's thread
+    Then "Plan checkout" is shown as "Completed"
 
   @mc @shared
   Scenario: A message from another agent says which thread it came from
@@ -593,6 +622,14 @@ Feature: Plans and subagents
     Then the marker shows "Claude" and "Codex" with their models
     And pointing at either names its provider and model
 
+  # Upstream #15477: a handoff between accounts on the same model showed the same glyph twice;
+  # pending and finished handoff markers now show each side's account.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A handoff between two accounts names each account
+    Given the thread ran on "Claude · Opus" signed in as "Work"
+    When the context is handed to "Claude · Opus" signed in as "Personal"
+    Then the marker shows the "Work" account on one side and "Personal" on the other
+
   @desktop
   Scenario: A context handoff that failed is marked as failed
     When the context handoff fails
@@ -617,6 +654,24 @@ Feature: Plans and subagents
     Then the timeline marks "Context handoff pending" before the next message is sent
     When the user picks the Codex model again
     Then the mark is gone
+
+  # Upstream #19523: a stale draft showed a pending handoff to a provider the next send would
+  # skip or refuse.
+  @shared @mobile @backlog @priority-low
+  Scenario: No handoff is marked for a provider the next send cannot use
+    Given the thread has run on Codex
+    And the draft names a Claude model
+    And Claude is disabled for the thread's project
+    Then the timeline does not mark "Context handoff pending"
+    But a project that enables Claude while it is off elsewhere does mark it
+
+  # Upstream #24349: the handoff showed twice, as its row and as the pending mark, until the
+  # new provider started.
+  @shared @backlog @priority-low
+  Scenario: A starting handoff is marked once
+    Given the timeline marks "Context handoff pending"
+    When the user sends the next message and the handoff starts
+    Then the handoff's row is shown and "Context handoff pending" is gone, before the new provider starts
 
   @desktop
   Scenario Outline: A fork marker leads to the other end of the fork
@@ -791,6 +846,39 @@ Feature: Plans and subagents
     When the turn settles and every subagent has finished
     Then the thread's status does not mention subagents
 
+  # Upstream #25759: the Agents entry disappeared when the turn ended, leaving finished subagents
+  # out of reach from the parent.
+  # Replaces the scenario above once mobile carries it.
+  @backlog @mobile @priority-high
+  Scenario: Finished subagents stay reachable from the thread's status after the turn settles
+    Given the agent started three subagents in this turn
+    When the turn settles and every subagent has finished
+    Then the thread's status says "3 agents done"
+    And opening it lists the three subagents, each opening its own thread
+
+  # Upstream #25759: a later run takes the roster over; a queued, cancelled or rolled-back run does not.
+  @backlog @mobile
+  Scenario Outline: The finished subagents give way only to a later run that started
+    Given the agent started three subagents in a turn that has settled
+    When <later>
+    Then the thread's status <status>
+
+    Examples:
+      | later                                          | status                         |
+      | a later turn starts                            | follows the later turn         |
+      | a later message is only queued                 | still says "3 agents done"     |
+      | a later message is cancelled before it starts  | still says "3 agents done"     |
+      | a later turn is rolled back                    | still says "3 agents done"     |
+
+  # Upstream #24587: completed workflows stayed out of the Agents list after later turns, and idle
+  # agents counted as done.
+  @backlog @mobile
+  Scenario: A finished workflow stays in the thread's agents and idle agents are not counted done
+    Given a workflow finished in an earlier run of the thread
+    And an agent of the latest run is idle
+    Then the thread's status says "1 done"
+    And its agents list both, and the workflow opens its result thread
+
   # Upstream #16878: folding a settled turn (or a superseded attempt) left running work out of sight.
   @backlog @shared
   Scenario: A running subagent's card stays in view after its turn is folded
@@ -808,12 +896,43 @@ Feature: Plans and subagents
     Then "Tax tests" is listed as working and "Docs" as completed
     And "Docs" is shown to have taken "1m 15s"
 
+  # Since upstream #20785 background subagents still working from earlier turns are listed too,
+  # so this holds only once the first turn's subagent has finished; see the replacement below.
   @mobile
   Scenario: A thread's subagents are listed for the latest turn only
     Given the agent started the subagent "Tax tests" in the first turn
     And the agent started the subagent "Docs" in the second turn
     When the user opens the subagents of the thread
     Then only "Docs" is listed among the subagents
+
+  # Upstream #20785: an earlier turn's subagent drops out of the list once it has finished.
+  # Replaces the scenario above once the phone carries it.
+  @backlog @mobile
+  Scenario: A finished subagent of an earlier turn is not listed with the latest turn's
+    Given the agent started the subagent "Tax tests" in the first turn
+    And "Tax tests" has finished
+    And the agent started the subagent "Docs" in the second turn
+    When the user opens the subagents of the thread
+    Then only "Docs" is listed among the subagents
+
+  # Upstream #20785: the thread's subagents also take in background subagents still working
+  # from earlier turns, so the list agrees with the number the thread says it waits on.
+  @backlog @mobile
+  Scenario: Subagents still working from an earlier turn are listed with the latest turn's
+    Given the agent started the subagent "Tax tests" in the background in the first turn
+    And the agent started the subagent "Docs" in the second turn
+    And "Tax tests" is still working
+    When the user opens the subagents of the thread
+    Then "Tax tests" and "Docs" are both listed among the subagents
+    And the thread's status counts as many working subagents as the list shows
+
+  # Upstream #20785: subagents of a rolled-back turn stay out of the list, as they do from the count.
+  @backlog @mobile
+  Scenario: A subagent of a rolled-back turn is not listed
+    Given the agent started the subagent "Tax tests" in a turn that was rolled back
+    And "Tax tests" is still working
+    When the user opens the subagents of the thread
+    Then "Tax tests" is not listed among the subagents
 
   @mobile
   Scenario: A subagent the provider manages is listed but cannot be opened
@@ -983,6 +1102,16 @@ Feature: Plans and subagents
       | high   | Ultrafast   | two bolts  |
       | high   | Standard    | none       |
 
+  # Upstream #15710: a provider's own subagent showed the model's default effort when none was
+  # saved or reported; it now shows none, and ignores a report for another model.
+  @backlog @shared @priority-low
+  Scenario: A subagent whose effort nobody stated shows none
+    Given a provider's own subagent runs with no saved effort
+    And its provider reports no effort for the model it runs on
+    When the user looks at the subagent's details
+    Then no effort is shown, not the model's default
+    And an effort the provider reports for another model is not shown either
+
   @backlog @shared
   Scenario: Stopping a subagent from the lineage
     Given a subagent that HAL-C2 started is running
@@ -1013,6 +1142,16 @@ Feature: Plans and subagents
     And a queued member stays pending and its timer starts only when it starts running
     And opening a member shows its original prompt and its final answer
 
+  # Upstream #20786: a running workflow member's thread shows the text it has answered so far,
+  # read from its transcript, instead of only its prompt until it finishes.
+  @backlog @mc @shared @plugin-claude
+  Scenario: A running Claude workflow member shows its answer so far
+    Given Claude runs a workflow with a member still running
+    When the member has written part of its answer
+    Then the member's thread shows the answer so far after its prompt
+    And the answer so far grows as the member writes more
+    And when the member finishes, its final answer takes the place of the answer so far
+
   @backlog @mc @shared @plugin-claude
   Scenario: Stopping a whole Claude workflow
     Given Claude runs a workflow with members still running
@@ -1025,6 +1164,14 @@ Feature: Plans and subagents
     Given Claude runs a workflow with members still running
     When the workflow's coordinator fails, the Claude process exits or the MC restarts
     Then no member or member thread is left reading as running
+
+  # Upstream #18142: Claude workflow members keep their real completion time; a retry clears the old one.
+  @backlog @mc @shared @plugin-claude
+  Scenario: A Claude workflow member's time ends when it finished
+    Given a Claude workflow member waited 2 minutes to start and then worked for 1 minute
+    When the member finishes
+    Then the lineage shows it finished 3 minutes after it was queued, when it last reported progress
+    And a member that is retried does not keep its first attempt's finish time
 
   @backlog @mc @plugin-claude @priority-high
   Scenario: A finished Claude subagent does not read as running again

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19326
 #   https://github.com/pingdotgg/t3code/pull/18454 (prompt links: parser in packages/shared/promptLinks,
 #     resolvers in packages/client-runtime/prompt-links, docs/user/prompt-links.md)
 #   Cross-domain: mobile/navigation-and-deep-links.feature owns the phone's link schemes;
@@ -106,6 +107,14 @@ Feature: Sharing a prompt as a link
     Given "My MacBook" has the thread "Fix checkout"
     When the user opens a link to "Fix checkout" with the prompt "Also cover refunds"
     Then "Fix checkout" opens with "Also cover refunds" in its composer
+
+  # Upstream #19326: a prompt link opened from a thread no longer lands in that thread
+  @backlog @desktop
+  Scenario: A prompt link opened while a thread is open drafts a new thread
+    Given the user has the thread "Build search" open
+    When the user opens a prompt link that names no thread
+    Then the prompt is drafted in a new thread
+    And the composer of "Build search" is unchanged
 
   @backlog @desktop @mobile @priority-high
   Scenario: A prompt link asks before replacing what the user already wrote

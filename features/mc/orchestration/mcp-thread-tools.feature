@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18194
+#   https://github.com/pingdotgg/t3code/pull/18360
+#   https://github.com/pingdotgg/t3code/pull/17454
+#   https://github.com/pingdotgg/t3code/pull/21027
 #   https://github.com/pingdotgg/t3code/pull/17791
 #   https://github.com/pingdotgg/t3code/pull/17823
 #   https://github.com/pingdotgg/t3code/pull/17145
@@ -6,6 +10,10 @@
 #   https://github.com/pingdotgg/t3code/pull/15627
 #   https://github.com/pingdotgg/t3code/pull/15617
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/24784
+#   https://github.com/pingdotgg/t3code/pull/22732
+#   https://github.com/pingdotgg/t3code/pull/22901
+#   https://github.com/pingdotgg/t3code/pull/22452
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
 #     hal_c2_environment_preferences_update)
@@ -55,6 +63,14 @@ Feature: Agents working with threads through MCP tools
     Then it receives the messages at positions 3 and 4, the next position and whether more remain
     And the thread's recent runs, newest first
 
+  # Upstream #18194: reading a thread names the thread that sent each agent message
+  @backlog @mc
+  Scenario: Reading a thread says which thread sent a message
+    Given the agent of "caller" sent "check the tests" to "t2"
+    When another agent reads "t2"
+    Then "check the tests" names "caller" as the thread that sent it
+    And messages the user typed name no sending thread
+
   @mc
   Scenario: The activity view includes tool work, not just messages
     When the agent of "caller" reads "t2" in the activity view
@@ -65,6 +81,19 @@ Feature: Agents working with threads through MCP tools
     Given a message of "t2" is 30,000 characters long
     When the agent of "caller" reads it with a limit of 20,000 characters
     Then the text is cut to 20,000 characters and can be read on from an offset
+
+  # Upstream #22901: limits above their maximum failed the read.
+  @backlog @mc
+  Scenario Outline: Reading a thread with a limit over its maximum uses the maximum
+    When the agent of "caller" reads "t2" with <argument> of <value>
+    Then <result>
+
+    Examples:
+      | argument          | value  | result                                  |
+      | limit             | 500    | it reads with a limit of 100            |
+      | runLimit          | 500    | it reads with a run limit of 50         |
+      | maxCharsPerItem   | 900000 | it reads with at most 50,000 characters |
+      | limit             | 0      | the read is refused                     |
 
   @mc
   Scenario: Reading without a thread id reads the caller
@@ -97,6 +126,15 @@ Feature: Agents working with threads through MCP tools
     Given "t2" is idle
     When the agent of "caller" sends a message to "t2" in mode "restart"
     Then it fails with code "thread_not_sendable"
+
+  # Upstream #21027: a send the orchestrator refuses reports the orchestrator's reason, the one
+  # a client would show, instead of a generic dispatch failure.
+  @backlog @mc
+  Scenario: A send the orchestrator refuses says why
+    Given "t2" has a turn running whose provider session is gone
+    When the agent of "caller" sends a message to "t2" in mode "restart"
+    Then it fails with the orchestrator's reason for refusing it
+    And not only with the name of the command that failed
 
   @mc
   Scenario: An archived thread cannot be messaged
@@ -188,6 +226,53 @@ Feature: Agents working with threads through MCP tools
     Then a new thread is created by an agent through MCP with the caller's model and modes
     And its first turn starts with that message
 
+  # Upstream #22732: a launch from outside any thread ignored the model saved in settings and
+  # always took the caller's full access.
+  @backlog @mc @priority-high
+  Scenario: A thread launched from outside any thread starts with the project's defaults
+    Given the project "demo" defaults to the model "gpt-5.5" in Supervised mode
+    And an agent outside HAL-C2 is signed in with Full access approved
+    When that agent launches a thread in "demo" with message "Find why the tests are slow"
+    Then the thread starts with "gpt-5.5" in Supervised mode
+
+  # Upstream #22732: the defaults never go past what the outside caller was approved for.
+  @backlog @mc @priority-high
+  Scenario: A thread launched from outside any thread stays within the caller's approved access
+    Given the project "demo" defaults to Full access
+    And an agent outside HAL-C2 is signed in with Supervised access approved
+    When that agent launches a thread in "demo"
+    Then the thread starts in Supervised mode
+
+  # Upstream #22732: scripts and terminals drive threads with the same thread tools, signed in
+  # for the length of one command.
+  @backlog @mc @priority-low
+  Scenario: A thread is started and messaged from the terminal
+    Given the MC is running and the terminal is in a folder of the project "demo"
+    When the user starts a thread there from the terminal with "Find why the tests are slow"
+    Then the thread's id is printed
+    And sending "Now fix it" to that id from the terminal queues it behind any running turn
+    And the terminal's sign-in is revoked when each command ends
+
+  # Upstream #22732: waiting reports that run's own outcome in the exit status.
+  @backlog @mc @priority-low
+  Scenario Outline: Waiting on a thread from the terminal exits by how its run ended
+    Given the user sent a message to a thread from the terminal and waits for it
+    When that run <ends>
+    Then the terminal prints <printed> and exits with <status>
+
+    Examples:
+      | ends                      | printed                  | status |
+      | ends with a reply         | the reply                | 0      |
+      | fails or is stopped       | the error                | 1      |
+      | waits for the user's answer | that it needs an answer | 2      |
+
+  # Upstream #22732: a launch onto a base ref that does not exist made a thread in the project folder.
+  @backlog @mc
+  Scenario: A launch onto a base ref that does not exist is refused before anything is made
+    When the agent of "caller" launches a thread in a new worktree from the base ref "no-such-branch"
+    Then the launch is refused naming the ref
+    And no thread or worktree is created
+
   @mc
   Scenario: An agent launches a thread in a new worktree on a named branch
     When the agent of "caller" launches a thread in "demo" in a new worktree based on "feature/base" on branch "feature/demo"
@@ -262,6 +347,18 @@ Feature: Agents working with threads through MCP tools
     When it repeats the request with request key "k1"
     Then it fails because the threads already exist
     And no extra threads are created
+
+  # Upstream #18360: a repeat of an accepted batch is answered with the threads it created, even
+  # once the project has turned its provider off; a new batch is judged by today's settings.
+  # Replaces the scenario above once the MC carries it.
+  @mc @backlog
+  Scenario: Repeating a batch with the same request key answers with the threads it created
+    Given the agent of "caller" created threads on "codex-work" with request key "k1"
+    And the project then turned "codex-work" off
+    When it repeats the request with request key "k1"
+    Then it is answered with the threads the first request created
+    And no extra threads are created
+    But a new batch on "codex-work" is refused because the provider is off for the project
 
   @mc
   Scenario Outline: Batch-created thread titles
@@ -364,6 +461,14 @@ Feature: Agents working with threads through MCP tools
     Then the response includes the settlement state of "t2"
     And it says why "t2" can or cannot settle
 
+  # Upstream #17454: thread list and read include the thread's visible pull request links, the
+  # list list_thread_pull_requests returns, without dismissed stack members.
+  @backlog @mc
+  Scenario: Listing or reading a thread shows every pull request linked to it
+    Given "t2" is linked to pull request 42 in "demo" and pull request 7 in another repository
+    When the agent of "caller" lists or reads "t2"
+    Then the response names both pull requests with their host, repository, number and state
+
   # Upstream #16782: agents see snooze state, can filter on it, and are told how to link a thread.
   @backlog @mc
   Scenario: Listing or reading a thread shows whether it is snoozed and until when
@@ -386,6 +491,22 @@ Feature: Agents working with threads through MCP tools
   Scenario: Agents are told how to link to a thread in their answers
     When an agent reads the orchestration instructions
     Then they say a thread is linked by its id with a thread link, not by a copied title
+
+  # Upstream #24784: every thread tool result carries the thread's link ready-made, so agents
+  # do not build it from a bare id or a title.
+  @backlog @mc
+  Scenario Outline: A thread tool returns a ready link for each thread it names
+    When the agent of "caller" <calls>
+    Then each thread in the result carries a thread link holding its exact id
+
+    Examples:
+      | calls                                  |
+      | lists threads                          |
+      | reads "t2"                             |
+      | searches threads for "tax"             |
+      | launches a thread                      |
+      | sends "go on" to "t2"                  |
+      | delegates a task and checks its status |
 
   @mc
   Scenario Outline: Organizing a thread
@@ -463,6 +584,19 @@ Feature: Agents working with threads through MCP tools
     Given thread "t2" was deleted
     When the agent of "caller" reads "t2"
     Then the tool fails with code "thread_not_found" saying "Thread t2 is no longer available."
+
+  # Upstream #22452: an agent naming a thread by its bare id gets pointed at the right one.
+  @backlog @mc @priority-low
+  Scenario Outline: Reading a thread by a bare id suggests the full id only when that thread exists
+    Given <thread>
+    When the agent of "caller" reads "4f1c"
+    Then the tool fails with code "thread_not_found" <hint>
+
+    Examples:
+      | thread                                     | hint                                               |
+      | thread "mcp:4f1c" exists                   | ending in "Did you mean `mcp:4f1c`?"               |
+      | thread "mcp:4f1c" was deleted              | with its usual message                             |
+      | no thread "mcp:4f1c" exists                | with its usual message                             |
 
   @mc
   Scenario Outline: Interrupting a thread says what happened

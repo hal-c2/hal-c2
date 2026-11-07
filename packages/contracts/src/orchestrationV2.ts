@@ -500,6 +500,8 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** The run whose message (a steer or restart) interrupted this one to go first. */
+  steeredByRunId: Schema.optional(RunId),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
@@ -937,6 +939,8 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
+    // The message that implemented the plan, once one has.
+    implementedByMessageId: Schema.optional(MessageId),
   }),
   Schema.Struct({
     ...OrchestrationV2PlanArtifactBaseFields,

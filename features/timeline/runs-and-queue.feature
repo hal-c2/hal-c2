@@ -1,10 +1,24 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20054
+#   https://github.com/pingdotgg/t3code/pull/23135
+#   https://github.com/pingdotgg/t3code/pull/23814
+#   https://github.com/pingdotgg/t3code/pull/20299
+#   https://github.com/pingdotgg/t3code/pull/21417
+#   https://github.com/pingdotgg/t3code/pull/21474
+#   https://github.com/pingdotgg/t3code/pull/21483
+#   https://github.com/pingdotgg/t3code/pull/18919
+#   https://github.com/pingdotgg/t3code/pull/22052
+#   https://github.com/pingdotgg/t3code/pull/21499
 #   https://github.com/pingdotgg/t3code/pull/19849
 #   https://github.com/pingdotgg/t3code/pull/17539
 #   https://github.com/pingdotgg/t3code/pull/17945
 #   https://github.com/pingdotgg/t3code/pull/17761
 #   https://github.com/pingdotgg/t3code/pull/17764
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/22638
+#   https://github.com/pingdotgg/t3code/pull/25238
+#   https://github.com/pingdotgg/t3code/pull/25401
+#   https://github.com/pingdotgg/t3code/pull/25830
 #   docs/user/composer.md (Queued messages, Follow-up behavior)
 #   docs/user/updating.md (Continue threads after restarts)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, run.interrupt, queue.resume, queued-run.reorder, queued-run.cancel, queued-run.edit, queued-message.promote-to-steer, provider-session.detach, run.created, run.updated, run_interrupt_request, run_interrupt_result)
@@ -44,6 +58,13 @@ Feature: Runs, interruptions and the queue
     When the user interrupts the turn
     Then the turn stops
     And the timeline marks the run as interrupted
+
+  # Upstream #25830: a stopped run read as a failure.
+  @backlog @shared @priority-low
+  Scenario: A run the user or an agent stopped is not shown as a failure
+    Given the run was stopped by the user, a goal, a steer or the agent that delegated it
+    When the user looks at the timeline
+    Then "Run interrupted" is shown as a stop, not as an error
 
   @mc
   Scenario: A message sent while the agent works waits its turn
@@ -91,6 +112,9 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
+  # Upstream #21417: the phone marks sent steer and queued messages like the desktop, as muted
+  # text beside the time, not tappable pills.
+  # Since upstream #21474 a message that waited in the queue carries no marker; see the replacement below.
   @shared @backlog-mobile @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
@@ -102,27 +126,40 @@ Feature: Runs, interruptions and the queue
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
 
-  # The marker only shows on a message that has already gone out, so it must
-  # not read as still waiting; messages still waiting stay in the queue above
-  # the composer.
-  @backlog @shared
-  Scenario: A message sent from the queue reads as sent, not as waiting
-    Given the user's message was queued while the agent was busy and has since run
-    Then the message is marked "From queue"
-    And the marker explains "Queued while the agent was busy"
-
+  # Upstream #21474: a sent message that had waited in the queue carries no marker; steers and
+  # queued messages promoted to steers keep theirs. Replaces the scenario above once the clients
+  # carry it.
   @backlog @shared @priority-high
+  Scenario Outline: A sent message is marked only when it steered the agent
+    When the user's message was <how>
+    Then the message is <marked>
+
+    Examples:
+      | how                                  | marked                                                              |
+      | queued behind the active turn        | not marked                                                          |
+      | sent as a steer                      | marked "Steered the active turn"                                    |
+      | queued and later promoted to a steer | marked "Originally queued, then promoted to steer the active turn" |
+
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A reply that finished before a steer stays the turn's answer
     Given the agent finished its reply
     When the user's steer restarts the run before the turn closed
     Then the finished reply stays visible as the turn's answer
     And it is not folded away as partial output
 
-  @backlog @shared @priority-high
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A reply cut off by a steer is folded as cut off
     Given the agent is in the middle of its reply
     When the user's steer restarts the run
     Then what the agent had written is folded under "Cut off by a steer"
+
+  # Only a steer marks the run it interrupts; a crash, an MC restart or an imported
+  # thread that stopped mid-reply leaves the reply interrupted with no mark.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A reply that stopped without a steer is not folded as cut off
+    Given the agent is in the middle of its reply
+    When the run ends interrupted without a steer
+    Then what the agent had written is not folded as cut off
 
   @backlog @shared
   Scenario: A queued run that starts after a steer shows in a thread with only recent history loaded
@@ -145,14 +182,14 @@ Feature: Runs, interruptions and the queue
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: An image is still shown after its address stops working
     Given the user sent the image "cart.png" with a message
     And the message shows the image "cart.png" from its MC
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A sent file shows its name, kind and size
     When the user sent the file "report.pdf" of 2 MB with a message
     Then the message shows "report.pdf" with its kind and size
@@ -233,11 +270,29 @@ Feature: Runs, interruptions and the queue
       | the task "watch tests"             | Waiting on background task    |
       | the tasks "watch tests" and "lint" | Waiting on 2 background tasks |
 
+  # Upstream #20054: a long task description hid the links to the subagents' threads.
+  @backlog @desktop @priority-low
+  Scenario: A long background task description keeps its subagent links in reach
+    Given the turn has finished and left a subagent running with a long description
+    Then the notice shows the description below its title
+    And the link to the subagent's thread is still shown
+    And Stop stays beside the notice's title
+
   @backlog @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
     Then the thread shows no notice about background work
     And stopping the turn is the way to stop them
+
+  # Upstream #23814: a command the MC had finished still showed as running from the client's
+  # saved copy of the thread, and Stop did not clear it.
+  @backlog @shared
+  Scenario: Stop clears commands the MC already finished
+    Given the client's saved copy of "Fix checkout" shows "npm test" running
+    And the MC finished "npm test" long ago
+    When the user presses Stop in "Fix checkout"
+    Then "npm test" shows as finished, also after the app is reopened
+    And work that is still running stays shown as running
 
   @backlog @desktop @priority-high
   Scenario: Stopping background work can be asked again
@@ -245,6 +300,14 @@ Feature: Runs, interruptions and the queue
     When the user stops the background work and the environment accepts
     And "watch tests" is still running
     Then the user can ask to stop it again
+
+  # Upstream #22052: a thread can be stopped without knowing which run is active.
+  @backlog @desktop @priority-high
+  Scenario: Background work left by a turn that is not loaded can still be stopped
+    Given an earlier turn left the task "watch tests" running
+    And that turn is older than the part of the thread the client has loaded
+    When the user stops the thread
+    Then "watch tests" is stopped
 
   @backlog @desktop
   Scenario: Background work that cannot be stopped says why
@@ -254,14 +317,37 @@ Feature: Runs, interruptions and the queue
     Then the thread shows the reason as its error
     And the notice about "watch tests" stays
 
-  @shared @backlog @priority-high
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: The user dismisses a thread's error
     Given the thread shows the error "Rate limited"
     When the user dismisses the error
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A later run that fails the same way shows its error again
+    Given the thread shows the error "Rate limited"
+    And the user dismisses the error
+    When a later run of the thread fails with "Rate limited"
+    Then the thread shows "Rate limited" as its error
+
+  # A failed run's error goes once a later run succeeds.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A later run that succeeds does not bring a dismissed error back
+    Given the thread shows the error "Rate limited"
+    And the user dismisses the error
+    When a later run of the thread completes
+    Then the thread shows no error
+
+  # Upstream #21483: a structured thread error filled the banner with its raw JSON.
+  @backlog @shared @priority-low
+  Scenario: A structured thread error reads as its message
+    Given the thread's error is a payload whose message is "Your request was blocked"
+    When the user looks at the thread's error
+    Then the error reads "Your request was blocked"
+    And the user can open the full error to read the whole payload
+
+  @shared @backlog-mobile @priority-high
   Scenario: A usage limit is one warning line naming when to retry
     Given the provider stopped the turn at its usage limit, resetting at the top of an hour
     Then the timeline shows one warning line naming when to retry
@@ -560,8 +646,157 @@ Feature: Runs, interruptions and the queue
     Then the answer to "/usage-limits" is the notice shown
     And the composer no longer says there are other notices
 
+  # Upstream #25238: switching threads while a dismissed notice was still going away brought it back.
+  @backlog @desktop @priority-low
+  Scenario: A notice dismissed just before switching threads stays dismissed
+    Given the thread shows the error "Rate limited"
+    When the user dismisses the error and at once opens another thread
+    And the user comes back to the thread
+    Then the error is not shown
+
+  # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
+  # actions; errors, warnings and urgent notices now come first, activity behind them.
   @backlog @desktop
-  Scenario: What the agent is doing stays in front of every notice
-    Given the thread says it is waiting on the background work "watch tests"
-    And the thread shows the error "Rate limited"
-    Then the notice about "watch tests" is the one shown and the error waits behind it
+  Scenario Outline: Errors and warnings stay in front of what the agent is doing
+    Given the thread <activity>
+    And the thread shows <notice>
+    Then <notice> is the notice shown
+    And the notice about what the agent is doing waits behind it
+
+    Examples:
+      | activity                                                | notice                                  |
+      | says it is waiting on the background work "watch tests" | the error "Rate limited"                |
+      | is working toward a goal                                | a usage limit with its recovery actions |
+
+  # Upstream #20299: a time that rounds up to a minute reads as a minute.
+  @backlog @shared @priority-low
+  Scenario: A time just under a minute reads as one minute
+    Given a turn has been working for 59.5 seconds
+    Then its elapsed time reads "1m", not "60s"
+
+  # Upstream #21499: a turn blocked only in a thread wait looked busy (its label is upstream #21500).
+  @backlog @mc @shared
+  Scenario: A turn that only waits on another thread says so
+    Given a thread's agent waits for the thread "Add search" to finish
+    And nothing else in the turn is running
+    Then the thread shows it is waiting on another thread, not working
+
+  @backlog @mc @shared
+  Scenario: A turn that waits on another thread and runs a command reads as working
+    Given a thread's agent waits for the thread "Add search" to finish
+    And the agent also runs a command
+    Then the thread shows it is working
+
+  # Upstream #22638: automation prompts are long runbooks repeated on every run; they fold to one line.
+  @backlog @shared
+  Scenario Outline: A message an automation sent is folded to one line
+    Given <task> sent its prompt into the thread
+    When the user looks at the thread
+    Then the message is a one-line bubble reading "Automation" and <label>
+
+    Examples:
+      | task                                                         | label                       |
+      | the scheduled task "PR dispatcher"                           | "PR dispatcher"             |
+      | a scheduled task since deleted, with "Triage new issues" first | "Triage new issues"       |
+
+  # Upstream #22638: opening the fold shows the whole prompt and only then its actions.
+  @backlog @shared
+  Scenario: Opening an automation message shows its prompt and actions
+    Given the scheduled task "PR dispatcher" sent its prompt into the thread
+    When the user opens the folded message
+    Then the whole prompt is shown
+    And the user can open the automation, see when it ran, edit from here and copy the prompt
+    And opening it again folds it back to one line
+
+  # Upstream #22638: find reaches into folded automation messages.
+  @backlog @shared
+  Scenario: Finding text inside a folded automation message opens it
+    Given a folded automation message whose prompt mentions "label events"
+    When the user finds "label events" in the thread
+    Then the message opens with the match shown
+
+  # Upstream #23135: a few messages from other agents pushed the user's own last message off the
+  # screen; they fold like automation prompts.
+  @backlog @shared
+  Scenario Outline: A message another agent sent is folded to one line
+    Given <sender> sent "Review notes:" and more lines into the thread
+    When the user looks at the thread
+    Then the message is a one-line bubble reading <label> and "Review notes:"
+
+    Examples:
+      | sender                                      | label                  |
+      | the agent of the thread "Review the 2.4 notes" | "Review the 2.4 notes" |
+      | an agent whose thread is not known          | "Agent"                |
+
+  @backlog @shared
+  Scenario: Opening another agent's message shows it whole and leads to its thread
+    Given the agent of "Review the 2.4 notes" sent a message into the thread
+    When the user opens the folded message
+    Then the whole message is shown with its time, a copy action and "Open thread"
+    And "Open thread" opens "Review the 2.4 notes"
+
+  @backlog @shared @priority-low
+  Scenario: Finding text inside a folded agent message opens it
+    Given a folded message from another agent mentions "release blocker"
+    When the user finds "release blocker" in the thread
+    Then the message opens with the match shown
+
+  @backlog @shared @priority-low
+  Scenario: Messages HAL-C2 sends stay whole
+    Given a delegated task's result was sent into the thread by HAL-C2
+    Then the message is shown whole, not folded
+
+  # Upstream #22638: older messages carried the schedule as a text prefix.
+  @backlog @shared @priority-low
+  Scenario: An older automation message is shown without its trigger prefix
+    Given a message from before automations were marked starts "[Triggered by schedule task: PR dispatcher]"
+    When the user opens it
+    Then the prompt is shown without that prefix
+
+  # Upstream #25401: thread state stacked as cards over the composer, showing one and hiding the
+  # rest. The end of the timeline now reads past, now, next; the composer keeps what affects sending.
+  Rule: The end of the timeline says what is happening now and what comes next
+
+    @backlog @desktop
+    Scenario Outline: What a thread is doing shows at the end of its timeline
+      Given <state>
+      When the user looks at the thread
+      Then the end of the timeline shows it, with <actions>
+      And nothing stacks over the composer
+
+      Examples:
+        | state                                         | actions                              |
+        | a subagent needs the user's input             | Open approval or Open question       |
+        | a finished turn left "vp run dev" running     | Stop                                 |
+        | the thread is pursuing a goal                 | the goal's usage and its actions     |
+        | the thread's messages are still loading       | no actions                           |
+
+    @backlog @desktop
+    Scenario: Queued messages show as Up next after the thread's status
+      Given two messages are queued behind the running turn
+      When the user looks at the thread
+      Then the end of the timeline shows them under "Up next", after the thread's status
+      And each can be edited, sent now or steered, removed or moved
+
+    @backlog @desktop @priority-low
+    Scenario: The agent's task list is in the work log where it wrote it
+      Given the agent wrote a task list and has done 2 of its 5 steps
+      When the user looks at the work log
+      Then the update reads "Tasks 2/5" with the current step, and opens to every step
+
+    @backlog @desktop
+    Scenario Outline: What affects sending stays with the composer
+      Given <state>
+      Then the composer says so
+
+      Examples:
+        | state                                    |
+        | the environment is offline or reconnecting |
+        | the branch changed under the thread      |
+        | a usage limit was reached                |
+
+    @backlog @desktop @priority-low
+    Scenario: Scroll to end names what waits at the end
+      Given the end of the timeline is out of view
+      And the thread needs the user's input and has 2 queued messages
+      Then "Scroll to end" reads "Needs input · 2 queued"

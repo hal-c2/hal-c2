@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19030
 #   https://github.com/pingdotgg/t3code/pull/19692
 #   https://github.com/pingdotgg/t3code/pull/17729
 #   https://github.com/pingdotgg/t3code/pull/12537
@@ -187,11 +188,19 @@ Feature: Sharing GitHub access between environments
 
   @backlog @mc @priority-low
   Scenario: Which tool owns an unrecognised host is asked once in five minutes
-    Given the projects "web" and "api" have remotes on "acme.ghe.com", a host the MC does not recognise
+    Given the projects "web" and "api" have remotes on "git.acme.dev", a host the MC does not recognise
     When pull requests are read for both projects twice within five minutes
-    Then each hosting tool is asked about "acme.ghe.com" only once
+    Then each hosting tool is asked about "git.acme.dev" only once
     And a tool that timed out or failed is asked again next time
     And saving a credential or turning a host on or off in Settings asks again
+
+  # Upstream #19030: a repository on a host nothing recognises failed every pull request lookup.
+  @backlog @mc
+  Scenario: A repository on a host nothing recognises has no pull requests
+    Given the project "shop" has its remote on "git.example.internal", a host no hosting tool recognises
+    When the status of "shop" is refreshed
+    Then "shop" has no pull requests
+    And no failed pull request lookup is logged
 
   @backlog @mc
   Scenario: An account that cannot be told is refused

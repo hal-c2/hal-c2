@@ -1,4 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24231
+#   https://github.com/pingdotgg/t3code/pull/24595
+#   https://github.com/pingdotgg/t3code/pull/23273
+#   https://github.com/pingdotgg/t3code/pull/20046
+#   https://github.com/pingdotgg/t3code/pull/19806
+#   https://github.com/pingdotgg/t3code/pull/19678
+#   https://github.com/pingdotgg/t3code/pull/18664
+#   https://github.com/pingdotgg/t3code/pull/16146
+#   https://github.com/pingdotgg/t3code/pull/17462
+#   https://github.com/pingdotgg/t3code/pull/17419
+#   https://github.com/pingdotgg/t3code/pull/19771
 #   https://github.com/pingdotgg/t3code/pull/17389
 #   https://github.com/pingdotgg/t3code/pull/19712
 #   https://github.com/pingdotgg/t3code/pull/15875
@@ -8,6 +19,8 @@
 #   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
+#   https://github.com/pingdotgg/t3code/pull/22897
+#   https://github.com/pingdotgg/t3code/pull/21074
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
@@ -77,6 +90,14 @@ Feature: Cursor
       | a browser sign-in was rejected by Cursor                  | Cursor sign-in expired or was rejected. Sign in again in provider settings. |
       | the CURSOR_API_KEY was rejected by Cursor                 | Cursor SDK authentication failed. Check CURSOR_API_KEY.                     |
       | the Cursor model catalog request fails for another reason | Cursor SDK catalog request failed. Check server logs for details.           |
+
+  # Upstream #19771: a free-plan Cursor account is told a paid plan is needed; its credentials are discarded.
+  @backlog @shared
+  Scenario: A free-plan Cursor account is told it needs a paid plan
+    Given the user signs in to Cursor with a free-plan account
+    When Cursor rejects the account
+    Then Cursor's status and the sign-in say a paid Cursor plan is needed
+    And the rejected sign-in is not kept
 
   @backlog
   Scenario: A Cursor model catalog request that does not finish is reported
@@ -152,6 +173,36 @@ Feature: Cursor
   Scenario: Cursor model options come from the Cursor catalog
     When the user opens the options for a Cursor model
     Then the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown
+
+  # Upstream #17462: Cursor handoffs used a 128K fallback whatever window the model ran with; the
+  # chosen window, or the catalog's default for the model, now sets the budget.
+  @backlog
+  Scenario Outline: A handoff to Cursor is budgeted by the context window the model runs with
+    Given "t1" is switched to a Cursor model whose catalog default context window is 1,000,000 tokens
+    And <chosen>
+    When the conversation is handed over with a new message
+    Then the history is budgeted against <window>
+
+    Examples:
+      | chosen                                  | window           |
+      | the user chose the 500,000 token window | 500,000 tokens   |
+      | the user chose no window                | 1,000,000 tokens |
+
+  # Upstream #21074: Cursor rejected its long-context variants ("Invalid parameters for registry
+  # model") because the request never asked for Max Mode.
+  @backlog @priority-high
+  Scenario: A Cursor model variant that only runs in Max Mode runs
+    Given Cursor's catalog marks every variant of a model with a long context as Max Mode
+    When the user sends a message on that model with the long context, in a new thread or an existing one
+    Then the turn runs in Max Mode instead of failing with "Invalid parameters"
+
+  # Upstream #19678: a model the account's catalog rejects is explained
+  @backlog
+  Scenario: A model the Cursor account does not offer says so
+    Given a Cursor thread set to a model the account's catalog does not include
+    When the turn fails because Cursor rejects the model
+    Then the user is told the model must be one the Cursor account offers
+    And the error does not suggest trying again
 
   Scenario: An empty Cursor catalog is a warning
     Given Cursor returns no models
@@ -250,6 +301,25 @@ Feature: Cursor
     Then the sandboxed thread still runs in its sandbox
     And its tools still work
 
+  # Upstream #20046: Cursor's SDK has no sandbox on Windows, so default threads failed to start.
+  @backlog
+  Scenario Outline: A Cursor thread on a Windows MC runs without Cursor's default sandbox
+    Given the MC runs on Windows
+    When a Cursor thread in <mode> starts its first turn
+    Then the turn runs without Cursor's sandbox
+    And the thread warns that Cursor has no sandbox on Windows
+
+    Examples:
+      | mode              |
+      | auto              |
+      | approval required |
+
+  @backlog
+  Scenario: A Cursor mode that needs a sandbox is refused on a Windows MC
+    Given the MC runs on Windows
+    When a Cursor thread in auto-accept edits starts its first turn
+    Then the turn fails saying Cursor cannot sandbox on Windows
+
   @backlog
   Scenario: Cursor text generation that its sandbox blocks is retried without the sandbox
     Given Cursor is picked for text generation
@@ -302,6 +372,15 @@ Feature: Cursor
       | .codex/skills  |
       | .claude/skills |
 
+  # Upstream #24595: Cursor's built-in skills live in ~/.cursor/skills-cursor and were missing.
+  @backlog @priority-low
+  Scenario: Cursor's built-in skills are offered as system skills after the others
+    Given Cursor's built-in skill "review" in ".cursor/skills-cursor" of the user's home
+    And the project has its own skill "review"
+    When the user opens the skill list in a Cursor thread
+    Then Cursor's built-in skills are offered as system skills
+    And "review" is the project's skill
+
   @backlog @priority-low
   Scenario: A project's Cursor skill wins over the user's skill of the same name
     Given the skill "deploy" exists in the project and in the user's home
@@ -327,6 +406,25 @@ Feature: Cursor
     When the user opens the skill list in a Cursor thread
     Then "review" is offered
     And skills inside the too-deep part of the tree are not
+
+  # Upstream #18664: skill discovery walks a folder once even when two skill roots link to
+  # it, so a linked root no longer doubles the scan and exhausts its budget.
+  @backlog @priority-low
+  Scenario: A skill folder linked from a second root is read once
+    Given the user's "~/.agents/skills" is a link to "~/.claude/skills"
+    And "~/.claude/skills" holds 6,000 entries including the skill "review"
+    When the user opens the skill list in a Cursor thread
+    Then "review" is offered once
+    And the skill search is not reported as incomplete
+
+  # Upstream #19806: installed node_modules no longer exhaust skill discovery
+  @backlog
+  Scenario: Installed dependencies inside a skill do not hide the other skills
+    Given a Cursor skill folder holds an installed "node_modules" with thousands of files
+    And other skills sit beside it
+    When the user lists Cursor's skills
+    Then every skill is listed
+    And nothing inside "node_modules" is searched for skills
 
   @backlog @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short
@@ -363,6 +461,44 @@ Feature: Cursor
     Given a Cursor turn is running
     When Cursor's whole reply is a connection error such as "Something went wrong communicating with the server. Please try again."
     Then the turn fails as a connection problem instead of showing the error as Cursor's answer
+
+  # Upstream #23273: commentary earlier in the turn hid a later message that was only the error.
+  @backlog
+  Scenario: A Cursor message that is only a connection error fails the turn after commentary
+    Given a Cursor turn wrote "Checking the build first." and ran a step
+    When Cursor's next message is only the error "Error: RetriableError: WritableIterable is closed" and the run finishes
+    Then the turn fails with "Provider turn failed."
+    And a later ordinary message in the same turn lets it complete
+
+  # Upstream #16146: a failed Cursor run fails the turn with Cursor's own message and code,
+  # and an SDK failure names the SDK's reason, code and HTTP status.
+  # Upstream #24231: Cursor's SDK resumed a finished turn from an older checkpoint after its
+  # connection broke, gave up, and the answered turn read "Provider error".
+  @backlog
+  Scenario: A finished Cursor turn whose late resume gives up still completes
+    Given a Cursor turn has answered and Cursor reported the turn ended
+    When the connection to Cursor breaks and the run ends with "Agent turn stopped after repeated resume attempts made no progress"
+    Then the turn completes instead of failing
+    And the failed resume's text is not shown as the answer
+
+  @backlog
+  Scenario Outline: A Cursor run that gives up still fails when the turn had not finished
+    Given a Cursor turn is running
+    When <event>
+    Then the turn fails
+
+    Examples:
+      | event                                                                                     |
+      | the run ends with the no-progress error before Cursor reports the turn ended              |
+      | Cursor reports the turn ended and the run then ends with "Checkpoint persistence failed"  |
+      | Cursor continues after the turn ended and stops mid-answer with the no-progress error     |
+
+  @backlog
+  Scenario: A failed Cursor turn shows the reason Cursor gave
+    Given a Cursor turn is running
+    When Cursor ends the run with the error "Model Blocked Please ask your admin to enable access"
+    Then the turn fails with "Model Blocked Please ask your admin to enable access"
+    And a thread that delegated the turn is told the same reason
 
   @backlog @priority-low
   Scenario: An answer that quotes a connection error is still an answer
@@ -426,6 +562,13 @@ Feature: Cursor
     Then a child thread opens with the task as its first message
     And the subagent's tool calls appear in the child thread
     And the subagent's result is shown when it finishes
+
+  # Upstream #17419: subagent cards show Cursor's reasoning effort.
+  @backlog @shared
+  Scenario: A Cursor subagent's card names its reasoning effort
+    Given Cursor starts a subagent with high reasoning effort
+    When the user looks at the subagent's card
+    Then the card reads the effort "High"
 
   @backlog @priority-low
   Scenario Outline: A Cursor subagent that never reported back takes the run's outcome
@@ -530,3 +673,11 @@ Feature: Cursor
     Given the subagents setting is HAL-C2 workers
     When a Cursor session is started
     Then Cursor starts as usual, because it has no switch for its subagents
+
+  # Upstream #22897: a write to a stream the Cursor SDK already closed took the whole server down.
+  @backlog @priority-high
+  Scenario: A Cursor stream closing under a write does not stop the MC
+    Given a Cursor turn is running
+    When the Cursor SDK rejects a write because its stream already closed
+    Then the MC keeps running
+    And other threads are unaffected

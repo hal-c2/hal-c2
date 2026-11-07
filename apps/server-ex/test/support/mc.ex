@@ -3446,7 +3446,7 @@ defmodule HalC2.Test.Mc.World do
     ExUnit.Callbacks.on_exit(fn ->
       for key <-
             ~w(FAKE_CODEX_MODELS FAKE_CODEX_ACCOUNT FAKE_CLAUDE_USAGE FAKE_CLAUDE_MODELS FAKE_ACP_MODELS FAKE_ACP_CAPS FAKE_AUTH_FILE FAKE_CODEX_CONSUME_LOG
-                    FAKE_CODEX_CONSUME_FAIL),
+                    FAKE_CODEX_CONSUME_FAIL FAKE_CLAUDE_USAGE_EMPTY FAKE_CODEX_CONSUME_OUTCOME),
           do: System.delete_env(key)
 
       reset_provider_caches()

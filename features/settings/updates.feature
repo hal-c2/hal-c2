@@ -1,10 +1,24 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18095
+#   https://github.com/pingdotgg/t3code/pull/23233
+#   https://github.com/pingdotgg/t3code/pull/17900
+#   https://github.com/pingdotgg/t3code/pull/18414
+#   https://github.com/pingdotgg/t3code/pull/14745
+#   https://github.com/pingdotgg/t3code/pull/21210
+#   https://github.com/pingdotgg/t3code/pull/18980
+#   https://github.com/pingdotgg/t3code/pull/21688
+#   https://github.com/pingdotgg/t3code/pull/18404
+#   https://github.com/pingdotgg/t3code/pull/22233
+#   https://github.com/pingdotgg/t3code/pull/14790
 #   https://github.com/pingdotgg/t3code/pull/19291
 #   https://github.com/pingdotgg/t3code/pull/18053
 #   https://github.com/pingdotgg/t3code/pull/18208
 #   https://github.com/pingdotgg/t3code/pull/19837
 #   https://github.com/pingdotgg/t3code/pull/13575
 #   https://github.com/pingdotgg/t3code/pull/13302 (phone maintenance of environments and providers)
+#   https://github.com/pingdotgg/t3code/pull/22506
+#   https://github.com/pingdotgg/t3code/pull/22912
+#   https://github.com/pingdotgg/t3code/pull/21402
 #   docs/user/updating.md
 #   docs/internals/server-updates.md
 #   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, server.updateServerWithProgress)
@@ -46,17 +60,37 @@ Feature: Updating the server, the desktop app and providers
       Then the user sees it downloading, then installing
       And the update ends as complete
 
+    # Upstream #18980: a server update keeps running when the client that asked disconnects.
+    @backlog @mc
+    Scenario: A server update keeps going when the client that started it disconnects
+      Given the user started updating a remote server
+      When the client disconnects while the update downloads
+      Then the update carries on to the end
+      And the client sees the server's new version when it reconnects
+
     @mc
     Scenario: Only one server update runs at a time
       Given a server update is in progress
       When the user starts another server update
       Then the second update is refused
 
+    # Upstream #22233: reverted #21950; the idle update notice is a dismissible banner above the
+    # composer again, not part of the environment control.
     @shared
     Scenario: A server behind the app offers an update in the conversation
       Given the app is newer than the server on "server"
       When the user opens a thread on "server"
       Then the user is offered to update "server"
+
+    # Upstream #21402: the phone could not update a saved server too old to connect to.
+    @backlog @mobile
+    Scenario: A saved server too old to connect to can be updated from the phone
+      Given the phone saved "server" and "server" runs a version too old to connect to
+      And "server" can update itself
+      When the user opens the phone's settings for "server"
+      Then the user is offered to update "server", with the version it would update to
+      When the user confirms
+      Then the user sees the update's progress and can retry it if it fails
 
     @shared
     Scenario: A successful update names the version it reconnected on
@@ -218,6 +252,15 @@ Feature: Updating the server, the desktop app and providers
       When the user restarts to install and confirms
       Then the app relaunches on "1.4.0" with the same windows
 
+    # Upstream #18095: quitting after a download lost the restart prompt, though the update was
+    # still on disk.
+    @backlog @desktop @priority-low
+    Scenario: An update downloaded before the app quit is still ready to install
+      Given update "1.4.0" was downloaded and the user quit without installing it
+      When the desktop app starts again and finds "1.4.0" is still the newest release
+      Then the user is offered to restart to update without downloading it again
+      But a newer release than "1.4.0" is offered for download
+
     @desktop
     Scenario: A failed download can be retried
       Given an update download failed
@@ -291,6 +334,13 @@ Feature: Updating the server, the desktop app and providers
         | 5     | 8     | 0     | 3 more changes on GitHub   |
         | 5     | 6     | 0     | 1 more change on GitHub    |
         | 5     | 5     | 4     | 4 older releases on GitHub |
+
+    # Upstream #21210: version and release links follow the repository updates come from.
+    @backlog @desktop @priority-low
+    Scenario: Release links go to the repository the app updates from
+      Given the app reads its updates from the repository "hal-c2/hal-c2"
+      When the user opens a version or release notes link
+      Then it opens the release on "hal-c2/hal-c2"
 
     # Legacy: apps/desktop/src/updates/releaseNotes.ts (normalizeDesktopUpdateReleaseNotes)
     @desktop
@@ -383,6 +433,14 @@ Feature: Updating the server, the desktop app and providers
         | automatic updates were turned off for this run    | Automatic updates are disabled by the HAL_C2_DISABLE_AUTO_UPDATE setting. |
         | the app on Linux is not the AppImage build        | Automatic updates on Linux require running the AppImage build.            |
 
+    # Upstream #18404: a disabled update control only said "Check for updates"; the sidebar
+    # tooltip and Settings About now give the reason.
+    @backlog @desktop
+    Scenario: A disabled update control says why it cannot be used
+      Given the app runs from a development build
+      When the user points at the update button in the sidebar or opens About in settings
+      Then the user sees "Automatic updates are only available in packaged production builds."
+
     # Upstream #13575: a .deb updates itself through dpkg, so the Linux refusal below changes
     # once the desktop carries it.
     @desktop @backlog @priority-low
@@ -443,6 +501,14 @@ Feature: Updating the server, the desktop app and providers
       Then the MC is started again
       And the user is told "Could not install update" with the reason
       And the app keeps running on its current version
+
+    # Upstream #18414: a failed install does not start a backend the user turned off.
+    @backlog @desktop @priority-low
+    Scenario: A failed install does not start an MC the user turned off
+      Given the user has turned off one of the environments the desktop app hosts
+      And the app stopped its MCs to install an update
+      When the install fails
+      Then only the MCs that were running before are started again
 
     # Legacy: apps/desktop/src/updates/updateMachine.ts (a downloaded update survives later checks)
     @desktop
@@ -706,6 +772,14 @@ Feature: Updating the server, the desktop app and providers
       Then the MC hears that request failed with the install's reason
       And a new update request can start
 
+    # Upstream #14790: Connections said "Up to date" while the sidebar offered an update.
+    @backlog @desktop
+    Scenario: The version in settings names a desktop update that is waiting
+      Given version "1.5.0" of the desktop app has downloaded and waits for a restart
+      When the user opens the local environment's version in settings
+      Then it says "1.5.0" is ready to install
+      And it does not say the app is up to date
+
   Rule: Updating providers
 
     @mc
@@ -738,6 +812,26 @@ Feature: Updating the server, the desktop app and providers
         | is not installed                       | Codex is not installed on this machine.         |
         | was installed in a way the MC cannot update | This installation cannot be updated from here. |
 
+    # Upstream #22506: a failed update said only that it failed.
+    @backlog @mc
+    Scenario Outline: A failed provider update says what the updater said last
+      Given updating Codex fails and its updater wrote <output>
+      When the user updates Codex
+      Then the update fails with a message ending in <ending>
+
+      Examples:
+        | output                                                         | ending                       |
+        | "EACCES: permission denied" as its last error line             | "EACCES: permission denied"  |
+        | no error lines and "npm ERR! code E404" as its last output line | "npm ERR! code E404"         |
+        | an error line 500 characters long                              | its first 200 characters     |
+
+    # Upstream #22506: a timeout keeps its own message.
+    @backlog @mc
+    Scenario: A provider update that times out says so
+      Given updating Codex takes longer than the MC waits
+      When the user updates Codex
+      Then the user is told "Update timed out."
+
     @mc
     Scenario: The user turns off provider update checks
       Given the user turned off provider update checks
@@ -763,6 +857,16 @@ Feature: Updating the server, the desktop app and providers
       When the desktop shell is connected to its MC
       Then the user sees a "warning" toast "Update Available: Codex v0.51.0" saying "Install the update now or review provider settings."
       And the toast "Update Available: Codex v0.51.0" offers "Update" and "Settings"
+
+    # Upstream #23233: the launch toast repeated the sidebar's update button, so it was removed;
+    # the toast after "Update all" in Settings stays.
+    # Replaces the scenario above, and the other launch toast scenarios here, once desktop carries it.
+    @backlog @desktop
+    Scenario: At launch an outdated provider is offered only from the sidebar
+      Given "Codex" is behind its latest release
+      When the desktop shell is connected to its MC
+      Then the user sees no toast
+      And the sidebar's update button offers the Codex update
 
     @desktop
     Scenario: At launch the offered update runs and reports it finished
@@ -817,6 +921,27 @@ Feature: Updating the server, the desktop app and providers
         | the update of Codex to 0.52.0 failed       | Codex v0.52.0 update failed |
         | the updates of two providers failed        | 2 provider updates failed   |
         | Codex was updated but is still out of date | Codex still needs an update |
+
+    # Upstream #14745: the sidebar shows updates of a provider's other instances.
+    @backlog @desktop
+    Scenario: The sidebar shows an update of a provider's second instance
+      Given Claude has a default instance and a second one
+      When only the second instance is updated
+      Then the sidebar notice says "Updating Claude" while it runs
+      And then says that Claude was updated
+
+    # Upstream #22912: an update that ended could leave the notice spinning with nothing to show.
+    @backlog @desktop
+    Scenario Outline: A provider update that ends replaces its progress with the outcome
+      Given the sidebar says "Updating Codex"
+      When the update of Codex <ends>
+      Then the sidebar says "<notice>"
+      And nothing in the sidebar still shows the update running
+
+      Examples:
+        | ends     | notice              |
+        | succeeds | Codex updated       |
+        | fails    | Codex update failed |
 
     @desktop
     Scenario: A finished provider update notice goes away by itself
@@ -999,6 +1124,27 @@ Feature: Updating the server, the desktop app and providers
       Given "server" is connected to the phone
       When the user checks "server" for updates
       Then the phone says whether a newer HAL-C2 release is available on "server"'s channel
+
+    # Upstream #17900: checks failed once the network used up GitHub's anonymous API quota.
+    @backlog @mobile @priority-low
+    Scenario: The phone checks for a release without GitHub's API rate limit
+      Given the phone's network has used up GitHub's anonymous API quota
+      When the user checks "server" for updates
+      Then the phone still says whether a newer HAL-C2 release is available on "server"'s channel
+
+    # Upstream #21688: the phone told the user to update an environment that cannot update itself
+    # even when a check had just found it up to date.
+    @backlog @mobile @priority-low
+    Scenario Outline: The phone says how to update only once a newer release is found
+      Given "server" cannot update itself because <why>
+      When the user checks "server" for updates and <found>
+      Then the phone <hint>
+
+      Examples:
+        | why                           | found                | hint                                              |
+        | it was started by hand        | it is up to date     | says it is up to date and nothing more            |
+        | it was started by hand        | "1.4.0" is available | says to update and restart HAL-C2 on that machine |
+        | it is served by a desktop app | "1.4.0" is available | says to update the desktop app on that machine    |
 
     @mobile
     Scenario: The phone lists only the enabled providers of an environment for update

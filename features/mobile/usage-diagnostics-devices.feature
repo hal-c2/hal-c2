@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16052
+#   https://github.com/pingdotgg/t3code/pull/14284
 #   apps/mobile/src/features/usage/UsageRouteScreen.tsx (usage and limits tabs, ranges, filter)
 #   apps/mobile/src/features/usage/UsageLimitsSection.tsx (reset credits)
 #   apps/mobile/src/features/usage/UsageLimitsPooled.tsx (accounts, pace, reveal email)
@@ -229,6 +231,15 @@ Feature: Usage, diagnostics and devices on a phone
     When the user copies the crash report
     Then the crash report is on the clipboard
 
+  # Upstream #16052: the build number is read from the installed app, so store builds name it;
+  # "dev" is shown only when the app reports none.
+  @backlog @mobile @priority-low
+  Scenario: A copied crash report names the installed build
+    Given the user runs version 2.0.0, build 418, from the store
+    And the app crashed during launch yesterday
+    When the user copies the crash report
+    Then the report starts with the app's name, "2.0.0" and build "418"
+
   @backlog @mobile @priority-low
   Scenario: Builds that keep no crash log say so
     Given the user runs a build that does not keep startup crash records
@@ -272,6 +283,15 @@ Feature: Usage, diagnostics and devices on a phone
       | platform       | result                                        |
       | an iPhone      | the device is shown as a stream of still images |
       | an Android phone | the user is told video is unavailable       |
+
+  # Upstream #14284: an Android phone streams an iOS simulator over a plain-HTTP connection.
+  @backlog @mobile @priority-low
+  Scenario: An Android phone shows an iOS simulator over a plain HTTP connection
+    Given the phone reaches "My MacBook" over plain HTTP
+    And the user is on an Android phone
+    When the user opens the device viewer on the iOS Simulator "iPhone 17"
+    Then the simulator's screen is shown
+    And the user's touches reach the simulator
 
   @backlog @mobile @priority-low
   Scenario: A dropped device stream can be reconnected

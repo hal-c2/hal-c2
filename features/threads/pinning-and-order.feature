@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19697
+#   https://github.com/pingdotgg/t3code/pull/22607
+#   https://github.com/pingdotgg/t3code/pull/21401
 #   docs/user/thread-sidebar.md (Pinning, Undo, Arranging threads, drag between sections)
 #   apps/web/src/components/Sidebar.tsx (pin, unpin, drag and drop, confirm unpin)
 #   apps/web/src/components/Sidebar.drag.ts, Sidebar.pointer.ts (drag collisions, a drag that is cancelled)
@@ -72,6 +75,7 @@ Feature: Pinning and arranging threads
     When the user presses the shortcut that pins a thread
     Then nothing is pinned and no error is shown
 
+  # Upstream #21401: the phone offers the same five-second undo after settle, snooze and unpin.
   @desktop @mobile @backlog-mobile @priority-high
   Scenario Outline: Undoing a thread change
     Given the user just <changed> "Beta"
@@ -84,6 +88,23 @@ Feature: Pinning and arranging threads
       | settled  |
       | snoozed  |
       | archived |
+
+  # Upstream #21401: undoing a settle does not try to restore a snooze that has run out.
+  @backlog @desktop @mobile
+  Scenario: Undoing a settle after the thread's snooze ran out restores it without an error
+    Given "Beta" was snoozed until 09:00 and it is now 10:00
+    And the user just settled "Beta"
+    When the user undoes the change
+    Then "Beta" is active again
+    And the user is not told the snooze could not be restored
+
+  # Upstream #21401: pinning a thread cancels any undo still pending for it.
+  @backlog @desktop @mobile @priority-low
+  Scenario: Pinning a thread cancels its pending undo
+    Given the user just settled "Beta"
+    When the user pins "Beta" before the undo times out
+    Then there is no undo left for settling "Beta"
+    And "Beta" stays pinned
 
   @backlog @desktop @mobile
   Scenario Outline: An undo that fails says so and leaves the thread as it is
@@ -120,6 +141,7 @@ Feature: Pinning and arranging threads
     When the user undoes the change
     Then "Beta" is restored and opened again
 
+  # Upstream #22607: typing after the change gives the undo shortcut back to the text.
   @desktop
   Scenario: The undo shortcut only acts when no text is being edited
     Given the user just unpinned "Beta"

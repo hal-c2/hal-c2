@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23873 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19706
+#   https://github.com/pingdotgg/t3code/pull/19554
+#   https://github.com/pingdotgg/t3code/pull/20277
+#   https://github.com/pingdotgg/t3code/pull/15044
+#   https://github.com/pingdotgg/t3code/pull/16670
 #   https://github.com/pingdotgg/t3code/pull/19118
 #   https://github.com/pingdotgg/t3code/pull/17587
 #   https://github.com/pingdotgg/t3code/pull/14784
@@ -22,11 +28,23 @@
 #   apps/web/src/legacyStorage.ts, apps/web/src/clientPersistenceStorage.ts (what a browser kept; dropped)
 #   Shared domain: connections/ owns pairing; mc/platform/ owns the MC's side of the bootstrap.
 #   https://github.com/pingdotgg/t3code/pull/15440
+#   https://github.com/pingdotgg/t3code/pull/25317
+#   https://github.com/pingdotgg/t3code/pull/25345
+#   https://github.com/pingdotgg/t3code/pull/22471
 
 Feature: The desktop app runs its own MC
   Started on its own, the Qt desktop app starts an MC on this machine and connects to
   it with the MC's own access token. Given an MC's pairing link, it attaches to that MC
   instead. Either way the shell's own client is paired with the MC before the window fills.
+
+  # Upstream #23873: a quit stuck waiting on the bundled server's shutdown swallowed every later Quit
+  # and SIGTERM. Dropped: the HAL-C2 desktop does not own the MC's shutdown, so its quit never
+  # waits on one.
+  @dropped @desktop
+  Scenario: Quitting again after a stuck quit closes the app
+    Given the app started quitting 10 seconds ago and is still waiting on its server to stop
+    When the user quits again
+    Then the app closes
 
   Rule: Starting the desktop app starts its MC and connects to it
 
@@ -36,6 +54,13 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then an MC starts with the HAL-C2 home "/tmp/sandbox"
       And its bootstrap reaches it on standard input, not on the command line
+
+    # Upstream #19706: no window showed until the local backend reported ready.
+    @backlog @desktop @priority-low
+    Scenario: The desktop app shows it is starting while its MC starts
+      When the user starts the desktop app
+      Then a window saying "Starting HAL-C2…" shows before the MC is ready
+      And it gives way to the main window once the MC is ready
 
     # The shell connects with the MC's own access token; there is no web app to pair.
     @dropped
@@ -126,12 +151,29 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the MC listens on the next free port
 
+    # Upstream #15044: a host without IPv6 support no longer reports every free port as taken.
+    @backlog @desktop @priority-low
+    Scenario: A host without IPv6 still finds a free port for the MC
+      Given the host was started with IPv6 turned off
+      And nothing listens on the MC's default port
+      When the user starts the desktop app
+      Then the MC listens on its default port
+
     @desktop
     Scenario: An MC already running on the desktop's files is used instead of starting another
       Given the background service runs an MC on the files the desktop app's MC would use
       When the user starts the desktop app
       Then the shell is told that MC's address and the MC's own access token
       And the desktop app starts no MC of its own
+
+    # Upstream #19554: a second launch of the app starts no second backend
+    @backlog @desktop
+    Scenario: Starting the desktop app again shows the window already open
+      Given the desktop app is running
+      When the user starts it again
+      Then the open window is brought forward
+      And no second app or MC is started
+      And a link the second start was given is handled by the running app
 
     # At login the app can start before the background service's MC has said where it
     # listens; the MC that gets the files first keeps them (mc-startup.feature).
@@ -240,6 +282,22 @@ Feature: The desktop app runs its own MC
       When the user quits the desktop app
       Then the MC keeps running
 
+    # Upstream #20277: the backend a desktop started exits when that desktop dies.
+    @backlog @desktop
+    Scenario: A desktop app that dies without quitting does not leave its MC running
+      Given the desktop app started its own MC
+      When the desktop app is killed
+      Then the MC it started stops
+
+    # Upstream #22471: the MC's own "launcher is gone" notice hit the closed pipe and crashed it,
+    # leaving its runtime record and the home held.
+    @backlog @mc @desktop
+    Scenario: An MC whose desktop died shuts down as if interrupted
+      Given the desktop app started its own MC
+      When the desktop app is killed
+      Then the MC shuts down cleanly even though nothing reads its output
+      And the next MC started for that home starts without finding it still held
+
   Rule: Start-up failures say what went wrong
 
     # The desktop app no longer serves a web app.
@@ -263,6 +321,25 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the desktop app says "HAL-C2 failed to start" with the step it failed in and the reason
       And the app quits afterwards
+
+    # Upstream #25317: a client that could not load offered only Reload, with no way to find
+    # out what was wrong.
+    @backlog @desktop @priority-low
+    Scenario: A window that could not load says how to look into it
+      Given the desktop app's window fails to load
+      Then it offers to reload
+      And it names the "hal-c2 triage" command as it runs on this machine, ready to copy
+
+    # Upstream #25345: the real fix for a broken build was a newer one, and users could neither
+    # find it nor share the error.
+    @backlog @desktop @priority-low
+    Scenario: A window that keeps failing to load offers a newer build and a report
+      Given the desktop app's window failed to load
+      And a newer build of HAL-C2 is available
+      Then beside reload it offers to download the update, and then to restart into it
+      And more options offer a reinstall link, the triage command, the error details to copy and a bug report filled in with them
+      When the window fails to load again within five minutes
+      Then those options are already open
 
     @backlog @desktop
     Scenario: A failure while the app is already quitting is not shown
@@ -395,6 +472,7 @@ Feature: The desktop app runs its own MC
 
   Rule: The app fits the desktop it runs on
 
+    # Upstream #16670: older xdg-open could not find a quoted Exec path; the path is quoted only when it must be.
     # Legacy: apps/desktop/src/app/DesktopLinuxUrlHandler.ts
     @backlog @desktop @priority-low
     Scenario: On Linux a link for HAL-C2 opens the installed app

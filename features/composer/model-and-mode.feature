@@ -1,8 +1,17 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20886
+#   https://github.com/pingdotgg/t3code/pull/22242
+#   https://github.com/pingdotgg/t3code/pull/19900
+#   https://github.com/pingdotgg/t3code/pull/11933
+#   https://github.com/pingdotgg/t3code/pull/14961
+#   https://github.com/pingdotgg/t3code/pull/19928
 #   https://github.com/pingdotgg/t3code/pull/18494
 #   https://github.com/pingdotgg/t3code/pull/16069
 #   https://github.com/pingdotgg/t3code/pull/13590
 #   https://github.com/pingdotgg/t3code/pull/13555
+#   https://github.com/pingdotgg/t3code/pull/25609
+#   https://github.com/pingdotgg/t3code/pull/21404
+#   https://github.com/pingdotgg/t3code/pull/21406
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
@@ -150,15 +159,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user toggles back
     Then the next turn builds again
 
-  @desktop
+  # Upstream #21406: the phone hid Ultrathink and Ultracode.
+  @desktop @mobile @backlog-mobile
   Scenario: Ultrathink prefixes the prompt
     Given the thread runs on Claude
     When the user turns on Ultrathink and sends "design the cache"
     Then the agent receives "Ultrathink: design the cache"
 
   # Legacy: packages/shared/src/model.ts (applyClaudePromptEffortPrefix)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/claude/provider.ex (prompt/2)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: Ultrathink is left off a message it would break
     Given the thread runs on Claude with Ultrathink turned on
     When the user sends "<message>"
@@ -178,11 +187,28 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user removes it from the favourites
     Then it is no longer listed among the favourites
 
+  # Upstream #14961: the model picker offers every saved custom model, not just the first 32
+  @backlog @shared
+  Scenario: Every saved custom model is offered
+    Given the user has saved 40 custom models for Codex
+    When the user opens the model picker
+    Then all 40 custom models are offered
+    And a thread set to the 40th custom model shows that model as chosen
+
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: A started thread can move to another provider
     Given the thread has already run a turn on Codex
     When the user chooses the model "claude-opus"
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
+
+  # Upstream #20886: a model picked earlier in a draft kept overriding a change made elsewhere.
+  @backlog @shared @mobile
+  Scenario: A draft follows a model change made on another client
+    Given the user picked "gpt-5" in the draft of a thread on this client
+    And then changed the thread to "claude-opus" on another client
+    When the user returns to the thread here
+    Then the draft is on "claude-opus"
+    But an unsent pick in another thread's draft is kept
 
   @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: The last model used with each provider is remembered
@@ -209,6 +235,16 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given the project is a Git repository
     When the user chooses to work in a new worktree from branch "main"
     Then the first turn works in a new worktree based on "main"
+
+  # Upstream #21404: the phone could inherit new-worktree mode for a plain folder and then
+  # refuse to start on a branch that cannot exist.
+  @backlog @shared
+  Scenario: A project that is not a Git repository starts its thread in its folder
+    Given the project is a plain folder with no Git repository
+    And the last thread was started in a new worktree, or a saved draft asked for one
+    When the user starts a new thread in the project
+    Then the thread works in the project's folder
+    And no branch or worktree can be chosen
 
   @desktop
   Scenario: A branch that does not exist is created when chosen
@@ -246,6 +282,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses "server · scratch" as the machine the thread runs on
     Then the new thread is in "scratch" on "server"
     And the prompt is still there
+
+  # Upstream #22242: reverted #15636, which listed every checkout as its own row; checkouts of
+  # one repository are grouped as one project again.
+  @backlog @desktop
+  Scenario: Checkouts of one repository are one project in the new-thread picker
+    Given "shop" has checkouts on "laptop" and "server"
+    When the user opens the project picker for a new thread
+    Then "shop" is listed once
+    And both machines are offered under it
 
   @backlog @desktop
   Scenario: The user lets a new thread's machine be picked automatically
@@ -312,6 +357,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the machine "server" is shown
     And it cannot be changed
 
+  # Upstream #19900: a started thread offered other machines, and picking one did nothing.
+  @backlog @desktop @priority-low
+  Scenario: A started thread names its machine without offering others
+    Given a thread has started on the machine "server" in a project on several machines
+    When the user looks at the thread's composer
+    Then the machine "server" is shown
+    And no other machine is offered, by the menu or by the machine shortcut
+
   @backlog @desktop @priority-low
   Scenario: The machine is left out when it is the only one and it is this one
     Given the project runs on the machine being used and no other machine is connected
@@ -348,6 +401,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the three older models are listed
     And the section is already open when the thread runs on one of them
 
+  # Upstream #11933: a favourited legacy model was hidden in the folded "Legacy models" section.
+  @backlog @desktop
+  Scenario: A favourite older model is listed outside the folded section
+    Given Codex lists the legacy model "gpt-4.1" and the user marked it as a favourite
+    When the user looks through Codex's models
+    Then "gpt-4.1" is listed above Codex's current models without opening "Legacy models"
+    When the user removes it from the favourites
+    Then "gpt-4.1" is back in "Legacy models"
+
   @backlog @desktop
   Scenario: Searching the models finds a provider's older models too
     Given Codex lists the legacy model "gpt-4.1"
@@ -364,6 +426,18 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given Codex reports "gpt-6" as a new model
     When the user looks through Codex's models
     Then "gpt-6" is marked as new
+
+  # Upstream #25609: the new mark comes from the model's release date and lasts seven days.
+  @backlog @mc @desktop
+  Scenario Outline: A model is marked new for seven days after its release
+    Given "gpt-6" was released <age>
+    When the user looks through Codex's models
+    Then "gpt-6" <mark>
+
+    Examples:
+      | age               | mark                  |
+      | six days ago      | is marked as new      |
+      | eight days ago    | is not marked as new  |
 
   @backlog @desktop @priority-high
   Scenario Outline: A provider that cannot be used says why in the model picker
@@ -473,7 +547,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the permissions read "Supervised"
     And the thread's saved permissions are unchanged until the user chooses
 
-  @backlog @desktop
+  # Upstream #21406: the phone sums the options up too, beside both model controls.
+  @backlog @desktop @mobile
   Scenario Outline: The model's options are summed up beside the model
     Given the thread runs on a model with <options>
     Then the composer sums the model's options up as "<summary>"
@@ -511,11 +586,95 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the effort reads "Ultrathink" and cannot be changed
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
-  @backlog @desktop @priority-high
+  # Upstream #19928: two commands step the composer's effort one level without opening the picker.
+  @backlog @desktop @tui
+  Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
+    Given the thread runs on a model whose efforts are low, medium and high
+    And the effort is <from> and the user is typing a draft
+    When the user steps the effort <direction>
+    Then the effort is <to>
+    And the draft and where the user was typing are unchanged
+    And the effort picker stays closed
+
+    Examples:
+      | from   | direction | to   |
+      | medium | up        | high |
+      | high   | up        | low  |
+      | medium | down      | low  |
+      | low    | down      | high |
+
+  # Upstream #19928: stepping into Ultrathink follows the same rules as choosing it.
+  @backlog @desktop @tui @priority-low
+  Scenario: Stepping the effort into Ultrathink adds its prefix and keeps the caret in place
+    Given the thread runs on Claude at the effort just below Ultrathink
+    And the user has typed "design the cache" with the caret before "cache"
+    When the user steps the effort up
+    Then the effort reads "Ultrathink"
+    And the draft reads "Ultrathink: design the cache"
+    And the caret is still before "cache"
+
+  # Upstream #19928: slash commands never get the Ultrathink prefix, so stepping skips it.
+  @backlog @desktop @tui @priority-low
+  Scenario: Stepping the effort skips Ultrathink for a slash command
+    Given the thread runs on Claude at the effort just below Ultrathink
+    And the user has typed "/review the cache"
+    When the user steps the effort up
+    Then the effort wraps past Ultrathink to Claude's lowest effort
+    And the draft reads "/review the cache"
+
+  # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
+  @backlog @desktop @tui @priority-low
+  Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
+    Given the thread runs on Claude
+    And the user has typed "please ultrathink about the cache"
+    When the user steps the effort up
+    Then the effort still reads "Ultrathink"
+
+  # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
+  # steps from the model's default instead of doing nothing.
+  @backlog @desktop @tui @priority-low
+  Scenario: An effort outside the model's levels steps from the model's default
+    Given the provider reports an effort the model does not list
+    And the model's default effort is medium
+    When the user steps the effort up
+    Then the effort is high
+
+  # Upstream #19928: stepping saves the same options as the picker, so Cursor's Fast stays off.
+  @backlog @desktop @tui @plugin-cursor @priority-low
+  Scenario: Stepping the effort leaves Cursor's Fast mode off unless the user chose it
+    Given the thread runs on a Cursor model whose default turns Fast mode on
+    And the user has not chosen Fast mode
+    When the user steps the effort up
+    Then the next turn runs without Fast mode
+
+  # Upstream #19928: the step stands down whenever something else owns the composer.
+  @backlog @desktop @tui
+  Scenario Outline: Stepping the effort does nothing while the composer is taken
+    Given <situation>
+    When the user steps the effort up
+    Then the effort is unchanged
+
+    Examples:
+      | situation                                            |
+      | an approval is waiting for the user                  |
+      | the agent's question is waiting for an answer        |
+      | the user is editing a queued message                 |
+      | no provider is available                             |
+      | the user is holding the step key down after one step |
+
+  # Upstream #21406: the phone previewed different options from those it saved.
+  @backlog @desktop @mobile @priority-high
   Scenario: Each model keeps the options the user last gave it
     Given the user set "opus" to high effort and "sonnet" to low effort
     When the user switches from "opus" to "sonnet" and back
     Then "sonnet" was offered with low effort and "opus" is back at high effort
+
+  # Upstream #21406: an existing thread on the phone hid accounts it could move to.
+  @backlog @desktop @mobile
+  Scenario: An existing thread offers every account its conversation can continue on
+    Given the thread runs on one Codex account and a second Codex account can continue its conversation
+    When the user opens the thread's model picker
+    Then both Codex accounts are offered for the thread
 
   @backlog @desktop @priority-low
   Scenario: An unavailable model shows the options saved with it without letting them change

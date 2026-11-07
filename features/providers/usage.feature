@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23729
+#   https://github.com/pingdotgg/t3code/pull/21899
+#   https://github.com/pingdotgg/t3code/pull/21898
+#   https://github.com/pingdotgg/t3code/pull/17769
+#   https://github.com/pingdotgg/t3code/pull/21862
+#   https://github.com/pingdotgg/t3code/pull/21863
 #   https://github.com/pingdotgg/t3code/pull/15661
 #   https://github.com/pingdotgg/t3code/pull/17848
 #   https://github.com/pingdotgg/t3code/pull/10409
@@ -65,6 +71,23 @@ Feature: Usage
     When the user opens Usage
     Then that turn is missing from the totals
 
+  # Upstream #21863: Codex per-request and cumulative token counters are reconciled in usage totals.
+  @backlog @mc @plugin-codex
+  Scenario: Codex tokens are counted once when it reports both per-request and running totals
+    Given a Codex turn reported 3 requests of 1000 tokens each and a running total of 3000 tokens
+    When the user opens usage
+    Then the turn counts 3000 tokens
+
+  # Upstream #23729: a forked or subagent Codex transcript starts with totals it inherited, and
+  # its first request was dropped as a skipped record.
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: The first request of a forked Codex transcript is counted
+    Given a Codex subagent's transcript starts with its parent's running total of 5000 tokens
+    And its first request used 800 tokens
+    When the user opens Usage
+    Then that request counts 800 tokens
+    And the inherited 5000 tokens are not counted again
+
   @mc
   Scenario: A cost reported by the provider is used as is
     Given a Grok turn that reported its own cost
@@ -77,13 +100,13 @@ Feature: Usage
     When the user opens Usage
     Then that model's cost is marked unpriced
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A bare model family name is marked unpriced rather than guessed
     Given a turn recorded only the model family name "opus"
     When the user opens Usage
     Then that model is marked unpriced rather than priced at one generation's rate
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A model's larger context variant is priced at its base rate
     Given a turn on a model recorded with a bracketed context-size suffix such as "[1m]"
     When the user opens Usage
@@ -186,8 +209,7 @@ Feature: Usage
     Then the usage counts all 12,000 tokens
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (tailRecords), usageScanCache.ts
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (tail)
-  @backlog @mc @priority-high
+  @mc
   Scenario: A transcript line the CLI is still writing is counted once it is complete
     Given a transcript whose last line has no line ending yet
     When the user opens Usage
@@ -196,8 +218,7 @@ Feature: Usage
     Then the line is counted once
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (guard hash, shrunk file)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (size and mtime resume)
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A transcript that did not just grow is read again from the start
     Given the user opened Usage and a transcript was read
     And the transcript was then <change>
@@ -211,8 +232,7 @@ Feature: Usage
       | replaced by a shorter file                              |
 
   # Legacy: apps/server/src/usage/usageScanCache.ts (decodeScanCache, cache version, corrupt rows)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@cache_version)
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A saved scan the MC cannot trust is discarded
     Given the MC saved its scan of the history before it restarted
     And the saved scan <damage>
@@ -225,6 +245,7 @@ Feature: Usage
       | was written by an older version of the MC      |
       | is not readable                                |
       | has one entry that is damaged                  |
+      | has one entry whose records are damaged        |
 
   # Legacy: apps/server/src/usage/UsageService.ts (in-flight scans keyed by request and prices)
   @backlog @mc @priority-low
@@ -248,8 +269,7 @@ Feature: Usage
     Then the other client still receives the totals
 
   # Legacy: apps/server/src/usage/UsageService.ts (RATES_REFRESH_FLOOR_MS, "refetches a rate table inside its TTL only when the client asks")
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage/pricing.ex (@refresh_floor_ms)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Refreshing again within a minute does not fetch prices again
     Given the user refreshed Usage and prices were fetched ten seconds ago
     When the user refreshes Usage again
@@ -265,8 +285,7 @@ Feature: Usage
     And a fetch that takes longer than 10 seconds is treated as failed
 
   # Legacy: apps/server/src/usage/UsageService.ts (collectDirs: MTIME_SLACK_MS)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@mtime_slack_ms)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Only transcripts touched near the window are read, and only records inside it count
     Given a Claude transcript last changed 30 hours before the window began, holding records from before and inside the window
     And another transcript last changed 40 hours before the window began
@@ -275,8 +294,7 @@ Feature: Usage
     And the second transcript is not opened
 
   # Legacy: apps/server/src/usage/UsageService.ts (codexEventOccurrences)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (codex_key)
-  @backlog @mc @priority-high
+  @mc
   Scenario: A moved copy of a Codex rollout counts once but equal events inside one rollout all count
     Given a Codex rollout was copied into another folder
     And one rollout has two token counts with identical time, model and totals
@@ -285,8 +303,7 @@ Feature: Usage
     And the two identical events inside a single rollout are both counted
 
   # Legacy: apps/server/src/usage/usageTranscripts.ts (Grok reads updates.jsonl only)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage/transcripts.ex
-  @backlog @mc @priority-high
+  @mc
   Scenario: Only Grok's session update log is read as usage
     Given a Grok session folder with "updates.jsonl" and other JSONL files
     When the user opens Usage
@@ -304,6 +321,15 @@ Feature: Usage
     Given a Claude request on Opus 5.5 in fast mode that costs $0.28 at the standard rate
     When the user opens Usage
     Then the request is priced at $0.56
+
+  # Upstream #21898, #21899: Codex can omit its first turn's tier, which priced it at Standard.
+  @mc @plugin-codex @backlog @priority-low
+  Scenario: A Codex turn started on Fast is priced at Fast when Codex did not record the tier
+    Given a Codex thread was started on the Fast service tier
+    And Codex's transcript does not record a tier for that turn
+    When the user opens Usage
+    Then that turn is priced at the Fast rate
+    And a tier Codex did record wins over the one the thread asked for
 
   # Upstream #10409: Cursor's account history counts only once the user has enabled it.
   @mc @plugin-cursor @backlog @priority-low
@@ -324,6 +350,15 @@ Feature: Usage
     When the user opens Usage
     Then Antigravity's tokens are counted
 
+  # Upstream #17769: usage reads each Antigravity instance's own data directory.
+  @mc @plugin-antigravity @backlog @priority-low
+  Scenario: An Antigravity instance with its own data directory counts toward usage
+    Given an Antigravity instance whose environment sets its own data directory
+    And that directory holds local session history
+    When the user opens Usage
+    Then that instance's tokens are counted
+    And history shared with the default instance is counted once
+
   @mc
   Scenario: A scan that fails is reported
     Given the transcripts cannot be scanned
@@ -338,6 +373,15 @@ Feature: Usage
     Then Claude's usage is marked incomplete, saying how many transcripts could not be read
     And it counts the readable transcripts and the usage saved from the unreadable one
     And a later scan that reads everything is no longer marked incomplete
+
+  # Upstream #21862: records a reader skipped inside a readable transcript went unreported, and
+  # the next incremental scan forgot them.
+  @backlog @mc @priority-low
+  Scenario: Records a scan skipped keep the usage marked incomplete
+    Given a Claude transcript can be read but some of its records could not be understood
+    When the user opens Usage
+    Then Claude's usage is marked incomplete
+    And it stays marked incomplete after a later scan that reads only what was added since
 
   # Clients leave a missing source out of the totals; saved records keep counting.
   @backlog @mc @priority-low

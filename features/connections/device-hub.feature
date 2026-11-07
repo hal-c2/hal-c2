@@ -1,5 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19974
+#   https://github.com/pingdotgg/t3code/pull/20182
+#   https://github.com/pingdotgg/t3code/pull/22012
+#   https://github.com/pingdotgg/t3code/pull/18784
+#   https://github.com/pingdotgg/t3code/pull/18159
 #   https://github.com/pingdotgg/t3code/pull/12402
+#   https://github.com/pingdotgg/t3code/pull/24912
 #   apps/server-ex/lib/hal_c2/devices.ex (device.list, device.open, device.close, device.shutdown,
 #     device.detail, device.action, device.testHost, devices shape, platform reasons)
 #   apps/server-ex/lib/hal_c2/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
@@ -41,6 +47,7 @@ Feature: Device hub on an MC
     Then the MC installs the device hub under its home's tools folder
     And runs it on a loopback port
 
+  # Upstream #18159: Apple device discovery is skipped on non-Mac hosts
   @mc
   Scenario Outline: A platform the machine cannot run explains why
     Given <situation>
@@ -103,6 +110,21 @@ Feature: Device hub on an MC
   Scenario: Opening a device that is gone fails
     When a client opens a device id the hub does not list
     Then the MC answers that the device was not found
+
+  # Upstream #18784: a missing ffmpeg left the emulator's stream blank without a word; it is
+  # checked when an emulator is opened, and physical devices do not need it.
+  @mc @backlog
+  Scenario Outline: An Android emulator that cannot be streamed says what is missing
+    Given the device host has <ffmpeg>
+    When a client opens an Android emulator in a thread
+    Then it fails saying <missing> is needed to stream the emulator
+    And the emulator is not booted
+    But physical Android devices still open
+
+    Examples:
+      | ffmpeg                             | missing             |
+      | no ffmpeg                          | ffmpeg              |
+      | an ffmpeg without the x264 encoder | ffmpeg with libx264 |
 
   # Legacy: apps/server/src/device/DeviceService.test.ts (stopped AVD boot, boot progress)
   @mc
@@ -169,6 +191,22 @@ Feature: Device hub on an MC
       | Android  | the boot takes longer than three minutes            | the boot timed out               |
       | iOS      | its stream takes longer than three minutes to start | the boot timed out               |
       | iOS      | the simulator fails to launch                       | the device failed to launch      |
+
+  # Upstream #22012: emulators without image-file cameras boot with emulated cameras
+  @backlog @mc
+  Scenario: An Android emulator that cannot use image cameras still boots
+    Given an Android emulator whose cameras cannot show an image file
+    When a client opens it in a thread
+    Then the emulator boots with emulated cameras
+    And launch arguments the user set for it still apply
+
+  # Upstream #22012: a failed boot shows what the device hub reported, capped at 2,000 characters
+  @backlog @mc
+  Scenario: A failed boot shows what the device tools reported
+    Given a shut-down Android device whose emulator exits while booting
+    When a client opens it in a thread
+    Then the open fails with the emulator's own output, cut to 2,000 characters
+    And an agent that opened it is told the same
 
   @mc
   Scenario: Turning device support off while a device boots fails the open
@@ -260,6 +298,14 @@ Feature: Device hub on an MC
       | device                     | how                                                 |
       | an Android emulator        | tilts the emulator's accelerometer to that side     |
       | a physical Android phone   | locks the phone's rotation to that side             |
+
+  # Upstream #20182: Portrait and Landscape follow the screen's shape on landscape-native tablets
+  @backlog @mc
+  Scenario: Portrait and landscape are right on an Android tablet that is wide by nature
+    Given an Android tablet whose natural screen is wider than it is tall
+    When a client sets its orientation to portrait
+    Then the screen is taller than it is wide
+    And landscape makes it wider than it is tall
 
   @mc
   Scenario: A plain push message arrives as a notification alert
@@ -500,6 +546,21 @@ Feature: Device hub on an MC
     When the agent asks for a device screenshot
     Then it receives the screen as an image with its width and height
 
+  # Upstream #24912: on a two-screen simulator such as the iPhone Duo the capture picked a
+  # display without looking at the fold, giving a black picture or a failed capture.
+  @backlog @mc @desktop @priority-low
+  Scenario Outline: A screenshot of a foldable simulator captures the screen that is on
+    Given the thread has a foldable iOS Simulator open that booted <booted>
+    And the simulator is now <now>
+    When a screenshot of the device is taken
+    Then it shows the screen that is on, not a black picture or an error
+
+    Examples:
+      | booted   | now      |
+      | folded   | folded   |
+      | folded   | unfolded |
+      | unfolded | folded   |
+
   @mc
   Scenario: A screenshot with no open device asks the agent to open one
     Given no device is open in the agent's thread
@@ -552,3 +613,13 @@ Feature: Device hub on an MC
     When the hub looks for the emulator's token
     Then it uses that directory
     And an explicit value is kept
+
+  # Upstream #19974: a failed listing of Android virtual devices keeps the devices already found and warns.
+  @backlog @mc
+  Scenario: A failed listing of Android virtual devices keeps the devices already found
+    Given the device hub found a connected Android phone
+    When listing the Android virtual devices fails
+    Then the phone is still listed and can be opened
+    And the device list warns that virtual devices could not be listed
+    When a later listing succeeds
+    Then the warning is gone

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24766
+#   https://github.com/pingdotgg/t3code/pull/18381
+#   https://github.com/pingdotgg/t3code/pull/9356
 #   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (HAL-C2 Account row, sections)
 #   apps/mobile/src/features/settings/SettingsAuthRouteScreen.tsx (sign in, profile, sign out)
 #   apps/mobile/app.config.ts (Apple and Google sign-in configuration)
@@ -31,6 +34,19 @@ Feature: Settings that belong to the phone
 
   Background:
     Given the phone is paired with "My MacBook"
+
+  # Upstream #24766: Settings on a tablet or a foldable had no search.
+  Rule: Searching settings
+
+    @backlog @mobile
+    Scenario Outline: Searching settings finds a page by what it holds
+      When the user searches settings for "<query>"
+      Then <outcome>
+
+      Examples:
+        | query    | outcome                                                        |
+        | dark     | "Appearance" is listed and sections with no match are not      |
+        | zzz      | the user is told no settings match                             |
 
   # The HAL-C2 account was the HAL-C2 Connect (Clerk) sign-in, removed with Connect.
   Rule: HAL-C2 account
@@ -307,6 +323,15 @@ Feature: Settings that belong to the phone
       Then the settings scope reads "Unavailable project"
       And the project's pages ask the user to select a project with a checkout on a connected environment
 
+    # Upstream #9356: a setting another environment refused was only logged.
+    @backlog @mobile
+    Scenario: A setting some environments refuse names each of them and why
+      Given the user's settings scope holds "My MacBook" and "Office Mac"
+      And "Office Mac" refuses settings changes
+      When the user changes a thread behavior setting
+      Then the user is told the change was not saved on "Office Mac", with its reason
+      And "My MacBook" keeps the new value
+
     @backlog @mobile
     Scenario Outline: Server settings need a connected environment
       Given no environment is connected
@@ -562,3 +587,10 @@ Feature: Settings that belong to the phone
     Scenario: Turning on Plan Mode brings back the Build and Plan choice
       When the user turns on Plan Mode under Legacy
       Then the Build and Plan choice is offered when starting a task
+
+    # Upstream #18381: text typed in a settings field is saved when the user leaves with Back.
+    @backlog @mobile
+    Scenario: Text typed in a setting is kept when the user leaves with Back
+      Given the user typed "ana/" as the worktree branch prefix
+      When the user presses Back without leaving the field first
+      Then the branch prefix "ana/" is saved

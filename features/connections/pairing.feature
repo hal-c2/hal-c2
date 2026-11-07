@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23789
+#   https://github.com/pingdotgg/t3code/pull/19902
+#   https://github.com/pingdotgg/t3code/pull/10958
 #   docs/user/remote-access.md (Pair over a LAN or private network, Manage or revoke access)
 #   docs/operations/development.md (vp run dev --share pairing URL, Reusable dev credential)
 #   docs/internals/environment-auth.md (Authority survives transport changes)
@@ -39,6 +42,14 @@ Feature: Pairing a client with an environment
     When an operator asks the MC for a pairing link with its LAN address
     Then it prints the address with a one-time token
     And the token grants standard scopes for five minutes
+
+  # Upstream #23789: pairing against an MC on another protocol printed a token it could not use.
+  @backlog @mc
+  Scenario: A pairing command refuses an MC that speaks another protocol
+    Given the running MC speaks another protocol than the pairing command
+    When an operator asks for a pairing link
+    Then the command fails naming both protocols and the command that pairs with that MC
+    And no token, database or tailnet setting is written
 
   @mc
   Scenario: A pairing link names the address the operator gives it
@@ -129,6 +140,14 @@ Feature: Pairing a client with an environment
     Then the command fails naming "1 to 65535"
     And no pairing link is listed
 
+  # Upstream #10958: a tailnet without HTTPS certificates made Serve pairing time out unexplained.
+  @backlog @mc
+  Scenario: A tailnet with HTTPS turned off says so instead of timing out
+    Given the tailnet has HTTPS certificates turned off
+    When the user pairs through Tailscale
+    Then the user is told HTTPS is off for the tailnet and to turn it on in the Tailscale admin DNS settings
+    And no Tailscale Serve is started
+
   @backlog @mc @priority-high
   Scenario: A pairing link keeps its token out of the address a server sees
     When an operator asks the MC for a pairing link
@@ -183,6 +202,14 @@ Feature: Pairing a client with an environment
     Then Tailscale serves the MC over HTTPS at "box.tail5e3a.ts.net"
     And the link comes with the address "https://box.tail5e3a.ts.net"
     And that address is one another device can reach
+
+  # Upstream #19902: Tailscale Serve targets the IPv6 loopback when the server listens only on ::1.
+  # Its Connect half is dropped with HAL-C2 Connect.
+  @backlog @mc
+  Scenario: A Tailscale pairing reaches an MC that listens only on ::1
+    Given the MC listens only on "::1"
+    When the user makes a pairing link over Tailscale
+    Then the tailnet address reaches the MC
 
   @mc
   Scenario: No pairing link is made when Tailscale cannot publish the MC

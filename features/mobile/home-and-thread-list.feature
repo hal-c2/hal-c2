@@ -1,6 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24748
+#   https://github.com/pingdotgg/t3code/pull/19818
 #   https://github.com/pingdotgg/t3code/pull/16693
 #   https://github.com/pingdotgg/t3code/pull/17368
+#   https://github.com/pingdotgg/t3code/pull/21388
 #   apps/mobile/src/features/home/ (thread list options, empty states, search, connection status)
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (status labels, shelves)
 #   apps/mobile/src/features/threads/thread-provider-instance.ts (provider account badge on a row)
@@ -23,12 +26,12 @@ Feature: Home screen and thread list on a phone
   project, with a status line that tells the user whether what they see is current.
 
   Rule: With several environments paired
-    # Pairing the phone with more than one environment is not built yet: hal-c2/hal-c2#1092.
+    # Narrowing by environment and naming it on a row are not built yet: hal-c2/hal-c2#1131.
 
     Background:
       Given the phone is paired with "My MacBook" and "Office Mac"
 
-    @backlog @mobile @priority-high
+    @mobile @priority-high
     Scenario: Home lists threads from every paired environment
       When the user opens the app
       Then threads from "My MacBook" and "Office Mac" are listed together
@@ -111,9 +114,9 @@ Feature: Home screen and thread list on a phone
       Examples:
         | situation                                   | status                    |
         | the phone has no network                    | You are offline           |
-        | "Office Mac" is reconnecting                | Reconnecting to Office Mac |
+        | only "Office Mac" was usable and it is reconnecting | Reconnecting to Office Mac |
         | both environments are reconnecting          | Reconnecting 2 environments |
-        | the environments are catching up on threads | Syncing threads...        |
+        | the connected environments are catching up on threads | Syncing threads...        |
         | no environment is connected                 | Not connected             |
 
     @backlog @mobile @priority-low
@@ -122,13 +125,23 @@ Feature: Home screen and thread list on a phone
       When "Office Mac" drops and reconnects within half a second
       Then the list status never appears
 
+    # Upstream #21388: the status speaks for the list only when no other environment is usable.
     @backlog @mobile
     Scenario: A connection that stays down shows its status after a short wait
-      Given the list is connected
+      Given the list is connected to "Office Mac" alone
       When "Office Mac" has been reconnecting for a second
       Then the list status reads "Reconnecting to Office Mac"
       When "Office Mac" is connected again
       Then the list status goes away at once
+
+    # Upstream #21388: a secondary environment retrying made the home header say reconnecting
+    # while another environment worked; its own status stays in environment settings.
+    @backlog @mobile
+    Scenario: An environment retrying while another works leaves the home header as it is
+      Given "My MacBook" is connected and usable
+      When "Office Mac" keeps failing to reconnect
+      Then the home header shows the app's name, not a reconnecting status
+      And the environment settings say "Office Mac" is reconnecting
 
     @backlog @mobile @priority-low
     Scenario: Tapping the status line opens environment settings
@@ -192,6 +205,15 @@ Feature: Home screen and thread list on a phone
     Scenario: The user searches threads by title
       When the user searches threads for "checkout"
       Then only threads whose title matches "checkout" are listed
+
+    # Upstream #24748: on iPhone the search field collapsed after going back from a result,
+    # leaving the list filtered with no query in sight.
+    @backlog @mobile
+    Scenario: Search stays open after going back from a result
+      Given the user searched threads for "checkout"
+      When the user opens a result and goes back
+      Then the search still reads "checkout" and the list is still filtered by it
+      And the keyboard opens only if the search had it when the user left
 
     @backlog @mobile
     Scenario: A search with no matches says so
@@ -292,6 +314,13 @@ Feature: Home screen and thread list on a phone
         | task                                                   | label             |
         | a task written offline that is waiting to be sent      | Sends on reconnect |
         | a task that was written but not started                | Draft             |
+
+    # Upstream #19818: the Unsent group sat below the active threads; it leads the list on the phone
+    # and in the tablet sidebar.
+    @backlog @mobile
+    Scenario: Unsent tasks lead the thread list
+      Given the list holds a draft that was never started and threads that are working
+      Then the "Unsent" group comes before every other group
 
     @backlog @mobile @priority-low
     Scenario: A subagent's own thread is not listed but a fork of the thread is

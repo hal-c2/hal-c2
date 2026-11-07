@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23541 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19486
+#   https://github.com/pingdotgg/t3code/pull/14361
+#   https://github.com/pingdotgg/t3code/pull/22856
 #   docs/user/background-service.md
 #   apps/server-ex/lib/hal_c2/background_policy.ex (profiles, leases, host power, pause rules)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (server.reportClientActivity)
@@ -19,6 +23,15 @@ Feature: Background activity and the background service
   The MC does periodic work such as fetching git and checking providers only
   while someone is looking, and backs off on battery or when the machine is
   locked. The background service keeps the MC running without a client.
+
+  # Upstream #23541: when an update needs a newer `t3` launcher, the error names both launcher
+  # protocols, the CLI that ran, and how to install the right one. Dropped: the MC runs as its own
+  # OS service and updates through release upgrades, with no separate launcher to fall behind.
+  @dropped @mc
+  Scenario: An update that needs a newer launcher says which launcher ran and how to replace it
+    Given the installed service launcher is older than an update requires
+    When the user installs the update
+    Then the user is told which launcher ran, which version the update needs, and how to install it
 
   Rule: Background activity follows the user's profile
 
@@ -262,6 +275,28 @@ Feature: Background activity and the background service
       Then the service can start that provider tool
       And the folders where providers are usually installed are searched as well
 
+    # Upstream #22856: emulators did not boot from the service without the shell's JAVA_HOME.
+    @backlog @mc @priority-low
+    Scenario Outline: The service takes JAVA_HOME from the login shell only when it has none
+      Given the user's login shell sets JAVA_HOME to "/opt/homebrew/opt/openjdk@17"
+      And the service's own environment <own>
+      When the background service starts the MC
+      Then the MC uses JAVA_HOME "<used>"
+
+      Examples:
+        | own                                  | used                          |
+        | has no JAVA_HOME                     | /opt/homebrew/opt/openjdk@17  |
+        | sets JAVA_HOME to "/usr/lib/jvm/21"  | /usr/lib/jvm/21               |
+
+    # Upstream #19486: installing or updating rewrote the unit or plist and lost custom entries.
+    @backlog @mc
+    Scenario: The service's own environment file survives reinstalls and updates
+      Given the user set "HTTPS_PROXY" in the service environment file in the HAL-C2 home
+      When the background service is installed again or updated
+      Then the file is left as it was
+      And the MC the service starts next has "HTTPS_PROXY" set
+      But a variable the service sets for itself cannot be overridden from that file
+
     @backlog @mc
     Scenario: Installing an older version over a newer service is refused
       Given the background service runs version 1.4.0
@@ -306,3 +341,12 @@ Feature: Background activity and the background service
       Given the MC runs on Windows
       When the user installs the background service
       Then the install fails closed saying the background service is not available on Windows
+
+    # Upstream #14361: a restart or update run from inside the service stopped its own caller
+    # before starting the service again; it now hands the work to the service manager.
+    @backlog @mc
+    Scenario: Restarting the service from a terminal inside HAL-C2 brings it back
+      Given the MC runs under its service
+      When the user restarts the service from a terminal in one of its threads
+      Then the user is told the restart is under way
+      And the MC comes back running under the service

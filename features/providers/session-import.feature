@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19161
 #   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
 #   apps/server-ex/lib/hal_c2/acp/sessions.ex (server.listAcpRegistrySessions, server.importAcpRegistrySession,
 #     server.deleteAcpRegistrySession, capability checks, error codes)
@@ -63,6 +64,15 @@ Feature: Importing native agent sessions
     When the user imports "shop"
     Then last week's sessions become threads with their visible messages
     And the session from two months ago is not imported
+
+  # Upstream #19161: tool and hidden records used up the history budget and skipped the session.
+  @backlog @plugin-claude
+  Scenario: A long Claude session that is mostly tool records is imported
+    Given a Claude session of "shop" whose records are mostly tool calls and attachments
+    And its visible conversation fits the import's history limit
+    When the user imports "shop"
+    Then the session becomes a thread with its visible messages, title and model
+    And it is matched to "shop" by the directory it first ran in
 
   Scenario: An imported thread continues its native session
     Given a Claude session imported as a thread

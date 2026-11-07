@@ -1,8 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24616
+#   https://github.com/pingdotgg/t3code/pull/21086
+#   https://github.com/pingdotgg/t3code/pull/13865
 #   https://github.com/pingdotgg/t3code/pull/19197
 #   https://github.com/pingdotgg/t3code/pull/17637
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/12900
+#   https://github.com/pingdotgg/t3code/pull/21503
+#   https://github.com/pingdotgg/t3code/pull/21393
 #   docs/user/permission-modes.md
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, thread.user-input.dismiss, approval_request, user_input_request)
 #   packages/contracts/src/providerPolicy.ts (ProviderApprovalDecision)
@@ -123,6 +128,39 @@ Feature: Approvals and agent questions
     Then the request stays shown
     And a request that arrives while the user is not typing appears at once
 
+  # Upstream #21503: the composer stays usable while an approval waits, and sending a message
+  # declines every pending approval, then steers the message into the waiting turn whatever
+  # the follow-up setting says.
+  @backlog @mc @shared @priority-high
+  Scenario: Sending a message while approvals wait declines them and redirects the agent
+    Given the agent is waiting for the user to approve two commands
+    And follow-ups are set to queue
+    When the user sends "don't run that, just say hi instead"
+    Then both commands are declined without running
+    And the message steers the waiting turn instead of queueing behind it
+
+  # Upstream #21503: only a message that is really sent declines approvals.
+  @backlog @shared
+  Scenario Outline: A send that does not reach the agent leaves the approvals waiting
+    Given the agent is waiting for the user to approve a command
+    When the user <sends>
+    Then the command is still waiting for approval
+
+    Examples:
+      | sends                                       |
+      | runs a slash command such as "/plan"        |
+      | sends a draft the composer refuses          |
+      | edits a message already in the queue        |
+
+  # Upstream #21503: a decline that fails sends nothing.
+  @backlog @shared
+  Scenario: A decline that fails sends nothing
+    Given the agent is waiting for the user to approve a command
+    And the environment refuses the decline
+    When the user sends a message
+    Then the message is not sent and stays in the composer
+    And the user is told the approval could not be declined
+
   # Legacy: packages/client-runtime/src/pendingRequests.ts (closedApprovals, closedUserInputs)
   @backlog @desktop @mobile @priority-high
   Scenario: A request that was settled stays settled whatever order the news arrived in
@@ -176,6 +214,15 @@ Feature: Approvals and agent questions
     When the user approves it
     Then the MC receives one answer
 
+  # Upstream #24616: an answer recorded but never delivered to the provider left the run spinning
+  # with nothing to answer and no error.
+  @backlog @mc @shared
+  Scenario: An answer the provider never confirms says so in the timeline
+    Given the user answered the agent's question
+    When every attempt to deliver the answer to the provider fails
+    Then the timeline shows "Answer delivery not confirmed."
+    And the user's answer stays recorded and the run is not failed
+
   @desktop
   Scenario: A failed answer is reported and can be sent again
     Given the agent asks to run "npm test"
@@ -203,6 +250,13 @@ Feature: Approvals and agent questions
     When the user answers "DuckDB, in memory"
     Then the agent receives "DuckDB, in memory"
 
+  # Upstream #13865: a typed answer was lost after opening a new thread and coming back.
+  @shared @backlog-mobile @backlog-tui @priority-low
+  Scenario: A half-written answer survives leaving the thread
+    Given the agent asks "Which database?" and the user has typed "DuckDB" without sending it
+    When the user opens a new thread and comes back
+    Then the answer still reads "DuckDB" on the same question
+
   @backlog @shared
   Scenario: A link in the agent's question opens the way a chat link does
     Given the agent asks "Authorize this device at https://example.com/device with `RTJS-TQGS`"
@@ -218,6 +272,15 @@ Feature: Approvals and agent questions
     When the timeline shows the exchange collapsed
     Then the row reads "Which approach should we use?" and shows "Incremental migration" beside it
     And expanding the row still shows the full question and answer
+
+  # Upstream #21086: an answered question stays in sight after its turn.
+  # Upstream #21393: the phone hid answered questions inside the turn's folded work.
+  @backlog @shared
+  Scenario: An answered question stays in sight after the turn finishes
+    Given the agent asked the user a question during a turn and the user answered
+    When the turn finishes
+    Then the question and its answer are shown outside the turn's folded work
+    And they are not merged into a summary of commands and tools
 
   @mc
   Scenario: The user dismisses a question without answering

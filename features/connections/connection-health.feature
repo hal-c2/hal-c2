@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22159
+#   https://github.com/pingdotgg/t3code/pull/15052
+#   https://github.com/pingdotgg/t3code/pull/18155
+#   https://github.com/pingdotgg/t3code/pull/18469
 #   https://github.com/pingdotgg/t3code/pull/14518
 #   https://github.com/pingdotgg/t3code/pull/20441
 #   https://github.com/pingdotgg/t3code/pull/16200
@@ -38,6 +42,10 @@
 #   local-cache.feature holds what a client keeps between runs.
 #   https://github.com/pingdotgg/t3code/pull/15470
 #   https://github.com/pingdotgg/t3code/pull/15563
+#   https://github.com/pingdotgg/t3code/pull/22212
+#   https://github.com/pingdotgg/t3code/pull/22213
+#   https://github.com/pingdotgg/t3code/pull/25526
+#   https://github.com/pingdotgg/t3code/pull/25703
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with
@@ -217,6 +225,25 @@ Feature: Connection health
     And the attempt is given up only after 75 seconds more than the setup time
     And a route that fails while waiting for its snapshot leaves the next route its own time
 
+  # Upstream #25526: a slow answer to the session request read as no access, so settings were read-only.
+  @backlog @shared
+  Scenario: A host slow to describe the user's session does not make settings read-only
+    Given the environment takes 10 seconds to describe the user's session
+    When the user opens settings
+    Then the client asks again with a longer wait, up to 60 seconds
+    And settings stay changeable once the session arrives
+    And only a session that is still unanswered after 60 seconds, or refused, is reported as a failure
+
+  # Upstream #25703: a search or refresh waited on an environment that was retrying.
+  @backlog @shared
+  Scenario: A search does not wait on an environment that is retrying
+    Given "Office Mac" failed to connect and is retrying
+    When the user searches threads or pull requests, or refreshes the pull request list
+    Then the results of the other environments are shown and the search stops loading
+    And "Office Mac" is listed as unreachable for that search
+    And results "Office Mac" gave before, live or cached, stay shown
+    And the search runs again on "Office Mac" once it connects
+
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
   @desktop @mobile
   Scenario Outline: The retry delays start over only after a connection has held for 30 seconds
@@ -259,12 +286,73 @@ Feature: Connection health
 
   # The client's own reason for a drop ("timeout", "HTTP 502", a socket error) goes to its
   # log under the attempt's trace id; the user reads a sentence.
+  # Upstream #18469: losing a live session reads as reconnecting, not as a failed connection.
   @desktop @mobile
   Scenario: The environment's status says it is reconnecting, in plain words
     Given the connection dropped because of a timeout
     Then the environment reads "Reconnecting"
     And the notice says why: "It stopped answering. HAL-C2 keeps trying."
     And no surface shows the client's own reason "timeout"
+
+  # Upstream #22212: a connection that was open and went quiet names the environment and how
+  # long it was silent, and blames load, sleep or the network rather than DNS or a firewall.
+  # Replaces the scenario above once desktop and mobile carry it.
+  @backlog @desktop @mobile
+  Scenario: An environment that went quiet says for how long and what may be wrong
+    Given the client was connected to "leftbook"
+    When "leftbook" stops answering pings for 15 seconds
+    Then the notice says "leftbook stopped responding for 15s. It may be overloaded, asleep, or off the network."
+
+  # Upstream #22212: the DNS and firewall hint is kept for connections that never opened.
+  @backlog @desktop @mobile
+  Scenario: Only a connection that never opened suggests checking DNS or a firewall
+    When the client cannot open a connection to "leftbook" at all
+    Then the notice suggests the network's DNS or a firewall may be blocking it
+    But a connection to "leftbook" that opened and then went quiet does not suggest that
+
+  # Upstream #22213: only the host knows it froze, and it can say so once it answers again.
+  @backlog @mc @desktop @mobile
+  Scenario: A host that froze says why when the client reconnects
+    Given "leftbook" froze for 12 seconds while its load was 219 on 18 cores
+    When the client reconnects to "leftbook"
+    Then the user is told "leftbook froze for 12s" and "Its CPU is overloaded (load 219 on 18 cores)."
+    And the user is told once for that freeze
+
+  # Upstream #22213: a freeze with the load under the core count is a busy server, not the CPU.
+  @backlog @mc @desktop @mobile @priority-low
+  Scenario: A host that froze without a loaded CPU says it was too busy to answer
+    Given "leftbook" froze for 12 seconds while its load was 4 on 18 cores
+    When the client reconnects to "leftbook"
+    Then the user is told HAL-C2 on "leftbook" was too busy to answer
+
+  # Upstream #22213: only stalls of 5 seconds or more, and only for 5 minutes after them.
+  @backlog @mc
+  Scenario Outline: A host reports a freeze only when it was long and recent
+    Given "leftbook" froze for <length> seconds <ago> minutes ago
+    When a client reconnects to "leftbook"
+    Then the MC <reports> the freeze
+
+    Examples:
+      | length | ago | reports         |
+      | 3      | 1   | does not report |
+      | 7      | 1   | reports         |
+      | 7      | 6   | does not report |
+
+  # Upstream #22213: a freeze is never replayed from a saved copy after the app restarts.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A freeze already reported is not reported again after the app restarts
+    Given the user was told "leftbook froze for 12s"
+    When the app restarts and reconnects to "leftbook" a minute later
+    Then the user is told about that freeze only if the MC still reports it
+
+  # Upstream #18469: losing a live session reads as reconnecting, not as a failed connection.
+  # The desktop and the phone pass the scenario above; this is the terminal client's half.
+  @backlog @tui
+  Scenario: The terminal client shows a session lost after connecting as reconnecting
+    Given the client was connected to the environment
+    When the connection drops
+    Then the environment's status says "Reconnecting"
+    And it does not say the connection failed
 
   # The window shows its connection as an icon and a word; hovering it says what is going
   # on, and clicking it opens a panel with the sentence and what the user can do.
@@ -300,6 +388,14 @@ Feature: Connection health
     Then within a second and a half the window shows it is not connected
     And nothing said it was connected
 
+  # Upstream #18155: what a connecting environment is asked for stays loading, not failed.
+  @backlog @shared
+  Scenario: An environment that is still connecting is not shown as failing
+    Given the user opens Usage while an environment is connecting
+    When the connection is handed over to a new session
+    Then the environment's usage shows as loading
+    And it is never shown as unable to report
+
   @desktop @mobile
   Scenario: The user copies a connection's trace id for a bug report
     Given a connection that failed
@@ -321,6 +417,21 @@ Feature: Connection health
     Then the warning lists each request by its method and environment
     And says when each request started
 
+  # Upstream #22212: the slow-request warning named the environment by its id.
+  @backlog @desktop
+  Scenario: The slow-request warning names the environment, not its id
+    Given a request to "leftbook" has not been answered for 15 seconds
+    When the user shows the requests in the warning
+    Then the request is listed with "leftbook"
+    And the environment's id is not shown
+
+  # Upstream #22212: the client's activity heartbeat, which nobody waits on, was the only
+  # request ever reported for a frozen host.
+  @backlog @desktop
+  Scenario: The client's activity report is never reported as slow
+    When the client's report of its own activity is not answered for 5 minutes
+    Then the user sees no warning
+
   @desktop
   Scenario: Answered requests leave the slow-request warning, which closes when none are waiting
     Given two requests to the MC have not been answered for 15 seconds
@@ -332,6 +443,16 @@ Feature: Connection health
   @desktop
   Scenario: Updating a provider or the server is reported as slow only after two minutes
     Given the user updates a provider
+    When 1 minute and 59 seconds pass
+    Then the user sees no warning
+    When 1 more second passes
+    Then the user sees a "warning" toast "Some requests are slow"
+
+  # Upstream #22159: refreshing a repository's status often takes over 15 seconds while a
+  # background poll holds it, and kept tripping the warning.
+  @backlog @desktop @priority-low
+  Scenario: Refreshing a repository's status is reported as slow only after two minutes
+    Given the client asked the MC to refresh the status of "shop"
     When 1 minute and 59 seconds pass
     Then the user sees no warning
     When 1 more second passes
@@ -507,6 +628,21 @@ Feature: Connection health
       | protocol                       | advice                                   |
       | a newer protocol than the client | update HAL-C2 on this device          |
       | an older protocol than the client | update HAL-C2 on that environment    |
+
+  # Upstream #15052: an incompatible host is retried once it is compatible instead of being switched off for good
+  @backlog @shared
+  Scenario: A blocked environment connects by itself once it is compatible again
+    Given the connection to "server" was blocked because its MC speaks an older protocol
+    When "server" is updated to a protocol the client speaks
+    Then the client connects to "server" without the user switching it back on
+    And "server" was never saved as switched off
+
+  # Upstream #15052: only the user's own choice keeps an environment off
+  @backlog @shared
+  Scenario: An environment the user switched off stays off
+    Given the user switched "server" off
+    When "server" becomes reachable and compatible
+    Then the client does not connect to "server"
 
   # Legacy: packages/client-runtime/src/connection/layer.ts (watchDiscoveredCompatibility)
   # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.

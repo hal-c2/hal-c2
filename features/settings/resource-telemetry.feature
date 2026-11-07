@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24229
+#   https://github.com/pingdotgg/t3code/pull/19645
 #   https://github.com/pingdotgg/t3code/pull/16838
 #   https://github.com/pingdotgg/t3code/pull/19399
 #   docs/internals/resource-telemetry.md
@@ -228,6 +230,14 @@ Feature: Resource monitor
     Then usage is shown for the MC and its agents, for the desktop app and for the monitor's own overhead
     And each shows its process count, CPU, memory, and read and write rates
 
+  # Upstream #19645: agents and terminals the MC runs no longer count as the desktop app's when
+  # the desktop app started the MC.
+  @backlog @desktop
+  Scenario: Agents count under the MC even when the desktop app started it
+    Given the desktop app started the MC and the MC runs agents and terminals
+    When the user watches the resource monitor
+    Then the agents and terminals count under the MC and its agents, not under the desktop app
+
   @backlog @desktop
   Scenario: Host state shows power, idle, session and thermal state
     Given the desktop app supplies host signals
@@ -269,6 +279,14 @@ Feature: Resource monitor
     Given the process monitor is stopped
     When the user retries the monitor and the retry fails
     Then the user is told "Could not restart resource monitor" with the reason
+
+  # Upstream #24229: a retry that worked left the old error on screen until a reload.
+  @backlog @desktop
+  Scenario: A retry that works clears the monitor's error
+    Given the process monitor failed to start and its error is shown
+    When the user retries the monitor and it starts
+    Then the error is no longer shown
+    And the resource timeline fills again
 
   @backlog @desktop
   Scenario: The resource timeline charts CPU and I/O for the chosen period

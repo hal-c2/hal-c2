@@ -1,10 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24985
+#   https://github.com/pingdotgg/t3code/pull/21071
+#   https://github.com/pingdotgg/t3code/pull/18574
+#   https://github.com/pingdotgg/t3code/pull/15083
 #   https://github.com/pingdotgg/t3code/pull/12648 (folded phone and unfolded split; Android foldables here)
 #   https://github.com/pingdotgg/t3code/pull/19988
 #   https://github.com/pingdotgg/t3code/pull/20403
 #   https://github.com/pingdotgg/t3code/pull/18157
 #   https://github.com/pingdotgg/t3code/pull/13085
 #   https://github.com/pingdotgg/t3code/pull/13310
+#   https://github.com/pingdotgg/t3code/pull/24298
 #   apps/mobile/src/lib/layout.ts (split view thresholds, pane widths)
 #   apps/mobile/src/features/layout/ (sidebar, inspector pane, maximize content)
 #   apps/mobile/src/lib/useHoverGesture.ts, components/RowPressable.tsx (hover highlight for mouse and stylus)
@@ -90,12 +95,30 @@ Feature: Tablet layout and hardware keyboards
     When the hinge changes again before it gets there
     Then the edge moves on from where it is without jumping
 
+  # Upstream #18574: folding the phone keeps the composer on the folded screen.
+  @backlog @mobile
+  Scenario: Folding the phone with a thread open keeps the composer on screen
+    Given a thread is open on an unfolded phone
+    When the user folds the phone
+    Then the thread stays open
+    And the whole composer, including Send, is on the folded screen
+
   # The desktop's layout has no empty detail pane: with no thread it lands on a new thread's draft.
   @backlog @mobile
   Scenario: An empty detail pane tells the user what to do
     Given the layout is split
     And no thread is selected
     Then the user is told to choose a thread from the sidebar or start a new task
+
+  # Upstream #24298: Settings on a wide Android screen was one wide page.
+  @backlog @mobile
+  Scenario: Settings on a wide screen keeps its sections beside the chosen page
+    Given the layout is split on an Android tablet or an unfolded phone
+    When the user opens Settings
+    Then the settings sections are listed beside the Environments page
+    When the user chooses another section and opens one of its pages
+    Then the sections stay beside it
+    And on a narrow screen Settings opens one page at a time, with Back
 
   @mobile
   Scenario: The user hides and shows the thread sidebar
@@ -104,6 +127,36 @@ Feature: Tablet layout and hardware keyboards
     Then the thread sidebar is hidden
     When the user shows the thread sidebar
     Then the thread sidebar is shown
+
+  # Upstream #21071: one control switches the split sidebar between threads and pull
+  # requests, in place of the rail.
+  @backlog @mobile
+  Scenario: The split sidebar switches between threads and pull requests
+    Given the layout is split
+    When the user switches the sidebar to pull requests
+    Then the sidebar lists pull requests
+    When the user switches the sidebar back
+    Then the sidebar lists threads
+
+  # Upstream #21071: sidebar threads open while Settings or New task is open.
+  @backlog @mobile
+  Scenario Outline: A thread chosen in the split sidebar opens over another screen
+    Given the layout is split
+    And <screen> is open
+    When the user chooses "Add search" in the thread list
+    Then "Add search" is shown
+
+    Examples:
+      | screen     |
+      | Settings   |
+      | a new task |
+
+  # Upstream #21071: sidebar taps did nothing until the app had navigated once.
+  @backlog @mobile
+  Scenario: The split sidebar opens threads straight after launch
+    Given the app has just started with the layout split
+    When the user chooses "Add search" in the thread list before going anywhere else
+    Then "Add search" is shown
 
   @backlog @mobile
   Scenario: The thread's header starts a new task beside the thread
@@ -156,6 +209,30 @@ Feature: Tablet layout and hardware keyboards
     And the user made the thread's files pane wider
     When the thread's other side pane is shown
     Then it has the width it had before the files pane was widened
+
+  # Upstream #24985: on a tablet, opening a subagent or a device took over the thread.
+  @backlog @mobile @priority-low
+  Scenario Outline: A <item> opens in the inspector beside its thread
+    Given the layout is split and the user is in "Fix checkout"
+    When the user opens <what>
+    Then it opens in the inspector pane with "Fix checkout" still shown
+    When the user maximizes it
+    Then it fills the screen
+    When the user returns from it
+    Then it is in the inspector beside "Fix checkout" again
+
+    Examples:
+      | item     | what                                     |
+      | subagent | a subagent's card in "Fix checkout"      |
+      | device   | a device preview from "Fix checkout"     |
+
+  # Upstream #24985
+  @backlog @mobile @priority-low
+  Scenario: The inspector opens at 40% of the screen and resizes between limits
+    Given the layout is split
+    When the inspector pane opens for the first time
+    Then it takes 40% of the screen's width
+    And dragging its divider sizes it between 260 points and 60% of the screen
 
   @backlog @mobile
   Scenario: A screen reader can widen and narrow the side pane
@@ -514,12 +591,13 @@ Feature: Tablet layout and hardware keyboards
     Then the screen opened last handles it
     And the thread screen does not
 
+  # Upstream #21071: in split view a thread or pull request replaces the detail pane with no slide-in.
   @backlog @mobile
   Scenario: Choosing another thread beside the list swaps the thread without stacking screens
     Given the layout is split
     And the user is reading "Fix checkout"
     When the user chooses "Add search" in the thread list
-    Then "Add search" is shown beside the list
+    Then "Add search" takes the place of "Fix checkout" beside the list without sliding in
     When the user goes back
     Then the user does not return to "Fix checkout"
 
@@ -556,6 +634,7 @@ Feature: Tablet layout and hardware keyboards
     When the user hides the inspector
     Then the thread list is shown again
 
+  # Upstream #21071: on Android the thread, the composer and the full-width thread list stop at 640dp and stay centred.
   @backlog @mobile
   Scenario: Reading text in a thread stays a comfortable width on a wide window
     Given the app window is wider than the thread's reading width
@@ -589,3 +668,11 @@ Feature: Tablet layout and hardware keyboards
     When the app goes to the background, the phone folds, and the app returns on the cover screen
     Then the composer fits the cover screen and Send is visible
     And the draft text is still there
+
+  # Upstream #15083: on iPadOS 18 a pending task tapped in the split sidebar never opened.
+  @backlog @mobile
+  Scenario: A pending task chosen in the split thread list opens beside it
+    Given the layout is split
+    And a pending task is waiting in "shop"
+    When the user chooses the pending task in the thread list
+    Then the pending task opens for editing beside the list

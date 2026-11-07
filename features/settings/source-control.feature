@@ -1,7 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13253
 #   https://github.com/pingdotgg/t3code/pull/17901
 #   https://github.com/pingdotgg/t3code/pull/16322
 #   https://github.com/pingdotgg/t3code/pull/14103
+#   https://github.com/pingdotgg/t3code/pull/22495
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
@@ -87,6 +89,15 @@ Feature: Source Control settings
   Scenario: A fetch interval of zero turns background fetching off
     When the user sets the automatic Git fetch interval to 0 seconds
     Then Git never fetches in the background
+
+  # Upstream #13253: a zero fetch interval also stops the fetch and pull on window focus.
+  @backlog @mc @desktop
+  Scenario: With fetching off, coming back to the window neither fetches nor pulls
+    Given the automatic Git fetch interval is 0 seconds
+    And the default branch is clean and was behind its remote when last fetched
+    When the user comes back to the window
+    Then Git does not fetch and the branch is not pulled
+    And the branch's local status still refreshes
 
   @tui
   Scenario: Seeing source control tools from the terminal client
@@ -226,6 +237,14 @@ Feature: Source Control settings
     When the user saves a GitCafe token
     Then GitCafe works at once, using the saved token before any from the environment or the CLI
     And the token is only sent to git.cafe, never to its staging host
+
+  # Upstream #22495: creating a GitCafe repository or pull request still needed the cafe CLI
+  # when a token covered everything else.
+  @backlog @mc @priority-low
+  Scenario: A GitCafe token alone creates repositories and pull requests
+    Given the user saved a GitCafe token and the cafe CLI is not installed
+    When the user publishes a project as a new GitCafe repository and opens a pull request from a fork
+    Then the repository and the pull request are created
 
   # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @shared

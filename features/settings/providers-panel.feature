@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20446
+#   https://github.com/pingdotgg/t3code/pull/17676
+#   https://github.com/pingdotgg/t3code/pull/19145
 #   https://github.com/pingdotgg/t3code/pull/16958
 #   apps/web/src/components/settings/ProviderSettingsPanel.tsx
 #   apps/web/src/components/settings/ProviderSettingsPanel.logic.ts
@@ -32,6 +35,9 @@
 #   apps/desktop-qt/src/native/ProviderSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ProvidersSettings.qml
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the account email stays hidden until asked)
 #   https://github.com/pingdotgg/t3code/pull/14678
+#   https://github.com/pingdotgg/t3code/pull/25753
+#   https://github.com/pingdotgg/t3code/pull/25475
+#   https://github.com/pingdotgg/t3code/pull/21402
 
 Feature: Providers settings panel
   The Providers page lists the agent providers configured on one environment. The user adds
@@ -55,6 +61,15 @@ Feature: Providers settings panel
       Given the user's session may view but not operate "Build box"
       When the user shows the providers of "Build box"
       Then the providers are shown read-only
+      And the user is told this session can view the providers but not change their settings
+
+    # Upstream #21402: a phone session that may not manage providers opened sign-in panels
+    # that failed.
+    @backlog @mobile
+    Scenario: A phone session that may not manage providers is told so instead of signing in
+      Given the phone's session on "Build box" may not manage providers
+      When the user shows the providers of "Build box" on the phone
+      Then no provider sign-in is started
       And the user is told this session can view the providers but not change their settings
 
     @desktop
@@ -229,11 +244,50 @@ Feature: Providers settings panel
       Then "<provider>" is marked "<mark>"
       And every "<provider>" instance in the list carries the same mark
 
+      # Upstream #25753: Muse Code is no longer marked Beta.
       Examples:
         | provider     | mark         |
         | Pi           | Early Access |
         | ACP Registry | Early Access |
-        | Muse Code    | Beta         |
+
+    # Upstream #25753: the providers HAL-C2 carries lead; the ACP Registry waits under Show more.
+    @backlog @desktop @priority-low
+    Scenario: Adding a provider leads with HAL-C2's own providers
+      When the user opens the choice of providers to add
+      Then Codex, Claude and HAL-C2's other own providers are offered first
+      And the ACP Registry search is folded under "Show more"
+      And opening "Show more" shows registry results without waiting for a new search
+
+    # Upstream #25753: the registry list leaves out agents HAL-C2 carries as its own providers.
+    @backlog @mc @desktop @plugin-acp-registry @priority-low
+    Scenario Outline: The ACP Registry does not offer a twin of HAL-C2's own provider
+      When the user searches the ACP Registry for "<search>"
+      Then "<twin>" is not listed
+      And "<twin>" can still be entered by hand, and an instance already added from it keeps working
+
+      Examples:
+        | search   | twin            |
+        | codex    | codex-acp       |
+        | claude   | claude-acp      |
+        | cursor   | cursor          |
+        | grok     | grok-build      |
+        | opencode | opencode        |
+        | opencode | opencode-v2     |
+        | pi       | pi-acp          |
+        | gemini   | antigravity-acp |
+
+    # Upstream #25475: a non-blocking note before a second account of the same Claude or Codex.
+    @backlog @desktop @priority-low
+    Scenario Outline: Adding a second account of a provider warns first
+      Given "Laptop" already has a signed-in <provider> account
+      When the user adds another "<provider>" provider on "Laptop"
+      Then the user is told "Laptop" already has a <provider> account signed in
+      And the user can still add it
+
+      Examples:
+        | provider |
+        | Claude   |
+        | Codex    |
 
     # Legacy: apps/web/src/components/settings/providerDriverMeta.ts (hasDefaultInstance: false)
     @backlog @desktop @priority-low
@@ -250,6 +304,13 @@ Feature: Providers settings panel
     Scenario: Searching the ACP Registry lists compatible agents best first
       When the user searches the ACP Registry for "gemini"
       Then the compatible agents matching "gemini" are listed best first
+
+    # Upstream #19145: an empty search showed only 20 agents; typed searches still show 20.
+    @backlog @mc @plugin-acp-registry
+    Scenario: The ACP Registry lists every compatible agent before the user searches
+      Given the registry has 40 agents compatible with this machine
+      When the user opens the ACP Registry without searching
+      Then all 40 are listed
 
     @desktop
     Scenario: A search with no compatible agent suggests a broader search
@@ -566,6 +627,22 @@ Feature: Providers settings panel
       When the user renames the variable "API_KEY" to "OPENAI_KEY"
       Then "OPENAI_KEY" asks for a new value instead of showing a stored secret
       And the secret stored for "API_KEY" is forgotten
+
+    # Upstream #20446: any provider setting entered like a password is treated as a secret.
+    @backlog @mc @desktop @priority-high
+    Scenario: A provider setting entered like a password is stored as a secret
+      Given a provider offers a setting that is entered like a password
+      When the user saves a value for it
+      Then its value is stored as a secret
+      And the page shows it as a stored secret that a new value replaces
+
+    # Upstream #20446: a saved secret field can be cleared from the form.
+    @backlog @desktop
+    Scenario: A saved secret setting can be cleared
+      Given the OpenCode instance keeps a stored server password
+      When the user clears the server password
+      Then the secret stored for the server password is forgotten
+      And the field asks for a new value
 
     @desktop
     Scenario: A provider's own API key can be cleared for browser sign-in
@@ -1094,6 +1171,15 @@ Feature: Providers settings panel
         | "1.14.19" is the recommended version            | Use v1.14.19 for full support. |
         | the supported range is "1.14 to 1.16"           | Use 1.14 to 1.16 for full support. |
         | no version or range is recommended              | Update for full support.       |
+
+    # Upstream #17676: no update is offered that cannot clear a limited-support warning.
+    @backlog @desktop
+    Scenario: A limited-support warning on the latest release offers no update
+      Given "Codex" is on its latest release
+      And the installed "Codex" is of limited support for this HAL-C2 release
+      When the user opens the version details of "Codex"
+      Then the user is warned "Limited support"
+      And no update is offered
 
     # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
     @backlog @desktop

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17547
 #   https://github.com/pingdotgg/t3code/pull/16674
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
 #   https://github.com/pingdotgg/t3code/pull/11846 (per-thread Auto-settle behavior: Enabled, Disabled)
@@ -14,6 +15,8 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (settle, unsettle)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
 #   https://github.com/pingdotgg/t3code/pull/15024
+#   https://github.com/pingdotgg/t3code/pull/24760
+#   https://github.com/pingdotgg/t3code/pull/24830
 
 Feature: Settling threads
   Settling marks a thread as done without archiving it. Threads also settle on their own
@@ -80,6 +83,8 @@ Feature: Settling threads
     When the user settles "Ship checkout"
     Then the question is dismissed
 
+  # Upstream #17547: the server's confirmation brought the old wake time back; settling now
+  # clears the snooze where it is stored.
   @desktop @mobile
   Scenario: Settling a snoozed thread ends the snooze
     Given "Ship checkout" is snoozed until tomorrow
@@ -244,8 +249,26 @@ Feature: Settling threads
     And the user can see "work" was not updated
 
   # Upstream #15024: threads settle as soon as an agent merges their pull request
+  # Upstream #24760: the pull request is read when the merge command ends, not when the run ends.
   @backlog @mc
   Scenario: A thread settles when the agent merges its own pull request from a shell
     Given the agent ran gh pr merge or close, or the glab equivalent
-    When the turn ends
-    Then the pull request is read fresh and the thread settles at once
+    When the command ends
+    Then the pull request is read fresh before the run ends
+    And the thread settles as soon as its turn ends
+
+  # Upstream #24830: a branch pull request the thread never linked was read from a minute-old
+  # cache, so the thread showed in the inbox and only settled later.
+  @backlog @mc
+  Scenario: A thread settles at once after a shell merge of a pull request it never linked
+    Given the thread's branch has an open pull request that is not linked to it
+    When the agent merges it with gh pr merge and the turn ends
+    Then the branch's pull request is read fresh
+    And the thread settles within two seconds of its turn ending
+
+  # Upstream #24760: background work ending only got noticed by the once-a-minute sweep.
+  @backlog @mc
+  Scenario: A thread is checked for settling as soon as its background work ends
+    Given a thread whose turn ended while a subagent still worked
+    When the subagent finishes
+    Then the thread is checked for settling at once, without waiting for the next sweep

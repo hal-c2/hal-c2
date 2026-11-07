@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24275
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URLs, claims, persist, signed asset URLs)
 #   apps/server-ex/lib/hal_c2/web/router.ex (POST /api/attachments/upload/:token, GET /api/assets/:token)
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (project-favicon-assets, native-app-icon-assets,
@@ -696,6 +697,27 @@ Feature: Attachments and assets served by the MC
     When the client asks for an asset URL for it with no thread
     Then the MC serves "report.html" and the files next to it
     And an absolute media path outside the project is served as that one file only
+
+  # Upstream #24275: a draft's relative audio and video paths were refused, since only images
+  # and pages were accepted from a draft's folder.
+  @backlog @mc @shared
+  Scenario Outline: A draft's <kind> in the project is served
+    Given a draft in the project "/work/app" refers to "<file>"
+    When the client asks for an asset URL for it with no thread
+    Then the MC serves "<file>" and lets a player seek through it
+
+    Examples:
+      | kind  | file             |
+      | audio | media/intro.mp3  |
+      | video | media/demo.mp4   |
+
+  # Upstream #24275
+  @backlog @mc @priority-high
+  Scenario: A draft file swapped for a link outside the project is not served
+    Given a draft in the project "/work/app" refers to "media/demo.mp4"
+    And "media/demo.mp4" is replaced by a link to a file outside the project as its URL is made
+    When the client asks for an asset URL for it with no thread
+    Then no URL is issued
 
   @mc
   Scenario: Host videos seek without downloading the whole file

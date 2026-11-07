@@ -1,9 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15036
+#   https://github.com/pingdotgg/t3code/pull/19947
+#   https://github.com/pingdotgg/t3code/pull/23471
+#   https://github.com/pingdotgg/t3code/pull/23133
+#   https://github.com/pingdotgg/t3code/pull/18175
+#   https://github.com/pingdotgg/t3code/pull/21523
 #   https://github.com/pingdotgg/t3code/pull/19103
 #   https://github.com/pingdotgg/t3code/pull/10984
 #   https://github.com/pingdotgg/t3code/pull/19257
 #   https://github.com/pingdotgg/t3code/pull/17710
 #   https://github.com/pingdotgg/t3code/pull/16192
+#   https://github.com/pingdotgg/t3code/pull/25530
 #   docs/user/source-control.md (merge, auto-merge, revert, fork workflows, reviewers, labels)
 #   packages/contracts/src/pullRequest.ts (PullRequestAction, PullRequestMergeMethod, PullRequestUpdateMethod, PullRequestCapabilities, PullRequestViewerPermissions)
 #   packages/contracts/src/rpc.ts (pullRequests.runAction, pullRequests.reviewerCandidates, pullRequests.requestReviewers, pullRequests.labelCandidates, pullRequests.setLabels)
@@ -90,6 +97,19 @@ Feature: Acting on a pull request
     Given pull request 42 has pending checks
     When the user enables auto-merge
     Then GitHub will merge pull request 42 once it is ready
+
+  # Upstream #19947: auto-merge was offered where GitHub would merge at once or had it switched off.
+  @backlog @mc @priority-high
+  Scenario Outline: Auto-merge is offered only when GitHub would wait
+    Given <state>
+    Then enabling auto-merge on pull request 42 is not offered
+    And merging it directly still is, when the user may merge
+
+    Examples:
+      | state                                                  |
+      | the repository has auto-merge switched off             |
+      | pull request 42 can be merged right now                |
+      | pull request 42 can be merged now with failing optional checks |
 
   @mc
   Scenario: Cancelling auto-merge
@@ -418,6 +438,14 @@ Feature: Acting on a pull request
       | the user starts another action            |
       | the user opens another pull request       |
 
+  # Upstream #25530: a press waiting for its confirm let go of the keyboard when its control went away.
+  @backlog @desktop
+  Scenario: A press waiting to be confirmed ends when its control goes away
+    Given the user pressed close on pull request 42 once
+    When the close control goes away, because the menu holding it changed
+    Then pressing Escape closes the surrounding menu or dialog
+    And pull request 42 is still open and nothing was sent to the host
+
   @backlog @desktop
   Scenario: A confirmation says what it will do
     When the user chooses to merge pull request 42 from its review with the squash method
@@ -649,6 +677,19 @@ Feature: Acting on a pull request
     Then the repository switches to the pull request's branch and a thread opens on it
     And the user sees a "success" toast "Checked out here"
 
+  # Upstream #15036: Check out here could throw away local edits and commits and still say it worked.
+  @backlog @mc @desktop @priority-high
+  Scenario Outline: Checking out here never discards the user's work
+    Given the repository <state>
+    When the user checks out pull request 42 in this repository from its review
+    Then <outcome>
+
+    Examples:
+      | state                                                       | outcome                                                                    |
+      | has uncommitted changes to tracked files                    | the checkout is refused and the changes are kept                           |
+      | has the pull request's branch with commits not yet pushed   | the commits are kept and the user is told it is not on the latest commits |
+      | has the pull request's branch behind the pull request       | the branch moves forward to the pull request's latest commit               |
+
   @backlog @desktop
   Scenario: The checkout says it is working
     Given the checkout of pull request 42 is being prepared
@@ -820,6 +861,20 @@ Feature: Acting on a pull request
     Then "Needed again" stays in the conversation
     And the user sees an "error" toast "Could not reopen this pull request"
 
+  # Upstream #18175: closing with a comment ran on the first press; it asks for a second press like
+  # the other close controls and keeps the comment when left unconfirmed. Reopening with a comment
+  # still takes one press.
+  @backlog @desktop
+  Scenario: Closing with a comment asks to be pressed again
+    Given the user has written "Superseded by #50" on pull request 42
+    When the user chooses to close pull request 42 with the comment
+    Then pull request 42 is still open and the same control asks to confirm
+    When the user presses Escape
+    Then the control no longer asks to confirm
+    And "Superseded by #50" is still in the comment
+    When the user closes pull request 42 with the comment and confirms
+    Then "Superseded by #50" is posted and pull request 42 is closed
+
   @backlog @desktop
   Scenario: A comment that could not be posted stops the close
     Given the host refuses comments on pull request 42
@@ -920,6 +975,14 @@ Feature: Acting on a pull request
     When the user merges it
     Then the merge request is merged now
     And auto-merge is not left armed
+
+  # Upstream #21523: GitLab merges and auto-merge name the merge request's current head.
+  @backlog @mc @priority-low
+  Scenario: A GitLab merge is pinned to the head the user saw
+    Given a GitLab project that only merges a merge request at a stated head
+    When the user merges one of its merge requests or arms auto-merge
+    Then the merge names the merge request's current head and GitLab accepts it
+    And when that head cannot be read the user is told and nothing is merged
 
   @backlog @mc @priority-low
   Scenario Outline: Auto-merge keeps the method it was armed with
@@ -1188,6 +1251,31 @@ Feature: Acting on a pull request
     Then rebase is not among the merge methods offered
     And a repository that reports nothing about a method is taken as allowing it
 
+  # Upstream #23471: a Forgejo merge left the branch behind though the repository deletes merged
+  # branches.
+  @backlog @mc @priority-low
+  Scenario Outline: Merging a Forgejo pull request follows the repository's branch deletion setting
+    Given a Forgejo repository whose setting to delete a branch after merging is <setting>
+    When the user merges one of its pull requests
+    Then its branch is <outcome>
+
+    Examples:
+      | setting                 | outcome |
+      | on                      | deleted |
+      | off                     | kept    |
+      | not reported by Forgejo | kept    |
+
+  @backlog @mc @priority-low
+  Scenario: A Forgejo merge whose settings cannot be read is not made
+    Given the settings of a Forgejo repository cannot be read
+    When the user merges one of its pull requests
+    Then the pull request is not merged and the user is told why
+
+  @backlog @mc @priority-low
+  Scenario: A Forgejo merge whose branch could not be deleted still reports the merge
+    Given Forgejo merges a pull request but refuses to delete its branch
+    Then the user is told the pull request was merged
+
   # Legacy: apps/server/src/pullRequest/ForgejoPullRequestProvider.ts (permissions.updateMethods: allow_rebase_update)
   @backlog @mc @priority-low
   Scenario: A Forgejo repository that does not allow rebasing a branch offers only merging the target in
@@ -1212,3 +1300,17 @@ Feature: Acting on a pull request
     Then agent co-author trailers and generated-by footers are removed from the proposed message
     And human co-authors and Markdown examples are kept
     And the setting is off by default
+
+  # Upstream #23133: Claude Code's footer now links to claude.com, and it was left in the message.
+  @backlog @mc @priority-low
+  Scenario Outline: Leaving out agent credits removes Claude Code's footer by either address
+    Given "Remove agent credits when merging" is on
+    And the pull request's body ends with "🤖 Generated with [Claude Code](<link>)"
+    When the user merges the pull request
+    Then the proposed message does not contain the footer
+    And a sentence elsewhere in the body that links to "<link>" is kept
+
+    Examples:
+      | link                           |
+      | https://claude.com/claude-code |
+      | https://claude.ai/code         |

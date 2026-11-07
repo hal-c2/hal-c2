@@ -101,12 +101,14 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
 QVariant pickerKey(const QList<keybindings::Binding>& bindings, bool mac, const QString& command);
 
 // What the text before the caret asks for: "path" (@), "skill" ($),
-// "slash-command" (/ at a line start) or "pull-request" (#).
+// "slash-command" (/) or "pull-request" (#). A slash after other text on its
+// line is `midLine`: it offers only what its word is the start of a name of.
 struct Trigger {
   QString kind;
   QString query;
   int start = 0;
   int end = 0;
+  bool midLine = false;
 };
 std::optional<Trigger> trigger(const QString& text, int cursor);
 
@@ -133,6 +135,11 @@ QString pathLink(const QString& path);
 QString emptyText(const QString& kind);
 // What the @ menu says when its search could not run, which is not "no match".
 QString pathSearchUnavailableText();
+// What the @ menu says while its search has not answered.
+QString pathSearchingText();
+// Whether a currency sign followed by `query` is a skill rather than a price:
+// a query led by a digit only when one of the instance's skills starts so.
+bool opensSkillMenu(const Instance* instance, const QString& query);
 
 // How well a value matches a query: lower is better, nothing is no match.
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,

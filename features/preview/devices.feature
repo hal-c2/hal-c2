@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19975
+#   https://github.com/pingdotgg/t3code/pull/21197
+#   https://github.com/pingdotgg/t3code/pull/16040
+#   https://github.com/pingdotgg/t3code/pull/17020
+#   https://github.com/pingdotgg/t3code/pull/14534
 #   https://github.com/pingdotgg/t3code/pull/17566
 #   https://github.com/pingdotgg/t3code/pull/18502
 #   https://github.com/pingdotgg/t3code/pull/18326
@@ -29,6 +34,9 @@
 #   mobile/usage-diagnostics-devices.feature holds the phone's device viewer.
 #   https://github.com/pingdotgg/t3code/pull/15551
 #   https://github.com/pingdotgg/t3code/pull/15435
+#   https://github.com/pingdotgg/t3code/pull/21841
+#   https://github.com/pingdotgg/t3code/pull/25714
+#   https://github.com/pingdotgg/t3code/pull/25815
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
@@ -127,6 +135,15 @@ Feature: Device panel
         | running | Running | Open   |
         | stopped | Stopped | Start  |
 
+    # Upstream #19975: a ready host's discovery warnings showed without a label, or not at all.
+    @backlog @desktop
+    Scenario: A machine whose device discovery warns says so by name while its devices still work
+      Given the machine "studio" lists its iOS Simulators but warns that Android discovery failed
+      When the user adds a Device tab
+      Then the list shows the warning under the name "studio"
+      And the iOS Simulators of "studio" can still be opened
+      And the warning goes away once Android discovery works again
+
     @desktop
     Scenario: Only one device is opened at a time from the list
       Given the thread's environment has the iOS Simulators "iPhone 17" and "iPad" running
@@ -175,6 +192,15 @@ Feature: Device panel
       Given the device hub is ready and reports "Using Xcode 26.1"
       When the user adds a Device tab
       Then the tab shows "Using Xcode 26.1" above the list of devices
+
+    # Upstream #25815: a Mac without the Android SDK warned about avdmanager on every refresh.
+    @backlog @mc @desktop @priority-low
+    Scenario: A machine without the Android SDK shows no Android tool warnings
+      Given the thread's environment has no Android SDK
+      When the user adds a Device tab and refreshes the devices
+      Then the tab says the Android SDK was not found
+      And no warning about Android's device tools is shown
+      But on a machine with the Android SDK, an Android tool failure is still shown
 
     @desktop
     Scenario: A machine with the Android SDK but no virtual devices says how to make one
@@ -283,6 +309,14 @@ Feature: Device panel
       And the MC refuses the device stream
       When the user shows the "Pixel 9" tab
       Then the tab says "The MC refused the device stream. Reconnect to try again."
+
+    # Upstream #21841: a simulator locked to WebRTC (as EAS Simulator always is) refuses the
+    # usual video; the viewer switches to WebRTC instead of failing.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A simulator that streams only over WebRTC is still shown
+      Given the thread has an iOS Simulator open that serves its screen only over WebRTC
+      When the user shows its tab
+      Then the tab shows the device's screen
 
     @desktop
     Scenario: An Android emulator that rotates starts its video over
@@ -620,6 +654,15 @@ Feature: Device panel
       When the user presses the device's Home button
       Then the device receives the "home" button
 
+    # Upstream #17020: right and middle clicks on the device's screen are no longer sent as touches.
+    @backlog @desktop
+    Scenario: Only the primary button touches the device
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user right-clicks the middle of the screen
+      And the user middle-clicks the middle of the screen
+      Then the device receives no touch
+
     @desktop
     Scenario: Touches, keys and buttons reach an emulator through the MC
       Given the thread has the Android Emulator "Pixel 9" open
@@ -670,6 +713,24 @@ Feature: Device panel
       When the user clicks the device's screen and types "a"
       Then the device receives the key "a" going down and up
 
+    # Upstream #14534: letters typed on a focused device screen no longer jump to the composer.
+    @backlog @desktop
+    Scenario: Letters typed on the device's screen do not move to the composer
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user clicks the device's screen and types "hello"
+      Then the device receives the keys "h", "e", "l", "l" and "o"
+      And the composer stays empty
+
+    # Upstream #14534: coming back to the window leaves focus on the device screen.
+    @backlog @desktop
+    Scenario: Coming back to the window keeps the device's screen focused
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user clicked the "iPhone 17" screen
+      When the user switches to another app and back
+      Then the device's screen still has the focus
+      And the composer does not take it
+
     @desktop
     Scenario: Command shortcuts stay with the app while the device has the focus
       Given the thread has the iOS Simulator "iPhone 17" open
@@ -703,6 +764,14 @@ Feature: Device panel
       And the user is watching the "iPhone 17" tab
       Then on a Mac the app keeps every Command chord but Command with "R"
 
+    # Upstream #21197: pasting into the focused device screen types the text into the Android device.
+    @backlog @desktop
+    Scenario: Pasting into a focused Android screen types into the device
+      Given an Android device's screen has the focus
+      When the user pastes "hello@example.com"
+      Then the device receives "hello@example.com" as typed text
+      And the composer does not receive it
+
   Rule: Closing
 
     @desktop
@@ -732,6 +801,17 @@ Feature: Device panel
       Then the right panel shows the "iPhone 17" tab
       When the user goes back to the first thread
       Then the right panel has no "iPhone 17" tab
+
+    # Upstream #16040: a device action's progress and error stay with the thread that started it.
+    @backlog @desktop
+    Scenario: A device action's progress and error stay with the thread that started it
+      Given the user starts opening the iOS Simulator "iPhone 17" in a thread
+      And the MC is slow to answer
+      When the user switches to another thread
+      Then that thread's Device tab shows no progress and offers its own device choice
+      When the MC answers that "iPhone 17" could not be opened
+      And the user goes back to the first thread
+      Then the first thread's Device tab says the device could not be opened
 
     @desktop
     Scenario: A device that cannot be powered off stays open and says why
@@ -780,6 +860,27 @@ Feature: Device panel
       When the user adds a Device tab
       And the user opens "iPhone 17" from the Device tab
       Then the right panel shows the "iPhone 17" tab
+
+    # Upstream #25714: a device an agent opened in a thread the user was not viewing never showed.
+    @backlog @desktop
+    Scenario: A device an agent opened while the user was elsewhere shows on returning
+      Given the user is looking at another thread
+      When an agent opens "iPhone 17" in "Fix checkout"
+      And the user switches to "Fix checkout"
+      Then "Fix checkout" shows "iPhone 17", floating or as a right panel tab as the user's setting says
+
+    # Upstream #25714: a floating device stayed open after its session ended in another thread.
+    @backlog @desktop
+    Scenario: A floating device closes when its session ends
+      Given "iPhone 17" floats over "Fix checkout"
+      When its session ends while the user is looking at another thread
+      Then "iPhone 17" no longer floats over "Fix checkout"
+
+    @backlog @desktop @priority-low
+    Scenario: Closing the right panel does not float a device whose session ended
+      Given the right panel shows the "iPhone 17" tab and its session has ended
+      When the user closes the right panel
+      Then no device floats over the conversation
 
   Rule: Setting devices up from the Device tab
     # Device support that is off already points to the Integrations settings (Choosing a

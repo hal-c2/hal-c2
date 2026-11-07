@@ -1,4 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23235
+#   https://github.com/pingdotgg/t3code/pull/20521
+#   https://github.com/pingdotgg/t3code/pull/21356
+#   https://github.com/pingdotgg/t3code/pull/23052
+#   https://github.com/pingdotgg/t3code/pull/18498
+#   https://github.com/pingdotgg/t3code/pull/21762
+#   https://github.com/pingdotgg/t3code/pull/18933
+#   https://github.com/pingdotgg/t3code/pull/15529
+#   https://github.com/pingdotgg/t3code/pull/15368
+#   https://github.com/pingdotgg/t3code/pull/15791
+#   https://github.com/pingdotgg/t3code/pull/19070
 #   https://github.com/pingdotgg/t3code/pull/18639
 #   https://github.com/pingdotgg/t3code/pull/18643
 #   https://github.com/pingdotgg/t3code/pull/17851
@@ -16,6 +27,7 @@
 #   https://github.com/pingdotgg/t3code/pull/16661
 #   https://github.com/pingdotgg/t3code/pull/16210
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/21822
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
 #   apps/server-ex/lib/hal_c2/pi.ex, apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (Pi RPC mode)
@@ -93,11 +105,27 @@ Feature: Pi
     Then Pi stays available with the "Pi default" model
     And Pi is shown with a message that the live session will retry startup
 
+  # Upstream #18498: models Pi no longer lists are not restored
+  @backlog
+  Scenario: A model Pi no longer offers is removed
+    Given Pi listed the models "alpha" and "beta"
+    When Pi's models are discovered again and only "alpha" is listed
+    Then only "alpha" is offered
+    And a discovery that fails or does not finish keeps both
+
   Scenario: Pi stays usable when discovery cannot finish
     Given Pi discovery needs interactive input
     When the user refreshes provider status
     Then Pi stays available with the "Pi default" model
     And the first thread lets Pi handle its startup prompt
+
+  # Upstream #15529: Pi model discovery waits up to 30 seconds for slow extensions
+  @backlog
+  Scenario: Pi's extension models are found when its extensions load slowly
+    Given Pi takes 20 seconds to load its extensions
+    When the user refreshes provider status
+    Then the models Pi's extensions add are offered
+    And discovery that takes longer than 30 seconds falls back to "Pi default"
 
   Scenario: Pi thinking levels follow the model
     Given the Pi model supports thinking levels up to extra high
@@ -158,10 +186,32 @@ Feature: Pi
     Then Pi continues from the turn before it
     And the stopped turn is not used as Pi's history
 
+  # Upstream #20521: a turn stopped before HAL-C2 saw its place in Pi's session made reverts and
+  # forks past it fail, though Pi had kept the prompt.
+  @backlog
+  Scenario Outline: A Pi turn stopped before it was recorded can still be gone past
+    Given a Pi thread whose second turn was stopped before Pi reported its place in the session
+    And a third turn finished after it
+    When the user <action> the end of the third turn
+    Then Pi continues from the third turn
+
+    Examples:
+      | action        |
+      | reverts to    |
+      | forks from    |
+
   Scenario: Forking a Pi thread copies the native conversation into the new workspace
     Given a Pi thread with three turns
     When the user forks from the second turn into a new worktree
     Then the new thread continues Pi's conversation through the second turn in that worktree
+
+  # Upstream #23052: forking a finished turn failed while the next one ran, since the running
+  # turn had no session entry captured yet.
+  @backlog
+  Scenario: A finished Pi turn can be forked while the next turn runs
+    Given a Pi thread whose second turn is running
+    When the user forks from the first turn
+    Then the new thread continues Pi's conversation through the first turn only
 
   Scenario: Pi skills appear in the skill menu
     Given Pi loads the project skill "deploy"
@@ -200,6 +250,13 @@ Feature: Pi
     When the Pi model calls "hal_c2_thread_read"
     Then the call runs and its result reaches the model
     And tools the user excluded with "--exclude-tools" are still left out
+
+  # Upstream #21822: a tool schema with no properties at all was refused by some models.
+  @backlog @priority-low
+  Scenario: A HAL-C2 tool that takes no arguments is usable by a Pi model
+    Given Pi runs a model that refuses tool schemas without a properties list
+    When the Pi model calls a HAL-C2 tool that takes no arguments
+    Then the call runs and its result reaches the model
 
   # PiCommands.ts: Pi's command list omits its terminal built-ins, and Pi only expands
   # skills written as leading "/skill:name" commands.
@@ -279,6 +336,14 @@ Feature: Pi
     When Pi writes a thread title
     Then Pi runs with every tool and extension turned off
     And no Pi session file is left behind
+
+  # Upstream #19070: Pi text generation names the model it could not load and that extensions are off for it.
+  @backlog
+  Scenario: Pi failing to write a title says which model it could not load
+    Given the text-generation model is one only a Pi extension provides
+    When Pi is asked for a thread title
+    Then the failure names that model
+    And says extensions are not loaded when Pi writes titles and commit messages
 
   @backlog @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
@@ -419,6 +484,13 @@ Feature: Pi
     Then Pi receives the message unchanged and expands "/review"
     And HAL-C2's own instructions reach Pi as part of its system prompt
 
+  # Upstream #18933: HAL-C2's guidance no longer overrides other Pi extensions' prompt changes
+  @backlog
+  Scenario: HAL-C2's instructions leave other Pi extensions' prompt changes in place
+    Given a Pi extension adds its own context files and skills to the system prompt
+    When a Pi thread starts a turn
+    Then Pi's system prompt holds both that extension's additions and HAL-C2's instructions
+
   # Works around Pi asking OpenRouter for more output than the context can hold.
   @backlog
   Scenario Outline: Pi's output budget on OpenRouter is capped at 32,768 tokens
@@ -469,6 +541,14 @@ Feature: Pi
       | a line of text     |
       | a longer text edit |
 
+  # Upstream #23235: a blank placeholder became the question, which failed the whole turn while
+  # Pi kept waiting on its dialog.
+  @backlog
+  Scenario: A Pi extension's text question with a blank placeholder asks its title
+    When a Pi extension asks for a line of text titled "What should I do?" with a blank placeholder
+    Then the user is asked "What should I do?"
+    And the turn keeps running until the answer goes back to the extension
+
   # Upstream #17206: Pi editor dialogs prefill the answer composer
   @backlog
   Scenario: A Pi extension's text edit starts the answer from what is there now
@@ -476,6 +556,7 @@ Feature: Pi
     Then the whole text fills the answer composer, ready to edit
     And the answer goes back to the extension with its spaces and line breaks as typed
 
+  # Upstream #21762: an empty Pi select value no longer fails the question
   @backlog
   Scenario: An empty choice from a Pi extension can still be picked
     When a Pi extension offers a list whose choices include an empty one
@@ -582,6 +663,13 @@ Feature: Pi
   Scenario: A file Pi cannot take as an image is handed over as a saved path
     When the user attaches a PDF to a Pi message
     Then Pi receives the line "[Attachment saved at" followed by the file's path
+
+  # Upstream #21356: Pi silently skipped an attachment whose saved copy could not be found.
+  @backlog @mc @plugin-pi
+  Scenario: Pi is told when an attachment's saved copy cannot be found
+    Given the saved copy of "notes.pdf" attached to a Pi message cannot be found
+    When the message reaches Pi
+    Then Pi is told "notes.pdf" is unavailable
 
   Scenario Outline: A message sent while Pi works joins the run or starts one
     Given a Pi turn that <state>
@@ -926,3 +1014,18 @@ Feature: Pi
       | a HAL-C2 tool marked read-only                   | allowed without asking |
       | a HAL-C2 tool that changes something             | asked for approval     |
       | a read-only tool from another MCP server         | asked for approval     |
+
+  # Upstream #15368: extension notifications were a "notify" tool call folded into the work log.
+  @backlog @shared
+  Scenario: A Pi extension notification shows as a notice in the thread
+    When a Pi extension sends the notification "Lint finished\n3 warnings"
+    Then the thread shows a notice with both lines
+    And it is not folded into the tool calls
+
+  # Upstream #15791: ids built from the per-turn ordinal let one thread's notice replace another's.
+  @backlog
+  Scenario: Pi notices in two threads stay apart
+    Given Pi threads "t1" and "t2" each send a notification as the first item of a turn
+    When the user opens each thread
+    Then "t1" shows its own notice
+    And "t2" shows its own notice

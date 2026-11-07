@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12567
+#   https://github.com/pingdotgg/t3code/pull/24760
+#   https://github.com/pingdotgg/t3code/pull/22615
 #   apps/web/src/components/settings/NotificationSettings.tsx
 #   apps/web/src/threadNotifications.ts
 #   apps/web/src/assets/notification-completion.mp3, notification-input.mp3 (the sounds)
@@ -86,6 +89,18 @@ Feature: Thread notifications
         | asks a question          | Input needed        |
         | hits its usage limit     | Usage limit reached |
 
+    # Upstream #24760: a run that ends right before its continuation sent a false, sometimes
+    # repeated, "Thread completed".
+    @backlog @desktop @mobile
+    Scenario: "Thread completed" waits until the thread has stayed done
+      Given the notification mode is "Notifications only"
+      And HAL-C2 is in the background
+      When "Fix login" finishes and its next run starts within two seconds
+      Then no "Thread completed" notification is shown for "Fix login"
+      When "Fix login" finishes and stays done for two seconds
+      Then exactly one "Thread completed" notification names "Fix login"
+
+    # Upstream #12567: clicking a thread notification restores and raises the window.
     @desktop
     Scenario: Clicking a notification opens the thread
       Given a system notification for "Fix login" is shown
@@ -158,6 +173,18 @@ Feature: Thread notifications
         | asks a question      | input      |
         | fails                | input      |
         | hits its usage limit | input      |
+
+    # Upstream #22615: a run the user stopped by hand is not announced as finished; one that
+    # finishes on its own still is.
+    @backlog @mc @desktop @mobile
+    Scenario: A run the user stopped does not announce that it finished
+      Given the notification mode is "Sound and notifications"
+      And HAL-C2 is in the background
+      When the user stops the run in "Fix login" and it ends
+      Then no completion sound plays
+      And no notification says "Fix login" finished
+      When the next run in "Fix login" finishes on its own
+      Then the completion sound plays
 
     @backlog @desktop
     Scenario: A toast is not shown when in-app notifications are off

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20415
+#   https://github.com/pingdotgg/t3code/pull/20388
 #   https://github.com/pingdotgg/t3code/pull/17116
 #   https://github.com/pingdotgg/t3code/pull/17559
 #   https://github.com/pingdotgg/t3code/pull/16551
@@ -30,6 +32,13 @@ Feature: Stacked pull requests
   Scenario: Reading a pull request's stack
     When the user asks for the stack of pull request 42
     Then the layers 41, 42 and 43 are listed in order with their heads
+
+  # Upstream #20415: older layers kept the shorter stack after a new layer was linked.
+  @backlog @mc
+  Scenario: Every linked layer learns of a layer added on top
+    Given pull requests 41, 42 and 43 are each linked to a thread
+    When pull request 44 is stacked on 43 and linked to a thread
+    Then the threads of 41, 42 and 43 each show the layers 41, 42, 43 and 44
 
   @mc
   Scenario: Merging a layer merges the open layers below it
@@ -460,3 +469,11 @@ Feature: Stacked pull requests
     Then each layer, bottom to top, is rebased onto the new head of the layer below it
     And a layer replays only its own commits, so a layer above does not conflict with the old copy of the one below
     And the user's checkout does not move
+
+  # Upstream #20388: reading only the first saved layer list put new layers first and chose the
+  # wrong current pull request.
+  @backlog @mc
+  Scenario: A stack follows the saved layer list that covers the most layers
+    Given pull request 18 saved the layers 18 and 20, and pull request 84 saved 18, 20, 83 and 84
+    When the user opens the stack from pull request 84
+    Then the layers are 18, 20, 83 and 84, and 84 is the current one

@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18723
+#   https://github.com/pingdotgg/t3code/pull/17061
+#   https://github.com/pingdotgg/t3code/pull/20081
+#   https://github.com/pingdotgg/t3code/pull/19808
+#   https://github.com/pingdotgg/t3code/pull/15116
+#   https://github.com/pingdotgg/t3code/pull/14657
+#   https://github.com/pingdotgg/t3code/pull/10700
+#   https://github.com/pingdotgg/t3code/pull/21413
+#   https://github.com/pingdotgg/t3code/pull/10310
+#   https://github.com/pingdotgg/t3code/pull/18624
 #   https://github.com/pingdotgg/t3code/pull/19207
 #   https://github.com/pingdotgg/t3code/pull/17711
 #   https://github.com/pingdotgg/t3code/pull/17530
@@ -49,11 +59,28 @@ Feature: Subscription limits
     When the next check of Codex fails
     Then the windows from a minute ago are still shown
 
+  # Upstream #15116: a window reported mid-turn cleared the failed-check marker; the failure now
+  # stays until a full check succeeds.
+  @mc
+  Scenario: A reading from a running turn does not hide a failed check
+    Given the last check of Codex's limits failed
+    When a running Codex turn reports one rate-limit window
+    Then that window is shown
+    And Codex's limits still say the last check failed until a check succeeds
+
   @mc
   Scenario: An API key account reports that limits are not available
     Given Codex is signed in with an API key
     When the MC checks Codex's limits
     Then Codex's limits are reported as not supported for this account
+
+  # Upstream #18624: a Claude account with limits but no data is a failed check, not unsupported
+  @mc @plugin-claude
+  Scenario: A Claude account whose limits come back empty is checked again
+    Given a Claude subscription account whose check says it has limits but returns none
+    When the MC checks Claude's limits
+    Then the check is reported as failed, not as not supported
+    And the next check that returns limits shows them
 
   @mc
   Scenario: A disabled provider shows no limits until it is enabled again
@@ -69,6 +96,14 @@ Feature: Subscription limits
     When the user refreshes the providers
     Then Codex, Claude and the hub are checked again
 
+  # Upstream #18723: refreshing could replace newer live readings with an older probe's.
+  @mc @backlog
+  Scenario: An older reading does not replace newer limits
+    Given Claude's limits were read live at 10:05
+    When a check that Claude started at 10:00 returns its limits
+    Then the limits read at 10:05 are still shown
+    And a reading of 10:05 or later replaces them
+
   @mc
   Scenario: Limits are checked in the background only while a client shows them
     Given the background activity profile checks provider status every five minutes
@@ -82,6 +117,14 @@ Feature: Subscription limits
     When the background check interval passes
     Then Codex and Claude are not checked
 
+  # Upstream #10310: switching background checks off also stops reading the usage hubs
+  @mc
+  Scenario: Background checks switched off do not read the usage hubs either
+    Given the health check interval is set to never
+    When a minute passes and the MC runs its periodic checks
+    Then no usage hub is read
+    And refreshing by hand still reads them
+
   @mc
   Scenario: Using a Codex reset credit restores the limit
     Given Codex has a banked reset credit
@@ -94,7 +137,15 @@ Feature: Subscription limits
     When the user uses the reset credit and the following check fails
     Then the user is told "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
 
-  @backlog @mc @plugin-codex @priority-low
+  # Upstream #19808: reset credit progress shows after the usage popover closes
+  @backlog @desktop
+  Scenario: Using a reset credit shows its progress under the usage bar
+    Given Codex has a banked reset credit
+    When the user uses the reset credit from the usage bar and confirms
+    Then "Using reset credit…" shows under the bar after the popover closes
+    And it is replaced by how the reset went
+
+  @mc @plugin-codex
   Scenario Outline: A refused Codex reset credit is not reported as unconfirmed when the following check fails
     Given Codex refuses the reset credit because <refusal>
     When the user uses the reset credit and the following check fails
@@ -207,8 +258,7 @@ Feature: Subscription limits
     Then the hub redeems it and the account's limits are read again
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (readAccounts: enabled codex and claude auth files only)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's disabled accounts and other providers are left out
     Given a hub that lists a disabled Codex account, an enabled Claude account and a Gemini account
     When the MC reads the hub
@@ -216,15 +266,14 @@ Feature: Subscription limits
     And a reset credit cannot be redeemed on the disabled Codex account
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (credits endpoint failure keeps usage)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (credits)
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's credit lookup failing keeps the account's windows
     Given a hub whose Codex account reports its windows but whose credit lookup fails
     When the MC reads the hub
     Then the account shows its windows with no reset credits
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (failed account never publishes the upstream body)
-  @mc @backlog @priority-low
+  @mc
   Scenario: What a hub's upstream said is not shown to clients
     Given a hub account whose upstream request fails with a message that holds a secret
     When the MC reads the hub
@@ -232,18 +281,24 @@ Feature: Subscription limits
     And the secret text is not in anything sent to clients
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (Claude weekly scoped windows)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's Claude account shows its per-model weekly limits
     Given a hub Claude account that reports a weekly limit scoped to one model
     When the MC reads the hub
     Then the account shows its session and weekly windows and the model's own weekly window
 
+  # Upstream #21413: a hub Codex account keeps its plan when the usage response leaves it out
+  @mc
+  Scenario: A hub's Codex account keeps its plan when the usage report leaves it out
+    Given a hub Codex account on the Free plan whose usage report names no plan
+    When the MC reads the hub
+    Then the account is labelled with the Free plan from its sign-in details
+    And its quota is shown as that plan's window, not as a session window
+
   # Legacy: apps/server/src/usage/cliproxyApi.ts (consume outcomes)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (@outcomes)
-  @mc @backlog @priority-high
+  @mc
   Scenario Outline: A hub answers a reset credit redemption with what happened
-    Given a hub account with a banked reset credit
+    Given a hub account with a banked Codex reset credit
     When the hub answers the redemption with <answer>
     Then the user is told <outcome>
     And the hub's cooldown for that account is <cooldown>
@@ -256,16 +311,15 @@ Feature: Subscription limits
       | already redeemed    | the credit was already redeemed         | cleared           |
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (cooldown clearing failure is a warning)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A reset applied through a hub whose cooldown cannot be cleared still succeeds
-    Given a hub account with a banked reset credit
+    Given a hub account with a banked Codex reset credit
     When the user uses the reset credit and the hub cannot clear the account's cooldown
     Then the reset is reported as applied
     And the user is warned that routing may resume only after the hub's cooldown expires
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (account in a redemption must be one the hub listed)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A redemption for an account the hub does not list is not forwarded
     Given a hub that lists two accounts
     When the user uses a reset credit naming an account the hub does not list
@@ -284,6 +338,14 @@ Feature: Subscription limits
       | Grok          | its billing period allowance and reset time |
       | OpenCode Go   | its session, weekly and monthly allowance  |
 
+  # Upstream #14657: a Codex Enterprise allowance with no session or weekly window was dropped; it
+  # is now a monthly credit limit with the reset Codex reports.
+  @mc @backlog
+  Scenario: A Codex Enterprise allowance shows as a monthly credit limit
+    Given Codex is signed in to an Enterprise workspace that reports only its allowance, 99% left
+    When the MC checks limits
+    Then Codex reports a monthly credit limit 1% used, with the reset Codex gave
+
   @mc
   Scenario: Grok with an explicit API key reports no subscription limits
     Given Grok is connected with an explicit API key
@@ -298,6 +360,22 @@ Feature: Subscription limits
     When the user opens Limits
     Then Grok's account is listed with the notice "No limits reported."
     And it is not reported as not supported
+
+  # Upstream #17061: a complete weekly or monthly period with no usage percentage now reads as
+  # unused; an incomplete, unsupported or invalid period still reports no limits. Replaces the
+  # scenario above once the MC and the clients carry it.
+  @mc @shared @backlog @plugin-grok @priority-low
+  Scenario Outline: A Grok account with no metered usage yet shows its billing period unused
+    Given Grok is signed in with a subscription and has not used any metered credit yet
+    And xAI reports <period> without a usage percentage
+    When the user opens Limits
+    Then <shown>
+
+    Examples:
+      | period                            | shown                                                           |
+      | a complete weekly billing period  | Grok's weekly window reads 0% used with its reset time          |
+      | a complete monthly billing period | Grok's monthly window reads 0% used with its reset time         |
+      | an incomplete billing period      | Grok's account is listed with the notice "No limits reported."  |
 
   @mc @backlog @priority-low
   Scenario: Grok names its limits by the signed-in account's email
@@ -316,6 +394,15 @@ Feature: Subscription limits
     Given the same Codex account is signed in on two environments and reported by a hub
     When the user opens Limits
     Then that account is counted once in each window
+
+  # Upstream #10700: two instances of a provider signed in to one subscription counted twice; they
+  # are one account, with the freshest usage and reset credit.
+  @backlog @mc @desktop @mobile @priority-low
+  Scenario: Two instances signed in to the same account count once
+    Given the Codex instances "codex" and "codex-work" are signed in to the same account and workspace
+    When the user opens Limits
+    Then that account is shown once, with the freshest usage either instance reported
+    And its reset credit is redeemed through the instance that reported it
 
   # OpenCode Go reports no account email, so a shared API key is what identifies the account.
   @backlog @desktop @mobile @priority-low
@@ -471,3 +558,12 @@ Feature: Subscription limits
     When the user opens the usage limits
     Then Antigravity shows its 5-hour and weekly windows
     And the Gemini models' windows are kept apart from those of the Claude and GPT models it shares
+
+  # Upstream #20081: Antigravity's limits merge both quota services
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: Antigravity's Gemini limits show when one quota service leaves them out
+    Given one of Google's quota services reports only the Claude and GPT limits for the account
+    And the other reports the Gemini limits
+    When the user opens the usage limits
+    Then Antigravity shows both the Gemini limits and the Claude and GPT limits
+    And a limit both services report shows the more used reading

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21658
+#   https://github.com/pingdotgg/t3code/pull/21070
+#   https://github.com/pingdotgg/t3code/pull/18575
 #   https://github.com/pingdotgg/t3code/pull/19402
 #   https://github.com/pingdotgg/t3code/pull/16886
 #   https://github.com/pingdotgg/t3code/pull/12919
@@ -237,6 +240,14 @@ Feature: Managing environments on a client
     Then HAL-C2 installs its own MC runtime in the distro without further steps
     And agents and projects run inside the distro with the provider CLIs installed there
 
+  # Upstream #21070: a cold WSL distro got ten seconds to boot and was abandoned while starting.
+  @backlog @desktop @priority-low
+  Scenario: A stopped WSL distro gets time to boot before the app gives up on it
+    Given the local environment runs in a WSL distro that is stopped
+    When the app starts and the distro takes 15 seconds to boot
+    Then the local environment starts in the distro
+    And the app gives up only after the distro has had 30 seconds
+
   @backlog @desktop @priority-low
   Scenario: The first launch after an app update prepares the distro again
     Given the local environment runs in a WSL distro
@@ -268,6 +279,15 @@ Feature: Managing environments on a client
     And the Windows backend runs instead
     And the next start uses Windows too until the user turns WSL on again in the Connections settings
 
+  # Upstream #21658: a runtime that failed to install in the distro lost its loader error behind
+  # the fallback's; the reason given is now the install's own.
+  @backlog @desktop @priority-low
+  Scenario: A WSL runtime that fails to install names what is missing
+    Given the user chose to run only WSL
+    And the distro lacks a library HAL-C2's runtime needs
+    When the app installs its runtime in the distro and the runtime cannot start
+    Then the user is told "WSL backend couldn't start" with the missing library named
+
   @backlog @desktop @priority-low
   Scenario: A WSL start that keeps failing for a passing reason falls back to Windows for this launch only
     Given the user chose to run only WSL
@@ -284,6 +304,15 @@ Feature: Managing environments on a client
     When the app starts
     Then the Windows backend runs normally
     And the Connections settings say why the WSL backend could not start
+
+  # Upstream #18575: unregistering the WSL backend stops it for good instead of leaving it
+  # to be restarted as if it had crashed.
+  @backlog @desktop @priority-low
+  Scenario: Turning off the WSL backend while the app runs keeps it off
+    Given the user chose to run both Windows and WSL and both are running
+    When the user turns the WSL backend off
+    Then the WSL backend stops
+    And it is not started again when its process exits
 
   @backlog @desktop @priority-low
   Scenario: A WSL backend that is still starting shows as connecting

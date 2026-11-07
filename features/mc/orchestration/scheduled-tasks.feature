@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17458
+#   https://github.com/pingdotgg/t3code/pull/22070
+#   https://github.com/pingdotgg/t3code/pull/17451
+#   https://github.com/pingdotgg/t3code/pull/18467
+#   https://github.com/pingdotgg/t3code/pull/15768
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/scheduled_tasks.ex (scheduledTasks.list, scheduledTasks.upsert,
 #     scheduledTasks.delete, scheduledTasks.setEnabled, scheduledTasks.runNow, watchers)
@@ -104,12 +109,31 @@ Feature: Scheduled tasks
     Then its prompt is sent to "t1" to start after any active turn
     And the message records that it came from task "a"
 
+  # Upstream #18467: a bound task switched its thread back to the provider and model saved with
+  # the task; bound runs now take the thread's current selection.
+  @backlog @mc @priority-high
+  Scenario: A task bound to a thread runs on the thread's current provider and model
+    Given task "a" was created bound to thread "t1" while "t1" used "codex"
+    And the user has since switched "t1" to "claudeAgent"
+    When task "a" becomes due
+    Then its prompt runs on "claudeAgent" with the model "t1" uses now
+    And "t1" is not switched back to "codex"
+
   @mc
   Scenario: An unbound task starts a new thread each time
     Given task "a" is not bound to a thread and uses a new worktree
     When task "a" becomes due
     Then a new thread titled like the task is launched in "demo" with the task's model and modes
     And its first message is the task's prompt, recorded as coming from task "a"
+
+  # Upstream #17451: a task for No project asking for a new worktree failed on the plain scratch
+  # folder; it now runs in a fresh scratch folder, tasks saved that way included.
+  @mc @backlog
+  Scenario: A task for No project runs in its own scratch folder
+    Given task "a" is not bound to a thread, is for "No project" and uses a new worktree
+    When task "a" becomes due
+    Then a new thread is launched in a fresh scratch folder
+    And no worktree is created for it
 
   @mc
   Scenario: A finished run records its outcome
@@ -126,6 +150,21 @@ Feature: Scheduled tasks
   Scenario: Running now answers with the finished task
     When a client runs task "a" now
     Then the answer is task "a" after the run, with its outcome
+
+  # Upstream #17458: run_scheduled_task_now answered with the task's binding, so a run that
+  # started a new thread answered with none.
+  @backlog @mc
+  Scenario Outline: An agent running a task now is told the thread the run went to
+    Given task "a" <binding>
+    When an agent runs task "a" now and <result>
+    Then the answer names <thread>
+    And task "a" keeps <binding>
+
+    Examples:
+      | binding                        | result                     | thread                    |
+      | starts a new thread each time  | the run starts "Run 4"     | "Run 4"                   |
+      | is bound to the thread "Daily" | the run is queued there    | "Daily"                   |
+      | starts a new thread each time  | the run fails to start     | no thread                 |
 
   # Scheduled runs aim the next run afresh; a manual run leaves the schedule alone.
   @mc
@@ -163,6 +202,13 @@ Feature: Scheduled tasks
     Given task "a" runs every hour and was due while the MC was asleep
     When the MC checks its schedule
     Then task "a" runs
+
+  # Upstream #15768: interval tasks count elapsed time across daylight saving changes.
+  @backlog @mc
+  Scenario: An interval task keeps its interval across a clock change
+    Given a task runs every two hours in New York
+    When the clocks go back an hour between two runs
+    Then the next run is two hours after the last one
 
   # A scratch MC on a copy of real data, as `mise run desktop:cua` starts one, names real checkouts.
   @mc
@@ -254,6 +300,14 @@ Feature: Scheduled tasks
     Given thread "caller" has a task bound to it
     When the agent of "caller" updates the task to not be bound to its thread
     Then each run launches a new worktree from origin's main
+
+  # Upstream #22070: tasks bound to a deleted thread were left behind with their webhook deliveries.
+  @backlog @mc
+  Scenario: Deleting a thread deletes the tasks bound to it
+    Given "Check CI" is bound to thread "caller" and "Nightly" was unbound from it
+    When the user deletes thread "caller"
+    Then "Check CI" and its webhook deliveries are deleted
+    And "Nightly" is kept
 
   @mc
   Scenario: Agents see and change only their project's tasks

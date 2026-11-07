@@ -1,8 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19483
+#   https://github.com/pingdotgg/t3code/pull/22072
+#   https://github.com/pingdotgg/t3code/pull/20391
 #   https://github.com/pingdotgg/t3code/pull/17364
 #   https://github.com/pingdotgg/t3code/pull/15537
 #   https://github.com/pingdotgg/t3code/pull/18789
 #   https://github.com/pingdotgg/t3code/pull/11337
+#   https://github.com/pingdotgg/t3code/pull/25457
 #   docs/user/question-attachments.md
 #   apps/tui/src/userInput.ts
 #   apps/tui/src/components/ChatView.tsx (question panel, defer and reopen)
@@ -55,18 +59,19 @@ Feature: Answering the agent's questions from the composer
     When the user reopens the pending question
     Then "Which database?" is shown again with its options
 
+  # Questions of one request are stepped through one at a time, as the web did.
   @desktop
-  Scenario: Questions asked while the composer is open are shown whole above its editor
+  Scenario: Questions asked while the composer is open are shown above its editor
     Given the composer is on screen
     When the agent asks two long questions in place of the first
-    Then the questions, their options and the answer button sit above the composer's editor
+    Then each question, its options and the answer button sit above the composer's editor as the user steps through them
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A question can be dismissed without an answer
     When the user dismisses the question without answering
     Then the agent is told the question was dismissed
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A question that could not be dismissed stays and says why
     Given the environment refuses to dismiss the question
     When the user dismisses the question without answering
@@ -95,7 +100,7 @@ Feature: Answering the agent's questions from the composer
     When the user tries to attach a file
     Then the user is told this question cannot accept attachments
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A failed answer keeps what the user wrote
     Given the user typed "MySQL"
     When submitting the answer fails
@@ -107,20 +112,30 @@ Feature: Answering the agent's questions from the composer
     When the user chooses to implement the plan
     Then a turn starts that carries out the plan
 
-  @backlog @mobile
+  @mobile
   Scenario: The question panel can be folded away to read the conversation
-    Given the agent is waiting for the user's answer
+    Given the agent asked "Which database?" and "Which cache?" in one request
+    And the user answered only "Which database?"
+    And the user typed "Valkey" as the answer to "Which cache?"
     When the user folds the question panel away
     Then the conversation can be read and the question stays pending
     When the user opens the question panel again
-    Then the question and what the user already answered are shown
+    Then "Which cache?" still reads "Valkey" and "Which database?" still has "Postgres" picked
 
-  @backlog @mobile @priority-high
+  # Upstream #20391: pending questions no longer squash the composer on narrow windows
+  @backlog @desktop @mobile
+  Scenario: The composer stays open while a question waits on a narrow window
+    Given a narrow window
+    When the agent asks a question
+    Then the composer stays expanded while the question waits
+    And it collapses again once the question is answered
+
+  @mobile @priority-high
   Scenario: A question that can no longer be answered disables its controls
     Given the agent asked a question and its session can no longer take the answer
     Then the user cannot submit an answer to it
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A question already being answered cannot be submitted twice
     Given the user submitted the answer to "Which database?"
     And the answer is still on its way to the agent
@@ -139,7 +154,7 @@ Feature: Answering the agent's questions from the composer
     Then the user is told the file could not be attached because there are too many attachments
     And the file is not attached
 
-  @backlog @desktop
+  @desktop
   Scenario: An answer is not sent while its files are still uploading or failed
     Given the answer to "Which database?" has a file that has not finished uploading
     When the user submits the answers
@@ -153,6 +168,21 @@ Feature: Answering the agent's questions from the composer
     Then the chosen file is not attached to anything
     And the user is not left with a question that is no longer pending
 
+  # Upstream #25457: a question's half-written answer is let go when the question ends, wherever it ends.
+  @backlog @shared
+  Scenario Outline: A question that ends while its thread is not open lets go of its half-written answer
+    Given the user typed an answer and attached a file to "Which database?" without sending
+    And the user opened another thread
+    When <ending>
+    Then the typed answer and the file are gone, after a restart too
+    And when the agent asks a new question it starts from its suggested answer
+
+    Examples:
+      | ending                                    |
+      | another client answers the question       |
+      | the user stops the turn                   |
+      | the turn ends without an answer           |
+
   @backlog @mobile @priority-high
   Scenario: An answered question stays in the conversation with its answers and files
     Given the user answered "Which schema?" with "use this one" and attached "schema.sql"
@@ -160,7 +190,7 @@ Feature: Answering the agent's questions from the composer
     Then the question is listed with the answer "use this one"
     And "schema.sql" is listed under the answer and can be opened
 
-  @backlog @desktop
+  @desktop
   Scenario: A number key picks the option in that place
     Given the user is not typing in the composer
     When the user presses 2
@@ -168,7 +198,7 @@ Feature: Answering the agent's questions from the composer
     When the user is typing an answer and presses 2
     Then "2" is typed into the answer and no option is picked
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Picking an option of a single-choice question moves on to the next question
     Given the agent asked "Which database?" and "Which cache?" in one request
     When the user picks "Postgres"
@@ -176,7 +206,7 @@ Feature: Answering the agent's questions from the composer
 
   # Upstream #17364: the move after a pick was still pending when the user moved by hand,
   # and it then skipped or undid that move.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: Moving by hand right after a pick is not moved again
     Given the agent asked "Which database?", "Which cache?" and "Which queue?" in one request
     When the user picks "Postgres" and at once <moves>
@@ -187,14 +217,14 @@ Feature: Answering the agent's questions from the composer
       | presses Next                           | Which cache?   |
       | goes back to a question already shown  | Which database? |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A question that allows several answers waits for the user to move on
     Given the question allows several answers
     Then the user is told "Select one or more options."
     When the user picks "Postgres"
     Then "Which database?" is still shown so "SQLite" can be picked too
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Several questions are stepped through and answered together
     Given the agent asked "Which database?" and "Which cache?" in one request
     Then the question is marked "1/2" and the user can go on to the next question
@@ -202,7 +232,7 @@ Feature: Answering the agent's questions from the composer
     Then the user can go back to the previous question to change its answer
     And submitting sends both answers to the agent together
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The first question still unanswered is the one shown
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the user answered "Which database?" and left the thread
@@ -230,7 +260,7 @@ Feature: Answering the agent's questions from the composer
     Then the file is not attached
     And the user is told there are too many attachments
 
-  @backlog @desktop
+  @desktop
   Scenario: The question is folded away on the desktop to read the conversation
     When the user hides the question and its options
     Then only the question's title stays above the composer
@@ -238,12 +268,12 @@ Feature: Answering the agent's questions from the composer
     When the user shows the question again
     Then the options and what the user already picked are shown
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A question asked during a turn still lets the user stop the turn
     Given the agent asked the question while its turn is still running
     Then the user can stop the turn as well as answer the question
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Files cannot be removed from an answer that is on its way
     Given the user typed "use this schema" and attached "schema.sql"
     When the user submits the answer and the agent has not taken it yet
@@ -271,20 +301,20 @@ Feature: Answering the agent's questions from the composer
     Then "Postgres" is shown as picked
     And the typed answer is empty
 
-  @backlog @mobile
+  @mobile
   Scenario: Picking an option again takes it back when a question allows several answers
     Given the question allows several answers
     And the user picked "Postgres" and "SQLite"
     When the user picks "SQLite" again
     Then only "Postgres" is picked
 
-  @backlog @mobile
+  @mobile
   Scenario: A question that does not allow a typed answer ignores typed text
     Given the question allows only its listed options
     When the user submits without picking an option
     Then nothing is sent
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Questions in one request are sent only when each has an answer
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the user answered only "Which database?"
@@ -303,3 +333,19 @@ Feature: Answering the agent's questions from the composer
     When the user types "$bro" in the answer to "Which database?" and picks the skill "bro"
     Then the answer shows the skill "bro" as a chip and the skill picker closes
     And what the user types next follows the chip
+
+  # Upstream #22072: folder references work in typed answers too, not in choice-only questions.
+  @backlog @desktop
+  Scenario: A folder dropped or pasted into a typed answer references its path
+    Given the agent asks a question that takes a typed answer
+    When the user pastes the folder "/work/shop/src" into the answer
+    Then the answer references "/work/shop/src"
+
+  # Upstream #19483: deleted chips returned after the answer moved back to the composer and a reload.
+  @backlog @desktop
+  Scenario: A chip deleted from a typed answer does not come back
+    Given the user typed an answer with the file references "cart.ts" and "auth.ts"
+    And deleted "auth.ts" from it
+    When the user picks an option, moving the typed answer back to the composer
+    And reloads the app
+    Then the composer references "cart.ts" and not "auth.ts"

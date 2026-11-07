@@ -1,6 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18817
+#   https://github.com/pingdotgg/t3code/pull/18780
+#   https://github.com/pingdotgg/t3code/pull/19564
+#   https://github.com/pingdotgg/t3code/pull/23889
+#   https://github.com/pingdotgg/t3code/pull/17794
 #   https://github.com/pingdotgg/t3code/pull/14140
 #   https://github.com/pingdotgg/t3code/pull/8645
+#   https://github.com/pingdotgg/t3code/pull/22904
 #   docs/user/source-control.md (Troubleshooting)
 #   packages/contracts/src/vcs.ts (VcsProcessExitError, VcsProcessTimeoutError, VcsOutputLimitError, VcsProcessSpawnError, VcsRepositoryDetectionError, VcsUnsupportedOperationError)
 #   packages/contracts/src/git.ts (GitManagerError, GitPullRequestMaterializationError, TextGenerationError)
@@ -103,6 +109,27 @@ Feature: When source control goes wrong
     When the user runs "Commit & push"
     Then the failure offers nothing to do
 
+  # Upstream #22904: a push the remote refused said only "Git command exited with a non-zero
+  # status." Git's own rejection lines now pick a fixed sentence; no remote output is quoted.
+  @backlog @mc
+  Scenario Outline: A push the remote refuses says why
+    Given git reports the push of "feature/tax" as <rejection>
+    When the user pushes
+    Then the failure says "<message>"
+    And the failure quotes none of the remote's output
+
+    Examples:
+      | rejection                                 | message                                                                                   |
+      | rejected by the remote (a declining hook) | The remote rejected the push. Push this branch from a terminal to see the server's message. |
+      | rejected as not a fast-forward            | The remote has commits this branch doesn't have. Pull or rebase, then push again.         |
+
+  # Upstream #22904: only a push's rejection is named; a rejected fetch is left as it was.
+  @backlog @mc @priority-low
+  Scenario: A rejected fetch is not reported as a refused push
+    Given git rejects a fetch of "feature/tax" as not a fast-forward
+    When the user fetches
+    Then the failure does not say the remote has commits this branch doesn't have
+
   @mc
   Scenario: A failed git command keeps its command and exit code
     Given git exits with an error while initializing "shop"
@@ -148,6 +175,50 @@ Feature: When source control goes wrong
       | sends no response                                       |
       | sends a success header and then stops sending the body  |
       | sends an error header and then stops sending the body   |
+
+  # Upstream #23889: every queued Bitbucket lookup went out after a 429 and got its own 429.
+  @backlog @mc
+  Scenario: Bitbucket's rate limit pauses the MC's background reads
+    Given the MC is looking up the pull requests of 20 thread branches on Bitbucket
+    When Bitbucket answers one lookup with "429 Too Many Requests"
+    Then no more than 4 Bitbucket requests are ever out at once
+    And the remaining lookups fail as rate limited without being sent
+    And Bitbucket is asked again once its Retry-After has passed, or after 30 seconds doubling to at most 15 minutes
+
+  @backlog @mc
+  Scenario: A user's own Bitbucket action goes out while background reads are paused
+    Given the MC's background reads of Bitbucket are paused by a rate limit
+    When the user checks out a Bitbucket pull request
+    Then the checkout reads the pull request from Bitbucket
+
+  # Upstream #19564: one reviewer GitHub would not show to the app stopped the whole read.
+  @backlog @mc
+  Scenario: A pull request with a reviewer GitHub hides from the app is still read
+    Given GitHub refuses to show the app one of pull request 42's requested reviewers
+    When the MC reads pull request 42 and its review threads
+    Then the pull request, its checks and its review threads are read
+    And watching pull request 42 goes on
+
+  # Upstream #18780: a credential that may read pull requests but not its own account was refused.
+  @backlog @mc @priority-low
+  Scenario: Pull requests load for a GitHub credential that cannot read its own profile
+    Given the GitHub credential can read pull requests but is refused its user profile
+    When the MC reads pull request 42
+    Then the account is confirmed another way and the pull request is read
+
+  # Upstream #18817: GitLab activity reads hid an expired sign-in or a rate limit as no activity.
+  @backlog @mc @priority-low
+  Scenario Outline: A GitLab activity read that fails for a reason the user can act on says so
+    Given GitLab answers a read of merge request 7's activity with <failure>
+    When the MC reads merge request 7
+    Then <outcome>
+
+    Examples:
+      | failure                          | outcome                                            |
+      | an expired sign-in               | the user is told GitLab's sign-in failed           |
+      | a rate limit                     | GitLab is asked again only after its backoff       |
+      | glab missing                     | the user is told glab is not installed             |
+      | another error on the notes alone | the rest of the activity shows, marked as partial  |
 
   @tui
   Scenario: The terminal client reports a failed git action
@@ -250,3 +321,16 @@ Feature: When source control goes wrong
     Given a git command fails with a well-known error
     When the failure is shown
     Then the message names the cause
+
+  # Upstream #17794: a deleted branch surfaced as a generic git failure; it is named as a missing
+  # ref, without git's output or the ref's name.
+  @backlog @mc
+  Scenario Outline: A branch that no longer exists is named as missing
+    Given the branch "feature/old" was deleted
+    When the user <action> "feature/old"
+    Then the failure says the ref could not be found
+
+    Examples:
+      | action                                 |
+      | starts a thread in a new worktree from |
+      | switches the checkout to               |
