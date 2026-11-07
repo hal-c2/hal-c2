@@ -67,7 +67,9 @@ defmodule HalC2.ProjectsTest do
     assert ".hidden" in Enum.map(all, & &1["name"])
   end
 
-  test "a project folder is expanded and canonical, and a relative one is refused", %{tmp_dir: dir} do
+  test "a project folder is expanded and canonical, and a relative one is refused", %{
+    tmp_dir: dir
+  } do
     home = System.get_env("HOME")
     messy = Path.join([dir, "a", "..", "b", "."])
 
