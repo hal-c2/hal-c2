@@ -281,11 +281,16 @@ defmodule HalC2.Usage do
 
   # Parses the directory's files that changed since they were cached, in parallel.
   defp parse_dir(%{provider: provider, dir: dir} = source, state, files_since) do
-    if File.exists?(dir) do
-      # A history folder that exists but cannot be listed fails the scan: reading it as
-      # empty would report a total with its usage silently missing.
-      with {:error, reason} <- File.ls(dir), do: raise("cannot list #{dir}: #{reason}")
+    listing = File.ls(dir)
 
+    # The source root only: one that vanished since it was resolved is missing, not a
+    # failure, but one that exists and cannot be listed fails the scan, since reading it
+    # as empty would drop its usage from the total silently. Unreadable folders below the
+    # root are not checked here.
+    with {:error, reason} when reason != :enoent <- listing,
+         do: raise("cannot list #{dir}: #{reason}")
+
+    if listing != {:error, :enoent} do
       files = Transcripts.list(dir, files_since, if(provider == "grok", do: "updates.jsonl"))
 
       changed =
