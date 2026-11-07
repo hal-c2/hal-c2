@@ -149,7 +149,9 @@ for line in sys.stdin:
         sub = msg["request"]["subtype"]
         # Plan usage; FAKE_CLAUDE_USAGE=unsupported is an account without plan limits.
         if sub == "get_usage":
-            usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {
+            # FAKE_CLAUDE_USAGE=empty has limits but returns none, until the file it names is gone.
+            empty = os.environ.get("FAKE_CLAUDE_USAGE_EMPTY")
+            usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {"rate_limits_available": True, "rate_limits": {}} if empty and os.path.exists(empty) else {
                 "rate_limits_available": True,
                 "rate_limits": {
                     "five_hour": {"utilization": 30, "resets_at": "2026-09-24T15:00:00.123456+00:00"},
@@ -229,8 +231,9 @@ for line in sys.stdin:
     if "answer halfway" in text.split("</conversation_history>")[-1]:
         send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
         continue
-    # A handoff's earlier conversation is history, not a directive.
-    if "wait" in text.split("</conversation_history>")[-1]:
+    # A handoff's earlier conversation is history, not a directive, and so is a
+    # delegated task's worker preamble (it asks the worker to finish its own waiting).
+    if "wait" in text.split("</conversation_history>")[-1].split("\nTask:\n")[-1]:
         continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
     # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
@@ -327,20 +330,24 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent started the dev server"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
+    # "in the background": a background subagent (agent-N) and command (bash-N); "only
+    # the subagent" or "only the command" leaves the other out.
     if "in the background" in text:
         agent, bash = f"agent-{turn}", f"bash-{turn}"
-        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
-            "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
-        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
-              "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
-        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
-              "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
-        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
-            "command": "npm run build", "description": "Build", "run_in_background": True}}]}})
-        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
-              "description": "Build", "task_type": "local_bash"})
-        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
-              "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
+        if "only the command" not in text:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+                "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+                  "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+                  "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
+        if "only the subagent" not in text:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "tool_use", "id": bash, "name": "Bash", "input": {
+                "command": "npm run build", "description": "Build", "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{bash}", "tool_use_id": bash,
+                  "description": "Build", "task_type": "local_bash"})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": bash,
+                  "content": f"Command running in background with ID: task-{bash}", "is_error": False}]}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Both are running"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Both are running", "session_id": session})
         continue

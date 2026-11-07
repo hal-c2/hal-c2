@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24493
 #   https://github.com/pingdotgg/t3code/pull/12567
 #   https://github.com/pingdotgg/t3code/pull/24760
 #   https://github.com/pingdotgg/t3code/pull/22615
@@ -159,6 +160,18 @@ Feature: Thread notifications
       And "Fix login" finished and notified
       When the environment sends its state again with "Fix login" finished at the same time
       Then no further notification is shown
+
+    # Upstream #24493: a thread that finished, failed or asked while the connection was down never
+    # notified. This reverses #11481, which let a reconnect announce nothing.
+    @backlog @desktop @priority-high
+    Scenario: A thread that needed the user while the connection was down notifies once it is back
+      Given the notification mode is "Notifications only"
+      And HAL-C2 is in the background
+      And the connection to the environment of "Fix login" dropped while "Fix login" was running
+      When "Fix login" finishes before the connection comes back
+      And the connection comes back
+      Then a system notification titled "Thread completed" is shown once
+      And an alert shown before the connection dropped is not shown again
 
     @backlog @desktop
     Scenario Outline: The sound depends on what the thread needs

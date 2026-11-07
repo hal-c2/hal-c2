@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/10439 (find in thread)
+#   https://github.com/pingdotgg/t3code/pull/29759
+#   https://github.com/pingdotgg/t3code/pull/30332
 #   packages/contracts/src/rpc.ts (orchestration.searchThreads)
 #   packages/contracts/src/orchestration.ts (OrchestrationSearchThreadsInput, OrchestrationThreadSearchMatch)
 #   apps/server-ex/lib/hal_c2/search.ex
@@ -23,6 +25,21 @@ Feature: Searching threads by what was said
     Given thread "t1" has a user message "Fix the Parser"
     When a client searches for "parser"
     Then "t1" is found
+
+  # Upstream #30332: a query word under three letters was checked with a lower-casing that folds only
+  # ASCII, so a short non-Latin word in another case or without its accent dropped the thread.
+  @backlog @mc @priority-low
+  Scenario Outline: A short word matches in any case or accent, whatever its script
+    Given thread "t1" has a user message "<message>"
+    When a client searches for "<query>"
+    Then "t1" is found
+
+    Examples:
+      | message             | query     |
+      | В логах ошибка      | ошибка в  |
+      | Логи: ошибка        | ошибка ло |
+      | École fermée à Lyon | fermée éc |
+      | École fermée à Lyon | fermee ec |
 
   @mc
   Scenario: A user message is preferred over an assistant message in the same thread
@@ -147,3 +164,15 @@ Feature: Searching threads by what was said
     When a turn in "t1" adds a message mentioning "deploy"
     And the client finds "deploy" in "t1" again
     Then the MC answers with 4 matches
+
+  # Upstream #29759: find in thread treated a straight and a curly apostrophe as different letters
+  @backlog @mc @priority-low
+  Scenario Outline: Finding in a thread treats straight and curly apostrophes alike
+    Given a message in "t1" says "<written>"
+    When a client finds "<typed>" in "t1"
+    Then the MC answers with 1 match
+
+    Examples:
+      | written | typed |
+      | don’t   | don't |
+      | don't   | don’t |

@@ -16,6 +16,7 @@
 #   apps/tui/src/store.ts (pullGit, runGitAction)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: base-branch upstream, aliases, chosen remote)
+#   https://github.com/pingdotgg/t3code/pull/22098
 
 Feature: Pushing, pulling and guarding the default branch
   Pushing publishes the branch to its upstream, pulling only fast-forwards, and anything
@@ -200,6 +201,24 @@ Feature: Pushing, pulling and guarding the default branch
     Given the user was asked to confirm committing and pushing to "main"
     When the user chooses to create a feature branch and continue
     Then the work is committed on a new branch and pushed there instead of "main"
+
+  # Upstream #22098: the phone chose the new branch's name from branches it had not finished
+  # reading, so it could pick a name that already existed.
+  @backlog @mobile
+  Scenario: Moving work onto a new branch never picks a name that is taken
+    Given the branch "feature/update" exists but the phone has not read its branches yet
+    And the user was asked to confirm pushing to "main"
+    When the user chooses to create a feature branch and continue
+    Then the work moves to "feature/update-2"
+
+  # Upstream #22098: a failed read of the branches stops the move before any branch is made.
+  @backlog @mobile
+  Scenario: A move onto a new branch stops when the branches cannot be read
+    Given the branches of the checkout cannot be read
+    And the user was asked to confirm pushing to "main"
+    When the user chooses to create a feature branch and continue
+    Then the user is told the git action failed
+    And no branch is created
 
   # Upstream #18716: with nothing to commit, the default-branch confirmation offered a feature
   # branch it could not create.

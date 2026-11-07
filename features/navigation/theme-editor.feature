@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23223
+#   https://github.com/pingdotgg/t3code/pull/27472
+#   https://github.com/pingdotgg/t3code/pull/25375
+#   https://github.com/pingdotgg/t3code/pull/23162
 #   https://github.com/pingdotgg/t3code/pull/18827
 #   https://github.com/pingdotgg/t3code/pull/21924
 #   docs/user/appearance.md (Custom themes)
@@ -18,6 +22,8 @@
 #   https://github.com/pingdotgg/t3code/pull/14499
 #   https://github.com/pingdotgg/t3code/pull/14498
 #   https://github.com/pingdotgg/t3code/pull/25076
+#   https://github.com/pingdotgg/t3code/pull/23465
+#   https://github.com/pingdotgg/t3code/pull/23136
 
 Feature: Custom themes
   Users create, import, edit, share and remove their own themes, and can pick a color
@@ -124,6 +130,20 @@ Feature: Custom themes
       Then nothing is picked
       And the keyboard is back in the theme editor
 
+    # Upstream #27472: Escape closed a color chooser but kept the color dragged or typed in it.
+    @backlog @desktop
+    Scenario Outline: Escape in a color chooser puts the colors back
+      Given the user opened the color chooser for the accent color in the <view> view
+      And dragged the hue
+      When the user <closes>
+      Then <result>
+
+      Examples:
+        | view     | closes                     | result                                                     |
+        | simple   | presses Escape             | the accent and the palette made from it are as they were    |
+        | advanced | presses Escape             | the accent is as it was                                    |
+        | simple   | clicks outside the chooser | the new accent is kept                                     |
+
     # Legacy: apps/web/src/components/settings/ThemeColorPicker.tsx (ThemeColorField)
     @backlog @desktop
     Scenario: A color typed in the field that is not a color is flagged
@@ -155,6 +175,14 @@ Feature: Custom themes
       Then the toolbar border keeps its transparency of 25%
       And the chooser shows the opaque color it is editing
 
+    # Upstream #23136: typing a hex value made a translucent color opaque, while dragging or typing
+    # RGB kept its transparency.
+    @backlog @desktop
+    Scenario: Typing a hex value keeps the transparency of the color it replaces
+      Given the toolbar border color is "#22ccff80"
+      When the user types "#ff0000" as its hex value in the color chooser
+      Then the toolbar border color is "#ff000080"
+
     # Legacy: apps/web/src/components/ui/color-picker.tsx (hue slider keys; the provider accent
     # chooser in settings uses the same picker)
     @backlog @desktop
@@ -171,6 +199,19 @@ Feature: Custom themes
         | 120  | the left arrow            | 119 |
         | 355  | Shift and the right arrow | 5   |
         | 5    | Shift and the left arrow  | 355 |
+
+    # Upstream #23465: Home and End did nothing on the hue.
+    @backlog @desktop @priority-low
+    Scenario Outline: Home and End take the hue to its ends
+      Given the user opened the color chooser for the accent color
+      And the hue is 180 degrees
+      When the user presses <key> on the hue
+      Then the hue is <to> degrees
+
+      Examples:
+        | key  | to  |
+        | Home | 0   |
+        | End  | 360 |
 
     # Legacy: apps/web/src/components/ui/color-picker.tsx (saturation and brightness: Tab moves
     # between the two values; the arrows, Shift and Home/End act on the one that has focus)
@@ -337,6 +378,15 @@ Feature: Custom themes
       When the user renames "Dusk Night" to "Dusk" and saves it
       Then the user is told "“Dusk” already has a dark palette. Pick another name."
       And both themes are unchanged
+
+    # Upstream #23162: names with no Latin letters or digits, like "夜" and "朝", all got the id
+    # "custom-theme", so the second offered to add a palette to the first.
+    @backlog @desktop @priority-low
+    Scenario: Themes named without Latin letters stay apart
+      Given "夜" is installed with only a dark palette
+      When the user creates a dark theme named "朝" and saves it
+      Then "夜" and "朝" are both installed
+      And saving "夜" again keeps it the same theme
 
     @backlog @desktop
     Scenario: An appearance a theme never had cannot be edited into it
@@ -577,6 +627,17 @@ Feature: Custom themes
         | Update existing | the installed "Nord" is replaced        |
         | Keep both       | a copy named "Nord (2)" is added        |
         | Cancel          | nothing changes                          |
+    # Upstream #23223: a file that failed in the same batch hid the already-installed prompt,
+    # so the newer copy was dropped without a word.
+    @backlog @desktop
+    Scenario: A failed file in a batch does not hide a theme that is already installed
+      Given "Dusk" is installed
+      When the user imports "Dawn.json", a changed "Dusk.json" and a file that cannot be read, together
+      Then "Dawn" is added
+      And the user is told why the unreadable file failed
+      And the user is asked to update "Dusk" or keep both
+      And the dialog stays open
+
 
     @backlog @desktop
     Scenario Outline: Importing a theme file that breaks the rules explains why
@@ -640,6 +701,25 @@ Feature: Custom themes
     Scenario: A VS Code theme without an editor background is refused
       When the user imports a VS Code theme that has no editor background color
       Then the user is told 'That VS Code theme has no "editor.background" color, so there is nothing to build a palette from.'
+
+    # Upstream #25375: VS Code's own Solarized themes were refused for their comments and
+    # trailing commas.
+    @backlog @desktop
+    Scenario Outline: A VS Code theme with comments or trailing commas is imported
+      When the user adds a VS Code theme that has comments and trailing commas by <way>
+      Then the theme is added
+
+      Examples:
+        | way                                          |
+        | pasting it                                   |
+        | importing its file                           |
+        | importing its file with another one at once  |
+
+    # Upstream #25375
+    @backlog @desktop @priority-low
+    Scenario: A HAL-C2 theme file still has to be strict JSON
+      When the user imports a HAL-C2 theme file that has a trailing comma
+      Then the theme is not added
 
     @backlog @desktop
     Scenario: A VS Code theme fills the colors it leaves out

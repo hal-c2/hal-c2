@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29917
+#   https://github.com/pingdotgg/t3code/pull/23641
+#   https://github.com/pingdotgg/t3code/pull/26154
+#   https://github.com/pingdotgg/t3code/pull/23231
+#   https://github.com/pingdotgg/t3code/pull/26798
 #   https://github.com/pingdotgg/t3code/pull/18692
 #   https://github.com/pingdotgg/t3code/pull/20231
 #   https://github.com/pingdotgg/t3code/pull/18901
@@ -78,6 +83,16 @@ Feature: Projects settings panel
     Then the user is told the project title cannot be empty
     And the name stays "shop"
 
+  # Upstream #23231: Enter that confirmed an input method's candidate saved the half-typed name
+  # and took the keyboard away from the field.
+  @backlog @desktop @priority-low
+  Scenario: Confirming an input method's candidate keeps the project name open for editing
+    Given the user is renaming "shop" in settings with a Japanese input method
+    When the user presses Enter to pick a candidate
+    Then the name is not saved yet and the field keeps the keyboard
+    When the user finishes the name and presses Enter
+    Then the finished name is saved
+
   @desktop @mobile @backlog-mobile
   Scenario: Renaming with a disconnected checkout asks the user to reconnect
     Given "server" is disconnected
@@ -97,10 +112,28 @@ Feature: Projects settings panel
     When the user sets the icon of "shop" back to automatic
     Then "shop" shows its automatic icon
 
+  # Upstream #26798: a renamed "No project" had no name reset, and clearing its icon lost its own.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A renamed "No project" can be reset to its own name and icon
+    Given the user renamed "No project" to "Notes" and gave it a rocket icon
+    When the user resets its name and its icon in settings
+    Then it is called "No project" again and shows its own icon
+
   @desktop @mobile @backlog-mobile @priority-low
   Scenario: The panel lists every checkout with where it lives
     When the user manages "shop" in settings
     Then the checkouts on "laptop" and "server" are listed with their folders
+
+  # Upstream #23641: with related checkouts grouped, the panel had no per-checkout grouping, so a
+  # checkout could not be split into its own project there or put back under the global rule.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A checkout's grouping is set and reset from the panel
+    Given project grouping combines matching repositories
+    When the user sets the "server" checkout of "shop" to stay apart
+    Then the "server" checkout is listed as a project of its own and the panel follows it
+    When the user sets it back to follow the global grouping
+    Then it is grouped into "shop" again and the checkout's other overrides are kept
+    And a grouping that cannot be saved is reported and the saved choice stays shown
 
   # Upstream #21409: the phone lists projects and checkouts and can now remove them too.
   @desktop @mobile @backlog-mobile
@@ -121,6 +154,15 @@ Feature: Projects settings panel
     When the user asks to remove the "laptop" checkout of "shop"
     Then the confirmation names 3 threads, the folder and "laptop"
     And the confirmation says conversation history is cleared permanently
+
+  # Upstream #29917: the count included side chats and subagent threads, which no thread list
+  # shows, and moved as subagents started and went idle.
+  @backlog @desktop @mobile
+  Scenario: The removal confirmation counts only the threads the lists show
+    Given the "laptop" checkout of "shop" has 1 thread with a side chat and a running subagent
+    When the user asks to remove the "laptop" checkout of "shop"
+    Then the confirmation names 1 thread
+    And the side chat and the subagent are removed with that thread
 
   # Upstream #21409: after removal the phone left a dead screen and kept filtering by the project.
   @backlog @mobile
@@ -246,3 +288,68 @@ Feature: Projects settings panel
     When the clone finishes
     Then the project shows the repository's favicon instead of a generated monogram
     And no reload is needed
+
+  # Upstream #26154: projects piled up with no way to keep favourites first or hide finished ones.
+  @backlog @mc @shared @priority-high
+  Rule: Pinned projects come first and archived projects leave the pickers
+
+    Scenario: A pinned project comes first in every project picker
+      Given the projects "api", "shop" and "web"
+      When the user pins "web"
+      Then "web" is listed first in the sidebar's project filter, the new thread's project choice, the command palette and scheduled tasks
+      And the other projects keep the user's project order
+
+    Scenario: A pinned project keeps its folder in the sidebar without active threads
+      Given "web" is pinned and has no active threads
+      When the user looks at the sidebar
+      Then "web" has a folder above the other projects, with its new-thread button
+      And the user can pin or unpin a folder from its menu
+
+    Scenario Outline: A project is pinned and unpinned from where it is chosen
+      When the user pins "web" from <where>
+      Then "web" is pinned
+      And the same place unpins it
+
+      Examples:
+        | where                                                                |
+        | its row in a new thread's project choice                             |
+        | the new-thread project list, with mod+shift+p on the highlighted row |
+        | the command palette                                                  |
+        | the sidebar's project filter                                         |
+        | Settings > Projects                                                  |
+
+    Scenario: An archived project leaves the pickers and keeps its threads
+      When the user archives "api" in Settings > Projects
+      Then "api" is no longer offered in the project pickers
+      And its threads, settings and files are kept
+      And Settings lists "api" marked "Archived", with "Unarchive" on its page
+
+    Scenario: An archived project with active threads keeps a folder below the open projects
+      Given "api" is archived and has an active thread
+      When the user looks at the sidebar
+      Then "api" has a folder below the open projects
+
+    Scenario: Adding an archived project's folder again unarchives it
+      Given "api" is archived
+      When the user adds the folder of "api" as a project from the command palette, the phone or the desktop
+      Then "api" is no longer archived
+
+    @mobile
+    Scenario: The phone pins and archives from Organize
+      When the user opens Settings > Projects > Organize
+      Then each project can be pinned and archived there
+
+    Scenario: A project on several machines is pinned if any machine says so and archived only if every one does
+      Given "shop" has checkouts on "laptop" and "server"
+      And "laptop" has "shop" pinned and archived but "server" has neither
+      When the user looks at the project pickers
+      Then "shop" is listed, pinned
+
+    Scenario: An agent pins and archives a project with its project tool
+      When an agent updates "api" through the HAL-C2 project tool with pinned and archived set
+      Then "api" is pinned and archived
+
+    Scenario: An MC that cannot keep pins and archives offers neither
+      Given an environment whose MC does not keep project pins and archives
+      When the user looks at its projects
+      Then no pin or archive control is offered for them

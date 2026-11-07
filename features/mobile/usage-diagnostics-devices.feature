@@ -1,6 +1,9 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/16052
 #   https://github.com/pingdotgg/t3code/pull/14284
+#   https://github.com/pingdotgg/t3code/pull/25231
+#   https://github.com/pingdotgg/t3code/pull/26061
+#   https://github.com/pingdotgg/t3code/pull/28622
 #   apps/mobile/src/features/usage/UsageRouteScreen.tsx (usage and limits tabs, ranges, filter)
 #   apps/mobile/src/features/usage/UsageLimitsSection.tsx (reset credits)
 #   apps/mobile/src/features/usage/UsageLimitsPooled.tsx (accounts, pace, reveal email)
@@ -168,6 +171,28 @@ Feature: Usage, diagnostics and devices on a phone
     When the user looks at the usage environment filter
     Then the filter says some environments are loading
 
+  # Upstream #25231: crossing the compact/split boundary reset Usage.
+  @backlog @mobile @priority-low
+  Scenario: Usage keeps its place when the layout changes width
+    Given the user is on the limits page of usage with an environment filter set and scrolled down
+    When the window crosses between the compact and split layouts
+    Then usage still shows the limits page with the same filter and scroll position
+
+  # Upstream #26061: usage stacked two switches (Usage/Limits, then Cost/Tokens) in one narrow column.
+  @backlog @mobile @priority-low
+  Scenario: Usage is switched between cost, tokens and limits with one control
+    When the user opens usage
+    Then one control switches between cost, tokens and limits
+
+  # Upstream #26061
+  @backlog @mobile @priority-low
+  Scenario: Usage on a wide screen sets its totals beside the chart
+    Given the phone shows usage at least 600 points wide
+    When the user looks at cost
+    Then the total and the providers sit beside the chart
+    When the user looks at limits
+    Then each account's share of a limit is labelled on the bar where it has room
+
   @backlog @mobile
   Scenario: The user opens an account from the limits to see its details
     Given the limits pool two Codex accounts
@@ -271,6 +296,15 @@ Feature: Usage, diagnostics and devices on a phone
     When the user closes the device viewer
     Then streaming stops
     And the simulator stays open for the agent
+
+  # Upstream #28622: the phone forced iOS simulators onto still images, and connecting input hid Close.
+  @backlog @mobile @priority-low
+  Scenario: The device viewer streams video where it can and keeps Close in reach
+    Given an agent in "Fix checkout" has an iOS simulator open
+    When the user opens the device viewer
+    Then the simulator is streamed as H.264 video, or as still images where the phone cannot decode it
+    When the user's touches start reaching the simulator and the controls hide
+    Then the user can still close the viewer and show the controls again
 
   @backlog @mobile @priority-low
   Scenario Outline: The device viewer adapts to an insecure remote connection

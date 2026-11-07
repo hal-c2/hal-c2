@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21271
 #   https://github.com/pingdotgg/t3code/pull/17547
 #   https://github.com/pingdotgg/t3code/pull/16674
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
@@ -17,6 +18,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15024
 #   https://github.com/pingdotgg/t3code/pull/24760
 #   https://github.com/pingdotgg/t3code/pull/24830
+#   https://github.com/pingdotgg/t3code/pull/26395
 
 Feature: Settling threads
   Settling marks a thread as done without archiving it. Threads also settle on their own
@@ -146,6 +148,22 @@ Feature: Settling threads
     When "Ship checkout" has had no activity for 3 days
     Then "Ship checkout" is settled automatically
 
+  # Upstream #26395: a watch on a pull request that has already merged is no longer work the
+  # thread waits on, so the thread settles when its turn ends instead of on the next sweep.
+  # A closed pull request still holds it, because the agent is woken for the close.
+  @backlog @mc @priority-high
+  Scenario Outline: A watched pull request holds a finished thread only until it merges
+    Given the agent in "Ship checkout" is watching its pull request
+    And the pull request <state>
+    When the agent's turn ends
+    Then "Ship checkout" <result>
+
+    Examples:
+      | state                                     | result                     |
+      | merged during the turn                    | is settled right away      |
+      | was closed without merging                | stays active for the agent |
+      | merged and the agent waits on CI after it | stays active               |
+
   @mc
   Scenario Outline: Work in progress keeps a thread from settling on its own
     Given "Ship checkout" has had no activity for 3 days
@@ -272,3 +290,13 @@ Feature: Settling threads
     Given a thread whose turn ended while a subagent still worked
     When the subagent finishes
     Then the thread is checked for settling at once, without waiting for the next sweep
+  # Upstream #21271: subagent threads copied the parent's pin, so they never settled and the
+  # sidebar, which hides them, gave no way to unpin them.
+  @backlog @mc
+  Scenario: A subagent thread of a pinned thread is not pinned
+    Given "Cart totals" is pinned
+    When its agent starts a subagent thread or delegates a task
+    Then the new thread is not pinned
+    And "Cart totals" stays pinned
+    And the new thread settles on its own once it has been idle long enough
+

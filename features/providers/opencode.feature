@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27779
+#   https://github.com/pingdotgg/t3code/pull/21460
+#   https://github.com/pingdotgg/t3code/pull/29535
+#   https://github.com/pingdotgg/t3code/pull/22661
+#   https://github.com/pingdotgg/t3code/pull/29221
+#   https://github.com/pingdotgg/t3code/pull/29877
+#   https://github.com/pingdotgg/t3code/pull/26165
+#   https://github.com/pingdotgg/t3code/pull/24734
+#   https://github.com/pingdotgg/t3code/pull/27757
+#   https://github.com/pingdotgg/t3code/pull/25230
 #   https://github.com/pingdotgg/t3code/pull/23939
 #   https://github.com/pingdotgg/t3code/pull/15672
 #   https://github.com/pingdotgg/t3code/pull/19636
@@ -44,6 +54,20 @@
 #   apps/server/src/provider/Layers/openCodeUsageLimits.ts, apps/server/src/textGeneration/OpenCodeTextGeneration.ts
 #   https://github.com/pingdotgg/t3code/pull/14978
 #   https://github.com/pingdotgg/t3code/pull/22596
+#   https://github.com/pingdotgg/t3code/pull/26182
+#   https://github.com/pingdotgg/t3code/pull/26302
+#   https://github.com/pingdotgg/t3code/pull/23591
+#   https://github.com/pingdotgg/t3code/pull/23598
+#   https://github.com/pingdotgg/t3code/pull/23270
+#   https://github.com/pingdotgg/t3code/pull/28294
+#   https://github.com/pingdotgg/t3code/pull/28372
+#   https://github.com/pingdotgg/t3code/pull/29301
+#   https://github.com/pingdotgg/t3code/pull/29762
+#   https://github.com/pingdotgg/t3code/pull/30643
+#   https://github.com/pingdotgg/t3code/pull/30201
+#   https://github.com/pingdotgg/t3code/pull/29326
+#   https://github.com/pingdotgg/t3code/pull/29765
+#   https://github.com/pingdotgg/t3code/pull/29824
 
 @plugin-opencode @mc
 Feature: OpenCode
@@ -129,6 +153,46 @@ Feature: OpenCode
     When a new thread needs a title
     Then OpenCode writes it with every tool refused
 
+  # Upstream #23598: the 3-minute limit started only after OpenCode answered the session and prompt.
+  # Upstream #28372: OpenCode 1.x had no limit at all and kept generating after the MC gave up.
+  @backlog
+  Scenario: An OpenCode title that never comes back fails within three minutes
+    Given OpenCode is picked for text generation
+    And OpenCode accepts the request but never answers it
+    When a new thread needs a title
+    Then within three minutes the title fails with "OpenCode did not finish generating in time."
+    And OpenCode is told to stop generating it
+
+  # Upstream #23598: the interrupt after a timeout had no deadline of its own.
+  @backlog @priority-low
+  Scenario: An OpenCode generation that times out is not held up by a stalled interrupt
+    Given an OpenCode title generation reached its three-minute limit
+    And OpenCode does not answer the request to stop it
+    When five more seconds pass
+    Then the title has failed with "OpenCode did not finish generating in time."
+
+  # Upstream #23591: a reconnect mid-reply replaced the text already streamed with what came after.
+  @backlog @priority-high
+  Scenario: An OpenCode reply keeps its streamed text across an event stream reconnect
+    Given OpenCode has streamed one paragraph and part of a second
+    When OpenCode's event stream drops and the MC reconnects
+    And OpenCode streams the rest of the second paragraph
+    Then the reply shows both whole paragraphs
+
+  # Upstream #28294: each OpenCode 1.x title, branch name or commit message left a "T3 Code"
+  # session behind in the user's OpenCode history.
+  @backlog @priority-low
+  Scenario Outline: An OpenCode text generation leaves no session behind
+    Given OpenCode is picked for text generation
+    When OpenCode writes a commit message and <ends>
+    Then OpenCode's session history has no session for that generation
+
+    Examples:
+      | ends              |
+      | it succeeds       |
+      | it fails          |
+      | the user cancels it |
+
   # Upstream #10606: a cancelled OpenCode text generation kept running; it is now aborted.
   @backlog @priority-low
   Scenario: A cancelled OpenCode title or commit message stops OpenCode generating it
@@ -136,6 +200,25 @@ Feature: OpenCode
     When the user cancels it
     Then OpenCode stops generating it
     And another generation on the same server still finishes
+
+  # Upstream #29877: a failed OpenCode 1.x generation copied the model provider's raw text into
+  # its error, sometimes only "<none>"; known failures now get fixed explanations.
+  @backlog @priority-low
+  Scenario Outline: An OpenCode text generation the model provider fails says why in plain words
+    Given OpenCode 1.x is picked for text generation
+    When OpenCode writes a commit message and the model provider fails with <failure>
+    Then the commit message fails with "<explanation>"
+    And the error carries none of the model provider's own text
+
+    Examples:
+      | failure                    | explanation                                                                                     |
+      | a sign-in error            | The model provider rejected the credentials. Check the provider's sign-in or API key in OpenCode. |
+      | HTTP 403                   | The model provider rejected the credentials. Check the provider's sign-in or API key in OpenCode. |
+      | HTTP 429                   | The model provider's usage or rate limit was reached. Try again later.                          |
+      | a context overflow         | The prompt is too long for the selected model's context window.                                 |
+      | an aborted message         | OpenCode stopped the generation.                                                                |
+      | HTTP 502                   | The model provider failed the request (HTTP 502).                                               |
+      | an error body of "<none>"  | OpenCode could not generate the text.                                                           |
 
   Scenario: Refreshing providers picks up a changed OpenCode login
     Given the user connected a new upstream provider in OpenCode
@@ -152,6 +235,15 @@ Feature: OpenCode
     Given the user runs an OpenCode server elsewhere
     When the user sets its URL and password on the OpenCode instance
     Then OpenCode threads run on that server
+
+  # Upstream #25230: health checks and session requests left out the configured password.
+  @backlog @priority-high
+  Scenario: A password-protected OpenCode server is checked and used with its password
+    Given the OpenCode instance points at a server that requires the password the user set
+    When the user starts an OpenCode thread
+    Then the server's health check and the thread's session both use that password
+    And the thread runs
+    But a server the user set up elsewhere is never sent the MC's own OpenCode password
 
   # Upstream #20446: the OpenCode server password moves to the secret store and is never read back.
   @backlog @priority-high
@@ -257,6 +349,23 @@ Feature: OpenCode
       | auto-accept edits | run a command           | asked for approval        |
       | full access       | work outside the project| allowed without asking    |
 
+  # Upstream #26182: an OpenCode session kept the rules it was created with, so a thread moved
+  # from full access to approval required was never asked. #26302 does the same for subagents,
+  # which keep their own limits such as not delegating further.
+  # Upstream #26302: subagent sessions follow the thread's access mode too, keeping their own limits.
+  @backlog @priority-high
+  Scenario Outline: Changing the access mode of an OpenCode thread changes what its sessions are asked
+    Given the thread started OpenCode in full access and <session> exists
+    When the user changes the thread to approval required and sends a message
+    Then OpenCode is asked for approval before <session> runs a command
+    And a subagent session still cannot start subagents of its own
+
+    Examples:
+      | session                                         |
+      | the thread's own session                        |
+      | a subagent session the thread started           |
+      | a subagent session the thread later resumes     |
+
   Scenario Outline: OpenCode approval decisions
     Given OpenCode asked to run a command
     When the user answers <decision>
@@ -282,6 +391,15 @@ Feature: OpenCode
     When the user sends a follow-up message
     Then OpenCode receives the message during the running turn
 
+  # Upstream #23270: a steer to OpenCode 1.x sent only the text, so the rest of the turn ran with
+  # OpenCode's default agent, no reasoning variant and none of HAL-C2's instructions.
+  @backlog @priority-high
+  Scenario: A steer keeps the OpenCode turn's agent, variant and instructions
+    Given an OpenCode turn is running with the agent "reviewer" and the "high" variant in plan mode
+    When the user steers the OpenCode turn with "check the tests too"
+    Then the rest of the turn still runs with the agent "reviewer" and the "high" variant
+    And OpenCode still has HAL-C2's plan mode instructions
+
   Scenario: A message sent as an OpenCode turn ends is answered in that turn
     Given an OpenCode turn is running that ends as it is steered
     When the user sends a follow-up message
@@ -305,6 +423,35 @@ Feature: OpenCode
     When the user stops the turn
     Then the OpenCode turn is interrupted
 
+  # Upstream #29762: OpenCode 1.x rewrites a tool it stopped as an error, so every running command,
+  # edit or subagent read as failed, and a stopped edit showed "Tool execution aborted" as its diff.
+  @backlog @priority-high
+  Scenario Outline: A <tool> running when an OpenCode turn is stopped shows as interrupted
+    Given an OpenCode 1 turn is running <tool>
+    When the user stops the turn
+    Then <tool> shows as interrupted, not failed
+    And no error text is shown as its output or diff
+
+    Examples:
+      | tool                |
+      | a command           |
+      | a file edit         |
+      | a subagent task     |
+
+  # Upstream #30643: an edit replacing text with nothing, or with only whitespace, lost its before
+  # and after text, so its diff had no after state.
+  @backlog @priority-low
+  Scenario Outline: An OpenCode edit that <change> keeps its before and after text
+    Given an OpenCode turn made an edit that <change>
+    When the user opens the edit's diff
+    Then the diff shows the text before and the text after, empty or blank as it is
+
+    Examples:
+      | change                                |
+      | deletes text                          |
+      | replaces text with only spaces        |
+      | writes an empty file                  |
+
   Scenario: A running OpenCode command shows what it runs and its output so far
     Given an OpenCode turn is running
     Then the running command reads "ls" with the output "a.txt"
@@ -319,10 +466,45 @@ Feature: OpenCode
     When the user forks from the second turn
     Then the new thread continues from a fork of OpenCode's session
 
+  # Upstream #29221: OpenCode 2.2.5 compactions lack a field the bundled client required, so every
+  # send of a fork from a compacted thread failed with an empty error.
+  @backlog @priority-high
+  Scenario: Forking an OpenCode thread whose session was compacted forks OpenCode's session
+    Given an OpenCode 2.2 thread with three turns whose session OpenCode compacted
+    When the user forks from the second turn and sends a message
+    Then the new thread continues from a fork of OpenCode's session
+
+  # Upstream #22661: OpenCode 2.1 compactions lack a field the bundled client required, so reading
+  # the session's history failed before the revert was asked for.
+  @backlog @priority-high
+  Scenario: Reverting an OpenCode 2.1 thread whose session was compacted rewinds OpenCode's session
+    Given an OpenCode 2.1 thread with three turns whose session OpenCode compacted
+    When the user reverts to the end of the first turn
+    Then OpenCode's session is rewound to that point
+
   Scenario: OpenCode Go limits are shown for a local OpenCode
     Given OpenCode is signed in to OpenCode Go and runs locally
     When the user opens the limits view
     Then OpenCode Go shows its session, weekly and monthly windows
+
+  # Upstream #27757: one timed-out usage read at startup left Go limits unavailable until restart,
+  # though OpenCode itself was ready and signed in.
+  @backlog @priority-low
+  Scenario: OpenCode Go limits come back after a usage read times out at startup
+    Given OpenCode is signed in to OpenCode Go and runs locally
+    And reading its Go usage timed out when OpenCode started
+    When the next health check comes round
+    Then the Go usage is read again without restarting OpenCode
+    And OpenCode Go shows its session, weekly and monthly windows
+
+  # Upstream #26165: a Go key replaced in OpenCode 2 lived only in its credential store, so usage used the old key.
+  @backlog @priority-low
+  Scenario: OpenCode Go limits use a Go key replaced in OpenCode 2
+    Given a local OpenCode 2 whose Go key was replaced after it imported "auth.json"
+    And the key left in "auth.json" has expired
+    When the user opens the limits view
+    Then OpenCode Go shows its session, weekly and monthly windows
+    And the user is not told "OpenCode Go could not read usage."
 
   # Upstream #21007: OpenCode 2 running Go through a Console API key showed "could not read usage".
   @backlog @priority-low
@@ -361,6 +543,19 @@ Feature: OpenCode
       | reason             |
       | an exhausted quota |
       | a rate limit       |
+
+  # Upstream #29301: a spent Claude plan used through OpenCode's Claude provider failed as a plain
+  # provider error, so Snooze until reset and auto-resume never turned on.
+  @backlog
+  Scenario Outline: A Claude plan limit reached through OpenCode is a usage limit
+    Given an OpenCode turn is running on OpenCode's Claude provider
+    When OpenCode fails it with "<message>"
+    Then the turn shows it hit a usage limit <reset>
+
+    Examples:
+      | message                                                                          | reset                                 |
+      | You've hit your weekly limit · resets 9pm Resets at 2026-11-02T20:00:00.000Z.     | that resets at 2026-11-02T20:00:00Z   |
+      | You've hit your weekly limit · resets 9pm                                         | with no reset time given              |
 
   # Upstream #22596: a quota stop that is a payment problem (HTTP 402) is not a usage limit.
   @backlog
@@ -434,6 +629,15 @@ Feature: OpenCode
     When the event stream ends unexpectedly
     Then the turn fails saying OpenCode exited unexpectedly
     And the thread takes the next message
+
+  # Upstream #30201: a server that accepted the event request but never answered it held the session
+  # open for about five minutes, since the 45-second silence limit starts only after an answer.
+  @backlog
+  Scenario: An OpenCode event stream that is never answered fails within 10 seconds
+    Given OpenCode 2 takes the event stream request and never answers it
+    When the MC opens an OpenCode session or reconnects its event stream
+    Then the attempt fails after 10 seconds
+    And the session is cleaned up or reconnects as it would after any failed attempt
 
   @backlog
   Scenario: An idle report for an earlier prompt does not end a later run
@@ -592,6 +796,15 @@ Feature: OpenCode
     When the user sends "/review the last change" to an OpenCode thread
     Then OpenCode runs its "review" command with "the last change"
 
+  # Upstream #29765: a custom command in a subfolder, such as "git/commit", was sent to the model as
+  # plain text, because a command name could not hold a "/".
+  @backlog
+  Scenario: An OpenCode command from a subfolder runs as OpenCode's own command
+    Given OpenCode offers the command "/git/commit" from ".opencode/command/git/commit.md"
+    When the user sends "/git/commit staged changes" to an OpenCode thread
+    Then OpenCode runs its "git/commit" command with "staged changes"
+    And a message starting with a file path such as "/Users/me/file.ts explain" is still sent as a message
+
   @backlog
   Scenario Outline: A slash message OpenCode cannot run as a command is sent as a message
     Given <situation>
@@ -713,6 +926,15 @@ Feature: OpenCode
     When OpenCode reports that a session failed without saying why
     Then the turn fails saying "OpenCode session failed without an error payload."
 
+  # Upstream #24734: a model provider's unreadable error page showed as "<none>".
+  @backlog @priority-low
+  Scenario: An OpenCode failure from an error page names the page and its status
+    Given an OpenCode turn is running
+    When OpenCode reports a provider error with no message, status 502 and an HTML page titled "Bad gateway"
+    Then the turn fails naming "Bad gateway" and status 502
+    And the failure is not shown as "<none>"
+    And a provider error with a message still shows that message
+
   @backlog
   Scenario: An OpenCode timeout without a message still fails the turn readably
     Given an OpenCode turn is running
@@ -830,6 +1052,15 @@ Feature: OpenCode
     Then reading fails naming the project folder
     And the failure is not remembered as an empty list
 
+  # Upstream #29535: OpenCode 2 lists a folder's skills while it scans it in the background, and a
+  # $skill missing from one early read was dropped, so the model saw only the literal "$name".
+  @backlog
+  Scenario: A $skill sent before OpenCode finishes scanning the folder still reaches OpenCode
+    Given the project has the OpenCode skill "greet"
+    And OpenCode 2 was restarted and has not finished scanning the project folder
+    When the user sends "$greet again please" in an OpenCode thread
+    Then OpenCode receives the message with the skill "greet" attached
+
   # OpenCodeAdapterV2.ts: how OpenCode's own tools, permissions and to-dos read in the thread.
   @backlog
   Scenario Outline: OpenCode's tool calls are shown by kind
@@ -843,6 +1074,14 @@ Feature: OpenCode
       | fetches a web page or searches the web                   | a web search with what it looked for     |
       | reads a file, searches files or asks the language server | a file search with what it looked for    |
       | uses any other tool                                      | a tool call with its input and output    |
+
+  # Upstream #29824: OpenCode reports a shell command that exits non-zero as completed, so a failing
+  # test run was stored, and read by agents, as a command that succeeded.
+  @backlog @priority-high
+  Scenario: An OpenCode command that exits non-zero is shown as failed
+    When OpenCode runs "vp test" and it exits with code 1
+    Then the thread shows the command as failed with exit code 1
+    And an agent reading the thread is told the command failed
 
   # Upstream #21507: OpenCode's native reads render without their XML envelopes
   @backlog
@@ -979,6 +1218,15 @@ Feature: OpenCode
     Then a process of "opencode-work" runs that turn in place of the first instance's
     And another message to "opencode-work" stays in that process
 
+  # Upstream #29326: OpenCode's binary path was used as written, so "~/.local/bin/opencode" failed
+  # to start; Codex and Claude already expanded it.
+  @backlog @priority-low
+  Scenario: An OpenCode binary path starting with "~" is found in the user's home
+    Given OpenCode's binary path is set to "~/.local/bin/opencode", a wrapper in a home folder with spaces in its name
+    When the MC checks OpenCode
+    Then OpenCode is ready, with its version and models
+    And its turns run that wrapper
+
   # Upstream #13651: OpenCode 2.x prints "server listening on <url>", not the 1.x line.
   @backlog @mc @plugin-opencode @priority-low
   Scenario: OpenCode counts as started when it prints either listening line
@@ -1065,6 +1313,15 @@ Feature: OpenCode
     Then the call to "A" ends as failed
     And the thread no longer shows an agent working in the background
 
+  # Upstream #21460: background work an OpenCode 2 subagent queued while the root turn ended was
+  # lost behind the session's newer idle state.
+  @backlog @priority-high
+  Scenario: A subagent's queued background continuation still runs after the root turn ends
+    Given an OpenCode 2 subagent queued a background continuation of its nested work
+    When the root turn ends
+    Then the thread still shows an agent working in the background
+    And the continuation runs and its result reaches the subagent's caller
+
   # Upstream #18561: an upgraded CLI kept being reported at the running server's old version.
   @backlog
   Scenario: An OpenCode update is checked against the installed CLI
@@ -1072,3 +1329,13 @@ Feature: OpenCode
     When the user checks for provider updates
     Then OpenCode is shown as 1.5.0 and up to date
     And the running server is not restarted to find out
+
+  # Upstream #27779: an OpenCode upgraded from 1.x to 2 while the MC ran kept being opened as 1.x,
+  # so every new session failed until the provider status was refreshed.
+  @backlog @priority-high
+  Scenario: An OpenCode upgraded in place from 1.x to 2 opens its sessions as OpenCode 2
+    Given the MC started with OpenCode 1.18 installed
+    And OpenCode is upgraded in place to 2.2
+    When the user sends a message in a new OpenCode thread
+    Then the session opens through OpenCode 2
+    And an OpenCode already seen as 2 is not checked again

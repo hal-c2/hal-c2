@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27703
+#   https://github.com/pingdotgg/t3code/pull/23326
+#   https://github.com/pingdotgg/t3code/pull/24639
+#   https://github.com/pingdotgg/t3code/pull/24702
+#   https://github.com/pingdotgg/t3code/pull/26065
+#   https://github.com/pingdotgg/t3code/pull/26592
+#   https://github.com/pingdotgg/t3code/pull/21448
+#   https://github.com/pingdotgg/t3code/pull/27143
 #   https://github.com/pingdotgg/t3code/pull/24231
 #   https://github.com/pingdotgg/t3code/pull/24595
 #   https://github.com/pingdotgg/t3code/pull/23273
@@ -21,6 +29,9 @@
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
 #   https://github.com/pingdotgg/t3code/pull/22897
 #   https://github.com/pingdotgg/t3code/pull/21074
+#   https://github.com/pingdotgg/t3code/pull/29398
+#   https://github.com/pingdotgg/t3code/pull/29419
+#   https://github.com/pingdotgg/t3code/pull/29748
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
@@ -68,6 +79,15 @@ Feature: Cursor
     Then every client of the MC is offered the Cursor sign-in page
     And Cursor is signed in once the user finishes on the website
 
+  # Upstream #24702: a sign-in whose account had no email was refused as "Could not save the Cursor sign-in."
+  @backlog
+  Scenario: A Cursor account without an email still signs in
+    Given Cursor is enabled and signed out
+    And the user's Cursor account reports no email
+    When the user signs in to Cursor and finishes on the website
+    Then Cursor is signed in
+    And the user is not told the sign-in could not be saved
+
   # Both servers end a sign-in after five minutes (ProviderAuth, CursorAuth AUTH_TIMEOUT_MS).
   Scenario: The Cursor sign-in request expires if nobody answers it
     Given Cursor is waiting for the user to open its sign-in page
@@ -98,6 +118,16 @@ Feature: Cursor
     When Cursor rejects the account
     Then Cursor's status and the sign-in say a paid Cursor plan is needed
     And the rejected sign-in is not kept
+
+  # Upstream #24639: Enterprise teams can block Cursor's account endpoint while models and local
+  # runs still work; the blocked read failed the whole status check.
+  @backlog @priority-low
+  Scenario: Cursor is ready when the team blocks reading the account
+    Given the user's Cursor team has turned off the account details endpoint
+    When the user opens the provider list
+    Then Cursor is ready with its models
+    And the account shows as "Cursor account" or "Cursor API key" without an email
+    And a rejected sign-in or key still fails as an authentication error
 
   @backlog
   Scenario: A Cursor model catalog request that does not finish is reported
@@ -136,6 +166,16 @@ Feature: Cursor
     Given Cursor is picked for text generation
     When a new thread needs a title
     Then Cursor writes the title without using any tools
+
+  # Upstream #29748: a Cursor text generation stopped by a usage limit failed with only "Cursor SDK
+  # request finished with an error."
+  @backlog
+  Scenario: Cursor text generation stopped by a usage limit says so
+    Given Cursor is picked for text generation
+    And the user has reached a Cursor usage limit
+    When a commit message is generated
+    Then the failure says the Cursor usage limit was reached
+    And it says to try again later or choose another text-generation provider
 
   Scenario Outline: Cursor's access modes map to Cursor's own safety settings
     Given the thread runs Cursor in <mode>
@@ -209,6 +249,16 @@ Feature: Cursor
     When the user opens the provider list
     Then Cursor is shown with a warning that no models were found
 
+  # Upstream #29398: "/compact" reached Cursor's model as plain text, which either did not know it or
+  # replied with a summary, and the context stayed the same size.
+  @backlog
+  Scenario: Sending /compact compacts the Cursor conversation
+    Given a Cursor thread with a long conversation
+    When the user sends "/compact" to the Cursor thread
+    Then the thread shows that its context was compacted
+    And Cursor's summary is not shown as a reply in the chat
+    And Cursor still knows what the conversation covered
+
   Scenario: Cursor's plan and task list are shown
     Given the thread is in plan mode on Cursor
     When Cursor finishes planning
@@ -218,6 +268,21 @@ Feature: Cursor
     Given Cursor is signed in with a file-based login
     When the user opens the limits view
     Then Cursor shows its monthly, Auto and API usage with the billing cycle end
+
+  # Upstream #29419: a Cursor sign-in from HAL-C2 or a CURSOR_API_KEY showed Cursor as signed in
+  # but no limits and no history; only a Cursor CLI login could be read.
+  @backlog
+  Scenario Outline: Cursor usage shows for an account signed in with <credential>
+    Given the user signed in to Cursor with <credential> and has no Cursor CLI login
+    When the user opens the limits view and the usage history
+    Then Cursor shows its monthly allowance
+    And Cursor's usage history lists its requests
+    And the user is not asked to allow access to a Cursor CLI login
+
+    Examples:
+      | credential                                  |
+      | Sign in with Cursor                         |
+      | a CURSOR_API_KEY in the instance's environment |
 
   Scenario: Cursor usage is unavailable with a keychain login
     Given Cursor is signed in through the system keychain
@@ -247,6 +312,16 @@ Feature: Cursor
     Given Cursor has no saved login
     When the user opens the limits view
     Then Cursor shows no login warning
+
+  # Upstream #27143: a Keychain token left behind by an old Cursor install was read and its 401
+  # shown as "Sign in to Cursor again" to users who no longer have Cursor.
+  @backlog @priority-low
+  Scenario: A keychain login left by a removed Cursor install is ignored
+    Given the user turned on Cursor account usage
+    And the system keychain still holds a login from a Cursor install that was removed
+    When the user opens the limits view
+    Then the keychain is not read for Cursor
+    And Cursor shows no login warning
 
   # Upstream #13870: once one environment reports Cursor account usage, another environment's
   # keychain is not read to report the same account again.
@@ -288,6 +363,15 @@ Feature: Cursor
   Scenario: A command Cursor leaves running ends with its turn
     When Cursor ends a turn with a command still running
     Then the command it left running ends with the turn
+
+  # Upstream #21448: a read Cursor never reported back was closed as a successful read with no
+  # output when the run finished normally, while the reply said the read failed.
+  @backlog @priority-high
+  Scenario: A tool call Cursor never finished is not shown as a success
+    Given Cursor starts reading "secret.txt" and never reports a result for it
+    When the Cursor run finishes normally
+    Then the read of "secret.txt" is shown as interrupted
+    And it stays visible in the timeline
 
   Scenario: A Cursor command the user stops shows as interrupted
     Given Cursor is running a command
@@ -426,6 +510,16 @@ Feature: Cursor
     Then every skill is listed
     And nothing inside "node_modules" is searched for skills
 
+  # Upstream #23326: supporting files used up the skill search's shared budget, so 11,000 files
+  # under one skill hid its sibling and failed the provider check.
+  @backlog @priority-low
+  Scenario: A skill's supporting files do not hide the skills beside it
+    Given the project has the Cursor skills "review" and "deploy"
+    And "review" holds 11,000 files under its "artifacts" folder
+    When the user lists Cursor's skills
+    Then "review" and "deploy" are both listed
+    And Cursor's provider check passes
+
   @backlog @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short
     Given <situation>
@@ -534,6 +628,13 @@ Feature: Cursor
     Then the thread shows the tool call as "mcp__docs__search"
     And a result the server marks as an error shows the call as failed
 
+  # Upstream #26065: a file with one match in a counting grep said "1 matches".
+  @backlog @shared @priority-low
+  Scenario: A counting search says "1 match" for a file with one match
+    When Cursor counts the matches of a text search across files
+    Then a file with one match says "1 match"
+    And a file with three matches says "3 matches"
+
   @backlog
   Scenario: A Cursor command shows its output while it runs
     Given Cursor is running a long shell command
@@ -562,6 +663,20 @@ Feature: Cursor
     Then a child thread opens with the task as its first message
     And the subagent's tool calls appear in the child thread
     And the subagent's result is shown when it finishes
+  # Upstream #26592: a subagent's empty directory listing, lint check or MCP result failed the parent run.
+  @backlog
+  Scenario Outline: A Cursor subagent's <tool> with nothing in it does not fail the parent run
+    Given Cursor hands a task to one of its subagents
+    When the subagent's <tool> comes back with <empty>
+    Then the parent run goes on
+    And the child thread shows the <tool>
+
+    Examples:
+      | tool              | empty                         |
+      | directory listing | a folder holding only folders |
+      | lint check        | no problems                   |
+      | MCP tool call     | no content                    |
+
 
   # Upstream #17419: subagent cards show Cursor's reasoning effort.
   @backlog @shared
@@ -679,5 +794,14 @@ Feature: Cursor
   Scenario: A Cursor stream closing under a write does not stop the MC
     Given a Cursor turn is running
     When the Cursor SDK rejects a write because its stream already closed
+    Then the MC keeps running
+    And other threads are unaffected
+
+  # Upstream #27703: when the Cursor SDK ended a run's request with a write still in flight, as after
+  # an account ran out of usage, the rejected write took the whole server down.
+  @backlog @priority-high
+  Scenario: A Cursor write left over after its request ended does not stop the MC
+    Given a Cursor turn is running
+    When the Cursor SDK ends the run's request while a write is still in flight
     Then the MC keeps running
     And other threads are unaffected

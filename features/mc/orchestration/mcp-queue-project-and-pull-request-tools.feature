@@ -3,6 +3,8 @@
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/23899
 #   https://github.com/pingdotgg/t3code/pull/22850
+#   https://github.com/pingdotgg/t3code/pull/27994
+#   https://github.com/pingdotgg/t3code/pull/27925
 #   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
 #     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
 #     hal_c2_pending_request_read, hal_c2_pending_request_respond)
@@ -17,6 +19,10 @@
 #     thread.metadata.update, message.dispatch (queue_after_active),
 #     thread.pull-request.link, thread.pull-request.unlink
 #   apps/server/src/mcp/toolkits/orchestrator, project, worktree, pullRequests
+#   https://github.com/pingdotgg/t3code/pull/25561
+#   https://github.com/pingdotgg/t3code/pull/30564
+#   https://github.com/pingdotgg/t3code/pull/30375
+#   https://github.com/pingdotgg/t3code/pull/29810
 Feature: Agents managing queues, projects, worktrees and pull requests through MCP
   Beyond threads themselves, an agent can manage queued messages, answer
   questions, register projects, move its own thread into a worktree and link
@@ -132,6 +138,18 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     When the agent of "caller" renames project "demo" to "Demo app"
     Then the project is called "Demo app"
 
+  # Upstream #30564: a change the project's rules refused came back as "The operation could not be
+  # completed.", so agents retried the same input.
+  @backlog @mc
+  Scenario Outline: A project update the project's rules refuse says why
+    When the agent of "caller" updates project "demo" with <change>
+    Then it fails with code "invalid_request" and a reason naming <rule>
+
+    Examples:
+      | change                               | rule                                                  |
+      | a new script with the id "Run Tests" | script ids being lowercase letters, digits or hyphens |
+      | the monogram "ABC"                   | monograms holding at most two characters              |
+
   @mc
   Scenario: Deleting a project with threads needs force
     When the agent of "caller" deletes project "demo" without force
@@ -174,6 +192,21 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     When the agent of "caller" hands off to a worktree without a continuation prompt
     Then the continuation is skipped
     And the note says the conversation continues in the worktree on the next message
+
+  # Upstream #29810: the handoff and the worktree status read the environment's "start from origin",
+  # not the project's own setting.
+  @backlog @mc @priority-high
+  Scenario Outline: A handoff that does not say where to start follows the project's setting
+    Given new worktrees do not start from origin on the environment
+    And project "demo" sets new worktrees to start from origin
+    When the agent of "caller" <asks>
+    Then <outcome>
+
+    Examples:
+      | asks                                                            | outcome                                                               |
+      | hands off to a worktree on new branch "feature/x"                 | the worktree is created from origin's copy of the current branch      |
+      | asks for its worktree status                                     | it is told new worktrees start from origin                            |
+      | hands off on new branch "feature/x" and says not to start from origin | the worktree is created from the local copy of the current branch |
 
   @mc
   Scenario Outline: Handoffs that are refused
@@ -239,6 +272,46 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
   Scenario: Unlinking reports whether the pull request was linked
     When the agent of "caller" unlinks pull request 99 that is not linked
     Then the answer says it was not linked
+
+  # Upstream #25561: unlinking a pull request dismissed from a stack answered that it had been linked.
+  @backlog @mc
+  Scenario: Unlinking a pull request dismissed from a stack says it was not linked
+    Given pull request 12 was dismissed from the stack of "caller"
+    When the agent of "caller" unlinks pull request 12
+    Then the answer says it was not linked
+    And the thread is not changed
+
+  # Upstream #27994: one call links several pull requests to a thread.
+  @backlog @mc
+  Scenario: An agent links several pull requests in one call
+    Given "caller" already links pull request 12
+    When the agent of "caller" links pull requests 12, 13 and 14 and one address that is not a pull request in one call
+    Then 13 and 14 are reported as linked, 12 as already linked and the address as invalid
+    And the work log of "caller" says 2 pull requests were linked
+
+  # Upstream #27925: one call unlinks every linked pull request in the given states.
+  @backlog @mc
+  Scenario: An agent unlinks every pull request in the given states in one call
+    Given "caller" links merged pull request 10, closed pull request 11, open pull request 12 and pull request 13 that has never been synced
+    When the agent of "caller" unlinks its pull requests that are merged or closed
+    Then 10 and 11 are unlinked and 12 and 13 stay linked
+    And the answer groups the unlinked pull requests by repository and state with their count
+    And the work log of "caller" says 2 pull requests were unlinked
+
+  # Upstream #30375: the pull request tools looked the thread up on their own and gave no hint for
+  # a bare id, as #22452 gave the thread tools.
+  @backlog @mc @priority-low
+  Scenario Outline: A pull request tool given a bare thread id suggests the full id
+    Given thread "mcp:4f1c" exists
+    When the agent of "caller" <calls> for thread "4f1c"
+    Then the tool fails with code "thread_not_found" ending in "Did you mean `mcp:4f1c`?"
+
+    Examples:
+      | calls                                |
+      | links pull request 12                |
+      | unlinks pull request 12              |
+      | lists the linked pull requests       |
+      | watches pull request 12              |
 
   @mc
   Scenario Outline: Pull request references that cannot be used

@@ -296,10 +296,15 @@ defmodule HalC2.Orchestration.Delegation do
 
   # Settles `task` if its child is quiet; true once the task has ended.
   defp settle_quiet(child, child_id, parent_id, task) do
-    # A child that has not started its first run yet has not begun the task.
-    with [_ | _] = runs <- StreamState.list(child, "run"),
+    # A child that has not started its first run yet has not begun the task. Quiet in
+    # the earlier snapshot, then decided from a newer one read after its continuations.
+    with [_ | _] <- StreamState.list(child, "run"),
          true <- quiet?(child),
-         {status, run, ended_at} <- last_end(runs) do
+         {child, continuations} = continuations(child_id),
+         [_ | _] = runs <- StreamState.list(child, "run"),
+         true <- quiet?(child),
+         false <- continuing?(child, continuations),
+         {status, run, ended_at} <- last_end(child, runs) do
       result = result_for(child_id, run, status)
       # Before the result starts the caller's turn, so a link its agent makes from the
       # report finds the child's already there, with what the child heard of it.
@@ -438,28 +443,67 @@ defmodule HalC2.Orchestration.Delegation do
 
   # How a child ended and when, with its state; nil while it works or has not run yet.
   defp stopped(child_id, boot?) do
-    child = stream(child_id)
+    {child, continuations} = continuations(child_id)
     runs = StreamState.list(child, "run")
 
     cond do
       boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil}
-      runs == [] or not quiet?(child) -> nil
-      true -> last_end(runs)
+      runs == [] or not quiet?(child) or continuing?(child, continuations) -> nil
+      true -> last_end(child, runs)
     end
+  end
+
+  # A continuation a restart asked of the child (`Recovery.continue/0`) whose message is
+  # not in yet: the run the restart interrupted is not how the task ends. Once the message
+  # is in, its run is work `quiet?/1` sees. One that failed for good leaves the task to
+  # the periodic check (`IdleSessions`).
+  defp continuing?(child, continuations) do
+    messages = StreamState.get(child, "message")
+
+    Enum.any?(
+      continuations,
+      &(&1["status"] in ~w(pending running) and
+          messages[get_in(&1, ["args", "command", "messageId"])] == nil)
+    )
+  end
+
+  # The child's restart continuations (`provider-runtime.continue` effects), then its
+  # stream, read in that order: a continuation sent sends its message before its effect's
+  # row goes, so one gone from the first read has its message, and its run, in the second.
+  defp continuations(child_id) do
+    hook(:continuations, child_id)
+
+    continuations =
+      for effect <- HalC2.Orchestration.Effects.effects(child_id),
+          effect["type"] == "provider-runtime.continue",
+          do: effect
+
+    hook(:continued, child_id)
+    {stream(child_id), continuations}
   end
 
   # How a child's work ended: its latest run that was not rolled back, by the
   # same pick as everywhere else (`Shell.latest_run/1` — a held run cancelled
   # while held never started, so the run that passed it is how it ended), or,
   # when the user rolled back every one, cancelled when the last was. Nil for a
-  # status no task takes.
-  defp last_end(runs) do
+  # status no task takes. A run that ended to wait on background work a restart ended
+  # did not finish the task, whatever its interim answer says: it was interrupted.
+  defp last_end(child, runs) do
     case runs
          |> Enum.reject(&(&1["status"] == "rolled_back"))
          |> HalC2.Projection.Shell.latest_run() do
-      %{"status" => ended} = run when ended in @terminal -> {ended, run, end_of(run)}
-      nil -> {"cancelled", nil, end_of(latest(runs))}
-      _ -> nil
+      %{"status" => "completed"} = run ->
+        status = if cut_off?(child, run), do: "interrupted", else: "completed"
+        {status, run, end_of(run)}
+
+      %{"status" => ended} = run when ended in @terminal ->
+        {ended, run, end_of(run)}
+
+      nil ->
+        {"cancelled", nil, end_of(latest(runs))}
+
+      _ ->
+        nil
     end
   end
 
@@ -503,6 +547,13 @@ defmodule HalC2.Orchestration.Delegation do
   end
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
+
+  defp cut_off?(child, run),
+    do:
+      Enum.any?(
+        StreamState.list(child, "turn-item"),
+        &(&1["runId"] == run["id"] and HalC2.Orchestration.Recovery.cut_off?(&1))
+      )
 
   # Runs stored without an ordinal read 0, as in `Shell.latest_run/1`; a bare
   # `max_by` would let `nil` win outright (it sorts above integers).

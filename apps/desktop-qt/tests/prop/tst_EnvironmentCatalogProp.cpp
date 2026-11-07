@@ -1,13 +1,15 @@
 // The saved environments (EnvironmentCatalog) as the user and the system change
 // them: environments saved and forgotten, a keyring that refuses and comes
-// back or loses a credential, the record file damaged as a crash leaves it,
-// and the app starting again. It lists what was saved and nothing a refusing
-// keyring kept from it; a damaged file is set aside and the app starts with
+// back, cannot be read, or loses a credential, the record file damaged as a crash leaves it,
+// a disk that stops taking writes, and the app starting again. It lists what
+// was saved and nothing a refusing keyring or disk kept from it, and one not
+// saved keeps the credential it had; a damaged file is set aside and the app starts with
 // none; connecting gives the credential, or says what is missing; and no
 // credential is ever on disk.
 
 #include "Prop.h"
 
+#include <QDir>
 #include <QDirIterator>
 #include <QFile>
 
@@ -38,6 +40,10 @@ struct Model {
   // What the keyring holds, whatever the record file says.
   std::map<std::string, std::string> keyring;
   bool refusing = false;
+  // The keyring takes writes but gives nothing back.
+  bool unreadable = false;
+  // The record file's directory takes no writes.
+  bool locked = false;
   // The record file was damaged since the catalog last wrote it.
   bool damagedOnDisk = false;
   // Damaged files set aside so far.
@@ -58,8 +64,16 @@ struct Sut {
   std::unique_ptr<EnvironmentCatalog> catalog;
   QStringList asides;  // every damaged file the catalog set aside, oldest first
 
-  Sut() { start(); }
-  QString path() const { return dir.filePath(QStringLiteral("saved-environments.json")); }
+  Sut() {
+    QDir().mkpath(records());
+    start();
+  }
+  ~Sut() { lock(false); }
+  QString records() const { return dir.filePath(QStringLiteral("records")); }
+  QString path() const { return QDir(records()).filePath(QStringLiteral("saved-environments.json")); }
+  void lock(bool locked) const {
+    QFile::setPermissions(records(), locked ? QFile::ReadOwner | QFile::ExeOwner : QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+  }
   // As the app starts: a store on the same keyring, the record file read.
   void start() {
     catalog.reset();
@@ -113,6 +127,18 @@ struct Save : Step<Save> {
   explicit Save(const Model&) {}
   void apply(Model& model) const override {
     if (model.refusing) return;
+    if (model.locked) {
+      // Not saved: the keyring is put back as the catalog read it, and a
+      // credential the record names stays when there was nothing to put back.
+      const auto had = model.keyring.find(id);
+      if (!model.unreadable && had != model.keyring.end()) return;
+      if (model.find(id)) {
+        model.keyring[id] = credential;
+      } else {
+        model.keyring.erase(id);
+      }
+      return;
+    }
     model.keyring[id] = credential;
     std::erase_if(model.listed, [&](const auto& entry) { return entry.first == id; });
     model.listed.emplace_back(id, Saved{label, located, credential});
@@ -121,8 +147,8 @@ struct Save : Step<Save> {
   void act(const Model& model, Sut& sut) const {
     const SavedEnvironment environment{q(id), q(label), located ? QUrl(QStringLiteral("http://%1.local:3773").arg(q(id))) : QUrl(), {}};
     const std::optional<QString> refused = sut.catalog->save(environment, q(credential));
-    // Refused exactly when the keyring is, and saying who could not be saved.
-    RC_ASSERT(refused.has_value() == model.refusing);
+    // Refused exactly when the keyring or the disk is, and saying who could not be saved.
+    RC_ASSERT(refused.has_value() == (model.refusing || model.locked));
     if (refused) RC_ASSERT(refused->startsWith(label.empty() ? q(id) : q(label)));
   }
   void show(std::ostream& os) const override { os << "Save(" << id << ", \"" << label << "\"" << (located ? "" : ", no origin") << ")"; }
@@ -132,6 +158,8 @@ struct Forget : Step<Forget> {
   std::string id = *rc::gen::elementOf(kIds);
 
   explicit Forget(const Model&) {}
+  // One forgotten on a disk that takes no writes is back at the next start (#1096).
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.locked); }
   void apply(Model& model) const override {
     model.keyring.erase(id);
     if (std::erase_if(model.listed, [&](const auto& entry) { return entry.first == id; }) > 0) model.damagedOnDisk = false;
@@ -150,6 +178,16 @@ struct Refuse : Step<Refuse> {
   void show(std::ostream& os) const override { os << "Refuse(" << (refusing ? "on" : "off") << ")"; }
 };
 
+// The keyring stops, or starts again, giving back what it holds.
+struct Unreadable : Step<Unreadable> {
+  bool unreadable = *rc::gen::arbitrary<bool>();
+
+  explicit Unreadable(const Model&) {}
+  void apply(Model& model) const override { model.unreadable = unreadable; }
+  void act(const Model&, Sut& sut) const { sut.keys->unreadable = unreadable; }
+  void show(std::ostream& os) const override { os << "Unreadable(" << (unreadable ? "on" : "off") << ")"; }
+};
+
 // The keyring loses one credential (the user deleted it, or another app did).
 struct LoseCredential : Step<LoseCredential> {
   std::string id = *rc::gen::elementOf(kIds);
@@ -160,9 +198,21 @@ struct LoseCredential : Step<LoseCredential> {
   void show(std::ostream& os) const override { os << "LoseCredential(" << id << ")"; }
 };
 
+// The disk stops, or starts again, taking writes.
+struct Lock : Step<Lock> {
+  bool locked = *rc::gen::arbitrary<bool>();
+
+  explicit Lock(const Model&) {}
+  void apply(Model& model) const override { model.locked = locked; }
+  void act(const Model&, Sut& sut) const { sut.lock(locked); }
+  void show(std::ostream& os) const override { os << "Lock(" << (locked ? "on" : "off") << ")"; }
+};
+
 // The record file is cut off, as a crash mid-write leaves it.
 struct Damage : Step<Damage> {
   explicit Damage(const Model&) {}
+  // A crash mid-write, so on a disk that takes writes.
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.locked); }
   void apply(Model& model) const override { model.damagedOnDisk = true; }
   void act(const Model&, Sut& sut) const {
     QFile file(sut.path());
@@ -175,6 +225,11 @@ struct Damage : Step<Damage> {
 // The app starts again and reads the record file.
 struct Reload : Step<Reload> {
   explicit Reload(const Model&) {}
+  // A damaged file is set aside by writing beside it.
+  void checkPreconditions(const Model& model) const override {
+    const bool stuck = model.locked && model.damagedOnDisk;
+    RC_PRE(!stuck);
+  }
   void apply(Model& model) const override {
     if (!model.damagedOnDisk) return;
     // Set aside, and none listed; the keyring keeps what it had.
@@ -208,7 +263,7 @@ struct Connect : Step<Connect> {
     if (!saved || !saved->located) {
       RC_ASSERT(connection.blocked == EnvironmentCatalog::profileMissing(q(id)));
       RC_ASSERT(connection.credential.isEmpty());
-    } else if (model.refusing || kept == model.keyring.end()) {
+    } else if (model.refusing || model.unreadable || kept == model.keyring.end()) {
       RC_ASSERT(connection.blocked == EnvironmentCatalog::credentialMissing(q(id)));
       RC_ASSERT(connection.credential.isEmpty());
     } else {
@@ -230,8 +285,8 @@ private slots:
     QVERIFY(rc::check("the catalog lists what was saved, sets a damaged file aside, and never writes a credential to disk", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Save, Save, Save, Forget, Refuse, LoseCredential, Damage, Reload, Reload, Connect,
-                                                         Connect>());
+                       rc::state::gen::execOneOfWithArgs<Save, Save, Save, Forget, Refuse, Unreadable, Lock, LoseCredential, Damage, Reload, Reload,
+                                                         Connect, Connect>());
     }));
   }
 };

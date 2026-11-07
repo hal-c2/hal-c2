@@ -57,6 +57,67 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
     "claude-work" => "claudeAgent"
   }
 
+  # The failed-check marker over any run of turn readings and checks, through the pure
+  # `merge/3` and `after_probe/2` the service publishes with: a failed check with no
+  # earlier reading is marked, a turn's reading shows its window yet leaves the mark, and
+  # only a check that succeeds clears it. A failed check after a good one keeps that one.
+  property "a failed check stays marked through turn readings until a check succeeds" do
+    forall steps <-
+             list(
+               oneof([
+                 {:reading, oneof(~w(primary secondary)), integer(0, 100)},
+                 :check_fails,
+                 {:check_ok, integer(0, 100)}
+               ])
+             ) do
+      {published, marked?} =
+        Enum.reduce(steps, {nil, false}, fn
+          {:reading, id, used}, {published, marked?} ->
+            window = %{"id" => id, "kind" => "session", "usedPercent" => used}
+            {Limits.merge(published, [window], "t"), marked?}
+
+          :check_fails, {published, marked?} ->
+            failed = Limits.unavailable("t", "probeFailed")
+
+            if published == nil or Map.has_key?(published, "unavailable"),
+              do: {Limits.after_probe(published, failed), true},
+              else: {Limits.after_probe(published, failed), marked?}
+
+          {:check_ok, used}, {published, _marked?} ->
+            ok =
+              Limits.limits("t", [
+                %{"id" => "primary", "kind" => "session", "usedPercent" => used}
+              ])
+
+            {Limits.after_probe(published, ok), false}
+        end)
+
+      published == nil or Map.has_key?(published, "unavailable") == marked?
+    end
+  end
+
+  # A reading then a failed check still shows the reading, and repeating an unchanged
+  # reading under the marker publishes the very same limits (nothing to push).
+  property "readings under a failed-check marker survive failed checks and repeat silently" do
+    forall {used, repeats, message} <-
+             {integer(0, 100), integer(1, 4), oneof([nil, "Codex exited.", "Codex timed out."])} do
+      failed = Limits.unavailable("t0", "probeFailed")
+      window = %{"id" => "primary", "kind" => "session", "usedPercent" => used}
+      shown = Limits.merge(Limits.after_probe(nil, failed), [window], "t1")
+
+      repeated =
+        Enum.reduce(1..repeats, shown, fn n, acc -> Limits.merge(acc, [window], "t#{n + 1}") end)
+
+      later = Limits.unavailable("t9", "probeFailed", message)
+      after_failed = Limits.after_probe(repeated, later)
+
+      # The windows stay, and the marker is the newer check's own.
+      repeated == shown and
+        after_failed == Map.put(shown, "unavailable", later["unavailable"]) and
+        [%{"usedPercent" => used}] == Enum.map(shown["windows"], &Map.take(&1, ["usedPercent"]))
+    end
+  end
+
   property "each instance keeps its own windows across updates, probes and upgrades",
     numtests: HalC2.Prop.numtests(50),
     max_size: 30 do

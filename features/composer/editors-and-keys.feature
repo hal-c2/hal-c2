@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27384
+#   https://github.com/pingdotgg/t3code/pull/25659
+#   https://github.com/pingdotgg/t3code/pull/23940
+#   https://github.com/pingdotgg/t3code/pull/27016
+#   https://github.com/pingdotgg/t3code/pull/17138
 #   https://github.com/pingdotgg/t3code/pull/18466
 #   https://github.com/pingdotgg/t3code/pull/24063
 #   https://github.com/pingdotgg/t3code/pull/19186
@@ -44,6 +49,10 @@
 #   https://github.com/pingdotgg/t3code/pull/10154
 #   https://github.com/pingdotgg/t3code/pull/14674
 #   https://github.com/pingdotgg/t3code/pull/21503
+#   https://github.com/pingdotgg/t3code/pull/27899
+#   https://github.com/pingdotgg/t3code/pull/23446
+#   https://github.com/pingdotgg/t3code/pull/27457
+#   https://github.com/pingdotgg/t3code/pull/30421
 
 Feature: Editing the draft
   The user edits the draft with the keys they are used to, in an outside
@@ -485,6 +494,65 @@ Feature: Editing the draft
     When the user presses Tab
     Then that line is indented by two spaces
 
+  # Upstream #27384: Backspace on a task nested under a bullet nested it again and let it out,
+  # forever, and the stored draft kept the old indent.
+  @backlog @desktop
+  Scenario Outline: Backspace leaves a nested item of the other list kind
+    Given rich text editing is on
+    And the draft has <parent> with <child> nested under it
+    When the user presses Backspace on an empty <child> below it
+    Then the empty item is gone and the caret is at the end of the item above
+    And the stored draft matches what the composer shows
+
+    Examples:
+      | parent              | child           |
+      | the bullet "parent" | a task "todo"   |
+      | the task "parent"   | a bullet "todo" |
+  # Upstream #17138: Tab on a numbered item nests it under the item above, numbered as a child.
+  @backlog @shared
+  Scenario: Tab on a numbered item nests it under the item above
+    Given the draft reads "1. first" and then "2. nested" on the next line
+    And the caret is in "2. nested"
+    When the user presses Tab
+    Then "nested" becomes the first item of a numbered list under "first"
+    And it lines up with the text of "first", not its number
+    And the caret is still in "nested"
+
+  # Upstream #17138: a nested item continues the numbering of the nested items before it.
+  @backlog @shared
+  Scenario: Tab continues the numbering of the nested items already there
+    Given "first" already has a nested item "1. one"
+    And the next line reads "2. two" at the outer level
+    When the user presses Tab on "2. two"
+    Then "two" is numbered 2 under "first"
+
+  # Upstream #27016: Shift+Tab moved focus to the Build/Plan toggle and left a nested item nested.
+  @backlog @shared
+  Scenario: Shift+Tab moves a nested list item back out one level
+    Given the draft reads "1. first", then "2. second" nested under it as "1. second"
+    And the caret is at the end of "second"
+    When the user presses Shift+Tab
+    Then "second" is item 2 of the outer list again
+    And the caret stays at the end of "second"
+    And Shift+Tab on a top-level line still switches between Build and Plan
+
+  # Upstream #17138: Shift+Enter on an empty nested item lifts it one level and renumbers the parent list.
+  @backlog @shared
+  Scenario: A new line on an empty nested item moves it out one level
+    Given the caret is on an empty item nested under "1. first"
+    And "2. second" follows at the outer level
+    When the user adds a new line
+    Then the empty item becomes item 2 of the outer list
+    And "second" is renumbered 3
+
+  # Upstream #17138: a further Shift+Enter on the lifted empty item leaves the list.
+  @backlog @shared
+  Scenario: A new line on an empty outer item after lifting leaves the list
+    Given the caret is on an empty item that was just moved out to the outer list
+    When the user adds a new line
+    Then that line is no longer a list item
+
+
   @backlog @desktop
   Scenario Outline: Markdown typed with rich text on is shown styled
     Given rich text editing is on
@@ -501,6 +569,23 @@ Feature: Editing the draft
       | - [ ] milk    | "milk" as an unchecked task    |
       | - [x] milk    | "milk" as a checked task       |
 
+  # Upstream #30421: styled Markdown showed its delimiters as decoration, so selecting
+  # and deleting "**" deleted letters instead.
+  @backlog @desktop
+  Scenario Outline: The Markdown under the caret can be edited as written
+    Given rich text editing is on
+    And the draft shows "bold" in bold from "**bold**"
+    When the user moves the caret into "bold"
+    Then the draft shows "**bold**" as it was written
+    When the user <edits>
+    Then once the caret leaves, the draft shows <shown>
+
+    Examples:
+      | edits                                 | shown               |
+      | deletes both "**"                     | "bold" plain        |
+      | changes both "**" to "*"              | "bold" in italics   |
+      | types " text" before the closing "**" | "bold text" in bold |
+
   # Upstream #17435: filling a typed pair of backticks left them literal; moving past the closing
   # backtick now makes the text code.
   @backlog @desktop
@@ -510,6 +595,47 @@ Feature: Editing the draft
     When the user types "hello world" and moves past the closing backtick
     Then the draft shows "hello world" as code
     And text typed after it is plain
+
+  # Upstream #23940: typing the closing backtick first and the opening one last left both literal.
+  @backlog @desktop
+  Scenario: A backtick typed before a line's text makes the pair after it code
+    Given rich text editing is on
+    And the draft reads "hello`"
+    When the user moves to the start of the draft and types "`"
+    Then the draft shows "hello" as code
+    And the caret is at the start of the code
+    And undoing it gives back "hello`"
+
+  # Upstream #27457: on a layout where the backtick is a dead key, a typed pair of backticks stayed
+  # literal, and a later backtick paired with the literal one and formatted the wrong words.
+  @backlog @desktop
+  Scenario: Backticks typed with a dead key make code like any others
+    Given rich text editing is on
+    And the keyboard layout types the backtick as a dead key
+    When the user types "testing `test` and `test`"
+    Then the draft shows both "test" words as code
+    And "and" is plain
+
+  # Upstream #25659: a closing "*" matched an opening one inside earlier inline code, and the
+  # line was italicised with the delimiter pulled out of the code.
+  @backlog @desktop
+  Scenario Outline: An emphasis delimiter inside inline code is not matched
+    Given rich text editing is on
+    When the user types "<typed>"
+    Then nothing in the draft is <style> and both code spans keep their text
+
+    Examples:
+      | typed           | style          |
+      | `*foo` `bar*    | in italics     |
+      | `**foo` `bar**  | bold           |
+      | `~~foo` `bar~~  | struck through |
+
+  # Upstream #25659
+  @backlog @desktop @priority-low
+  Scenario: Emphasis typed around inline code still formats
+    Given rich text editing is on
+    When the user types "*`code` bar*"
+    Then "code" is code and "code bar" is in italics
 
   # Upstream #14677: blocks, not only words, are styled, and the draft keeps every delimiter.
   @backlog @desktop
@@ -550,6 +676,29 @@ Feature: Editing the draft
     When the user picks "Rust" from the code block's language list
     Then the block is highlighted as Rust
     And it is sent with "rust" after its opening fence
+
+  # Upstream #27899: Assembly joined the code block language list.
+  @backlog @desktop @priority-low
+  Scenario: Assembly can be picked as a code block's language
+    Given rich text editing is on and the draft holds a code block
+    When the user picks "Assembly" from the code block's language list
+    Then the block is highlighted as Assembly
+
+  # Upstream #23446: a fence tagged "Text", "TEXT", "plaintext" or "txt" showed its raw spelling
+  # instead of selecting "Plain text".
+  @backlog @desktop @priority-low
+  Scenario Outline: Plain text fences of any spelling are plain text
+    Given rich text editing is on
+    When the user pastes a code block fenced as "<tag>"
+    Then the code block's language reads "Plain text"
+    And the language list offers "Plain text" once, checked
+
+    Examples:
+      | tag       |
+      | Text      |
+      | TEXT      |
+      | plaintext |
+      | txt       |
 
   @backlog @desktop
   Scenario Outline: Markers that do not make a style are left as typed

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24080
+#   https://github.com/pingdotgg/t3code/pull/31825
 #   https://github.com/pingdotgg/t3code/pull/24610
 #   https://github.com/pingdotgg/t3code/pull/21500
 #   https://github.com/pingdotgg/t3code/pull/20996
@@ -28,6 +30,9 @@
 #   https://github.com/pingdotgg/t3code/pull/15034
 #   https://github.com/pingdotgg/t3code/pull/25368
 #   https://github.com/pingdotgg/t3code/pull/21394
+#   https://github.com/pingdotgg/t3code/pull/28515
+#   https://github.com/pingdotgg/t3code/pull/29814
+#   https://github.com/pingdotgg/t3code/pull/28832
 
 Feature: Unread and status in the thread list
   Each thread says whether it needs the user, is busy, or has finished work the user has
@@ -75,6 +80,15 @@ Feature: Unread and status in the thread list
     Then the row for "Build search" reads "Working 26s"
     And a second later it reads "Working 27s"
 
+  # Upstream #28832: a new worktree's setup read "Working", and the timer started over when the agent began.
+  @backlog @desktop @mobile
+  Scenario: A thread setting up its worktree says so before it says Working
+    Given "Build search" was started in a new worktree whose setup takes 20 seconds
+    When the user looks at the thread list during the setup
+    Then the row for "Build search" reads "Setting up" with the time the setup has taken
+    When the agent starts working
+    Then the row reads "Working" counting from when the agent started
+
   # Upstream #21394: a wake that passes while the thread is open is seen, so the row does not
   # say Woke when the user goes back.
   @backlog @desktop @mobile
@@ -116,13 +130,14 @@ Feature: Unread and status in the thread list
 
   # Upstream #15430: a question the agent asked without waiting for the answer showed Input while
   # it kept working; it shows Input once the run ends, and a secret request still shows Input at once.
+  # Upstream #28515: reverses #15430; any question waiting for the user moves the thread out of
+  # Working at once, whether or not the agent keeps working.
   @backlog @mc @desktop @mobile @tui
-  Scenario: A question the agent does not wait on leaves the thread working
+  Scenario: A question the agent does not wait on still shows the thread waiting for an answer
     Given "Build search" has an agent working that asked a question it does not wait on
     When the user looks at the thread list
-    Then "Build search" is shown as working
-    When the run ends with the question unanswered
     Then "Build search" is shown as waiting for an answer
+    And it is not in the Working section
 
   @desktop @mobile @backlog-mobile
   Scenario: A project shows the most urgent state of its threads
@@ -187,8 +202,18 @@ Feature: Unread and status in the thread list
       | 2 days ago     | 2d  |
       | 3 months ago   | 3mo |
 
+  # Upstream #31825: an active row kept aging from the user's last message after the agent
+  # replied; the age now counts from the newest message or run activity.
+  @backlog @desktop @mobile
+  Scenario: A thread's age counts from the agent's latest reply
+    Given the user's last message in "Build search" was 40 minutes ago
+    And the agent replied 2 minutes ago
+    When the user looks at the thread list
+    Then the row for "Build search" shows "2m"
+    And "Build search" keeps its place in the list
+
   # Pinning, snoozing, waking and renaming also move the thread's update time; the age
-  # does not follow it, as on the web (latestUserMessageAt ?? updatedAt).
+  # does not follow it, as on the web, which counts from messages and run activity.
   @desktop @mobile @backlog-mobile @tui @backlog-tui @priority-low
   Scenario: Pinning a thread does not change its age
     Given the last message in "Build search" was 3 hours ago
@@ -281,6 +306,20 @@ Feature: Unread and status in the thread list
     When the agent adds to "Build search" or the user leaves and opens it again
     Then "Build search" is read
 
+  # Upstream #29814: a read thread reopened within ten minutes sent no visit, so marking it unread
+  # was undone at once.
+  @backlog @desktop @mobile
+  Scenario Outline: Marking a thread unread sticks after it was reopened soon after reading
+    Given the user read "Build search", opened another thread, and came back to it within ten minutes
+    When <who> marks "Build search" unread
+    Then "Build search" stays unread while it remains open
+
+    Examples:
+      | who                                |
+      | the user                           |
+      | the user on another device         |
+      | an agent                           |
+
   @desktop
   Scenario: Marking several threads unread
     Given the user has selected three read threads
@@ -345,10 +384,18 @@ Feature: Unread and status in the thread list
     And the preview says "2 terminal processes running"
 
   # Upstream #13673: zsh prompt helpers made idle shells look busy.
-  @mc @desktop @tui @backlog @priority-high
+  @mc @desktop @tui @backlog-desktop @backlog-tui @priority-high
   Scenario: An idle shell does not make its thread look busy
     Given "Build search" has one terminal waiting at an idle prompt
     Then "Build search" is not shown as busy
+
+  # Review of #1206: telling prompt helpers apart by the shell's name hid real work, such as
+  # `bash ./deploy.sh` run in bash; a helper stays in the shell's process group, a command
+  # runs in a group of its own.
+  @mc @priority-high
+  Scenario: A script the shell runs through itself makes its thread look busy
+    Given "Build search" has one terminal running a script through its own shell
+    Then "Build search" is shown as busy
 
   @backlog @desktop @priority-low
   Scenario: The preview lists the thread's pull requests
@@ -404,3 +451,11 @@ Feature: Unread and status in the thread list
     Given a thread shows Woke
     When the user dismisses it from the pill or the chat banner
     Then it is dismissed on the user's other devices too
+
+  # Upstream #24080: Mark unread brought a dismissed Woke back instead of showing Done.
+  @backlog @mc @shared
+  Scenario: Marking a thread unread after its wake was dismissed shows Done, not Woke
+    Given "Build search" was snoozed, woke, and the user dismissed Woke
+    When the user marks "Build search" unread
+    Then the row for "Build search" reads "Done"
+    And it does not show Woke again until it is snoozed and wakes once more

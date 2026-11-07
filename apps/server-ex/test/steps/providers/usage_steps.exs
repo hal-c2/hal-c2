@@ -585,11 +585,317 @@ defmodule HalC2.Steps.Providers.Usage do
   end
 
   step "the transcripts cannot be scanned", context do
-    # A scan cache whose entries are not parsed transcripts makes the scan itself fail.
-    cache =
-      :erlang.term_to_binary(%{version: 1, files: %{"transcript.jsonl" => %{}}, sources: %{}})
+    # A history folder the MC may not list.
+    dir = Path.join(context.usage_dirs.claude, "projects")
+    File.chmod!(dir, 0o000)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dir, 0o755) end)
+    context
+  end
 
-    File.write!(Path.join(context.mc.home, "usage-scan-cache.bin"), cache)
+  step "a turn recorded only the model family name {string}", %{args: [family]} = context do
+    claude(context.usage_dirs.claude, "family", [
+      claude_line("family-1", now() - 60_000, model: family, input: 1000, output: 1000)
+    ])
+
+    Map.put(context, :family, family)
+  end
+
+  step "that model is marked unpriced rather than priced at one generation's rate", context do
+    assert %{"costSource" => "unpriced", "costUsd" => 0} =
+             bucket(context.usage, "claude", context.family)
+
+    context
+  end
+
+  step "a turn on a model recorded with a bracketed context-size suffix such as {string}",
+       %{args: [suffix]} = context do
+    model = "claude-sonnet" <> suffix
+
+    claude(context.usage_dirs.claude, "wide", [
+      claude_line("wide-1", now() - 60_000, model: model, input: 1000, output: 1000)
+    ])
+
+    Map.put(context, :wide_model, model)
+  end
+
+  step "that model is priced at the rate of its base model", context do
+    assert %{"costSource" => "modelPriced", "costUsd" => cost} =
+             bucket(context.usage, "claude", context.wide_model)
+
+    assert_in_delta cost, 1000 * 1.0e-6 + 1000 * 2.0e-6, 1.0e-12
+    context
+  end
+
+  # --- transcripts still being written, rewritten, or outside the window --------------------------
+
+  step "a transcript whose last line has no line ending yet", context do
+    path = claude(context.usage_dirs.claude, "partial", [])
+    line = JSON.encode!(claude_line("partial-1", now() - 60_000, output: 321, session: "partial"))
+    File.write!(path, line)
+    Map.merge(context, %{partial: %{path: path, line: line}, expected_output: 500 + 321})
+  end
+
+  step "that unfinished line is counted in the totals", context do
+    assert output(context.usage, "claude") == context.expected_output
+    context
+  end
+
+  step "the CLI finishes the line and the user opens Usage again", context do
+    File.write!(context.partial.path, "\n", [:append])
+    summary(context)
+  end
+
+  step "the line is counted once", context do
+    assert output(context.usage, "claude") == context.expected_output
+    context
+  end
+
+  step "the user opened Usage and a transcript was read", context do
+    path =
+      claude(context.usage_dirs.claude, "rewrite", [
+        claude_line("rw-1", now() - 90_000, output: 400, session: "rewrite"),
+        claude_line("rw-2", now() - 80_000, output: 100, session: "rewrite")
+      ])
+
+    context = summary(context)
+    assert output(context.usage, "claude") == 500 + 400 + 100
+    Map.put(context, :rewritten, path)
+  end
+
+  step ~r/^the transcript was then (?<change>.+)$/, %{args: [change]} = context do
+    lines =
+      case change do
+        # The same first line, the last bytes before the old end of file changed.
+        "rewritten with different text but the same start" ->
+          [
+            claude_line("rw-1", now() - 90_000, output: 400, session: "rewrite"),
+            claude_line("rw-3", now() - 70_000, output: 150, session: "rewrite"),
+            claude_line("rw-4", now() - 60_000, output: 7, session: "rewrite")
+          ]
+
+        "replaced by a shorter file" ->
+          [claude_line("rw-5", now() - 50_000, output: 300, session: "rewrite")]
+      end
+
+    File.write!(context.rewritten, Enum.map_join(lines, &(JSON.encode!(&1) <> "\n")))
+    context = World.trace_usage_reads(context)
+
+    Map.put(
+      context,
+      :expected_output,
+      500 + Enum.sum(for l <- lines, do: l["message"]["usage"]["output_tokens"])
+    )
+  end
+
+  step "the whole transcript is read again", context do
+    path = context[:rewritten]
+    # A rewrite that grew is offered to `Transcripts.read/3` with its old position, which
+    # refuses it when the bytes before it changed; the totals below prove it read it whole.
+    assert {^path, "claude", _resume} = List.keyfind(World.usage_reads(), path, 0)
+    context
+  end
+
+  step "its earlier lines are not counted twice", context do
+    assert output(context.usage, "claude") == context.expected_output
+    context
+  end
+
+  step "the MC saved its scan of the history before it restarted", context do
+    context = summary(context)
+    assert File.exists?(Path.join(context.mc.home, "usage-scan-cache.bin"))
+    ExUnit.Callbacks.stop_supervised!(HalC2.Usage)
+    Mc.ensure(HalC2.Usage)
+    World.trace_usage_reads(context)
+  end
+
+  step ~r/^the saved scan (?<damage>.+)$/, %{args: [damage]} = context do
+    cache = Path.join(context.mc.home, "usage-scan-cache.bin")
+    [main] = Path.wildcard(Path.join(context.usage_dirs.claude, "projects/main/*.jsonl"))
+
+    case damage do
+      "was written by an older version of the MC" ->
+        saved = cache |> File.read!() |> :erlang.binary_to_term()
+        File.write!(cache, :erlang.term_to_binary(%{saved | version: 0}))
+
+      "is not readable" ->
+        File.write!(cache, "not a saved scan")
+
+      "has one entry that is damaged" ->
+        saved = cache |> File.read!() |> :erlang.binary_to_term()
+        files = Map.put(saved.files, main, %{})
+        File.write!(cache, :erlang.term_to_binary(%{saved | files: files}))
+
+      "has one entry whose records are damaged" ->
+        saved = cache |> File.read!() |> :erlang.binary_to_term()
+        files = Map.update!(saved.files, main, &%{&1 | records: [:not_a_record]})
+        File.write!(cache, :erlang.term_to_binary(%{saved | files: files}))
+    end
+
+    Map.merge(context, %{damaged: damage, claude_main: main})
+  end
+
+  step "the affected transcripts are read from the start", context do
+    reads = World.usage_reads()
+
+    affected =
+      if context.damaged =~ "has one entry",
+        do: [context.claude_main],
+        else: Path.wildcard(Path.join(context.mc.home, "{claude,codex,grok}/**/*.jsonl"))
+
+    for path <- affected do
+      assert {^path, _provider, nil} = List.keyfind(reads, path, 0)
+    end
+
+    if context.damaged =~ "has one entry",
+      do: assert(length(reads) == 1, "undamaged entries stay cached: #{inspect(reads)}")
+
+    context
+  end
+
+  step "the usage page is still shown", context do
+    assert {:ok, %{"buckets" => [_ | _]}} = context.reply
+    assert output(context.usage, "claude") == 500
+    context
+  end
+
+  step "the user refreshed Usage and prices were fetched ten seconds ago", context do
+    context = snapshot(context, @rates, 10_000)
+    {{:ok, pricing}, context} = World.call(context, "server.refreshUsageRates")
+    assert pricing["status"] == "cached"
+
+    # The source now knows another model; it would show if the table were fetched.
+    File.write!(
+      Path.join(context.mc.home, "rates.json"),
+      JSON.encode!(
+        Map.put(@rates, "anthropic/claude-new-1", %{
+          "input_cost_per_token" => 1.0e-6,
+          "output_cost_per_token" => 1.0e-6
+        })
+      )
+    )
+
+    Map.put(context, :pricing_before, pricing)
+  end
+
+  step "the user refreshes Usage again", context do
+    {reply, context} = World.call(context, "server.refreshUsageRates")
+    Map.put(context, :reply, reply)
+  end
+
+  step "the price table is not fetched again", context do
+    assert {:ok, pricing} = context.reply
+    assert pricing == context.pricing_before
+    context
+  end
+
+  step "an ordinary open of Usage never fetches inside the daily refresh", context do
+    context = summary(context)
+    assert context.usage["pricing"] == context.pricing_before
+    context
+  end
+
+  step "a Claude transcript last changed 30 hours before the window began, holding records from before and inside the window",
+       context do
+    started = window_start()
+
+    path =
+      claude(context.usage_dirs.claude, "near", [
+        claude_line("near-1", started - 3_600_000, output: 111, session: "near"),
+        claude_line("near-2", started + 3_600_000, output: 222, session: "near")
+      ])
+
+    File.touch!(path, div(started - 30 * 3_600_000, 1000))
+    context = World.trace_usage_reads(context)
+    Map.merge(context, %{near: path, expected_output: 500 + 222})
+  end
+
+  step "another transcript last changed 40 hours before the window began", context do
+    started = window_start()
+
+    path =
+      claude(context.usage_dirs.claude, "far", [
+        claude_line("far-1", started + 7_200_000, output: 333, session: "far")
+      ])
+
+    File.touch!(path, div(started - 40 * 3_600_000, 1000))
+    Map.put(context, :far, path)
+  end
+
+  step "the user opens Usage for that window", context do
+    summary(context)
+  end
+
+  step "the first transcript is read and only its records inside the window are counted",
+       context do
+    assert List.keyfind(World.usage_reads(), context.near, 0)
+    assert output(context.usage, "claude") == context.expected_output
+    context
+  end
+
+  step "the second transcript is not opened", context do
+    refute List.keyfind(World.usage_reads(), context.far, 0)
+    context
+  end
+
+  step "a Codex rollout was copied into another folder", context do
+    at = now() - 60_000
+
+    original =
+      codex(context.usage_dirs.codex, "moved", "gpt-5.6-sol", [codex_count(at, output: 321)])
+
+    copy = Path.join(context.usage_dirs.codex, "sessions/archive/rollout-moved.jsonl")
+    File.mkdir_p!(Path.dirname(copy))
+    File.cp!(original, copy)
+    context
+  end
+
+  step "one rollout has two token counts with identical time, model and totals", context do
+    at = now() - 50_000
+
+    codex(context.usage_dirs.codex, "twin", "gpt-5.6-sol", [
+      codex_count(at, output: 40),
+      codex_count(at + 1000, output: 5),
+      codex_count(at, output: 40)
+    ])
+
+    context
+  end
+
+  step "each event of the copied rollout is counted once", context do
+    assert output(context.usage, "codex") == 300 + 321 + 40 + 5 + 40
+    context
+  end
+
+  step "the two identical events inside a single rollout are both counted", context do
+    # The Background's 300 and the copied rollout's 321 are the other contributors.
+    codex = output(context.usage, "codex")
+    assert codex - 300 - 321 == 40 + 5 + 40
+    context
+  end
+
+  step "a Grok session folder with {string} and other JSONL files", %{args: [name]} = context do
+    folder =
+      Path.dirname(
+        grok(context.usage_dirs.grok, "folder", [
+          grok_completed("p1", now() - 60_000, "grok-4", input: 10, output: 20)
+        ])
+      )
+
+    assert Path.basename(Path.join(folder, name)) == name
+
+    for other <- ["events.jsonl", "prompts.jsonl"] do
+      File.write!(
+        Path.join(folder, other),
+        JSON.encode!(grok_completed("px", now() - 60_000, "grok-4", input: 10, output: 9999)) <>
+          "\n"
+      )
+    end
+
+    context
+  end
+
+  step "only {string} contributes to the totals", context do
+    assert output(context.usage, "grok") == 200 + 20
     context
   end
 
@@ -767,6 +1073,13 @@ defmodule HalC2.Steps.Providers.Usage do
         "_meta" => %{"agentTimestampMs" => at}
       }
     }
+  end
+
+  # Midnight UTC of the first day of the last-seven-days window.
+  defp window_start do
+    Date.add(Date.utc_today(), -6)
+    |> DateTime.new!(~T[00:00:00])
+    |> DateTime.to_unix(:millisecond)
   end
 
   defp now, do: System.system_time(:millisecond)

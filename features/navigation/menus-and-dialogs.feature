@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27157
 #   https://github.com/pingdotgg/t3code/pull/20841
 #   https://github.com/pingdotgg/t3code/pull/18565
 #   https://github.com/pingdotgg/t3code/pull/17962
@@ -57,6 +58,20 @@ Feature: Menus, pickers and confirmations
       When the user clicks outside the confirmation
       Then the confirmation stays open
       And the action is neither confirmed nor declined
+
+    # Upstream #27157: app shortcuts opened the palette and pickers over an open confirmation and took focus from it.
+    @backlog @desktop @priority-high
+    Scenario Outline: App shortcuts wait while a confirmation is open
+      Given the app asked the user to confirm a destructive action
+      When the user presses the shortcut that <opens>
+      Then nothing else opens
+      And the confirmation keeps the keyboard until it is answered
+
+      Examples:
+        | opens                 |
+        | the command palette   |
+        | the file picker       |
+        | the new-thread picker |
 
     @backlog @desktop
     Scenario: A destructive confirmation marks its Confirm as destructive

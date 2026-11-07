@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27115
+#   https://github.com/pingdotgg/t3code/pull/23340
+#   https://github.com/pingdotgg/t3code/pull/26441
+#   https://github.com/pingdotgg/t3code/pull/27044
+#   https://github.com/pingdotgg/t3code/pull/25709
+#   https://github.com/pingdotgg/t3code/pull/24890
+#   https://github.com/pingdotgg/t3code/pull/27008
 #   https://github.com/pingdotgg/t3code/pull/18085
 #   https://github.com/pingdotgg/t3code/pull/18758
 #   https://github.com/pingdotgg/t3code/pull/16026
@@ -10,6 +17,12 @@
 #   https://github.com/pingdotgg/t3code/pull/19354
 #   https://github.com/pingdotgg/t3code/pull/20432
 #   https://github.com/pingdotgg/t3code/pull/22900
+#   https://github.com/pingdotgg/t3code/pull/31403
+#   https://github.com/pingdotgg/t3code/pull/31226
+#   https://github.com/pingdotgg/t3code/pull/31652
+#   https://github.com/pingdotgg/t3code/pull/31651
+#   https://github.com/pingdotgg/t3code/pull/31654
+#   https://github.com/pingdotgg/t3code/pull/30498
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
@@ -190,6 +203,13 @@ Feature: Connections settings
         | 443  | https://laptop.tail1234.ts.net       |
         | 8443 | https://laptop.tail1234.ts.net:8443  |
 
+    # Upstream #24890: entering 443 over an advertised custom port kept the old port in the preview.
+    @backlog @desktop @priority-low
+    Scenario: Setting up Tailscale HTTPS on 443 previews the address without a port
+      Given Tailscale HTTPS is advertised on port 441
+      When the user sets up Tailscale HTTPS and enters the port 443
+      Then the address preview is "https://laptop.tail1234.ts.net"
+
     @backlog @desktop
     Scenario: Choosing the default address for pairing
       Given this machine has a local network address and a Tailscale address
@@ -270,6 +290,29 @@ Feature: Connections settings
       When the user looks at this machine
       Then its controls cannot be changed
       And the user is told administrative access is required
+
+    # Upstream #27008: a permissions check that failed during a reconnect stayed failed while the
+    # environment showed as connected.
+    @backlog @shared @priority-high
+    Scenario: A permissions check that fails while connected is tried again
+      Given the user's environment reconnects
+      And checking the session's permissions fails once the connection is up
+      When the check succeeds on a later try while the connection stays up
+      Then the environment's permissions are shown without the user reconnecting
+      And while it was failing the user was told the check will be tried again
+
+    # Upstream #27008
+    @backlog @shared
+    Scenario Outline: The permissions panel says why it shows no permissions
+      Given the environment <state>
+      Then the permissions panel says "<message>"
+
+      Examples:
+        | state                                      | message                                                |
+        | is not connected                           | Connect to check your permissions.                     |
+        | is still checking this session             | Checking permissions…                                  |
+        | could not be asked and is being retried    | Could not verify your permissions. Retrying…           |
+        | answered that the session is not signed in | Your session was not accepted. Reconnect to try again. |
 
     @backlog @desktop
     Scenario Outline: Network access says how this machine can be reached
@@ -678,6 +721,19 @@ Feature: Connections settings
       Given a client with no label that runs on "Android" in "Chrome"
       Then it is listed as "Android · Chrome"
       And its row shows its device type, system, browser and address when known
+    # Upstream #23340: phone builds of Edge, Firefox and Opera were listed as Chrome or Safari
+    @backlog @mc @priority-low
+    Scenario Outline: A client paired from a phone browser is named by that browser
+      Given a client with no label paired from <browser> on <system>
+      Then it is listed as "<system> · <browser>"
+
+      Examples:
+        | browser | system  |
+        | Edge    | Android |
+        | Edge    | iOS     |
+        | Firefox | iOS     |
+        | Opera   | iOS     |
+
 
     @backlog @desktop
     Scenario: The desktop app presents itself by name, system and version when it pairs
@@ -746,6 +802,17 @@ Feature: Connections settings
         | 3       | 0     | 3 clients                    |
         | 2       | 1     | 2 clients · 1 pairing link   |
         | 2       | 4     | 2 clients · 4 pairing links  |
+
+    # Upstream #30498: a link created from Sharing & access went into the folded list, so sharing it took expanding the list, finding the row and pressing Share.
+    @backlog @desktop @mobile
+    Scenario: A pairing link just created shows ready to scan while the authorized clients stay folded
+      Given the authorized clients are folded
+      When the user creates a pairing link
+      Then it is the only row shown under the folded header, with its QR code open
+      When the user expands the authorized clients
+      Then every client and link is listed as before
+      When the link is used, revoked, expires or a newer link is created
+      Then it no longer shows under the folded header
 
     @backlog @desktop
     Scenario: Authorized clients are managed only where other devices can reach this machine
@@ -1019,6 +1086,21 @@ Feature: Connections settings
         | route                    | label              |
         | over SSH as ada@devbox   | SSH ada@devbox     |
         | through WSL              | WSL                |
+
+    # Upstream #26441: load balancing, pull request sharing and scheduled tasks named the first saved route instead.
+    @backlog @desktop @priority-low
+    Scenario Outline: Every Settings section names the route this device is using
+      Given "Build box" has a LAN route saved first and a Tailscale route
+      And this device reaches "Build box" through its Tailscale route
+      When the user looks at "Build box" in <section>
+      Then it says it is reached via Tailscale
+
+      Examples:
+        | section               |
+        | Environments          |
+        | Load balancing        |
+        | Pull request sharing  |
+        | Scheduled tasks       |
 
     @desktop
     Scenario: Switching an environment off keeps it saved
@@ -1325,3 +1407,153 @@ Feature: Connections settings
       Then the environment is added
       When a suggestion is highlighted and the user presses Enter
       Then that suggestion is chosen instead
+
+  # Upstream #25709: secret providers, a vault the provider settings can point at (behind a flag upstream)
+  # Upstream #31654: the user guide explains secret providers and secret requests.
+  @backlog @priority-low
+  Rule: Secret providers
+
+    @shared @mc
+    Scenario: The user adds a 1Password secret provider and sees it listed
+      Given secret providers are turned on in this build
+      When the user adds a 1Password secret provider named "Work" for the account "team.1password.com"
+      Then Settings > Connections > Secrets lists "Work" with its account hidden until clicked
+      And the user can edit or remove "Work"
+
+    @shared @mc
+    Scenario: A session that may not maintain the environment sees secret providers read only
+      Given the user's session on "laptop" may not change its provider settings
+      When the user opens the Secrets settings for "laptop"
+      Then the secret providers are listed without a way to add, edit or remove them
+
+    @shared
+    Scenario: Secret providers stay hidden in builds that do not turn them on
+      Given secret providers are not turned on in this build
+      Then Settings has no Secrets page and searching settings does not find it
+      And a link to the Secrets page opens General instead
+
+    # Upstream #27044: only the web client checked a provider's config, and unknown kinds reached every client
+    @mc @priority-high
+    Scenario Outline: The MC checks a secret provider before saving it
+      When a settings change saves a secret provider <entry>
+      Then the change is refused with the reason and nothing is saved
+
+      Examples:
+        | entry                                     |
+        | of a kind the MC does not know            |
+        | of 1Password with the account "--help"    |
+        | of 1Password with no config               |
+
+    @mc @priority-high
+    Scenario: A secret provider of a kind the MC does not know keeps its config from clients
+      Given the settings file holds a secret provider of a kind this MC does not know
+      When a client reads the settings
+      Then it sees that provider without its config
+      And a 1Password provider's config reaches the client
+
+    @shared
+    Scenario: An environment too old for secret providers asks to be updated
+      Given "laptop" does not report that it keeps secret providers
+      When the user opens the Secrets settings for "laptop"
+      Then the page says to update HAL-C2 on "laptop" instead of showing an empty list
+
+    # Upstream #27115: a sensitive provider variable can point at a secret provider instead of holding a value
+    @shared @mc
+    Scenario: A sensitive provider variable reads its value from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the Claude instance's "ANTHROPIC_API_KEY" at "op://vault/item/field" in "Work"
+      Then settings keep only "Work" and the reference
+      And a value stored earlier for "ANTHROPIC_API_KEY" is removed
+      And Claude runs with the value 1Password holds
+
+    @mc
+    Scenario: The MC reads an account's secret references once and holds them
+      Given two provider variables point at references in the 1Password account "team.1password.com"
+      When the MC starts those provider instances
+      Then it reads both references in one 1Password call
+      And usage polling, reconnects and model lists never ask 1Password again
+
+    @shared @mc
+    Scenario: Only refreshing a provider in Settings reads its secrets again
+      Given the reference behind "ANTHROPIC_API_KEY" now holds a new value
+      When the user refreshes the Claude provider in Settings
+      Then the MC reads the references again
+      And only the instances whose values changed start again
+
+    @mc
+    Scenario: A secret read that fails keeps the value that worked
+      Given the Claude instance runs with a value read from 1Password
+      When the user refreshes the provider and 1Password cannot be read
+      Then the Claude instance keeps running with its previous value
+
+    @shared @mc
+    Scenario: A locked vault does not hold up the MC's start
+      Given 1Password is locked when the MC starts
+      Then the MC starts without waiting on it
+      And the instances with references show as unavailable with "Reading secrets…" until the read finishes
+
+    # Upstream #31403: a reference saved by hand without "sensitive" showed a blank value, and
+    # saving that row could clear it.
+    @mc @shared @priority-high
+    Scenario Outline: A stored secret reference is always sensitive
+      Given the settings file holds "ANTHROPIC_API_KEY" as a reference to "Work" with <sensitive>
+      When the user opens the Claude instance in Settings
+      Then "ANTHROPIC_API_KEY" shows its reference in the secret source picker
+      And saving that row keeps the reference
+
+      Examples:
+        | sensitive                |
+        | "sensitive" set to false |
+        | no "sensitive" key       |
+
+    # Upstream #31226: every settings save rebuilt an instance stuck on an unreadable secret, so
+    # a locked vault asked to unlock on every unrelated change.
+    @mc
+    Scenario: A settings save that leaves an unreadable instance alone does not read its secret again
+      Given the Claude instance is unavailable because 1Password is locked
+      When the user changes an unrelated setting
+      Then 1Password is not asked again
+      When the user unlocks 1Password and refreshes the provider in Settings
+      Then the Claude instance reads its secret and becomes available
+
+    # Upstream #31652: three credential fields still took only plain text.
+    @shared @mc
+    Scenario Outline: The <field> can come from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the <field> at "op://vault/item/field" in "Work"
+      Then settings keep only "Work" and the reference
+      And the MC reads the value from 1Password when it needs it
+      And while the reference cannot be read the <owner> shows as unavailable with the reason
+
+      @plugin-antigravity
+      Examples: Antigravity
+        | field               | owner                |
+        | Antigravity API key | Antigravity instance |
+
+      @plugin-opencode
+      Examples: OpenCode
+        | field                    | owner             |
+        | OpenCode server password | OpenCode instance |
+
+    # Upstream #31651: references to a removed provider were left dangling, showing its raw id.
+    @mc @shared
+    Scenario: Removing a secret provider clears the fields that read from it
+      Given "ANTHROPIC_API_KEY" and the GitHub token read from "Work"
+      And the Codex instance's "OPENAI_API_KEY" reads from "Personal"
+      When the user removes "Work"
+      Then the confirmation lists "ANTHROPIC_API_KEY" and the GitHub token as fields that will be unset
+      And once removed, the GitHub token is empty and "ANTHROPIC_API_KEY" is no longer set
+      And "OPENAI_API_KEY" still reads from "Personal"
+
+    # Upstream #31651
+    @shared
+    Scenario: Removing a secret provider nothing reads from asks only to confirm
+      Given nothing reads from the secret provider "Spare"
+      When the user removes "Spare"
+      Then the confirmation lists no fields
+
+    @mc
+    Scenario: A terminal does not get an empty value for a secret reference
+      Given "ANTHROPIC_API_KEY" points at a reference in a secret provider
+      When the user opens a terminal in the project
+      Then the terminal keeps the "ANTHROPIC_API_KEY" it inherits instead of an empty one

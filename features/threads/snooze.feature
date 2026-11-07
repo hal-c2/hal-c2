@@ -3,10 +3,15 @@
 #   https://github.com/pingdotgg/t3code/pull/21019
 #   https://github.com/pingdotgg/t3code/pull/21026
 #   https://github.com/pingdotgg/t3code/pull/14887
+#   https://github.com/pingdotgg/t3code/pull/26043
 #   https://github.com/pingdotgg/t3code/pull/16517
 #   https://github.com/pingdotgg/t3code/pull/19099
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/22202
+#   https://github.com/pingdotgg/t3code/pull/26208
+#   https://github.com/pingdotgg/t3code/pull/26427
+#   https://github.com/pingdotgg/t3code/pull/20058
+#   https://github.com/pingdotgg/t3code/pull/30063
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   packages/client-runtime/src/state/threadSnoozed.test.ts (early wake rules, a queued turn start expiring after two minutes)
@@ -86,11 +91,77 @@ Feature: Snoozing threads
     When the user opens the snooze choices
     Then "This evening" is not offered
 
+  # Upstream #26043: on the phone a row's snooze choices kept the times from when the row first
+  # showed, so after hours "In 1 hour" offered a time already past.
+  @backlog @mobile
+  Scenario: Snooze choices follow the clock while the app stays open
+    Given the thread list opened on Wednesday at 10:00
+    When the user opens the snooze choices of "Refactor cart" at 17:30
+    Then "In 1 hour" reads 18:30
+    And "This evening" is not offered
+
   @desktop @mobile @backlog-mobile
   Scenario: On Sunday "next week" and "tomorrow" are the same choice
     Given the local time is Sunday 10:00
     When the user opens the snooze choices
     Then only one choice wakes the thread on Monday at 09:00
+
+  # Upstream #26208: the snooze choices are the user's own, a setting of up to 8 options shared
+  # by every client of the environment; the defaults are the five fixed choices.
+  @backlog @mc @shared
+  Scenario: The user chooses their own snooze options
+    When the user sets the snooze options to "In 2 hours", "Tomorrow at 21:00" and "Monday at 18:00"
+    And the user opens the snooze choices for "Refactor cart" on any device
+    Then the choices offered are exactly those three, soonest first
+    When the user resets the snooze options
+    Then the five default choices are offered again
+
+  # Upstream #26208
+  @backlog @shared @priority-low
+  Scenario: No more than eight snooze options can be added
+    Given the user has 8 snooze options
+    When the user tries to add another snooze option
+    Then the option is not added
+
+  # Upstream #26208: labels follow the real day gap; a choice for later today is hidden once its time
+  # has passed, and choices that wake at the same minute are offered once.
+  @backlog @shared
+  Scenario Outline: Snooze options are named for when they wake
+    Given the local time is <now>
+    And the snooze options include "<option>"
+    When the user opens the snooze choices
+    Then <offered>
+
+    Examples:
+      | now              | option             | offered                                        |
+      | Sunday 10:00     | Monday at 18:00    | the choice reads "Tomorrow"                    |
+      | Wednesday 19:00  | Today at 18:00     | the choice is not offered                      |
+      | Wednesday 10:00  | In 8 hours         | only one choice wakes the thread at 18:00      |
+
+  # Upstream #26208: a duration counts from the moment it is chosen, so a menu left open does
+  # not shorten it; a set time wakes when the menu said.
+  @backlog @shared @priority-low
+  Scenario: A snooze choice left open counts from when it is chosen
+    Given the user opened the snooze choices at 10:00
+    When the user chooses "In 3 hours" at 10:20
+    Then "Refactor cart" wakes at 13:20
+
+  # Upstream #26427: the options in settings are listed soonest first, like the menu, and re-sort
+  # only once the user leaves the list, so a row never moves while it is edited.
+  @backlog @shared @priority-low
+  Scenario: Snooze options are kept soonest first without moving while edited
+    Given the snooze options are "In 1 hour" and "Tomorrow at 09:00"
+    When the user changes "In 1 hour" to "In 20 hours"
+    Then the option still reads "In 20 hours" in the same place while the user edits
+    When the user leaves the list
+    Then "Tomorrow at 09:00" is listed above "In 20 hours"
+
+  # Upstream #26427: the custom snooze choice links to the snooze options.
+  @backlog @desktop @tui @priority-low
+  Scenario: The custom snooze choice leads to the snooze options
+    When the user opens the custom snooze choice for "Refactor cart"
+    And the user asks to edit the snooze options
+    Then the snooze options in settings are shown
 
   @desktop @mobile @backlog-mobile
   Scenario Outline: Snoozing until a custom time
@@ -144,6 +215,28 @@ Feature: Snoozing threads
       | is waiting for an answer to a question |
       | has a turn queued that has not started |
 
+  # Upstream #20058: a thread waiting for an answer can be snoozed; the question stays pending.
+  # Replaces the question row of the outline above once every surface carries it.
+  @backlog @mc @desktop @mobile @tui
+  Scenario: A thread waiting for an answer to a question can be snoozed
+    Given "Refactor cart" is waiting for an answer to a question
+    When the user snoozes "Refactor cart" until tomorrow
+    Then "Refactor cart" is snoozed
+    And the question can still be answered from the thread
+
+  # Upstream #20058: a newer question wakes the thread; answering or waking it clears the snooze.
+  @backlog @mc @desktop @mobile
+  Scenario Outline: A thread snoozed over a question wakes when <event>
+    Given "Refactor cart" was snoozed while waiting for an answer to a question
+    When <event>
+    Then "Refactor cart" is no longer snoozed
+
+    Examples:
+      | event                                   |
+      | the agent asks a newer question         |
+      | the user answers the question           |
+      | the user wakes the thread               |
+
   @desktop @mobile @backlog-mobile
   Scenario: A thread with a running agent can be snoozed
     Given the agent is working in "Refactor cart"
@@ -152,7 +245,7 @@ Feature: Snoozing threads
 
   # A queued message the user wrote still blocks the snooze (above); automatic wakes do not.
   # Upstream #19099: snoozed threads allow queued automatic wakes
-  @mc @backlog
+  @mc
   Scenario Outline: A thread with an automatic wake queued can be snoozed
     Given "Refactor cart" has <wake> queued
     When the user snoozes "Refactor cart" until tomorrow
@@ -179,16 +272,25 @@ Feature: Snoozing threads
       | the MC shuts down                          |
 
   # Upstream #2829: the new orchestrator
-  @mc @desktop @mobile @backlog @priority-high
+  @mc @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario: A late failure from an earlier run does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When a run that started before the snooze reports a failure
     Then "Refactor cart" stays snoozed
     And it is not marked as woke
 
+  # Upstream #30063: a failed run with no finish time took the next metadata update for a fresh
+  # failure, so the client showed the snoozed thread as active while the MC kept it snoozed.
+  @desktop @mobile @backlog @priority-high
+  Scenario: A snoozed thread whose failed run has no finish time stays snoozed after an update
+    Given "Refactor cart" is snoozed until tomorrow and its last run failed without a finish time
+    When the thread's details are updated
+    Then "Refactor cart" stays in Snoozed
+    But a question or approval it asks for still wakes it
+
   # Upstream #16517: pull request sync, links, renames and reordering woke snoozed threads; only
   # new activity does now.
-  @mc @desktop @mobile @backlog @priority-high
+  @mc @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: A background update does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When <update>
@@ -242,7 +344,7 @@ Feature: Snoozing threads
 
   # Upstream #22202: every automatic message cleared the snooze, so a self-waking thread came
   # back within minutes. A message the user sends still wakes it.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: An automatic wake keeps a thread snoozed
     Given "Refactor cart" is snoozed until tomorrow
     When <wake> sends "Refactor cart" a message and its run finishes

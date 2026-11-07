@@ -165,8 +165,16 @@ void NavigationController::leaveVanishedThread() {
 }
 
 bool NavigationController::handle(const QString& action, const QVariant& payload) {
-  if (!m_active) return false;
   const QVariantMap map = payload.toMap();
+  if (!m_active) {
+    // Before the MC answers, a thread the cache lists opens, as the one the
+    // last run showed does (preview()); activate() checks it on the MC's rows.
+    const QString key = map.value(QStringLiteral("key")).toString();
+    if (action != QLatin1String("thread.open") || !m_store->previewing() || !m_store->thread(key)) return false;
+    m_previewing = true;
+    open(Route::thread(key));
+    return true;
+  }
   if (action == QLatin1String("thread.open")) {
     const QString key = map.value(QStringLiteral("key")).toString();
     if (!key.isEmpty()) open(Route::thread(key));

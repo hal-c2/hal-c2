@@ -1,7 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25444
+#   https://github.com/pingdotgg/t3code/pull/27691
+#   https://github.com/pingdotgg/t3code/pull/31924
+#   https://github.com/pingdotgg/t3code/pull/26874
 #   https://github.com/pingdotgg/t3code/pull/19697
 #   https://github.com/pingdotgg/t3code/pull/22607
 #   https://github.com/pingdotgg/t3code/pull/21401
+#   https://github.com/pingdotgg/t3code/pull/30346
+#   https://github.com/pingdotgg/t3code/pull/29602
 #   docs/user/thread-sidebar.md (Pinning, Undo, Arranging threads, drag between sections)
 #   apps/web/src/components/Sidebar.tsx (pin, unpin, drag and drop, confirm unpin)
 #   apps/web/src/components/Sidebar.drag.ts, Sidebar.pointer.ts (drag collisions, a drag that is cancelled)
@@ -40,6 +46,15 @@ Feature: Pinning and arranging threads
     Given "Beta" is pinned
     When the user unpins "Beta"
     Then "Beta" returns to its place among the active threads
+
+  # Upstream #29602: pinning a settled thread never recorded its return, so unpinning it dropped it to
+  # where it was created.
+  @backlog @mc @desktop @mobile
+  Scenario: A settled thread that is pinned and unpinned is listed where it came back
+    Given "Delta" was created before "Alpha" and is settled
+    When the user pins "Delta" and later unpins it
+    Then "Delta" is listed among the active threads as returned when it was pinned
+    And it is not listed below "Alpha" at the place it was created
 
   @desktop @backlog-desktop @mobile @backlog-mobile @priority-high
   Scenario: A pinned thread shows a pin that unpins it
@@ -106,6 +121,20 @@ Feature: Pinning and arranging threads
     Then there is no undo left for settling "Beta"
     And "Beta" stays pinned
 
+  # Upstream #25444: an Undo from before an archive or delete stayed on offer and then failed or came back.
+  @backlog @desktop
+  Scenario Outline: Archiving or deleting a thread withdraws its earlier undo
+    Given the user just <changed> "Beta"
+    When the user <ends> "Beta" before the undo times out
+    Then there is no undo left for <changed> "Beta"
+
+    Examples:
+      | changed  | ends     |
+      | unpinned | deletes  |
+      | settled  | archives |
+      | snoozed  | archives |
+      | archived | deletes  |
+
   @backlog @desktop @mobile
   Scenario Outline: An undo that fails says so and leaves the thread as it is
     Given the user just <changed> "Beta"
@@ -133,6 +162,15 @@ Feature: Pinning and arranging threads
       | changed  | notice             |
       | settled  | Settled 2 threads  |
       | unpinned | Unpinned 2 threads |
+  # Upstream #26874: the undo notice covered the bottom thread row for five seconds.
+  @backlog @desktop
+  Scenario: The undo notice never covers a thread or moves the list
+    Given the sidebar is at its narrowest
+    When the user settles the bottom thread "Beta"
+    Then the undo notice sits in the sidebar footer beside its buttons and reads "Settled, Ctrl+Z to undo"
+    And the thread now at the bottom of the list is fully visible and has not moved
+    And where the footer has no room for the count, the notice reads "Ctrl+Z to undo" without cutting a word
+
 
   @desktop
   Scenario: Undo reopens an archived thread the user was viewing
@@ -284,6 +322,16 @@ Feature: Pinning and arranging threads
       | settled | into the active section         | un-settled                    |
       | snoozed | into the active section         | woken                         |
 
+  # Upstream #30346: the settled drop hint scrolled itself into view on every drag, so a list
+  # taller than the sidebar jumped and the drop landed away from the pointer.
+  @backlog @desktop @priority-low
+  Scenario: Dragging a thread in a long list keeps the list under the pointer
+    Given the thread list is taller than the sidebar
+    When the user starts dragging "Beta" and holds it still
+    Then the list does not scroll
+    And "Beta" drops where the pointer is
+    But dragging down to the settled section brings its drop hint into view
+
   @desktop
   Scenario: A thread cannot be dragged into the snoozed shelf
     When the user drags "Beta" onto the snoozed section
@@ -313,6 +361,24 @@ Feature: Pinning and arranging threads
     When the user drags "Alpha" out of the list and drops it on the composer
     Then the composer references "Alpha" and "Gamma"
     And the order of the threads in the list is unchanged
+
+  # Upstream #31924: leaving the list on the way to the composer crossed its bottom edge, and
+  # the list scrolled away, often to the end.
+  @backlog @desktop @priority-low
+  Scenario: Dragging a thread onto the composer leaves the list where it was scrolled
+    Given the thread list is scrolled to the top and "Gamma" is near its bottom
+    When the user drags "Gamma" out of the list, over its bottom edge, and drops it on the composer
+    Then the composer references "Gamma"
+    And the thread list is still scrolled to the top
+
+  # Upstream #27691: picking up a thread near the bottom ran the list to its end with the
+  # pointer held still; only a drag held at the edge scrolls now, and steadily.
+  @backlog @desktop @priority-low
+  Scenario: Picking up a thread near the bottom of a long list does not scroll it
+    Given the thread list holds 500 threads and "Gamma" is near the bottom of what is shown
+    When the user picks up "Gamma", moves it a few pixels and holds it still
+    Then the list does not scroll
+    But holding "Gamma" at the list's bottom edge scrolls the list steadily toward its end
 
   @backlog @desktop
   Scenario: Dropping a dragged thread outside the list and outside the composer does nothing

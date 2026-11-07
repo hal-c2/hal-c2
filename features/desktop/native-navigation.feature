@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27430
+#   https://github.com/pingdotgg/t3code/pull/25188
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route, back stack and restore)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (title, settings and cluster from `route`)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
@@ -79,6 +81,49 @@ Feature: The desktop shell decides where the window is
       And the user can go back
       When the user goes back from settings
       Then the window shows "env-a:t1"
+
+    # Upstream #25188: mouse drivers on macOS send Back and Forward as swipes, which did nothing.
+    @backlog @desktop @priority-low
+    Scenario: A mouse's back and forward swipe on macOS moves through the history
+      Given the desktop runs on macOS
+      And the user opened "env-a:t1" and then "env-a:t2" from the sidebar
+      When the mouse sends a back swipe
+      Then the window shows "env-a:t1"
+      When the mouse sends a forward swipe
+      Then the window shows "env-a:t2"
+      And an up or down swipe does not move through the history
+
+    # Upstream #27430: the desktop had no visible back or forward, and trackpad swipes did nothing
+    @backlog @desktop @priority-low
+    Scenario: Back and forward buttons sit beside the logo in the sidebar
+      Given the user opened "env-a:t1" and then "env-a:t2" from the sidebar
+      Then the sidebar header shows back and forward buttons after the logo
+      And forward is unavailable and back's tooltip names its shortcut
+      When the user clicks back
+      Then the window shows "env-a:t1"
+      And forward is available
+
+    # Upstream #27430: back and forward buttons, and a two-finger trackpad swipe that navigates the history, cancelled by a swipe that stops short.
+    @backlog @desktop @priority-low
+    Scenario: A two-finger trackpad swipe moves through the history
+      Given the user opened "env-a:t1" and then "env-a:t2" from the sidebar
+      When the user swipes two fingers sideways far enough over the main content and lifts them
+      Then a circle peeks in from that edge as the swipe goes, with a solid arrow once it is far enough
+      And the window shows "env-a:t1"
+
+    # Upstream #27430: a swipe that is cancelled, or never commits, does not move through the history.
+    @backlog @desktop @priority-low
+    Scenario Outline: A trackpad swipe that is not meant as navigation leaves the history alone
+      Given the user opened "env-a:t1" and then "env-a:t2" from the sidebar
+      When the user <swipe>
+      Then the window shows "env-a:t2"
+
+      Examples:
+        | swipe                                                       |
+        | swipes back before lifting                                  |
+        | swipes over sideways-scrollable content that can still move |
+        | swipes inside a dialog                                      |
+        | swipes mostly up or down                                    |
 
     # T3 Code's #13516 sends Back from settings opened at launch to the thread list. HAL-C2 keeps the
     # new draft that "Back with nowhere to return to" records in settings/search-and-navigation.feature.

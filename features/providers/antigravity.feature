@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25292
+#   https://github.com/pingdotgg/t3code/pull/26929
+#   https://github.com/pingdotgg/t3code/pull/26928
+#   https://github.com/pingdotgg/t3code/pull/26910
+#   https://github.com/pingdotgg/t3code/pull/26876
+#   https://github.com/pingdotgg/t3code/pull/27153
+#   https://github.com/pingdotgg/t3code/pull/24939
+#   https://github.com/pingdotgg/t3code/pull/25435
+#   https://github.com/pingdotgg/t3code/pull/23746
 #   https://github.com/pingdotgg/t3code/pull/24652
 #   https://github.com/pingdotgg/t3code/pull/21358
 #   https://github.com/pingdotgg/t3code/pull/19796
@@ -30,6 +39,17 @@
 #   apps/web/src/components/settings/ProviderSetupSection.tsx
 #   packages/contracts/src/rpc.ts (provider.install.start, provider.install.cancel, provider.install.remove, provider.install.subscribe, provider.auth.complete)
 #   packages/contracts/src/providerSetup.ts (ProviderInstallState)
+#   https://github.com/pingdotgg/t3code/pull/22217
+#   https://github.com/pingdotgg/t3code/pull/26184
+#   https://github.com/pingdotgg/t3code/pull/27651
+#   https://github.com/pingdotgg/t3code/pull/27759
+#   https://github.com/pingdotgg/t3code/pull/28629
+#   https://github.com/pingdotgg/t3code/pull/30189
+#   https://github.com/pingdotgg/t3code/pull/31158
+#   https://github.com/pingdotgg/t3code/pull/30377
+#   https://github.com/pingdotgg/t3code/pull/29594
+#   https://github.com/pingdotgg/t3code/pull/30079
+#   https://github.com/pingdotgg/t3code/pull/29823
 
 @plugin-antigravity @mc @priority-low
 Feature: Antigravity
@@ -47,6 +67,14 @@ Feature: Antigravity
     Then the user sees the download progress in megabytes
     And then that it is extracting and then checking the runtime
     And finally that Antigravity is installed
+
+  # Upstream #23746: Install was disabled and the runtime read "Not installed" until the first installation status arrived.
+  @backlog @shared
+  Scenario: The runtime can be installed while its status is still loading
+    Given the MC has not yet reported whether the Antigravity runtime is installed
+    When the user opens Antigravity's provider settings
+    Then the runtime reads "Checking the Antigravity runtime"
+    And the user can install the runtime
 
   # Windows can keep the checked runtime's files locked for a moment after its
   # processes end, so the check must not fail the installation.
@@ -77,6 +105,30 @@ Feature: Antigravity
     Given the Antigravity installation failed for lack of disk space
     When the user frees space and retries the installation
     Then the runtime is installed
+
+  # Upstream #30189: on Intel Macs Google's hardened signing kept the runtime from ever
+  # answering, and installation failed with a disk-space error after 90 seconds.
+  @backlog
+  Scenario: Installing the Antigravity runtime finishes on an Intel Mac
+    Given the MC runs on an Intel Mac and the Antigravity runtime is not installed
+    When the user installs the Antigravity runtime
+    Then the download is checked against Google's published checksum
+    And the runtime is checked and Antigravity is installed
+    And a later session starts with the installed runtime
+
+  # Upstream #31158: Antigravity offered its other models only to clients it knew, so the
+  # session named itself Zed; from agy acp 1.5.1 every client gets them.
+  @backlog
+  Scenario Outline: Antigravity is told who is asking by its runtime's version
+    Given the Antigravity runtime is version <version>
+    When an Antigravity session starts
+    Then the session names its client <client>
+
+    Examples:
+      | version | client                          |
+      | 1.5.1   | HAL-C2, with HAL-C2's version   |
+      | 1.4.5   | "zed"                           |
+      | unknown | "zed"                           |
 
   Scenario: Removing the downloaded runtime keeps the Google sign-in
     Given the Antigravity runtime is installed and the user is signed in
@@ -166,6 +218,16 @@ Feature: Antigravity
       | the runtime is installed and the user has not signed in        | Sign in with Google to use Antigravity.                                  |
       | the runtime is installed and the sign-in has not been checked  | Antigravity is installed. Google account access is not checked yet.      |
 
+  # Upstream #25435: with the Antigravity app or CLI installed but no ACP runtime, the status said "Antigravity is not installed".
+  @backlog
+  Scenario: A missing runtime is named as the ACP runtime, not the Antigravity app
+    Given the Antigravity app and its "agy" CLI are installed on the host
+    And this environment has no Antigravity ACP runtime
+    When the user opens the provider list
+    Then Antigravity's message says its ACP runtime is missing on this environment
+    And points to this environment's provider settings to install it
+    And says the Antigravity app, IDE and CLI are separate installations
+
   Scenario: Signing in with a Google account in the browser
     Given the Antigravity runtime is installed
     When the user signs in with a Google account and finishes in the browser
@@ -202,6 +264,15 @@ Feature: Antigravity
     Then the Account row says Antigravity has not reached Google yet
     And it names broken IPv6 as a common cause
 
+  # Upstream #30079: on Windows the runtime takes about a minute to start, so the 30-second hint
+  # always blamed the network before Google was even asked.
+  @backlog
+  Scenario: The hint that Google was not reached counts from when the runtime has started
+    Given Antigravity takes 60 seconds to start on the MC's machine
+    When the user starts Google sign-in
+    Then the Account row does not say Antigravity has not reached Google while it starts
+    And it says so only once 30 seconds pass after the start without a Google link
+
   @backlog
   Scenario: A sign-in that never reached Google says so when it gives up
     Given the user started Google sign-in
@@ -223,6 +294,42 @@ Feature: Antigravity
       | Gemini Enterprise          | a browser sign-in, GCP project and location  |
       | Gemini API key             | an API key                                   |
       | Agent Platform             | an API key, or a GCP project and location    |
+
+  # Upstream #29823: Antigravity text generation failed with only "Antigravity text generation
+  # failed.", hiding a sign-in in progress, incomplete settings and a signed-out agent.
+  @backlog
+  Scenario Outline: Antigravity text generation that cannot run says why
+    Given Antigravity is picked for text generation
+    And <situation>
+    When a commit message is generated
+    Then the failure says <said>
+
+    Examples:
+      | situation                                 | said                                                                 |
+      | a Google sign-in is still running         | "Antigravity sign-in or sign-out is in progress. Try again after it finishes." |
+      | the Antigravity settings are incomplete   | which setting is missing                                             |
+      | the user is signed out of Antigravity     | to sign in to Antigravity                                            |
+
+  # Upstream #27759: instances set up with an API key still said "Google account access" and
+  # "Sign in" before their first connection, hiding the step that loads their models.
+  @backlog @shared
+  Scenario Outline: An Antigravity instance that uses an API key asks to connect, not to sign in
+    Given the Antigravity instance uses <method> and has not connected yet
+    When the user opens its setup
+    Then it describes access by <method> and offers "Connect"
+    And it does not mention Google account access or offer "Sign in"
+
+    Examples:
+      | method         |
+      | Gemini API key |
+      | Agent Platform |
+
+  # Upstream #27759
+  @backlog @shared
+  Scenario: An Antigravity instance signed out of its API key keeps its wording
+    Given the Antigravity instance uses a Gemini API key
+    When its authentication is cleared
+    Then it still describes access by Gemini API key and offers "Connect"
 
   Scenario: Ambient Google credentials do not override the instance's method
     Given the environment has a Gemini API key in its variables
@@ -309,10 +416,31 @@ Feature: Antigravity
     When Antigravity asks for that file by its path
     Then Antigravity receives the file's contents
 
+  # Upstream #25292: an image read as text came back as garbled characters, so the model saw nothing useful.
+  @backlog
+  Scenario Outline: Antigravity reading a binary file as text is told it is not text
+    Given the project has <file>
+    When Antigravity asks for that file as text
+    Then Antigravity is told "<error>"
+
+    Examples:
+      | file                                   | error                                       |
+      | an image "logo.png"                    | File 'logo.png' is not a UTF-8 text file.   |
+      | a file "data.bin" that holds NUL bytes | File 'data.bin' contains binary data.       |
+
   Scenario: Antigravity cannot leave the workspace
     Given an Antigravity thread works in the project's folder
     When Antigravity asks for a path outside that folder
     Then the request is refused
+
+  # Upstream #26184: only the file's parent was resolved, so a write into missing folders under
+  # a link that leads out of the workspace passed the check and landed outside it.
+  @backlog @priority-high
+  Scenario: Antigravity cannot write outside the workspace through a linked folder
+    Given the workspace holds a link "out" to a folder outside it
+    When Antigravity writes "out/a/b/file.txt" where "a" and "b" do not exist yet
+    Then the write is refused
+    And nothing is created outside the workspace
 
   Scenario: Antigravity reads project skills from its skill folders in order
     Given the project has the skill "deploy" in both .gemini/skills and .agents/skills
@@ -329,6 +457,14 @@ Feature: Antigravity
     Then the turn fails asking the user to sign in from Settings
     And the thread's Antigravity agent is stopped and the instance shows as signed out
 
+  # Upstream #24939: each prompt tried to open a session five times while Antigravity wanted a browser sign-in.
+  @backlog
+  Scenario: A signed-out Antigravity is not started again and again for one message
+    Given the saved Google login of the Antigravity instance expired
+    When the user sends a message in an Antigravity thread
+    Then Antigravity is started once for it
+    And the turn fails at once asking the user to sign in from Settings
+
   Scenario: A model the account lost is explained on resume
     Given an Antigravity thread uses a model the account can no longer use
     When the user sends a message
@@ -342,6 +478,14 @@ Feature: Antigravity
   Scenario: A spent Antigravity quota stops the thread on a usage limit
     When Antigravity answers that the quota resets in 4 hours, 26 minutes
     Then the thread is limited until 4 hours and 26 minutes after the answer
+
+  # Upstream #29594: a plain rate limit (not a spent quota) was marked a usage limit but lost its
+  # reset time, so the thread could not be snoozed and resumed when it cleared.
+  @backlog @priority-low
+  Scenario: A rate-limited Antigravity turn keeps the reset time Google gives
+    When Google ends an Antigravity turn on a rate limit that names a retry delay of 90 seconds
+    Then the thread is limited until 90 seconds after the answer
+    And it resumes on its own once the limit clears
 
   Scenario: A reply that only mentions a usage limit is an ordinary answer
     When Antigravity's answer talks about a usage limit among other text
@@ -382,6 +526,15 @@ Feature: Antigravity
     Then those files are removed
     And files left behind by an MC that was killed are removed the next time Antigravity starts
 
+  # Upstream #27651: deleting the last session's extracted runtimes held up the server's startup
+  # by seconds, most on Windows; they are moved aside and deleted in the background.
+  @backlog
+  Scenario: Removing leftover Antigravity runtimes does not hold up the MC's startup
+    Given a killed MC left large extracted Antigravity runtimes behind
+    When the MC starts
+    Then the MC is ready without waiting for those files to be deleted
+    And they are deleted in the background before any Antigravity session starts
+
   Scenario Outline: Antigravity skills are read from its own folders
     Given a skill "deploy" in <folder>
     When the user opens the skill list in an Antigravity thread
@@ -395,6 +548,14 @@ Feature: Antigravity
       | the project's .agents/skills                     | offered     |
       | the project's .agent/skills                      | offered     |
       | the user's .agents/skills                        | not offered |
+
+  # Upstream #27153: sign-in failed when the user had no global skills folders.
+  @backlog @priority-high
+  Scenario: Antigravity signs in when the user has no global skills folders
+    Given the user has no .gemini/config/skills or .gemini/antigravity-cli/skills folder
+    When the user signs in to Antigravity
+    Then the session starts and its models load
+    And a global skills folder created later is read on the next start
 
   Scenario: A skill without a name in its header is named after its folder
     Given the project has a skill folder "deploy" whose skill file states no name
@@ -491,10 +652,20 @@ Feature: Antigravity
     And the background command keeps running
 
   # AntigravityAdapterV2.ts: what the Antigravity flavour changes in the shared ACP adapter.
+  # Passes today; the backlog scenario below replaces it once the MC follows upstream #22217.
   Scenario: Sending /compact alone to Antigravity compacts its conversation
     Given an Antigravity thread with earlier turns
     When the user sends "/compact" with no attachments and the turn completes
     Then the work log shows "Context compacted" once
+
+  # Upstream #22217: Antigravity's ACP runtime answers "/compact" as an ordinary prompt and its
+  # context grows, so a compaction recorded after that reply was false. Compaction is unsupported.
+  @backlog @priority-low
+  Scenario: Sending /compact alone to Antigravity says compaction is not supported
+    Given an Antigravity thread with earlier turns
+    When the user sends "/compact" with no attachments
+    Then the user is told Antigravity cannot compact its conversation
+    And the work log does not show "Context compacted"
 
   Scenario: Antigravity can read a file the user attached although it is outside the workspace
     Given the user attached a file to an Antigravity message
@@ -645,6 +816,17 @@ Feature: Antigravity
     When Antigravity is started for a chat thread
     Then it is told HAL-C2 reads and writes workspace files for it, and that HAL-C2 runs no terminals for it
     And an Antigravity started for sign-in, a status check or text generation is told HAL-C2 does neither
+  # Upstream #26876: offering writes made Antigravity drop its own edit tool and rewrite whole
+  # files. Once the MC follows, this replaces the scenario above.
+  @backlog
+  Scenario: Antigravity edits files with its own diff edits, which still ask in supervised
+    Given an Antigravity thread in supervised
+    When Antigravity is started for the thread
+    Then it is told HAL-C2 reads workspace files for it, but not that HAL-C2 writes them
+    When Antigravity changes one line of "src/cart.ts"
+    Then the change is shown as a one-line diff
+    And the approval carries that diff
+
 
   Scenario: Session files of a conversation HAL-C2 did not create are left alone
     Given a temporary Antigravity session ended
@@ -737,7 +919,7 @@ Feature: Antigravity
   Scenario Outline: The agent is downloaded for each supported platform
     Given a <platform> machine
     When Antigravity is set up
-    Then the 1.3.0 agent for it is downloaded and checked against its hash
+    Then the 1.4.1 agent for it is downloaded and checked against its hash
 
     Examples:
       | platform     |
@@ -779,3 +961,150 @@ Feature: Antigravity
     And Antigravity reports the call only as "Running html_render"
     Then the page shows in the thread as a published page
     And a publish that failed shows no page
+
+  # Upstream #26876: Antigravity listed only Gemini models and had no thinking control.
+  @backlog
+  Scenario: Antigravity lists the account's Claude and GPT models alongside Gemini
+    Given the Google account can use "Claude Opus 5.5", "GPT-OSS" and "Gemini 3.8 Flash"
+    When the Antigravity models are refreshed
+    Then all three are offered in the model picker
+
+  # Upstream #26876: runtime 1.4 lists model families with a thinking level apart from the model.
+  @backlog @shared
+  Scenario Outline: Each Antigravity model offers its own thinking levels and default
+    When the user picks the Antigravity model "<model>"
+    Then the thinking levels offered are the ones Antigravity reports for "<model>"
+    And "<default>" is selected until the user picks another
+    And the turn runs with the thinking level the user picked
+
+    Examples:
+      | model            | default |
+      | Claude Opus 5.5  | Low     |
+      | Gemini 3.8 Flash | High    |
+
+  # Upstream #26876: saved Antigravity 1.3.0 IDs such as gemini-3.8-flash-low map to the model family plus its thinking level.
+  @backlog @priority-high
+  Scenario: A thread saved with a model and level in one id keeps working
+    Given an Antigravity thread was saved with the model "gemini-3.8-flash-low"
+    When the thread sends its next message
+    Then the turn runs on "Gemini 3.8 Flash" with the thinking level "Low"
+
+  # Upstream #26876: the manifest marks Antigravity 1.4.1 as the recommended runtime, and the in-app install verifies it.
+  # Upstream #28629: the managed runtime moved from 1.4.1 to 1.4.5; 1.4.2 to 1.4.5 wrote a stray
+  # workflow skill into the project until its workflow tool was turned off.
+  @backlog
+  Scenario: Antigravity 1.4.5 is the release HAL-C2 installs and recommends
+    When the MC installs Antigravity
+    Then it installs version 1.4.5 and reports it as recommended
+    And starting a session leaves nothing new in the project's git status
+
+  # Upstream #26876: Antigravity 1.3.0 and later call subagents with invoke_subagent, so their subagents show in the subagent bar.
+  @backlog
+  Scenario: Subagents from current Antigravity releases show as a subagent batch
+    When Antigravity 1.4.5 starts subagents with its "invoke_subagent" tool
+    Then their activity is shown as a subagent batch
+
+  # Upstream #28629: the runtime ended quota and provider errors as ordinary replies; the turn
+  # now fails on what Antigravity recorded, never on the reply's wording.
+  @backlog
+  Scenario Outline: An Antigravity turn that ended on <error> fails
+    When Antigravity ends a turn normally after recording <error>
+    Then the turn fails with that error
+
+    Examples:
+      | error                     |
+      | a spent quota             |
+      | an invalid request        |
+
+  # Upstream #30377: a runtime that went silent mid-prompt kept the thread working forever.
+  @backlog
+  Scenario: An Antigravity turn that stays silent for 15 minutes fails
+    Given an Antigravity turn has sent nothing and waits on no question, tool or subagent
+    When 15 minutes pass
+    Then the turn fails and the stalled runtime is stopped
+    And the next message starts a fresh runtime
+
+  # Upstream #30377: only the turn's own output and answered requests count as activity.
+  @backlog
+  Scenario Outline: An Antigravity turn is not timed out while <waiting>
+    Given an Antigravity turn is <waiting>
+    When 15 minutes pass without output
+    Then the turn is still running
+
+    Examples:
+      | waiting                                 |
+      | waiting for the user to answer a request |
+      | running a tool                          |
+      | running a subagent                      |
+
+  # Upstream #28629
+  @backlog @shared
+  Scenario: The work of an Antigravity subagent can be read
+    Given an Antigravity turn started a subagent that read "src/cart.ts"
+    When the user opens the subagent's work
+    Then the subagent's role, prompt, tool calls and answer are shown
+    And none of it can be changed
+
+  # Upstream #28629: a batch is matched to its record only when nothing else could own it.
+  @backlog @shared
+  Scenario: Subagent work that cannot be matched to its record says so
+    Given two Antigravity subagent batches in one session were started with the same text
+    When the user opens the work of one of them
+    Then the user is told there is no record of that subagent's work
+
+  # Upstream #28629: video uploads became plain file paths.
+  @backlog
+  Scenario: An MP4 video attached to an Antigravity turn is sent as a video
+    When the user sends a message to Antigravity with an MP4 video attached
+    Then Antigravity receives the video itself, not its file path
+
+  # Upstream #28629: an edit whose place could not be found exactly showed as a wrong change at line 1.
+  @backlog @shared
+  Scenario: An Antigravity edit that cannot be placed exactly has no inline preview
+    Given Antigravity asks to edit "src/cart.ts" with text that matches no whole lines of the file
+    When the approval is shown
+    Then it shows no inline preview of the edit
+
+  # Upstream #28629
+  @backlog
+  Scenario: The first Antigravity prompt does not wait for the quota read
+    Given Antigravity's quota read is slow to answer
+    When the user sends the first message to Antigravity
+    Then the turn starts without waiting for the quota
+
+  # Upstream #28629
+  @backlog @shared
+  Scenario: Signing in to another Google account clears the old account's limits
+    Given the limits view shows the Antigravity limits of "a@example.com"
+    When the user signs the Antigravity instance in to "b@example.com"
+    Then the limits of "a@example.com" are no longer shown
+
+  # Upstream #26910: Antigravity marks every open read failed with an unrelated step error,
+  # and never completes a subagent's read that HAL-C2 served.
+  # Upstream #26928: same change as #26910.
+  @backlog @priority-high
+  Scenario Outline: A file read HAL-C2 served for Antigravity is shown as it went
+    Given an Antigravity subagent asks HAL-C2 to read "src/cart.ts"
+    And HAL-C2 <served>
+    When Antigravity later reports the read failed with "Tool execution failed"
+    Then the read is shown <shown>
+
+    Examples:
+      | served                               | shown                                            |
+      | served it                            | completed from the moment it was served, without the error |
+      | refused it as outside the workspace  | failed                                           |
+
+  # Upstream #26928: two Antigravity models listed under one name are labelled apart in the picker.
+  @backlog @priority-low
+  Scenario: Antigravity models that share a name are told apart in the picker
+    Given Antigravity lists "gemini-3.8-flash" and "gemini-3.8-flash-demo" both as "Gemini 3.8 Flash"
+    When the user opens the model picker
+    Then the second reads "Gemini 3.8 Flash (gemini-3.8-flash-demo)"
+
+  # Upstream #26929: the thinking level fell back to the old gauge and label in the composer.
+  @backlog @shared @mobile
+  Scenario: Antigravity's thinking level is the composer's effort
+    Given an Antigravity thread on "Gemini 3.8 Flash" with the thinking level "High"
+    Then the composer shows "High" the way it shows other providers' effort
+    And the effort shortcut changes the thinking level
+    And the thread details name the thinking level as its effort

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27515
 #   https://github.com/pingdotgg/t3code/pull/19161
 #   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
 #   apps/server-ex/lib/hal_c2/acp/sessions.ex (server.listAcpRegistrySessions, server.importAcpRegistrySession,
@@ -146,6 +147,27 @@ Feature: Importing native agent sessions
       | Grok        |
       | Pi          |
       | Antigravity |
+
+  # Upstream #27515: Pi's terminal sessions could not be imported; the scan only knew Claude Code and Codex.
+  @backlog @plugin-pi
+  Scenario Outline: Pi's sessions are found where that Pi instance keeps them
+    Given an enabled Pi instance whose environment sets <setting>
+    When the MC scans for agent history
+    Then the Pi sessions in <folder> are offered, kept per project or all in one folder
+
+    Examples:
+      | setting                                 | folder                 |
+      | PI_CODING_AGENT_SESSION_DIR to "~/pi-s" | "~/pi-s"               |
+      | only PI_CODING_AGENT_DIR to "~/pi"      | "~/pi/sessions"        |
+      | neither                                 | "~/.pi/agent/sessions" |
+
+  # Upstream #27515: importing a Pi session uses only its active branch (the last entry back to the root) as the thread.
+  @backlog @plugin-pi
+  Scenario: An imported Pi session with branches becomes the thread of its active branch
+    Given a Pi session whose history branched after a rewind
+    When the user imports it
+    Then the thread holds the active branch, from its last entry back to the start
+    And the next message continues that Pi session
 
   @backlog
   Scenario: A provider plugin declares where its history lives

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26797
+#   https://github.com/pingdotgg/t3code/pull/25971
+#   https://github.com/pingdotgg/t3code/pull/23339
 #   https://github.com/pingdotgg/t3code/pull/19975
 #   https://github.com/pingdotgg/t3code/pull/21197
 #   https://github.com/pingdotgg/t3code/pull/16040
@@ -37,6 +40,10 @@
 #   https://github.com/pingdotgg/t3code/pull/21841
 #   https://github.com/pingdotgg/t3code/pull/25714
 #   https://github.com/pingdotgg/t3code/pull/25815
+#   https://github.com/pingdotgg/t3code/pull/24106
+#   https://github.com/pingdotgg/t3code/pull/25248
+#   https://github.com/pingdotgg/t3code/pull/21430
+#   https://github.com/pingdotgg/t3code/pull/28323
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
@@ -143,6 +150,46 @@ Feature: Device panel
       Then the list shows the warning under the name "studio"
       And the iOS Simulators of "studio" can still be opened
       And the warning goes away once Android discovery works again
+
+    # Upstream #25248: the warning stopped at the hub's message and dropped the cause it reported.
+    @backlog @mc
+    Scenario: A device discovery warning gives the cause the device tools reported
+      Given the machine's iOS Simulator service stops answering
+      When the user or an agent lists the machine's devices
+      Then the warning names the cause, "Unable to connect to CoreSimulatorService"
+      And it is one line without the tools' stack trace
+
+    # Upstream #25971: a failed or hung simulator listing dropped the known devices, and setup
+    # then advised installing an iOS runtime that was already there.
+    @backlog @mc @desktop
+    Scenario Outline: Known devices stay listed when a listing <fails>
+      Given the machine "studio" listed the iOS Simulator "iPhone 17"
+      When its next simulator listing <fails>
+      Then "iPhone 17" is still listed
+      And the list says the iOS Simulators of "studio" may be incomplete, and why
+      And setup does not advise installing an iOS runtime
+      And the warning clears once a listing succeeds again
+
+      Examples:
+        | fails                           |
+        | fails                           |
+        | does not answer within 40 seconds |
+
+    # Upstream #25971: the incomplete-listing warning can be put away until its cause changes.
+    @backlog @desktop @priority-low
+    Scenario: An incomplete device listing warning can be dismissed until its cause changes
+      Given the device list says the iOS Simulators of "studio" may be incomplete
+      When the user dismisses the warning
+      Then it is not shown again for that cause
+      But it comes back when the cause or the platforms it names change
+
+    # Upstream #25971: a device booted while its platform's listing was incomplete opened the
+    # stale entry, such as an emulator by its virtual device name.
+    @backlog @mc @priority-low
+    Scenario: A booted device is not opened from a listing that may be incomplete
+      Given the Android listing of "studio" may be incomplete
+      When the user starts the emulator "Pixel 9" and opens it
+      Then opening it is refused until a listing names the running emulator
 
     @desktop
     Scenario: Only one device is opened at a time from the list
@@ -317,6 +364,23 @@ Feature: Device panel
       Given the thread has an iOS Simulator open that serves its screen only over WebRTC
       When the user shows its tab
       Then the tab shows the device's screen
+
+    # Upstream #26797: EAS Simulator hosts offered only an iPhone; Android sessions could not open,
+    # since the host assumed iOS and the viewer never asked serve-emu for its WebRTC stream.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A hosted simulator offers an Android device beside the iPhone
+      Given the machine's device hub is an EAS Simulator host
+      When the user opens an Android device from it
+      Then the tab shows the Android device's screen over WebRTC
+      And the device's input reconnects without restarting its video
+
+    # Upstream #26797
+    @backlog @desktop @mobile @priority-low
+    Scenario: A hosted simulator offers only what a hosted device can do
+      Given the thread has a device open from an EAS Simulator host
+      When the user looks at the device's controls
+      Then navigation, screenshots and powering off are offered
+      And device settings and tools that need the host's own commands are not
 
     @desktop
     Scenario: An Android emulator that rotates starts its video over
@@ -654,6 +718,21 @@ Feature: Device panel
       When the user presses the device's Home button
       Then the device receives the "home" button
 
+    # Upstream #23339: keys typed on a numeric keypad never reached an iOS simulator.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A numeric keypad types into an iOS simulator
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user presses the keypad's "<key>" on the device
+      Then the device receives the keypad's "<key>" going down and up
+
+      Examples:
+        | key   |
+        | 7     |
+        | Enter |
+        | .     |
+        | *     |
+
     # Upstream #17020: right and middle clicks on the device's screen are no longer sent as touches.
     @backlog @desktop
     Scenario: Only the primary button touches the device
@@ -676,12 +755,22 @@ Feature: Device panel
       When the user presses the device's Recents button
       Then the emulator receives the "recents" button
 
+    # Upstream #21430: a touch whose pointer is taken away ends once, at its last point.
     @desktop
     Scenario: A touch taken away mid-drag ends where it was
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
       When the user drags from the middle of the screen to its left middle and the touch is taken away
       Then the device receives a touch that ends at the left middle
+
+    # Upstream #21430: a second finger could start its own gesture and end the first one's.
+    @backlog @desktop @mobile
+    Scenario: A second finger does not interrupt a touch in progress on the flat view
+      Given the thread has the iOS Simulator "iPhone 17" open in the flat view
+      And the user is dragging one finger across the screen
+      When the user puts a second finger on the screen and lifts it
+      Then the device receives only the first finger's drag
+      And the drag ends when the first finger lifts
 
     @desktop
     Scenario: Rotating a simulator turns its screen
@@ -899,6 +988,23 @@ Feature: Device panel
       And later turned device support off
       When the user shows the Device tab
       Then the wizard opens at its first step
+
+    # Upstream #24106: a reload showed the wizard before the environment answered.
+    @backlog @desktop
+    Scenario: A restored Device tab waits for the device list before offering setup
+      Given device support is set up on the thread's environment
+      And the Device tab was open when the desktop restarted
+      When the tab comes back before the environment has sent its devices
+      Then the tab says "Finding devices…" and no setup wizard opens
+
+    # Upstream #24106: waiting for a first answer that failed spun on "Finding devices…" for good.
+    @backlog @desktop
+    Scenario: A device list that fails to load says why and offers to try again
+      Given the environment refuses the Device tab's first request for its devices
+      When the user shows the Device tab
+      Then the tab shows the error with "Retry"
+      When the user retries and the environment answers
+      Then the tab lists the environment's devices
 
     @desktop
     Scenario: Enabling the device hub says what it is doing until it is ready
@@ -1208,6 +1314,16 @@ Feature: Device panel
         | the iOS Simulator "iPhone 17"  | https:// or myapp://     | myapp://cart         | Open   | open "myapp://cart"             |
         | the iOS Simulator "iPhone 17"  | Bundle ID to launch      | com.example.shop     | Launch | launch "com.example.shop"       |
         | the Android Emulator "Pixel 9" | Package name to launch   | com.example.shop     | Launch | launch "com.example.shop"       |
+
+    # Upstream #28323: the address and app fields were emptied even when the device refused, so a
+    # hand-typed deep link or bundle ID had to be typed again to retry.
+    @backlog @desktop
+    Scenario: An address the device refuses to open stays in its field
+      Given the user has the tools open for the iOS Simulator "iPhone 17"
+      And the device refuses to open "myapp://cart"
+      When the user types "myapp://cart" into "https:// or myapp://" and chooses "Open"
+      Then the tools say why the device refused
+      And the field still reads "myapp://cart"
 
     @desktop
     Scenario: An empty address or app name cannot be sent

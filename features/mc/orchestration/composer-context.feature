@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23784
+#   https://github.com/pingdotgg/t3code/pull/29158
 #   apps/server-ex/lib/hal_c2/composer_context.ex (context links, markers, hal_c2_context envelope,
 #     attachment remapping)
 #   packages/shared/src/composerContextReferences.ts (the shared format)
@@ -53,6 +55,13 @@ Feature: Inline context in messages
       | 300 characters long                 | the first 200 characters         |
       | empty                               | the kind of the context          |
 
+  # Upstream #29158: a cut at 200 characters could split an emoji and leave a broken character.
+  @backlog @mc @shared @priority-low
+  Scenario: A long label is not cut through the middle of an emoji
+    When a message links context with a label whose 200th character starts an emoji
+    Then the marker label ends before that emoji
+    And it has no broken character
+
   @mc
   Scenario: Malformed links are left as text
     When a message holds a context link with an unknown version or an invalid id
@@ -79,6 +88,13 @@ Feature: Inline context in messages
       | mention            | the path                                                      |
       | skill              | the skill name                                                |
       | thread             | the thread title and id, and how to read it as reference only |
+
+  # Upstream #23784: agents read an attached thread by the id in its marker and got thread_not_found.
+  @backlog @mc @priority-high
+  Scenario: An attached thread's payload gives the exact call that reads it
+    When a message references thread "t1" as context
+    Then its payload names the call that reads it with the thread's own id as its argument
+    And not the id that pairs the reference with its marker
 
   @mc
   Scenario: A context of an unknown kind is passed as data

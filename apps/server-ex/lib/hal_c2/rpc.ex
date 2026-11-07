@@ -88,6 +88,16 @@ defmodule HalC2.Rpc do
     end)
   end
 
+  # A thread's history in bounded pages (`HalC2.Projection.History`): the newest user
+  # turns, or the page before the `cursor` an earlier answer gave.
+  def handle("hal-c2.threadHistory", %{"threadId" => thread_id} = input) do
+    HalC2.Streams.read(thread_id, fn state ->
+      if input["cursor"] == nil,
+        do: {:ok, HalC2.Projection.History.snapshot(state)},
+        else: HalC2.Projection.History.page(state, input["cursor"])
+    end)
+  end
+
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding
   # one that moved.
   def handle("hal-c2.moveThread", %{"threadId" => id, "machine" => machine} = input),
@@ -406,8 +416,10 @@ defmodule HalC2.Rpc do
   # changes something.
   @reads ~w(
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
+    orchestration.getCommandOutput
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
+    hal-c2.threadHistory
     hal-c2.placeThread hal-c2.registerPush hal-c2.unregisterPush
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
