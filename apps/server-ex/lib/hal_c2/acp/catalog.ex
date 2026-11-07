@@ -841,7 +841,10 @@ defmodule HalC2.Acp.Catalog do
       else: error("checksum_mismatch", "The downloaded archive does not match its sha256.")
   end
 
-  # erl_tar and zip refuse entries that would land outside `dir`.
+  # erl_tar and zip refuse entries that would land outside `dir`. A bare binary
+  # lands at `cmd`, whose segments relative_segments/1 has already checked
+  # (no absolute path, drive letter, `.` or `..`), so it stays inside `dir`.
+  # sobelow_skip ["Traversal.FileModule"]
   defp extract(archive, dir, cmd) do
     result =
       case Path.basename(archive) do
