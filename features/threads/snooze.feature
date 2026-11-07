@@ -242,7 +242,7 @@ Feature: Snoozing threads
 
   # Upstream #22202: every automatic message cleared the snooze, so a self-waking thread came
   # back within minutes. A message the user sends still wakes it.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: An automatic wake keeps a thread snoozed
     Given "Refactor cart" is snoozed until tomorrow
     When <wake> sends "Refactor cart" a message and its run finishes

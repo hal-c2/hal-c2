@@ -527,6 +527,35 @@ defmodule HalC2.Steps.Threads do
     |> Map.put(:wake_message, message_id)
   end
 
+  # The wake sends its message and the run it started, after the snooze, ends.
+  step ~r/^(?<wake>a background task finishing|a monitor the agent set|a pull request watch|the completion of a task it delegated) sends "(?<thread>[^"]+)" a message and its run finishes$/,
+       %{args: [wake, thread]} = context do
+    extra =
+      if wake == "the completion of a task it delegated",
+        do: %{"delegatedCompletion" => %{"taskId" => "task-1"}},
+        else: %{"notification" => %{"source" => "provider", "outcome" => "completed"}}
+
+    message_id = "msg-wake-#{System.unique_integer([:positive])}"
+    at = World.iso_from_now(1_000)
+
+    context
+    |> World.add_message(
+      thread,
+      "user",
+      "The task finished",
+      nil,
+      Map.put(extra, "id", message_id)
+    )
+    |> World.add_run(thread, "completed", at, %{"userMessageId" => message_id})
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed until tomorrow$/, %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["snoozedUntil"] == World.local_time(context, "tomorrow")
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
   step "the user snoozes {string} until tomorrow", %{args: [thread]} = context do
     until = World.local_time(context, "tomorrow")
     id = World.thread_id(context, thread)
@@ -571,8 +600,12 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # The MC marks no wake; a thread is woke when settlement finds it awake, so not woke is
+  # the snooze left in force and settlement still seeing it parked.
   step "it is not marked as woke", context do
-    assert World.row(context, "Refactor cart")["wokeAt"] == nil
+    row = World.row(context, "Refactor cart")
+    assert row["snoozedUntil"] != nil and row["snoozedAt"] != nil
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
     context
   end
 
@@ -627,34 +660,54 @@ defmodule HalC2.Steps.Threads do
 
   # --- unread-and-status.feature ---------------------------------------------------
 
-  # The shell sits at its prompt after forking a copy of itself that waits, as a prompt
-  # theme's helper does: a child of the shell with the shell's own name.
+  # The shell sits at its prompt after forking a subshell that waits, as a prompt theme's
+  # helper does: a child in the shell's own process group (job control is off for it).
   step "{string} has one terminal waiting at an idle prompt", %{args: [thread]} = context do
+    {context, fifo} = open_terminal(context, thread)
+    {_, context} = Terminal.run(context, "default", "set +m; { (read _ < #{fifo}) & }")
+    Map.put(context, :idle_thread, World.thread_id(context, thread))
+  end
+
+  # A command of the user's that is a copy of the shell: the shell run through itself.
+  step "{string} has one terminal running a script through its own shell",
+       %{args: [thread]} = context do
+    {context, fifo} = open_terminal(context, thread)
+    n = System.unique_integer([:positive])
+
+    context =
+      Terminal.write(context, "default", "sh -c 'echo started''_#{n}; read _ < #{fifo}'\n")
+
+    {_, _, context} = Terminal.await_output(context, "default", "started_#{n}")
+    Map.put(context, :idle_thread, World.thread_id(context, thread))
+  end
+
+  defp open_terminal(context, thread) do
     id = World.thread_id(context, thread)
     {_, context} = Terminal.open!(context, %{"threadId" => id, "terminalId" => "term-1"})
     {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
     fifo = Terminal.folder(context, "/prompt-helper")
     File.mkdir_p!(Path.dirname(fifo))
     {_, 0} = System.cmd("mkfifo", [fifo])
-    {_, context} = Terminal.run(context, "default", "{ (read _ < #{fifo}) & }")
-    Map.put(context, :idle_thread, id)
+    {context, fifo}
   end
 
   step "{string} is not shown as busy", context do
-    # The hub looks at the shell's children once a second; two of its answers after the
-    # helper was forked are the receipt that it looked at it.
-    hub = Process.whereis(HalC2.Terminal.Hub)
-    :erlang.trace(hub, true, [:receive])
-    for _ <- 1..2, do: assert_receive({:trace, ^hub, :receive, {:processes, _}}, 5_000)
-    :erlang.trace(hub, false, [:receive])
-
-    assert %{"hasRunningSubprocess" => false} =
-             Enum.find(
-               HalC2.Terminal.Hub.summaries(),
-               &(&1["threadId"] == context.idle_thread)
-             )
-
+    assert %{"hasRunningSubprocess" => false} = terminal_after_look(context)
     context
+  end
+
+  step "{string} is shown as busy", context do
+    assert %{"hasRunningSubprocess" => true} = terminal_after_look(context)
+    context
+  end
+
+  # The hub looks at the shell's children when asked; its answer is the receipt that it did.
+  defp terminal_after_look(context) do
+    :ok = HalC2.Terminal.Hub.refresh()
+    # The terminal tells the hub of what it found after the hub told it.
+    [{session, _}] = Registry.lookup(HalC2.Terminal.Registry, {context.idle_thread, "term-1"})
+    _ = :sys.get_state(session)
+    Enum.find(HalC2.Terminal.Hub.summaries(), &(&1["threadId"] == context.idle_thread))
   end
 
   step "{string} finished work the user has not seen", %{args: [thread]} = context do

@@ -350,6 +350,14 @@ Feature: Unread and status in the thread list
     Given "Build search" has one terminal waiting at an idle prompt
     Then "Build search" is not shown as busy
 
+  # Review of #1206: telling prompt helpers apart by the shell's name hid real work, such as
+  # `bash ./deploy.sh` run in bash; a helper stays in the shell's process group, a command
+  # runs in a group of its own.
+  @mc @priority-high
+  Scenario: A script the shell runs through itself makes its thread look busy
+    Given "Build search" has one terminal running a script through its own shell
+    Then "Build search" is shown as busy
+
   @backlog @desktop @priority-low
   Scenario: The preview lists the thread's pull requests
     Given "Build search" is linked to pull requests 12 and 14

@@ -44,6 +44,13 @@ defmodule HalC2.Terminal.Hub do
     :exit, {:noproc, _} -> []
   end
 
+  @doc """
+  Looks at the shells' children once now and returns when every terminal has been told
+  what it found. The hub also looks by itself while any shell runs; this is for a caller
+  that needs the answer to a change it just made.
+  """
+  def refresh, do: GenServer.call(__MODULE__, :refresh, 30_000)
+
   @impl true
   def init(nil) do
     {:ok,
@@ -74,6 +81,9 @@ defmodule HalC2.Terminal.Hub do
   end
 
   @impl true
+  def handle_call(:refresh, _from, state),
+    do: {:reply, :ok, apply_processes(state, process_table())}
+
   def handle_call(:summaries, _from, state),
     do: {:reply, for({_key, {summary, _session}} <- state.terminals, do: summary), state}
 
@@ -163,7 +173,12 @@ defmodule HalC2.Terminal.Hub do
     {:noreply, state}
   end
 
-  def handle_info({:processes, table}, state) do
+  def handle_info({:processes, table}, state),
+    do: {:noreply, state |> apply_processes(table) |> Map.put(:polling, false) |> maybe_poll()}
+
+  def handle_info(_other, state), do: {:noreply, state}
+
+  defp apply_processes(state, table) do
     activity =
       for {key, {%{"status" => "running", "pid" => pid}, session}} <- state.terminals,
           is_integer(pid),
@@ -176,10 +191,8 @@ defmodule HalC2.Terminal.Hub do
         {key, current}
       end
 
-    {:noreply, maybe_poll(%{state | activity: activity, polling: false})}
+    %{state | activity: activity}
   end
-
-  def handle_info(_other, state), do: {:noreply, state}
 
   # A hub from before followers has no field for them.
   @impl true
@@ -229,60 +242,63 @@ defmodule HalC2.Terminal.Hub do
 
   defp maybe_poll(state) do
     if Enum.any?(state.terminals, fn {_, {summary, _}} -> summary["status"] == "running" end) do
-      Process.send_after(self(), :poll, @poll_ms)
+      Process.send_after(self(), :poll, Application.get_env(:hal_c2, :terminal_poll_ms, @poll_ms))
       %{state | polling: true}
     else
       state
     end
   end
 
-  # `{children by parent pid, command by pid}` from `ps`, which lists by pid.
+  # `{children by parent pid, command by pid, {process group, terminal's foreground group}
+  # by pid}` from `ps`, which lists by pid.
   defp process_table do
     ps =
       Application.get_env(:hal_c2, :terminal_ps) ||
         Enum.find(["/bin/ps", "/usr/bin/ps"], &File.exists?/1) || "ps"
 
-    case System.cmd(ps, ["-eo", "pid=,ppid=,comm="], stderr_to_stdout: true) do
+    case System.cmd(ps, ["-eo", "pid=,ppid=,pgid=,tpgid=,comm="], stderr_to_stdout: true) do
       {out, 0} ->
         for line <- String.split(out, "\n"),
-            [_, pid, ppid, command] <- [Regex.run(~r/^\s*(\d+)\s+(\d+)\s+(.+)$/, line)],
-            reduce: {%{}, %{}} do
-          {children, commands} ->
+            [_, pid, ppid, pgid, tpgid, command] <-
+              [Regex.run(~r/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/, line)],
+            reduce: {%{}, %{}, %{}} do
+          {children, commands, groups} ->
             pid = String.to_integer(pid)
             ppid = String.to_integer(ppid)
 
             {Map.update(children, ppid, [pid], &(&1 ++ [pid])),
-             Map.put(commands, pid, String.trim(command))}
+             Map.put(commands, pid, String.trim(command)),
+             Map.put(groups, pid, {String.to_integer(pgid), String.to_integer(tpgid)})}
         end
 
       _ ->
-        {%{}, %{}}
+        {%{}, %{}, %{}}
     end
   rescue
-    _ -> {%{}, %{}}
+    _ -> {%{}, %{}, %{}}
   end
 
   # The shell's first child that is a command, and its name, e.g. `{true, "vim"}`. A prompt
-  # theme forks copies of the shell to compute its prompt; a child with the shell's own name
-  # is that, not a command the user started.
-  defp child({children, commands}, shell_pid) do
-    shell = command_name(Map.get(commands, shell_pid, ""))
+  # theme forks subshells to compute the prompt, and command substitution does too; they
+  # stay in the shell's process group. A command the shell runs gets a group of its own
+  # (job control), which the terminal then hands the foreground. So a child counts when it
+  # is outside the shell's group, or when the shell is not the terminal's foreground group.
+  defp child({children, commands, groups}, shell_pid) do
+    {shell_group, foreground} = Map.get(groups, shell_pid, {nil, nil})
 
-    names =
+    command =
       children
       |> Map.get(shell_pid, [])
-      |> Enum.map(&command_name(Map.get(commands, &1, "")))
+      |> Enum.find(fn pid ->
+        {group, _} = Map.get(groups, pid, {nil, nil})
+        group != shell_group or foreground != shell_group
+      end)
 
-    case Enum.reject(names, &shell_copy?(&1, shell)) do
-      [name | _] -> {true, name}
-      [] -> {false, nil}
+    case command do
+      nil -> {false, nil}
+      pid -> {true, command_name(Map.get(commands, pid, ""))}
     end
   end
-
-  defp shell_copy?(name, shell),
-    do:
-      name != nil and shell != nil and
-        String.trim_leading(name, "-") == String.trim_leading(shell, "-")
 
   defp command_name(raw) do
     raw = String.trim(raw)

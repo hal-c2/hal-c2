@@ -389,9 +389,13 @@ defmodule HalC2.Orchestration.Settlement do
     completed = epoch_ms(row["latestRunCompletedAt"])
     began = epoch_ms(row["latestRunStartedAt"] || row["latestRunRequestedAt"])
 
+    # A wake the MC sent for the agent finishing is the agent working on, not news for the
+    # user; only its failure wakes the thread.
+    quiet_wake? = row["latestRunAutomatic"] == true and row["status"] != "failed"
+
     woke_after_snooze? =
       snoozed_at != nil and completed != nil and completed > snoozed_at and
-        (began == nil or began > snoozed_at)
+        (began == nil or began > snoozed_at) and not quiet_wake?
 
     until == nil or until <= now or woke_after_snooze? or
       (row["status"] == "failed" and snoozed_at == nil)
