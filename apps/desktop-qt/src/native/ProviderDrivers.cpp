@@ -71,7 +71,7 @@ QList<Driver> make() {
        {binaryPath(QStringLiteral("Path to the OpenCode binary."), QStringLiteral("opencode")),
         {QStringLiteral("serverUrl"), QStringLiteral("Server URL"), QStringLiteral("Leave blank to let HAL-C2 spawn the server when needed."),
          QStringLiteral("http://127.0.0.1:4096")},
-        {QStringLiteral("serverPassword"), QStringLiteral("Server password"), QStringLiteral("Stored in plain text on disk."),
+        {QStringLiteral("serverPassword"), QStringLiteral("Server password"), QStringLiteral("Kept in the secret store, never in the settings file."),
          QStringLiteral("Optional"), QStringLiteral("password")}},
        {},
        {effort(QStringLiteral("variant")),
