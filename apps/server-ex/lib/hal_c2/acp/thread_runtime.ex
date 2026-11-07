@@ -898,17 +898,24 @@ defmodule HalC2.Acp.ThreadRuntime do
                       provider.budget-limit provider.model-budget-limit provider.chatgpt-limit)
 
   defp usage_limit(state, %{"message" => message} = error) when is_binary(message) do
-    name = get_in(error, ["data", "errorName"])
+    # Only OpenCode's errors are read this way, and a JSON-RPC `data` need not be a
+    # map: check the driver first, then match its shape instead of walking into it.
+    if HalC2.Acp.driver(state.agent) == "opencode" do
+      name =
+        case error do
+          %{"data" => %{"errorName" => name}} -> name
+          _ -> nil
+        end
 
-    if HalC2.Acp.driver(state.agent) == "opencode" and
-         (name in @opencode_limits or message =~ ~r/\bYou've hit your \w+ limit\b/) do
-      %{
-        "class" => "usage_limit",
-        "message" => message,
-        "code" => name || "usage_limit",
-        "retryable" => nil,
-        "resetAt" => reset_at(message)
-      }
+      if name in @opencode_limits or message =~ ~r/\bYou've hit your \w+ limit\b/ do
+        %{
+          "class" => "usage_limit",
+          "message" => message,
+          "code" => name || "usage_limit",
+          "retryable" => nil,
+          "resetAt" => reset_at(message)
+        }
+      end
     end
   end
 
@@ -1105,9 +1112,10 @@ defmodule HalC2.Acp.ThreadRuntime do
          # (`HalC2.Mcp.AcpServers`): the MCP address, its credential and the
          # command to run one call with.
          mcp = HalC2.Mcp.for_agent(state.thread_id, instance),
-         env = env ++ HalC2.Mcp.AcpServers.build(%{}, mcp).env ++ subagents_off(instance, mcp),
+         env = env ++ HalC2.Mcp.AcpServers.build(%{}, mcp).env,
          {command, env, server} = serve_opencode(instance, command, env),
          env = HalC2.ProjectEnvironment.for_turn(context, env, command),
+         env = subagents_off(instance, mcp, env),
          {:ok, conn} <-
            Connection.start_link(
              cmd: command,
@@ -1160,11 +1168,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # OpenCode's own subagents (its task tool) are denied while agents use HAL-C2's
   # workers (`HalC2.Mcp.workers_only?/1`), in the config OpenCode starts with, so the
-  # choice holds for the session. The user's own `OPENCODE_CONFIG_CONTENT` is kept.
-  defp subagents_off(instance, mcp) do
+  # choice holds for the session. The user's own `OPENCODE_CONFIG_CONTENT` is kept:
+  # the denial is merged into the value the finished launch environment carries,
+  # which may come from the instance's variables or the project's environment, and
+  # only then from the MC's own, the order they apply in (`HalC2.ProjectEnvironment`).
+  defp subagents_off(instance, mcp, env) do
     if HalC2.Acp.driver(instance) == "opencode" and HalC2.Mcp.workers_only?(mcp) do
       config =
-        case JSON.decode(System.get_env("OPENCODE_CONFIG_CONTENT") || "") do
+        case JSON.decode(opencode_config(env) || "") do
           {:ok, %{} = config} -> config
           _ -> %{}
         end
@@ -1175,9 +1186,28 @@ defmodule HalC2.Acp.ThreadRuntime do
           _ -> %{"task" => "deny"}
         end
 
-      [{"OPENCODE_CONFIG_CONTENT", JSON.encode!(Map.put(config, "permission", permission))}]
+      merged =
+        {"OPENCODE_CONFIG_CONTENT", JSON.encode!(Map.put(config, "permission", permission))}
+
+      Enum.reject(env, &(elem(&1, 0) == "OPENCODE_CONFIG_CONTENT")) ++ [merged]
     else
-      []
+      env
+    end
+  end
+
+  # The launch's `OPENCODE_CONFIG_CONTENT`: in the final environment the launch
+  # variables follow the project's, so the last entry is the one that applies;
+  # with none, the MC's own variable is the one the agent would inherit.
+  defp opencode_config(env) do
+    env
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      {"OPENCODE_CONFIG_CONTENT", value} -> value
+      _ -> nil
+    end)
+    |> case do
+      nil -> System.get_env("OPENCODE_CONFIG_CONTENT")
+      value -> value
     end
   end
 
