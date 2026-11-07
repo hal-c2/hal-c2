@@ -129,6 +129,7 @@ Feature: Referencing files, skills, commands and context
       | Please use /skill    |
       | Please use /skill:re |
 
+  # Upstream #19107: a slash typed after other text searches skills, so a skill can be chipped mid-sentence.
   @shared @backlog-mobile @backlog-tui
   Scenario: A slash typed after other text searches skills
     Given the provider offers the skill "review"
