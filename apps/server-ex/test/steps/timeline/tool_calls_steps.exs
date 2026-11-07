@@ -350,6 +350,28 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
   end
 
   step "the turn fails", context do
+    if context[:codex_compaction] do
+      # A Codex turn held by its scenario (`:codex_compaction` names its thread):
+      # Codex ends it as failed.
+      title = context.codex_compaction
+      {_, runtime} = World.codex_runtime(context, title)
+
+      World.codex_notify(context, title, "turn/completed", %{
+        "turn" => %{
+          "id" => runtime.turn.native_turn_id,
+          "status" => "failed",
+          "error" => %{"message" => "the turn failed"}
+        }
+      })
+
+      World.await_runs(context, title, ["failed"])
+      context
+    else
+      turn_fails(context)
+    end
+  end
+
+  defp turn_fails(context) do
     if context[:cursor_world] do
       # An ACP provider feature on the AcpFixtures world (Cursor): the run
       # the scenario started has failed.
@@ -358,21 +380,25 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
 
       context
     else
-      if context[:batch_pending] do
-        # An Antigravity batch held by its scenario (features/providers):
-        # kill its agent process, so its turn fails around it.
-        [{pid, _}] =
-          Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, context.thread))
+      batch_or_subagent_fails(context)
+    end
+  end
 
-        %{conn: conn} = :sys.get_state(pid)
-        if conn, do: Process.exit(conn, :kill)
-        Map.put(context, :run_state, FakeAcp.await_run(context, "failed"))
-      else
-        context = FakeAcp.send_message(context, "survey the code")
-        state = FakeAcp.await_run(context, "failed")
-        assert [subagent] = StreamState.list(state, "subagent")
-        Map.put(context, :subagent, subagent)
-      end
+  defp batch_or_subagent_fails(context) do
+    if context[:batch_pending] do
+      # An Antigravity batch held by its scenario (features/providers):
+      # kill its agent process, so its turn fails around it.
+      [{pid, _}] =
+        Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, context.thread))
+
+      %{conn: conn} = :sys.get_state(pid)
+      if conn, do: Process.exit(conn, :kill)
+      Map.put(context, :run_state, FakeAcp.await_run(context, "failed"))
+    else
+      context = FakeAcp.send_message(context, "survey the code")
+      state = FakeAcp.await_run(context, "failed")
+      assert [subagent] = StreamState.list(state, "subagent")
+      Map.put(context, :subagent, subagent)
     end
   end
 

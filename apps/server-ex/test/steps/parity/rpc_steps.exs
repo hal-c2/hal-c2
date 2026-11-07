@@ -133,6 +133,15 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
+  step "the MC answers with a thread's family as shell rows, its lineage and subagent tree",
+       context do
+    {:rpc, _, {:ok, result}} = context.answer
+    assert %{"rows" => rows} = result
+    thread = context.fixtures.thread
+    assert Enum.any?(rows, &match?([_, ^thread, "thread", %{}], &1))
+    context
+  end
+
   step "the MC answers with the keybindings after the change", context do
     {:rpc, _, {:ok, %{"rules" => rules}}} = context.answer
     assert Enum.any?(rules, &(&1["command"] == "terminal.toggle" and &1["key"] == "mod+shift+j"))
@@ -290,6 +299,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
         {%{"threadId" => f.thread}, context}
 
       "hal-c2.threadHistory" ->
+        {%{"threadId" => f.thread}, context}
+
+      "hal-c2.threadFamily" ->
         {%{"threadId" => f.thread}, context}
 
       "hal-c2.upsertKeybinding" ->

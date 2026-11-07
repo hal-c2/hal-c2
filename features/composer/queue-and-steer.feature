@@ -21,6 +21,7 @@
 #   apps/web/src/session-logic.ts (getUserQueuedThreadRuns: the agent's own queued runs are not the user's)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
+#   apps/tui/qml/HalC2/Tui/Timeline.qml (the held queue, ^X q and the palette resume it)
 #   packages/shared/src/keybindings.ts (composer.sendAlternate, thread.steerQueuedMessage, thread.editQueuedMessage)
 #   packages/contracts/src/orchestrationV2.ts (queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer, queue.resume, run.interrupt)
 #   packages/contracts/src/settings.ts (followUpBehavior)
@@ -577,13 +578,13 @@ Feature: Follow-ups while the agent is working
     When the user starts editing it in the composer
     Then the queue marks "fix typo" as being edited and offers to cancel the edit
 
-  @desktop
+  @desktop @tui
   Scenario: A held queue says its messages are safe
     Given "later" was queued when the MC restarted
     When the MC comes back
     Then the queue is headed "Queue held" and says "Messages stay saved until you resume."
 
-  @desktop
+  @desktop @tui
   Scenario: A held queue is resumed from the composer
     Given "later" was queued when the MC restarted
     And the MC comes back
@@ -631,12 +632,13 @@ Feature: Follow-ups while the agent is working
     When the user resumes the queue
     Then the MC is asked to resume the queue
 
-  @backlog @tui @priority-high
-  Scenario: A held queue is resumed from the terminal
+  # The terminal's other route: ^X q is "the user resumes the queue" above.
+  @tui
+  Scenario: A held queue is resumed from the terminal's command palette
     Given "later" was queued when the MC restarted
     When the MC comes back
     Then the queue is shown as held
-    When the user resumes the queue
+    When the user resumes the queue from the command palette
     Then the MC is asked to resume the queue
 
   # Upstream #14725: steers keep the newest next-turn selection

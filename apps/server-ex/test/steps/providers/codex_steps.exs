@@ -31,7 +31,7 @@ defmodule HalC2.Steps.Providers.Codex do
   end
 
   step "Codex is listed as ready with its installed version", context do
-    assert %{"status" => "ready", "installed" => true, "version" => "0.50.0"} =
+    assert %{"status" => "ready", "installed" => true, "version" => "0.160.0"} =
              codex(context.providers)
 
     context
@@ -907,7 +907,7 @@ Red"} <- StreamState.get(state, "message")[message],
     World.reset_provider_caches()
     assert World.provider_log(context, "codex") == []
     HalC2.Codex.Provider.load()
-    assert %{"version" => "0.50.0", "models" => [_ | _]} = HalC2.Codex.Provider.entry()
+    assert %{"version" => "0.160.0", "models" => [_ | _]} = HalC2.Codex.Provider.entry()
     context
   end
 
@@ -1353,6 +1353,72 @@ Red"} <- StreamState.get(state, "message")[message],
   step "Codex shows that it uses an OpenAI API key", context do
     assert %{"type" => "apiKey", "label" => "OpenAI API Key"} = codex(context.providers)["auth"]
     refute Map.has_key?(codex(context.providers)["auth"], "email")
+    context
+  end
+
+  # --- plan names ------------------------------------------------------------------------
+
+  step "Codex is signed in with the ChatGPT plan Codex reports as {string}",
+       %{args: [plan]} = context do
+    context = World.fake_providers(context)
+    World.put_env("FAKE_CODEX_PLAN", plan)
+    context
+  end
+
+  step "Codex is signed in with a ChatGPT plan named by a newer Codex", context do
+    context = World.fake_providers(context)
+    World.put_env("FAKE_CODEX_PLAN", "proultra9000")
+    Map.put(context, :reported_plan, "proultra9000")
+  end
+
+  step "Codex's account is read", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Codex shows the account's email and its {string} plan", %{args: [plan]} = context do
+    assert %{"email" => "me@example.com", "type" => "chatgpt", "label" => ^plan} =
+             codex(context.providers)["auth"]
+
+    context
+  end
+
+  step "Codex shows the plan as {string}", %{args: [plan]} = context do
+    assert codex(context.providers)["auth"]["label"] == plan
+    context
+  end
+
+  step "Codex shows as signed in and its plan is shown by the plan's own name", context do
+    auth = codex(context.providers)["auth"]
+    assert auth["type"] == "chatgpt"
+    assert auth["email"] == "me@example.com"
+    assert auth["label"] == context.reported_plan
+    context
+  end
+
+  step "Codex's account says ChatGPT Pro from its cached login", context do
+    context = World.fake_providers(context)
+    World.put_env("FAKE_CODEX_PLAN", "pro")
+    context
+  end
+
+  @usage_plans %{
+    "ChatGPT Free" => "free",
+    "no plan" => "none",
+    "an unknown plan" => "plan-from-the-future"
+  }
+
+  step ~r/^Codex's usage read reports (?<plan>ChatGPT Free|no plan|an unknown plan)$/,
+       %{args: [plan]} = context do
+    World.put_env("FAKE_CODEX_USAGE_PLAN", Map.fetch!(@usage_plans, plan))
+    context
+  end
+
+  step ~r/^Codex shows the (?<plan>ChatGPT Free|ChatGPT Pro) plan$/, %{args: [plan]} = context do
+    assert codex(context.providers)["auth"]["label"] =~ plan
     context
   end
 
@@ -2051,6 +2117,110 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- a shadow home's locks and stray files ------------------------------------------------
+
+  step "its {string} folder is a link to the shared home's", %{args: [name]} = context do
+    assert File.read_link!(Path.join(context.codex_shadow, name)) ==
+             Path.join(context.codex_shared, name)
+
+    context
+  end
+
+  step ~r/^a Codex instance's shadow home has its own "thread-writer-locks" folder holding (?<locks>no thread lock|a thread lock)$/,
+       %{args: [locks]} = context do
+    context = shadow_setup(context)
+    folder = Path.join(context.codex_shadow, "thread-writer-locks")
+    File.mkdir_p!(folder)
+    if locks == "a thread lock", do: File.write!(Path.join(folder, "native-1.lock"), "")
+    Map.put(context, :writer_locks, folder)
+  end
+
+  step "the folder is replaced by a link to the shared home's", context do
+    assert File.read_link!(context.writer_locks) ==
+             Path.join(context.codex_shared, "thread-writer-locks")
+
+    context
+  end
+
+  step "the folder is kept with a warning, and replaced once its locks are gone", context do
+    assert {:ok, %File.Stat{type: :directory}} = File.lstat(context.writer_locks)
+    File.rm_rf!(Path.join(context.writer_locks, "native-1.lock"))
+    assert {:ok, _} = HalC2.Codex.Home.env(@second)
+
+    assert File.read_link!(context.writer_locks) ==
+             Path.join(context.codex_shared, "thread-writer-locks")
+
+    context
+  end
+
+  step "the instance is enabled", context do
+    assert {:ok, [{"CODEX_HOME", _home}]} = context.prepare_result
+    context
+  end
+
+  step ~S|a Codex instance's shadow home has "auth.lock" as a link to the shared home's|,
+       context do
+    context = shadow_setup(context)
+    File.mkdir_p!(context.codex_shadow)
+    File.write!(Path.join(context.codex_shared, "auth.lock"), "")
+
+    File.ln_s!(
+      Path.join(context.codex_shared, "auth.lock"),
+      Path.join(context.codex_shadow, "auth.lock")
+    )
+
+    context
+  end
+
+  step ~S|the link is removed and the account keeps its own "auth.lock"|, context do
+    assert {:ok, _} = context.prepare_result
+
+    case File.lstat(Path.join(context.codex_shadow, "auth.lock")) do
+      {:ok, %File.Stat{type: type}} -> assert type == :regular
+      {:error, :enoent} -> :ok
+    end
+
+    context
+  end
+
+  step ~S|a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file|,
+       context do
+    context = shadow_setup(context)
+    File.mkdir_p!(context.codex_shadow)
+    File.write!(Path.join(context.codex_shared, ".sqlite-maintenance.lock"), "shared")
+    File.write!(Path.join(context.codex_shadow, ".sqlite-maintenance.lock"), "mine")
+    context
+  end
+
+  step "the lock is replaced by a link to the shared home's lock", context do
+    assert File.read_link!(Path.join(context.codex_shadow, ".sqlite-maintenance.lock")) ==
+             Path.join(context.codex_shared, ".sqlite-maintenance.lock")
+
+    context
+  end
+
+  step ~S|a Codex account's home folder holds only a ".DS_Store" file left by Finder|,
+       context do
+    context = shadow_setup(context)
+    File.mkdir_p!(context.codex_shadow)
+    File.write!(Path.join(context.codex_shadow, ".DS_Store"), "finder")
+    context
+  end
+
+  step "the account is set up", context do
+    Map.put(context, :prepare_result, HalC2.Codex.Home.env(@second))
+  end
+
+  step "its home is set up as if the folder were empty", context do
+    assert {:ok, [{"CODEX_HOME", home}]} = context.prepare_result
+    assert home == context.codex_shadow
+
+    assert File.read_link!(Path.join(context.codex_shadow, "config.toml")) ==
+             Path.join(context.codex_shared, "config.toml")
+
+    context
+  end
+
   step "a Codex instance whose own home cannot be prepared from the shared one", context do
     context = shadow_setup(context)
     File.mkdir_p!(context.codex_shadow)
@@ -2288,8 +2458,8 @@ Red"} <- StreamState.get(state, "message")[message],
     "the folder Codex wants to write under" => "/tmp/root"
   }
 
-  # Claude's reason is the Claude steps' own.
-  step ~r/^the approval shows (?!Claude's )(?<shown>.+)$/, %{args: [shown]} = context do
+  step ~r/^the approval shows (?<shown>Codex's reason|the command|each file with what would be done to it|the file's old path and its new path|the folder Codex wants to write under)$/,
+       %{args: [shown]} = context do
     assert approval_prompt(context) == Map.fetch!(@approval_shown, shown)
     context
   end
@@ -3906,8 +4076,8 @@ Red"} <- StreamState.get(state, "message")[message],
   step "Codex's status is reported from the manifest the MC already has", context do
     entry = codex(context.providers)
     assert entry["status"] == "ready"
-    # The bundled policy's: the fake Codex is older than its floor.
-    assert entry["compatibilityAdvisory"]["status"] == "broken"
+    # The bundled policy's verdict on the fake's version.
+    assert entry["compatibilityAdvisory"]["status"] == "supported"
     context
   end
 
@@ -3923,7 +4093,7 @@ Red"} <- StreamState.get(state, "message")[message],
 
     File.write!(
       cmd,
-      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"codex-cli 0.50.0\"; exit 0; fi\nexec python3 -u #{fake} \"$@\"\n"
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"codex-cli 0.160.0\"; exit 0; fi\nexec python3 -u #{fake} \"$@\"\n"
     )
 
     File.chmod!(cmd, 0o755)
@@ -3936,6 +4106,1143 @@ Red"} <- StreamState.get(state, "message")[message],
     World.await_runs(context, @thread, ["completed"])
     assert "Hello from codex" in World.replies(context, @thread)
     context
+  end
+
+  # --- a killed app-server, a closed thread ------------------------------------------------
+
+  step "the Codex app-server is killed by a signal", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    Map.put(context, :killed_conn, runtime.conn)
+  end
+
+  step "the turn fails within seconds", context do
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the next Codex turn starts a new app-server", context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["failed", "completed"])
+    {_, runtime} = World.codex_runtime(context, @thread)
+    assert runtime.conn != nil and runtime.conn != context.killed_conn
+    context
+  end
+
+  step "Codex left a command running in a finished turn", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "run the dev server in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert tool_status(context, "cmd-bg") == "running"
+    context
+  end
+
+  step "Codex closes its native thread", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "thread/closed", %{
+      "threadId" => runtime.native_thread_id
+    })
+
+    context
+  end
+
+  step "the turn stays completed", context do
+    assert %{"status" => "completed"} = World.latest_run(context, @thread)
+    context
+  end
+
+  step "a late completion for that command does not bring it back", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "item/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "item" => %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => "npm run dev",
+        "status" => "completed",
+        "aggregatedOutput" => "done\n",
+        "exitCode" => 0
+      }
+    })
+
+    {pid, _} = World.codex_runtime(context, @thread)
+    :sys.get_state(pid)
+    assert tool_status(context, "cmd-bg") == "interrupted"
+    context
+  end
+
+  # --- an error code HAL-C2 does not know ----------------------------------------------------
+
+  step "a ChatGPT-account Codex rejects the thread's model with the code {string}",
+       %{args: [code]} = context do
+    context = World.fake_providers(context)
+    Map.merge(context, %{error_code: code, error_message: "The model is not available."})
+  end
+
+  step "the user sends a turn", context do
+    if context[:archived_thread] do
+      World.post_message(context, @thread, "hello again")
+    else
+      send_failing_turn(context)
+    end
+  end
+
+  defp send_failing_turn(context) do
+    context = start_waiting(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    codex_error(
+      context,
+      %{"message" => context.error_message, "codexErrorInfo" => context.error_code},
+      false
+    )
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{
+        "id" => runtime.turn.native_turn_id,
+        "status" => "failed",
+        "error" => %{"message" => context.error_message, "codexErrorInfo" => context.error_code}
+      }
+    })
+
+    context
+  end
+
+  step "the turn fails with Codex's message", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+    assert error =~ context.error_message
+    context
+  end
+
+  step "the thread does not stay working", context do
+    refute Enum.any?(
+             World.runs(context, @thread),
+             &(&1["status"] in ["preparing", "starting", "running", "waiting"])
+           )
+
+    World.await_row(World.thread_id(context, @thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  # --- a turn start answered with an earlier run's turn ---------------------------------------
+
+  step "a Codex thread whose earlier run had a turn", context do
+    World.put_env("FAKE_CODEX_REPEAT_TURN_ID", "1")
+    context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "say one")
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "a new run starts a turn and Codex answers with the earlier run's turn", context do
+    World.post_message(context, @thread, "say two")
+  end
+
+  step "the new run does not take that turn as its own", context do
+    state = World.await_runs(context, @thread, ["completed", "failed"])
+    assert World.replies(context, @thread) == ["one"]
+
+    # Only the first run has a provider turn: the repeated one was never adopted.
+    assert length(StreamState.list(state, "provider-turn")) == 1
+    context
+  end
+
+  step "the new run is not left running", context do
+    assert %{"status" => "failed"} = World.latest_run(context, @thread)
+    World.await_row(World.thread_id(context, @thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  # --- compaction that never finishes -----------------------------------------------------------
+
+  # The turn's endings are the existing global steps ("the turn is stopped by
+  # the user", "the turn fails"); `:codex_compaction` tells them this turn is
+  # Codex's, on this thread.
+  step "Codex started compacting the thread and never reported the compaction finished",
+       context do
+    context = start_waiting(context)
+    notify_item(context, "started", %{"type" => "contextCompaction", "id" => "compaction-1"})
+    await_item(context, &(&1["type"] == "compaction" and &1["status"] == "running"))
+    Map.put(context, :codex_compaction, @thread)
+  end
+
+  step "the compaction no longer reads as running", context do
+    item = await_item(context, &(&1["type"] == "compaction" and &1["status"] != "running"))
+    Map.put(context, :compaction_status, item["status"])
+  end
+
+  step "it reads {string}", %{args: [label]} = context do
+    assert context.compaction_status == %{"Stopped" => "interrupted", "Failed" => "failed"}[label]
+    context
+  end
+
+  # --- one patch, several files -------------------------------------------------------------------
+
+  # Codex sends an update's diff as bare hunks and an add's or delete's as the
+  # file's content; neither carries file headers.
+  step "Codex applies one patch that edits {string}, adds {string}, deletes {string} and renames {string} to {string}",
+       %{args: [edited, added, deleted, from, to]} = context do
+    context = start_waiting(context)
+
+    notify_item(context, "completed", %{
+      "type" => "fileChange",
+      "id" => "patch-1",
+      "status" => "completed",
+      "changes" => [
+        %{"path" => edited, "kind" => %{"type" => "update"}, "diff" => "@@ -1 +1 @@\n-a\n+b\n"},
+        %{"path" => added, "kind" => %{"type" => "add"}, "diff" => "first\nsecond\n"},
+        %{"path" => deleted, "kind" => %{"type" => "delete"}, "diff" => "gone\n"},
+        %{
+          "path" => from,
+          "kind" => %{"type" => "update", "move_path" => to},
+          "diff" => "@@ -1 +1 @@\n-c\n+d\n"
+        }
+      ]
+    })
+
+    item = await_item(context, &(&1["type"] == "file_change"))
+    Map.put(context, :file_change, item)
+  end
+
+  step "the change in the timeline lists {string}, {string}, {string} and {string}",
+       %{args: [first, second, third, fourth]} = context do
+    paths = Enum.map(context.file_change["changes"], & &1["path"])
+    assert paths == [first, second, third, fourth]
+    context
+  end
+
+  step "the rename shows it came from {string}", %{args: [from]} = context do
+    rename = Enum.find(context.file_change["changes"], &(&1["oldPath"] != nil))
+    assert rename["oldPath"] == from
+    context
+  end
+
+  step "the change shows every file's diff", context do
+    [edited, added, deleted, renamed] = context.file_change["changes"]
+    diff = context.file_change["diffStr"]
+
+    assert diff =~
+             "diff --git a/#{edited["path"]} b/#{edited["path"]}\n" <>
+               "--- a/#{edited["path"]}\n+++ b/#{edited["path"]}\n@@ -1 +1 @@\n-a\n+b"
+
+    assert diff =~
+             "diff --git a/#{added["path"]} b/#{added["path"]}\n" <>
+               "--- /dev/null\n+++ b/#{added["path"]}\n@@ -0,0 +1,2 @@\n+first\n+second"
+
+    assert diff =~
+             "diff --git a/#{deleted["path"]} b/#{deleted["path"]}\n" <>
+               "--- a/#{deleted["path"]}\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-gone"
+
+    assert diff =~
+             "diff --git a/#{renamed["oldPath"]} b/#{renamed["path"]}\n" <>
+               "--- a/#{renamed["oldPath"]}\n+++ b/#{renamed["path"]}\n@@ -1 +1 @@\n-c\n+d"
+
+    context
+  end
+
+  # --- approvals: files from the started change, file access by pattern ---------------------------
+
+  step "Codex started a change to edit {string} and delete {string}",
+       %{args: [edited, deleted]} = context do
+    context = start_waiting(context)
+
+    notify_item(context, "started", %{
+      "type" => "fileChange",
+      "id" => "file-x",
+      "status" => "inProgress",
+      "changes" => [
+        %{"path" => edited, "kind" => %{"type" => "update"}, "diff" => ""},
+        %{"path" => deleted, "kind" => %{"type" => "delete"}, "diff" => ""}
+      ]
+    })
+
+    Map.merge(context, %{change_edit: edited, change_delete: deleted})
+  end
+
+  step "Codex asks without a reason to approve that change, naming no files", context do
+    codex_request(context, "approval-x", "item/fileChange/requestApproval", %{
+      "itemId" => "file-x"
+    })
+  end
+
+  step "the approval lists {string} to edit and {string} to delete",
+       %{args: [edited, deleted]} = context do
+    prompt = approval_prompt(context)
+    lines = String.split(prompt, "\n")
+    assert Enum.any?(lines, &(&1 =~ edited and &1 =~ "update"))
+    assert Enum.any?(lines, &(&1 =~ deleted and &1 =~ "delete"))
+    context
+  end
+
+  step ~r/^Codex asks for extra access to (?<access>write files|read files) naming only "(?<path>[^"]+)"$/,
+       %{args: [access, path]} = context do
+    context = start_waiting(context)
+    kind = if access == "write files", do: "write", else: "read"
+
+    codex_request(context, "approval-perm", "item/permissions/requestApproval", %{
+      "itemId" => "perm-1",
+      "permissions" => %{
+        "fileSystem" => %{
+          "entries" => [%{"access" => kind, "path" => %{"type" => "glob", "value" => path}}]
+        }
+      }
+    })
+  end
+
+  step ~r/^the approval shows as (?<kind>a file change approval|a file read approval)$/,
+       %{args: [kind]} = context do
+    expected = %{"a file change approval" => "file-change", "a file read approval" => "file-read"}
+    assert context.request["kind"] == Map.fetch!(expected, kind)
+    context
+  end
+
+  step "Codex is answered as before", context do
+    respond(context, "accept")
+    answer = codex_answer(context, "approval-perm")
+    assert get_in(answer, ["result", "decision"]) == "accept"
+    context
+  end
+
+  # --- a request Codex settles itself -----------------------------------------------------------------
+
+  step "the MC is waiting on the user for a Codex approval", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "approve", %{"runtimeMode" => "approval-required"})
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "Codex reports that the request is resolved", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "serverRequest/resolved", %{
+      "threadId" => runtime.native_thread_id,
+      "requestId" => "approval-1"
+    })
+
+    context
+  end
+
+  step "the MC stops waiting on it without answering Codex", context do
+    World.await_value(context, @thread, fn _state ->
+      {_pid, runtime} = World.codex_runtime(context, @thread)
+      runtime.requests == %{}
+    end)
+
+    request =
+      StreamState.get(World.stream(context, @thread), "runtime-request")[context.request["id"]]
+
+    assert request["status"] != "pending"
+
+    # Nothing was sent back for the request Codex settled.
+    refute Enum.any?(
+             World.provider_log(context, "codex"),
+             &(get_in(&1, ["in", "id"]) == "approval-1" and get_in(&1, ["in", "method"]) == nil)
+           )
+
+    context
+  end
+
+  step "answering that approval afterwards fails as no longer pending", context do
+    reply =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => "accept"
+      })
+
+    assert {:error, message} = reply
+    assert message =~ "pending"
+    context
+  end
+
+  # --- reasoning defaults --------------------------------------------------------------------------------
+
+  step "a Codex model whose default reasoning is {string}", %{args: [effort]} = context do
+    models = [
+      %{
+        "model" => "gpt-6-luna",
+        "displayName" => "GPT-6 Luna",
+        "isDefault" => true,
+        "defaultReasoningEffort" => effort,
+        "supportedReasoningEfforts" =>
+          for(e <- ~w(low medium high), do: %{"reasoningEffort" => e})
+      }
+    ]
+
+    World.put_env("FAKE_CODEX_MODELS", JSON.encode!(models))
+    context = World.fake_providers(context)
+    HalC2.Codex.Provider.load()
+    Map.put(context, :default_effort, effort)
+  end
+
+  step "the thread has no reasoning level chosen", context do
+    Map.put(context, :pending_launch, %{
+      instance: "codex",
+      fields: %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-6-luna"}}
+    })
+  end
+
+  step "the turn runs at {string}", %{args: [effort]} = context do
+    turn =
+      World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+
+    params = turn["in"]["params"]
+    assert params["model"] == "gpt-6-luna"
+    # No effort is forced: Codex runs the turn at the model's own default.
+    refute Map.has_key?(params, "effort")
+
+    descriptor = reasoning_descriptor(context)
+    assert descriptor["currentValue"] == effort
+    context
+  end
+
+  step "a reasoning level the user picks is used instead, in plan mode too", context do
+    title = World.current_thread(context)
+    thread_id = World.thread_id(context, title)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.model-selection.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "modelSelection" => %{
+          "instanceId" => "codex",
+          "model" => "gpt-6-luna",
+          "options" => [%{"id" => "reasoningEffort", "value" => "low"}]
+        }
+      })
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.interaction-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "interactionMode" => "plan"
+      })
+
+    starts_before =
+      Enum.count(
+        World.provider_log(context, "codex"),
+        &(get_in(&1, ["in", "method"]) == "turn/start")
+      )
+
+    context = World.post_message(context, title, "make a plan")
+
+    turn =
+      World.await_provider_log(context, "codex", fn entry ->
+        get_in(entry, ["in", "method"]) == "turn/start" and
+          get_in(entry, ["in", "params", "effort"]) == "low" and
+          Enum.count(
+            World.provider_log(context, "codex"),
+            &(get_in(&1, ["in", "method"]) == "turn/start")
+          ) > starts_before
+      end)
+
+    assert get_in(turn, ["in", "params", "collaborationMode", "mode"]) == "plan"
+    context
+  end
+
+  # --- versions: too old to start, broken, slow to list models --------------------------------
+
+  # A wrapper Codex whose `--version` behaves as the scenario says and whose
+  # app-server exits at once, as a Codex too old for it does.
+  defp dying_codex(context, version_line) do
+    context = World.fake_providers(context)
+    wrapper = Path.join(context.fakes.dir, "dying-codex")
+
+    File.write!(
+      wrapper,
+      "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then #{version_line}; fi\nexit 1\n"
+    )
+
+    File.chmod!(wrapper, 0o755)
+    World.put_app_env(:codex_command, [wrapper])
+    World.reset_provider_caches()
+    context
+  end
+
+  step "the installed Codex prints version {string}", %{args: [version]} = context do
+    Map.put(context, :printed_version, version)
+  end
+
+  step "Codex exits with code 1 when its app-server starts", context do
+    if context[:printed_version] do
+      dying_codex(context, ~s(echo "codex-cli #{context.printed_version}"; exit 0))
+    else
+      context
+    end
+  end
+
+  step ~r/^its version command (?<answer>prints ".+"|exits with code 1|does not answer within 4 seconds)$/,
+       %{args: [answer]} = context do
+    case answer do
+      "prints \"" <> rest ->
+        dying_codex(context, ~s(echo "#{String.trim_trailing(rest, "\"")}"; exit 0))
+
+      "exits with code 1" ->
+        dying_codex(context, "exit 1")
+
+      "does not answer within 4 seconds" ->
+        # The version read's bound, shortened for the scenario.
+        World.put_app_env(:codex_version_timeout_ms, 300)
+        dying_codex(context, "exec sleep 30")
+    end
+  end
+
+  step "Codex is reported as {string} for this HAL-C2 release with version {string}",
+       %{args: [status, version]} = context do
+    entry = codex(context.providers)
+    assert entry["compatibilityAdvisory"]["status"] == status
+    assert entry["version"] == version
+    context
+  end
+
+  step ~r{^Codex is reported as "(?<status>[^"]+)" with (?<version>version "[^"]+"|no version)$},
+       %{args: [status, version]} = context do
+    entry = codex(context.providers)
+    assert entry["compatibilityAdvisory"]["status"] == status
+
+    case version do
+      "no version" -> assert entry["version"] in [nil, "unknown"]
+      "version \"" <> rest -> assert entry["version"] == String.trim_trailing(rest, "\"")
+    end
+
+    context
+  end
+
+  step "the user is offered the update before the probe's failure message", context do
+    entry = codex(context.providers)
+    # The entry carries the update the advisory recommends alongside the
+    # probe's own failure, which is what clients show first.
+    assert entry["compatibilityAdvisory"]["message"] =~ "Use >="
+    assert entry["message"] =~ "Could not start Codex CLI"
+    context
+  end
+
+  step "the installed Codex is version {string}, which this HAL-C2 release marks broken",
+       %{args: [version]} = context do
+    World.fake_providers(context, codex_version: version)
+  end
+
+  step "the user sends a turn to Codex", context do
+    World.launch_on(context, "Work", "codex", "hello")
+  end
+
+  step "a turn failed because the installed Codex version is broken", context do
+    context = World.fake_providers(context, codex_version: "0.144.3")
+    context = World.launch_on(context, "Work", "codex", "hello")
+    World.await_runs(context, "Work", ["failed"])
+    context
+  end
+
+  step "the user updated Codex to a supported version", context do
+    # The fake reads its version from this file, as an updated install would.
+    File.write!(Path.join(context.fakes.dir, "codex.version"), "0.160.0")
+    context
+  end
+
+  step "the user sends another message in the same thread", context do
+    World.post_message(context, "Work", "hello again")
+  end
+
+  step "the turn runs on the updated Codex", context do
+    World.await_runs(context, "Work", ["failed", "completed"])
+    assert "Hello from codex" in World.replies(context, "Work")
+    assert HalC2.Codex.Provider.entry()["version"] == "0.160.0"
+    context
+  end
+
+  step "Codex's account check succeeds", context do
+    context = World.fake_providers(context)
+
+    models = [%{"model" => "gpt-6-luna", "displayName" => "GPT-6 Luna", "isDefault" => true}]
+    World.put_env("FAKE_CODEX_MODELS", JSON.encode!(models))
+    HalC2.Codex.Provider.load()
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "Codex's model list does not arrive before the check's deadline", context do
+    World.put_os_env("FAKE_CODEX_MODELS_HANG", "1")
+    World.put_app_env(:codex_probe_timeout_ms, 300)
+    HalC2.Codex.Provider.load()
+    context
+  end
+
+  step "Codex is shown as signed in with a warning", context do
+    entry = codex(context.providers)
+    assert entry["status"] == "warning"
+    assert entry["auth"]["email"] == "me@example.com"
+    context
+  end
+
+  step "the last model list Codex gave is still offered", context do
+    assert [%{"slug" => "gpt-6-luna"}] = codex(context.providers)["models"]
+    context
+  end
+
+  # --- a session Codex archived itself ---------------------------------------------------------
+
+  # Kills the thread's app-server and waits until its runtime has let go of it:
+  # the next thing asked of Codex starts a new one, which has nothing loaded.
+  defp kill_app_server(context, title \\ @thread) do
+    {_, runtime} = World.codex_runtime(context, title)
+    ref = Process.monitor(runtime.conn)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    {_, runtime} = World.codex_runtime(context, title)
+    assert runtime.conn == nil
+    context
+  end
+
+  defp unarchives(context) do
+    for entry <- World.provider_log(context, "codex"),
+        (get_in(entry, ["in", "method"]) || entry["method"]) == "thread/unarchive" do
+      get_in(entry, ["in", "params", "threadId"]) || entry["params"]["threadId"]
+    end
+  end
+
+  step "the native Codex session of a thread was archived by Codex itself", context do
+    context = World.fake_providers(context)
+    flag = Path.join(context.fakes.dir, "archived")
+    World.put_env("FAKE_CODEX_ARCHIVED_FILE", flag)
+
+    context =
+      World.run_turns(context, @thread, "codex", ["write first.txt", "write second.txt"])
+
+    # Codex archives the session outside HAL-C2, and its app-server goes away.
+    File.write!(flag, "")
+    context = kill_app_server(context)
+    Map.merge(context, %{archived_thread: true, archived_flag: flag})
+  end
+
+  step "Codex no longer has the thread loaded", context do
+    {_, runtime} = World.codex_runtime(context, @thread)
+    assert runtime.conn == nil
+    assert runtime.native_thread_id == nil
+    context
+  end
+
+  step "the MC unarchives that same session and resumes it once", context do
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    assert unarchives(context) == ["native-thread-1"]
+
+    resumes =
+      Enum.count(
+        World.provider_log(context, "codex"),
+        &(get_in(&1, ["in", "method"]) == "thread/resume")
+      )
+
+    # The refused resume, then the one after unarchiving: the session resumed once.
+    assert resumes == 2
+    context
+  end
+
+  step "an unrelated resume error is shown as it is", context do
+    World.put_os_env("FAKE_CODEX_RESUME_ERROR", "resume blew up")
+    context = kill_app_server(context)
+    context = World.post_message(context, @thread, "once more")
+    state = World.await_runs(context, @thread, ["completed", "completed", "completed", "failed"])
+
+    assert [%{"lastError" => error} | _] = StreamState.list(state, "provider-session")
+    assert error =~ "resume blew up"
+    # No second unarchive was tried for an error that is not about archiving.
+    assert length(unarchives(context)) == 1
+    context
+  end
+
+  step "the user restores the thread to an earlier checkpoint", context do
+    World.rollback(context, @thread, 1, %{"restoreFiles" => false})
+  end
+
+  step "the MC unarchives that same session, and the conversation and files are restored",
+       context do
+    assert {:ok, _} = context.reply
+    assert unarchives(context) == ["native-thread-1"]
+
+    assert [%{"status" => "completed"}, %{"status" => "rolled_back"}] =
+             World.runs(context, @thread)
+
+    # Codex rewound its own thread after the unarchive (the restore this step's
+    # thread offers rewinds the conversation; file reset is a worktree thread's).
+    methods =
+      for entry <- World.provider_log(context, "codex"),
+          method = get_in(entry, ["in", "method"]) || entry["method"],
+          method,
+          do: method
+
+    assert Enum.find_index(methods, &(&1 == "thread/unarchive")) <
+             Enum.find_index(methods, &(&1 == "thread/revert"))
+
+    context
+  end
+
+  step "the user forks the thread", context do
+    World.fork(context, @thread, 2, "fork")
+  end
+
+  step "the MC unarchives that session and the fork starts with the thread's conversation",
+       context do
+    assert {:ok, _} = context.reply
+    context = World.post_message(context, "fork", "where are we")
+
+    World.await_value(context, "fork", fn state ->
+      match?(
+        [_, _, %{"status" => "completed"}],
+        state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+      )
+    end)
+
+    assert unarchives(context) == ["native-thread-1"]
+
+    assert "on forked-native-thread-1-at-native-turn-2 history False merged False" in World.replies(
+             context,
+             "fork"
+           )
+
+    context
+  end
+
+  # --- usage limits Codex reports in other shapes ------------------------------------------------
+
+  step "Codex ends a turn after too many failed attempts that each answered 429", context do
+    context = start_waiting(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    error = %{
+      "message" => "exceeded retry limit, last status: 429 Too Many Requests",
+      "codexErrorInfo" => %{"httpConnectionFailed" => %{"httpStatusCode" => 429}}
+    }
+
+    codex_error(context, error, false)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "failed", "error" => error}
+    })
+
+    context
+  end
+
+  step "Codex ends a turn with an error whose message mentions 14290 tokens", context do
+    context = start_waiting(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    error = %{
+      "message" => "context exceeds 14290 tokens",
+      "codexErrorInfo" => "responseStreamDisconnected"
+    }
+
+    codex_error(context, error, false)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "failed", "error" => error}
+    })
+
+    context
+  end
+
+  step "the turn fails as an ordinary error, not a usage limit", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert [%{"lastError" => "context exceeds 14290 tokens"}] =
+             StreamState.list(state, "provider-session")
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(get_in(&1, ["failure", "class"]) == "usage_limit")
+           )
+
+    context
+  end
+
+  step "the thread is marked as limited", context do
+    World.await_runs(context, @thread, ["failed"])
+    assert failure_of(context)["class"] == "usage_limit"
+    context
+  end
+
+  step "the run does not fail as a provider error", context do
+    state = World.stream(context, @thread)
+    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+    assert error =~ "usage limit"
+    refute failure_of(context)["class"] == "provider_error"
+    context
+  end
+
+  step "Codex is signed in with a personal ChatGPT plan", context do
+    World.fake_providers(context)
+  end
+
+  step "a turn stops with {string}", %{args: [message]} = context do
+    context = start_waiting(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+    error = %{"message" => message, "codexErrorInfo" => "responseStreamDisconnected"}
+    codex_error(context, error, false)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "failed", "error" => error}
+    })
+
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the thread is marked limited, not failed", context do
+    assert failure_of(context)["class"] == "usage_limit"
+    context
+  end
+
+  step "without a reset time from the sharing limit, the user is offered a manual retry",
+       context do
+    # No reset to wait for is what leaves the retry to the user.
+    assert failure_of(context)["resetAt"] == nil
+    context
+  end
+
+  step "an ordinary Codex usage reset is not taken as the sharing limit's reset", context do
+    reset = DateTime.utc_now() |> DateTime.add(2 * 3600, :second) |> DateTime.to_unix()
+
+    World.codex_notify(context, @thread, "account/rateLimits/updated", %{
+      "rateLimits" => weekly_snapshot(reset)
+    })
+
+    {pid, _} = World.codex_runtime(context, @thread)
+    :sys.get_state(pid)
+    assert failure_of(context)["resetAt"] == nil
+    context
+  end
+
+  # --- subagents after their parent's turn -----------------------------------------------------------
+
+  # Finishes the subagent `child` (spawned as `collab-1`) with `result`, as
+  # Codex reports it: its own final answer, then the tool call completing.
+  defp finish_subagent(context, result \\ "lib has three modules") do
+    child = "native-child-1"
+
+    World.codex_notify(context, @thread, "item/completed", %{
+      "threadId" => child,
+      "turnId" => "#{child}-turn-1",
+      "item" => %{"type" => "agentMessage", "id" => "#{child}-msg", "text" => result}
+    })
+
+    World.codex_notify(context, @thread, "item/completed", %{
+      "threadId" => context.native_thread,
+      "turnId" => context.native_turn,
+      "item" => %{
+        "type" => "collabAgentToolCall",
+        "id" => "collab-1",
+        "tool" => "spawnAgent",
+        "prompt" => "List the modules in lib",
+        "senderThreadId" => context.native_thread,
+        "receiverThreadIds" => [child],
+        "status" => "completed",
+        "agentsStates" => %{child => %{"status" => "completed", "message" => result}}
+      }
+    })
+
+    context
+  end
+
+  defp with_native_ids(context) do
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    Map.merge(context, %{
+      native_thread: runtime.native_thread_id,
+      native_turn: runtime.turn && runtime.turn.native_turn_id
+    })
+  end
+
+  step "the turn fails while the subagents keep working", context do
+    context = with_native_ids(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{
+        "id" => runtime.turn.native_turn_id,
+        "status" => "failed",
+        "error" => %{"message" => "the turn failed"}
+      }
+    })
+
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the run ends as failed and the subagents carry on", context do
+    World.await_value(context, @thread, fn state ->
+      subagents = StreamState.list(state, "subagent")
+      length(subagents) == 2 and Enum.all?(subagents, &(&1["status"] == "running"))
+    end)
+
+    # Their work still lands after the parent failed.
+    context = finish_subagent(context)
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "subagent"), &(&1["status"] == "completed"))
+    end)
+
+    context
+  end
+
+  step "the thread no longer shows the agent thinking", context do
+    World.await_row(World.thread_id(context, @thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  step "the next message the user sends starts a new turn instead of waiting in the queue",
+       context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["failed", "completed"])
+    context
+  end
+
+  step "a Codex turn started a subagent and then finished", context do
+    context = start_waiting(context) |> with_native_ids()
+    spawn_subagent(context, "collab-1", "native-child-1", %{})
+    subagent_entity(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the subagent finishes", context do
+    finish_subagent(context)
+  end
+
+  step "the parent thread starts a turn with the subagent's result", context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    state = World.stream(context, @thread)
+    [_, wake_run] = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    message = StreamState.get(state, "message")[wake_run["userMessageId"]]
+    assert message["text"] =~ "lib has three modules"
+    context
+  end
+
+  step "the result is kept in the parent's history", context do
+    assert subagent_entity(context)["result"] =~ "lib has three modules"
+    context
+  end
+
+  step ~r/^a Codex subagent whose parent (?<case>was interrupted by the user|is still running a turn|is itself a Codex subagent)$/,
+       %{args: [parent_case]} = context do
+    context = start_waiting(context) |> with_native_ids() |> Map.put(:thread, @thread)
+    spawn_subagent(context, "collab-1", "native-child-1", %{})
+    subagent_entity(context)
+
+    case parent_case do
+      "was interrupted by the user" ->
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "commandId" => "cmd-#{System.unique_integer([:positive])}",
+            "threadId" => World.thread_id(context, @thread),
+            "runId" => World.latest_run(context, @thread)["id"]
+          })
+
+        World.await_runs(context, @thread, ["interrupted"])
+        context
+
+      "is still running a turn" ->
+        context
+
+      "is itself a Codex subagent" ->
+        # The lineage shape `NativeSubagent.start/3` writes for a real child.
+        context =
+          World.patch_thread(context, @thread, %{
+            "lineage" => %{
+              "parentThreadId" => "th-parent",
+              "relationshipToParent" => "subagent",
+              "rootThreadId" => "th-parent"
+            }
+          })
+
+        {_, runtime} = World.codex_runtime(context, @thread)
+
+        World.codex_notify(context, @thread, "turn/completed", %{
+          "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+        })
+
+        World.await_runs(context, @thread, ["completed"])
+        context
+    end
+  end
+
+  step "the parent does not start another turn for it", context do
+    :ok = HalC2.Orchestration.Wake.drain()
+    {pid, _} = World.codex_runtime(context, @thread)
+    :sys.get_state(pid)
+    assert length(World.runs(context, @thread)) == 1
+    context
+  end
+
+  # --- instances whose homes are only in their environment ---------------------------------------------
+
+  step "the Codex instances {string} and {string} leave their home blank",
+       %{args: [first, second]} = context do
+    context = World.fake_providers(context)
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    World.merge_settings(%{
+      "providerInstances" =>
+        Map.new([first, second], &{&1, %{"driver" => "codex", "enabled" => true}})
+    })
+
+    Map.merge(context, %{home_instances: [first, second]})
+  end
+
+  step "their environment variables set CODEX_HOME to {string} and {string}",
+       %{args: [first_home, second_home]} = context do
+    [first, second] = context.home_instances
+
+    variables = fn instance, home ->
+      [
+        %{"name" => "CODEX_HOME", "value" => home},
+        %{"name" => "FAKE_CODEX_INSTANCE", "value" => instance}
+      ]
+    end
+
+    World.merge_settings(%{
+      "providerInstances" => %{
+        first => %{"environment" => variables.(first, first_home)},
+        second => %{"environment" => variables.(second, second_home)}
+      }
+    })
+
+    context
+  end
+
+  step "the user switches a {string} thread to {string}", %{args: [from, to]} = context do
+    context = World.launch_on(context, @thread, from, "hello from work")
+    World.await_runs(context, @thread, ["completed"])
+    {_, runtime} = World.codex_runtime(context, @thread)
+    context = Map.put(context, :work_native, runtime.native_thread_id)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.model-selection.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "modelSelection" => %{"instanceId" => to, "model" => "gpt-5.4"}
+      })
+
+    context = World.post_message(context, @thread, "where are we")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    Map.merge(context, %{switched_from: from, switched_to: to})
+  end
+
+  step "the conversation is handed over to {string}", %{args: [instance]} = context do
+    # The two instances are different homes, so the picker does not present
+    # this as continuing on the same Codex home.
+    {providers, context} = World.provider_list(context)
+    groups = Map.new(providers, &{&1["instanceId"], get_in(&1, ["continuation", "groupKey"])})
+    assert groups[context.switched_from] != nil
+    assert groups[instance] != groups[context.switched_from]
+
+    assert Enum.any?(World.replies(context, @thread), &(&1 =~ "history True"))
+
+    context
+  end
+
+  step "{string} does not try to resume the {string} session",
+       %{args: [_to, _from]} = context do
+    refute Enum.any?(
+             World.provider_log(context, "codex"),
+             &(get_in(&1, ["in", "method"]) == "thread/resume" and
+                 get_in(&1, ["in", "params", "threadId"]) == context.work_native)
+           )
+
+    context
+  end
+
+  # --- a background command cut through an emoji ----------------------------------------------------------
+
+  step "a Codex agent started a background command that finishes after the turn settled",
+       context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "run the dev server in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    assert tool_status(context, "cmd-bg") == "running"
+    with_native_ids(context)
+  end
+
+  step "its command or the start of its output's last 1,000 characters falls inside an emoji",
+       context do
+    # At 200 UTF-16 units the command's cut lands inside the rocket, and the
+    # last 1,000 units of the output begin inside it too.
+    Map.merge(context, %{
+      bg_command: String.duplicate("a", 199) <> "🚀 launch it",
+      bg_output: "a🚀" <> String.duplicate("y", 999)
+    })
+  end
+
+  step "the command finishes", context do
+    World.codex_notify(context, @thread, "item/completed", %{
+      "threadId" => context.native_thread,
+      "item" => %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => context.bg_command,
+        "status" => "completed",
+        "aggregatedOutput" => context.bg_output,
+        "exitCode" => 0
+      }
+    })
+
+    context
+  end
+
+  step "the agent is woken with the command and its output tail, cut before or after the emoji, not through it",
+       context do
+    turn =
+      World.await_provider_log(context, "codex", fn entry ->
+        get_in(entry, ["in", "method"]) == "turn/start" and
+          entry
+          |> get_in(["in", "params", "input"])
+          |> List.first(%{})
+          |> Map.get("text", "")
+          |> String.contains?(String.duplicate("y", 100))
+      end)
+
+    [%{"text" => text} | _] = get_in(turn, ["in", "params", "input"])
+    assert String.valid?(text)
+    assert text =~ "🚀"
+    refute text =~ "�"
+    assert text =~ String.duplicate("y", 999)
+    Map.put(context, :wake_text, text)
+  end
+
+  step "the wake turn starts and finishes", context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  defp reasoning_descriptor(context) do
+    {providers, _context} = World.provider_list(context)
+    model = Enum.find(codex(providers)["models"], &(&1["slug"] == "gpt-6-luna"))
+    Enum.find(model["capabilities"]["optionDescriptors"], &(&1["id"] == "reasoningEffort"))
   end
 
   # --- helpers ---------------------------------------------------------------------------

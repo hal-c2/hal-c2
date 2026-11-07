@@ -54,6 +54,8 @@ export interface PaletteContext {
   readonly threadId: string | null;
   readonly interactionMode: "default" | "plan";
   readonly hasProposedPlan: boolean;
+  /** A Stop held the selected thread's queue. */
+  readonly queueHeld: boolean;
   readonly attachmentCount: number;
   readonly referenceCount: number;
 }
@@ -147,6 +149,15 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
   }
   if (context.threadId !== null && context.hasProposedPlan) {
     list.push({ id: "implement", title: "Implement plan", hint: "^Y", action: "plan.implement" });
+  }
+  if (context.threadId !== null && context.queueHeld) {
+    list.push({
+      id: "resume-queue",
+      title: "Resume the queue",
+      hint: "^X q",
+      keywords: "held queued messages continue",
+      action: "composer.queue.resume",
+    });
   }
   if (composing && context.referenceCount > 0) {
     list.push({
