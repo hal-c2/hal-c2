@@ -24,6 +24,7 @@
 #   apps/server/src/provider/acp/XAiBackgroundTasks.ts (how background tasks are listed and ended)
 #   https://github.com/pingdotgg/t3code/pull/14486
 #   https://github.com/pingdotgg/t3code/pull/22709
+#   https://github.com/pingdotgg/t3code/pull/24246
 
 @plugin-grok @mc @priority-low
 Feature: Grok
@@ -123,6 +124,15 @@ Feature: Grok
     Given Grok was installed by its own installer and this Grok instance has its own Grok home
     When the user updates Grok
     Then Grok's updater runs against that home and not the default one
+    And Grok is reported current
+
+  # Upstream #24246: with npm 12 an npm-installed Grok's update succeeded but skipped the step that
+  # installs the new binary, so the old Grok kept running.
+  @backlog
+  Scenario: Updating an npm-installed Grok installs its new binary
+    Given Grok was installed with npm 12 and a newer version is released
+    When the user updates Grok
+    Then the new Grok binary is installed
     And Grok is reported current
 
   # Upstream #18772: a Homebrew-cask Grok is compared against the cask and upgraded with brew.

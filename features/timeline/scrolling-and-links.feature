@@ -48,6 +48,10 @@
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (load earlier activity control and its error)
 #   https://github.com/pingdotgg/t3code/pull/15059
 #   https://github.com/pingdotgg/t3code/pull/25371
+#   https://github.com/pingdotgg/t3code/pull/26239
+#   https://github.com/pingdotgg/t3code/pull/26240
+#   https://github.com/pingdotgg/t3code/pull/26485
+#   https://github.com/pingdotgg/t3code/pull/25754
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -216,6 +220,39 @@ Feature: Moving through a thread and following links
     Given the thread has more turns than are loaded
     When what is loaded leaves room in the view
     Then the earlier turns are loaded without the user scrolling
+
+  # Upstream #26240: long tool histories filled the first window before the latest user message,
+  # so that prompt was missing. The latest user message is always loaded, large finished work
+  # groups load when expanded, and loading earlier pages on until it reaches a user message.
+  @backlog @mc @shared @priority-high
+  Scenario: A thread whose last turn ran many tools opens with the user's last message
+    Given the last turn of "Fix login" ran 600 tool calls after the user's message
+    When the user opens "Fix login"
+    Then the user's last message is shown
+    And the turn's work is shown folded, with up to 150 of its items loaded
+
+  # Upstream #26240
+  @backlog @shared
+  Scenario: A large folded work group loads its items when it is expanded
+    Given a finished turn of "Fix login" holds more work items than were loaded
+    When the user expands its work
+    Then the user sees that its items are loading
+    And its items are shown once they arrive
+    And a failed load can be retried
+
+  # Upstream #26240
+  @backlog @shared
+  Scenario: Loading earlier turns goes on until it reaches a user message
+    Given the turns loaded in "Fix login" start in the middle of a long run of tool calls
+    When the user loads earlier turns once
+    Then earlier history keeps loading, a bounded page at a time, until the user message that started the run
+
+  # Upstream #25754: on a remote connection, loading older history held up Send and Stop.
+  @backlog @shared
+  Scenario: Send and Stop do not wait for earlier turns to load
+    Given the user is loading earlier turns of "Fix login" over a slow connection
+    When the user stops the running turn and sends "try again"
+    Then the stop and the message reach the MC without waiting for the earlier turns
 
   @backlog @mobile
   Scenario: Earlier turns that fail to load say why and can be asked for again
@@ -500,6 +537,7 @@ Feature: Moving through a thread and following links
     And the user can go to the quoted reply from there
 
   # Upstream #17017: a thread link holds the thread's id; its label is the thread's title now.
+  # Upstream #26485: on the phone every thread link read "Thread no longer available".
   @shared @backlog
   Scenario Outline: A thread link in a message shows the thread's title now
     Given a reply links to thread "t2" with the label "Old name"
@@ -531,6 +569,37 @@ Feature: Moving through a thread and following links
     And a reply on "laptop" links to thread "t9", which lives on "server"
     When the user follows the link
     Then thread "t9" on "server" opens
+
+  # Upstream #26239: the thread links an agent is given name the environment that holds the
+  # thread and carry no title; an agent mentions a thread only by that link.
+  @backlog @mc
+  Scenario: A thread link an agent is given names the thread's environment and no title
+    Given the agent in "Fix login" on "laptop" delegated a task that runs on "server"
+    When the agent reads the task's result
+    Then its link names "server" and the task's thread, and no title
+
+  # Upstream #26239: a link names its environment, so it opens exactly that thread, and one the
+  # client cannot reach says so instead of going nowhere. Links of the old form still resolve.
+  @backlog @shared
+  Scenario Outline: A thread link that names its environment opens only that thread
+    Given a reply links to thread "t9" on "<environment>"
+    And <state>
+    When the user looks at the reply
+    Then the link <result>
+
+    Examples:
+      | environment | state                                         | result                                                 |
+      | server      | the client is connected to "server"           | reads the current title of "t9" and opens it on "server" |
+      | server      | the client is not connected to "server"       | reads "Thread on another machine" and opens nothing     |
+      | laptop      | "t9" was deleted from the reply's environment | reads "Thread no longer available" and opens nothing    |
+
+  # Upstream #26239
+  @backlog @shared @priority-low
+  Scenario: A thread link of the old form without an environment still resolves
+    Given a reply on "laptop" links to thread "t2" without naming an environment
+    And "t2" lives on "laptop"
+    When the user follows the link
+    Then thread "t2" on "laptop" opens
 
   @desktop @backlog @priority-low
   Scenario: A selection too long to cite says so

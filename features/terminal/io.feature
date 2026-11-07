@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23480
+#   https://github.com/pingdotgg/t3code/pull/24640
+#   https://github.com/pingdotgg/t3code/pull/23140
+#   https://github.com/pingdotgg/t3code/pull/25030
 #   https://github.com/pingdotgg/t3code/pull/19366
 #   https://github.com/pingdotgg/t3code/pull/18429
 #   https://github.com/pingdotgg/t3code/pull/11305
@@ -223,6 +227,14 @@ Feature: Terminal input and output
       Then within a second the terminal is marked as running a command
       And its label becomes "npm"
 
+    # Upstream #23140: a command whose name has spaces was labelled by its first word, so Google
+    # Chrome showed as "Google".
+    @mc @backlog @priority-low
+    Scenario: A running command whose name has spaces is labelled by its whole name
+      Given a running terminal labelled "Terminal 1"
+      When the user starts "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in it
+      Then its label becomes "Google Chrome"
+
     @mc
     Scenario: A terminal goes back to its number when the command finishes
       Given a terminal labelled "npm" while a dev server runs
@@ -237,6 +249,15 @@ Feature: Terminal input and output
       When the user starts "npm run dev" in it
       Then the terminal keeps accepting input and showing output
       And the terminal is not marked as running a command
+
+    # Upstream #24640: on Windows hosts without native process snapshots, a slow but valid
+    # process-table query was thrown away after 1.5 seconds and asked again at once.
+    @mc @backlog @priority-low
+    Scenario: A slow list of running processes is waited for and asked for less often
+      Given a running terminal on a machine that takes 5 seconds to list its processes
+      When the user starts "npm run dev" in it
+      Then the terminal is marked as running a command once the list arrives
+      And the list is not asked for again sooner than four times as long as it took, at most a minute
 
   Rule: The terminal client drives the shell from the keyboard
 
@@ -448,6 +469,15 @@ Feature: Terminal input and output
       Then the shell receives the key as the terminal encodes it
       And no word or line movement is sent
 
+    # Upstream #23480: Ctrl and an arrow sent Escape+B or F, which Windows shells type as "b" or "f".
+    @backlog @desktop @priority-low
+    Scenario: Ctrl and an arrow reach a Windows shell as a modified arrow
+      Given the user is on Windows and the terminal runs PowerShell
+      And the prompt holds "git commit -m fix"
+      When the user presses "Ctrl+Left" in the terminal
+      Then the shell receives Ctrl+Left as the terminal encodes it
+      And the cursor moves one word left without "b" being typed
+
     @desktop
     Scenario Outline: Clicking again selects a word and then a line
       Given the shell has printed "git commit -m fix"
@@ -525,6 +555,18 @@ Feature: Terminal input and output
       And the selection stays
       When the user presses "Ctrl+C" in the terminal
       Then the shell receives Ctrl-C
+
+    # Upstream #25030: a program redrawing the same text cleared the selection, so copying was unreliable.
+    @backlog @desktop
+    Scenario Outline: Output keeps a selection only while the selected text is unchanged
+      Given the terminal has a selection
+      When a program redraws the terminal <redraw>
+      Then the selection <outcome>
+
+      Examples:
+        | redraw                              | outcome      |
+        | with the same text under it         | stays        |
+        | with different text under it        | is cleared   |
 
     # The terminal does this, but the offscreen platform the scenarios run on has
     # no selection clipboard to paste from. Needs an X11 or Wayland run.

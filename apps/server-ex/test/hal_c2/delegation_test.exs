@@ -180,6 +180,49 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a check that runs as a restart's continuation is sent" do
+    # The check first reads the child quiet, with its run interrupted; the continuation's
+    # message and run then land and its effect's row goes before the check reads the
+    # child's continuations. Neither is in what it read first.
+    test "does not settle the task as the interrupted run" do
+      delegate("interrupted")
+      message = "message:restart-continuation:cr"
+      key = "effect:c:effect-continue"
+
+      :ok =
+        HalC2.Store.put_meta(
+          key,
+          JSON.encode!(%{
+            "id" => "effect-continue",
+            "threadId" => "c",
+            "type" => "provider-runtime.continue",
+            "status" => "running",
+            "createdAt" => @at,
+            "args" => %{"command" => %{"messageId" => message}}
+          })
+        )
+
+      hook_with(fn
+        :continuations, "c" ->
+          {:ok, _} =
+            HalC2.Streams.commit("c", :thread, [
+              {"message", message,
+               %{"s" => %{"id" => message, "runId" => "cr2", "role" => "user", "text" => "Go"}}},
+              run("cr2", 2, "running")
+            ])
+
+          :ok = HalC2.Store.delete_meta(key)
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert task()["status"] == "running"
+      refute woken?()
+    end
+  end
+
   describe "a task whose child thread was never created" do
     test "fails at boot but is left alone once a launch may be under way" do
       {:ok, _} =

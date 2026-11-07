@@ -2,6 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/23205
 #   https://github.com/pingdotgg/t3code/pull/17648
 #   https://github.com/pingdotgg/t3code/pull/21401
+#   https://github.com/pingdotgg/t3code/pull/25809
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe actions, long-press menu)
 #   apps/mobile/src/features/threads/threadListV2.ts (drag between sections)
 #   apps/mobile/src/state/thread-order.ts, apps/mobile/src/features/threads/threadOrder.ts (drop labels, arrangement held until confirmed)
@@ -13,6 +14,7 @@
 #   apps/mobile/plugins/withAndroidPredictiveBackCompat
 #   apps/mobile/src/lib/copyTextWithHaptic.ts, apps/mobile/src/components/CopyTextButton.tsx (copy feedback)
 #   apps/mobile/src/components/ControlPillMenu.android.tsx (long press opens a menu with feedback, tap keeps working)
+#   https://github.com/pingdotgg/t3code/pull/23499
 # The thread actions themselves are specified in features/threads/ (settle.feature,
 # snooze.feature, pinning-and-order.feature). This file covers how a phone user reaches them.
 
@@ -238,11 +240,34 @@ Feature: Touch gestures on a phone
     When the environment confirms the new order
     Then the threads offer to move up or down again
 
+  # Upstream #25809: a snooze that woke while no thread list was open left moves turned off.
+  @backlog @mobile @priority-low
+  Scenario: A snooze waking during a move turns moving back on with no thread list open
+    Given the user dragged "B" above "A" and the environment has not confirmed it
+    And the user left the thread list
+    When a snooze wakes and changes the threads' sections
+    Then the threads offer to move up or down again once the user returns to the list
+
+  # Upstream #25809
+  @backlog @mobile @priority-low
+  Scenario: Two snoozes waking in the same minute each wake on time
+    Given "A" is snoozed until 10:00:10 and "B" until 10:00:40
+    When the thread list is open at 10:00:50
+    Then "A" and "B" are both back among the active threads
+
   @backlog @mobile @priority-low
   Scenario: An arrangement is let go when the list changes underneath it
     Given the user dragged "B" above "A" and the environment has not confirmed it
     When another device pins "C" before the environment confirms
     Then the list shows the environment's order
+
+  # Upstream #23499: at a large text size long titles were cut to one line while arranging.
+  @backlog @mobile @priority-low
+  Scenario: Arranging threads at a large text size shows two-line titles whole
+    Given the user set a large text size and a thread has a title that takes two lines
+    When the user arranges the threads
+    Then the thread's row and the dragged copy of it show both lines of its title
+    And an arrangement under way is let go if the text size changes
 
   @backlog @mobile @priority-high
   Scenario: Long pressing an archived thread offers to unarchive or delete it

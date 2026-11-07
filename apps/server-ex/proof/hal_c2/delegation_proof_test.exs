@@ -5,6 +5,7 @@ defmodule HalC2.DelegationProofTest do
   # that fails, and the MC stopping at any step and booting again. prop/hal_c2/delegation_prop_test.exs runs the code in sequence;
   # this explores every interleaving up to the bounds.
   @tool "the agent's tool call, a thin front to start/3 and wait/3; the model has the call and the wait"
+  @continuations "a test pause between a check's reads of the child's continuations and of its stream, read in that order so they are one view; the model's check and continue are each one step, and prop/hal_c2/delegation_prop_test.exs sends a continuation at each pause"
   @policy "changes the wake or delivery of a task already in the parent; no part of how it ends"
 
   use HalC2.Proof,
@@ -76,7 +77,13 @@ defmodule HalC2.DelegationProofTest do
         "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
       "HalC2.Orchestration.Recovery.start_link/0" => "starts the process that runs boot",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
-        "tells the MC is shutting down; the model has crash"
+        "tells the MC is shutting down; the model has crash",
+      "HalC2.Orchestration.Recovery.cut_off?/1" =>
+        "reads whether a restart ended an item, which names a task that ended as interrupted rather than completed; the model's task ends without telling the two apart",
+      "HalC2.Orchestration.Recovery.deliverable?/2" =>
+        "checks a continuation is still wanted when its effect runs; the model's continue decides and sends in one step, and one not wanted is skip-continue",
+      "HalC2.Orchestration.Delegation hook(:continuations)" => @continuations,
+      "HalC2.Orchestration.Delegation hook(:continued)" => @continuations
     },
     environment: %{
       "child-end" => "a run of the child thread ends, and its report starts",

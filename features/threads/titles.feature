@@ -1,5 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23171
 #   https://github.com/pingdotgg/t3code/pull/19822
+#   https://github.com/pingdotgg/t3code/pull/26835
 #   docs/user/thread-sidebar.md (Rename, Regenerate title, agent-managed metadata)
 #   apps/web/src/hooks/useRenameThread.ts
 #   apps/mobile/src/features/threads/thread-title-rename.ts (empty refused, unchanged title sends nothing)
@@ -69,6 +71,20 @@ Feature: Thread titles
     When the user types "Fix OAuth login" and clicks elsewhere
     Then the thread is listed as "Fix OAuth login"
 
+  # Upstream #23171: an untouched rename in the header wrote back the title it started from over
+  # a newer one set elsewhere.
+  @backlog @shared
+  Scenario Outline: Leaving an untouched rename keeps a title that changed meanwhile
+    Given the user started renaming "New thread" in the header
+    And the thread was renamed to "Fix login redirect" on another device
+    When the user <leaves> without typing
+    Then the thread keeps the title "Fix login redirect"
+
+    Examples:
+      | leaves         |
+      | clicks away    |
+      | presses Enter  |
+
   @backlog @desktop
   Scenario: Renaming a thread to the title it already has sends nothing
     Given the user is renaming "Fix login" in the thread list
@@ -125,6 +141,13 @@ Feature: Thread titles
     Given a new title is already being generated for "Fix login"
     When the user opens the thread menu
     Then regenerating the title is unavailable and shows it is in progress
+
+  # Upstream #26835: on the phone, only the closed menu showed that a title was regenerating.
+  @backlog @mobile @priority-low
+  Scenario: A thread's row shows while its title is regenerating
+    When the user asks for a new title for "Fix login" from its menu
+    Then the row of "Fix login" shows that its title is being regenerated
+    And it shows the new title once the regeneration ends
 
   @desktop @mobile @backlog-mobile
   Scenario: The title cannot be regenerated on an environment that needs an update

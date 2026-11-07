@@ -105,6 +105,11 @@ defmodule HalC2.GitActions do
   end
 
   defp run_action(%{"cwd" => cwd, "action" => action} = input, emit) do
+    with true <- action in @commit_actions,
+         message when is_binary(message) <- Vcs.lock_error(cwd) do
+      fail!(message)
+    end
+
     status = Map.merge(Vcs.local_status(cwd), Vcs.remote_status(cwd) || %{})
     branch = status["refName"]
     commit? = action in @commit_actions

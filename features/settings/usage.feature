@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24940
+#   https://github.com/pingdotgg/t3code/pull/23768
+#   https://github.com/pingdotgg/t3code/pull/21939
+#   https://github.com/pingdotgg/t3code/pull/24630
+#   https://github.com/pingdotgg/t3code/pull/25214
+#   https://github.com/pingdotgg/t3code/pull/23411
 #   https://github.com/pingdotgg/t3code/pull/22443
 #   https://github.com/pingdotgg/t3code/pull/24834
 #   https://github.com/pingdotgg/t3code/pull/17055
@@ -227,6 +233,14 @@ Feature: Usage and limits
       When the user views prices for all environments
       Then the price for "my-model" shows as mixed
 
+    # Upstream #23768: a price edit saved to one environment, skipped another where the model maps to another model, and reported both saved.
+    @backlog @shared
+    Scenario: A price cannot be saved to an environment where the model is mapped
+      Given "my-model" has its own price on "laptop" and maps to "other-model" on "server"
+      When the user edits the price of "my-model" for "laptop" and "server"
+      Then the user is told "server" still maps the model, to remove it from the environments the price applies to or clear its mapping first
+      And the price cannot be saved until that is resolved
+
     @backlog @desktop
     Scenario Outline: A model price that is incomplete or invalid is not saved
       Given the user is adding a price for a model
@@ -248,6 +262,20 @@ Feature: Usage and limits
       Then the input rate stays empty
       When the user types "2.5"
       Then the input rate is 2.5
+
+    # Upstream #21939: a comma works as the decimal separator in price cells; more than one
+    # separator is still refused.
+    @backlog @desktop @priority-low
+    Scenario Outline: A model's price takes a comma as the decimal separator
+      Given the user is adding a price for a model
+      When the user enters "<typed>" as its input rate and saves
+      Then <result>
+
+      Examples:
+        | typed | result                                                    |
+        | 2,5   | the input rate is saved as 2.5                            |
+        | 0,075 | the input rate is saved as 0.075                          |
+        | 1,2,3 | the user is told "Use non-negative numbers for prices."   |
 
     @backlog @desktop
     Scenario: A model that already has a price row is edited there
@@ -380,6 +408,15 @@ Feature: Usage and limits
       When the user views cost for the past 90 days
       Then the cost is labelled as an API estimate
       And the estimate says what share of the usage it leaves out
+
+    # Upstream #23411: skipped-record warnings repeated once per differing count, and equal counts
+    # from different sources were merged into one.
+    @shared @backlog @priority-low
+    Scenario: Skipped session records are reported once, with the total
+      Given "laptop" skipped 1 unreadable Codex record and "server" skipped 11
+      When the user views usage for all environments
+      Then usage gives one notice of 12 skipped records
+      And a source reported by two connections is counted once
       When the user views cost for the past 7 days
       Then no share of usage left out is given
 
@@ -571,6 +608,43 @@ Feature: Usage and limits
       When the user views limits
       Then each account shows its initials in a colour of its own, the same on every visit
       And an account signed in on a provider instance shows that instance's badge instead
+
+    # Upstream #24940: the ChatGPT usage card never said which connected accounts it covered.
+    @backlog @shared @priority-low
+    Scenario: The ChatGPT usage card names the connected accounts it covers
+      Given two Codex instances "Work" and "Personal" connected with ChatGPT on "studio"
+      When the user views limits
+      Then the ChatGPT usage card lists "Work on studio" and "Personal on studio"
+
+    # Upstream #24630: limit bars took the provider's colour even when the account had an accent of
+    # its own, in Limits and in the limits shown above the composer.
+    @backlog @shared @priority-low
+    Scenario Outline: An account's limits are drawn in the account's accent colour
+      Given two Claude accounts, one with a blue accent and one with no accent
+      When the user views <where>
+      Then the blue account's limits are drawn in blue
+      And the other account's limits are drawn in Claude's colour
+
+      Examples:
+        | where                            |
+        | limits                           |
+        | the limits shown above the composer |
+
+    # Upstream #24630: the low-allowance warning colours win over the account's accent.
+    @backlog @shared @priority-low
+    Scenario: A nearly spent limit above the composer warns in place of the account colour
+      Given a Claude account with a blue accent that has 10% of its 5-hour allowance left
+      When the user views the limits shown above the composer
+      Then that limit is drawn in the warning colour, not blue
+
+    # Upstream #25214: a pooled limit could show an older plan beside fresh quota, depending on the
+    # order environments answered.
+    @backlog @shared
+    Scenario: A pooled limit names the plan its freshest report gives
+      Given "laptop" last reported the Claude account on the Team plan an hour ago
+      And "server" reported the same account on the Max plan a minute ago
+      When the user views limits for all environments
+      Then the Claude limit names the Max plan
 
     @shared @backlog-mobile @backlog-tui
     Scenario: Opening limits checks them at most every five minutes

@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/17132
 #   https://github.com/pingdotgg/t3code/pull/17378
 #   https://github.com/pingdotgg/t3code/pull/11500
+#   https://github.com/pingdotgg/t3code/pull/26579
 #   apps/server-ex/lib/hal_c2/workspace.ex (index, list_entries)
 #   apps/web/src/components/files/FileBrowserPanel.tsx
 #   apps/web/src/components/files/useDirectoryEntries.ts
@@ -20,6 +21,8 @@
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp, FileTreeModel.cpp
 #   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   https://github.com/pingdotgg/t3code/pull/21920
+#   https://github.com/pingdotgg/t3code/pull/23398
 
 Feature: Exploring project files
   The user can walk a project's files from any client without leaving the thread.
@@ -90,12 +93,36 @@ Feature: Exploring project files
     And nothing from the linked folder is returned
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: only files and folders)
+  # Upstream #21920: links inside the project are now listed as what they point to.
   @mc @backlog @priority-high
-  Scenario: Links and special files are not listed as entries
-    Given "shop" holds a link to a file and a named pipe next to "README.md"
+  Scenario: Special files are not listed as entries
+    Given "shop" holds a named pipe next to "README.md"
     When a client lists the folder "" of "shop"
     Then "README.md" is returned
-    And the link and the named pipe are not
+    And the named pipe is not
+
+  # Upstream #21920: the Files tree never showed links to files or folders in the project.
+  @mc @backlog
+  Scenario: A link to a file or folder in the project is listed as what it points to
+    Given "shop" holds "link.txt", a link to "real.txt", and "linkdir", a link to the folder "realdir"
+    When a client lists the folder "" of "shop"
+    Then "link.txt" is returned as a file
+    And "linkdir" is returned as a folder
+
+  # Upstream #21920: links the MC would refuse to open, or that loop, stay out of the tree.
+  @mc @backlog
+  Scenario Outline: A link that cannot be followed safely is not listed
+    Given "shop" holds a link "<link>" that <points>
+    When a client lists the folder "" of "shop"
+    Then "<link>" is not returned
+
+    Examples:
+      | link    | points                                      |
+      | gone    | points to nothing                           |
+      | outside | points to a folder elsewhere on the machine |
+      | git     | points into ".git"                          |
+      | self    | points to the folder it is in               |
+      | up      | points to the folder above it               |
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: check-ignore in batches, optional)
   @mc @backlog @priority-low
@@ -249,6 +276,7 @@ Feature: Exploring project files
     Then the file opens and the filter stays as typed
     But opening the same file from a message clears the filter and reveals it
 
+  # Upstream #26579: Copy mention and Add to chat in a file's menu did nothing when clicked with the pointer.
   @desktop
   Scenario Outline: File actions available from a file entry
     When the user chooses to <action> "src/app.ts"
@@ -293,3 +321,16 @@ Feature: Exploring project files
     Given the project's folder is too large to scan within the initial scan budget
     When the user searches file contents
     Then the search fails with a timeout instead of showing partial content results
+
+  # Upstream #23398: on Linux and macOS a backslash in a folder's name was read as a separator,
+  # so the folder opened empty or failed to list.
+  @backlog @mc @shared
+  Scenario Outline: A folder with a backslash in its name lists its files on Linux and macOS
+    Given "shop" on a Linux or macOS environment has the folder "<folder>" holding "q3-notes.md"
+    When the user expands "<folder>" in the file explorer
+    Then "q3-notes.md" is listed inside "<folder>"
+
+    Examples:
+      | folder       |
+      | exports\2026 |
+      | ..\archive   |

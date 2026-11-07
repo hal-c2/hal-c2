@@ -107,6 +107,15 @@ defmodule HalC2.GitActionsTest do
     assert %{"kind" => "action_failed", "phase" => "push"} = List.last(events)
   end
 
+  test "a commit while another git holds the index says so", %{repo: repo} do
+    File.write!(Path.join(repo, "b.txt"), "b\n")
+    File.write!(Path.join(repo, ".git/index.lock"), "")
+
+    assert {{:error, message}, _} = run(%{"cwd" => repo, "action" => "commit"})
+    assert message =~ "index is locked"
+    refute message =~ "not a git repository"
+  end
+
   test "feature branch names" do
     assert GitActions.feature_branch_name("Add Login Form!") == "feature/add-login-form"
     assert GitActions.feature_branch_name("feature/x y") == "feature/x-y"

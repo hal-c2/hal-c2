@@ -92,16 +92,116 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   step ~r/^thread "(?<thread>[^"]+)" (?:had a running turn|was mid-turn(?: on "codex")? when the MC stopped|was mid-turn on a provider conversation that can resume)$/,
        %{args: [thread]} = context do
-    context = World.running_turn(context, thread)
-    # The provider's conversation can resume: Codex named its native thread.
-    World.await_state(context, thread, fn state ->
-      Enum.any?(
-        Map.values(state.entities["provider-thread"] || %{}),
-        &is_map(&1["nativeThreadRef"])
-      )
-    end)
+    continued_turn(context, thread)
+  end
 
-    context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+  # Three runs before the next one, each but the first continuing the one before it after
+  # a restart, the first the user's: the next turn of `thread` continues the last
+  # (`context.continuing`). Quick ones are cut off a minute after they start; the others
+  # after ten. With the MC down, a quick one's boot ends it ten minutes after it was
+  # last seen working.
+  step ~r/^"(?<thread>[^"]+)" has been continued after 3 restarts(?<how>, each after more than five minutes of work| in a row without a message from the user| in a row, each a minute's work before the MC was down ten minutes)$/,
+       %{args: [thread, how]} = context do
+    context = World.providers(context)
+
+    context =
+      if (context[:threads] || %{})[thread],
+        do: context,
+        else: World.named_thread(context, thread)
+
+    minutes = if how =~ "five minutes", do: 10, else: 1
+    down = if how =~ "was down", do: 10, else: 0
+    ids = for n <- 1..3, do: "run:seeded-#{thread}-#{n}"
+
+    for {id, n} <- Enum.with_index(ids, 1) do
+      start = -(4 - n) * (minutes + down + 1) * 60_000
+      worked = World.iso_from_now(start + minutes * 60_000)
+      ended = World.iso_from_now(start + (minutes + down) * 60_000)
+
+      message =
+        if n == 1,
+          do: "msg-seeded-#{thread}",
+          else: "message:restart-continuation:#{Enum.at(ids, n - 2)}"
+
+      World.put_entity(context, thread, "run", id, %{
+        "s" =>
+          %{
+            "id" => id,
+            "threadId" => World.thread_id(context, thread),
+            "ordinal" => n,
+            "status" => "interrupted",
+            "userMessageId" => message,
+            "requestedAt" => World.iso_from_now(start),
+            "startedAt" => World.iso_from_now(start),
+            "completedAt" => ended,
+            "updatedAt" => ended
+          }
+          |> Map.merge(if down > 0, do: %{"lastActivityAt" => worked}, else: %{})
+      })
+    end
+
+    Map.put(context, :continuing, List.last(ids))
+  end
+
+  # A request of the cut-off run that the restart then closes: the provider that asked
+  # is gone.
+  step ~r/^the restart closed (?:an approval "(?<a>[^"]+)" was waiting on|a question "(?<q>[^"]+)" was asking the user)$/,
+       %{args: args} = context do
+    [thread] = Enum.reject(args, &(&1 in [nil, ""]))
+    kind = if Enum.at(args, 0) in [nil, ""], do: "user_input", else: "command_execution"
+    run = World.state(context, thread).entities["run"][context.cut_off]
+
+    World.put_entity(context, thread, "runtime-request", "runtime-request:restart-closed", %{
+      "s" => %{
+        "id" => "runtime-request:restart-closed",
+        "nodeId" => run["rootNodeId"],
+        "kind" => kind,
+        "status" => "pending",
+        "responseCapability" => %{"type" => "live"},
+        "createdAt" => World.iso_from_now(0),
+        "resolvedAt" => nil
+      }
+    })
+  end
+
+  step "the provider's turn had already ended", context do
+    run = World.state(context, context.thread).entities["run"][context.cut_off]
+    attempt = World.state(context, context.thread).entities["run-attempt"][run["activeAttemptId"]]
+
+    World.put_entity(context, context.thread, "provider-turn", attempt["providerTurnId"], %{
+      "s" => %{"status" => "completed", "completedAt" => World.iso_from_now(0)}
+    })
+  end
+
+  step "{string} waits for the user's next message", %{args: [thread]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+
+    assert World.runs(context, thread)
+           |> Enum.filter(&(&1["status"] in ~w(starting running waiting queued))) == []
+
+    context
+  end
+
+  # The user's message starts the count again: a turn continuing it, cut off by a
+  # restart, is continued.
+  step "{string} may be continued after a later restart again", %{args: [thread]} = context do
+    source = World.await_latest_run(context, thread, "completed")
+    context = context |> Map.put(:continuing, source["id"]) |> continued_turn(thread)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    message = "message:restart-continuation:#{context.cut_off}"
+    assert %{"text" => @continuation} = World.state(context, thread).entities["message"][message]
+    context
+  end
+
+  step "{string} receives {string} from the server", %{args: [thread, text]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    message = "message:restart-continuation:#{context.cut_off}"
+
+    assert %{"text" => ^text, "createdBy" => "agent"} =
+             World.state(context, thread).entities["message"][message]
+
+    context
   end
 
   # The provider's turn ended, and the MC stopped while it captured the run's checkpoint:
@@ -402,6 +502,127 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The stop reached Codex, which acknowledged it and went on; the MC died before the turn
+  # ended, so only the stop's request item records that the user wanted it stopped.
+  step ~r/^the user had asked to stop the running turn of "(?<thread>[^"]+)"(?<queue>, with a message queued behind it)?$/,
+       %{args: [thread | queue]} = context do
+    File.write!(Path.join(context.mc.home, "ignore-interrupt"), "")
+    context = World.running_turn(context, thread)
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
+
+    context =
+      if List.first(queue) in [nil, ""],
+        do: context,
+        else: World.queue_message(context, thread, "Next")
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "commandId" => "command:stop-#{thread}",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    assert {:ok, _} = reply
+    stop = "turn-item:run:#{context.running}:signal:interrupt-request"
+    World.await_state(context, thread, &(&1.entities["turn-item"][stop] != nil))
+    assert World.state(context, thread).entities["run"][context.running]["status"] == "running"
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+  end
+
+  # `continue/0` has run by the time the MC is back; whatever it enqueued has run after a drain.
+  step "no continuation is asked of {string}", %{args: [thread]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    message = "message:restart-continuation:#{context.cut_off}"
+    assert World.state(context, thread).entities["message"][message] == nil
+
+    assert World.state(context, thread).entities["run"][context.cut_off]["status"] ==
+             "interrupted"
+
+    context
+  end
+
+  step "the message queued on {string} is held for the user", %{args: [thread]} = context do
+    [queued] = context.queued
+    run = World.state(context, thread).entities["run"][queued]
+    assert %{"status" => "queued", "queueHeld" => true} = run
+    assert World.runs(context, thread) |> Enum.filter(&(&1["status"] == "running")) == []
+    context
+  end
+
+  # The restart asked to continue the cut-off turn, and its effect waits in the thread's
+  # lane, recorded but not run.
+  step "the continuation of {string} was recorded but not yet delivered",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
+
+    context = context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+    id = World.thread_id(context, thread)
+    World.put_app_env(:effects_hook, {__MODULE__, :hold_continuation, [self(), id]})
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert_receive {:continuation_held, ^id, lane}, 5_000
+    Map.put(context, :held_continuation, lane)
+  end
+
+  step "{string} is archived before it is delivered", %{args: [thread]} = context do
+    context =
+      World.patch_thread(context, thread, %{"archivedAt" => World.iso_from_now(0)})
+
+    Application.delete_env(:hal_c2, :effects_hook)
+    send(context.held_continuation, :release_continuation)
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    context
+  end
+
+  # The effect a restart enqueues to continue a thread waits in its lane until released.
+  step "the continuation a restart asks of the subagent waits to be sent", context do
+    child = World.thread_id(context, "subagent")
+    World.put_app_env(:effects_hook, {__MODULE__, :hold_continuation, [self(), child]})
+    context
+  end
+
+  # The checks that settle a quiet child's task: the boot's, after `continue/0`, and the
+  # periodic one.
+  step "the task is {string} however often it is checked while the continuation waits",
+       %{args: [status]} = context do
+    child = World.thread_id(context, "subagent")
+    assert_receive {:continuation_held, ^child, lane}, 5_000
+
+    assert HalC2.Orchestration.Delegation.reconcile(
+             World.thread_id(context, context.task_parent),
+             false
+           ) == 0
+
+    :ok = HalC2.Orchestration.Delegation.settle_if_quiet(child)
+
+    task =
+      HalC2.StreamState.get(World.state(context, context.task_parent), "subagent")[
+        context.task_id
+      ]
+
+    assert task["status"] == status
+    Map.put(context, :held_lane, lane)
+  end
+
+  step "the continuation is sent", context do
+    Application.delete_env(:hal_c2, :effects_hook)
+    send(context.held_lane, :release_continuation)
+    context
+  end
+
   # --- provider processes an MC that died left running ------------------------------------
 
   # A stand-in provider whose `sleep` is a command it left in the background; it holds
@@ -415,6 +636,56 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     mc_died(sub)
     Map.put(context, :orphan, sub)
+  end
+
+  # An agent the killed MC started, with a command it runs in the background, and a
+  # terminal the user started outside any MC running the same kind of command. Each
+  # answers with the pid of its command; the user's is killed by that pid at the end.
+  step "an MC was killed while its agents were still running", context do
+    {:ok, sub} =
+      HalC2.Subprocess.start([
+        "sh",
+        "-c",
+        ~s(sleep 60 & echo $!; while read l; do echo "$l"; done)
+      ])
+
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    mc_died(sub)
+
+    {pid, 0} =
+      System.cmd("sh", ["-c", "setsid sleep 60 </dev/null >/dev/null 2>&1 & echo $!"])
+
+    terminal = pid |> String.trim() |> String.to_integer()
+
+    ExUnit.Callbacks.on_exit(fn ->
+      unless HalC2.Subprocess.Orphans.gone?(terminal),
+        do: System.cmd("kill", ["-9", "#{terminal}"])
+    end)
+
+    Map.merge(context, %{orphan: sub, left_command: String.to_integer(line), terminal: terminal})
+  end
+
+  step "a new MC on the same files launches its first agent", context do
+    mc = Mc.restart(context.mc)
+    assert {:ok, agent} = HalC2.Subprocess.start(["sh", "-c", "while read l; do echo $l; done"])
+    %{context | mc: mc, clients: %{}} |> Map.put(:agent, agent)
+  end
+
+  step "the agents the killed MC left are stopped first", context do
+    exit_ref = context.orphan.proc.exit_ref
+    assert_receive {^exit_ref, {:ok, 137}}, 5_000
+    assert HalC2.Subprocess.Orphans.gone?(context.left_command)
+    # The new MC's agent runs.
+    :ok = HalC2.Subprocess.write_line(context.agent, "up")
+    reader = context.agent.reader
+    assert_receive {:subprocess_lines, ^reader, ["up"]}, 5_000
+    HalC2.Subprocess.stop(context.agent)
+    context
+  end
+
+  step "terminals the user started are left alone", context do
+    refute HalC2.Subprocess.Orphans.gone?(context.terminal)
+    context
   end
 
   # The command leaves the provider's process group (hal-c2/hal-c2#387); the provider
@@ -1396,6 +1667,209 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The fake Claude ends its turn with only that work running in the background; the
+  # provider process then dies with the MC.
+  step(
+    ~r/^thread "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
+    %{args: [thread, work]} = context,
+    do: wait_on(context, thread, work)
+  )
+
+  step "\"continue threads after restarts\" is on", context do
+    HalC2.Test.Mc.ensure(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => true}, version)
+    context
+  end
+
+  # Claude woke "thread" by itself as the MC stopped (`HalC2.Orchestration.Wake`): the
+  # wake's run, after the turn that left a command in the background, had not reached
+  # its provider yet.
+  step "a wake of {string} was still starting when the MC stopped, after a settled run whose background work was lost",
+       %{args: [thread]} = context do
+    context = wait_on(context, thread, "a background task")
+    settled = context.settled_run
+    wake = "run:wake-#{thread}"
+    message = "message:wake-#{thread}"
+    at = HalC2.Orchestration.Entities.now()
+
+    {:ok, _} =
+      HalC2.Streams.commit(World.thread_id(context, thread), :thread, [
+        {"message", message,
+         %{
+           "s" => %{
+             "id" => message,
+             "role" => "user",
+             "text" => "Background task completed.",
+             "providerWake" => true,
+             "createdBy" => "agent",
+             "runId" => wake,
+             "createdAt" => at
+           }
+         }},
+        {"run", wake,
+         %{
+           "s" =>
+             Map.merge(Map.take(settled, ~w(modelSelection providerThreadId)), %{
+               "id" => wake,
+               "ordinal" => settled["ordinal"] + 1,
+               "status" => "starting",
+               "userMessageId" => message,
+               "activeAttemptId" => "attempt:#{wake}",
+               "requestedAt" => at,
+               "startedAt" => nil,
+               "completedAt" => nil
+             })
+         }},
+        {"run-attempt", "attempt:#{wake}",
+         %{"s" => %{"id" => "attempt:#{wake}", "runId" => wake, "status" => "pending"}}}
+      ])
+
+    Map.put(context, :wake, wake)
+  end
+
+  step "{string} is continued from the settled run that lost the work",
+       %{args: [thread]} = context do
+    id = "message:restart-continuation:#{context.settled_run["id"]}"
+    state = World.await_state(context, thread, &HalC2.StreamState.fetch(&1, "message", id))
+    run_id = HalC2.StreamState.fetch(state, "message", id)["runId"]
+
+    state =
+      World.await_state(context, thread, &(&1.entities["run"][run_id]["status"] in @started))
+
+    assert state.entities["message"][id]["text"] =~ "ended the background command `npm run build`"
+
+    # The wake replayed what the gone provider process had sent: it is cancelled, not
+    # started again, and the run that lost the work is the one continued.
+    assert %{"status" => "cancelled"} = state.entities["run"][context.wake]
+    assert %{"status" => "cancelled"} = state.entities["run-attempt"]["attempt:#{context.wake}"]
+    assert state.entities["run"][context.settled_run["id"]]["status"] == "completed"
+    context
+  end
+
+  # A Claude child of "parent"'s task, whose only turn ends that way.
+  step ~r/^a task delegated to "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
+       %{args: [thread, work]} = context do
+    input = %{
+      "task" => waiting_on(work),
+      "mode" => "async",
+      "target" => %{"providerInstanceId" => "claudeAgent"}
+    }
+
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, "parent", "delegate_task", input, "codex")
+
+    state = World.await_state(context, "parent", &HalC2.StreamState.get(&1, "subagent")[task_id])
+    child = HalC2.StreamState.get(state, "subagent")[task_id]["childThreadId"]
+    context = put_in(context, [:threads, thread], child)
+    World.await_run(context, thread, &(&1["status"] == "completed"))
+
+    context
+    |> Map.merge(%{thread: thread, task_id: task_id, task_parent: "parent"})
+    |> leave_waiting()
+  end
+
+  step ~r/^the continuation names (?<work>a monitor|a subagent|a background task) the restart ended$/,
+       %{args: [work]} = context do
+    text = context.continuation_message["text"]
+
+    named = %{
+      "a monitor" => ~s(waiting on: the monitor "Watch the dev log".),
+      "a subagent" => ~s(waiting on: the subagent "Survey the repo".),
+      "a background task" => "ended the background command `npm run build`."
+    }
+
+    assert text =~ "The server stopped, which "
+    assert text =~ named[work]
+    context
+  end
+
+  step "the task delegated to {string} ends {string}, not {string}",
+       %{args: [_thread, status, _]} = context do
+    state =
+      World.await_state(
+        context,
+        context.task_parent,
+        &(HalC2.StreamState.get(&1, "subagent")[context.task_id]["status"] not in ~w(pending running))
+      )
+
+    assert %{"status" => ^status} = HalC2.StreamState.get(state, "subagent")[context.task_id]
+    context
+  end
+
+  # A Claude thread "t1" whose last turn completed with a subagent left running, whose
+  # provider process died without ending it, and whose session the idle release stopped.
+  step "a completed thread has leftover background tool or subagent records", context do
+    context =
+      context |> World.providers() |> World.log_claude_prompts() |> World.named_thread("t1")
+
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+
+    context =
+      for {text, n} <- [{"Hi", 1}, {waiting_on("a subagent"), 2}], reduce: context do
+        context ->
+          context = World.dispatch_message(context, "t1", text, claude)
+          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+          World.await_run(context, "t1", &(&1["ordinal"] == n and &1["status"] == "completed"))
+          context
+      end
+
+    context = context |> Map.put(:thread, "t1") |> leave_waiting()
+    :ok = HalC2.Orchestration.release_session(World.thread_id(context, "t1"))
+    Map.put(context, :claude, claude)
+  end
+
+  step "the thread is not woken", context do
+    id = World.thread_id(context, "t1")
+    :ok = HalC2.Orchestration.Effects.drain(id)
+    state = World.state(context, "t1")
+
+    assert Enum.map(HalC2.StreamState.list(state, "run"), & &1["ordinal"]) |> Enum.sort() == [
+             1,
+             2
+           ]
+
+    refute Enum.any?(
+             Map.keys(state.entities["message"] || %{}),
+             &String.starts_with?(&1, "message:restart-continuation:")
+           )
+
+    last = Enum.find(HalC2.StreamState.list(state, "run"), &(&1["ordinal"] == 2))
+
+    background =
+      for item <- HalC2.StreamState.list(state, "turn-item"),
+          item["runId"] == last["id"],
+          item["type"] in ~w(command_execution dynamic_tool subagent),
+          do: item
+
+    assert background != []
+    assert Enum.all?(background, &(&1["status"] == "interrupted"))
+    context
+  end
+
+  step "its background cleanup note reaches the provider once, on the next manual turn",
+       context do
+    before = length(World.claude_prompts(context))
+
+    for {text, n} <- [{"Next", 3}, {"Again", 4}] do
+      context = World.dispatch_message(context, "t1", text, context.claude)
+      assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+      World.await_run(context, "t1", &(&1["ordinal"] == n and &1["status"] == "completed"))
+    end
+
+    [first, second] = context |> World.claude_prompts() |> Enum.drop(before)
+    assert first =~ "<server_restart>"
+
+    assert first =~
+             ~s(ended the background work it had left running: the subagent "Survey the repo".)
+
+    refute second =~ "<server_restart>"
+
+    thread = World.state(context, "t1").entities["thread"][World.thread_id(context, "t1")]
+    refute Map.has_key?(thread, "restartNote")
+    context
+  end
+
   # --- native subagents ------------------------------------------------------------------
 
   # Claude's own subagent (its Agent tool), running in the background when the provider
@@ -1417,6 +1891,153 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
     |> put_in([:threads, "subagent"], child)
     |> Map.merge(%{thread: thread, native_subagent: id})
+  end
+
+  # A Claude turn of "thread" kept running, in which Claude started a subagent of its own
+  # (its Agent tool), whose tool call shows in the subagent's own thread.
+  step(
+    "thread {string} has a provider-native subagent running with its own thread",
+    %{args: [thread]} = context,
+    do: native_running(context, thread)
+  )
+
+  # The stop ended the turn, but its subagent's records still read as running, in the
+  # parent and in the subagent's own thread, as an MC before stops settled them left
+  # them.
+  step "thread {string} was stopped while its native subagent's record still read as running",
+       %{args: [thread]} = context do
+    context = native_running(context, thread)
+    id = context.native_subagent
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    assert {:ok, _} = reply
+    World.await_latest_run(context, thread, "interrupted")
+    running = %{"s" => %{"status" => "running", "completedAt" => nil}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        World.thread_id(context, thread),
+        :thread,
+        for(kind <- ~w(subagent node), do: {kind, id, running}) ++
+          [{"turn-item", "turn-item:subagent:#{id}", running}]
+      )
+
+    child = World.thread_id(context, "subagent")
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        child,
+        :thread,
+        for(
+          item <- World.entities(context, "subagent", "turn-item"),
+          item["type"] != "user_message",
+          do: {"turn-item", item["id"], running}
+        )
+      )
+
+    context
+  end
+
+  defp native_running(context, thread) do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "wait for it", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_latest_run(context, thread, "running")
+
+    for message <- [
+          claude_tool_use(nil, "agent-own", "Agent", %{"prompt" => "Survey the repo"}),
+          %{
+            "type" => "system",
+            "subtype" => "task_started",
+            "task_id" => "task-agent-own",
+            "tool_use_id" => "agent-own",
+            "task_type" => "local_agent",
+            "prompt" => "Survey the repo"
+          },
+          claude_tool_use("agent-own", "bash-own", "Bash", %{"command" => "ls"})
+        ],
+        do: claude_says(context, thread, message)
+
+    state =
+      World.await_state(context, thread, fn state ->
+        Enum.any?(
+          HalC2.StreamState.list(state, "subagent"),
+          &(&1["origin"] == "provider_native" and &1["status"] == "running")
+        )
+      end)
+
+    %{"id" => id, "childThreadId" => child} =
+      Enum.find(HalC2.StreamState.list(state, "subagent"), &(&1["origin"] == "provider_native"))
+
+    context =
+      context
+      |> put_in([:threads, "subagent"], child)
+      |> Map.merge(%{thread: thread, native_subagent: id})
+
+    World.await_state(context, "subagent", fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["status"] == "running"))
+    end)
+
+    context
+  end
+
+  step(
+    "the subagent reads as stopped, not running, and its timer stops",
+    context,
+    do: stopped_subagent(context)
+  )
+
+  step(
+    "the subagent's thread no longer shows a working turn",
+    context,
+    do: idle_subagent_thread(context)
+  )
+
+  step "the subagent and its thread read as stopped", context do
+    context |> stopped_subagent() |> idle_subagent_thread()
+  end
+
+  # The stop ended the turn, but its subagent's records still read as running, in the
+  # parent and in the subagent's own thread, as an MC before stops settled them left
+  # them; then the MC stops.
+  defp stopped_subagent(context) do
+    id = context.native_subagent
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["subagent"][id]["status"] not in ~w(pending running)
+      end)
+
+    assert %{"status" => "interrupted", "completedAt" => at} = state.entities["subagent"][id]
+    assert is_binary(at)
+    assert %{"status" => "interrupted"} = state.entities["node"][id]
+
+    assert %{"status" => "interrupted", "completedAt" => ^at} =
+             state.entities["turn-item"]["turn-item:subagent:#{id}"]
+
+    context
+  end
+
+  defp idle_subagent_thread(context) do
+    child = World.thread_id(context, "subagent")
+    active = ~w(preparing queued starting running waiting pending)
+    row = World.await_row(child, &(&1["pendingBackgroundTasks"] in [nil, []]))
+    refute row["status"] in active
+    refute row["activityRunStatus"] in active
+    state = World.state(context, "subagent")
+
+    for kind <- ~w(run node turn-item), entity <- HalC2.StreamState.list(state, kind) do
+      refute entity["status"] in active, "#{kind} #{entity["id"]} is #{entity["status"]}"
+    end
+
+    refute Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["streaming"] == true))
+    context
   end
 
   step "the subagent thread is settled or interrupted", context do
@@ -1735,6 +2356,38 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     pid
   end
 
+  # A turn of `thread` the MC stops in, on a provider conversation that can resume. With
+  # `context.continuing`, the turn is a restart's continuation of that run.
+  defp continued_turn(context, thread) do
+    context =
+      case context[:continuing] do
+        nil ->
+          World.running_turn(context, thread)
+
+        source ->
+          context =
+            World.dispatch_message(context, thread, "wait for it", %{
+              "messageId" => "message:restart-continuation:#{source}",
+              "createdBy" => "agent",
+              "creationSource" => "server"
+            })
+
+          assert {:ok, _} = context.reply
+          run = World.await_latest_run(context, thread, "running")
+          context |> Map.delete(:reply) |> Map.merge(%{thread: thread, running: run["id"]})
+      end
+
+    # The provider's conversation can resume: Codex named its native thread.
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
+
+    context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+  end
+
   defp kill_provider(context, thread) do
     {pid, _} = World.codex_runtime(context, thread)
     ref = Process.monitor(pid)
@@ -1869,6 +2522,43 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     Map.put(context, :runtime, pid)
   end
 
+  defp waiting_on("a monitor"), do: "start a monitor"
+  defp waiting_on("a subagent"), do: "only the subagent in the background"
+  defp waiting_on("a background task"), do: "only the command in the background"
+
+  # The fake Claude ends "thread"'s second turn with only `work` running in the
+  # background; the provider process then dies with the MC.
+  defp wait_on(context, thread, work) do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+
+    context =
+      for {text, n} <- [{"Hi", 1}, {waiting_on(work), 2}], reduce: context do
+        context ->
+          context = World.dispatch_message(context, thread, text, claude)
+          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+          World.await_run(context, thread, &(&1["ordinal"] == n and &1["status"] == "completed"))
+          context
+      end
+
+    run = World.await_run(context, thread, &(&1["ordinal"] == 2))
+
+    context
+    |> Map.put(:thread, thread)
+    |> leave_waiting()
+    |> Map.merge(%{settled_run: run, work: work})
+  end
+
+  # Kills the provider process of `context.thread` once its one background task shows.
+  defp leave_waiting(context) do
+    context = await_background(context)
+    pid = runtime(context, context.thread)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}
+    context
+  end
+
   defp await_background(context) do
     World.await_row(
       World.thread_id(context, context.thread),
@@ -1876,6 +2566,18 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     )
 
     context
+  end
+
+  # A tool call of Claude's (`parent` nil) or of its subagent under the tool call `parent`.
+  defp claude_tool_use(parent, id, name, input) do
+    %{
+      "type" => "assistant",
+      "parent_tool_use_id" => parent,
+      "message" => %{
+        "id" => "m-#{id}",
+        "content" => [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+      }
+    }
   end
 
   defp claude_says(context, thread, message) do
@@ -1968,6 +2670,22 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     context
   end
+
+  @doc false
+  def hold_continuation(
+        test,
+        thread_id,
+        :execute,
+        %{"type" => "provider-runtime.continue", "threadId" => thread_id}
+      ) do
+    send(test, {:continuation_held, thread_id, self()})
+
+    receive do
+      :release_continuation -> :ok
+    end
+  end
+
+  def hold_continuation(_test, _thread_id, _stage, _record), do: :ok
 
   defp continue_setting(context, project, on?) do
     id = World.project(context, project).id

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27837
+#   https://github.com/pingdotgg/t3code/pull/27741
 #   https://github.com/pingdotgg/t3code/pull/18322
 #   https://github.com/pingdotgg/t3code/pull/19465
 #   https://github.com/pingdotgg/t3code/pull/24022
@@ -52,6 +54,12 @@
 #   apps/web/src/components/composerContextPresentation.tsx, apps/web/src/components/contextChipParts.tsx,
 #   apps/web/src/components/ThreadContextChip.tsx (what a reference shows and opens)
 #   apps/web/src/composerDraftStore.ts (where context added from another panel lands in the draft)
+#   https://github.com/pingdotgg/t3code/pull/28209
+#   https://github.com/pingdotgg/t3code/pull/26201
+#   https://github.com/pingdotgg/t3code/pull/26269
+#   https://github.com/pingdotgg/t3code/pull/25066
+#   https://github.com/pingdotgg/t3code/pull/21537
+#   https://github.com/pingdotgg/t3code/pull/23447
 
 Feature: Referencing files, skills, commands and context
   The user pulls things into a message by typing a trigger character or by
@@ -61,9 +69,11 @@ Feature: Referencing files, skills, commands and context
   Background:
     Given a project with an open thread
 
-  @desktop @backlog-desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A trigger character offers matching suggestions
-    When the user types "<typed>"
+    Given the project has the files "src/components/Button.tsx", "src/config.ts" and "README.md"
+    And the provider offers the skills "review" and "release-notes"
+    When the user types "<typed>" into the composer
     Then the user is offered <suggestions>
 
     Examples:
@@ -72,27 +82,29 @@ Feature: Referencing files, skills, commands and context
       | $rev      | skills matching "rev"                 |
       | /mo       | commands matching "mo"                |
 
-  @desktop @backlog-desktop @priority-high
+  @desktop @priority-high
   Scenario: Choosing a file suggestion puts the file into the draft
-    Given the user has typed "@read"
+    Given the project has the file "README.md"
+    And the user has typed "@read"
     When the user chooses "README.md" from the suggestions
     Then the draft references "README.md"
 
-  @desktop @backlog-desktop @priority-high
+  @desktop @priority-high
   Scenario: Dismissing suggestions does not send the message
     Given the user is offered suggestions
     When the user dismisses them with Escape
     Then no suggestion is inserted
     And nothing has been sent
 
-  @backlog @tui @priority-high
+  @tui @priority-high
   Scenario: The terminal client offers file, skill and command suggestions
     When the user types "@src" in the prompt
     Then the user is offered files and folders matching "src"
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Provider commands only apply at the start of a message
-    When the user types "<typed>"
+    Given the provider offers the command "compact"
+    When the user types "<typed>" into the composer
     Then <outcome>
 
     Examples:
@@ -101,32 +113,84 @@ Feature: Referencing files, skills, commands and context
       | please /compact       | no provider command is offered             |
       | please /model         | the built-in model command is offered      |
 
-  @backlog @shared
+  @desktop
+  Scenario Outline: A slash typed after other text keeps its menu open while it heads for a name
+    Given the provider offers the command "compact"
+    And the provider offers the skill "review"
+    When the user types "<typed>" into the composer
+    Then no provider command is offered
+    And a built-in command or skill is offered
+
+    Examples:
+      | typed                |
+      | Please use /         |
+      | Please use /mo       |
+      | Please use /ski      |
+      | Please use /skill    |
+      | Please use /skill:re |
+
+  @shared @backlog-mobile @backlog-tui
   Scenario: A slash typed after other text searches skills
     Given the provider offers the skill "review"
-    When the user types "Please use /rev"
+    When the user types "Please use /rev" into the composer
     Then the skill "review" is offered
     When the user chooses it
     Then the draft reads "Please use " followed by the skill "review"
 
+  # Differs from the web on purpose: its composer opens the menu for "/thread" too, matching
+  # descriptions and fuzzily, so Enter takes /model or /plan there and the message is not sent.
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A slash typed after other text that starts no name is sent as typed
+    Given the Build and Plan toggle setting is on
+    And the provider offers the skill "template"
+    When the user types "<typed>" into the composer
+    Then no slash command or skill suggestions are offered
+    And pressing Enter sends the draft with "<typed>" as typed
+
+    Examples:
+      | typed               |
+      | summarise /thread   |
+      | fix /this           |
+      | look in /tmp        |
+      | that'll go great /s |
+
+  @desktop @priority-high
+  Scenario: A slash after leading spaces is still the start of the message
+    Given the provider offers the command "compact"
+    When the user types "  /compact" into the composer
+    Then the provider command "compact" is offered
+
   # Upstream #19671: a path typed in the composer offers no slash suggestions.
-  @backlog @shared
+  @shared @backlog-mobile
   Scenario: A path typed in the composer does not open the slash menu
-    When the user types "run /tmp/build.sh"
+    When the user types "run /tmp/build.sh" into the composer
     Then no slash command or skill suggestions are offered
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Choosing a built-in command acts at once and leaves no text behind
     Given the Build and Plan toggle setting is on
+    And the thread is <mode>
     When the user chooses the built-in command "<command>"
     Then <outcome>
     And "<command>" is removed from the draft
 
     Examples:
-      | command  | outcome                                  |
-      | /plan    | the thread switches to planning          |
-      | /default | the thread switches back to building     |
-      | /model   | the user is asked to choose a model      |
+      | command  | mode     | outcome                                  |
+      | /plan    | building | the thread switches to planning          |
+      | /default | planning | the thread switches back to building     |
+      | /model   | building | the user is asked to choose a model      |
+
+  # Upstream #27837: "/Model" opened the model picker but "/Model opus" closed it.
+  @backlog @desktop
+  Scenario Outline: The model command with a search opens the model picker in any case
+    When the user types "<typed>"
+    Then the model picker is open, searching for "opus"
+
+    Examples:
+      | typed       |
+      | /model opus |
+      | /Model opus |
+      | /MODEL opus |
 
   @backlog @desktop
   Scenario: Pull requests are found by number or by title
@@ -159,6 +223,17 @@ Feature: Referencing files, skills, commands and context
     When the user types "#4"
     Then both are suggested, the linked one naming "owner/repo-b"
     And a linked pull request whose details have not loaded yet is not suggested
+
+  # Upstream #26269: typing words after "#" left out the thread's linked pull requests unless the
+  # search returned them. Linked ones matching the words (title, branch, repository or number)
+  # come first and show at once; the search's results follow when they arrive.
+  @backlog @desktop @mobile
+  Scenario: Pull requests linked to the thread come first for a typed word
+    Given the thread links the pull request "Fix doctor checks" on the branch "doctor-fix"
+    And the repository has newer pull requests about "doctor" that are not linked
+    When the user types "#doctor"
+    Then "Fix doctor checks" is suggested before the search's results come back
+    And it stays first once the other matches are listed below it
 
   # Legacy: packages/shared/src/composerInlineTokens.ts (SCOPED_PACKAGE_REFERENCE_REGEX)
   @backlog @desktop
@@ -193,6 +268,25 @@ Feature: Referencing files, skills, commands and context
     When the user references the thread "Auth refactor"
     Then the draft references "Auth refactor"
     And the agent can read that thread's history
+
+  # Upstream #26201: a thread on a machine the composer's environment can reach (upstream's linked
+  # machines; for HAL-C2, another machine of the MC's cluster) is offered and attached like a local one.
+  @backlog @shared @priority-high
+  Scenario: The thread picker offers threads on the other machines of the cluster
+    Given the machine "beast" is in the MC's cluster and has a thread "Deploy the API"
+    When the user types "@Deploy" in a draft on this machine
+    Then "Deploy the API" is offered as a thread on "beast"
+    When the user picks it
+    Then the draft references "Deploy the API" on "beast"
+    And the message can be sent
+
+  # Upstream #26201: a pasted or dropped reference to a cluster machine's thread stays a live reference.
+  @backlog @shared
+  Scenario: A reference to a thread on another machine of the cluster pastes as a live reference
+    Given the user copied a reference to "Deploy the API" on the cluster machine "beast"
+    When the user pastes it into a draft on this machine
+    Then the draft references "Deploy the API" on "beast"
+    And it is not marked as unreadable
 
   @backlog @desktop
   Scenario: A thread from another environment cannot be referenced
@@ -349,6 +443,13 @@ Feature: Referencing files, skills, commands and context
     Given a draft references the terminal excerpt "npm test output"
     When the user copies that text and pastes it into another thread's draft
     Then the other draft references "npm test output" as well
+
+  # Upstream #21537: copied context whose text held an apostrophe pasted as a bare link.
+  @backlog @desktop @mobile
+  Scenario: Copied references with an apostrophe survive a paste through another app
+    Given a draft references the terminal excerpt "error: can't find module"
+    When the user copies that text and it reaches another draft only as rich text
+    Then the other draft references "error: can't find module" as well
 
   @backlog @mobile @priority-low
   Scenario: Copying a sent message brings its references along
@@ -526,7 +627,7 @@ Feature: Referencing files, skills, commands and context
     When the environment of the open thread is reachable again
     Then the suggestion list says "No matching files or folders."
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A suggestion list with nothing to offer says why
     When the user types "<typed>" and <situation>
     Then the suggestion list says "<message>"
@@ -536,31 +637,53 @@ Feature: Referencing files, skills, commands and context
       | $zzz  | no skill matches                             | No skills found. Try / to browse provider commands. |
       | @zzz  | no file or folder matches                    | No matching files or folders.                       |
       | /zzz  | no command matches                           | No matching command.                                |
+
+    # The desktop has no pull request suggestions yet.
+    @backlog
+    Examples: Pull requests
+      | typed | situation                                    | message                                             |
       | #zzz  | no pull request matches                      | No pull request matches zzz.                        |
       | #     | the repository has no pull requests          | No pull requests found in this repository.          |
       | #     | the project has no repository on a code host | Pull requests are not available for this project.   |
       | #     | the code host cannot be read                 | Pull requests could not be read for this project.   |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A suggestion list that is still looking says what it is looking for
     When the user types "<typed>" and the <items> have not come back yet
     Then the suggestion list says "<message>"
 
     Examples:
       | typed  | items         | message                       |
-      | $rev   | skills        | Searching workspace skills... |
       | @cart  | files         | Searching workspace files...  |
+
+    # The desktop's skills come with the provider, so there is no skill search to wait on,
+    # and it has no pull request suggestions yet.
+    @backlog
+    Examples: Skills and pull requests
+      | typed  | items         | message                       |
+      | $rev   | skills        | Searching workspace skills... |
       | #login | pull requests | Finding pull request...       |
 
-  @backlog @desktop
+  # Upstream #28209: a project skill typed straight after opening a thread was "No matching
+  # command." until the project's skills arrived, though it existed.
+  @backlog @desktop @mobile
+  Scenario: A project skill typed before the project's skills arrive is not reported missing
+    Given the project "shop" has the skill "caveman"
+    And the user has just opened a thread in "shop" and its skills are still being read
+    When the user types "/caveman"
+    Then the suggestion list says "Searching workspace skills..."
+    And once the skills arrive "caveman" is offered
+    And the list never says "No matching command." while they are being read
+
+  @desktop
   Scenario: The suggestion list is walked with the arrow keys and wraps at its ends
-    Given the user typed "@" and three files are offered
+    Given the user typed "@s" and three files are offered
     When the user presses Up on the first suggestion
     Then the last suggestion is highlighted
     When the user presses Down
     Then the first suggestion is highlighted
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: Enter or Tab takes the highlighted suggestion
     Given the user typed "@read" and "README.md" is highlighted
     When the user presses <key>
@@ -596,40 +719,40 @@ Feature: Referencing files, skills, commands and context
       | Enter |
       | Tab   |
 
-  @backlog @desktop
+  @desktop
   Scenario: Suggestions are ordered by how closely their name matches
     Given the provider offers the commands "review", "review-pr" and "code-review" and the skill "pre-review"
-    When the user types "/review"
+    When the user types "/review" into the composer
     Then "review" is offered first, then "review-pr", then "code-review" and "pre-review"
 
-  @backlog @desktop
+  @desktop
   Scenario: Equally good matches list built-in commands, then provider commands, then skills
     Given the provider offers a command and a skill that both match "/mo" as well as "/model" does
-    When the user types "/mo"
+    When the user types "/mo" into the composer
     Then "/model" is offered before the provider command, and the skill last
 
-  @backlog @desktop
+  @desktop
   Scenario: A skill offered among the slash commands is named as a skill
     Given skills are shown in the slash menu
     And the provider offers the skill "review"
-    When the user types "/skill"
-    Then "/skill:review" is offered
+    When the user types "/skill" into the composer
+    Then the suggestion "/skill:review" is offered
     When the user chooses it
     Then the draft references the skill "review"
 
-  @backlog @desktop
+  @desktop
   Scenario: Each skill is offered once, and only if the user may run it
     Given the provider reports the skill "review" from two places and a skill "internal" the user may not run
-    When the user types "$"
-    Then "review" is offered once
-    And "internal" is not offered
+    When the user types "$" into the composer
+    Then the skill "review" is offered once
+    And the skill "internal" is not offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (getProviderSlashCommandsForSlashMenu)
-  @backlog @desktop
+  @desktop
   Scenario: A provider command named like a skill that is offered is not listed twice
     Given skills are shown in the slash menu
     And the provider offers the skill "review" and also a command "review"
-    When the user types "/review"
+    When the user types "/review" into the composer
     Then "review" is offered once, as the skill
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (resolveProviderSkillsForCwd, resolveProviderSlashCommandsForCwd)
@@ -648,10 +771,11 @@ Feature: Referencing files, skills, commands and context
     Then the skill "deploy" is still offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (formatProviderSkillDisplayName)
-  @backlog @desktop
+  # Passes today; upstream #27741 shows the id as written instead, see the backlog scenario below.
+  @desktop
   Scenario Outline: A skill without a display name is named from its id
     Given the provider offers the skill "<id>" with no display name
-    When the user types "$"
+    When the user types "$" into the composer
     Then the skill is shown as "<shown>"
 
     Examples:
@@ -659,6 +783,21 @@ Feature: Referencing files, skills, commands and context
       | lint-fix      | Lint Fix      |
       | pdf_reader    | Pdf Reader    |
       | plugin:review | Plugin Review |
+
+  # Upstream #27741: a skill without a display name was title-cased and split on ":", "_" and
+  # "-", so "frontend-design:frontend-design" read "Frontend Design Frontend Design". It is now
+  # shown as written, in the skill menu and the composer's and messages' chips.
+  @backlog @desktop
+  Scenario Outline: A skill without a display name is shown by its own name
+    Given the provider offers the skill "<id>" with no display name
+    When the user types "$" into the composer
+    Then the skill is shown as "<shown>"
+
+    Examples:
+      | id                              | shown                           |
+      | lint-fix                        | lint-fix                        |
+      | pdf_reader                      | pdf_reader                      |
+      | frontend-design:frontend-design | frontend-design:frontend-design |
 
   @backlog @desktop
   Scenario Outline: A skill says where it comes from
@@ -675,16 +814,16 @@ Feature: Referencing files, skills, commands and context
       | the system            | System   |
       | anywhere else         | Provider |
 
-  @backlog @desktop
+  @desktop
   Scenario: A skill is found by its description as well as its name
     Given the provider offers the skill "lint-fix" described as "Tidy the changed files"
-    When the user types "$tidy"
-    Then "lint-fix" is offered
+    When the user types "$tidy" into the composer
+    Then the skill "lint-fix" is offered
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Any currency sign opens the skills
     Given the provider offers the skill "review"
-    When the user types "<typed>"
+    When the user types "<typed>" into the composer
     Then the skill "review" is offered
 
     Examples:
@@ -695,10 +834,10 @@ Feature: Referencing files, skills, commands and context
 
   # Upstream #21519: a price after a currency sign opened the skill menu, and Enter could
   # replace it with a skill whose description matched the digits.
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: Typing a price does not open the skill menu
     Given the provider offers a skill described as "Release 5 notes"
-    When the user types "<typed>"
+    When the user types "<typed>" into the composer
     Then no skill menu opens
     And pressing Enter sends the draft with "<typed>" as typed
 
@@ -711,10 +850,10 @@ Feature: Referencing files, skills, commands and context
       | £1,000 a month   |
 
   # Upstream #21519: a skill whose name starts with a digit is still found once a letter follows.
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: A bare currency sign or a skill name starting with a digit opens the skill menu
     Given the provider offers the skills "1password" and "2fa"
-    When the user types "<typed>"
+    When the user types "<typed>" into the composer
     Then the skill menu opens
 
     Examples:
@@ -742,6 +881,15 @@ Feature: Referencing files, skills, commands and context
       | file                       |
       | routes/posts.$postId.tsx   |
       | app/[id]/page.tsx          |
+
+  # Upstream #25066: desktop chips were tinted pills whose colours fell to 1.7:1 on some themes;
+  # the phone's chips had already lost their pill.
+  @backlog @shared @priority-low
+  Scenario: References in text read like links on every theme
+    Given the user's theme is any built-in theme, light or dark
+    When a message holds a file, skill and thread reference
+    Then each reference is drawn as coloured text and icon without a pill, at the size of the text around it
+    And each reference's colour has a contrast of at least 4.5:1 against the background
 
   @backlog @desktop
   Scenario: Threads on this environment are offered ahead of files
@@ -784,13 +932,13 @@ Feature: Referencing files, skills, commands and context
     When the user pastes "[cart](src/cart.ts)" into the draft
     Then the draft references "src/cart.ts"
 
-  @backlog @desktop
+  @desktop
   Scenario: Closing the suggestions leaves the caret where the user was typing
     Given the user typed "fix @rea" and suggestions are offered
     When the user dismisses the suggestions
     Then the next letter the user types follows "@rea"
 
-  @backlog @desktop
+  @desktop
   Scenario: A provider command is put into the draft ready for its arguments
     Given the provider offers the command "review"
     When the user types "/rev" and chooses "review"
@@ -823,6 +971,15 @@ Feature: Referencing files, skills, commands and context
     And the user opened another thread meanwhile
     When the file arrives
     Then the other thread's draft carries no new attachment
+
+  # Upstream #23447: a pasted file whose chip was deleted while it downloaded came back once it arrived.
+  @backlog @desktop
+  Scenario: A pasted file whose chip was deleted while it arrived stays out of the draft
+    Given the user pasted a reference whose file is still being fetched
+    When the user deletes its chip
+    And the file arrives
+    Then the draft does not carry the file and its chip does not return
+    But if the user undid the deletion before the file arrived, the file is attached
 
   @backlog @desktop
   Scenario: A copied preview annotation brings its screenshot along

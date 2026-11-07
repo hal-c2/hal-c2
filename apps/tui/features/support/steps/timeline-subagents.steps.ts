@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import { findObject, pressKey, snapshot } from "../world.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
+  addCommand,
   addItem,
   lastOf,
   linesOf,
@@ -431,3 +432,38 @@ step("nothing says a message was sent by another agent", async (ctx: TurnWorld) 
   expect(screen).not.toContain("↩");
   expect(screen).not.toContain("Background task completed.");
 });
+
+step(
+  "the agent delegated a task and then ran three tool calls in the running turn",
+  async (ctx: TurnWorld) => {
+    await startRun(ctx);
+    await addItem(ctx, "subagent", {
+      ...SUBAGENT,
+      status: "running",
+      progress: null,
+      result: null,
+    });
+    for (let n = 1; n <= 3; n += 1) await addCommand(ctx, n);
+  },
+);
+
+step("the subagent's row is shown", async (ctx: TurnWorld) => {
+  const row = lastOf(ctx, "work")
+    .lines.map((line) => plain(line.text))
+    .find((line) => line.includes(CHILD.title));
+  expect(row).toBeDefined();
+  expect(await snapshot(ctx)).toContain(CHILD.title);
+});
+
+step(
+  "the latest tool call is shown with {string} beside it",
+  async (ctx: TurnWorld, label: string) => {
+    const lines = lastOf(ctx, "work").lines;
+    const latest = lines.at(-1)!;
+    expect(plain(latest.text)).toContain("bun test cart-3");
+    expect(plain(latest.right!.text)).toBe(label);
+    const screen = await snapshot(ctx);
+    expect(screen).toContain(label);
+    expect(screen).not.toContain("bun test cart-1");
+  },
+);

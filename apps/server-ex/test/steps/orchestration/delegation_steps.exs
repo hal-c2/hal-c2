@@ -1399,6 +1399,70 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # Codex's GPT-6 Luna offers reasoning levels and no faster tier; the thread's stored
+  # selection still names fast mode, off.
+  step "{string} was launched on a model without fast mode, with fast mode stored off",
+       %{args: [thread]} = context do
+    System.put_env(
+      "FAKE_CODEX_MODELS",
+      JSON.encode!([
+        %{
+          "model" => "gpt-6-luna",
+          "displayName" => "GPT-6 Luna",
+          "isDefault" => true,
+          "defaultReasoningEffort" => "medium",
+          "supportedReasoningEfforts" =>
+            for(effort <- ~w(low medium high), do: %{"reasoningEffort" => effort})
+        }
+      ])
+    )
+
+    :ok = HalC2.Codex.Provider.load()
+
+    World.patch_thread(context, thread, %{
+      "modelSelection" => %{
+        "instanceId" => "codex",
+        "model" => "gpt-6-luna",
+        "options" => [
+          %{"id" => "reasoningEffort", "value" => "high"},
+          %{"id" => "fastMode", "value" => false}
+        ]
+      }
+    })
+
+    context
+  end
+
+  step "the agent in {string} asks for the orchestrator's capabilities",
+       %{args: [thread]} = context do
+    assert {:ok, capabilities} = World.mcp_tool(context, thread, "orchestrator_capabilities")
+    Map.merge(context, %{capabilities: capabilities, task_parent: thread})
+  end
+
+  step "the inherited options do not include fast mode", context do
+    assert context.capabilities["inheritedOptions"] == [
+             %{"id" => "reasoningEffort", "value" => "high"}
+           ]
+
+    context
+  end
+
+  step "it delegates a task giving those inherited options", context do
+    delegate(context, context.task_parent, %{
+      "target" => %{
+        "providerInstanceId" => context.capabilities["inheritedProviderInstanceId"],
+        "model" => context.capabilities["inheritedModel"],
+        "options" => context.capabilities["inheritedOptions"]
+      }
+    })
+  end
+
+  step "the subagent starts with only the options its model has", context do
+    assert {:ok, %{"taskId" => _}} = context.mcp_result
+    assert subagent_options(context) == %{"reasoningEffort" => "high"}
+    context
+  end
+
   defp subagent_options(context) do
     selection = World.thread(context, "subagent")["modelSelection"]
     Map.new(selection["options"] || [], &{&1["id"], &1["value"]})
@@ -2130,7 +2194,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   # --- backlog: deliveries and the caller's settled run -------------------------------------
 
   # The caller's turn settles, and its delivery is answered with the run read before.
-  step ~r/^the caller's run (?<settled>failed in the provider|completed its checkpoint) just before the caller (?<command>acknowledges|disposes) the delivery$/,
+  step ~r/^the caller's run (?<settled>failed in the provider|completed its checkpoint) just before the caller (?<command>acknowledges|disposes|accepts) the delivery$/,
        %{args: [settled, command]} = context do
     parent = context.task_parent
     [seen | _] = World.runs(context, parent)
@@ -2159,8 +2223,23 @@ defmodule HalC2.Steps.Orchestration.Delegation do
       run["status"] == ended and (ended == "failed" or run["checkpointId"] != nil)
     end)
 
-    action = if command == "acknowledges", do: "acknowledge", else: "dispose"
-    {reply, context} = World.dispatch(context, delivery_command(context, action, seen["id"]))
+    command =
+      case command do
+        "acknowledges" ->
+          delivery_command(context, "acknowledge", seen["id"])
+
+        "disposes" ->
+          delivery_command(context, "dispose")
+
+        "accepts" ->
+          %{
+            "type" => "notification.delivery.accept",
+            "threadId" => World.thread_id(context, parent),
+            "messageId" => context.result_message["id"]
+          }
+      end
+
+    {reply, context} = World.dispatch(context, command)
     assert {:ok, _} = reply
     Map.put(context, :seen_run, seen["id"])
   end

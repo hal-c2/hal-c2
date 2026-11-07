@@ -675,7 +675,7 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
 
     File.write!(Path.join(bin, "git"), """
     #!/bin/bash
-    if [ "$1" = ls-files ] && [[ " $* " == *" --ignored "* ]] && [ "$(pwd -P)" = "#{String.trim(real_path)}" ] && mkdir "#{bin}/paused" 2>/dev/null; then
+    if [[ " $* " == *" ls-files "* ]] && [[ " $* " == *" --ignored "* ]] && [ "$(pwd -P)" = "#{String.trim(real_path)}" ] && mkdir "#{bin}/paused" 2>/dev/null; then
       exec 3<>/dev/tcp/127.0.0.1/#{port}
       echo paused >&3
       read -r _ <&3
