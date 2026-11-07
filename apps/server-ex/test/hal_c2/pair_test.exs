@@ -262,4 +262,11 @@ defmodule HalC2.PairTest do
         :ok
     end
   end
+
+  test "a lifetime of zero is refused however it is written" do
+    for ttl <- ["0s", "00s", "000m"] do
+      assert {:error, message} = HalC2.Pair.command(["--ttl", ttl])
+      assert message =~ "`--ttl` is a count and a unit"
+    end
+  end
 end

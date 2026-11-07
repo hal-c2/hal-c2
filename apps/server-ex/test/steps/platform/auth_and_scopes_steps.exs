@@ -1500,7 +1500,17 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
       context.device
     ])
 
+    # Watchers of the access list are told the client is gone, so a live Connections
+    # view stops showing it as connected.
+    HalC2.Auth.subscribe(self())
     HalC2.Auth.prune()
+
+    assert_receive {:hal_c2_auth_access,
+                    %{"type" => "clientRemoved", "payload" => %{"sessionId" => id}}},
+                   1000
+
+    assert id == context.device
+    HalC2.Auth.unsubscribe(self())
     context
   end
 

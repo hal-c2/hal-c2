@@ -152,16 +152,21 @@ defmodule HalC2.Pair do
 
   defp ttl(text) do
     case Regex.run(~r/^(\d{1,6})([smhd])$/, text) do
-      [_, count, unit] when count != "0" ->
-        {:ok,
-         String.to_integer(count) * %{"s" => 1, "m" => 60, "h" => 3600, "d" => 86_400}[unit] *
-           1000}
+      [_, count, unit] when count != "" ->
+        case String.to_integer(count) do
+          0 -> ttl_error(text)
+          n -> {:ok, n * %{"s" => 1, "m" => 60, "h" => 3600, "d" => 86_400}[unit] * 1000}
+        end
 
       _ ->
-        {:error,
-         "`--ttl` is a count and a unit, such as 90s, 30m, 1h or 2d, not #{printable(text)}"}
+        ttl_error(text)
     end
   end
+
+  defp ttl_error(text),
+    do:
+      {:error,
+       "`--ttl` is a count and a unit, such as 90s, 30m, 1h or 2d, not #{printable(text)}"}
 
   @doc """
   What to run to pair a client with this MC, for a message that tells the operator:

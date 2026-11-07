@@ -583,7 +583,7 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :prune, []}, {removed, remaining, closed}) do
+  def postcondition(state, {:call, _, :prune, []}, {removed, remaining, closed, announced}) do
     now = state.clock
 
     ran_out =
@@ -602,7 +602,8 @@ defmodule HalC2.AuthPropTest do
       remaining.pairing == map_size(state.links) - count.(state.links) and
       remaining.sessions == map_size(state.sessions) - count.(state.sessions) and
       remaining.tickets == map_size(state.tickets) - count.(state.tickets) and
-      remaining.proofs <= live_proofs and closed == ran_out
+      remaining.proofs <= live_proofs and closed == ran_out and
+      announced == Enum.sort(for {h, v} <- state.sessions, v.expires <= now, do: h)
   end
 
   # --- system under test --------------------------------------------------------
@@ -811,7 +812,16 @@ defmodule HalC2.AuthPropTest do
   def advance(ms), do: Reg.advance(ms)
 
   def prune do
+    # Watchers are told each expired client is gone, so a live view stops listing it.
+    Auth.subscribe(self())
+    _ = drain_removed([])
     removed = Auth.prune()
+    _ = :sys.get_state(Auth)
+    gone = drain_removed([])
+    Auth.unsubscribe(self())
+
+    announced =
+      for {{:session, h}, {id, _}} <- :ets.tab2list(:auth_prop_handles), id in gone, do: h
 
     remaining = %{
       pairing: count("auth_pairing"),
@@ -820,7 +830,19 @@ defmodule HalC2.AuthPropTest do
       proofs: :ets.info(Auth.Dpop.Proofs, :size)
     }
 
-    {removed, remaining, closed_sockets()}
+    {removed, remaining, closed_sockets(), Enum.sort(announced)}
+  end
+
+  defp drain_removed(acc) do
+    receive do
+      {:hal_c2_auth_access, %{"type" => "clientRemoved", "payload" => %{"sessionId" => id}}} ->
+        drain_removed([id | acc])
+
+      {:hal_c2_auth_access, _} ->
+        drain_removed(acc)
+    after
+      0 -> acc
+    end
   end
 
   defp count(table) do

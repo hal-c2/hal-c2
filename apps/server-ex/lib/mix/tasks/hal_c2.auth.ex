@@ -27,7 +27,8 @@ defmodule Mix.Tasks.HalC2.Auth do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started(:exqlite)
     store = HalC2.Store.home_path()
-    {opts, rest, _} = OptionParser.parse(args, strict: [token: :boolean, json: :boolean])
+    {opts, rest, invalid} = OptionParser.parse(args, strict: [token: :boolean, json: :boolean])
+    if invalid != [], do: usage()
 
     case rest do
       ["session", "list"] ->
@@ -46,9 +47,11 @@ defmodule Mix.Tasks.HalC2.Auth do
         revoke(HalC2.Auth.revoke_pairing_link(store, id), id, "pairing")
 
       _ ->
-        Mix.raise(@moduledoc |> String.split("\n\n") |> Enum.at(1) |> String.trim())
+        usage()
     end
   end
+
+  defp usage, do: Mix.raise(@moduledoc |> String.split("\n\n") |> Enum.at(1) |> String.trim())
 
   defp list_sessions(store) do
     case HalC2.Auth.list_sessions(store) do

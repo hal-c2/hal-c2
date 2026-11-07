@@ -610,7 +610,10 @@ defmodule HalC2.Auth do
     create_link(input, scopes, state)
   end
 
-  def handle_call(:prune, _from, state), do: {:reply, prune_expired(state.path), state}
+  def handle_call(:prune, _from, state) do
+    {counts, expired} = prune_expired(state.path)
+    {:reply, counts, broadcast(state, removed_clients(expired))}
+  end
 
   def handle_call(:links, _from, state), do: {:reply, links(state.path), state}
 
@@ -732,9 +735,9 @@ defmodule HalC2.Auth do
   end
 
   def handle_info(:prune, state) do
-    prune_expired(state.path)
+    {_counts, expired} = prune_expired(state.path)
     Process.send_after(self(), :prune, @prune_every)
-    {:noreply, state}
+    {:noreply, broadcast(state, removed_clients(expired))}
   end
 
   # A watcher left, or a socket closed (its session may now be offline).
@@ -769,13 +772,25 @@ defmodule HalC2.Auth do
          )}
       end)
 
+    # Counted first: a ticket never outlives its session, so the ones of a session that
+    # ran out are among the expired, and `drop_tickets/1` would leave nothing to count.
+    tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
+
     # A session that ran out takes the sockets it opened with it.
     drop_tickets(expired)
     close_sockets(nil, expired)
     sessions = length(expired)
 
-    tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
-    %{pairing: pairing, sessions: sessions, tickets: tickets, proofs: HalC2.Auth.Dpop.prune()}
+    counts = %{
+      pairing: pairing,
+      sessions: sessions,
+      tickets: tickets,
+      proofs: HalC2.Auth.Dpop.prune()
+    }
+
+    # The ids come back so the caller tells watchers each client is gone: the closed
+    # sockets' `:DOWN` finds no row left to report.
+    {counts, expired}
   end
 
   defp insert_pairing(
