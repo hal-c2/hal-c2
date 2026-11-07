@@ -1531,12 +1531,35 @@ defmodule HalC2.Orchestration do
   # workspace, a restart), so a provider turned off after its message was accepted
   # starts no turn: the run fails and says why.
   defp begin_turn_now(thread_id, turn) do
-    case HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) do
-      nil ->
-        start_turn_now(thread_id, turn)
-
-      reason ->
+    cond do
+      reason = HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", off(reason))
+
+      # A bare `/compact` with nothing to compact (`new_run/5`) never reaches
+      # the provider.
+      refusal = Map.get(turn, :compact_refusal) ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
+
+      true ->
+        start_turn_now(thread_id, turn)
+    end
+  end
+
+  # The failure of a bare `/compact` on a thread with no conversation yet: no
+  # provider conversation to compact, no fork to continue and no history handed
+  # over. Its error item is titled from the code (`TurnWriter`).
+  defp compact_refusal(command, provider_thread, handoff) do
+    fresh =
+      provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
+
+    if maintenance(command) == "/compact" and fresh and handoff.fork == nil and
+         handoff.context in [nil, ""] do
+      %{
+        "class" => "provider_error",
+        "code" => "compact_empty_thread",
+        "message" => "Start a conversation before compacting this thread.",
+        "retryable" => false
+      }
     end
   end
 
@@ -5155,6 +5178,9 @@ defmodule HalC2.Orchestration do
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
+      # A bare `/compact` with nothing to compact fails before the provider
+      # starts (`begin_turn_now/2`).
+      compact_refusal: compact_refusal(command, provider_thread, handoff),
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),

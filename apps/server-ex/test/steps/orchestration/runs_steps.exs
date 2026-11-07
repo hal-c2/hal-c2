@@ -984,6 +984,27 @@ defmodule HalC2.Steps.Orchestration.Runs do
     Map.put(context, :failed_run, run["id"])
   end
 
+  # --- compacting an empty thread ----------------------------------------------------
+
+  step "{string} has no conversation yet", %{args: [thread]} = context do
+    assert World.entities(context, thread, "run") == []
+    Map.put(context, :thread, thread)
+  end
+
+  step "the run fails with {string} and {string}", %{args: [title, message]} = context do
+    run = World.await_latest_run(context, context.thread, "failed")
+
+    error =
+      Enum.find(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "error" and &1["title"] == title)
+      )
+
+    assert error != nil, "no error item titled #{inspect(title)}"
+    assert error["failure"]["message"] == message
+    Map.put(context, :failed_run, run["id"])
+  end
+
   step "{string} can take its next message", %{args: [thread]} = context do
     context = World.dispatch_message(context, thread, "Next")
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"

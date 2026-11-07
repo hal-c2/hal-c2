@@ -457,12 +457,12 @@ Feature: Runs and turns
     When the user sends the sign-out command by itself to "t1"
     Then the run fails with "Provider sign-out failed" and the provider's reason
 
-  @backlog @mc
+  @mc
   Scenario: Compacting a thread with no conversation is refused
     Given "t1" has no conversation yet
     When the user sends "/compact" to "t1"
     Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
-    And nothing is sent to the provider
+    And no provider process is started for it
 
   # Upstream #24172: a fork's first /compact was refused as an empty thread.
   @backlog @mc
