@@ -206,15 +206,11 @@ defmodule HalC2.Orchestration do
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
     # Uploads join the thread before the message names them.
-    case HalC2.Attachments.claim(thread_id, command["attachments"] || []) do
-      {:ok, attachments} ->
-        with {:ok, _} = sent <- dispatch_message(thread_id, claimed(command, attachments)) do
-          implemented_plan(thread_id, command["sourcePlanRef"])
-          sent
-        end
-
-      {:error, _} = error ->
-        error
+    with :ok <- implementable(thread_id, command["sourcePlanRef"]),
+         {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []),
+         {:ok, _} = sent <- dispatch_message(thread_id, claimed(command, attachments)) do
+      implemented_plan(thread_id, command["sourcePlanRef"])
+      sent
     end
   end
 
@@ -683,29 +679,39 @@ defmodule HalC2.Orchestration do
   end
 
   # An approval's decision, or answers to questions (`answers`, by question id).
+  # A request that can no longer be answered (`not_resumable`) refuses with its reason,
+  # before anything reaches a provider; so do answers the provider could not use.
   def dispatch(%{"type" => "runtime-request.respond", "threadId" => thread_id} = command) do
-    case message_request(thread_id, command["requestId"]) do
-      nil ->
+    request = HalC2.Streams.get(thread_id, "runtime-request", command["requestId"])
+
+    with :ok <- answerable(thread_id, request, command) do
+      if request && HalC2.Orchestration.TurnWriter.message_request?(request) do
+        answer_with_message(thread_id, request, command)
+      else
         with {:ok, response} <- response(thread_id, command),
              do: respond(thread_id, command["requestId"], response)
-
-      request ->
-        answer_with_message(thread_id, request, command)
+      end
     end
   end
 
-  # Closing questions without answering them.
+  # Closing questions without answering them. Every provider is told a live question
+  # was dismissed (each runtime's `respond/3` takes `%{"dismissed" => true}`).
   def dispatch(%{"type" => "thread.user-input.dismiss", "threadId" => thread_id} = command) do
-    case message_request(thread_id, command["requestId"]) do
+    case HalC2.Streams.get(thread_id, "runtime-request", command["requestId"]) do
+      %{"status" => "pending"} = request ->
+        if HalC2.Orchestration.TurnWriter.message_request?(request) do
+          HalC2.Streams.transact(thread_id, :thread, fn state ->
+            {resolve_message_request(state, request, "cancelled", nil), :ok}
+          end)
+
+          {:ok, %{"sequence" => sequence(thread_id)}}
+        else
+          respond(thread_id, command["requestId"], %{"dismissed" => true})
+        end
+
+      # One the thread has no record of is the runtimes' to refuse.
       nil ->
         respond(thread_id, command["requestId"], %{"dismissed" => true})
-
-      %{"status" => "pending"} = request ->
-        HalC2.Streams.transact(thread_id, :thread, fn state ->
-          {resolve_message_request(state, request, "cancelled", nil), :ok}
-        end)
-
-        {:ok, %{"sequence" => sequence(thread_id)}}
 
       _ ->
         {:error, "This question has already been answered."}
@@ -910,10 +916,54 @@ defmodule HalC2.Orchestration do
 
   defp queue_waits(_thread), do: :queued
 
-  defp message_request(thread_id, request_id) do
-    request = HalC2.Streams.get(thread_id, "runtime-request", request_id)
+  # Whether `command` can answer `request` (nil when the thread has none by its id;
+  # the runtimes refuse that one). Files go only to a question still pending that
+  # takes more than its fixed choices.
+  defp answerable(thread_id, request, command) do
+    attached =
+      for {question, [_ | _]} <- command["attachmentsByQuestionId"] || %{}, do: question
 
-    if request && HalC2.Orchestration.TurnWriter.message_request?(request), do: request
+    cond do
+      match?(%{"responseCapability" => %{"type" => "not_resumable"}}, request) ->
+        {:error, request["responseCapability"]["reason"]}
+
+      not answers_shape?(command["answers"]) ->
+        {:error, "Each answer must be text or a list of chosen options."}
+
+      attached == [] ->
+        :ok
+
+      request == nil or request["status"] != "pending" ->
+        {:error, "This question is no longer pending."}
+
+      Enum.any?(questions(thread_id, request), fn question ->
+        question["id"] in attached and question["allowCustomAnswer"] == false
+      end) ->
+        {:error, "This question does not accept file references."}
+
+      true ->
+        :ok
+    end
+  end
+
+  # Answers by question id: text, or the options chosen (as a list, or as Codex's
+  # `%{"answers" => [...]}`).
+  defp answers_shape?(nil), do: true
+
+  defp answers_shape?(%{} = answers) do
+    Enum.all?(answers, fn
+      {_id, answer} when is_binary(answer) -> true
+      {_id, %{"answers" => list}} when is_list(list) -> Enum.all?(list, &is_binary/1)
+      {_id, list} when is_list(list) -> Enum.all?(list, &is_binary/1)
+      _ -> false
+    end)
+  end
+
+  defp answers_shape?(_answers), do: false
+
+  defp questions(thread_id, request) do
+    (HalC2.Streams.get(thread_id, "turn-item", question_item(request)) || %{})["questions"] ||
+      []
   end
 
   # The answer resolves the request and goes to the provider as a message: into the
@@ -924,17 +974,12 @@ defmodule HalC2.Orchestration do
     item = StreamState.get(state, "turn-item")[question_item(request)] || %{}
     answers = command["answers"] || %{}
 
+    # Each question with its answer, in the order asked; an optional question left
+    # blank is left out.
     replies =
-      for question <- item["questions"] || [] do
-        case answers[question["id"]] do
-          answer when is_binary(answer) ->
-            if String.trim(answer) != "", do: question["question"] <> "
-" <> String.trim(answer)
-
-          _ ->
-            nil
-        end
-      end
+      (item["questions"] || [])
+      |> Enum.map(&reply(&1, answers[&1["id"]]))
+      |> Enum.reject(&(&1 == :skip))
 
     message_id = "async-answer:" <> request["id"]
 
@@ -944,8 +989,11 @@ defmodule HalC2.Orchestration do
           do: {:ok, %{"sequence" => sequence(thread_id)}},
           else: {:error, "This question has already been answered."}
 
-      replies == [] or Enum.any?(replies, &is_nil/1) ->
+      Enum.any?(replies, &is_nil/1) or (replies == [] and item["questions"] in [nil, []]) ->
         {:error, "Answer each question before sending."}
+
+      replies == [] ->
+        {:error, "Enter an answer before sending."}
 
       true ->
         answer = %{"requestId" => request["id"], "answers" => answers}
@@ -954,10 +1002,12 @@ defmodule HalC2.Orchestration do
           {resolve_message_request(state, request, "resolved", answer), :ok}
         end)
 
+        # Into the running turn only when its provider takes messages mid-turn;
+        # otherwise behind it, never interrupting it.
         running =
           state
           |> StreamState.list("run")
-          |> Enum.find(&(&1["status"] == "running"))
+          |> Enum.find(&(&1["status"] == "running" and steerable?(&1)))
 
         dispatch(%{
           "type" => "message.dispatch",
@@ -976,6 +1026,25 @@ defmodule HalC2.Orchestration do
               else: %{"type" => "queue_after_active"}
             )
         })
+    end
+  end
+
+  # The question and its answer, as the agent reads it; nil for a required question
+  # left unanswered, `:skip` for an optional one.
+  defp reply(question, answer) do
+    text =
+      case answer do
+        %{"answers" => list} -> Enum.join(list, ", ")
+        list when is_list(list) -> Enum.join(list, ", ")
+        answer when is_binary(answer) -> answer
+        _ -> ""
+      end
+      |> String.trim()
+
+    cond do
+      text != "" -> question["question"] <> "\n" <> text
+      question["required"] == false -> :skip
+      true -> nil
     end
   end
 
@@ -4591,6 +4660,35 @@ defmodule HalC2.Orchestration do
   end
 
   defp implemented_plan(_thread_id, _ref), do: :ok
+
+  # A message can implement only a proposed plan that is still active, in a thread of
+  # its own project; two devices pressing "implement" start one run, not two.
+  defp implementable(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
+       when is_binary(plan_thread) do
+    plans = HalC2.Streams.state(plan_thread)
+    project = fn state, id -> (StreamState.get(state, "thread")[id] || %{})["projectId"] end
+
+    case StreamState.get(plans, "plan")[plan_id] do
+      %{"kind" => "proposed_plan"} = plan ->
+        cond do
+          plan_thread != thread_id and
+              project.(plans, plan_thread) != project.(HalC2.Streams.state(thread_id), thread_id) ->
+            {:error,
+             "Proposed plan '#{plan_id}' belongs to thread '#{plan_thread}' in a different project."}
+
+          plan["status"] != "active" ->
+            {:error, "Proposed plan #{plan_id} is not active."}
+
+          true ->
+            :ok
+        end
+
+      _ ->
+        {:error, "Proposed plan '#{plan_id}' does not exist on thread '#{plan_thread}'."}
+    end
+  end
+
+  defp implementable(_thread_id, _ref), do: :ok
 
   @doc "The next free turn-item ordinal in a thread."
   def next_ordinal(state) do

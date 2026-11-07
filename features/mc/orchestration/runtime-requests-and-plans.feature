@@ -86,7 +86,7 @@ Feature: Approvals, questions and plans
     And the user input item is completed with the answer
 
   # Upstream #14884: unusable answers are refused while the question stays open
-  @backlog @mc
+  @mc
   Scenario: An answer the provider cannot use is refused and the question stays open
     Given the provider asked the user "Which database?"
     When a caller answers with a number instead of text
@@ -112,6 +112,9 @@ Feature: Approvals, questions and plans
     Then the provider is told the questions were dismissed
     And the request is no longer pending
 
+  # The MC lets the user dismiss any question, and each adapter tells its provider so
+  # (Codex gets no answers, Claude a denial, ACP and Antigravity a cancel); the Node
+  # server refuses to dismiss one the provider waits on. Which is right is open.
   @backlog @mc @priority-high
   Scenario: A question the provider is blocked on cannot be dismissed
     Given the provider is blocked until it gets an answer to "Which database?"
@@ -119,7 +122,7 @@ Feature: Approvals, questions and plans
     Then the command fails with "This question needs an answer. Answer it or stop the turn."
     And the request is still pending
 
-  @backlog @mc
+  @mc
   Scenario Outline: A question that was already answered or dismissed cannot be dismissed again
     Given the provider asked the user "Which database?"
     And the questions were already <done>
@@ -131,36 +134,36 @@ Feature: Approvals, questions and plans
       | answered  |
       | dismissed |
 
-  @backlog @mc
+  @mc
   Scenario: A question answered by message needs every question answered
     Given the provider asked two questions it does not wait on
     When the user answers only the first
     Then the command fails with "Answer each question before sending."
     And nothing is sent to the thread
 
-  @backlog @mc
+  @mc
   Scenario: A file cannot be attached to a question that only takes fixed choices
     Given the provider asked the user "Which database?" with fixed choices only
     When the user answers attaching "schema.sql"
     Then the command fails with "This question does not accept file references."
 
-  @backlog @mc
+  @mc
   Scenario: Files attached to an answer for a question that is no longer pending are refused
     Given the provider asked the user "Show me the error"
     And the question has since closed
     When the user answers attaching "error.png"
     Then the command fails with "This question is no longer pending."
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Answers given by message reach the agent as one message of questions and answers
     Given the provider asked "Which database?" and "Which port?" without waiting on them
     When the user answers "Postgres" and "5432"
     Then "t1" receives one user message pairing each question with its answer, in the order asked
     And the questions are closed as answered
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: An answer given by message is delivered the way the provider can take it
-    Given "t1" runs on a provider that <steering>
+    Given the running turn of "t1" is on a provider that <steering>
     And the provider asked a question it does not wait on and its turn is still running
     When the user answers
     Then the answer <delivery>
@@ -170,20 +173,20 @@ Feature: Approvals, questions and plans
       | can take messages mid-turn     | joins the running turn                     |
       | cannot take messages mid-turn  | waits in the queue behind the running turn |
 
-  @backlog @mc
+  @mc
   Scenario: Optional questions answered by message may be left blank
     Given the provider asked a required question and an optional one without waiting on them
     When the user answers only the required question
     Then the answer is sent with the required question alone
 
-  @backlog @mc
+  @mc
   Scenario: Leaving every optional question blank sends nothing
     Given the provider asked only optional questions without waiting on them
     When the user sends without answering any
     Then the command fails with "Enter an answer before sending."
     And nothing is sent to the thread
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A request that can no longer be answered refuses the answer with its reason
     Given a request of "t1" is still pending but marked as one that cannot be resumed, with a reason
     When the user responds to it
@@ -204,14 +207,14 @@ Feature: Approvals, questions and plans
     Then the request is marked not resumable rather than cancelled
     And the thread explains the request can no longer be answered
 
-  @backlog @mc
+  @mc
   Scenario: Requests pending at a clean shutdown are cancelled rather than expired
     Given the provider asked for approval of a command
     When the MC shuts down cleanly
     Then the request is cancelled and marked not resumable
     And it says the server shut down before the request was resolved
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A question that can be answered by message survives a restart
     Given the provider asked a question the user can answer with a message
     When the MC restarts
@@ -230,7 +233,7 @@ Feature: Approvals, questions and plans
       | fails                  | expired   | Provider session failed before this runtime request was resolved.     |
       | is stopped by the user | cancelled | Provider session was closed before this runtime request was resolved. |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A question only its running turn could take is closed when the turn ends
     Given the provider asked the user a question that only the running turn can receive the answer to
     When the provider's turn <ends> before the user answers
@@ -242,7 +245,7 @@ Feature: Approvals, questions and plans
       | fails          |
       | is interrupted |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: An answer given just as the turn ends is not erased
     Given the provider asked the user a question
     And the provider's turn ends at the same moment the user answers
@@ -257,7 +260,9 @@ Feature: Approvals, questions and plans
     Then "t2" has a pending request the user can answer
     And the answer reaches the provider
 
-  @mc @backlog @priority-high
+  # The run itself stays running: an MC run is "waiting" once its provider finished and
+  # its checkpoint has not settled. The thread's row names the request it waits on.
+  @mc @priority-high
   Scenario: A run waiting on a request shows as waiting
     When the provider asks for approval of a command
     Then the run of "t1" is waiting
@@ -296,20 +301,20 @@ Feature: Approvals, questions and plans
     When the user sends a message to "t1" referring to plan "p2" of "t2"
     Then plan "p2" is completed
 
-  @backlog @mc
+  @mc
   Scenario: A plan from a thread of another project cannot be implemented
     Given thread "t2" of project "other" has an active proposed plan "p2"
     When the user sends a message to "t1" referring to plan "p2" of "t2"
     Then the command fails with "Proposed plan 'p2' belongs to thread 't2' in a different project."
     And plan "p2" is still active
 
-  @backlog @mc
+  @mc
   Scenario: A plan that does not exist cannot be implemented
     When the user sends a message to "t1" referring to plan "gone" of "t1"
     Then the command fails with "Proposed plan 'gone' does not exist on thread 't1'."
 
   # Two devices, or a second press, can both ask to implement the same plan.
-  @backlog @mc
+  @mc
   Scenario: A plan that was already implemented cannot be implemented again
     Given plan "p1" of "t1" was implemented and is completed
     When the user sends another message to "t1" referring to plan "p1"

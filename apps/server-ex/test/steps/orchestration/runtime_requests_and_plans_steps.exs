@@ -2,6 +2,8 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.StreamState
+  alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
   # Codex's requests and notifications are delivered to the thread's Codex runtime as
@@ -159,7 +161,6 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
       "threadId" => World.thread_id(context, "t1"),
       "requestId" => request(context, "t1")["id"]
     })
-    |> tap(&assert({:ok, _} = &1.reply))
   end
 
   step "the provider is told the questions were dismissed", context do
@@ -287,11 +288,491 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  # --- refusals --------------------------------------------------------------------
+
+  step "a caller answers with a number instead of text", context do
+    World.command(context, %{
+      "type" => "runtime-request.respond",
+      "threadId" => World.thread_id(context, "t1"),
+      "requestId" => context.request,
+      "answers" => %{"q1" => 5432}
+    })
+  end
+
+  step "the answer is refused", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
+  step "{string} is still waiting for an answer", %{args: [question]} = context do
+    assert request(context, "t1")["status"] == "pending"
+
+    assert %{"status" => "waiting", "questions" => [%{"question" => ^question}]} =
+             request_item(context)
+
+    context
+  end
+
+  step ~r/^the questions were already (?<done>answered|dismissed)$/,
+       %{args: [done]} = context do
+    case done do
+      "answered" -> respond(context, %{"answers" => %{"q1" => "Postgres"}})
+      "dismissed" -> dismiss(context)
+    end
+
+    await_request(context, &(&1["status"] in ["resolved", "cancelled"]))
+    context
+  end
+
+  step "the provider asked the user {string} with fixed choices only",
+       %{args: [question]} = context do
+    context = questions(context, question)
+    # Antigravity's questions take only their options (`allowCustomAnswer: false`).
+    patch_questions(context, &Map.put(&1, "allowCustomAnswer", false))
+  end
+
+  step "the user answers attaching {string}", %{args: [name]} = context do
+    World.command(
+      context,
+      Map.merge(
+        %{
+          "type" => "runtime-request.respond",
+          "threadId" => World.thread_id(context, "t1"),
+          "requestId" => context.request,
+          "answers" => %{"q1" => "Here"}
+        },
+        attaching(upload(name, true))
+      )
+    )
+  end
+
+  step "the question has since closed", context do
+    context = dismiss(context)
+    await_request(context, &(&1["status"] == "cancelled"))
+    context
+  end
+
+  step "the user responds to it", context do
+    World.command(context, %{
+      "type" => "runtime-request.respond",
+      "threadId" => World.thread_id(context, "t1"),
+      "requestId" => context.request,
+      "decision" => "accept"
+    })
+  end
+
+  step "a request of {string} is still pending but marked as one that cannot be resumed, with a reason",
+       %{args: [thread]} = context do
+    context = approval(context, "command", "May I?")
+    reason = "The provider session was replaced before this runtime request was resolved."
+
+    context
+    |> World.put_entity(thread, "runtime-request", context.request, %{
+      "s" => %{"responseCapability" => %{"type" => "not_resumable", "reason" => reason}}
+    })
+    |> Map.put(:reason, reason)
+  end
+
+  step "the command fails with the reason recorded on the request", context do
+    assert {:error, reason, _} = context.reply
+    assert reason == context.reason
+    assert request(context, "t1")["responseCapability"]["reason"] == reason
+    context
+  end
+
+  # The Codex runtime still holds the provider's request: no answer went out for it.
+  step "nothing is sent to the provider", context do
+    {pid, _} = codex(context)
+    assert Map.has_key?(:sys.get_state(pid).requests, context.request)
+    assert request(context, "t1")["status"] == "pending"
+    context
+  end
+
+  # --- answers given by message ------------------------------------------------------
+
+  step "the provider asked {string} and {string} without waiting on them",
+       %{args: [first, second]} = context do
+    ask_async(context, [first, second])
+  end
+
+  step "the provider asked two questions it does not wait on", context do
+    ask_async(context, ["Which database?", "Which port?"])
+  end
+
+  step "the provider asked a required question and an optional one without waiting on them",
+       context do
+    context
+    |> ask_async(["Which database?", "Which port?"])
+    |> patch_questions(&if(&1["id"] == "1", do: Map.put(&1, "required", false), else: &1))
+  end
+
+  step "the provider asked only optional questions without waiting on them", context do
+    context
+    |> ask_async(["Which database?", "Which port?"])
+    |> patch_questions(&Map.put(&1, "required", false))
+  end
+
+  step "the provider asked a question the user can answer with a message", context do
+    ask_async(context, ["Which color?"])
+  end
+
+  step "the user answers {string} and {string}", %{args: [first, second]} = context do
+    respond(context, %{"answers" => %{"0" => first, "1" => second}})
+  end
+
+  step "the user answers only the first", context do
+    answer_by_message(context, %{"0" => "Postgres"})
+  end
+
+  step "the user answers only the required question", context do
+    respond(context, %{"answers" => %{"0" => "Postgres"}})
+  end
+
+  step "the user sends without answering any", context do
+    answer_by_message(context, %{})
+  end
+
+  step "the user answers", context do
+    respond(context, %{"answers" => %{"0" => "Red"}})
+  end
+
+  step "{string} receives one user message pairing each question with its answer, in the order asked",
+       %{args: [thread]} = context do
+    assert %{"role" => "user", "text" => "Which database?\nPostgres\n\nWhich port?\n5432"} =
+             answer_message(context, thread)
+
+    context
+  end
+
+  step "the answer is sent with the required question alone", context do
+    assert answer_message(context, "t1")["text"] == "Which database?\nPostgres"
+    context
+  end
+
+  step "the questions are closed as answered", context do
+    assert %{"status" => "resolved", "answers" => %{"0" => "Postgres", "1" => "5432"}} =
+             request(context, "t1")
+
+    assert request_item(context)["status"] == "completed"
+    context
+  end
+
+  step "nothing is sent to the thread", context do
+    assert request(context, "t1")["status"] == "pending"
+    refute StreamState.fetch(World.stream(context, "t1"), "message", answer_id(context))
+    assert [_] = World.runs(context, "t1")
+    context
+  end
+
+  # The background's Codex steers; Grok takes no message mid-turn (`Entities.steers?/1`).
+  step ~r/^the running turn of "(?<thread>[^"]+)" is on a provider that (?<steering>can|cannot) take messages mid-turn$/,
+       %{args: [thread, steering]} = context do
+    case steering do
+      "can" ->
+        Map.put(context, :steering, true)
+
+      "cannot" ->
+        context = context |> World.fake_providers() |> World.launch_on(thread, "grok", "wait")
+        run = World.await_running(context, thread)
+        Map.merge(context, %{steering: false, running: run["id"]})
+    end
+  end
+
+  step "the provider asked a question it does not wait on and its turn is still running",
+       context do
+    context =
+      if context.steering,
+        do: ask_async(context, ["Which color?"]),
+        else: plant_async(context, "Which color?")
+
+    assert %{"status" => "running"} = World.latest_run(context, "t1")
+    context
+  end
+
+  step "the answer joins the running turn", context do
+    World.await_runs(context, "t1", ["completed"])
+    assert "steered: Which color?\nRed" in World.replies(context, "t1")
+    assert answer_message(context, "t1")["text"] == "Which color?\nRed"
+    assert [_] = World.runs(context, "t1")
+    context
+  end
+
+  step "the answer waits in the queue behind the running turn", context do
+    message = answer_message(context, "t1")
+    assert message["text"] == "Which color?\nRed"
+
+    assert [%{"id" => running, "status" => "running"}, %{"status" => "queued"} = queued] =
+             World.runs(context, "t1")
+
+    assert running == context.running
+    assert queued["userMessageId"] == answer_id(context)
+    context
+  end
+
+  step "the question is still pending", context do
+    assert %{"status" => "pending", "responseCapability" => %{"type" => "message"}} =
+             request(context, "t1")
+
+    assert request_item(context)["status"] == "waiting"
+    context
+  end
+
+  step "the user can still answer it", context do
+    context = respond(context, %{"answers" => %{"0" => "Red"}})
+    assert request(context, "t1")["status"] == "resolved"
+    assert answer_message(context, "t1")["text"] == "Which color?\nRed"
+    context
+  end
+
+  # --- requests and the end of their turn or server ------------------------------------
+
+  step "the request is cancelled and marked not resumable", context do
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+
+    assert %{"status" => "cancelled", "responseCapability" => %{"type" => "not_resumable"}} =
+             request(context, "t1")
+
+    context
+  end
+
+  step "it says the server shut down before the request was resolved", context do
+    assert request(context, "t1")["responseCapability"]["reason"] ==
+             "The server shut down before this runtime request was resolved."
+
+    context
+  end
+
+  step "the provider asked the user a question that only the running turn can receive the answer to",
+       context do
+    context = questions(context, "Which database?")
+    assert request(context, "t1")["responseCapability"]["type"] == "live"
+    context
+  end
+
+  step ~r/^the provider's turn (?<ends>completes|fails|is interrupted) before the user answers$/,
+       %{args: [ends]} = context do
+    status =
+      %{"completes" => "completed", "fails" => "failed", "is interrupted" => "interrupted"}[ends]
+
+    end_turn(context, status)
+  end
+
+  step "the question is cancelled and no longer pending", context do
+    await_request(context, &(&1["status"] == "cancelled"))
+    assert request_item(context)["status"] == "cancelled"
+    context
+  end
+
+  step "the provider asked the user a question", context do
+    questions(context, "Which database?")
+  end
+
+  step "the provider's turn ends at the same moment the user answers", context do
+    context
+  end
+
+  # The answer is recorded, then the turn's end arrives and closes what it left open.
+  step "the user's answer is recorded first", context do
+    context = respond(context, %{"answers" => %{"q1" => "Postgres"}})
+    await_request(context, &(&1["status"] == "resolved"))
+    end_turn(context, "completed")
+  end
+
+  step "the question stays answered with what the user chose", context do
+    assert %{"status" => "resolved"} = request(context, "t1")
+    assert request_item(context)["questionAnswer"]["answers"] == %{"q1" => "Postgres"}
+    context
+  end
+
+  step "the turn's end does not mark it cancelled", context do
+    assert request_item(context)["status"] == "completed"
+    assert World.state(context, "t1").entities["run"][context.running]["status"] == "completed"
+    context
+  end
+
+  # The run stays `running`: an MC run is `waiting` once its provider finished and
+  # its checkpoint has not settled. The thread's row names the request it waits on.
+  step "the run of {string} is waiting", %{args: [thread]} = context do
+    id = context.request
+
+    row =
+      World.await_row(
+        World.thread_id(context, thread),
+        &match?(%{"pendingRuntimeRequest" => %{"id" => ^id}}, &1)
+      )
+
+    assert %{"pendingRuntimeRequest" => %{"kind" => "command"}} = row
+    assert row["activeRunId"] == context.running
+    assert World.state(context, thread).entities["run"][context.running]["status"] == "running"
+    context
+  end
+
+  step "it returns to running when the request is resolved", context do
+    context = respond(context, %{"decision" => "accept"})
+    row = World.await_row(World.thread_id(context, "t1"), &(&1["pendingRuntimeRequest"] == nil))
+    assert row["activeRunId"] == context.running
+    assert row["activityRunStatus"] == "running"
+    context
+  end
+
+  # --- plans that cannot be implemented --------------------------------------------------
+
+  step "thread {string} of project {string} has an active proposed plan {string}",
+       %{args: [thread, project, plan]} = context do
+    context
+    |> World.create_project(project)
+    |> World.named_thread(thread, project)
+    |> Map.put(:thread, "t1")
+    |> proposed_plan(thread, plan)
+  end
+
+  step "plan {string} is still active", %{args: [plan]} = context do
+    thread = context.plans[plan]
+    assert World.state(context, thread).entities["plan"][plan]["status"] == "active"
+    context
+  end
+
+  step "plan {string} of {string} was implemented and is completed",
+       %{args: [plan, thread]} = context do
+    context =
+      context |> proposed_plan(thread, plan) |> implement(thread, "Implement it", thread, plan)
+
+    assert {:ok, _} = context.reply
+    assert World.state(context, thread).entities["plan"][plan]["status"] == "completed"
+    Map.put(context, :run_count, length(World.runs(context, thread)))
+  end
+
+  step "the user sends another message to {string} referring to plan {string}",
+       %{args: [thread, plan]} = context do
+    implement(context, thread, "Implement it again", thread, plan)
+  end
+
+  step "no second run starts for the plan", context do
+    assert length(World.runs(context, "t1")) == context.run_count
+
+    refute Enum.any?(
+             World.entities(context, "t1", "message"),
+             &(&1["text"] == "Implement it again")
+           )
+
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   defp codex(context) do
     [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, "t1"))
     {pid, :sys.get_state(pid).conn}
+  end
+
+  defp dismiss(context) do
+    World.command(context, %{
+      "type" => "thread.user-input.dismiss",
+      "threadId" => World.thread_id(context, "t1"),
+      "requestId" => context.request
+    })
+  end
+
+  # Codex's async question: an agent message carrying questions it does not wait on.
+  defp ask_async(context, titles) do
+    {_, runtime} = World.codex_runtime(context, "t1")
+    item = "msg-async-#{System.unique_integer([:positive])}"
+
+    notify(context, "item/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turnId" => runtime.turn.native_turn_id,
+      "item" => %{
+        "type" => "agentMessage",
+        "id" => item,
+        "delivery" => "async",
+        "text" => "",
+        "questions" => for(title <- titles, do: %{"title" => title, "options" => ["Red", "Blue"]})
+      }
+    })
+
+    context = Map.put(context, :request, "runtime-request:codex:async:" <> item)
+    await_request(context, &(&1["status"] == "pending"))
+    assert request(context, "t1")["responseCapability"] == %{"type" => "message"}
+    context
+  end
+
+  # A question answered by message on a provider with no such questions of its own,
+  # recorded as an adapter records one.
+  defp plant_async(context, question) do
+    id = "runtime-request:grok:async:q-#{System.unique_integer([:positive])}"
+    node = "node:grok:async:" <> id
+
+    context
+    |> World.put_entity("t1", "turn-item", String.replace_prefix(node, "node:", "turn-item:"), %{
+      "s" => %{
+        "id" => String.replace_prefix(node, "node:", "turn-item:"),
+        "type" => "user_input_request",
+        "status" => "waiting",
+        "runId" => context.running,
+        "requestId" => id,
+        "questions" => [
+          %{
+            "id" => "0",
+            "header" => "Question",
+            "question" => question,
+            "options" => [%{"label" => "Red"}, %{"label" => "Blue"}]
+          }
+        ]
+      }
+    })
+    |> World.put_entity("t1", "runtime-request", id, %{
+      "s" => %{
+        "id" => id,
+        "nodeId" => node,
+        "runId" => context.running,
+        "kind" => "user_input",
+        "status" => "pending",
+        "responseCapability" => %{"type" => "message"},
+        "createdAt" => World.iso_from_now(0),
+        "resolvedAt" => nil
+      }
+    })
+    |> Map.put(:request, id)
+  end
+
+  defp patch_questions(context, fun) do
+    item = request_item(context)
+
+    World.put_entity(context, "t1", "turn-item", item["id"], %{
+      "s" => %{"questions" => Enum.map(item["questions"], fun)}
+    })
+  end
+
+  defp answer_by_message(context, answers) do
+    World.command(context, %{
+      "type" => "runtime-request.respond",
+      "threadId" => World.thread_id(context, "t1"),
+      "requestId" => context.request,
+      "answers" => answers
+    })
+  end
+
+  defp answer_id(context), do: "async-answer:" <> context.request
+
+  defp answer_message(context, thread) do
+    id = answer_id(context)
+
+    World.await_value(context, thread, &StreamState.fetch(&1, "message", id))
+  end
+
+  defp end_turn(context, status) do
+    {_, runtime} = World.codex_runtime(context, "t1")
+
+    notify(context, "turn/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => status}
+    })
+
+    World.await_value(context, "t1", fn state ->
+      StreamState.get(state, "run")[context.running]["status"] not in ["running", "queued"]
+    end)
+
+    context
   end
 
   defp provider_request(context, method, params) do
@@ -464,7 +945,6 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
         }
       })
 
-    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     context
   end
 end
