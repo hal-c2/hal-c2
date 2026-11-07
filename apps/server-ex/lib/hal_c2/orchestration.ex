@@ -2480,15 +2480,24 @@ defmodule HalC2.Orchestration do
       # A page's agent keeps working for the continuation a restart promised it
       # (`HalC2.Space.PageAgent.reconcile/1`), so it hears when that cannot happen: on a
       # refusal, which is never retried, and on the last try of a crash.
+      # It is checked again when it runs (`Recovery.deliverable?/2`), which can be well
+      # after the restart asked for it; one no longer wanted is dropped.
       "provider-runtime.continue" ->
         try do
-          dispatch(args["command"])
+          if args["runId"] == nil or
+               HalC2.Orchestration.Recovery.deliverable?(thread_id, args["runId"]),
+             do: dispatch(args["command"]),
+             else: :refused
         catch
           kind, reason ->
             unless will_retry, do: HalC2.Space.PageAgent.report(thread_id)
             :erlang.raise(kind, reason, __STACKTRACE__)
         else
           {:ok, _} ->
+            :ok
+
+          :refused ->
+            HalC2.Space.PageAgent.report(thread_id)
             :ok
 
           {:error, message} ->
