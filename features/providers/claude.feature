@@ -1700,7 +1700,10 @@ Feature: Claude
 
   # Upstream #25372: a stalled registration failed a resumed turn outright, and the old Claude
   # process could still be running when its replacement started.
-  @backlog @priority-high
+  # Dropped: the MC registers nothing for a turn to wait on. HAL-C2's tools reach Claude
+  # in `--mcp-config` at launch (`HalC2.Claude.McpConfig`), and Claude Code connects to
+  # them itself, so no turn stalls or fails on a registration.
+  @dropped @priority-high
   Scenario Outline: A stalled registration of HAL-C2's tools is retried once only for a resumed session
     Given the user sends a message to <session>
     And HAL-C2's tools do not register with Claude within 90 seconds
@@ -1712,7 +1715,8 @@ Feature: Claude
       | a Claude thread starting afresh | the turn fails without a retry                                                  |
 
   # Upstream #25372: the registration timeout keeps its own message through the failure report.
-  @backlog
+  # Dropped with the registration wait above: no turn fails on one.
+  @dropped
   Scenario: A turn that failed because HAL-C2's tools did not register says so
     Given HAL-C2's tools did not register with Claude in time, even after the retry
     Then the thread's error says the tools did not register in time, not only that the turn failed
