@@ -1,6 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23314
 #   https://github.com/pingdotgg/t3code/pull/14157
-#   https://github.com/pingdotgg/t3code/pull/14883
+#   https://github.com/pingdotgg/t3code/pull/22807
+#   https://github.com/pingdotgg/t3code/pull/22225
 #   https://github.com/pingdotgg/t3code/pull/20440
 #   https://github.com/pingdotgg/t3code/pull/19315
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
@@ -36,6 +38,22 @@ Feature: Picking, switching and creating branches
     Then "feature/tax" is marked current and listed first
     And "main" is marked default and listed next
     And the other branches follow, most recently committed first
+
+  # Upstream #22807: after a git switch in a terminal, the picker kept the old branch as
+  # current, even once that branch was deleted.
+  @backlog @mc @shared
+  Scenario: Opening the branch list picks up a branch switched outside HAL-C2
+    Given the user ran "git switch main" in a terminal of the thread
+    When the user opens the branch list
+    Then "main" is marked current
+    And the thread shows "main" with no ahead or behind counts or pull request left from "feature/tax"
+
+  # Upstream #22807
+  @backlog @mc
+  Scenario: Opening the branch list does not fetch from the remote
+    When the user opens the branch list
+    Then the thread's git status is read from the checkout
+    And nothing is fetched and no pull request is looked up
 
   @mc @desktop
   Scenario: Searching narrows the branch list
@@ -91,6 +109,16 @@ Feature: Picking, switching and creating branches
     Given clients ask for a fresh branch list of "shop" several times within five seconds
     Then the repository's refs are read once
     And after a read that failed the next fresh read is not attempted for half a minute
+
+  # Upstream #23314: a reconnect that replaced the session left the branch list stale until the
+  # next connection change.
+  @shared @backlog @priority-low
+  Scenario: The branch list is read again after a reconnect
+    Given the user has the branch list of "shop" open
+    And a branch was created on the machine while the client was disconnected
+    When the client reconnects
+    Then the new branch is listed without the user asking
+    And a read that fails while the connection is coming back is retried quietly
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (listRefs: isRepo false)
   @mc @backlog
@@ -325,24 +353,14 @@ Feature: Picking, switching and creating branches
     When the user looks at the thread list
     Then the thread's row says the folder is currently checked out on another branch
 
-  # Upstream #14883: worktree threads warn when their checkout's branch changes, without
-  # offering to put the branch back.
+  # Upstream #22225: reverted #14883; an agent switching branches in its own worktree is normal
+  # work, so worktree threads do not warn. Threads in the project's folder still do (above).
   @backlog @desktop
-  Scenario: A worktree thread's checkout moved off its branch is called out
+  Scenario: A worktree thread whose checkout moved to another branch does not warn
     Given a thread in its own worktree last ran on "feature/tax"
-    And someone checked out "feature/other" in that worktree
-    When the user looks at the thread's branch
-    Then the thread says the worktree is on "feature/other" but the thread last ran on "feature/tax"
-    And putting "feature/tax" back is not offered
-
-  # Upstream #14883: sending from a worktree thread adopts the checkout's branch and keeps the worktree.
-  @backlog @desktop
-  Scenario: Sending from a worktree thread on another branch makes it the thread's branch
-    Given a thread in its own worktree last ran on "feature/tax" and the worktree is now on "feature/other"
-    And another thread of the project is on "feature/tax"
-    When the user sends a message in the worktree thread
-    Then that thread is recorded on "feature/other" and keeps its worktree
-    And the other thread stays on "feature/tax"
+    And the agent checked out "feature/other" in that worktree
+    When the user looks at the thread list and the thread's branch
+    Then the thread does not say another branch is checked out
 
   @backlog @desktop @priority-low
   Scenario: A new thread's base ref is labelled as coming from origin when it starts from there

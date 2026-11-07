@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18466
+#   https://github.com/pingdotgg/t3code/pull/24063
 #   https://github.com/pingdotgg/t3code/pull/19186
 #   https://github.com/pingdotgg/t3code/pull/18843
 #   https://github.com/pingdotgg/t3code/pull/18786
@@ -41,6 +43,7 @@
 #   apps/web/src/composerPlaceholder.ts, apps/web/src/components/chat/ChatComposer.tsx (what an empty composer asks for)
 #   https://github.com/pingdotgg/t3code/pull/10154
 #   https://github.com/pingdotgg/t3code/pull/14674
+#   https://github.com/pingdotgg/t3code/pull/21503
 
 Feature: Editing the draft
   The user edits the draft with the keys they are used to, in an outside
@@ -249,12 +252,25 @@ Feature: Editing the draft
       | macOS    | Cmd+B  |
       | Linux    | Ctrl+B |
 
+  # Upstream #24063: the composer is focused most of the time, so the bold shortcut bolds only
+  # a selection; with just a caret it toggles the sidebar.
   @backlog @desktop
-  Scenario: The bold shortcut does not toggle the sidebar while rich text is on
+  Scenario: The bold shortcut does not toggle the sidebar while text is selected
     Given rich text editing is on
-    And the composer has focus
+    And the composer has "word" selected
     When the user presses the bold shortcut
-    Then the sidebar stays as it was
+    Then "word" is bold
+    And the sidebar stays as it was
+
+  # Upstream #24063: the composer ignores the bold chord on an empty selection, even when the
+  # sidebar toggle is moved to another key.
+  @backlog @desktop
+  Scenario: The bold shortcut with only a caret toggles the sidebar instead of bolding
+    Given rich text editing is on
+    And the composer has focus with nothing selected
+    When the user presses the bold shortcut
+    Then the sidebar toggles
+    And nothing in the draft turns bold
 
   # Upstream #13409: the layout's letter decides the shortcut, so a Cyrillic or Greek layout bolds too.
   @backlog @desktop @priority-low
@@ -856,10 +872,12 @@ Feature: Editing the draft
     And <state>
     Then the composer reads "<hint>"
 
+    # Upstream #21503: an approval no longer locks the composer; its hint says a message
+    # declines the approval and redirects the agent.
     Examples:
       | state                                              | hint                                                                 |
       | nothing is waiting on the user                     | Ask anything, @tag files/folders, $use skills, or / for commands     |
-      | an approval is waiting for an answer               | Resolve this approval request to continue                            |
+      | an approval is waiting for an answer               | Send a message to decline and redirect the agent                     |
       | a question with only fixed choices is waiting      | Choose an option above                                               |
       | a question that takes a typed answer is waiting    | Type your own answer, or leave this blank to use the selected option |
       | a proposed plan is waiting to be implemented       | Add feedback to refine the plan, or leave this blank to implement it |
@@ -931,6 +949,14 @@ Feature: Editing the draft
     Given the user typed, pasted, then typed more
     When the user undoes once
     Then only the last action is undone
+
+  # Upstream #18466: undo after a thread switch put a deleted chip from the other draft back.
+  @backlog @shared @priority-low
+  Scenario: Undo does not reach into another thread's draft
+    Given the user deleted a file chip from the draft of "Alpha"
+    When the user switches to "Beta" and undoes
+    Then nothing from the draft of "Alpha" is put into the draft of "Beta"
+    But undoing in "Alpha" before switching brings the chip back whole
 
   # Upstream #17614: an input method composing before a skill mention keeps its text.
   @backlog @shared @priority-low

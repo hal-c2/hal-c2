@@ -25,11 +25,13 @@ defmodule HalC2.ThreadMoveProofTest do
         ~w(stage take import import-failed refused gave-up accept put sent),
       "HalC2.ThreadMove.arrived?/2" => ~w(answer locked got has moves),
       "HalC2.ThreadMove.settle/1" =>
-        ~w(settle let-go forward stop letting freeing? again release),
+        ~w(settle let-go forward stop letting freeing? again release forsake found unsure),
       "HalC2.ThreadMove handle_cast {:watch, _, _, _}" => "mover-died",
       "HalC2.ThreadMove handle_cast {:done, _, _}" => "settle",
+      "HalC2.ThreadMove.removed/1" => ~w(forsake found out),
+      "HalC2.ThreadMove handle_cast {:removed, _}" => ~w(forsake found),
       "HalC2.ThreadMove handle_info {:settle, _}" => "settle",
-      "HalC2.ThreadMove handle_info {:nodeup, _}" => ~w(settle restart heal),
+      "HalC2.ThreadMove handle_info {:nodeup, _}" => ~w(settle restart heal forsake),
       "HalC2.ThreadMove handle_info {_, _}" => "again",
       "HalC2.ThreadMove handle_info {:DOWN, _, :process, _, _}" => ~w(settle mover-died),
       "HalC2.ThreadMove state :movers" => "mover",
@@ -73,7 +75,12 @@ defmodule HalC2.ThreadMoveProofTest do
       "partition" => "two MCs stop reaching each other",
       "heal" => "they reach each other again",
       "time-out" => "an :erpc call gives up",
-      "drop" => "an answer to a call that gave up is thrown away"
+      "drop" => "an answer to a call that gave up is thrown away",
+      "remove" =>
+        "an MC is removed from the cluster: it stops, its links break, it never rejoins",
+      "switch-off" =>
+        "an MC is switched off: it stops and its links break, but it stays in the member table",
+      "switch-on" => "it is switched back on and starts again"
     },
     scenarios: %{
       "threads/moving-between-machines.feature" => [
@@ -82,6 +89,9 @@ defmodule HalC2.ThreadMoveProofTest do
         "A move that breaks off part way leaves the thread on the source",
         "A destination that was cut off while copying does not take the thread afterwards",
         "A move cut off while the destination takes the thread waits for the destination",
+        "A move to a machine that is removed from the cluster is called off",
+        "A move to a removed machine that passed the thread on is not called off",
+        "A move to a removed machine waits for a member that is switched off",
         "The source restarting while the destination takes the thread does not undo the move",
         "The source going offline after the destination confirmed does not undo the move",
         "A thread cannot be moved twice at once"
@@ -89,10 +99,10 @@ defmodule HalC2.ThreadMoveProofTest do
     }
 
   # Rules the environment may or may not take; the code's own may not stop.
-  @faults ~w(crash partition time-out mover-died)
+  @faults ~w(crash partition time-out mover-died remove switch-off)
   @fair ~w(begin moved forward called-off broke-off taking taking-gone stage
-           take import import-failed refused gave-up answer settle let-go again release
-           restart heal drop)
+           take import import-failed refused gave-up answer settle let-go again release forsake found
+           restart heal drop switch-on)
 
   # Each searches every state for all of twice, lost, hurts and wrong at once.
   for init <- ["two(2, 2)", "three(2, 2)"] do

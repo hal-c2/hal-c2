@@ -43,12 +43,17 @@ mix hal_c2.thread.export "Fix the cart" alpha.hal-c2-thread
 mix hal_c2.thread.import alpha.hal-c2-thread --project shop
 ```
 
-The file carries the conversation, attachments, terminal scrollback, checkpoints and, when the
-provider can carry it, the agent's own session. Exporting leaves the thread where it was. Without
+The file carries the conversation, attachments, checkpoints and, when the provider can carry it,
+the agent's own session. Terminal scrollback can hold secrets, so it comes along only with
+`--terminal-scrollback`. Only you can read the file, and an export never overwrites a file that is
+already there. Exporting leaves the thread where it was. Without
 `--project`, the thread goes into the one project that is a checkout of the same repository; if
 there are several or none, name one. Checkpoints only come along into a checkout of the same
 repository. A thread archive from an earlier install imports too, and its next message hands
-the conversation over as a provider switch does. Nothing is imported from a damaged file.
+the conversation over as a provider switch does. Nothing is imported from a damaged file, from a
+file whose attachment or terminal names reach outside where they belong, or when an attachment
+of the same name with other contents is already on this machine; an import that fails part way
+removes what it copied.
 
 ## Looking at the old transcript
 

@@ -62,11 +62,11 @@ Feature: Dictating a message
     Then the draft reads <result>
 
     Examples:
-      | language   | draft            | result                |
-      | English    | "Please|"        | "Please run the tests" |
-      | English    | "|now"           | "run the tests now"   |
-      | English    | "Please |now"    | "Please run the tests now" |
-      | another one | "Please|"       | "Pleaserun the tests" |
+      | language    | draft          | result                     |
+      | English     | "Please\|"     | "Please run the tests"     |
+      | English     | "\|now"        | "run the tests now"        |
+      | English     | "Please \|now" | "Please run the tests now" |
+      | another one | "Please\|"     | "Pleaserun the tests"      |
 
   @backlog @mobile
   Scenario: The user cancels dictation

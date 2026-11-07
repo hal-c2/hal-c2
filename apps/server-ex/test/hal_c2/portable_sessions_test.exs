@@ -150,4 +150,23 @@ defmodule HalC2.PortableSessionsTest do
     assert {nil, []} = PortableSessions.place(%{"driver" => "cursor", "files" => []}, to, %{})
     assert {nil, []} = PortableSessions.place(nil, to, %{})
   end
+
+  test "taking a placed session back removes only the files and folders it made",
+       %{tmp_dir: dir, from: from, to: to} do
+    folder = Path.join([dir, "claude", "projects", String.replace(to, ~r/[^A-Za-z0-9]/, "-")])
+    File.mkdir_p!(folder)
+    File.write!(Path.join(folder, "s1.jsonl"), "mine\n")
+
+    files = [
+      {"s1.jsonl", [%{"sessionId" => "s1", "cwd" => from}]},
+      {"s1/subagents/agent-1.jsonl", [%{"cwd" => from}]}
+    ]
+
+    {placed, []} = PortableSessions.place(session("claudeAgent", "s1", files, from), to, %{})
+    assert File.exists?(Path.join(folder, "s1/subagents/agent-1.jsonl"))
+
+    PortableSessions.unplace(placed)
+    assert File.ls!(folder) == ["s1.jsonl"]
+    assert File.read!(Path.join(folder, "s1.jsonl")) == "mine\n"
+  end
 end

@@ -97,6 +97,44 @@ defmodule HalC2.Test.Machines do
     end
   end
 
+  @doc """
+  Starts this MC's `HalC2.Cluster`, which scenarios run without, with a member table of
+  the scenario's members as an MC that admitted them keeps (`HalC2.Test.ClusterTable`),
+  so it can remove one or switch it off. Once a scenario: later calls do nothing.
+  """
+  def member_table(context) do
+    if Process.whereis(HalC2.Cluster) == nil do
+      Mc.World.put_app_env(:cluster_transport, HalC2.Test.ClusterTable)
+      Mc.ensure(HalC2.Cluster)
+
+      for {label, %{mode: :cluster, environment: environment}} <- context.machines do
+        fingerprint = :crypto.hash(:sha256, environment) |> Base.encode16(case: :lower)
+        entry = %{"id" => environment, "fingerprint" => fingerprint, "label" => label}
+        {:ok, _} = HalC2.Cluster.admit(Map.put(entry, "addresses", []))
+      end
+    end
+
+    context
+  end
+
+  @doc """
+  Returns once `HalC2.ThreadMove` here settles nothing and has nothing queued: what it
+  was told before this call (a removal, a member back) is settled.
+  """
+  def moves_settled do
+    case :sys.get_state(HalC2.ThreadMove) do
+      %{task: %Task{pid: pid}} ->
+        ref = Process.monitor(pid)
+
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> moves_settled()
+        end
+
+      _idle ->
+        :ok
+    end
+  end
+
   @doc "Takes `label` out of the cluster: it keeps its files and runs on its own."
   def leave(context, label) do
     machine = machine(context, label)
@@ -229,6 +267,23 @@ defmodule HalC2.Test.Machines do
   end
 
   def hold_move(_test, _held, _stage, _id), do: :ok
+
+  @doc """
+  Makes this MC's store refuse every change to the stream `id`, as a full disk would
+  (`:store_hook`); `nil` takes that back.
+  """
+  def refuse_changes(nil), do: Application.delete_env(:hal_c2, :store_hook)
+
+  def refuse_changes(id),
+    do: Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_change, [id]})
+
+  # Only this MC's own store: a scratch store an import folds into is not its disk.
+  @doc false
+  def refuse_change(id, :append_change, id) do
+    if self() == Process.whereis(HalC2.Store), do: raise("the disk is full"), else: :ok
+  end
+
+  def refuse_change(_id, _stage, _stream_id), do: :ok
 
   @doc "The diff of a thread's runs `from` to `to` on this MC (`HalC2.Checkpoint.turn_diff/5`)."
   def turn_diff(id, from, to) do

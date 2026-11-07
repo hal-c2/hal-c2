@@ -243,6 +243,9 @@ defmodule HalC2.OrchestrationTest do
 
     assert %{"status" => "queued", "queuePosition" => 1} =
              StreamState.get(state, "run")[third["id"]]
+
+    # Going first interrupts the turn it was to steer, so that turn ends steered by it.
+    assert StreamState.get(state, "run")[active["id"]]["steeredByRunId"] == third["id"]
   end
 
   test "a message runs a Codex turn and streams it into the thread" do
@@ -1767,6 +1770,9 @@ defmodule HalC2.OrchestrationTest do
 
       state = await_statuses(thread_id, ["interrupted", "completed", "completed"])
 
+      # The interrupted run names the steer that cut it off.
+      assert StreamState.get(state, "run")[active["id"]]["steeredByRunId"] == third["id"]
+
       # The promoted message ran before the one queued ahead of it.
       order =
         state
@@ -2256,6 +2262,13 @@ defmodule HalC2.OrchestrationTest do
 
       state = await_statuses(thread_id, ["interrupted", "completed"])
       assert Enum.any?(StreamState.list(state, "turn-item"), &(&1["messageId"] == "m2"))
+
+      # The interrupted run names the steer that cut it off; a stop or a crash leaves
+      # no such mark.
+      [interrupted, restart] = runs(state)
+      assert interrupted["steeredByRunId"] == restart["id"]
+      assert restart["userMessageId"] == "m2"
+      refute Map.has_key?(restart, "steeredByRunId")
     end
   end
 

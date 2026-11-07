@@ -105,12 +105,15 @@ defmodule HalC2.Steps.Connections.Pairing do
 
     case {status, positionals} do
       {0, [base | _]} ->
-        context |> Map.put(:base, base) |> Map.put(:printed, out) |> Map.put(:pair_output, [out])
+        context
+        |> Map.put(:base, base)
+        |> Map.put(:printed, link_line(out))
+        |> Map.put(:pair_output, [out])
 
       {0, []} ->
         context
         |> Map.put(:base, "http://127.0.0.1:#{context.mc.port}")
-        |> Map.put(:printed, out)
+        |> Map.put(:printed, link_line(out))
         |> Map.put(:pair_output, [out])
 
       {_, _} ->
@@ -423,8 +426,19 @@ defmodule HalC2.Steps.Connections.Pairing do
   end
 
   defp print_link(base) do
-    assert [line] = Mc.run_task(Mix.Tasks.HalC2.Pair, [base])
+    assert [line, expires] = Mc.run_task(Mix.Tasks.HalC2.Pair, [base])
+    assert_expiry_line(expires)
     line
+  end
+
+  # The link is the first line; the second says when it expires, as an ISO 8601 time.
+  defp assert_expiry_line("Expires " <> iso), do: assert({:ok, _, 0} = DateTime.from_iso8601(iso))
+
+  # The link of the command's output, which also says when it expires.
+  defp link_line(out) do
+    assert [link, expires] = String.split(out, "\n", trim: true)
+    assert_expiry_line(expires)
+    link
   end
 
   defp create_link(context, label) do

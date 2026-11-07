@@ -10,6 +10,8 @@
 #   https://github.com/pingdotgg/t3code/pull/16220
 #   https://github.com/pingdotgg/t3code/pull/16231
 #   https://github.com/pingdotgg/t3code/pull/13314
+#   https://github.com/pingdotgg/t3code/pull/21099
+#   https://github.com/pingdotgg/t3code/pull/18359
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)
@@ -538,6 +540,27 @@ Feature: Worktrees and setup scripts
     And a new worktree for "feature/tax" can be made in the same place
     And files found there are kept
 
+  # Upstream #21099: removing a worktree on Windows followed its junctions and deleted what they
+  # pointed to.
+  @backlog @mc @priority-high
+  Scenario: Removing a worktree on Windows never deletes what its links point to
+    Given the MC runs on Windows and the "feature/tax" worktree holds a junction to a folder outside it
+    When the user removes that worktree
+    Then the folder the junction pointed to and its files are untouched
+
+  # Upstream #21099: the cleanup keeps git's refusals.
+  @backlog @mc @priority-high
+  Scenario Outline: A worktree git refuses to remove on Windows is kept
+    Given the MC runs on Windows and the "feature/tax" worktree <state>
+    When the user removes that worktree without force
+    Then the removal is refused and the worktree's files are kept
+
+    Examples:
+      | state                         |
+      | is locked                     |
+      | has uncommitted changes       |
+      | has a populated submodule     |
+
   @desktop @mobile
   Scenario: Returning to the previous worktree
     Given the user just finished a thread in the worktree on "feature/tax"
@@ -689,3 +712,25 @@ Feature: Worktrees and setup scripts
     Then it is at "<location>/<repo>/<branch>" and existing worktrees stay put
     And a path that is not absolute on the MC fails the creation, pointing to the setting
     And storage cleanup accepts both the default and the custom folder
+
+  # Upstream #18359: a thread whose worktree was deleted could never start another turn.
+  @backlog @mc @shared @priority-high
+  Scenario Outline: A thread whose worktree was deleted gets it back on its next message
+    Given the thread "Fix checkout" worked in its own worktree on "feature/cart"
+    And the worktree was deleted and <branch>
+    When the user sends the next message
+    Then the worktree is made again <from>
+    And the turn runs in it
+
+    Examples:
+      | branch                         | from                                                          |
+      | "feature/cart" still exists    | on "feature/cart"                                             |
+      | "feature/cart" was deleted too | with "feature/cart" started from the project's current branch |
+
+  @backlog @mc @shared
+  Scenario: A worktree that cannot be made again stops before the agent starts
+    Given the thread "Fix checkout" lost its worktree and making it again fails
+    When the user sends the next message
+    Then the agent is not started
+    And the thread says the worktree could not be made, naming the branch and the path, without raw git output
+    And the user can send again to retry
