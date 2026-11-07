@@ -82,7 +82,8 @@ defmodule HalC2.Vcs.Watch do
        local: Vcs.local_status(cwd),
        remote: Vcs.remote_status(cwd, pr: true),
        timer: schedule_fetch(),
-       pr_branch: Git.current_branch(cwd)
+       pr_branch: Git.current_branch(cwd),
+       lookup: nil
      }}
   end
 
@@ -116,17 +117,28 @@ defmodule HalC2.Vcs.Watch do
     {:noreply, update(%{state | pr_branch: branch}, read_local(state), remote)}
   end
 
+  # A turn's end looks the pull request up afresh, off this process so subscribers are not
+  # held behind the host; turns ending meanwhile share the lookup that follows it.
   def handle_cast(:turn_ended, state) do
-    branch = Git.current_branch(state.cwd)
+    {:noreply, state} = handle_cast(:refresh, state)
     scope = %{"type" => "vcs-status", "cwd" => state.cwd}
 
-    if branch && HalC2.BackgroundPolicy.run_scope_work?(scope) do
-      remote = Vcs.remote_status(state.cwd, pr: :fresh)
-      {:noreply, update(%{state | pr_branch: branch}, read_local(state), remote)}
-    else
-      handle_cast(:refresh, state)
+    cond do
+      is_nil(state.pr_branch) or not HalC2.BackgroundPolicy.run_scope_work?(scope) ->
+        {:noreply, state}
+
+      state.lookup ->
+        {:noreply, %{state | lookup: put_elem(state.lookup, 1, true)}}
+
+      true ->
+        {:noreply, start_lookup(state)}
     end
   end
+
+  def handle_cast({:pr_found, branch, remote}, %{pr_branch: branch} = state),
+    do: {:noreply, update(state, state.local, remote)}
+
+  def handle_cast({:pr_found, _other_branch, _remote}, state), do: {:noreply, state}
 
   def handle_cast({:publish, local, remote}, state), do: {:noreply, update(state, local, remote)}
 
@@ -151,6 +163,11 @@ defmodule HalC2.Vcs.Watch do
 
   def handle_info(:fetch_off, state), do: {:noreply, %{state | timer: schedule_fetch()}}
 
+  def handle_info({:DOWN, ref, :process, _pid, _}, %{lookup: {ref, again?, _}} = state) do
+    state = %{state | lookup: nil}
+    {:noreply, if(again?, do: start_lookup(state), else: state)}
+  end
+
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
     case HalC2.Watchers.down(state.subscribers, ref, pid) do
       same when same == state.subscribers -> {:noreply, state}
@@ -159,6 +176,19 @@ defmodule HalC2.Vcs.Watch do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  defp start_lookup(state) do
+    watcher = self()
+    {cwd, branch} = {state.cwd, state.pr_branch}
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        if remote = Vcs.remote_status(cwd, pr: :fresh),
+          do: GenServer.cast(watcher, {:pr_found, branch, remote})
+      end)
+
+    %{state | lookup: {ref, false, pid}}
+  end
 
   # A status git cannot give right now (the index is locked) leaves the last one standing.
   defp read_local(state) do

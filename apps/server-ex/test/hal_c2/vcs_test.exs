@@ -55,6 +55,26 @@ defmodule HalC2.VcsTest do
     assert %{"isRepo" => false} = Vcs.local_status(plain)
   end
 
+  test "a locked index leaves the checkout a repository, and the watcher's first snapshot too",
+       %{repo: repo} do
+    File.write!(Path.join(repo, ".git/index.lock"), "")
+
+    assert %{"isRepo" => true, "refName" => "main"} = Vcs.local_status(repo)
+    assert {:error, "Git index is locked" <> _} = Vcs.read_status(repo)
+
+    assert %{"_tag" => "snapshot", "local" => %{"isRepo" => true, "refName" => "main"}} =
+             HalC2.Vcs.Watch.subscribe(repo, self())
+  end
+
+  test "untracked files are read only up to a budget", %{repo: repo} do
+    for n <- 1..520,
+        do: File.write!(Path.join(repo, "u#{String.pad_leading("#{n}", 3, "0")}.txt"), "x\n")
+
+    assert %{"workingTree" => %{"files" => files, "insertions" => 500}} = Vcs.local_status(repo)
+    assert length(files) == 520
+    assert Enum.count(files, &(&1["insertions"] == 0)) == 20
+  end
+
   test "ahead and behind, after a fetch", %{repo: repo, other: other} do
     File.write!(Path.join(other, "b.txt"), "b\n")
     git!(other, ~w(add b.txt))

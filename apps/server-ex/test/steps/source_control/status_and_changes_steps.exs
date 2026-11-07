@@ -732,6 +732,13 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   step "the thread's turn ends", context do
     context = World.run_turn(context, context.thread_title, "write notes.md")
     {_event, context} = World.await_vcs(context, &(&1["_tag"] == "remoteUpdated"))
+    # The fresh lookup runs off the watcher: wait for it to finish (it casts its answer
+    # before it exits), then read what the watcher holds.
+    with %{lookup: {_ref, _again, pid}} <- :sys.get_state(watcher(context)) do
+      down = Process.monitor(pid)
+      assert_receive {:DOWN, ^down, :process, _, _}, 5_000
+    end
+
     state = :sys.get_state(watcher(context))
     Map.put(context, :reply, {:ok, Map.merge(state.local, state.remote)})
   end

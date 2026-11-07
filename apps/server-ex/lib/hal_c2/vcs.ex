@@ -22,7 +22,8 @@ defmodule HalC2.Vcs do
   status cannot be read, report `isRepo: false`.
   """
   def local_status(cwd) do
-    case read_local_status(cwd) do
+    # A held `index.lock` does not stop `git status`, so a locked checkout is still one.
+    case read_local_status(cwd, false) do
       {:ok, status} -> status
       {:error, _reason} -> not_a_repo()
     end
@@ -40,15 +41,20 @@ defmodule HalC2.Vcs do
   past its time limit or printed more than the limit (`:vcs_status_limits` overrides
   them). A folder that is no repository, or a machine without git, is `{:ok, not a repo}`.
   """
-  def read_status(cwd), do: read_local_status(cwd)
+  def read_status(cwd), do: read_local_status(cwd, true)
 
-  defp read_local_status(cwd) do
+  @doc "The message for a checkout whose index another git holds, or nil."
+  def lock_error(cwd) do
+    if File.dir?(cwd) and index_locked?(cwd, 5_000), do: @index_locked
+  end
+
+  defp read_local_status(cwd, check_lock?) do
     limits = Application.get_env(:hal_c2, :vcs_status_limits, [])
     max = limits[:max_bytes] || @status_max_bytes
 
     result =
       if File.dir?(cwd) do
-        if index_locked?(cwd, limits[:timeout] || 5_000) do
+        if check_lock? and index_locked?(cwd, limits[:timeout] || 5_000) do
           {:error, @index_locked}
         else
           Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all),
@@ -98,18 +104,18 @@ defmodule HalC2.Vcs do
     default = default_branch(cwd)
 
     # Untracked and binary files have no line counts but are still changes.
-    untracked = untracked_paths(status)
+    untracked = MapSet.new(untracked_paths(status))
+
+    # Reading untracked files is bounded (`@untracked_budget`): past it they count none.
+    {others, _spent} =
+      changed
+      |> Enum.reject(&Map.has_key?(stats, &1))
+      |> Enum.map_reduce({0, 0}, fn path, budget ->
+        untracked_file(cwd, path, MapSet.member?(untracked, path), budget)
+      end)
 
     files =
-      (for(
-         {path, {ins, del, previous}} <- stats,
-         do: file(path, ins, del, previous)
-       ) ++
-         for(
-           path <- changed,
-           not Map.has_key?(stats, path),
-           do: untracked_file(cwd, path, path in untracked)
-         ))
+      (for({path, {ins, del, previous}} <- stats, do: file(path, ins, del, previous)) ++ others)
       |> Enum.sort_by(& &1["path"])
 
     %{
@@ -135,11 +141,16 @@ defmodule HalC2.Vcs do
   # counts (binary, mode only) count none. Files past a megabyte are not read.
   # `path` is one git listed under `cwd`, and a link is never followed (`lstat`).
   @untracked_read_limit 1_000_000
+  # A read stops for good once 500 files or 8 MB have been read (upstream #16771: counting
+  # thousands of untracked files pegged the CPU); `budget` is `{files, bytes}` spent.
+  @untracked_budget {500, 8_000_000}
   # sobelow_skip ["Traversal.FileModule"]
-  defp untracked_file(cwd, path, true) do
+  defp untracked_file(cwd, path, true, {files, bytes} = budget) do
+    {max_files, max_bytes} = @untracked_budget
     full = Path.join(cwd, path)
 
-    with {:ok, %{type: :regular, size: size}} when size <= @untracked_read_limit <-
+    with true <- files < max_files and bytes < max_bytes,
+         {:ok, %{type: :regular, size: size}} when size <= @untracked_read_limit <-
            File.lstat(full),
          {:ok, data} <- File.read(full),
          false <- String.contains?(data, <<0>>) do
@@ -149,13 +160,13 @@ defmodule HalC2.Vcs do
         |> length()
         |> Kernel.+(if data == "" or String.ends_with?(data, "\n"), do: 0, else: 1)
 
-      file(path, lines, 0, nil)
+      {file(path, lines, 0, nil), {files + 1, bytes + byte_size(data)}}
     else
-      _ -> file(path, 0, 0, nil)
+      _ -> {file(path, 0, 0, nil), budget}
     end
   end
 
-  defp untracked_file(_cwd, path, false), do: file(path, 0, 0, nil)
+  defp untracked_file(_cwd, path, false, budget), do: {file(path, 0, 0, nil), budget}
 
   # Without a known default branch, main and master count as the default.
   defp default_ref?(nil, _default), do: false
@@ -219,7 +230,7 @@ defmodule HalC2.Vcs do
   git could not give (it would not start, ran too long, printed too much) is an error.
   """
   def refresh_status(%{"cwd" => cwd}) do
-    with {:ok, local} <- read_local_status(cwd) do
+    with {:ok, local} <- read_local_status(cwd, true) do
       remote = remote_status(cwd, fetch: true, pr: :fresh)
       HalC2.Vcs.Watch.publish(cwd, local, remote)
       {:ok, Map.merge(local, remote || empty_remote())}

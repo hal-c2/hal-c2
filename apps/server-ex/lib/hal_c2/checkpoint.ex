@@ -327,7 +327,7 @@ defmodule HalC2.Checkpoint do
   # Git refuses for a moment while another git holds a lock, or while a file it is
   # indexing is replaced under it; the capture is tried up to three times.
   @capture_attempts 3
-  @transient ~r/\.lock['"]?:? File exists|Another git process|unable to (index|stat) file|No such file or directory|failed to insert into database/i
+  @transient ~r/\.lock['"]?:? File exists|Another git process|unable to (index|stat) file '[^']*': No such file or directory|failed to insert into database/i
 
   @doc """
   Commits the whole worktree (tracked and untracked, minus ignored) to `ref`, trying
