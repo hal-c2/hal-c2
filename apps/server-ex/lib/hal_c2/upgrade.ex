@@ -115,6 +115,9 @@ defmodule HalC2.Upgrade do
   """
   def update_from(path, version) do
     if File.regular?(path) do
+      # Before the bundle reaches the cache: the boot prune would take it, a version
+      # not yet installed being nothing it keeps.
+      :ok = await_pruned()
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
       input = %{"targetVersion" => version}
       members = update_members(Node.list(), input)

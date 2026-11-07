@@ -159,6 +159,47 @@ defmodule HalC2.UpgradeTest do
     :gen_tcp.close(listen)
   end
 
+  # `mix hal_c2.upgrade --release` puts the operator's bundle in the cache itself, so it
+  # waits for the boot prune before that, or the prune takes the bundle it just put.
+  test "an update from a local bundle during the boot prune keeps the bundle",
+       %{tmp_dir: dir} do
+    root = Path.join(dir, "release")
+    File.mkdir_p!(Path.join(root, "releases"))
+    release_fixture(root, "1.2.0")
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "16.0 1.2.0\n")
+    archive = Path.join(dir, "1.3.0.tar.gz")
+    File.write!(archive, "not a bundle")
+    me = self()
+
+    Application.put_env(:hal_c2, :upgrade_processes, fn ->
+      send(me, {:prune_blocked, self()})
+      receive(do: (:release_prune -> {:ok, []}))
+    end)
+
+    System.put_env("RELEASE_ROOT", root)
+    :persistent_term.put({Upgrade, :version}, "1.2.0")
+
+    on_exit(fn ->
+      if pid = Process.whereis(HalC2.Upgrade.Prune), do: send(pid, :release_prune)
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+      Application.delete_env(:hal_c2, :upgrade_processes)
+    end)
+
+    start_supervised!(Upgrade)
+    assert_receive {:prune_blocked, prune_pid}
+    prune_ref = Process.monitor(prune_pid)
+
+    caller = Task.async(fn -> Upgrade.update_from(archive, "1.3.0") end)
+    refute_receive {:DOWN, ^prune_ref, _, _, _}, 200
+    refute File.exists?(Source.cache_dir("1.3.0"))
+
+    send(prune_pid, :release_prune)
+    assert_receive {:DOWN, ^prune_ref, _, _, _}
+    Task.await(caller)
+    assert File.dir?(Source.cache_dir("1.3.0"))
+  end
+
   # Release `version` under `root`, with its cached bundle, every directory two
   # hours old so the boot prune's grace does not keep it.
   defp release_fixture(root, version) do
