@@ -200,6 +200,15 @@ Item {
             // A thread the store has not opened yet loads too.
             Threads.timeline = null;
             compare(placeholder(view).text, "Loading…");
+            // With the connection gone it loads once the connection returns.
+            Shell.state = Object.assign({}, Shell.state, {
+                connection: {
+                    phase: "reconnecting",
+                    title: "Reconnecting to ai-beast",
+                    detail: "Connection refused"
+                }
+            });
+            compare(placeholder(view).text, "This thread will load when the connection returns.");
         }
 
         function test_aThreadWithoutMessagesSaysHowToStart() {

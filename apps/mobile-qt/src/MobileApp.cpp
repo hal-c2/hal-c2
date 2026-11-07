@@ -7,6 +7,7 @@
 #include <QQuickStyle>
 #include <QtQml/qqml.h>
 
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "LayoutController.h"
 #include "LicensesController.h"
@@ -74,6 +75,9 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // The phone layout's timeline reads as the activity log the phone has
   // always had (TimelineModel::Folds::Phone); the desktop layout's as the desktop's.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
+  // A phone loses its connection often: what the user sends then waits on
+  // the phone and goes once it is back (the outbox), in either layout.
+  m_native->controller<ComposerController>()->setWaitsOffline(true);
   m_native->controller<TerminalController>()->setSingleScreen(true);
   m_native->controller<SpaceController>()->setPageShownBySteps(true);
   m_native->controller<ThreadStore>()->setFolds(TimelineModel::Folds::Phone);
