@@ -37,8 +37,14 @@ defmodule HalC2.Shell do
   changed. Its own rows start a new epoch from the store, and clients are sent them
   whole.
 
-  A client subscribes with `subscribe/2` and what it holds, and receives rows as
+  A client subscribes with `subscribe/3` and what it holds, and receives rows as
   `{:hal_c2_shell, {:rows, mc, rows, %{epoch: e, rev: r, reset: boolean}}}`.
+
+  A client that asks for a `settled_limit` is sent, whenever an MC's rows go to it
+  whole (its first subscribe, or a `reset`), only the newest settled threads of each
+  project (`HalC2.Shell.Settled`), and is told how many it was not sent
+  (`settled_left_out`, beside the version). Rows that change later are sent as to any
+  client, a left-out one included.
 
   Between MCs, `peer_hello` carries the version one holds of the other and is
   answered with `peer_rows` from it. A change is pushed as the one row after the
@@ -55,7 +61,7 @@ defmodule HalC2.Shell do
   @revs HalC2.Shell.Revs
   # `{peer, version}`: what this MC holds of each peer's rows.
   @versions HalC2.Shell.Versions
-  # `{pid, :plain | :client}`
+  # `{pid, :plain | :client | {:client, settled_limit}}`
   @subscribers HalC2.Shell.Subscribers
   @tables [@table, @mcs, @revs, @versions, @subscribers]
   @heir HalC2.Shell.Heir
@@ -156,9 +162,15 @@ defmodule HalC2.Shell do
   `%{mc:, online:, environment:, epoch:, rev:, reset:}` and the rows after its
   versions as `{mc, stream_id, kind, row}`. An MC marked `reset` is sent whole, and
   the client drops whatever rows of it it had.
+
+  With `settled_limit: n`, an MC sent whole leaves out all but the `n` newest settled
+  threads of each project, and its entry says how many it left out of each
+  (`settled_left_out`). So do the resets this client is sent later.
   """
-  @spec subscribe(pid, %{String.t() => version}) :: %{mcs: [map], rows: [tuple]}
-  def subscribe(pid, have), do: GenServer.call(__MODULE__, {:subscribe, pid, have})
+  @spec subscribe(pid, %{String.t() => version}, settled_limit: pos_integer | nil) ::
+          %{mcs: [map], rows: [tuple]}
+  def subscribe(pid, have, opts \\ []),
+    do: GenServer.call(__MODULE__, {:subscribe, pid, have, opts[:settled_limit]})
 
   @doc "Replaces a local stream's row; called by stream servers after they recompute it."
   @spec put_row(String.t(), {String.t(), map}) :: :ok
@@ -312,27 +324,49 @@ defmodule HalC2.Shell do
     {:reply, :ok, state}
   end
 
-  def handle_call({:subscribe, pid, have}, _from, state) do
+  # From a socket of the release before the settled limit.
+  def handle_call({:subscribe, pid, have}, from, state),
+    do: handle_call({:subscribe, pid, have, nil}, from, state)
+
+  def handle_call({:subscribe, pid, have, limit}, _from, state) do
+    kind = client_kind(limit)
+
     {mcs, rows} =
       Enum.map_reduce(:ets.tab2list(@mcs), [], fn {mc, descriptor}, rows ->
         {epoch, rev} = version = version_of(state, mc)
         {from, reset?} = lacking(version, Map.get(have, Atom.to_string(mc)))
 
-        mc_rows = for {id, {kind, row}} <- rows_after(mc, from), do: {mc, id, kind, row}
+        {sent, entry} =
+          for_client(kind, rows_after(mc, from), %{epoch: epoch, rev: rev, reset: reset?})
 
-        {%{
-           mc: mc,
-           online: MapSet.member?(state.online, mc),
-           environment: descriptor,
-           epoch: epoch,
-           rev: rev,
-           reset: reset?
-         }, mc_rows ++ rows}
+        mc_rows = for {id, {kind, row}} <- sent, do: {mc, id, kind, row}
+
+        entry =
+          Map.merge(entry, %{
+            mc: mc,
+            online: MapSet.member?(state.online, mc),
+            environment: descriptor
+          })
+
+        {entry, mc_rows ++ rows}
       end)
 
-    put_subscriber(pid, :client)
+    put_subscriber(pid, kind)
     {:reply, %{mcs: mcs, rows: rows}, state}
   end
+
+  defp client_kind(limit) when is_integer(limit) and limit > 0, do: {:client, limit}
+  defp client_kind(_limit), do: :client
+
+  # What a client subscriber is sent of an MC's changed rows at `version`: all of
+  # them, or, sent whole to one with a settled limit, the trimmed rows and the counts
+  # of those left out.
+  defp for_client({:client, limit}, rows, %{reset: true} = version) do
+    {rows, left_out} = HalC2.Shell.Settled.trim(rows, limit)
+    {rows, Map.put(version, :settled_left_out, left_out)}
+  end
+
+  defp for_client(_kind, rows, version), do: {rows, version}
 
   defp put_subscriber(pid, kind) do
     Process.monitor(pid)
@@ -529,10 +563,22 @@ defmodule HalC2.Shell do
   defp notify(mc, plain, rows, %{reset: reset?} = version) do
     plain = plain || rows
 
-    for {pid, kind} <- :ets.tab2list(@subscribers) do
+    subscribers = :ets.tab2list(@subscribers)
+
+    # Trimmed once for each limit the subscribers asked for.
+    sent =
+      for {_pid, kind} <- subscribers, kind != :plain, uniq: true, into: %{} do
+        {kind, for_client(kind, rows, version)}
+      end
+
+    for {pid, kind} <- subscribers do
       case kind do
-        :plain -> if plain != [] or reset?, do: send(pid, {:hal_c2_shell, {:rows, mc, plain}})
-        :client -> send(pid, {:hal_c2_shell, {:rows, mc, rows, version}})
+        :plain ->
+          if plain != [] or reset?, do: send(pid, {:hal_c2_shell, {:rows, mc, plain}})
+
+        client ->
+          {rows, version} = sent[client]
+          send(pid, {:hal_c2_shell, {:rows, mc, rows, version}})
       end
     end
   end

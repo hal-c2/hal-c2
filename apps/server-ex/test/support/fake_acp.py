@@ -14,10 +14,10 @@
 # 127.0.0.1:P for the `opencode` user and OPENCODE_SERVER_PASSWORD, over sessions kept
 # as JSON files in FAKE_ACP_SESSIONS (shared by every fake; a private directory without
 # it): each prompt adds a user message, and each turn's end an assistant message.
-# GET /session/:id/message[?limit=n] and POST /session/:id/fork ({messageID}: the
-# messages before it, with new ids) are served; each request is traced as
+# GET /session/:id/message[?limit=n], PATCH /session/:id ({title}) and POST /session/:id/fork ({messageID}: the
+# messages before it, with new ids, less any marked "lostOnFork") are served; each request is traced as
 # {"http": {method, path, body}}.
-import base64, json, os, re, sys, tempfile, threading, time
+import base64, json, os, re, signal, sys, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -119,6 +119,14 @@ if len(sys.argv) > 2 and sys.argv[1] in ("export", "import") and os.environ.get(
         print("Imported session: %s" % sid)
     sys.exit(0)
 
+# A session's title, in <id>.title: PATCH /session/:id sets it, and a session still
+# untitled at a prompt gets one of OpenCode's own, as its title model writes. A title
+# saying "unwritable" is refused.
+def set_title(sid, title):
+    os.makedirs(SESSIONS, exist_ok=True)
+    with open(os.path.join(SESSIONS, "%s.title" % sid), "w") as f:
+        f.write(title)
+
 def add_message(sid, role, text):
     if PORT:
         with LOCK:
@@ -152,6 +160,11 @@ class Api(BaseHTTPRequestHandler):
             return self.reply(401, {"message": "Unauthorized"})
         path, _, query = self.path.partition("?")
         parts = path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "session" and method == "PATCH":
+            if "unwritable" in ((body or {}).get("title") or ""):
+                return self.reply(500, {"data": {"message": "title not saved"}})
+            set_title(parts[1], (body or {}).get("title"))
+            return self.reply(200, {"id": parts[1], "title": (body or {}).get("title")})
         if len(parts) != 3 or parts[0] != "session":
             return self.reply(404, {"message": "not found"})
         sid, action = parts[1], parts[2]
@@ -167,7 +180,10 @@ class Api(BaseHTTPRequestHandler):
                 for msg in messages(sid):
                     if msg["info"]["id"] == before:
                         break
-                    kept.append(msg)
+                    # A message marked "lostOnFork" is not copied: an OpenCode whose fork
+                    # did not keep what it was asked to.
+                    if not msg["info"].get("lostOnFork"):
+                        kept.append(msg)
                 fork = new_id("ses")
                 for msg in kept:
                     msg["info"] = dict(msg["info"], id=new_id("msg"), sessionID=fork)
@@ -181,9 +197,29 @@ class Api(BaseHTTPRequestHandler):
     def do_POST(self):
         self.handle_any("POST")
 
+    def do_PATCH(self):
+        self.handle_any("PATCH")
+
 if PORT:
     api = ThreadingHTTPServer(("127.0.0.1", PORT), Api)
     threading.Thread(target=api.serve_forever, daemon=True).start()
+
+# A waiting prompt notes this process's pid in `<FAKE_ACP_TRACE>.waiting`; SIGUSR1 then fails
+# it with the JSON-RPC error in `<FAKE_ACP_TRACE>.stop`, as OpenCode fails a prompt whose
+# model request failed.
+def stop_waiting(*_):
+    global waiting
+    if waiting and TRACE and os.path.exists(TRACE + ".stop"):
+        with open(TRACE + ".stop") as f:
+            send({"id": waiting[0], "error": json.load(f)})
+        waiting = None
+
+def note_waiting():
+    if TRACE:
+        with open(TRACE + ".waiting", "w") as f:
+            f.write(str(os.getpid()))
+
+signal.signal(signal.SIGUSR1, stop_waiting)
 
 def steered_end(text):
     """How a waiting prompt's loop ends as a steer lands, if it does."""
@@ -297,6 +333,8 @@ for line in sys.stdin:
         names = json.loads(os.environ.get("FAKE_ACP_MODELS", "null")) or ["Fake/One", "Fake/Two"]
         options = [{"value": n.lower().replace(" ", "-"), "name": n} for n in names]
         result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}
+        # FAKE_ACP_NO_MODEL_SWITCH: the session offers no way to switch models.
+        if os.environ.get("FAKE_ACP_NO_MODEL_SWITCH"): result = {}
         if method == "session/new": result["sessionId"] = sid
         cwds[sid] = params.get("cwd") or os.getcwd()
         # A session in the shared store belongs to the directory it was opened in.
@@ -322,6 +360,8 @@ for line in sys.stdin:
         # ("waiting", ...) must not pick the script.
         text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
         add_message(sid, "user", text)
+        if PORT and not os.path.exists(os.path.join(SESSIONS, "%s.title" % sid)):
+            set_title(sid, "OpenCode's own title")
         if "never answered" in text:
             continue
         if waiting and waiting[1] == sid and waiting[2]:
@@ -413,6 +453,7 @@ for line in sys.stdin:
                          "kind": "execute", "title": "ls", "rawInput": {"command": "ls"},
                          "content": [{"type": "content", "content": {"type": "text", "text": "a.txt\n"}}]})
             waiting = (mid, sid, steered_end(text))
+            note_waiting()
         elif "approve" in text:
             pending = (mid, sid)
             asked += 1

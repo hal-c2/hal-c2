@@ -166,7 +166,7 @@ defmodule HalC2.StorePropTest do
   end
 
   @message_ids ["m1", "m2", "m3"]
-  @read_mark "messages_typed"
+  @read_mark "messages_typed_2"
   @stored_at 1_750_000_000_000
 
   # Texts are built from words that exercise LIKE's wildcards and escape, and mixed case.

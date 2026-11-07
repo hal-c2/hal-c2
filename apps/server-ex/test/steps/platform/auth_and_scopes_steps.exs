@@ -1538,7 +1538,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
              )
 
     # A socket that was still opening when the revoke ran is told to close all the same.
-    GenServer.cast(HalC2.Auth, {:connected, context.device, self()})
+    GenServer.cast(HalC2.Auth, {:connected, context.device, self(), %{}})
     assert_receive {:hal_c2_session_revoked, _}, 5_000
     context
   end
@@ -2091,6 +2091,355 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
        %{args: [result]} = context do
     assert [line] = context.printed
     assert line =~ result
+    context
+  end
+
+  # --- tickets per route (upstream #24554) ----------------------------------------------
+
+  defp buy_ticket(context, path, headers) do
+    assert {200, _, %{"ticket" => ticket}} =
+             Mc.request(context.mc, :post, path, headers: headers)
+
+    ticket
+  end
+
+  # A media stream: the device hub's routes take a ticket and refuse it before reaching a hub.
+  defp media_opens?(context, ticket) do
+    {status, _, _} =
+      Mc.request(
+        context.mc,
+        :get,
+        HalC2.Devices.hub_base_path() <> "/api/devices?wsTicket=#{ticket}"
+      )
+
+    status not in [401, 403]
+  end
+
+  defp rpc_opens?(context, query) do
+    case Mc.ws_client().connect(context.mc.port, "/ws?" <> query) do
+      {:ok, _client} -> true
+      {:error, _} -> false
+    end
+  end
+
+  step ~r/^a client bought a socket ticket for (?<route>the RPC socket|media streams)$/,
+       %{args: [route]} = context do
+    path = if route == "the RPC socket", do: "/rpc", else: "/media"
+    access = standard!(context)
+    ticket = buy_ticket(context, token_path() <> path, [{"authorization", "Bearer #{access}"}])
+    Map.put(context, :ticket, ticket)
+  end
+
+  step ~r/^it opens (?<other>a media stream|the RPC socket) with that ticket$/,
+       %{args: [other]} = context do
+    opened =
+      if other == "a media stream",
+        do: media_opens?(context, context.ticket),
+        else: rpc_opens?(context, "wsTicket=#{context.ticket}")
+
+    Map.put(context, :opened, opened)
+  end
+
+  step "the MC refuses the socket", context do
+    refute context.opened
+    context
+  end
+
+  # Pairs with a DPoP proof: `{key, access}` for a session bound to that key.
+  defp dpop_session!(context) do
+    key = dpop_key()
+    token = HalC2.Auth.create_pairing_token(context.mc.store)
+
+    form = %{
+      "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
+      "subject_token" => token,
+      "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap"
+    }
+
+    proof = dpop_proof(key, "POST", url(context, "/oauth/token"))
+
+    assert {200, _, %{"token_type" => "DPoP", "access_token" => access}} =
+             Mc.request(context.mc, :post, "/oauth/token", form: form, headers: [{"dpop", proof}])
+
+    {key, access}
+  end
+
+  step "a DPoP client bought an RPC socket ticket", context do
+    {key, access} = dpop_session!(context)
+    path = token_path() <> "/rpc"
+    proof = dpop_proof(key, "POST", url(context, path), access)
+    ticket = buy_ticket(context, path, dpop_headers(access, proof))
+    Map.merge(context, %{key: key, access: access, ticket: ticket})
+  end
+
+  step ~r/^the socket is opened with (?<proof>a fresh proof from the client's key|no proof|a proof from another key|a proof that was already used)$/,
+       %{args: [proof]} = context do
+    socket_proof = &dpop_proof(&1, "GET", url(context, "/ws"), context.ticket)
+
+    query =
+      case proof do
+        "a fresh proof from the client's key" ->
+          "&dpop=" <> socket_proof.(context.key)
+
+        "no proof" ->
+          ""
+
+        "a proof from another key" ->
+          "&dpop=" <> socket_proof.(dpop_key())
+
+        "a proof that was already used" ->
+          used = socket_proof.(context.key)
+          {:ok, _} = HalC2.Auth.Dpop.verify(used, "GET", url(context, "/ws"))
+          "&dpop=" <> used
+      end
+
+    Map.put(context, :opened, rpc_opens?(context, "wsTicket=#{context.ticket}" <> query))
+  end
+
+  step ~r/^the MC (?<answer>opens the socket|refuses it)$/, %{args: [answer]} = context do
+    assert context.opened == (answer == "opens the socket")
+    context
+  end
+
+  step "an older client bought a socket ticket without naming a route", context do
+    access = standard!(context)
+    headers = [{"authorization", "Bearer #{access}"}]
+    tickets = for _ <- 1..2, do: buy_ticket(context, token_path(), headers)
+    Map.put(context, :tickets, tickets)
+  end
+
+  step "it can open the RPC socket or a media stream with it", context do
+    [rpc, media] = context.tickets
+    assert rpc_opens?(context, "wsTicket=#{rpc}")
+    assert media_opens?(context, media)
+    context
+  end
+
+  # --- schemes and locales (upstream #23782, #19616, #30337) ---------------------------
+
+  step ~r/^a local tool sends the MC's access token with the scheme "(?<scheme>[^"]+)"$/,
+       %{args: [scheme]} = context do
+    # A paired client's token is read the same way as the MC's own.
+    responses =
+      for token <- [HalC2.Web.token(), standard!(context)] do
+        Mc.request(context.mc, :get, "/api/auth/session",
+          headers: [{"authorization", "#{scheme} #{token}"}]
+        )
+      end
+
+    Map.put(context, :responses, responses)
+  end
+
+  step "the MC says it is authenticated", context do
+    for response <- context.responses,
+        do: assert({200, _, %{"authenticated" => true}} = response)
+
+    context
+  end
+
+  step "a client holds a DPoP-bound access token and a fresh proof from its key", context do
+    {key, access} = dpop_session!(context)
+    Map.merge(context, %{key: key, access: access})
+  end
+
+  step ~r/^it sends the token with the scheme "(?<scheme>[^"]+)"$/,
+       %{args: [scheme]} = context do
+    # A proof names its method, URL and token, so the fresh one is made for this request.
+    proof = dpop_proof(context.key, "GET", url(context, "/api/auth/session"), context.access)
+
+    response =
+      Mc.request(context.mc, :get, "/api/auth/session",
+        headers: [{"authorization", "#{scheme} #{context.access}"}, {"dpop", proof}]
+      )
+
+    Map.merge(context, %{responses: [response], scheme: scheme})
+  end
+
+  step "a refused request is challenged for DPoP whatever the scheme's case", context do
+    # No proof, on a route that answers 401 (the session route answers 200 unauthenticated).
+    assert {401, headers, %{"reason" => "invalid_credential"}} =
+             Mc.request(context.mc, :post, token_path(),
+               headers: [{"authorization", "#{context.scheme} #{context.access}"}]
+             )
+
+    assert {"www-authenticate", "DPoP"} in headers
+    context
+  end
+
+  step ~r/^an agent calls the MCP server with (?<authorization>no Authorization header|a Basic credential|the scheme "Bearer", no token|an expired token)$/,
+       %{args: [authorization]} = context do
+    Mc.ensure(HalC2.Mcp)
+    context = context |> World.create_project("Work") |> World.create_thread("Agent work")
+
+    %{authorization: "Bearer " <> token} =
+      HalC2.Mcp.server(World.thread_id(context, "Agent work"), "codex")
+
+    headers =
+      case authorization do
+        "no Authorization header" ->
+          []
+
+        "a Basic credential" ->
+          [{"authorization", "Basic #{token}"}]
+
+        "the scheme \"Bearer\", no token" ->
+          [{"authorization", "Bearer"}]
+
+        "an expired token" ->
+          # An idle agent's credential lapses after a day (`HalC2.Mcp`'s liveness window).
+          a_day_ago = System.monotonic_time(:millisecond) - :timer.hours(25)
+          :ets.update_element(HalC2.Mcp.Credentials, token, {3, a_day_ago})
+          [{"authorization", "bEaReR #{token}"}]
+      end
+
+    request = %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}
+    response = Mc.request(context.mc, :post, "/mcp", headers: headers, json: request)
+    Map.merge(context, %{response: response, mcp_token: token})
+  end
+
+  step ~r/^it is refused as (?<reason>a missing credential|an unsupported scheme|an empty credential|an unknown or expired token)$/,
+       %{args: [reason]} = context do
+    code =
+      %{
+        "a missing credential" => "missing_authorization_header",
+        "an unsupported scheme" => "unsupported_scheme",
+        "an empty credential" => "missing_bearer_token",
+        "an unknown or expired token" => "unknown_or_expired_token"
+      }[reason]
+
+    assert {401, _, %{"error" => "invalid_mcp_credential", "reason" => ^code}} = context.response
+    context
+  end
+
+  step "the refusal does not contain the credential", context do
+    {_, headers, body} = context.response
+    refute inspect({headers, body}) =~ context.mcp_token
+    context
+  end
+
+  @locales ~w(lv_LV.UTF-8 lt_LT.UTF-8 eu_ES.UTF-8 az_AZ.UTF-8)
+
+  step "the MC runs under a Latvian, Lithuanian, Basque or Azerbaijani locale", context do
+    saved = Map.new(~w(LC_ALL LC_COLLATE LANG), &{&1, System.get_env(&1)})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {name, value} <- saved,
+          do: if(value, do: System.put_env(name, value), else: System.delete_env(name))
+    end)
+
+    # The thumbprint is RFC 7638's: the required members in lexicographic order, which
+    # no collation may reorder.
+    {jwk, _} = dpop_key()
+
+    canonical =
+      ~s({"crv":"#{jwk["crv"]}","kty":"#{jwk["kty"]}","x":"#{jwk["x"]}","y":"#{jwk["y"]}"})
+
+    expected = Base.url_encode64(:crypto.hash(:sha256, canonical), padding: false)
+
+    for locale <- @locales do
+      System.put_env(%{"LC_ALL" => locale, "LC_COLLATE" => locale, "LANG" => locale})
+      assert HalC2.Auth.Dpop.thumbprint(jwk) == expected
+    end
+
+    context
+  end
+
+  # --- pairing by hand, what a client reported, offline access ------------------------
+
+  step "the MC mints a pairing token", context do
+    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.mc.store))
+  end
+
+  step "it is 12 characters long", context do
+    assert String.length(context.token) == 12
+    context
+  end
+
+  step "it uses no characters that look alike, such as 0 and O or 1 and I", context do
+    assert context.token =~ ~r/\A[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{12}\z/
+    # Typed by hand, it pairs in either letter case.
+    assert {200, %{"access_token" => _}} =
+             Mc.exchange(context.mc, " " <> String.downcase(context.token) <> " ")
+
+    context
+  end
+
+  defp client_row(session_id) do
+    Enum.find(HalC2.Auth.clients(), &(&1["sessionId"] == session_id))["client"]
+  end
+
+  defp report_connect(context, query) do
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(context.access_token)
+    Mc.connect(context.mc, "wsTicket=#{ticket}&" <> query)
+    context
+  end
+
+  step "it opens a socket reporting its surface and app version", context do
+    report_connect(context, "clientSurface=mobile&clientAppVersion=1.2.3")
+  end
+
+  step "the authorized clients list shows that surface and version for it", context do
+    assert %{"surface" => "mobile", "appVersion" => "1.2.3"} =
+             client_row(session_id(context.access_token))
+
+    context
+  end
+
+  step "a later connection that reports only a version keeps the surface it reported before",
+       context do
+    report_connect(context, "clientAppVersion=1.2.4")
+
+    assert %{"surface" => "mobile", "appVersion" => "1.2.4"} =
+             client_row(session_id(context.access_token))
+
+    context
+  end
+
+  step "a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address",
+       context do
+    # A dual-stack listener reports an IPv4 peer as ::ffff:127.0.0.1.
+    host = Application.get_env(:hal_c2, :host)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if host,
+        do: Application.put_env(:hal_c2, :host, host),
+        else: Application.delete_env(:hal_c2, :host)
+    end)
+
+    Application.put_env(:hal_c2, :host, "::")
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert {:ok, {{0, 0, 0, 0, 0, 0, 0, 0}, _}} = ThousandIsland.listener_info(HalC2.Web.Listener)
+    Map.put(context, :access, standard!(context))
+  end
+
+  step "the authorized clients list shows the plain IPv4 address", context do
+    assert %{"ipAddress" => "127.0.0.1"} = client_row(session_id(context.access))
+    context
+  end
+
+  step "the MC is not running", context do
+    # A client paired earlier, so there is a session to list.
+    id = session_id(standard!(context))
+    Mc.stop(context.mc)
+    refute Process.whereis(HalC2.Auth)
+    Map.put(context, :listed, id)
+  end
+
+  step "an operator mints a pairing link and lists sessions from the command line", context do
+    assert [link, _expires] = mix_output(Mix.Tasks.HalC2.Pair, ["http://192.168.1.5:3780"])
+    Map.merge(context, %{link: link, printed: auth_cli(["session", "list"])})
+  end
+
+  step "both commands work against the MC's stored access records", context do
+    assert String.starts_with?(context.link, "http://192.168.1.5:3780/?token=")
+    assert Enum.any?(context.printed, &String.starts_with?(&1, context.listed <> "\t"))
+    context
+  end
+
+  step "the minted link works once the MC starts", context do
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    token = context.link |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
+    assert {200, %{"access_token" => _}} = Mc.exchange(context.mc, token["token"])
     context
   end
 end

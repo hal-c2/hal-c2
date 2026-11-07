@@ -484,6 +484,20 @@ defmodule HalC2.AuthTest do
     assert File.read!(outside) == "- buy eggs\n"
   end
 
+  test "a malformed client report is left out instead of failing the upgrade" do
+    assert HalC2.Auth.client_report(%{
+             "clientAppVersion" => ["1.0"],
+             "clientSurface" => %{"a" => "b"}
+           }) ==
+             %{surface: nil, app_version: nil}
+
+    assert HalC2.Auth.client_report(%{
+             "clientAppVersion" => " 1.2.3 ",
+             "clientSurface" => "desktop"
+           }) ==
+             %{surface: "desktop", app_version: "1.2.3"}
+  end
+
   test "a desktop bootstrap line sets where the MC listens and keeps its state" do
     previous = for key <- [:home, :port, :host], do: {key, Application.fetch_env(:hal_c2, key)}
 

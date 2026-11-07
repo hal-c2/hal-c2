@@ -485,6 +485,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     with {:ok, state} <- connect(state, turn),
          {:ok, state} <- ensure_native_thread(state, turn),
+         state = Map.delete(state, :fresh_start),
          {:ok, %{"thread" => %{"id" => id}}} <- rewind(state, plan) do
       {:reply, {:ok, %{"nativeThreadRef" => Entities.provider_ref(id)}},
        %{state | native_thread_id: id}}
@@ -1223,8 +1224,13 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # A thread Codex no longer has starts afresh with the whole thread
+  # (`HalC2.Orchestration.Handoff.fresh_start/2`).
   defp open_thread(state, turn) do
-    with {:ok, state} <- ensure_native_thread(state, turn), do: {:ok, state, turn}
+    with {:ok, state} <- ensure_native_thread(state, turn) do
+      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
+      {:ok, state, turn}
+    end
   end
 
   defp not_carried(state, turn, reason) do
@@ -1362,8 +1368,11 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:error, reason} when turn.native_thread_id != nil ->
         if recoverable_resume?(reason) do
           case Connection.call(state.conn, "thread/start", params) do
-            {:ok, %{"thread" => %{"id" => id}}} -> {:ok, %{state | native_thread_id: id}}
-            {:error, reason} -> {:error, reason, state}
+            {:ok, %{"thread" => %{"id" => id}}} ->
+              {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
+
+            {:error, reason} ->
+              {:error, reason, state}
           end
         else
           {:error, reason, state}

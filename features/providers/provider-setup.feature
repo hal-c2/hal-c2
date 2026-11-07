@@ -587,7 +587,7 @@ Feature: Provider setup, updates and sign-in
     Then running threads sharing that sign-in stop
     And thread history is kept
 
-  @desktop @mobile @backlog-mobile @backlog-mc @priority-low
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-low @backlog-desktop
   Scenario: The signed-in email is hidden until the user reveals it
     Given a provider is signed in as "me@example.com"
     When the user opens the provider

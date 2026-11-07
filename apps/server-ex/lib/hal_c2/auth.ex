@@ -84,7 +84,12 @@ defmodule HalC2.Auth do
     # The DPoP key thumbprint a session is bound to, or NULL for a bearer session.
     {"auth_sessions", "proof_jkt", "TEXT"},
     # What made the session: pairing, desktop-bootstrap or reusable-dev-token-child.
-    {"auth_sessions", "subject", "TEXT"}
+    {"auth_sessions", "subject", "TEXT"},
+    # The address the client paired from, IPv4 unwrapped from an IPv4-mapped IPv6 one.
+    {"auth_sessions", "ip_address", "TEXT"},
+    # What the client last reported on connecting (`connected/2`).
+    {"auth_sessions", "surface", "TEXT"},
+    {"auth_sessions", "app_version", "TEXT"}
   ]
 
   # The heir starts first, and a restart of it takes this server with it.
@@ -232,11 +237,11 @@ defmodule HalC2.Auth do
   """
   @spec authenticate(Plug.Conn.t()) :: {:ok, map} | {:error, String.t(), atom | nil}
   def authenticate(%Plug.Conn{} = conn) do
-    case Plug.Conn.get_req_header(conn, "authorization") do
-      [] ->
+    case conn |> Plug.Conn.get_req_header("authorization") |> List.first() |> credential() do
+      :missing ->
         {:error, "missing_credential", nil}
 
-      ["Bearer " <> token] ->
+      {"bearer", token} when token != "" ->
         if HalC2.Web.access_token?(token) do
           {:ok, local_session()}
         else
@@ -246,7 +251,7 @@ defmodule HalC2.Auth do
           end
         end
 
-      ["DPoP " <> token] ->
+      {"dpop", token} when token != "" ->
         with {:ok, %{proof_jkt: jkt} = session} when is_binary(jkt) <- session(token),
              proof = conn |> Plug.Conn.get_req_header("dpop") |> List.first(),
              {:ok, _} <-
@@ -262,6 +267,20 @@ defmodule HalC2.Auth do
 
       _ ->
         {:error, "invalid_credential", nil}
+    end
+  end
+
+  @doc """
+  An Authorization header as `{scheme, credential}`, the scheme lowercased since schemes
+  are case-insensitive (RFC 9110 section 11.1), or `:missing` for no header.
+  """
+  @spec credential(String.t() | nil) :: :missing | {String.t(), String.t()}
+  def credential(nil), do: :missing
+
+  def credential(header) do
+    case String.split(String.trim(header), " ", parts: 2) do
+      [scheme, credential] -> {String.downcase(scheme), String.trim(credential)}
+      [scheme] -> {String.downcase(scheme), ""}
     end
   end
 
@@ -283,13 +302,24 @@ defmodule HalC2.Auth do
     end
   end
 
-  @doc "A WebSocket ticket for an access token, or for a session `request_session/1` found."
-  @spec issue_ticket(String.t() | map) :: {:ok, String.t(), integer} | :error
-  def issue_ticket(%{id: id} = session) do
+  @doc """
+  A WebSocket ticket for an access token, or for a session `request_session/1` found.
+  `use` names the route it opens: `:rpc` (the client socket, `/ws`), `:media` (the
+  device hub's streams and images, `ticket_scopes/1`), or nil for either, as clients
+  that predate routes buy them. A DPoP session's RPC ticket is bound to its key, so the
+  socket needs a fresh proof from it (`take_ticket/3`). Media tickets stay unbound: one
+  serves every image and stream of a panel.
+  """
+  @spec issue_ticket(String.t() | map, nil | :rpc | :media) ::
+          {:ok, String.t(), integer} | :error
+  def issue_ticket(session_or_token, use \\ nil)
+
+  def issue_ticket(%{id: id} = session, use) do
     ticket = random_token()
     # A ticket never outlives the session it opens a socket for.
     expires_at = min(now() + @ticket_ttl, session[:expires_at] || @dev_expires_at)
-    :ets.insert(@tickets, {ticket, expires_at, id})
+    jkt = if use == :rpc, do: session[:proof_jkt]
+    :ets.insert(@tickets, {ticket, expires_at, id, use, jkt})
 
     # The session may have been revoked after this request read it, and the revoke may
     # have swept the tickets before this one was inserted: so check once it is in.
@@ -301,8 +331,8 @@ defmodule HalC2.Auth do
     end
   end
 
-  def issue_ticket(access_token) do
-    with {:ok, session} <- session(access_token), do: issue_ticket(session)
+  def issue_ticket(access_token, use) do
+    with {:ok, session} <- session(access_token), do: issue_ticket(session, use)
   end
 
   @doc """
@@ -333,17 +363,38 @@ defmodule HalC2.Auth do
   """
   def revoke_session(path, id), do: revoke(path, "id = ?1", [id]) != []
 
-  @doc "Consumes a WebSocket ticket; each ticket opens one socket, for its session."
-  @spec take_ticket(String.t()) :: {:ok, String.t() | nil} | :error
-  def take_ticket(ticket) do
-    case :ets.take(@tickets, ticket) do
-      [{_, expires_at, session_id}] -> if expires_at > now(), do: {:ok, session_id}, else: :error
-      [] -> :error
+  @doc """
+  Consumes a ticket that opens the client socket; each ticket opens one socket, for its
+  session. A ticket bound to a DPoP key needs `proof`, `{dpop_proof, method, url}` of the
+  upgrade request, signed by that key and naming the ticket (`ath`). A refused ticket
+  stays usable by its owner.
+  """
+  @spec take_ticket(String.t(), {String.t(), String.t(), String.t()} | nil) ::
+          {:ok, String.t() | nil} | :error
+  def take_ticket(ticket, proof \\ nil) do
+    now = now()
+
+    with [{_, expires_at, session_id, use, jkt}] when expires_at > now and use != :media <-
+           :ets.lookup(@tickets, ticket),
+         :ok <- ticket_proof(jkt, ticket, proof),
+         [_] <- :ets.take(@tickets, ticket) do
+      {:ok, session_id}
+    else
+      _ -> :error
     end
   end
 
+  defp ticket_proof(nil, _ticket, _proof), do: :ok
+  defp ticket_proof(_jkt, _ticket, nil), do: :error
+
+  defp ticket_proof(jkt, ticket, {proof, method, url}) do
+    with {:ok, _} <-
+           HalC2.Auth.Dpop.verify(proof, method, url, thumbprint: jkt, access_token: ticket),
+         do: :ok
+  end
+
   @doc """
-  A WebSocket ticket's session scopes, leaving the ticket usable: `{:ok, scopes}`.
+  A media ticket's session scopes, leaving the ticket usable: `{:ok, scopes}`.
   The device hub proxy (`HalC2.Devices.Proxy`) authenticates every stream and image
   of a Device panel with one ticket.
   """
@@ -352,17 +403,21 @@ defmodule HalC2.Auth do
     now = now()
 
     case :ets.lookup(@tickets, ticket) do
-      [{_, expires_at, _}] when expires_at <= now ->
+      [{_, expires_at, _, _, _}] when expires_at <= now ->
+        :error
+
+      # An RPC ticket opens only the client socket.
+      [{_, _, _, :rpc, _}] ->
         :error
 
       # A ticket bought with the MC's access token (`local_session/0`).
-      [{_, _, nil}] ->
+      [{_, _, nil, _, _}] ->
         {:ok, @admin_scopes}
 
-      [{_, _, session_id}] ->
+      [{_, _, session_id, _, _}] ->
         session_scopes(session_id)
 
-      [] ->
+      _ ->
         :error
     end
   end
@@ -395,8 +450,47 @@ defmodule HalC2.Auth do
     end)
   end
 
-  @doc "Called by a socket of `session_id` once open; it counts as connected until it exits."
-  def connected(session_id), do: GenServer.cast(__MODULE__, {:connected, session_id, self()})
+  @doc """
+  Called by a socket of `session_id` once open; it counts as connected until it exits.
+  `client` is what it reported on the upgrade URL (`client_report/1`); what it left out
+  keeps what an earlier connection reported.
+  """
+  def connected(session_id, client \\ %{}),
+    do: GenServer.cast(__MODULE__, {:connected, session_id, self(), client})
+
+  @surfaces ~w(web desktop mobile cli)
+
+  @doc """
+  The surface and app version a client reports next to its ticket, `clientSurface` and
+  `clientAppVersion`, as `%{surface:, app_version:}`: unknown surfaces and blank or
+  over-long versions are left out, as upstream's server does.
+  """
+  def client_report(params) do
+    # A query like `clientAppVersion[]=x` parses to a list; only a string is a version.
+    version =
+      case params["clientAppVersion"] do
+        v when is_binary(v) -> String.trim(v)
+        _ -> ""
+      end
+
+    %{
+      surface: if(params["clientSurface"] in @surfaces, do: params["clientSurface"]),
+      app_version: if(version != "" and String.length(version) <= 64, do: version)
+    }
+  end
+
+  # The address a request came from as clients list it, IPv4 unwrapped.
+  defp client_address(nil), do: nil
+
+  defp client_address(ip) do
+    ip =
+      case ip do
+        {0, 0, 0, 0, 0, 0xFFFF, _, _} -> :inet.ipv4_mapped_ipv6_address(ip)
+        ip -> ip
+      end
+
+    to_string(:inet.ntoa(ip))
+  end
 
   @doc """
   What people call the device of `session_id`, or nil: its label, else its device type,
@@ -705,7 +799,7 @@ defmodule HalC2.Auth do
   end
 
   @impl true
-  def handle_cast({:connected, id, socket}, state) do
+  def handle_cast({:connected, id, socket, client}, state) do
     # The socket read its session before it connected, so a revoke may have come first:
     # it is told to close, as the sockets open at a revoke are.
     if session_exists?(state.path, id) do
@@ -713,7 +807,11 @@ defmodule HalC2.Auth do
       :ets.insert(@live, {{:socket, socket}, id})
 
       with_db(state.path, fn db ->
-        exec(db, "UPDATE auth_sessions SET last_connected_at = ?1 WHERE id = ?2", [now(), id])
+        exec(
+          db,
+          "UPDATE auth_sessions SET last_connected_at = ?1, surface = COALESCE(?3, surface), app_version = COALESCE(?4, app_version) WHERE id = ?2",
+          [now(), id, client[:surface], client[:app_version]]
+        )
       end)
 
       {:noreply, broadcast(state, client_events(state, id))}
@@ -774,7 +872,12 @@ defmodule HalC2.Auth do
 
     # Counted first: a ticket never outlives its session, so the ones of a session that
     # ran out are among the expired, and `drop_tickets/1` would leave nothing to count.
-    tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
+    # Three-element tickets are from before tickets named their route.
+    tickets =
+      :ets.select_delete(@tickets, [
+        {{:_, :"$1", :_, :_, :_}, [{:"=<", :"$1", now}], [true]},
+        {{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}
+      ])
 
     # A session that ran out takes the sockets it opened with it.
     drop_tickets(expired)
@@ -801,7 +904,8 @@ defmodule HalC2.Auth do
          proof_jkt,
          kind
        ) do
-    token = random_token()
+    # A cluster invite is pasted by an operator between machines and admits an MC.
+    token = if kind == "cluster-invite", do: random_token(), else: pairing_token()
     id = "pairing-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
     created = now()
 
@@ -845,7 +949,7 @@ defmodule HalC2.Auth do
                  AND (kind IS NULL OR kind = 'pairing-link')
                RETURNING expires_at, id, scopes
                """,
-               [hash(token), client[:proof_jkt]]
+               [hash(typed(token)), client[:proof_jkt]]
              ) do
           [[expires_at, id, scopes]] when expires_at > 0 ->
             removed = [event("pairingLinkRemoved", %{"id" => id})]
@@ -869,8 +973,8 @@ defmodule HalC2.Auth do
     exec(
       db,
       """
-      INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, os, user_agent, proof_jkt, subject)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+      INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, os, user_agent, proof_jkt, subject, ip_address)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
       """,
       [
         hash(access),
@@ -883,7 +987,8 @@ defmodule HalC2.Auth do
         client[:os],
         client[:user_agent],
         client[:proof_jkt],
-        subject
+        subject,
+        client_address(client[:ip])
       ]
     )
 
@@ -956,10 +1061,10 @@ defmodule HalC2.Auth do
   defp online(_state), do: MapSet.new(:ets.match(@live, {{:socket, :_}, :"$1"}), &hd/1)
 
   defp session_rows(db, online, where, args) do
-    for [id, scopes, label, created, expires, last, device, os, agent, jkt] <-
+    for [id, scopes, label, created, expires, last, device, os, agent, jkt, ip, surface, version] <-
           query(
             db,
-            "SELECT id, scopes, label, created_at, expires_at, last_connected_at, device_type, os, user_agent, proof_jkt FROM auth_sessions WHERE #{where} ORDER BY created_at",
+            "SELECT id, scopes, label, created_at, expires_at, last_connected_at, device_type, os, user_agent, proof_jkt, ip_address, surface, app_version FROM auth_sessions WHERE #{where} ORDER BY created_at",
             args
           ) do
       %{
@@ -971,7 +1076,10 @@ defmodule HalC2.Auth do
           %{"deviceType" => device || device_type(agent)}
           |> put_present("label", label)
           |> put_present("os", os)
-          |> put_present("userAgent", agent),
+          |> put_present("userAgent", agent)
+          |> put_present("ipAddress", ip)
+          |> put_present("surface", surface)
+          |> put_present("appVersion", version),
         "issuedAt" => iso(created),
         "expiresAt" => iso(expires),
         "lastConnectedAt" => last && iso(last),
@@ -996,7 +1104,7 @@ defmodule HalC2.Auth do
   # The tickets a revoked session already bought go with it: a ticket opens a socket
   # for its session, so one outliving the session would let a revoked client in.
   defp drop_tickets(ids) do
-    for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id})
+    for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id, :_, :_})
     ids
   end
 
@@ -1102,6 +1210,26 @@ defmodule HalC2.Auth do
   defp put_present(map, key, value), do: Map.put(map, key, value)
 
   defp random_token, do: Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+
+  @pairing_alphabet "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+  # Twelve characters a person can type from another screen, with no look-alikes such as
+  # 0 and O or 1 and I (upstream's alphabet). 32 symbols divide a byte evenly, so each is
+  # equally likely: 60 bits, for a credential that works once and briefly.
+  defp pairing_token,
+    do:
+      for(<<b <- :crypto.strong_rand_bytes(12)>>,
+        into: "",
+        do: <<:binary.at(@pairing_alphabet, rem(b, 32))>>
+      )
+
+  # A hand-typed pairing token in any letter case. Tokens minted before these were
+  # 43 case-sensitive characters, so only the twelve-character form is folded.
+  defp typed(token) do
+    upper = token |> String.trim() |> String.upcase()
+    if upper =~ ~r/\A[2-9A-HJ-NP-Z]{12}\z/, do: upper, else: token
+  end
+
   defp hash(token), do: Base.encode16(:crypto.hash(:sha256, token), case: :lower)
 
   @doc """

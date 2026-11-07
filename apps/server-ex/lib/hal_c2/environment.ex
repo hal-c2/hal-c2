@@ -290,10 +290,9 @@ defmodule HalC2.Environment do
   defp with_identity(entry), do: entry
 
   defp builtin_providers do
-    for(
-      entry <- HalC2.Codex.Provider.entries() ++ HalC2.Claude.Provider.entries(),
-      do: HalC2.ProviderUpdates.put_state(entry)
-    ) ++ HalC2.Acp.entries()
+    for entry <-
+          HalC2.Codex.Provider.entries() ++ HalC2.Claude.Provider.entries() ++ HalC2.Acp.entries(),
+        do: HalC2.ProviderUpdates.put_state(entry)
   end
 
   # The model ids the user added in settings (`customModels`: bare slugs or

@@ -4,8 +4,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   on the fake CLI in `test/support/fake_claude.py`: turns on one model or another,
   with fast mode on, off or unset, that say hello, leave a subagent and a command
   running in the background, put Claude's own session in plan mode (EnterPlanMode), or
-  ask which mode the session runs in, or that Claude acknowledges without ever starting
-  a turn for; and the user stopping the thread between turns.
+  ask which mode the session runs in, compact the conversation (`/compact`), or that
+  Claude acknowledges without ever starting a turn for; and the user stopping the
+  thread between turns. Every resumed process first runs a turn of its own, reporting a
+  background task the previous one left behind.
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
@@ -13,6 +15,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   survives it. Stopping between turns ends the background work with its process. Plan
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, and keeps the process.
+  A turn Claude runs by itself never ends the user's: each turn ends on its own result,
+  and `/compact` once its compaction is in.
   """
 
   use ExUnit.Case, async: false
@@ -30,6 +34,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     background: "survey in the background",
     enter_plan: "enter plan mode yourself",
     which_mode: "which mode",
+    compact: "/compact",
     never_start: "never start a turn"
   }
   @fake_claude Path.expand("../../test/support/fake_claude.py", __DIR__)
@@ -44,6 +49,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
+        System.delete_env("FAKE_CLAUDE_ORPHANED")
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -58,6 +64,7 @@ defmodule HalC2.ClaudeSessionPropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
+    System.put_env("FAKE_CLAUDE_ORPHANED", "task-agent-1")
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -145,10 +152,13 @@ defmodule HalC2.ClaudeSessionPropTest do
           seen.background == state.background
 
       true ->
+        # A turn ends on its own answer, not on the one a turn of Claude's own gave.
         seen.status == "completed" and
           seen.reused == (state.session and state.launch == {model, fast == true}) and
           seen.background == (state.background or text == :background) and
-          (text != :which_mode or seen.reply == "mode bypassPermissions")
+          (text != :which_mode or seen.reply == "mode bypassPermissions") and
+          (text != :hello or seen.reply == "Hello from claude") and
+          seen.compactions == if(text == :compact, do: 1, else: 0)
     end
   end
 
@@ -184,17 +194,17 @@ defmodule HalC2.ClaudeSessionPropTest do
     run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
     state = current(@tid)
 
-    reply =
-      for %{"type" => "assistant_message"} = item <-
-            Enum.sort_by(StreamState.list(state, "turn-item"), & &1["ordinal"]),
+    items =
+      for item <- Enum.sort_by(StreamState.list(state, "turn-item"), & &1["ordinal"]),
           item["runId"] == run["id"],
-          do: item["text"]
+          do: item
 
     %{
       status: run["status"],
       reused: session != nil and session() == session,
       background: background?(),
-      reply: List.last(reply)
+      reply: List.last(for %{"type" => "assistant_message"} = item <- items, do: item["text"]),
+      compactions: Enum.count(items, &(&1["type"] == "compaction"))
     }
   end
 

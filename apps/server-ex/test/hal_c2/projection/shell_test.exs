@@ -94,6 +94,7 @@ defmodule HalC2.Projection.ShellTest do
              "settledOverride" => nil,
              "pullRequests" => [],
              "pendingBackgroundTasks" => [],
+             "runningBackgroundTasks" => [],
              "providerInstanceHistory" => [],
              "itemCount" => 0,
              "modelSelection" => %{"instanceId" => "claude", "model" => "opus"},
@@ -104,6 +105,40 @@ defmodule HalC2.Projection.ShellTest do
     # Optional fields the thread never had are omitted, not null.
     refute Map.has_key?(shell, "historyOrigin")
     refute Map.has_key?(shell, "linkedPullRequest")
+  end
+
+  test "the latest message the user typed passes over wakes, agents and schedules" do
+    message = fn id, at, extra ->
+      Map.merge(
+        %{
+          "id" => id,
+          "threadId" => "thread-1",
+          "role" => "user",
+          "text" => id,
+          "createdAt" => at,
+          "updatedAt" => at
+        },
+        extra
+      )
+    end
+
+    shell =
+      Shell.thread_shell(
+        state([
+          {"thread", @thread},
+          {"message",
+           message.("typed", "2026-09-01T10:01:00.000Z", %{"senderThreadId" => :null})},
+          {"message", message.("wake", "2026-09-01T10:02:00.000Z", %{"providerWake" => %{}})},
+          {"message",
+           message.("agent", "2026-09-01T10:03:00.000Z", %{"senderThreadId" => "t-2"})},
+          {"message",
+           message.("schedule", "2026-09-01T10:04:00.000Z", %{"scheduledTaskId" => "s-1"})}
+        ])
+      )
+
+    assert shell["latestUserAuthoredMessageAt"] == "2026-09-01T10:01:00.000Z"
+    assert shell["latestUserMessageAt"] == "2026-09-01T10:04:00.000Z"
+    assert Shell.thread_shell(state([{"thread", @thread}]))["latestUserAuthoredMessageAt"] == nil
   end
 
   test "the activity run is the newest active one, and waiting counts only as activity" do

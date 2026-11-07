@@ -5,7 +5,7 @@
 Feature: Desktop shell scenarios: header
   Executable scenarios for the native desktop header, driven through the shell's test double.
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: The header's terminal toggle opens and closes the terminal drawer
     Given the thread can open a terminal
     When the user toggles the terminal from the header

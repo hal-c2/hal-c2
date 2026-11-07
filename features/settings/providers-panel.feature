@@ -734,6 +734,8 @@ Feature: Providers settings panel
         | Resetting | reset  | the built-in "codex"    |
         | Deleting  | delete | the custom "Codex Work" |
 
+    # Upstream #29480: when resetting a provider that is off by default would turn it off, the
+    # confirmation says so.
     @backlog @shared @priority-low
     Scenario: Resetting a provider that is off by default says it will turn off
       Given Antigravity, which is off by default, is turned on and edited
