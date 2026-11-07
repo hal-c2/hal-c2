@@ -814,11 +814,12 @@ Feature: Worktrees and setup scripts
     And the user can send again to retry
 
   # Each would only fail the same way, so the rest of the queue waits, as it does behind a usage limit.
+  # A message sent now would wait behind them too, so the error says to resume the queue, not to send again.
   @mc
   Scenario: Messages queued behind a worktree that cannot be made again wait for the user
     Given the agent is working in the worktree of "Fix checkout" with two messages queued behind it
     And the worktree was deleted and making it again fails
     When the agent's turn ends
-    Then the first queued message fails, saying the worktree could not be made
+    Then the first queued message fails, saying the worktree could not be made and to resume the queue
     And the other one waits in the queue instead of starting
     And it starts once the worktree can be made and the user resumes the queue

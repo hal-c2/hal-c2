@@ -1821,6 +1821,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     assert item["title"] == "Worktree could not be made"
     assert message =~ ~s("#{branch}")
     assert message =~ path
+    assert message =~ "Send the message again to retry."
     refute message =~ ~r/fatal|already|git worktree/i
     context
   end
@@ -1868,13 +1869,16 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
-  step "the first queued message fails, saying the worktree could not be made", context do
+  step "the first queued message fails, saying the worktree could not be made and to resume the queue",
+       context do
     [first, _] = context.queued
     state = World.await_thread(context, context.thread, &(run_status(&1, first) == "failed"))
     run = HalC2.StreamState.get(state, "run")[first]
     assert run["startedAt"] == nil
     item = await_error_item(World.thread_id(context, context.thread))
     assert item["title"] == "Worktree could not be made"
+    assert item["failure"]["message"] =~ "Resume the queue to retry."
+    refute item["failure"]["message"] =~ "Send the message again"
     context
   end
 

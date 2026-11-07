@@ -1449,9 +1449,8 @@ defmodule HalC2.Orchestration do
            %{
              "class" => "unknown",
              "code" => "worktree_unavailable",
-             "message" =>
-               "Could not make the worktree of \"#{branch}\" again at #{path}. " <>
-                 "Send the message again to retry.",
+             # How to retry is the turn's end's to say (`TurnWriter`): it may hold a queue.
+             "message" => "Could not make the worktree of \"#{branch}\" again at #{path}.",
              "retryable" => true
            }}
       end
