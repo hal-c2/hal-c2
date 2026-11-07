@@ -1,7 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23803
+#   https://github.com/pingdotgg/t3code/pull/21114
+#   https://github.com/pingdotgg/t3code/pull/22915
 #   https://github.com/pingdotgg/t3code/pull/17457
 #   https://github.com/pingdotgg/t3code/pull/17867
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/25005
 #   docs/user/thread-sidebar.md (Inspect agent work: Limited, Resume at reset, Snooze until reset)
 #   apps/web/src/components/ChatView.tsx (limit recovery)
 #   apps/web/src/components/settings/SettingsPanels.tsx (Auto-resume limited threads, Snooze limited threads)
@@ -38,6 +42,15 @@ Feature: Threads stopped by a usage limit
     Given "Port tests" stopped on a usage limit
     When the user opens "Port tests"
     Then the conversation says the thread stopped on a usage limit
+
+  # Upstream #22915: the composer's limit banner wrote the reset time in the system's long
+  # form, ignoring Time format, while the timeline row above it followed it.
+  @backlog @shared @priority-low
+  Scenario: The reset time is written in the chosen time format
+    Given the user set the time format to "24-hour"
+    And "Port tests" stopped on a usage limit that resets tomorrow at 17:30
+    When the user opens "Port tests"
+    Then the composer says the limit resets tomorrow at 17:30
 
   @mc
   Scenario: Resuming at the reset time
@@ -76,6 +89,22 @@ Feature: Threads stopped by a usage limit
       | sends a new message   |
       | archives "Port tests" |
       | settles "Port tests"  |
+
+  # Upstream #21114: a later recovery sweep revived a thread the user had stopped.
+  @mc @backlog @priority-high
+  Scenario: Stopping a limited thread cancels its automatic resume for good
+    Given the user turned on auto-resume for limited threads
+    And Claude stopped "Port tests" on a usage limit that resets at 14:00
+    When the user stops "Port tests"
+    Then "Port tests" does not continue on its own at 14:00, nor after a restart
+    And the thread no longer shows a scheduled resume
+    And a snooze the thread had is kept
+
+  @shared @mc @backlog
+  Scenario: A stopped limited thread can be set to resume at the reset again
+    Given the user stopped "Port tests" after it stopped on a usage limit that resets at 14:00
+    When the user chooses to resume at the reset
+    Then "Port tests" continues on its own at 14:00
 
   @mc
   Scenario: An overdue resume runs after a restart
@@ -122,6 +151,15 @@ Feature: Threads stopped by a usage limit
     When the user wakes "Port tests" now
     Then "Port tests" is active again
 
+  # Upstream #23803: with snooze and auto-resume armed for one reset, the limit notice offered
+  # only "Cancel auto-resume".
+  @backlog @desktop
+  Scenario: The limit notice offers to wake a thread snoozed and set to resume
+    Given "Port tests" is snoozed until its limit resets at 14:00 and set to resume then
+    Then the limit notice offers "Wake now" beside "Cancel auto-resume"
+    When the user chooses "Wake now"
+    Then "Port tests" is active again and still resumes at 14:00
+
   @desktop @mobile @backlog-mobile
   Scenario: Agents without a reset time offer a manual retry
     Given the agent stopped "Port tests" on a limit without saying when it resets
@@ -141,6 +179,15 @@ Feature: Threads stopped by a usage limit
     When the user snoozes "Port tests" until the reset
     Then "Port tests" is not snoozed
     And the user is told the reset time has passed and to retry the thread by hand
+
+  # Upstream #25005: a reset more than about 25 days away never stopped offering the snooze
+  # once it passed, because the timer for it was never armed.
+  @backlog @desktop @mobile @priority-low
+  Scenario: Snoozing until a reset weeks away stops being offered when that reset passes
+    Given "Port tests" stopped on a usage limit that resets in 30 days
+    And the limit notice is left open
+    When the reset time passes
+    Then the notice no longer offers to snooze "Port tests" until the reset
 
   @backlog @mobile
   Scenario: A recovery choice that the environment refuses is reported on the thread

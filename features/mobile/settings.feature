@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24766
 #   https://github.com/pingdotgg/t3code/pull/18381
 #   https://github.com/pingdotgg/t3code/pull/9356
 #   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (HAL-C2 Account row, sections)
@@ -33,6 +34,19 @@ Feature: Settings that belong to the phone
 
   Background:
     Given the phone is paired with "My MacBook"
+
+  # Upstream #24766: Settings on a tablet or a foldable had no search.
+  Rule: Searching settings
+
+    @backlog @mobile
+    Scenario Outline: Searching settings finds a page by what it holds
+      When the user searches settings for "<query>"
+      Then <outcome>
+
+      Examples:
+        | query    | outcome                                                        |
+        | dark     | "Appearance" is listed and sections with no match are not      |
+        | zzz      | the user is told no settings match                             |
 
   # The HAL-C2 account was the HAL-C2 Connect (Clerk) sign-in, removed with Connect.
   Rule: HAL-C2 account

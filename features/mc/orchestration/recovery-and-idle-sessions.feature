@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/20306
+#   https://github.com/pingdotgg/t3code/pull/22846
 #   https://github.com/pingdotgg/t3code/pull/12513
 #   https://github.com/pingdotgg/t3code/pull/19291
 #   https://github.com/pingdotgg/t3code/pull/18461
@@ -387,6 +388,19 @@ Feature: Recovering from restarts and releasing idle sessions
     Given thread "t1" was stopped while its native subagent's record still read as running
     When the MC restarts
     Then the subagent and its thread read as stopped
+
+  # Upstream #22846: ending a native subagent's turn left the provider turn under it running.
+  @backlog @mc
+  Scenario Outline: Ending a native subagent's turn also ends its provider turn
+    Given thread "t1" has a provider-native subagent with a running turn
+    When <event>
+    Then the subagent's provider turn no longer reads as running
+
+    Examples:
+      | event                                   |
+      | the user stops the subagent             |
+      | the user interrupts "t1"                |
+      | the MC restarts after it stopped        |
 
   @mc @plugin-codex
   Scenario: A Codex background command keeps its session past the idle timeout

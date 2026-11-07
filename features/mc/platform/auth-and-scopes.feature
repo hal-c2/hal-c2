@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24554
 #   https://github.com/pingdotgg/t3code/pull/19616
 #   https://github.com/pingdotgg/t3code/pull/17370
 #   https://github.com/pingdotgg/t3code/pull/18509
@@ -144,6 +145,37 @@ Feature: MC authentication and scopes
     Given a local tool bought a socket ticket with the MC's access token
     When an administrator lists the authorized clients
     Then the MC's access token is not among them
+
+  # Upstream #24554: a socket ticket opened any ticket route, and a DPoP session's ticket
+  # worked for anyone holding the string.
+  @backlog @mc @priority-high
+  Scenario Outline: A socket ticket opens only the route it was bought for
+    Given a client bought a socket ticket for <route>
+    When it opens <other> with that ticket
+    Then the MC refuses the socket
+
+    Examples:
+      | route              | other              |
+      | the RPC socket     | a media stream     |
+      | media streams      | the RPC socket     |
+
+  @backlog @mc @priority-high
+  Scenario Outline: A DPoP session's RPC ticket needs a fresh proof from the session's key
+    Given a DPoP client bought an RPC socket ticket
+    When the socket is opened with <proof>
+    Then the MC <answer>
+
+    Examples:
+      | proof                                   | answer           |
+      | a fresh proof from the client's key     | opens the socket |
+      | no proof                                | refuses it       |
+      | a proof from another key                | refuses it       |
+      | a proof that was already used           | refuses it       |
+
+  @backlog @mc
+  Scenario: A ticket bought without naming a route still opens either
+    Given an older client bought a socket ticket without naming a route
+    Then it can open the RPC socket or a media stream with it
 
   @mc
   Scenario: A ticket request without a valid session is refused

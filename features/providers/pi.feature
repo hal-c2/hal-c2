@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23235
+#   https://github.com/pingdotgg/t3code/pull/20521
+#   https://github.com/pingdotgg/t3code/pull/21356
+#   https://github.com/pingdotgg/t3code/pull/23052
 #   https://github.com/pingdotgg/t3code/pull/18498
 #   https://github.com/pingdotgg/t3code/pull/21762
 #   https://github.com/pingdotgg/t3code/pull/18933
@@ -23,6 +27,7 @@
 #   https://github.com/pingdotgg/t3code/pull/16661
 #   https://github.com/pingdotgg/t3code/pull/16210
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/21822
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
 #   apps/server-ex/lib/hal_c2/pi.ex, apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (Pi RPC mode)
@@ -181,10 +186,32 @@ Feature: Pi
     Then Pi continues from the turn before it
     And the stopped turn is not used as Pi's history
 
+  # Upstream #20521: a turn stopped before HAL-C2 saw its place in Pi's session made reverts and
+  # forks past it fail, though Pi had kept the prompt.
+  @backlog
+  Scenario Outline: A Pi turn stopped before it was recorded can still be gone past
+    Given a Pi thread whose second turn was stopped before Pi reported its place in the session
+    And a third turn finished after it
+    When the user <action> the end of the third turn
+    Then Pi continues from the third turn
+
+    Examples:
+      | action        |
+      | reverts to    |
+      | forks from    |
+
   Scenario: Forking a Pi thread copies the native conversation into the new workspace
     Given a Pi thread with three turns
     When the user forks from the second turn into a new worktree
     Then the new thread continues Pi's conversation through the second turn in that worktree
+
+  # Upstream #23052: forking a finished turn failed while the next one ran, since the running
+  # turn had no session entry captured yet.
+  @backlog
+  Scenario: A finished Pi turn can be forked while the next turn runs
+    Given a Pi thread whose second turn is running
+    When the user forks from the first turn
+    Then the new thread continues Pi's conversation through the first turn only
 
   Scenario: Pi skills appear in the skill menu
     Given Pi loads the project skill "deploy"
@@ -223,6 +250,13 @@ Feature: Pi
     When the Pi model calls "hal_c2_thread_read"
     Then the call runs and its result reaches the model
     And tools the user excluded with "--exclude-tools" are still left out
+
+  # Upstream #21822: a tool schema with no properties at all was refused by some models.
+  @backlog @priority-low
+  Scenario: A HAL-C2 tool that takes no arguments is usable by a Pi model
+    Given Pi runs a model that refuses tool schemas without a properties list
+    When the Pi model calls a HAL-C2 tool that takes no arguments
+    Then the call runs and its result reaches the model
 
   # PiCommands.ts: Pi's command list omits its terminal built-ins, and Pi only expands
   # skills written as leading "/skill:name" commands.
@@ -507,6 +541,14 @@ Feature: Pi
       | a line of text     |
       | a longer text edit |
 
+  # Upstream #23235: a blank placeholder became the question, which failed the whole turn while
+  # Pi kept waiting on its dialog.
+  @backlog
+  Scenario: A Pi extension's text question with a blank placeholder asks its title
+    When a Pi extension asks for a line of text titled "What should I do?" with a blank placeholder
+    Then the user is asked "What should I do?"
+    And the turn keeps running until the answer goes back to the extension
+
   # Upstream #17206: Pi editor dialogs prefill the answer composer
   @backlog
   Scenario: A Pi extension's text edit starts the answer from what is there now
@@ -621,6 +663,13 @@ Feature: Pi
   Scenario: A file Pi cannot take as an image is handed over as a saved path
     When the user attaches a PDF to a Pi message
     Then Pi receives the line "[Attachment saved at" followed by the file's path
+
+  # Upstream #21356: Pi silently skipped an attachment whose saved copy could not be found.
+  @backlog @mc @plugin-pi
+  Scenario: Pi is told when an attachment's saved copy cannot be found
+    Given the saved copy of "notes.pdf" attached to a Pi message cannot be found
+    When the message reaches Pi
+    Then Pi is told "notes.pdf" is unavailable
 
   Scenario Outline: A message sent while Pi works joins the run or starts one
     Given a Pi turn that <state>

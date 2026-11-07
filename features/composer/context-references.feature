@@ -1,11 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18322
 #   https://github.com/pingdotgg/t3code/pull/19465
+#   https://github.com/pingdotgg/t3code/pull/24022
 #   https://github.com/pingdotgg/t3code/pull/14834
 #   https://github.com/pingdotgg/t3code/pull/18310
 #   https://github.com/pingdotgg/t3code/pull/18845
 #   https://github.com/pingdotgg/t3code/pull/17821
 #   https://github.com/pingdotgg/t3code/pull/8415
 #   https://github.com/pingdotgg/t3code/pull/20024
+#   https://github.com/pingdotgg/t3code/pull/21519
 #   https://github.com/pingdotgg/t3code/pull/19671
 #   https://github.com/pingdotgg/t3code/pull/14360
 #   https://github.com/pingdotgg/t3code/pull/16619
@@ -17,6 +20,7 @@
 #   https://github.com/pingdotgg/t3code/pull/20102
 #   docs/user/composer.md (slash commands, skills, context references, pull requests, threads, citing)
 #   https://github.com/pingdotgg/t3code/pull/13450 (focus returns to the draft after a quote's comment)
+#   https://github.com/pingdotgg/t3code/pull/22922
 #   docs/internals/composer-context-references.md
 #   apps/server-ex/lib/hal_c2/composer_context.ex (provider envelope, attachment remapping, quoted replies)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (@file, $skill and /command suggestions)
@@ -208,6 +212,23 @@ Feature: Referencing files, skills, commands and context
     When the user moves the draft back to "laptop"
     Then the message can be sent
     And Auto balance only picks a machine that holds every referenced thread
+
+  # Upstream #18322: a phone draft aimed at another machine still sent the thread it referenced.
+  @backlog @mobile
+  Scenario: A phone draft aimed at another machine does not send threads that machine cannot read
+    Given the new task references "Auth refactor" on "laptop"
+    When the user aims the task at "desktop"
+    Then the task is not sent with the reference to "Auth refactor"
+    And the user is told "Auth refactor" cannot be read on "desktop"
+
+  # Upstream #18322: pasted references to another machine's threads used up the context limit.
+  @backlog @mobile @priority-low
+  Scenario: Threads pasted from another machine stay as text the user is told about
+    Given the user copied a message referencing "Remote work" from another machine
+    When the user pastes it into a draft on "laptop"
+    Then "Remote work" stays in the text as an unavailable reference
+    And it does not count toward the draft's context limit
+    And the user is told "Remote work" could not be attached
 
   @backlog @desktop
   Scenario: A thread dropped from another environment is attached as its transcript
@@ -417,6 +438,16 @@ Feature: Referencing files, skills, commands and context
     Given the draft holds an annotation of the preview
     When the preview reloads and the user annotates it again
     Then the draft holds both annotations
+
+  # Upstream #24022: Annotate did nothing on a PDF open in the preview.
+  @backlog @desktop
+  Scenario: A PDF open in the preview can be annotated
+    Given the preview shows the PDF "spec.pdf"
+    When the user starts annotating
+    Then the Region tool is picked
+    And a region the user drags over the PDF is marked
+    And Escape and the tool keys reach the annotation, not the PDF viewer
+    And once annotating ends the PDF scrolls and takes clicks again
 
   @backlog @desktop
   Scenario: The user opens an annotation from the draft to read it in full
@@ -662,6 +693,36 @@ Feature: Referencing files, skills, commands and context
       | €rev  |
       | £rev  |
 
+  # Upstream #21519: a price after a currency sign opened the skill menu, and Enter could
+  # replace it with a skill whose description matched the digits.
+  @backlog @desktop @mobile @tui
+  Scenario Outline: Typing a price does not open the skill menu
+    Given the provider offers a skill described as "Release 5 notes"
+    When the user types "<typed>"
+    Then no skill menu opens
+    And pressing Enter sends the draft with "<typed>" as typed
+
+    Examples:
+      | typed            |
+      | It costs $5      |
+      | budget $9.99     |
+      | about €20        |
+      | raise $10k       |
+      | £1,000 a month   |
+
+  # Upstream #21519: a skill whose name starts with a digit is still found once a letter follows.
+  @backlog @desktop @mobile @tui
+  Scenario Outline: A bare currency sign or a skill name starting with a digit opens the skill menu
+    Given the provider offers the skills "1password" and "2fa"
+    When the user types "<typed>"
+    Then the skill menu opens
+
+    Examples:
+      | typed       |
+      | $           |
+      | $1password  |
+      | $2fa        |
+
   # Upstream #14834: $HOME and $PATH were drawn as skill chips.
   @backlog @desktop
   Scenario: A dollar word that is not an offered skill stays plain text
@@ -669,6 +730,18 @@ Feature: Referencing files, skills, commands and context
     When the user writes "echo $HOME and $review"
     Then "$review" becomes a skill reference
     And "$HOME" stays plain text the user can edit
+
+  # Upstream #22922: route files such as TanStack's and Next.js's lost their chip.
+  @backlog @shared
+  Scenario Outline: A file mention whose name has a dollar sign or brackets stays a file reference
+    Given the project has the file "<file>"
+    When the user mentions "<file>" in the composer
+    Then "<file>" is a file reference
+
+    Examples:
+      | file                       |
+      | routes/posts.$postId.tsx   |
+      | app/[id]/page.tsx          |
 
   @backlog @desktop
   Scenario: Threads on this environment are offered ahead of files
