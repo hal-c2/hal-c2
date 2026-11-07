@@ -1156,6 +1156,43 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- stopping during a slow start --------------------------------------------------------
+
+  # The runtime has its provider turn started and waits to claim the run, as it does
+  # while a slow provider takes its time.
+  step "a provider session is still starting", context do
+    context = World.providers(context)
+    id = World.thread_id(context, "t1")
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, HalC2.Orchestration.dispatch(start(id))}) end)
+    runtime = await_claim(watch)
+    Map.merge(context, %{thread: "t1", watch: watch, runtime: runtime})
+  end
+
+  step "the user stops the thread before the start completes", context do
+    context =
+      World.command(context, %{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    :ok = :sys.resume(context.watch)
+    assert_receive {:sent, {:ok, _}}, 5_000
+    context
+  end
+
+  step "the half-started provider session is cleaned up", context do
+    assert {:ok, _} = context.reply, "stop failed: #{inspect(context.reply)}"
+    World.await_runs(context, context.thread, ["interrupted"])
+    # The runtime let go of the turn its provider started, and told the provider so.
+    :ok = GenServer.call(context.runtime, :settle)
+    assert :sys.get_state(context.runtime).turn == nil
+    assert [%{"turnId" => _}] = World.codex_requests(context, "turn/interrupt")
+    World.await_runs(context, context.thread, ["interrupted"])
+    context
+  end
+
   # --- what a failure says -----------------------------------------------------------
 
   # What each provider message is, and what the thread records of it.
@@ -1201,6 +1238,31 @@ defmodule HalC2.Steps.Orchestration.Runs do
           World.entities(context, context.thread, "turn-item"),
         do: assert(text == expected)
 
+    context
+  end
+
+  step "the provider fails a turn of {string} with a message longer than 4,096 characters",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    context =
+      notify(context, "turn/completed", %{
+        "turn" => %{
+          "id" => native_turn(context),
+          "status" => "failed",
+          "error" => %{"message" => String.duplicate("long ", 1_000)}
+        }
+      })
+
+    await_status(context, context.running, "failed")
+    context
+  end
+
+  step "the failure the thread records is at most 4,096 characters and ends with {string}",
+       %{args: [ending]} = context do
+    recorded = session(context, context.thread, "codex")["lastError"]
+    assert String.length(recorded) == 4_096
+    assert String.ends_with?(recorded, ending)
     context
   end
 

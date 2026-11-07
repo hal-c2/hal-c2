@@ -325,7 +325,7 @@ Feature: Runs and turns
       | an API key, token, password or secret      | "[REDACTED]" in place of the value       |
       | a URL that cannot be read                  | "[REDACTED_URL]" in place of the URL     |
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A very long failure message is cut short
     When the provider fails a turn of "t1" with a message longer than 4,096 characters
     Then the failure the thread records is at most 4,096 characters and ends with "…"
@@ -515,7 +515,7 @@ Feature: Runs and turns
     And its pending requests are closed and its checkpoint is captured
     And a late result from the provider cannot undo the stop or replace a newer attempt
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Stopping during a slow provider start leaves no session behind
     Given a provider session is still starting
     When the user stops the thread before the start completes
