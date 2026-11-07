@@ -156,13 +156,13 @@ defmodule HalC2.ServiceTest do
       HalC2.Subprocess.Durable.stop(own_dir)
     end
 
-    test "a unit that names no home of ours leaves programs and says so" do
+    # T3 Code's units, and the Node server's, kept no programs through a restart.
+    test "a unit that names no home, as T3 Code's did, stops nothing" do
       {:ok, %{"unitPath" => path}} = Service.install()
       File.write!(path, String.replace(File.read!(path), ~r/^StandardOutput=.*$/m, ""))
       {own_dir, own_pid} = kept_program("t1")
 
-      assert {:ok, "Background service removed. Agents an older service" <> _} =
-               Service.command(["uninstall"])
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
 
       refute HalC2.Subprocess.Orphans.gone?(own_pid)
       HalC2.Subprocess.Durable.stop(own_dir)

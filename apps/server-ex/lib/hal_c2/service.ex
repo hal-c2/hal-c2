@@ -65,11 +65,7 @@ defmodule HalC2.Service do
   end
 
   def command(["uninstall"]) do
-    case uninstall() do
-      :ok -> {:ok, "Background service removed."}
-      {:ok, note} -> {:ok, "Background service removed. " <> note}
-      error -> error
-    end
+    with :ok <- uninstall(), do: {:ok, "Background service removed."}
   end
 
   def command(_), do: {:error, "usage: hal-c2-service install | status | restart | uninstall"}
@@ -234,9 +230,7 @@ defmodule HalC2.Service do
 
   @doc """
   Stops the service and removes it from startup, and the provider programs it kept
-  through its restarts with it. Projects and settings stay. `{:ok, note}` when a
-  removed unit does not say which home it ran on, so its programs were left to end
-  on their own.
+  through its restarts with it. Projects and settings stay.
   """
   def uninstall do
     with manager when manager != nil <- manager() || {:error, unsupported()},
@@ -247,18 +241,14 @@ defmodule HalC2.Service do
       for state when is_binary(state) <- homes,
           do: HalC2.Subprocess.Durable.stop_all(Path.join(state, "durable"))
 
-      if nil in homes,
-        do:
-          {:ok,
-           "Agents an older service may have left running were not stopped; " <>
-             "they end within ten minutes."},
-        else: :ok
+      :ok
     end
   end
 
   # The state dir the MC a unit runs keeps its files in, which its log names
-  # (`log_path/0`); nil for a unit that does not log there, such as T3 Code's. The
-  # path is one `installed/1` built under the user's home, never one a caller gave.
+  # (`log_path/0`). Nil for a unit that does not log there: one T3 Code or the Node
+  # server wrote, neither of which kept programs through a restart, so it has none to
+  # stop. The path is one `installed/1` built under the user's home, never a caller's.
   # sobelow_skip ["Traversal.FileModule"]
   defp unit_state(path) do
     case Regex.run(
