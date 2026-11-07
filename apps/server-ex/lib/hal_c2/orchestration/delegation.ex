@@ -319,10 +319,13 @@ defmodule HalC2.Orchestration.Delegation do
          true <- quiet?(child),
          false <- continuing?(child, continuations),
          {status, run, ended_at} <- last_end(child, runs) do
-      result = child_id |> result_for(run, status) |> with_pull_requests(child, child_id)
+      result =
+        child_id |> result_for(run, status) |> with_pull_requests(child, child_id, parent_id)
+
       # Before the result starts the caller's turn, so a link its agent makes from the
       # report finds the child's already there, with what the child heard of it.
       hand_over_pull_requests(child_id)
+      hook(:handed_over, child_id)
 
       # A child found quiet twice (two runs' ends, a provider replaying its turn's end
       # after a reconnect, the periodic check racing a report) settles and wakes once:
@@ -376,7 +379,13 @@ defmodule HalC2.Orchestration.Delegation do
           parent_id,
           task,
           ended,
-          if(run, do: result_for(child_id, run, ended)),
+          if(
+            run,
+            do:
+              child_id
+              |> result_for(run, ended)
+              |> with_pull_requests(stream(child_id), child_id, parent_id)
+          ),
           "disposed",
           :once,
           ended_at
@@ -422,11 +431,28 @@ defmodule HalC2.Orchestration.Delegation do
   end
 
   # The result names the pull requests the child hands back, with their head and
-  # checks as the child last heard of them, so the caller knows what to watch
-  # (upstream #19801). Read before the handover tombstones the child's links.
-  defp with_pull_requests(result, child, child_id) do
+  # checks as last heard of them, so the caller knows what to watch
+  # (upstream #19801). A handover may already have tombstoned the child's links
+  # before this result is built (PR news reached a quiet child still owing a
+  # restart continuation, or a settle that handed over then failed is retried),
+  # so a tombstone the caller now carries counts too, named from the caller's
+  # copy. A tombstone the caller does not carry is a link the child dismissed,
+  # not one it handed back.
+  defp with_pull_requests(result, child, child_id, parent_id) do
     thread = StreamState.get(child, "thread")[child_id] || %{}
-    links = thread |> Links.of() |> Links.visible()
+    parent = StreamState.get(stream(parent_id), "thread")[parent_id] || %{}
+    carried = Map.new(Links.of(parent), &{Links.key(&1), &1})
+
+    links =
+      thread
+      |> Links.of()
+      |> Enum.flat_map(fn link ->
+        cond do
+          link["source"] != "stack-dismissed" -> [link]
+          copy = carried[Links.key(link)] -> [copy]
+          true -> []
+        end
+      end)
 
     case links do
       [] ->

@@ -284,7 +284,8 @@ defmodule HalC2.Orchestration.DelegationTest do
                 "url" => "https://github.com/acme/app/pull/7",
                 "source" => "agent",
                 "linkedAt" => @at,
-                "heard" => @heard
+                "heard" => @heard,
+                "snapshot" => %{"headSha" => "abc123", "checksState" => "pending"}
               }
             ]
           })
@@ -319,6 +320,93 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert [%{"number" => 7}] = links("c")
       assert links("p") == []
+    end
+
+    # PR news reaches a quiet child that still owes a restart continuation:
+    # `HalC2.PullRequests.Wakes` hands its links over then, before the task can
+    # settle, and the settled result must still name them.
+    test "names it in the result when the handover beat the settle" do
+      :ok = delegate("completed")
+      :ok = link_child()
+      key = "effect:c:effect-continue"
+
+      :ok =
+        HalC2.Store.put_meta(
+          key,
+          JSON.encode!(%{
+            "id" => "effect-continue",
+            "threadId" => "c",
+            "type" => "provider-runtime.continue",
+            "status" => "running",
+            "createdAt" => @at,
+            "args" => %{"command" => %{"messageId" => "message:restart-continuation:cr"}}
+          })
+        )
+
+      assert Delegation.hand_over_pull_requests("c") == :ok
+      assert links("c") == []
+      assert [%{"number" => 7}] = links("p")
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert task()["status"] == "running"
+
+      :ok = HalC2.Store.delete_meta(key)
+      assert :ok = Delegation.settle_if_quiet("c")
+
+      assert %{"status" => "completed", "result" => result} = task()
+      assert result =~ "Pull requests handed to you to watch: acme/app#7 at abc123"
+      assert result =~ "(checks pending)"
+    end
+
+    # A settle that handed the links over and then failed before it committed:
+    # the retry builds the result from what was handed over, and still names it.
+    test "names it in the result when a settle failed after handing over" do
+      :ok = delegate("completed")
+      :ok = link_child()
+
+      hook_with(fn
+        :handed_over, "c" -> exit(:settle_failed)
+        _stage, _id -> :ok
+      end)
+
+      assert catch_exit(Delegation.finished("c", "cr", "completed")) == :settle_failed
+      assert task()["status"] == "running"
+      assert links("c") == []
+      assert [%{"number" => 7}] = links("p")
+
+      Application.delete_env(:hal_c2, :delegation_hook)
+      assert :ok = Delegation.settle_if_quiet("c")
+
+      assert %{"status" => "completed", "result" => result} = task()
+      assert result =~ "Pull requests handed to you to watch: acme/app#7 at abc123"
+      assert result =~ "(checks pending)"
+    end
+
+    # A tombstone the caller does not carry is a link the child dismissed, not
+    # one it handed back: the result does not name it.
+    test "does not name a dismissed link the caller does not carry" do
+      :ok = delegate("completed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          thread("c", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"},
+            "pullRequests" => [
+              %{
+                "host" => "github.com",
+                "repository" => "acme/app",
+                "number" => 7,
+                "url" => "https://github.com/acme/app/pull/7",
+                "source" => "stack-dismissed",
+                "linkedAt" => @at
+              }
+            ]
+          })
+        ])
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert %{"status" => "completed", "result" => result} = task()
+      refute result =~ "acme/app#7"
     end
   end
 

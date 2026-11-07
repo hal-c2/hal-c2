@@ -42,7 +42,12 @@ defmodule HalC2.DelegationPropTest do
     no one;
   - an interrupt of the caller's run that is not the user's Stop (an agent's
     `hal_c2_thread_interrupt`, a scheduled prompt's clean-up) leaves the task and its
-    child as they were: only its result stops waking that run.
+    child as they were: only its result stops waking that run;
+  - the child carries a pull request from the start, and a settled task's result
+    names it for the caller to watch (upstream #19801), also when a handover
+    (`hand_over_pull_requests/1`, as `HalC2.PullRequests.Wakes` calls it on PR news
+    for a quiet child) tombstoned the child's link and gave the caller its copy
+    before the task settled.
   """
 
   use ExUnit.Case, async: false
@@ -109,6 +114,7 @@ defmodule HalC2.DelegationPropTest do
         {1, {:call, __MODULE__, :restart, []}},
         {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}},
         {1, {:call, __MODULE__, :check, []}},
+        {2, {:call, __MODULE__, :hand_over, []}},
         {1, {:call, __MODULE__, :cancel, []}},
         {1, {:call, __MODULE__, :interrupt_caller, []}}
       ] ++
@@ -311,6 +317,8 @@ defmodule HalC2.DelegationPropTest do
 
   def next_state(state, _result, {:call, _, :check, []}), do: state
 
+  def next_state(state, _result, {:call, _, :hand_over, []}), do: state
+
   # The cancel cancels what the child queued and asks its turn to stop, which with no
   # provider behind these runs stays running. A cancel refused (the task had ended)
   # cancels nothing; the model takes the queue as cancelled all the same, which no
@@ -464,13 +472,17 @@ defmodule HalC2.DelegationPropTest do
     do: settled?(before) or not settled?(task) or quiet
 
   # As the child's last run not rolled back ended, with its last answer in such a
-  # run, or what a run that left no answer says for itself.
+  # run, or what a run that left no answer says for itself. The result also names
+  # the pull request the child carries (setup), handed to the caller to watch,
+  # whether the child still shows it or a handover already tombstoned its link
+  # and left the caller its copy.
   defp as_ended?(before, task, child) do
     settled?(before) or not settled?(task) or
       (task["subagent"]["status"] == ended_as(child) and
          task["subagent"]["completedAt"] == ended_at(child) and
          task["subagent"]["result"] ==
-           (prepared(child) || last_answer(child) || no_answer(ended_as(child))))
+           "#{prepared(child) || last_answer(child) || no_answer(ended_as(child))}" <>
+             "\n\nPull requests handed to you to watch: acme/app#7 at abc123 (checks pending).")
   end
 
   defp no_answer("completed"), do: "Child task completed without an assistant result."
@@ -646,11 +658,22 @@ defmodule HalC2.DelegationPropTest do
        })}
     ])
 
+    # The child opened a pull request its caller is to watch once the task ends.
     commit(@child, [
       {"thread", @child,
        %{
          "id" => @child,
-         "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => @parent}
+         "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => @parent},
+         "pullRequests" => [
+           %{
+             "host" => "github.com",
+             "repository" => "acme/app",
+             "number" => 7,
+             "url" => "https://github.com/acme/app/pull/7",
+             "source" => "agent",
+             "snapshot" => %{"headSha" => "abc123", "checksState" => "pending"}
+           }
+         ]
        }}
     ])
   end
@@ -843,6 +866,10 @@ defmodule HalC2.DelegationPropTest do
 
   # The periodic check for a child no provider process drives.
   def check, do: observe(fn -> Delegation.settle_if_quiet(@child) end)
+
+  # PR news for the child (`HalC2.PullRequests.Wakes`): a quiet child's links are
+  # handed to its caller then, settle or not, which tombstones the child's link.
+  def hand_over, do: observe(fn -> Delegation.hand_over_pull_requests(@child) end)
 
   def roll_back(id),
     do: observe(fn -> commit(@child, [{"run", id, %{"status" => "rolled_back"}}]) end)
