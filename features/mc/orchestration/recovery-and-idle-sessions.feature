@@ -259,6 +259,16 @@ Feature: Recovering from restarts and releasing idle sessions
     When the user sends "Try again" to "t1"
     Then "t1" may be continued after a later restart again
 
+  # A cut-off run is ended at the next boot: its time down is not time it worked.
+  @mc
+  Scenario: A crash loop is stopped however long the MC stayed down between restarts
+    Given project "demo" continues threads after a server update
+    And "t1" has been continued after 3 restarts in a row, each a minute's work before the MC was down ten minutes
+    And thread "t1" was mid-turn on a provider conversation that can resume
+    When the MC restarts
+    Then no continuation message is sent to "t1"
+    And "t1" waits for the user's next message
+
   # Upstream #20306: the restart guard counts only continuations requested within five minutes
   # of the interrupted run finishing; rapid loops still stop at three.
   @mc

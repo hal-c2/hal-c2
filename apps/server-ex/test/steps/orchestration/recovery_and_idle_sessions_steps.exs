@@ -98,8 +98,9 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   # Three runs before the next one, each but the first continuing the one before it after
   # a restart, the first the user's: the next turn of `thread` continues the last
   # (`context.continuing`). Quick ones are cut off a minute after they start; the others
-  # after ten.
-  step ~r/^"(?<thread>[^"]+)" has been continued after 3 restarts(?<how>, each after more than five minutes of work| in a row without a message from the user)$/,
+  # after ten. With the MC down, a quick one's boot ends it ten minutes after it was
+  # last seen working.
+  step ~r/^"(?<thread>[^"]+)" has been continued after 3 restarts(?<how>, each after more than five minutes of work| in a row without a message from the user| in a row, each a minute's work before the MC was down ten minutes)$/,
        %{args: [thread, how]} = context do
     context = World.providers(context)
 
@@ -109,10 +110,13 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
         else: World.named_thread(context, thread)
 
     minutes = if how =~ "five minutes", do: 10, else: 1
+    down = if how =~ "was down", do: 10, else: 0
     ids = for n <- 1..3, do: "run:seeded-#{thread}-#{n}"
 
     for {id, n} <- Enum.with_index(ids, 1) do
-      start = -(4 - n) * (minutes + 1) * 60_000
+      start = -(4 - n) * (minutes + down + 1) * 60_000
+      worked = World.iso_from_now(start + minutes * 60_000)
+      ended = World.iso_from_now(start + (minutes + down) * 60_000)
 
       message =
         if n == 1,
@@ -120,17 +124,19 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
           else: "message:restart-continuation:#{Enum.at(ids, n - 2)}"
 
       World.put_entity(context, thread, "run", id, %{
-        "s" => %{
-          "id" => id,
-          "threadId" => World.thread_id(context, thread),
-          "ordinal" => n,
-          "status" => "interrupted",
-          "userMessageId" => message,
-          "requestedAt" => World.iso_from_now(start),
-          "startedAt" => World.iso_from_now(start),
-          "completedAt" => World.iso_from_now(start + minutes * 60_000),
-          "updatedAt" => World.iso_from_now(start + minutes * 60_000)
-        }
+        "s" =>
+          %{
+            "id" => id,
+            "threadId" => World.thread_id(context, thread),
+            "ordinal" => n,
+            "status" => "interrupted",
+            "userMessageId" => message,
+            "requestedAt" => World.iso_from_now(start),
+            "startedAt" => World.iso_from_now(start),
+            "completedAt" => ended,
+            "updatedAt" => ended
+          }
+          |> Map.merge(if down > 0, do: %{"lastActivityAt" => worked}, else: %{})
       })
     end
 

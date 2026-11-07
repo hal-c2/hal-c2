@@ -556,7 +556,8 @@ defmodule HalC2.Orchestration.Recovery do
   # every restart. After three continuations in a row with nothing from the user between
   # them, the thread waits for the user. Upstream #20306: a continued run that worked
   # longer than five minutes before the next restart breaks the chain, so a thread that
-  # works across many updates keeps being continued.
+  # works across many updates keeps being continued. A cut-off run worked until its last
+  # activity, however long the MC then stayed down.
   defp looping?(state, run), do: links(state, run, 0) >= @chain_limit
 
   # How many quick continuations in a row led to `run`, newest first.
@@ -577,7 +578,11 @@ defmodule HalC2.Orchestration.Recovery do
   # A run that ended (or, still settling, is ending now) within five minutes of starting.
   defp quick?(run) do
     started = HalC2.Projection.JS.epoch_ms(run["startedAt"] || run["requestedAt"])
-    ended = HalC2.Projection.JS.epoch_ms(run["completedAt"]) || System.os_time(:millisecond)
+
+    ended =
+      HalC2.Projection.JS.epoch_ms(run["lastActivityAt"] || run["completedAt"]) ||
+        System.os_time(:millisecond)
+
     started == nil or ended - started <= @chain_window_ms
   end
 
@@ -731,6 +736,27 @@ defmodule HalC2.Orchestration.Recovery do
 
   defp entities(state, kind), do: StreamState.get(state, kind)
 
+  # A cut-off run's end, with when it was last seen working (`lastActivityAt`): its
+  # newest turn item, message or attempt before the restart touched them, else its
+  # start. `completedAt` is the boot's, so it counts the time the MC was down.
+  defp worked(state, run, done) do
+    own =
+      for kind <- ~w(turn-item message),
+          {_, entity} <- StreamState.get(state, kind),
+          entity["runId"] == run["id"],
+          do: entity["updatedAt"]
+
+    attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]] || %{}
+
+    [run["startedAt"], run["requestedAt"], attempt["updatedAt"] | own]
+    |> Enum.filter(&HalC2.Projection.JS.epoch_ms/1)
+    |> Enum.max_by(&HalC2.Projection.JS.epoch_ms/1, fn -> nil end)
+    |> case do
+      nil -> done
+      last -> Map.put(done, "lastActivityAt", last)
+    end
+  end
+
   defp changes(state, at, trigger, capturing) do
     done = %{"status" => "interrupted", "completedAt" => at}
 
@@ -775,7 +801,7 @@ defmodule HalC2.Orchestration.Recovery do
                run["status"] == "queued" -> Map.put(run, "queueHeld", true)
                # Never reached its provider: it goes first and starts again.
                unstarted?(state, run) -> requeue(run)
-               run["status"] in @active_runs -> Map.merge(run, done)
+               run["status"] in @active_runs -> Map.merge(run, worked(state, run, done))
                true -> nil
              end
            end},
