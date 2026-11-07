@@ -646,11 +646,21 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts mid-delegation
     Then the child's interrupted result is held until its continuation settles
 
-  @backlog @mc @priority-high
+  # Upstream #15323: a restart continued a run the user had stopped and started the queue held behind it.
+  @mc @priority-high
   Scenario: A restart keeps queued work waiting and work the user stopped stopped
-    Given "continue threads after restarts" is on and a thread has held queued work and a stopped run
+    Given project "demo" continues threads after a server update
+    And the user had asked to stop the running turn of "t1", with a message queued behind it
     When the MC restarts
-    Then the queued work waits for recovery and the stopped run is not continued
+    Then no continuation is asked of "t1"
+    And the message queued on "t1" is held for the user
+
+  @mc
+  Scenario: A turn the user had asked to stop is not continued after a restart
+    Given project "demo" continues threads after a server update
+    And the user had asked to stop the running turn of "t1"
+    When the MC restarts
+    Then no continuation is asked of "t1"
 
   @backlog @mc @priority-high
   Scenario: A settled thread stays asleep after a restart

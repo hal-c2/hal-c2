@@ -470,8 +470,10 @@ defmodule HalC2.Orchestration.Recovery do
   defp latest_run(state),
     do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
 
+  # A run the user had asked to stop is not continued: the restart only finished the stop.
   defp continuable(state) do
     with %{"status" => "running"} = run <- latest_run(state),
+         false <- stopped?(state, run),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]] do
       run
@@ -479,6 +481,11 @@ defmodule HalC2.Orchestration.Recovery do
       _ -> nil
     end
   end
+
+  defp stopped?(state, run),
+    do:
+      StreamState.get(state, "turn-item")["turn-item:run:#{run["id"]}:signal:interrupt-request"] !=
+        nil
 
   defp requeue(run),
     do:

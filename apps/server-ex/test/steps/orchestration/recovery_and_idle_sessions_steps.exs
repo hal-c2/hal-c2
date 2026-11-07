@@ -393,6 +393,60 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The stop reached Codex, which acknowledged it and went on; the MC died before the turn
+  # ended, so only the stop's request item records that the user wanted it stopped.
+  step ~r/^the user had asked to stop the running turn of "(?<thread>[^"]+)"(?<queue>, with a message queued behind it)?$/,
+       %{args: [thread | queue]} = context do
+    File.write!(Path.join(context.mc.home, "ignore-interrupt"), "")
+    context = World.running_turn(context, thread)
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
+
+    context =
+      if List.first(queue) in [nil, ""],
+        do: context,
+        else: World.queue_message(context, thread, "Next")
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "commandId" => "command:stop-#{thread}",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    assert {:ok, _} = reply
+    stop = "turn-item:run:#{context.running}:signal:interrupt-request"
+    World.await_state(context, thread, &(&1.entities["turn-item"][stop] != nil))
+    assert World.state(context, thread).entities["run"][context.running]["status"] == "running"
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+  end
+
+  # `continue/0` has run by the time the MC is back; whatever it enqueued has run after a drain.
+  step "no continuation is asked of {string}", %{args: [thread]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    message = "message:restart-continuation:#{context.cut_off}"
+    assert World.state(context, thread).entities["message"][message] == nil
+
+    assert World.state(context, thread).entities["run"][context.cut_off]["status"] ==
+             "interrupted"
+
+    context
+  end
+
+  step "the message queued on {string} is held for the user", %{args: [thread]} = context do
+    [queued] = context.queued
+    run = World.state(context, thread).entities["run"][queued]
+    assert %{"status" => "queued", "queueHeld" => true} = run
+    assert World.runs(context, thread) |> Enum.filter(&(&1["status"] == "running")) == []
+    context
+  end
+
   # --- provider processes an MC that died left running ------------------------------------
 
   # A stand-in provider whose `sleep` is a command it left in the background; it holds
