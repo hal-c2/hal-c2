@@ -32,6 +32,9 @@ export interface AttachmentPreviews {
  */
 export const ATTACHMENT_LINK_TTL_MS = 50 * 60_000;
 
+/** A refresh that failed keeps the link it had and is tried again this much later. */
+const REFRESH_RETRY_MS = 60_000;
+
 interface Entry {
   link: AttachmentLink;
   /** When the link was resolved (epoch ms); null while it is still being asked for. */
@@ -76,13 +79,21 @@ export function createAttachmentPreviews(options: {
     return entry;
   };
 
-  /** Ask for the link (again); an image already drawn stays drawn meanwhile. */
+  /**
+   * Ask for the link (again); an image already drawn stays drawn meanwhile. A refresh
+   * that fails keeps the link, which may still work, and tries again shortly.
+   */
   const resolve = (attachmentId: string, entry: Entry): void => {
+    const previous = entry.link;
     entry.resolvedAt = null;
     void track(
       (async () => {
         const url = await client.getAttachmentUrl(attachmentId).catch(() => null);
         if (entries.get(attachmentId) !== entry) return;
+        if (!url && previous.state === "ready") {
+          entry.resolvedAt = nowMs() - ATTACHMENT_LINK_TTL_MS + REFRESH_RETRY_MS;
+          return;
+        }
         entry.link = url ? { state: "ready", url } : { state: "unavailable" };
         entry.resolvedAt = nowMs();
         options.onChange();
