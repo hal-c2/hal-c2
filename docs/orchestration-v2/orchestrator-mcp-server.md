@@ -178,15 +178,21 @@ launching again. `create_threads` remains the batch option for a shared checkout
 
 ### `hal_c2_thread_list`
 
-Lists durable thread shells in the calling thread's project, newest first.
-Callers can filter by title, run status, and whether app-owned sub-agent threads
-are included. Results are bounded and offset-paginated. Deleted threads and
-threads from other projects are never exposed.
+Lists durable thread shells newest first: the calling thread's project, or
+every project on the MC with `allProjects`, each item naming its project.
+Callers can filter by title, run status, settled and snoozed state, and whether
+app-owned sub-agent threads are included. Results are bounded and
+offset-paginated. Deleted threads are never exposed.
+
+Like upstream, the project is the list's default, not an access limit: read and
+organize reach any thread on the MC, so whatever an all-projects list returns
+can be read and woken. Sending, interrupting and the other writes stay in the
+calling project.
 
 ### `hal_c2_thread_read`
 
-Reads a project-scoped thread's durable state, recent runs, and visible
-timeline. The default `messages` view returns user messages, assistant
+Reads a thread's durable state, recent runs, and visible timeline, from any
+project on the MC. The default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
 bounded and reports whether it was truncated. `afterPosition` and

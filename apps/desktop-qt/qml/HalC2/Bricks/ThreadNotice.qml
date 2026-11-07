@@ -47,6 +47,7 @@ Rectangle {
             text: notice.current?.description ?? ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Theme.type.meta.size
+            maximumLineCount: 1
             elide: Text.ElideRight
         }
         ShellButton {
