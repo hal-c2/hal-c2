@@ -145,7 +145,19 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
     |> install([provider])
     |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
-    |> title("Fix the login redirect loop")
+    |> title("Fix the login redirect loop", attachments: Map.get(context, :attachments, []))
+  end
+
+  step "{string} is asked to write a title", %{args: [provider]} = context do
+    context =
+      if provider == "antigravity",
+        do: plugin_text_model(context, "antigravity"),
+        else:
+          context
+          |> install([provider])
+          |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+
+    title(context, "Fix the login redirect loop")
   end
 
   # --- who wrote -----------------------------------------------------------------------
@@ -500,6 +512,360 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  # --- Claude, Cursor and Antigravity configuration ------------------------------------
+
+  step "the text model is on a Claude instance with its own home folder", context do
+    home = HalC2.Test.Mc.tmp_dir(context.mc, "claude-home")
+    context = install(context)
+
+    context
+    |> World.update_settings(%{
+      "providerInstances" => %{
+        "claude-work" => %{"driver" => "claudeAgent", "config" => %{"homePath" => home}}
+      },
+      "textGenerationModelSelection" => selection("claude-work", "claude-haiku-4-5")
+    })
+    |> Map.put(:claude_home, home)
+  end
+
+  step "it runs in a new temporary folder that is removed afterwards", context do
+    assert [%{"cwd" => cwd}] = calls(context)
+    refute cwd == root(context)
+    refute File.exists?(cwd)
+    context
+  end
+
+  step "the user's hooks, slash commands and MCP servers are not loaded", context do
+    assert [%{"argv" => argv} = call] = calls(context)
+    assert %{"disableAllHooks" => true} = JSON.decode!(after_flag(call, "--settings"))
+    assert "--disable-slash-commands" in argv
+    assert "--strict-mcp-config" in argv
+    context
+  end
+
+  step "Claude is run with that instance's home as its configuration folder", context do
+    assert {:ok, _} = context.reply
+    assert [%{"claudeConfigDir" => dir}] = calls(context)
+    assert dir == Path.expand(context.claude_home)
+    context
+  end
+
+  step "it runs in plan mode in a new temporary folder", context do
+    assert [%{"acp" => "cursor", "cwd" => cwd}] = calls(context)
+    refute cwd == root(context)
+    refute File.exists?(cwd)
+    # The fake replaces the agent's command, so the plan mode is read from the command
+    # the MC builds for a text generation run.
+    World.put_app_env(:acp_commands, %{})
+    assert {:ok, command, _env} = HalC2.Acp.command("cursor", "text-generation")
+    assert Enum.take(command, -2) == ["--mode", "text-generation"]
+    context
+  end
+
+  step "it is stopped if it does not answer in 3 minutes", context do
+    assert TextGeneration.timeout() == 3 * 60_000
+    context
+  end
+
+  step "the user has a custom {string}", %{args: [path]} = context do
+    home = HalC2.Test.Mc.tmp_dir(context.mc, "home")
+    World.put_os_env("HOME", home)
+    file = Path.join(home, String.replace_prefix(path, "~/", ""))
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, "{}")
+    context
+  end
+
+  # The MC names the file (`~/.cursor/sandbox.json`) where the feature says "that file".
+  step "it fails saying Cursor text generation cannot enforce workspace isolation with that file and to use another provider",
+       context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "Cursor text generation cannot enforce workspace isolation"
+    assert message =~ "~/.cursor/sandbox.json"
+    assert message =~ "Use another text-generation provider"
+    context
+  end
+
+  step "the Antigravity profile has global hooks", context do
+    antigravity_profile(context, "hooks.json", %{
+      "hooks" => %{"beforeTool" => [%{"command" => "true"}]}
+    })
+  end
+
+  step "the Antigravity profile has MCP servers configured", context do
+    antigravity_profile(context, "mcp_config.json", %{
+      "mcpServers" => %{"files" => %{"command" => "fs"}}
+    })
+  end
+
+  step "it fails saying text generation is unavailable for that profile and to select another system model",
+       context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "text generation is unavailable"
+    assert message =~ "Select another system model"
+    context
+  end
+
+  step "{string} writes a title and asks to run a command or read a file", context do
+    steps = [
+      %{
+        "permission" => %{
+          "toolCallId" => "tg-run",
+          "title" => "run",
+          "kind" => "execute",
+          "rawInput" => %{"command" => "ls"}
+        }
+      },
+      answer_step("antigravity")
+    ]
+
+    context
+    |> antigravity_model(steps)
+    |> title("Fix the login redirect loop")
+  end
+
+  step "the run is stopped and text generation fails", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "tool permission"
+    context
+  end
+
+  step "{string} writes a title and leaves a file in its working folder", context do
+    steps = [%{"writeFile" => "notes.md"}, %{"writeSession" => true}, answer_step("antigravity")]
+
+    context
+    |> antigravity_model(steps)
+    |> title("Fix the login redirect loop")
+  end
+
+  step "it fails saying Antigravity wrote files during text generation", context do
+    assert {:error, "Antigravity wrote files during text generation.", _} = context.reply
+    context
+  end
+
+  step "the folder and the session it made are removed", context do
+    assert [%{"cwd" => cwd}] = FakeAcp.starts(context, "antigravity")
+    refute File.exists?(cwd)
+
+    assert [] ==
+             Path.wildcard(
+               Path.join([
+                 Antigravity.profile("antigravity"),
+                 "antigravity-acp",
+                 "conversations",
+                 "*.meta"
+               ])
+             )
+
+    context
+  end
+
+  step "the text model is {string} on a {string} instance",
+       %{args: [model, provider]} = context do
+    context =
+      if provider == "pi",
+        do: plugin_text_model(context, "pi"),
+        else: install(context, [provider])
+
+    World.update_settings(context, %{"textGenerationModelSelection" => selection(provider, model)})
+  end
+
+  # `/` is alternation in a Cucumber expression, so it is escaped.
+  step "it fails saying the model must use the provider\\/model format", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "provider/model format"
+    context
+  end
+
+  # --- Codex images --------------------------------------------------------------------
+
+  step "a message with two images attached and one of them no longer stored", context do
+    [first, second] = persist_images(["first.png", "second.png"])
+    File.rm!(HalC2.Attachments.path(second))
+    Map.merge(context, %{attachments: [first, second], image: first})
+  end
+
+  step "Codex receives the stored image as an image input", context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert image_args(call) == [HalC2.Attachments.path(context.image)]
+    context
+  end
+
+  step "the missing one is left out without failing", context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert length(image_args(call)) == 1
+    context
+  end
+
+  # --- thread context ------------------------------------------------------------------
+
+  step "a thread whose assistant replies are each far longer than 2,000 characters", context do
+    Map.put(context, :messages, [
+      message("user", "Fix the login loop"),
+      message("assistant", String.duplicate("x", 3_000)),
+      message("assistant", String.duplicate("y", 3_000)),
+      message("assistant", String.duplicate("z", 3_000))
+    ])
+  end
+
+  step "the user changed the scope of the task in a late message", context do
+    Map.update!(context, :messages, &(&1 ++ [message("user", "Scope changed: also fix logout")]))
+  end
+
+  step "a title is generated for that thread", context do
+    regenerate(context, context.messages)
+  end
+
+  step "the first user message and the user's later messages are all in the context", context do
+    prompt = prompt(context)
+    assert prompt =~ "USER:\nFix the login loop"
+    assert prompt =~ "USER:\nScope changed: also fix logout"
+    context
+  end
+
+  step "the assistant replies take only the space the user's messages left", context do
+    prompt = prompt(context)
+    # Each reply is cut, so no whole reply reaches the writer; the latest one keeps its start.
+    refute prompt =~ String.duplicate("x", 3_000)
+    assert prompt =~ "ASSISTANT:\n" <> String.duplicate("z", 100)
+    context
+  end
+
+  step "a user message longer than the space it is given", context do
+    Map.put(context, :messages, [
+      message("user", "START " <> String.duplicate("m", 20_000) <> " END")
+    ])
+  end
+
+  step "the writer sees the start and the end of the message with {string} between them",
+       %{args: [marker]} = context do
+    assert prompt(context) =~ ~r/START .*#{Regex.escape(marker)}.*END/s
+    context
+  end
+
+  step "when messages were left out the context begins with {string}",
+       %{args: [marker]} = context do
+    assert prompt(context) =~ "Thread contents:\n" <> marker
+    context
+  end
+
+  step "a thread with user messages, assistant replies, reasoning traces and system notes",
+       context do
+    Map.put(context, :messages, [
+      message("user", "Fix the parser"),
+      message("reasoning", "hidden reasoning trace"),
+      message("assistant", "Found it in the lexer"),
+      message("system", "system note text")
+    ])
+  end
+
+  step "only the user and assistant messages are given to the writer", context do
+    prompt = prompt(context)
+    refute prompt =~ "hidden reasoning trace"
+    refute prompt =~ "system note text"
+    context
+  end
+
+  step "each is labelled {string} or {string}",
+       %{args: [user_label, assistant_label]} = context do
+    prompt = prompt(context)
+    assert prompt =~ "#{user_label}\nFix the parser"
+    assert prompt =~ "#{assistant_label}\nFound it in the lexer"
+    context
+  end
+
+  step "a thread whose first message has an image and whose later messages have five more",
+       context do
+    names = for n <- 0..5, do: "shot#{n}.png"
+    images = persist_images(names)
+
+    messages =
+      for {image, n} <- Enum.with_index(images) do
+        text = if n == 0, do: "First message", else: "Later message #{n}"
+        message("user", text, [image])
+      end
+
+    Map.merge(context, %{messages: messages, images: images})
+  end
+
+  step "each message lists its attachments by name as {string}", context do
+    prompt = prompt(context)
+
+    Enum.each(0..5, fn n ->
+      assert prompt =~ "[Attachments: shot#{n}.png]"
+    end)
+
+    context
+  end
+
+  step "the writer receives the first message's image and the three most recent ones", context do
+    assert [call] = calls(context)
+    expected = for n <- [0, 3, 4, 5], do: HalC2.Attachments.path(Enum.at(context.images, n))
+    assert image_args(call) == expected
+    context
+  end
+
+  # --- pull request templates ----------------------------------------------------------
+
+  step "the base branch has {string} and {string}", %{args: [first, second]} = context do
+    commit_files(context, %{first => template_body(first), second => template_body(second)})
+  end
+
+  step "the base branch has only one markdown file in {string}", %{args: [dir]} = context do
+    path = Path.join(dir, "bug.md")
+
+    context
+    |> commit_files(%{path => template_body(path)})
+    |> Map.put(:template_path, path)
+  end
+
+  step "the base branch has a file in {string} and {string}", %{args: [dir, path]} = context do
+    commit_files(context, %{
+      Path.join(dir, "bug.md") => template_body(Path.join(dir, "bug.md")),
+      path => template_body(path)
+    })
+  end
+
+  step "the base branch has a pull request template of 20,000 characters", context do
+    commit_files(context, %{".github/pull_request_template.md" => String.duplicate("x", 20_000)})
+  end
+
+  step "the base branch has a symbolic link at {string}", %{args: [path]} = context do
+    commit_entry(context, path, &File.ln_s!("README.md", &1))
+  end
+
+  step "the base branch has an empty file at {string}", %{args: [path]} = context do
+    commit_files(context, %{path => ""})
+  end
+
+  step "the base branch has a file with only blank lines at {string}",
+       %{args: [path]} = context do
+    commit_files(context, %{path => "\n\n  \n"})
+  end
+
+  step "the writer is given {string} for the body", %{args: [path]} = context do
+    expect_template(context, path)
+  end
+
+  step "the writer is given that file for the body", context do
+    expect_template(context, context.template_path)
+  end
+
+  step "the writer is given the first 8,000 bytes of it followed by {string}",
+       %{args: [marker]} = context do
+    prompt = prompt(context)
+    assert prompt =~ String.duplicate("x", 8_000) <> "\n\n" <> marker
+    refute prompt =~ String.duplicate("x", 8_001)
+    context
+  end
+
+  step "the writer is given no template from that path", context do
+    refute prompt(context) =~ "change request template"
+    context
+  end
+
   # --- helpers -------------------------------------------------------------------------
 
   # Installs fakes for `providers` (codex and Claude when not named), once per scenario.
@@ -535,13 +901,17 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     })
   end
 
-  defp plugin_text_model(context, "antigravity") do
+  defp plugin_text_model(context, "antigravity"),
+    do: antigravity_model(context, [answer_step("antigravity")])
+
+  # Antigravity signed in, answering the next prompt with `steps`.
+  defp antigravity_model(context, steps) do
     context =
       context
       |> install()
       |> FakeAcp.install(
         "antigravity",
-        %{"googleAuth" => true, "turns" => [answer_turn("antigravity")]},
+        %{"googleAuth" => true, "turns" => [%{"match" => "", "steps" => steps}]},
         binary: "agy_acp_server.par",
         enabled: true
       )
@@ -563,10 +933,10 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     })
   end
 
-  defp answer_turn(driver) do
-    answer = JSON.encode!(%{"title" => "#{driver} title", "needsRefinement" => false})
-    %{"match" => "", "steps" => [%{"text" => answer}]}
-  end
+  defp answer_turn(driver), do: %{"match" => "", "steps" => [answer_step(driver)]}
+
+  defp answer_step(driver),
+    do: %{"text" => JSON.encode!(%{"title" => "#{driver} title", "needsRefinement" => false})}
 
   # The prompts a fake Pi or Antigravity received.
   defp fake_prompts(context, driver) do
@@ -662,7 +1032,66 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  # The one prompt a writer was given.
+  defp prompt(context) do
+    assert [%{"prompt" => prompt}] = calls(context)
+    prompt
+  end
+
   defp calls(context), do: World.text_calls(context)
+
+  defp image_args(%{"argv" => argv}),
+    do: for({"--image", index} <- Enum.with_index(argv), do: Enum.at(argv, index + 1))
+
+  defp message(role, text, attachments \\ []),
+    do: %{"role" => role, "text" => text, "attachments" => attachments}
+
+  # Thread context as `Orchestration.regenerate_title` builds it, for a regenerated title.
+  defp regenerate(context, messages) do
+    {text, attachments} = HalC2.TextGeneration.Prompts.thread_context(messages)
+    title(context, text, previous_title: "Old title", attachments: attachments)
+  end
+
+  # Stored images as Codex and the title prompt receive them, in the order given.
+  defp persist_images(names) do
+    png = Base.encode64("\x89PNG fake image")
+
+    {:ok, %{"attachments" => stored}} =
+      HalC2.Attachments.persist(%{
+        "threadId" => "t-images",
+        "attachments" =>
+          for(name <- names, do: %{"dataUrl" => "data:image/png;base64,#{png}", "name" => name})
+      })
+
+    Enum.sort_by(stored, & &1["name"])
+  end
+
+  # The body each template path carries in these scenarios, so a prompt shows which one was given.
+  defp template_body(path), do: "## Template from #{path}\n"
+
+  defp expect_template(context, path) do
+    assert prompt(context) =~
+             "Repository change request template:\n" <> String.trim_trailing(template_body(path))
+
+    context
+  end
+
+  defp commit_entry(context, path, make) do
+    root = root(context)
+    File.mkdir_p!(Path.dirname(Path.join(root, path)))
+    make.(Path.join(root, path))
+    World.git!(root, ["add", path])
+    World.git!(root, ["commit", "-q", "-m", "templates"])
+    context
+  end
+
+  # A file in the Antigravity profile's config, as its global hooks or MCP servers.
+  defp antigravity_profile(context, file, config) do
+    dir = Path.join(Antigravity.profile("antigravity"), "config")
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, file), JSON.encode!(config))
+    context
+  end
 
   defp writer(%{"acp" => instance}), do: instance
   defp writer(%{"argv" => ["exec" | _]}), do: "codex"

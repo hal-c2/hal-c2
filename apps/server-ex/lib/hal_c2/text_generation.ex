@@ -354,8 +354,16 @@ defmodule HalC2.TextGeneration do
         ["--settings", JSON.encode!(settings), "--tools", ""] ++
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
+    # The instance's own config folder, as its sessions get it.
+    env =
+      case HalC2.Claude.Provider.home_path(selection["instanceId"]) do
+        nil -> []
+        home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
+      end
+
     in_dir(if(isolate, do: nil, else: cwd), fn dir ->
-      with {:ok, out} <- run_cli([claude_command(selection["instanceId"]) | args], dir, prompt),
+      with {:ok, out} <-
+             run_cli([claude_command(selection["instanceId"]) | args], dir, prompt, env: env),
            {:ok, decoded} <- JSON.decode(out),
            %{} = result <- structured(decoded) do
         {:ok, result}
@@ -448,13 +456,18 @@ defmodule HalC2.TextGeneration do
           in_dir(nil, fn dir ->
             cond do
               driver(id) == "cursor" and
-                  File.exists?(Path.join(System.user_home!(), ".cursor/sandbox.json")) ->
+                  File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
                 # Cursor's own sandbox settings could widen what the agent may write.
                 {:error,
                  "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
 
               antigravity ->
                 antigravity(id, dir, selection["model"], prompt)
+
+              driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
+                  not provider_model?(selection["model"]) ->
+                {:error,
+                 "OpenCode model '#{selection["model"]}' must use the provider/model format."}
 
               true ->
                 # Cursor plans read-only there, without the user's Cursor settings or tools.
@@ -740,6 +753,10 @@ defmodule HalC2.TextGeneration do
 
   # Pi's own default model is kept; any other must be a `provider/model` slug, since
   # running the default instead would report success for a model nobody asked for.
+  defp provider_model?(model) do
+    match?([provider, id] when provider != "" and id != "", String.split(model, "/", parts: 2))
+  end
+
   defp pi_model(_conn, model) when model in [nil, "", "default"], do: :ok
 
   defp pi_model(conn, model) do

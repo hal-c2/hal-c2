@@ -353,4 +353,39 @@ defmodule HalC2.TextGenerationTest do
     write.("hooks.json", ~s({"hooks": {}, "pad": "#{String.duplicate("x", 64_000)}"}))
     refute TextGeneration.antigravity_available?(profile)
   end
+
+  test "Claude writes with the config folder of the instance chosen for text generation", %{
+    repo: repo,
+    log: log,
+    tmp_dir: dir
+  } do
+    install([:claude])
+    home = Path.join(dir, "claude-work")
+
+    settings!(%{
+      "textGenerationModelSelection" => %{
+        "instanceId" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      },
+      "providerInstances" => %{
+        "claudeAgent" => %{"driver" => "claudeAgent", "config" => %{"homePath" => home}}
+      }
+    })
+
+    assert {:ok, _} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    assert [%{"claudeConfigDir" => ^home}] = calls(log)
+  end
+
+  test "OpenCode's text model must be written as provider/model", %{repo: repo} do
+    install([])
+    Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+
+    settings!(%{
+      "providers" => %{"opencode" => %{"enabled" => true}},
+      "textGenerationModelSelection" => %{"instanceId" => "opencode", "model" => "gpt-5"}
+    })
+
+    assert {:error, "OpenCode model 'gpt-5' must use the provider/model format."} =
+             TextGeneration.thread_title(repo, "Fix the login redirect loop")
+  end
 end
