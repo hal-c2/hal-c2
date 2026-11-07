@@ -138,13 +138,14 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
         do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
 
+    # (A failed end: an interrupted one first reads the run to capture its checkpoint.)
     # Held, the stream takes the run's end, then the unarchive, then what the end
     # starts once it has returned.
     stream = HalC2.Streams.ensure(thread_id)
     :ok = :sys.suspend(stream)
     :erlang.trace(stream, true, [:receive])
 
-    ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "interrupted", nil) end)
+    ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
     :erlang.trace(ender, true, [:procs])
     await_call(stream, ender)
 
@@ -161,10 +162,10 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     assert_receive {:trace, ^ender, :spawn, task, _}
     ref = Process.monitor(task)
     assert_receive {:DOWN, ^ref, :process, ^task, _}
-    assert ["interrupted", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
+    assert ["failed", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
-    await_statuses(thread_id, ["interrupted", "running"])
+    await_statuses(thread_id, ["failed", "running"])
   end
 
   # #277: a limit stop on a queue the restart held is what the user resumes at the reset.
