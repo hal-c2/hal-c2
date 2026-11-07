@@ -404,7 +404,7 @@ defmodule HalC2.StoreTest do
 
     test "a write that fails leaves a count of what the thread holds, and the mark", %{path: path} do
       indexed_thread(~w(m1 m2))
-      Store.put_meta("messages_typed", "1")
+      Store.put_meta("messages_typed_2", "1")
 
       assert_raise RuntimeError, fn ->
         HalC2.Search.storing_thread("t1", fn ->
@@ -424,7 +424,7 @@ defmodule HalC2.StoreTest do
       :ok = Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
       :ok = Sqlite3.execute(db, "UPDATE messages SET typed = NULL")
       :ok = Sqlite3.close(db)
-      Store.put_meta("messages_typed", "1")
+      Store.put_meta("messages_typed_2", "1")
       refute HalC2.Search.read?()
 
       assert_raise RuntimeError, fn ->

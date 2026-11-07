@@ -40,7 +40,8 @@ layout in use rather than being set once: the first-run wizard, popup menus at t
 the two that live in C++, which the root reports with `layout.desktop` (`MobileApp`): landing on
 a draft, and whether a thread has anywhere to show a terminal. The wizard has no phone form, so
 in the phone layout a device paired with an MC that has no projects says where projects are
-added and cannot set it up. Two things do not follow the layout:
+added; the home screen's Add project takes a folder path on the environment's machine
+(`project.add` with `onEnvironment`, which the MC checks) but there is no folder browser or clone form. Two things do not follow the layout:
 
 - `Sidebar.touchRows` is on in both. A tablet's list is under a finger too, and a row so marked
   still lets a mouse arrange it by dragging.

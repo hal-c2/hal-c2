@@ -294,6 +294,45 @@ defmodule HalC2.Claude.Skills do
     user ++ project ++ root_local ++ managed
   end
 
+  @doc """
+  Whether Claude lets a session at `cwd` bypass its permission prompts: `:disabled`
+  when a layer of its settings (`skill_overrides/2`'s, with the remote policy Claude
+  caches in its home) sets `permissions.disableBypassPermissionsMode` to `"disable"`,
+  `:unreadable` when a file that is there cannot be read or parsed, else `:allowed`.
+  A missing file is no layer, nor is a blank one, which Claude reads as `{}`.
+  """
+  @spec bypass_permissions(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
+  def bypass_permissions(config_dir, cwd) do
+    paths = settings_paths(config_dir, cwd) ++ [Path.join(config_dir, "remote-settings.json")]
+
+    Enum.reduce_while(paths, :allowed, fn path, verdict ->
+      case read_bypass(path) do
+        :disabled -> {:halt, :disabled}
+        :unreadable -> {:cont, :unreadable}
+        :allowed -> {:cont, verdict}
+      end
+    end)
+  end
+
+  # Reads only Claude's own settings files: fixed names under its config dir and
+  # the project's root, never a path a client sent.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp read_bypass(path) do
+    with {:ok, text} <- File.read(path),
+         false <- String.trim(text) == "",
+         {:ok, settings} when is_map(settings) <- decode_lenient(text) do
+      case settings["permissions"] do
+        %{"disableBypassPermissionsMode" => "disable"} -> :disabled
+        _ -> :allowed
+      end
+    else
+      {:error, :enoent} -> :allowed
+      {:error, :enotdir} -> :allowed
+      true -> :allowed
+      _ -> :unreadable
+    end
+  end
+
   defp repository_root(cwd) do
     cwd = Path.expand(cwd)
 

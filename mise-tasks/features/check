@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+#MISE description="Check that every scenario claimed passing on desktop/mobile is selected by that surface's native runner (--fix retags the rest @backlog-<surface>)"
+#USAGE flag "--fix" help="Add the missing @backlog-<surface> tags instead of only reporting"
+"""The ledger claims a scenario passes on a surface when it carries that
+surface's tag ('@desktop', '@mobile', or '@shared' for both plus '@tui')
+and no '@backlog' / '@backlog-<surface>'. The desktop and phone native
+runners, though, only run the scenarios their kDefaultGlobs name
+(apps/desktop-qt/tests/native/tst_Features.cpp,
+apps/mobile-qt/tests/tst_Features.cpp). This check mirrors
+runner::collectScenarios / parseFeature
+(apps/desktop-qt/tests/native/features/Runner.cpp) and fails on every
+scenario the ledger claims but no glob selects, so the claim and the
+proof cannot drift apart. Scenarios a QML test proves instead still get
+the backlog tag: the ledger claims only what tst_Features runs (#213).
+
+Exit 1 while such a scenario remains; --fix writes the missing
+'@backlog-<surface>' tags (at the widest true scope: the scenario, its
+outline, or the Examples table that is unselected) and then re-checks.
+An outline some of whose rows a glob names and some not cannot be
+retagged without splitting its Examples table; those are reported as
+ambiguous and left for a person.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+FEATURES = ROOT / "features"
+RUNNERS = {
+    "desktop": ROOT / "apps/desktop-qt/tests/native/tst_Features.cpp",
+    "mobile": ROOT / "apps/mobile-qt/tests/tst_Features.cpp",
+}
+SURFACES = list(RUNNERS)
+
+
+def qt_wildcard(glob: str) -> re.Pattern:
+    """QRegularExpression::fromWildcard(glob, CaseSensitive,
+    NonPathWildcardConversion): anchored; '*' and '?' match '/' too;
+    '[...]' is a character class ('!' negates); everything else literal."""
+    out, i = [], 0
+    while i < len(glob):
+        ch = glob[i]
+        if ch == "*":
+            out.append(".*")
+        elif ch == "?":
+            out.append(".")
+        elif ch == "[":
+            j = i + 1
+            if j < len(glob) and glob[j] == "!":
+                j += 1
+            if j < len(glob) and glob[j] == "]":
+                j += 1
+            while j < len(glob) and glob[j] != "]":
+                j += 1
+            if j >= len(glob):
+                out.append(re.escape("["))
+            else:
+                body = glob[i + 1 : j].replace("\\", "\\\\")
+                if body.startswith("!"):
+                    body = "^" + body[1:]
+                elif body.startswith("^"):
+                    body = "\\" + body
+                out.append("[" + body + "]")
+                i = j
+        else:
+            out.append(re.escape(ch))
+        i += 1
+    return re.compile("".join(out))
+
+
+def runner_globs(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    start = text.index("kDefaultGlobs{")
+    block = text[start : text.index("};", start)]
+    globs = []
+    for raw in re.findall(r'QStringLiteral\("((?:[^"\\]|\\.)*)"\)', block):
+        globs.append(
+            raw.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
+        )
+    if not globs:
+        sys.exit(f"features:check: no kDefaultGlobs found in {path}")
+    return globs
+
+
+def table_cells(line: str) -> list[str]:
+    cells = line.strip().replace("\\|", "\ue000").split("|")[1:-1]
+    return [c.strip().replace("\ue000", "|") for c in cells]
+
+
+class Row:
+    """One scenario as parseFeature emits it: a plain scenario, or one
+    expanded Examples row of an outline."""
+
+    def __init__(self, rel, name, tags, line, outline_line=None, examples_line=None):
+        self.rel, self.name, self.tags = rel, name, tags
+        self.line = line  # 1-based line of the Scenario keyword
+        self.outline_line = outline_line  # set for expanded rows
+        self.examples_line = examples_line  # 1-based line of its Examples:
+
+
+def parse_feature(path: Path, rel: str) -> list[Row]:
+    """Mirror Runner.cpp parseFeature: pending tags accumulate until a
+    Feature, Rule, scenario or Examples line takes them; an outline
+    expands to '<name> [<row cells joined ", ">]' per Examples row."""
+    lines = path.read_text(encoding="utf-8").split("\n")
+    rows: list[Row] = []
+    pending, feature_tags, rule_tags = [], [], []
+    current = None  # dict(name, tags, line, outline, examples=[(tags, line, table)])
+    examples = None
+
+    def flush():
+        nonlocal current
+        if current is None:
+            return
+        if not current["outline"]:
+            rows.append(Row(rel, current["name"], list(current["tags"]), current["line"]))
+        for ex_tags, ex_line, table in current["examples"]:
+            if not table:
+                continue
+            for cells in table[1:]:
+                rows.append(
+                    Row(
+                        rel,
+                        f"{current['name']} [{', '.join(cells)}]",
+                        list(current["tags"]) + list(ex_tags),
+                        current["line"],
+                        outline_line=current["line"],
+                        examples_line=ex_line,
+                    )
+                )
+        current = None
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line == '"""':
+            i += 1
+            while i < len(lines) and lines[i].strip() != '"""':
+                i += 1
+            i += 1
+            continue
+        if not line or line.startswith("#"):
+            i += 1
+            continue
+        if line.startswith("@"):
+            pending += line.split()
+        elif line.startswith("Feature:"):
+            feature_tags, pending = pending, []
+        elif line.startswith("Rule:"):
+            flush()
+            rule_tags, pending = pending, []
+            examples = None
+        elif line.startswith("Background:"):
+            flush()
+            examples = None
+        elif line.startswith(
+            ("Scenario Outline:", "Scenario Template:", "Scenario:", "Example:")
+        ):
+            flush()
+            current = {
+                "name": line.split(":", 1)[1].strip(),
+                "tags": feature_tags + rule_tags + pending,
+                "line": i + 1,
+                "outline": line.startswith(("Scenario Outline:", "Scenario Template:")),
+                "examples": [],
+            }
+            pending = []
+            examples = None
+        elif line.startswith(("Examples:", "Scenarios:")) and current is not None:
+            current["examples"].append((pending, i + 1, []))
+            examples = current["examples"][-1][2]
+            pending = []
+        elif line.startswith("|") and examples is not None:
+            examples.append(table_cells(line))
+        i += 1
+    flush()
+    return rows
+
+
+def claimed(row: Row, surface: str) -> bool:
+    """The ledger claims it passes on `surface` (features/README.md)."""
+    tags = set(row.tags)
+    if "@dropped" in tags or "@blocked" in tags:
+        return False
+    if f"@{surface}" not in tags and "@shared" not in tags:
+        return False
+    return "@backlog" not in tags and f"@backlog-{surface}" not in tags
+
+
+def already_backlogged(row: Row, surface: str) -> bool:
+    tags = set(row.tags)
+    return "@backlog" in tags or f"@backlog-{surface}" in tags or "@dropped" in tags
+
+
+def analyse():
+    """Returns (retag, ambiguous, unmatched): retag maps
+    (file, 1-based target line) -> {surface: [rows it covers]};
+    ambiguous carries (surface, row) a person must resolve."""
+    all_rows: dict[str, list[Row]] = {}
+    for path in sorted(FEATURES.rglob("*.feature")):
+        rel = path.relative_to(FEATURES).as_posix()
+        all_rows[rel] = parse_feature(path, rel)
+
+    retag: dict[tuple[str, int], dict[str, list[Row]]] = {}
+    ambiguous: list[tuple[str, Row]] = []
+    unmatched: dict[str, list[str]] = {}
+
+    for surface in SURFACES:
+        globs = runner_globs(RUNNERS[surface])
+        wants = []  # (file regex, name regex or None for all, glob)
+        for glob in globs:
+            file_part, colon, name_part = glob.partition(":")
+            wants.append((qt_wildcard(file_part), qt_wildcard(name_part) if colon else None, glob))
+        selected: set[int] = set()
+        glob_hit = [False] * len(wants)
+        for rel, rows in all_rows.items():
+            for row in rows:
+                for idx, (fre, nre, _g) in enumerate(wants):
+                    if fre.fullmatch(rel) and (nre is None or nre.fullmatch(row.name)):
+                        glob_hit[idx] = True
+                        selected.add(id(row))
+        unmatched[surface] = [wants[i][2] for i, hit in enumerate(glob_hit) if not hit]
+
+        def tag_at(rel, line, row):
+            retag.setdefault((rel, line), {}).setdefault(surface, []).append(row)
+
+        for rel, rows in all_rows.items():
+            plain = [r for r in rows if r.outline_line is None]
+            for row in plain:
+                if claimed(row, surface) and id(row) not in selected:
+                    tag_at(rel, row.line, row)
+            outlines: dict[int, list[Row]] = {}
+            for row in rows:
+                if row.outline_line is not None:
+                    outlines.setdefault(row.outline_line, []).append(row)
+            for outline_line, orows in outlines.items():
+                blocks: dict[int, list[Row]] = {}
+                for row in orows:
+                    blocks.setdefault(row.examples_line, []).append(row)
+                # Tag the outline itself only when that is true of every
+                # row: each is claimed-but-unselected or already
+                # backlogged on this surface, and each carries it.
+                def surface_row(r):
+                    return f"@{surface}" in r.tags or "@shared" in r.tags
+
+                if all(
+                    surface_row(r)
+                    and (already_backlogged(r, surface) or (claimed(r, surface) and id(r) not in selected))
+                    for r in orows
+                ) and any(claimed(r, surface) and id(r) not in selected for r in orows):
+                    for r in orows:
+                        if claimed(r, surface) and id(r) not in selected:
+                            tag_at(rel, outline_line, r)
+                    continue
+                for ex_line, brows in blocks.items():
+                    un = [r for r in brows if claimed(r, surface) and id(r) not in selected]
+                    if not un:
+                        continue
+                    if any(claimed(r, surface) and id(r) in selected for r in brows):
+                        ambiguous += [(surface, r) for r in un]
+                    else:
+                        for r in un:
+                            tag_at(rel, ex_line, r)
+    return retag, ambiguous, unmatched
+
+
+def describe(retag, ambiguous, unmatched) -> list[str]:
+    out = []
+    for surface in SURFACES:
+        rows = sorted(
+            {id(r): r for per in retag.values() for r in per.get(surface, [])}.values(),
+            key=lambda r: (r.rel, r.line, r.name),
+        )
+        amb = [r for s, r in ambiguous if s == surface]
+        if rows or amb:
+            out.append(f"@{surface}: {len(rows)} scenario(s) claimed passing but no glob selects:")
+            for r in rows:
+                out.append(f"  features/{r.rel}:{r.line} {r.name}")
+        if amb:
+            out.append(f"@{surface}: {len(amb)} ambiguous outline row(s) (a glob names sibling rows):")
+            for r in amb:
+                out.append(f"  features/{r.rel}:{r.line} {r.name}")
+        if unmatched.get(surface):
+            out.append(
+                f"@{surface}: {len(unmatched[surface])} glob(s) name no scenario "
+                f"(a typo or a renamed scenario; the phone's runner fails on these, "
+                f"the desktop's silently runs nothing):"
+            )
+            for g in unmatched[surface]:
+                out.append(f"  {g}")
+    return out
+
+
+def apply_fix(retag) -> None:
+    by_file: dict[str, list[tuple[int, list[str]]]] = {}
+    for (rel, line), per_surface in retag.items():
+        by_file.setdefault(rel, []).append((line, sorted(per_surface)))
+    for rel, targets in by_file.items():
+        path = FEATURES / rel
+        lines = path.read_text(encoding="utf-8").split("\n")
+        for line_no, surfaces in sorted(targets, reverse=True):
+            idx = line_no - 1
+            tags = " ".join(f"@backlog-{s}" for s in surfaces)
+            if idx > 0 and lines[idx - 1].strip().startswith("@"):
+                lines[idx - 1] = lines[idx - 1].rstrip() + " " + tags
+            else:
+                indent = lines[idx][: len(lines[idx]) - len(lines[idx].lstrip())]
+                lines.insert(idx, indent + tags)
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> int:
+    fix = "--fix" in sys.argv[1:]
+    retag, ambiguous, unmatched = analyse()
+    if fix and retag:
+        apply_fix(retag)
+        n = sum(len({id(r) for per in [p] for r in per.get(s, [])}) for p in retag.values() for s in SURFACES)
+        print(f"features:check: retagged {n} scenario(s) at {len(retag)} tag line(s)")
+        retag, ambiguous, unmatched = analyse()
+    lines = describe(retag, ambiguous, unmatched)
+    if lines:
+        print("\n".join(lines))
+        if not fix and retag:
+            print("Run `mise run features:check --fix` to add the missing @backlog-<surface> tags.")
+        return 1
+    print("features:check: every desktop/mobile scenario the ledger claims is selected by its runner")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

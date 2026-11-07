@@ -1,11 +1,18 @@
 defmodule HalC2.Projection.BackgroundWork do
   @moduledoc """
-  Work that outlives a thread's settled turn, for the sidebar's Waiting pill.
+  Work that outlives a thread's settled turn.
 
   Tasks come from the provider thread roster (Claude background tasks) and from
   still-active command, dynamic tool and subagent turn items, deduplicated by native
   task id. Nothing is pending while a foreground run is active or the latest run has
   not settled; a rolled-back latest run abandons everything.
+
+  `derive/1` is everything still running, which keeps the provider process and the
+  thread's files alive. Only some of it holds the thread Working (the sidebar's
+  Waiting pill, settlement, a delegated task's end): `holding/1`. A command or a
+  monitor is as often a dev server or its watchdog as a wait, and only the agent
+  knows which, so one holds only when the agent marked it as work it waits on
+  (`"awaited"`, `hal_c2_background_wait`); subagents and other tasks always hold.
   """
 
   import HalC2.Projection.JS, only: [get: 2, json: 1, trim: 1]
@@ -15,6 +22,8 @@ defmodule HalC2.Projection.BackgroundWork do
   @interruptible ~w(preparing starting running)
   # `waiting` is a successful turn before checkpoint capture; `rolled_back` is not settled.
   @settled ~w(cancelled completed failed interrupted waiting)
+  # Commands and monitors, as items and as roster task types: they hold only when awaited.
+  @unless_awaited ~w(command_execution dynamic_tool local_bash monitor command)
 
   @type task :: %{required(String.t()) => String.t()}
 
@@ -64,12 +73,18 @@ defmodule HalC2.Projection.BackgroundWork do
     end
   end
 
-  defp roster_task(task) do
-    description = if d = get(task, "description"), do: trim(d)
+  @doc "The tasks of `derive/1` that hold the thread Working."
+  @spec holding([task]) :: [task]
+  def holding(tasks), do: Enum.filter(tasks, &holds?/1)
 
+  defp holds?(task),
+    do: task["awaited"] == true or task["taskType"] not in @unless_awaited
+
+  defp roster_task(task) do
     Map.take(task, ["taskId", "taskType"])
     |> json()
-    |> put_present("description", if(description != "", do: description))
+    |> put_present("description", non_blank(get(task, "description")))
+    |> put_present("awaited", if(get(task, "awaited") == true, do: true))
   end
 
   defp pending_item?(item, rolled_back) do
@@ -86,6 +101,7 @@ defmodule HalC2.Projection.BackgroundWork do
   defp item_task(item) do
     %{"taskId" => native_task_id(item), "taskType" => get(item, "type")}
     |> put_present("description", description(item))
+    |> put_present("awaited", if(get(item, "awaited") == true, do: true))
   end
 
   defp native_task_id(item) do
@@ -116,11 +132,17 @@ defmodule HalC2.Projection.BackgroundWork do
     end
   end
 
+  # A description is one line, the first that says anything: a subagent's
+  # prompt or a heredoc command is many, and clients show it in a single row.
   defp non_blank(value) when is_binary(value) do
-    case trim(value) do
-      "" -> nil
-      trimmed -> trimmed
-    end
+    value
+    |> String.split(["\r\n", "\n", "\r"])
+    |> Enum.find_value(fn line ->
+      case trim(line) do
+        "" -> nil
+        trimmed -> trimmed
+      end
+    end)
   end
 
   defp non_blank(_), do: nil

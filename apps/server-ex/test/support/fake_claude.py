@@ -8,7 +8,8 @@
 # (--resume-session-at); "usage limit until EPOCH" stops on a usage limit; "in the
 # background" starts a background subagent (task task-agent-N) and a background command
 # (task task-bash-N) and ends the turn while both run, their task_notification left to
-# the test; "subagent leaves work running" runs a subagent that starts a background
+# the test; "background commands: A, B" starts one background command per name and
+# ends the turn while they run; "subagent leaves work running" runs a subagent that starts a background
 # command and returns "Dev server started" while the command runs on; "subagent approve
 # run: CMD" runs a subagent that asks permission for CMD and returns "ran CMD" when
 # allowed, "was not allowed to run CMD" otherwise. Rules a
@@ -86,10 +87,24 @@ session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
+# FAKE_CLAUDE_ORPHANED names a background task the previous process left running. A
+# resumed process queues its first message behind a turn of its own that reports the
+# task stopped: its result has origin task-notification and echoes no message's uuid.
+orphaned = os.environ.get("FAKE_CLAUDE_ORPHANED") if "--resume" in sys.argv else None
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
+# A subagent's messages are in a transcript of their own: Claude Code cannot resume the
+# conversation at one and ends the process.
+if resume_at and resume_at.startswith("sub-uuid-"):
+    sys.stderr.write(f"No message found with message.uuid of: {resume_at}\n")
+    sys.exit(1)
 # The permission mode, from argv and then set_permission_mode; in auto Claude's own
 # classifier approves the command "approve" would otherwise ask about.
 mode = sys.argv[sys.argv.index("--permission-mode") + 1] if "--permission-mode" in sys.argv else "default"
+# FAKE_CLAUDE_NO_AUTO: a model without auto mode. Claude Code runs it in its default
+# mode instead, says so in its init message, and refuses a later switch to auto.
+NO_AUTO = bool(os.environ.get("FAKE_CLAUDE_NO_AUTO"))
+if NO_AUTO and mode == "auto":
+    mode = "default"
 # The login is the config directory's, as Claude Code keeps it (`.claude.json`'s
 # oauthAccount); without one the fake is signed in as me@example.com.
 ACCOUNT_EMAIL = "me@example.com"
@@ -150,6 +165,9 @@ for line in sys.stdin:
             send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": usage}})
             continue
         # The account a signed-in Claude Code reports when it starts.
+        if sub == "set_permission_mode" and NO_AUTO and msg["request"]["mode"] == "auto":
+            send({"type": "control_response", "response": {"subtype": "error", "request_id": msg["request_id"], "error": "Cannot set permission mode to auto: auto mode unavailable for this model"}})
+            continue
         if sub == "set_permission_mode":
             mode = msg["request"]["mode"]
         if sub == "initialize":
@@ -189,7 +207,9 @@ for line in sys.stdin:
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
         send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
         send({"type": "assistant", "session_id": session, "message": {"id": "m-steer", "role": "assistant", "content": [{"type": "text", "text": "steered: " + steer_text}]}})
-        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        # The answer names only the steer's prompt, not the one the turn started with.
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session,
+              **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         continue
     turn += 1
     text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
@@ -200,8 +220,33 @@ for line in sys.stdin:
     if os.environ.get("FAKE_CLAUDE_INPUT_LOG"):
         with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as f:
             f.write(json.dumps(text) + "\n")
-    send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
+    # Claude Code says when it starts and finishes a prompt it was given a uuid for.
+    lifecycle = lambda state: msg.get("uuid") and send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": state})
+    if orphaned:
+        lifecycle("queued")
+        send({"type": "system", "subtype": "task_notification", "session_id": session, "task_id": orphaned, "status": "stopped",
+              "summary": "Orphaned by a previous Claude Code process exit"})
+        send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}o", "role": "assistant", "content": [{"type": "text", "text": "The survey stopped"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "result": "The survey stopped",
+              "origin": {"kind": "task-notification"}, "session_id": session})
+        # Then Claude starts the prompt it queued, unless it never runs one for it.
+        if "never start a turn" not in text:
+            lifecycle("started")
+        orphaned = None
+    send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
     record("user", text)
+    # "/compact": Claude summarises the conversation (compact_boundary) and answers with
+    # a result that echoes the message's uuid, as Claude Code 2.1.285 does.
+    if text == "/compact":
+        lifecycle("started")
+        send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+              "compact_metadata": {"trigger": "manual", "pre_tokens": 27445, "post_tokens": 1192}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": "<local-command-stdout>Compacted </local-command-stdout>"}})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": "", "session_id": session,
+              **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
+        lifecycle("completed")
+        continue
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
         resets = int(text.rsplit(" ", 1)[1])
@@ -212,6 +257,11 @@ for line in sys.stdin:
     if "long session" in text and "--resume" in sys.argv and "resume_return" in dialogs:
         send({"type": "control_request", "request_id": f"dialog-{turn}", "request": {"subtype": "request_user_dialog", "dialog_kind": "resume_return",
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
+        continue
+    # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
+    # as a turn the user stops mid-answer.
+    if "answer halfway" in text.split("</conversation_history>")[-1]:
+        send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
         continue
     # A handoff's earlier conversation is history, not a directive, and so is a
     # delegated task's worker preamble (it asks the worker to finish its own waiting).
@@ -246,6 +296,21 @@ for line in sys.stdin:
               "content": f"Monitor started (task task-{mon})", "is_error": False}]}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
+        continue
+    # "subagent has the last word": Claude starts a background subagent (agent-N) and
+    # answers, and the subagent's message (sub-uuid-N) comes after Claude's (uuid-N)
+    # before the turn ends.
+    if text == "subagent has the last word":
+        agent = f"agent-{turn}"
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}s", "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+            "description": "Helper", "prompt": "look around", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+              "description": "Helper", "task_type": "local_agent", "prompt": "look around", "is_backgrounded": True})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+              "content": [{"type": "text", "text": "Async agent launched"}]}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "A helper is looking around"}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": agent, "uuid": f"sub-uuid-{turn}", "message": {"id": f"s{turn}", "role": "assistant", "content": [{"type": "text", "text": "Looking around"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     # "subagent works on: TASK": a subagent (tool use agent-N) runs TASK in the turn,
     # its own messages under its tool call: partial text, then text, a Bash call and a
@@ -296,6 +361,21 @@ for line in sys.stdin:
               "content": [{"type": "text", "text": "Dev server started"}]}]}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent started the dev server"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "background commands: A, B": one background Bash per name (tool use NAME-N, task
+    # task-NAME-N, spaces as dashes, described by its name), the turn ending while they run.
+    if text.startswith("background commands: "):
+        names = [n.strip() for n in text[len("background commands: "):].split(",") if n.strip()]
+        for name in names:
+            tool = f"{name.replace(' ', '-')}-{turn}"
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}{tool}", "role": "assistant", "content": [{"type": "tool_use", "id": tool, "name": "Bash", "input": {
+                "command": f"run {name}", "description": name, "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{tool}", "tool_use_id": tool,
+                  "description": name, "task_type": "local_bash"})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool,
+                  "content": f"Command running in background with ID: task-{tool}", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "They are running"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "They are running", "session_id": session})
         continue
     # "in the background": a background subagent (agent-N) and command (bash-N); "only
     # the subagent" or "only the command" leaves the other out.
@@ -419,8 +499,6 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     ev = lambda e: send({"type": "stream_event", "session_id": session, "event": e})
-    # Claude Code says when it starts and finishes a prompt it was given a uuid for.
-    lifecycle = lambda state: msg.get("uuid") and send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": state})
     lifecycle("started")
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "thinking", "thinking": "Let me look."}]}})
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}b", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": "Bash", "input": {"command": "ls"}}]}})

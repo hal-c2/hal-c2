@@ -11,7 +11,14 @@ defmodule HalC2.ProviderSecrets do
   nothing stored (a renamed variable) is saved empty and unredacted, never as a secret
   that is not there. A variable made plain, emptied or dropped forgets its secret.
   `value/2` reads one back for the agent's environment.
+
+  An external OpenCode server's `serverPassword` (in `providers.opencode` or an
+  instance's `config`) is sealed the same way by `seal_server_passwords/2`, leaving
+  `"••••••"` in its place; sending the marker back keeps it, and
+  `server_password/2` reads it back.
   """
+
+  @marker "••••••"
 
   @doc """
   The settings to store for `next`, given the stored `current`, and whether a secret
@@ -61,6 +68,87 @@ defmodule HalC2.ProviderSecrets do
         else: {name, variable["value"]}
     end
     |> Enum.filter(fn {_name, value} -> is_binary(value) end)
+  end
+
+  @doc """
+  Moves plain OpenCode server passwords in `next` into the secret store and forgets
+  those `next` clears or drops. Returns the settings to store and whether a password
+  changed.
+  """
+  def seal_server_passwords(next, current) do
+    scopes = password_scopes(next)
+
+    {settings, changed} =
+      Enum.reduce(scopes, {next, false}, fn {scope, keys}, {settings, changed} ->
+        case get_in(settings, keys) do
+          @marker ->
+            # Nothing stored under this scope: no password to keep.
+            if File.exists?(password_path(scope)),
+              do: {settings, changed},
+              else: {drop_in(settings, keys), changed}
+
+          value when is_binary(value) and value != "" ->
+            write_file(password_path(scope), value)
+            {put_in(settings, keys, @marker), true}
+
+          _ ->
+            {settings, remove_file(password_path(scope)) or changed}
+        end
+      end)
+
+    kept = MapSet.new(scopes, &elem(&1, 0))
+
+    changed =
+      for {scope, _keys} <- password_scopes(current),
+          not MapSet.member?(kept, scope),
+          reduce: changed,
+          do: (changed -> remove_file(password_path(scope)) or changed)
+
+    {settings, changed}
+  end
+
+  @doc """
+  The password a server setting stands for: the stored one for the marker, the value
+  itself otherwise, nil when blank. `scope` is `{:provider, driver}` or
+  `{:instance, id}`.
+  """
+  # The scope is URL-safe base64 in a fixed name under the data directory's secrets.
+  # sobelow_skip ["Traversal.FileModule"]
+  def server_password(scope, @marker) do
+    case File.read(password_path(scope)) do
+      {:ok, value} when value != "" -> value
+      _ -> nil
+    end
+  end
+
+  def server_password(_scope, value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  def server_password(_scope, _value), do: nil
+
+  # Where a server password can be set: the OpenCode driver's settings and every
+  # OpenCode instance's config.
+  defp password_scopes(settings) do
+    provider =
+      if is_map(get_in(settings, ["providers", "opencode"])),
+        do: [{{:provider, "opencode"}, ["providers", "opencode", "serverPassword"]}],
+        else: []
+
+    instances =
+      for {id, %{"driver" => "opencode", "config" => %{}}} <-
+            settings["providerInstances"] || %{},
+          is_binary(id),
+          do: {{:instance, id}, ["providerInstances", id, "config", "serverPassword"]}
+
+    provider ++ instances
+  rescue
+    _ -> []
+  end
+
+  defp drop_in(settings, keys) do
+    {parent, [key]} = Enum.split(keys, -1)
+    update_in(settings, parent, &Map.delete(&1, key))
   end
 
   defp seal_instance(id, %{"environment" => environment} = instance, current, {changed, kept})
@@ -133,8 +221,9 @@ defmodule HalC2.ProviderSecrets do
     _ -> %{}
   end
 
-  defp write(id, name, value) do
-    path = path(id, name)
+  defp write(id, name, value), do: write_file(path(id, name), value)
+
+  defp write_file(path, value) do
     File.mkdir_p!(Path.dirname(path))
     File.chmod!(Path.dirname(path), 0o700)
     tmp = path <> ".tmp"
@@ -143,7 +232,23 @@ defmodule HalC2.ProviderSecrets do
     File.rename!(tmp, path)
   end
 
-  defp remove(id, name), do: File.rm(path(id, name)) == :ok
+  defp remove(id, name), do: remove_file(path(id, name))
+
+  defp remove_file(path), do: File.rm(path) == :ok
+
+  defp password_path(scope) do
+    name =
+      case scope do
+        {:provider, driver} -> "provider-#{driver}"
+        {:instance, id} -> "instance-#{id}"
+      end
+
+    Path.join([
+      HalC2.Paths.data_dir(),
+      "secrets",
+      "server-password-#{Base.url_encode64(name, padding: false)}.bin"
+    ])
+  end
 
   defp path(id, name) do
     encode = &Base.url_encode64(&1, padding: false)

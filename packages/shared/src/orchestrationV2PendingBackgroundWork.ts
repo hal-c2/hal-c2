@@ -84,24 +84,24 @@ function isPersistentDynamicToolInput(input: unknown): boolean {
   return Reflect.get(input, "persistent") === true;
 }
 
+// A description is one line, the first that says anything: a subagent's
+// prompt or a heredoc command is many, and clients show it in a single row.
+// Mirrors HalC2.Projection.BackgroundWork.
+function firstLine(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  for (const line of value.split(/\r\n|\n|\r/)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
 function descriptionFromTurnItem(item: PendingBackgroundWorkTurnItem): string | undefined {
-  if (typeof item.title === "string" && item.title.trim().length > 0) {
-    return item.title.trim();
-  }
-  if (item.type === "command_execution" && typeof item.input === "string") {
-    const command = item.input.trim();
-    return command.length > 0 ? command : undefined;
-  }
-  if (item.type === "dynamic_tool") {
-    const toolName = Reflect.get(item, "toolName");
-    if (typeof toolName === "string" && toolName.trim().length > 0) {
-      return toolName.trim();
-    }
-  }
-  if (item.type === "subagent" && typeof item.prompt === "string") {
-    const prompt = item.prompt.trim();
-    return prompt.length > 0 ? prompt : undefined;
-  }
+  const title = firstLine(item.title);
+  if (title !== undefined) return title;
+  if (item.type === "command_execution") return firstLine(item.input);
+  if (item.type === "dynamic_tool") return firstLine(Reflect.get(item, "toolName"));
+  if (item.type === "subagent") return firstLine(item.prompt);
   return undefined;
 }
 
@@ -179,10 +179,10 @@ export function derivePendingBackgroundWork(input: {
       if (task.taskId.length === 0 || byTaskId.has(task.taskId)) {
         continue;
       }
-      const description = task.description?.trim();
+      const description = firstLine(task.description);
       byTaskId.set(task.taskId, {
         taskId: task.taskId,
-        ...(description === undefined || description.length === 0 ? {} : { description }),
+        ...(description === undefined ? {} : { description }),
         ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
       });
     }

@@ -208,7 +208,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step "the shell row of {string} lists that background task", %{args: [thread]} = context do
     assert [%{"taskId" => "bg-1", "taskType" => "command_execution", "description" => d}] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+             World.row(context, thread)["runningBackgroundTasks"]
 
     assert d == "npm run watch"
     context
@@ -216,7 +216,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step "the shell row of {string} lists no background tasks", %{args: [thread]} = context do
     assert World.entities(context, thread, "turn-item") |> Enum.any?(&(&1["id"] == "bg-1"))
-    assert World.row(context, thread)["pendingBackgroundTasks"] == []
+    assert World.row(context, thread)["runningBackgroundTasks"] == []
     context
   end
 

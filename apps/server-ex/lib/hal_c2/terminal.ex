@@ -686,7 +686,7 @@ defmodule HalC2.Terminal do
       {:kill_timeout, 1}
     ]
 
-    case Enum.find(shells(), &File.exists?(hd(&1))) do
+    case shell() do
       nil ->
         failed(state, "No shell found (tried #{Enum.map_join(shells(), ", ", &hd/1)})")
 
@@ -887,6 +887,12 @@ defmodule HalC2.Terminal do
   # The user's shell first, then common ones (`:terminal_shells` replaces the
   # common ones, for tests of a machine without them). zsh must not print its partial-line
   # marker into a fresh terminal.
+  @doc """
+  The shell a terminal starts, as its argv: the program `SHELL` names when it is there,
+  else the first fallback that is; nil when none is.
+  """
+  def shell, do: Enum.find(shells(), &File.exists?(hd(&1)))
+
   defp shells do
     requested = System.get_env("SHELL", "") |> String.split() |> List.first()
 

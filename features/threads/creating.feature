@@ -265,7 +265,7 @@ Feature: Creating threads
     Then three threads are created, one per model
     And each thread works in its own new worktree
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A request to several models cut off by a quit comes back to its draft once
     Given "shop" is a Git project
     And the MC holds its answers

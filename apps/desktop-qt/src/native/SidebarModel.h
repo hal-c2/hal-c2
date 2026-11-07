@@ -45,6 +45,9 @@ struct Thread {
   QString createdAt;
   QString updatedAt;
   Nullable latestUserMessageAt;
+  // The latest message the user typed, which a wake or an agent's message does
+  // not move; nothing at all from an MC that does not send it.
+  std::optional<Nullable> latestUserAuthoredMessageAt;
   Nullable archivedAt;
   bool subagent = false;
   QString interactionMode;
@@ -104,6 +107,43 @@ Nullable statusLabel(const Thread& thread);
 bool unread(const Thread& thread);
 Nullable visibleWokeAt(const Thread& thread, qint64 nowMs);
 
+// Whether the thread is busy for the Working section: its run is going or
+// connecting, or it waits on background work it resumes from. Not while it
+// asks for an approval or an answer, nor with a plan to review.
+bool working(const Thread& thread);
+
+// How long a thread that stopped working stays in the Working section: a run
+// can end moments before its continuation starts, or before the MC settles it.
+inline constexpr qint64 kWorkingExitGraceMs = 2000;
+
+// The Working section's placement on this device (upstream's
+// createInboxReturnTracker): observe() every list of threads the sidebar is
+// built from. A thread that stops working stays in the section for
+// kWorkingExitGraceMs, unless it asks for something, fails, or the user or
+// the MC moves it (pins, snoozes, settles, archives); when it leaves, the time
+// is its return to the inbox. Threads not observed since are forgotten.
+class WorkingTracker {
+public:
+  void observe(const QList<Thread>& threads, qint64 nowMs);
+  // Forgets everything, as when the section is turned off.
+  void clear();
+  bool isWorking(const Thread& thread) const;
+  // When the thread `key` last left the section, as this device saw it.
+  std::optional<qint64> returnedAt(const QString& key) const;
+  // The soonest grace that runs out, to observe again then.
+  std::optional<qint64> nextDeadline() const;
+
+private:
+  struct State {
+    bool working = false;
+    std::optional<qint64> deadline;
+    // Where the thread was placed while it worked; a change is a move.
+    std::optional<QString> placement;
+  };
+  QHash<QString, State> m_states;
+  QHash<QString, qint64> m_returns;
+};
+
 struct Capabilities {
   bool settlement = false;
   bool snooze = false;
@@ -156,11 +196,14 @@ QString physicalKey(const Project& project);
 // The client settings grouping and ordering read: sidebarProjectGroupingMode
 // ("repository", "repository_path" or "separate"), its per-folder overrides
 // keyed by physical key, and sidebarProjectSortOrder ("updated_at",
-// "created_at" or "manual").
+// "created_at" or "manual"). `manualOrder` is the order the user arranged
+// the folders in by hand (`sidebarProjectOrder`, physical keys), which
+// "manual" lists first; folders it does not name follow in the order given.
 struct GroupingSettings {
   QString mode = QStringLiteral("repository");
   QHash<QString, QString> overrides;
   QString sortOrder = QStringLiteral("updated_at");
+  QStringList manualOrder;
 };
 
 // A logical project: the folders grouped as one, across environments.
@@ -187,6 +230,34 @@ std::optional<Project> mostRecentProject(const QList<Project>& projects, const Q
 // archived and subagent rows the sidebar does not list either.
 std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder);
 
+// The legacy sidebar (legacySidebarEnabled): one tree of threads per project
+// instead of the sections. A project lists its threads in `threadSortOrder`
+// ("updated_at" is the last message the user sent, or "created_at"), the
+// first `previewCount` of them unless the user asked for all; a folded one
+// lists only the open thread, when it is one of its own.
+struct Tree {
+  int previewCount = 6;
+  QString threadSortOrder = QStringLiteral("updated_at");
+  // Logical project keys.
+  QSet<QString> folded;
+  QSet<QString> showingAll;
+  // Projects are sorted by hand, so their headers can be dragged.
+  bool manual = false;
+};
+
+// sidebarThreadPreviewCount as the tree reads it: 1 to 15, 6 when unset
+// (packages/contracts settings.ts).
+inline constexpr int kMinThreadPreviewCount = 1;
+inline constexpr int kMaxThreadPreviewCount = 15;
+inline constexpr int kDefaultThreadPreviewCount = 6;
+int clampThreadPreviewCount(int count);
+
+// The folder order after the user dropped the folders `dragged` on the
+// project of the folders `target` (physical keys): dragged up it lands above
+// the target, dragged down below it. `order` unchanged when the drop moves
+// nothing.
+QStringList reorderProjects(const QStringList& order, const QStringList& dragged, const QStringList& target);
+
 // The settled rows the shelf lists at a time.
 inline constexpr qsizetype kSettledPage = 50;
 
@@ -205,6 +276,9 @@ struct Input {
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
+  // The threads whose composer holds something unsent; their rows, but the
+  // open one's, are marked `unsentDraft`.
+  QSet<QString> unsentDraftKeys;
   // The shortcut labels of the first rows' jump commands (thread.jump.1..9),
   // in order; each row carries its own while `showJumpHints`.
   QStringList jumpLabels;
@@ -221,13 +295,22 @@ struct Input {
   // Whether Settled lists the settled threads a plugin started, such as code
   // reviews (`sidebarShowSettledPluginThreads`); the open one is listed either way.
   bool showSettledPluginThreads = false;
+  // Set, the view is the legacy tree: `mode` "tree" and `tree` in place of
+  // the sections, which are empty.
+  std::optional<Tree> tree;
+
+  // The Working section (sidebarWorkingShelfEnabled), off without one: busy
+  // inbox threads list in `working`, ordered by when the user last sent work,
+  // and the inbox orders by when each came back, so it cannot be arranged.
+  const WorkingTracker* working = nullptr;
 
   const ProjectGroup* group(const QString& key) const;
 };
 
 struct View {
   QVariantMap state;
-  // Rows in the order they render (pinned, active, snoozed, settled), and
+  // Rows in the order they render (pinned, active, working, snoozed, settled;
+  // the tree's shown rows, project by project), and
   // which of them are parked (snoozed or settled).
   QStringList orderedKeys;
   QSet<QString> parkedKeys;
@@ -255,6 +338,13 @@ struct OrderAssignment {
 // holds every thread of the section, the ones not shown too, whose keys stay.
 QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
                                    const QString& movedKey);
+// planReorder for a section with rows that cannot store an order (their
+// environment is offline): only `writable` rows are written, a frozen row's
+// key is a bound, and a frozen keyless row (first in Active, last in Pinned,
+// `keylessFirst`) is left out. Nothing when the drop cannot be stored so that
+// it reads as dropped.
+std::optional<QList<OrderAssignment>> planWritableReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                                          const QString& movedKey, const QSet<QString>& writable, bool keylessFirst);
 
 struct SnoozePreset {
   QString id;
