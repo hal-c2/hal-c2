@@ -9,6 +9,7 @@
 #include "FakeFiles.h"
 #include "FakeMc.h"
 #include "McClient.h"
+#include "NavigationController.h"
 #include "NativeShell.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
@@ -44,7 +45,8 @@ struct Shell {
           {QStringLiteral("driver"), QStringLiteral("codex")},
           {QStringLiteral("enabled"), true},
           {QStringLiteral("status"), QStringLiteral("ready")},
-          {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-a")}}}},
+          {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-a")}},
+                                            QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-b")}}}},
       };
       mc.send({{QStringLiteral("t"), QStringLiteral("config")},
                {QStringLiteral("id"), id},
@@ -647,6 +649,55 @@ private slots:
     QCOMPARE(types, QStringList{QStringLiteral("message.dispatch")});
     const QJsonObject message = shell.mc.commands.constLast();
     QCOMPARE(message.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString(), QStringLiteral("codex"));
+  }
+
+  // The model and mode a new thread carried into the project's draft counted
+  // as the user's own, so a new thread from another thread reopened the draft
+  // still showing the first thread's.
+  void aNewThreadFromAnotherThreadReplacesWhatTheLastOneCarried() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto model = [](const QString& slug) {
+      return QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), slug}};
+    };
+    QJsonObject a = shell.mc.threads.value(QStringLiteral("t1"));
+    a.insert(QStringLiteral("modelSelection"), model(QStringLiteral("gpt-a")));
+    a.insert(QStringLiteral("interactionMode"), QStringLiteral("plan"));
+    shell.mc.threads.insert(QStringLiteral("t1"), a);
+    QJsonObject b = a;
+    b.insert(QStringLiteral("id"), QStringLiteral("t2"));
+    b.insert(QStringLiteral("title"), QStringLiteral("t2"));
+    b.insert(QStringLiteral("modelSelection"), model(QStringLiteral("gpt-b")));
+    b.insert(QStringLiteral("interactionMode"), QStringLiteral("default"));
+    shell.mc.threads.insert(QStringLiteral("t2"), b);
+    QVERIFY(shell.restart(true));
+    QVERIFY(shell.native->controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true));
+    const auto shows = [&](const QString& slug, const QString& mode) {
+      return shell.composer()->currentSelection().value(QLatin1String("model")).toString() == slug &&
+             shell.composerState().value(QStringLiteral("interactionMode")).toString() == mode;
+    };
+    const auto draftOpen = [&] { return shell.native->controller<NavigationController>()->route().draftId; };
+
+    QVERIFY(shell.open());
+    shell.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    QTRY_VERIFY(!draftOpen().isEmpty());
+    const QString draftId = draftOpen();
+    QTRY_VERIFY(shows(QStringLiteral("gpt-a"), QStringLiteral("plan")));
+
+    shell.key = QStringLiteral("env-a:t2");
+    QVERIFY(shell.open());
+    shell.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    QTRY_COMPARE(draftOpen(), draftId);
+    QTRY_VERIFY(shows(QStringLiteral("gpt-b"), QStringLiteral("default")));
+
+    // A pick there is the user's: the next new thread keeps it.
+    shell.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
+    QTRY_VERIFY(shows(QStringLiteral("gpt-b"), QStringLiteral("plan")));
+    shell.key = QStringLiteral("env-a:t1");
+    QVERIFY(shell.open());
+    shell.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    QTRY_COMPARE(draftOpen(), draftId);
+    QTRY_VERIFY(shows(QStringLiteral("gpt-b"), QStringLiteral("plan")));
   }
 };
 

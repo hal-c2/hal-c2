@@ -453,6 +453,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/creating.feature:The new thread button starts straight away when there is one project"),
     QStringLiteral("threads/creating.feature:Shift on the new thread button starts in the current project"),
     QStringLiteral("threads/creating.feature:A new thread keeps the current model and mode"),
+    QStringLiteral("threads/creating.feature:A new thread from another thread takes that thread's model and mode"),
     QStringLiteral("threads/creating.feature:A failed start does not put back a prompt over a newer draft"),
     QStringLiteral("threads/creating.feature:A thread whose start fails gets its prompt back without touching a newer draft"),
     QStringLiteral("threads/creating.feature:A draft whose project is gone cannot be sent"),

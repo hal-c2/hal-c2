@@ -103,6 +103,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
     QStringLiteral("threads/settle.feature"),
     QStringLiteral("threads/creating.feature:A new thread keeps the current model and mode"),
+    QStringLiteral("threads/creating.feature:A new thread from another thread takes that thread's model and mode"),
     QStringLiteral("threads/creating.feature:A new thread uses the project default model*"),
     QStringLiteral("threads/creating.feature:Starting a thread from another thread's branch"),
     QStringLiteral("threads/creating.feature:A new thread started while the last one sets up*"),

@@ -84,6 +84,9 @@ struct Target {
   QString model;  // picked, else the default
   int pending = 0;  // of a page's images, the first ones, those its ask on its way carries
   QString interaction;  // the interaction mode picked, else the thread's
+  // The draft's model and interaction came with a new thread, not from a pick
+  // here, so the next new thread brings its own.
+  bool carried = false;
 };
 
 // A page's ask whose answer the MC holds; whether it will refuse it.
@@ -966,7 +969,11 @@ struct RemoveImage : Command {
 
 struct PickModel : Command {
   QString model = pick(kModels);
-  void apply(Model& m) const override { m.targets[m.open].model = model; }
+  void apply(Model& m) const override {
+    Target& target = m.targets[m.open];
+    target.model = model;
+    target.carried = false;
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.model.select"),
                          QVariantMap{{QStringLiteral("instanceId"), instanceOf(model)}, {QStringLiteral("model"), model}});
@@ -981,7 +988,10 @@ struct PickInteraction : Command {
   QString mode = pick(kInteractionModes);
   void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open) || m.open == kDraft); }
   void apply(Model& m) const override {
-    if (mode != m.interaction(m.open)) m.targets[m.open].interaction = mode;
+    if (mode == m.interaction(m.open)) return;
+    Target& target = m.targets[m.open];
+    target.interaction = mode;
+    target.carried = false;
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
@@ -992,8 +1002,9 @@ struct PickInteraction : Command {
 
 // New thread from an open thread: the project's draft opens again. A draft
 // with nothing of its own (just made after the user discarded the last one,
-// or never written or picked in) takes the thread's interaction mode and model
-// (the project names no default here); one the user started on keeps its own.
+// never written or picked in, or holding only what the last new thread
+// brought) takes the thread's interaction mode and model (the project names
+// no default here); one the user wrote in or picked in keeps its own.
 struct NewThread : Command {
   bool fresh = *rc::gen::arbitrary<bool>();
   void checkPreconditions(const Model& m) const override {
@@ -1004,8 +1015,10 @@ struct NewThread : Command {
     const QString from = m.open;
     m.open = kDraft;
     const Target kept = m.targets.value(kDraft);
-    if (!fresh && (!kept.text.isEmpty() || kept.images > 0 || !kept.model.isEmpty() || !kept.interaction.isEmpty())) return;
+    const bool own = !kept.carried && (!kept.model.isEmpty() || !kept.interaction.isEmpty());
+    if (!fresh && (!kept.text.isEmpty() || kept.images > 0 || own)) return;
     Target draft;
+    draft.carried = true;
     draft.interaction = m.interaction(from);
     const QString picked = m.targets.value(from).model;
     draft.model = picked.isEmpty() ? m.recorded.value(from) : picked;

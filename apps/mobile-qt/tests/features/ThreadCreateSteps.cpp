@@ -47,7 +47,7 @@ QJsonObject modelNamed(const QString& name) {
 // Claude, offering the models the scenarios name.
 void offerModels(World& world) {
   QJsonArray models;
-  for (const QString& name : {S("Opus"), S("Sonnet")}) {
+  for (const QString& name : {S("Opus"), S("Sonnet"), S("GPT-5")}) {
     models.append(QJsonObject{{S("slug"), modelNamed(name).value(QLatin1String("model"))}, {S("name"), name},
                               {S("capabilities"), QJsonObject{{S("optionDescriptors"), QJsonArray()}}}});
   }
@@ -121,6 +121,10 @@ const Steps steps([] {
   // The model and mode a new thread keeps, unless the project names its own.
   step(S("the current thread uses the model %1( in plan mode)?").arg(q), [](World& world, const Captures& c, const Table&) {
     offerModels(world);
+    if (world.thread.isEmpty()) {
+      world.thread = haveThread(world, S("Tax line"));
+      openThread(world, S("Tax line"));
+    }
     const bool plan = !c[1].isEmpty();
     if (plan) {
       expect(world.native().controller<SettingsController>()->writeDevice(S("planModeEnabled"), true), S("plan mode could not be turned on"));
@@ -141,13 +145,26 @@ const Steps steps([] {
     world.mc.sendRow(c[0], row, S("project"));
     world.sync();
   });
-  step(S("the draft uses the model %1( in plan mode)?").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(S("the draft uses the model %1(?: in (plan|default) mode)?").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString model = modelNamed(c[0]).value(QLatin1String("model")).toString();
     world.waitFor([&] {
       const QVariantMap shown = composer(world);
       return route(world).value(S("kind")) == QLatin1String("draft") && shown.value(S("target")) == creating(world).draftId &&
-             shown.value(S("selectedModel")) == model && (c[1].isEmpty() || shown.value(S("interactionMode")) == QLatin1String("plan"));
+             shown.value(S("selectedModel")) == model && (c[1].isEmpty() || shown.value(S("interactionMode")) == c[1]);
     }, [&] { return S("the draft on %1; the composer is %2").arg(c[0], show(composer(world))); });
+  });
+  // Another thread of the project, in the default mode, opened from the thread list.
+  step(S("the user opens another thread of %1 that uses the model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("shop"), S("the phone's threads are in shop, not %1").arg(c[0]));
+    const QString title = S("Cart totals");
+    world.thread = haveThread(world, title);
+    updateRow(world.mc, world.thread, {{S("modelSelection"), modelNamed(c[1])}, {S("interactionMode"), S("default")}});
+    goHome(world);
+    openThread(world, title);
+    world.waitFor([&] {
+      return composer(world).value(S("selectedModel")) == modelNamed(c[1]).value(QLatin1String("model")).toString() &&
+             composer(world).value(S("interactionMode")) == QLatin1String("default");
+    }, [&] { return S("the other thread; the composer is %1").arg(show(composer(world))); });
   });
 
   // A new thread on the current thread's branch, from the thread's menu.

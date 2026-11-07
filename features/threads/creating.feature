@@ -92,6 +92,15 @@ Feature: Creating threads
     Then the draft uses the model "Opus" in plan mode
 
   @desktop @mobile @priority-high
+  Scenario: A new thread from another thread takes that thread's model and mode
+    Given the current thread uses the model "Opus" in plan mode
+    And the user starts a new thread
+    And the draft uses the model "Opus" in plan mode
+    When the user opens another thread of "shop" that uses the model "GPT-5"
+    And the user starts a new thread
+    Then the draft uses the model "GPT-5" in default mode
+
+  @desktop @mobile @priority-high
   Scenario: A new thread uses the project default model when the project has one
     Given "shop" has the default model "Sonnet"
     And the current thread uses the model "Opus"

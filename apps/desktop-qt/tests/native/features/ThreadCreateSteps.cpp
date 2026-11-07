@@ -404,13 +404,31 @@ const Steps steps([] {
                                composerShown(world).value(QStringLiteral("interactionMode")) == QLatin1String("plan"); },
                   [&] { return QStringLiteral("the thread's model and mode; the composer is %1").arg(show(composerShown(world))); });
   });
-  step(QStringLiteral("the draft uses the model %1 in plan mode").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the draft uses the model %1 in (plan|default) mode").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString model = modelNamed(c[0]).value(QLatin1String("model")).toString();
     world.waitFor([&] {
       const QVariantMap composer = composerShown(world);
       return navigation(world)->route().kind == QLatin1String("draft") && composer.value(QStringLiteral("target")) == navigation(world)->route().draftId &&
-             composer.value(QStringLiteral("selectedModel")) == model && composer.value(QStringLiteral("interactionMode")) == QLatin1String("plan");
-    }, [&] { return QStringLiteral("the draft on %1 in plan mode; the composer is %2").arg(c[0], show(composerShown(world))); });
+             composer.value(QStringLiteral("selectedModel")) == model && composer.value(QStringLiteral("interactionMode")) == c[1];
+    }, [&] { return QStringLiteral("the draft on %1 in %2 mode; the composer is %3").arg(c[0], c[1], show(composerShown(world))); });
+  });
+  // Another thread of the project, in the default mode, opened from the draft.
+  step(QStringLiteral("the user opens another thread of %1 that uses the model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = QStringLiteral("thread-other");
+    const QJsonObject model = modelNamed(c[1]);
+    const QJsonObject row{{QStringLiteral("id"), id}, {QStringLiteral("title"), QStringLiteral("Cart totals")}, {QStringLiteral("projectId"), c[0]},
+                          {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")},
+                          {QStringLiteral("modelSelection"), model}, {QStringLiteral("interactionMode"), QStringLiteral("default")}};
+    world.mc.threads.insert(id, row);
+    world.mc.sendRow(id, row);
+    world.sync();
+    const QString key = world.mc.environmentId + QLatin1Char(':') + id;
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
+    world.waitFor([&] {
+      const QVariantMap composer = composerShown(world);
+      return composer.value(QStringLiteral("target")) == key && composer.value(QStringLiteral("selectedModel")) == model.value(QLatin1String("model")).toString() &&
+             composer.value(QStringLiteral("interactionMode")) == QLatin1String("default");
+    }, [&] { return QStringLiteral("the other thread; the composer is %1").arg(show(composerShown(world))); });
   });
 
   // A new thread while the last one is still being made.

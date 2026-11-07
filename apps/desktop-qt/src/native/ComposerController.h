@@ -273,6 +273,9 @@ private:
     std::optional<QJsonObject> modelSelection;
     QString runtimeMode;
     QString interactionMode;
+    // The model and mode came with a new thread from the thread it was
+    // started on, not from a pick here; the next new thread replaces them.
+    bool carried = false;
     // A new thread's prompt goes to each of these instead: one thread per
     // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
