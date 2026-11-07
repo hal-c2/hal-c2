@@ -547,6 +547,7 @@ Rectangle {
 
             ListView {
                 id: suggestionList
+                objectName: "suggestionList"
 
                 anchors.fill: parent
                 anchors.margins: Theme.space.xs
