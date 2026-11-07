@@ -1,10 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17118
 #   https://github.com/pingdotgg/t3code/pull/21019
 #   https://github.com/pingdotgg/t3code/pull/21026
 #   https://github.com/pingdotgg/t3code/pull/14887
 #   https://github.com/pingdotgg/t3code/pull/16517
 #   https://github.com/pingdotgg/t3code/pull/19099
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/22202
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   packages/client-runtime/src/state/threadSnoozed.test.ts (early wake rules, a queued turn start expiring after two minutes)
@@ -199,6 +201,7 @@ Feature: Snoozing threads
       | the user renames it                        |
       | the user reorders the threads              |
 
+  # Upstream #17118: a run requested before the snooze no longer ends it when it completes.
   @desktop @mobile @backlog-mobile @priority-high
   Scenario Outline: A snoozed thread wakes early when it needs the user
     Given "Refactor cart" is snoozed until tomorrow
@@ -212,6 +215,45 @@ Feature: Snoozing threads
       | the agent asks the user a question           |
       | the agent run fails                          |
       | a run that started after the snooze finishes |
+
+  # Upstream #22202: a completed run no longer ends a snooze, so a thread that wakes itself
+  # for background work stays shelved until its wake time.
+  # Replaces the scenario above once desktop and mobile carry it.
+  @backlog @mc @desktop @mobile @priority-high
+  Scenario Outline: A snoozed thread wakes early only when it needs the user
+    Given "Refactor cart" is snoozed until tomorrow
+    When <event>
+    Then "Refactor cart" returns to the active threads
+    And it is marked as woke
+
+    Examples:
+      | event                                        |
+      | the agent asks for an approval               |
+      | the agent asks the user a question           |
+      | a run that started after the snooze fails    |
+
+  # Upstream #22202
+  @backlog @mc @desktop @mobile @priority-high
+  Scenario: A run that finishes does not wake a snoozed thread
+    Given "Refactor cart" is snoozed until tomorrow
+    When a run that started after the snooze finishes
+    Then "Refactor cart" stays snoozed
+    And it is not marked as woke
+
+  # Upstream #22202: every automatic message cleared the snooze, so a self-waking thread came
+  # back within minutes. A message the user sends still wakes it.
+  @backlog @mc @priority-high
+  Scenario Outline: An automatic wake keeps a thread snoozed
+    Given "Refactor cart" is snoozed until tomorrow
+    When <wake> sends "Refactor cart" a message and its run finishes
+    Then "Refactor cart" stays snoozed until tomorrow
+
+    Examples:
+      | wake                                    |
+      | a background task finishing             |
+      | a monitor the agent set                 |
+      | a pull request watch                    |
+      | the completion of a task it delegated   |
 
   # Upstream #14887: every snooze is stamped afresh, so snoozing a woken thread again until
   # the same time shelves it again; a retried command is still applied once.

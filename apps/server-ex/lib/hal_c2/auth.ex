@@ -100,14 +100,77 @@ defmodule HalC2.Auth do
   `admin: true` pairs with the operator's scopes, for tools on the host itself.
   """
   @spec create_pairing_token(String.t(), keyword) :: String.t()
-  def create_pairing_token(path, opts \\ []) do
+  def create_pairing_token(path, opts \\ []),
+    do: path |> mint_pairing_link(opts) |> Map.fetch!("credential")
+
+  @doc """
+  Like `create_pairing_token/2`, answering the whole link (`id`, `credential`, `label`,
+  `createdAt`, `expiresAt`, `scopes`). `ttl_ms` sets its lifetime (five minutes
+  otherwise) and `label` names it in Settings → Connections.
+  """
+  @spec mint_pairing_link(String.t(), keyword) :: map
+  def mint_pairing_link(path, opts \\ []) do
     scopes = if opts[:admin], do: @admin_scopes, else: @standard_scopes
+
+    link =
+      with_db(path, fn db ->
+        ensure_schema(db)
+
+        insert_pairing(
+          db,
+          opts[:label],
+          scopes,
+          opts[:ttl_ms] || @pairing_ttl,
+          nil,
+          "pairing-link"
+        )
+      end)
+
+    Map.put(link, "scopes", scopes)
+  end
+
+  @doc """
+  Issues an administrative session for `subject` straight into the store at `path`, for
+  a headless client; usable from outside the MC. Answers `{id, token, scopes, expires_at}`.
+  """
+  def issue_session(path, subject, label \\ nil) do
+    access = random_token()
+    id = "session-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    created = now()
 
     with_db(path, fn db ->
       ensure_schema(db)
-      insert_pairing(db, nil, scopes)
+
+      exec(
+        db,
+        "INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, subject) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'bot', ?7)",
+        [
+          hash(access),
+          Enum.join(@admin_scopes, " "),
+          label,
+          created,
+          created + @session_ttl,
+          id,
+          subject
+        ]
+      )
     end)
-    |> Map.fetch!("credential")
+
+    %{id: id, token: access, scopes: @admin_scopes, expires_at: iso(created + @session_ttl)}
+  end
+
+  @doc "The pairing links waiting in the store at `path`, as Connections lists them; usable from outside the MC."
+  def pairing_links(path) do
+    with_db(path, &ensure_schema/1)
+    links(path)
+  end
+
+  @doc "Revokes the pairing link `id` in the store at `path`; usable from outside the MC."
+  def revoke_pairing_link(path, id) do
+    with_db(path, fn db ->
+      ensure_schema(db)
+      query(db, "DELETE FROM auth_pairing WHERE id = ?1 RETURNING id", [id]) != []
+    end)
   end
 
   @doc """
@@ -547,7 +610,10 @@ defmodule HalC2.Auth do
     create_link(input, scopes, state)
   end
 
-  def handle_call(:prune, _from, state), do: {:reply, prune_expired(state.path), state}
+  def handle_call(:prune, _from, state) do
+    {counts, expired} = prune_expired(state.path)
+    {:reply, counts, broadcast(state, removed_clients(expired))}
+  end
 
   def handle_call(:links, _from, state), do: {:reply, links(state.path), state}
 
@@ -669,9 +735,9 @@ defmodule HalC2.Auth do
   end
 
   def handle_info(:prune, state) do
-    prune_expired(state.path)
+    {_counts, expired} = prune_expired(state.path)
     Process.send_after(self(), :prune, @prune_every)
-    {:noreply, state}
+    {:noreply, broadcast(state, removed_clients(expired))}
   end
 
   # A watcher left, or a socket closed (its session may now be offline).
@@ -696,23 +762,44 @@ defmodule HalC2.Auth do
   defp prune_expired(path) do
     now = now()
 
-    {pairing, sessions} =
+    {pairing, expired} =
       with_db(path, fn db ->
         {length(query(db, "DELETE FROM auth_pairing WHERE expires_at <= ?1 RETURNING 1", [now])),
-         length(query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING 1", [now]))}
+         for(
+           [id] <-
+             query(db, "DELETE FROM auth_sessions WHERE expires_at <= ?1 RETURNING id", [now]),
+           do: id
+         )}
       end)
 
+    # Counted first: a ticket never outlives its session, so the ones of a session that
+    # ran out are among the expired, and `drop_tickets/1` would leave nothing to count.
     tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
-    %{pairing: pairing, sessions: sessions, tickets: tickets, proofs: HalC2.Auth.Dpop.prune()}
+
+    # A session that ran out takes the sockets it opened with it.
+    drop_tickets(expired)
+    close_sockets(nil, expired)
+    sessions = length(expired)
+
+    counts = %{
+      pairing: pairing,
+      sessions: sessions,
+      tickets: tickets,
+      proofs: HalC2.Auth.Dpop.prune()
+    }
+
+    # The ids come back so the caller tells watchers each client is gone: the closed
+    # sockets' `:DOWN` finds no row left to report.
+    {counts, expired}
   end
 
   defp insert_pairing(
          db,
          label,
          scopes,
-         ttl \\ @pairing_ttl,
-         proof_jkt \\ nil,
-         kind \\ "pairing-link"
+         ttl,
+         proof_jkt,
+         kind
        ) do
     token = random_token()
     id = "pairing-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
@@ -852,8 +939,19 @@ defmodule HalC2.Auth do
     end)
   end
 
-  defp clients(state),
-    do: with_db(state.path, &session_rows(&1, online(state), "expires_at > ?1", [now()]))
+  # Administrators first, then the connected, then the newest. A client whose session ran
+  # out stays listed while a socket it opened is open (`prune_expired/1` closes those).
+  defp clients(state) do
+    online = online(state)
+    open = MapSet.to_list(online)
+    marks = Enum.map_join(Enum.with_index(open, 2), ",", fn {_, i} -> "?#{i}" end)
+    expired = if open == [], do: "", else: " OR id IN (#{marks})"
+
+    state.path
+    |> with_db(&session_rows(&1, online, "expires_at > ?1" <> expired, [now() | open]))
+    |> Enum.sort_by(& &1["issuedAt"], :desc)
+    |> Enum.sort_by(&{"access:write" not in &1["scopes"], not &1["connected"]})
+  end
 
   defp online(_state), do: MapSet.new(:ets.match(@live, {{:socket, :_}, :"$1"}), &hd/1)
 
@@ -928,7 +1026,7 @@ defmodule HalC2.Auth do
     cond do
       agent =~ ~r/iPad|Tablet/i -> "tablet"
       agent =~ ~r/Mobile|iPhone|Android/i -> "mobile"
-      agent =~ ~r/bot|curl|Elixir|node/i -> "bot"
+      agent =~ ~r/bot|curl|wget|Elixir|node/i -> "bot"
       true -> "desktop"
     end
   end

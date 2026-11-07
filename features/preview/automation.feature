@@ -1,5 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16941
+#   https://github.com/pingdotgg/t3code/pull/19931
+#   https://github.com/pingdotgg/t3code/pull/19913
 #   https://github.com/pingdotgg/t3code/pull/20994
+#   https://github.com/pingdotgg/t3code/pull/24056
+#   https://github.com/pingdotgg/t3code/pull/24356
+#   https://github.com/pingdotgg/t3code/pull/23895
 #   https://github.com/pingdotgg/t3code/pull/18146
 #   https://github.com/pingdotgg/t3code/pull/17429
 #   https://github.com/pingdotgg/t3code/pull/20085
@@ -35,6 +41,9 @@
 #   Cross-domain: settings/ owns the preference for whether agent-opened previews come to the front.
 #   https://github.com/pingdotgg/t3code/pull/14573
 #   https://github.com/pingdotgg/t3code/pull/15008
+#   https://github.com/pingdotgg/t3code/pull/25184
+#   https://github.com/pingdotgg/t3code/pull/24618
+#   https://github.com/pingdotgg/t3code/pull/22156
 
 Feature: Agents drive the preview browser
   An agent can open, read and operate the thread's browser tabs through its preview tools. The
@@ -113,6 +122,21 @@ Feature: Agents drive the preview browser
       When the page wait times out and the browser says so within a second of the time limit
       Then the tool fails with the browser's timeout
       And the agent's next action goes to the same browser
+
+    # Upstream #24356: preview_open named the 660000ms request budget when navigation stopped at 15000ms.
+    @backlog @mc @priority-low
+    Scenario: A page that does not load in time names the wait that ran out
+      Given the page an agent opens takes 20 seconds to answer
+      When the agent opens it with preview_open
+      Then the tool fails saying the navigation timed out after 15000ms
+
+    # Upstream #16941: queued actions ran after their caller timed out, clicking stale pages.
+    @backlog @mc @priority-high
+    Scenario: A queued browser action whose caller gave up is not started
+      Given an agent's click is queued behind another action in the same browser
+      When the click's time limit passes before its turn comes
+      Then the click is never performed
+      But a queued stop of a recording still runs, so the capture is cleaned up
 
     @mc
     Scenario: A browser that disconnects fails its unanswered actions
@@ -286,6 +310,32 @@ Feature: Agents drive the preview browser
       When an agent takes a snapshot and asks for no image
       Then the tool returns the page's text without the screenshot
 
+    # Upstream #24618: a scaled capture drew blurred backdrops wrong; snapshots are now taken at
+    # full scale and shrunk afterwards.
+    @backlog @mc @desktop @priority-low
+    Scenario: A snapshot's screenshot shows blurred backdrops as the page draws them
+      Given an agent's current tab shows a page with a blurred panel over its content
+      And the page is zoomed to 125%
+      When the agent takes a snapshot and asks for the image
+      Then the screenshot shows the panel blurred as it is on screen
+      And the screenshot has no black padding
+
+    # Upstream #19913: at 150% display scale a 1280×800 page gave a 960×600 image labelled 1280×800.
+    @backlog @mc @desktop
+    Scenario: A snapshot's screenshot matches the page's viewport and the display's scale
+      Given an agent's current tab is 1280×800 on a display scaled to 150%
+      When the agent takes a snapshot and asks for the image
+      Then the screenshot covers the whole 1280×800 viewport
+      And the size the snapshot reports is the image's own size
+
+    # Upstream #19931: a hidden or minimized preview returned stale pixels or failed.
+    @backlog @desktop
+    Scenario: A snapshot of a preview the user cannot see shows the page as it is now
+      Given an agent's current tab is hidden behind another tab or the window is minimized
+      And the page changed since it was last on screen
+      When the agent takes a snapshot and asks for the image
+      Then the screenshot shows the page as it is now, not as it was last drawn
+
     # Upstream #20446: snapshots mask what password fields hold, in every frame.
     @backlog @mc @desktop @priority-high
     Scenario: A snapshot never shows what a password field holds
@@ -361,6 +411,13 @@ Feature: Agents drive the preview browser
       When the agent stops the recording
       Then the recording is attached to the thread
       And the tool result gives the attachment's path
+
+    # Upstream #23895: agent recordings were captured at 30 fps whatever the setting said.
+    @backlog @mc @desktop
+    Scenario: An agent's recording uses the recording frame rate the user chose
+      Given the user's default recording frame rate is 60 fps
+      When an agent records the preview
+      Then the recording is captured at up to 60 frames a second
 
     @mc
     Scenario Outline: A recording that cannot be brought to the MC fails clearly
@@ -663,6 +720,37 @@ Feature: Agents drive the preview browser
       When the user focuses the second desktop's window
       Then a new agent session's first action goes to the second desktop
 
+    # Upstream #25184: driving a tab once kept it running at full speed long after anyone looked
+    # at it, a preview tab of another thread waking about 20 times a second.
+    @backlog @desktop @mc
+    Scenario Outline: A preview tab out of sight slows down like a background page
+      Given a preview tab of "Checkout" is not on screen
+      And <use>
+      Then the tab <runs>
+
+      Examples:
+        | use                                                       | runs                                                       |
+        | nothing has used it for five seconds                      | slows its timers down like a background page               |
+        | the agent of "Checkout" used it during the running turn   | keeps running at full speed until that turn ends           |
+        | an agent's action on it has not answered yet              | keeps running at full speed until the action answers       |
+        | it is being streamed or recorded                          | keeps running at full speed until the stream stops         |
+
+    # Upstream #24056: a tab's renderer dying while overlapping screenshots were pending crashed the
+    # whole desktop app and the MC with it.
+    @backlog @desktop
+    Scenario: A preview tab takes one agent screenshot at a time
+      Given an agent's snapshot of a stalled preview tab timed out with its screenshot still pending
+      When the agent takes another snapshot of that tab
+      Then its screenshot waits until the pending one answers or the tab loads a new page
+      And a screenshot left waiting for a tab the agent let go of is never taken
+
+    # Upstream #25184: a hidden tab keeps painting until a capture of it finishes.
+    @backlog @desktop @mc
+    Scenario: A screenshot of a preview tab out of sight shows the page as it is now
+      Given a preview tab of "Checkout" is not on screen and has slowed down
+      When an agent takes a snapshot of it and asks for the image
+      Then the screenshot shows the page's current content
+
     @backlog @desktop
     Scenario: A tab an agent opens renders at a fixed size unless the user chose one
       Given the user has no default browser size
@@ -876,6 +964,30 @@ Feature: Agents drive the preview browser
     When the page starts a download
     Then it is saved to the browser artifacts folder with no Save dialog
     And once the user clicks, types or navigates, downloads show the Save dialog again
+
+  # Upstream #22156: a data: address is the file's contents, so reporting it echoed the whole
+  # file into every later tool result and the event log.
+  @backlog @desktop
+  Scenario: A download from a data address is reported by its media type alone
+    Given the agent's page downloaded a file from a "data:text/plain" address
+    When the agent reads the browser's status, navigates or takes a snapshot
+    Then the download, navigation reports, network entries and link targets show "data:text/plain,…"
+    And none of them holds the file's contents
+
+  # Upstream #22156: only messages the browser writes itself are redacted; the page's own logs stay.
+  @backlog @desktop @priority-low
+  Scenario: A page's own console output keeps any data address it wrote
+    Given the agent's page logs a message containing a "data:" address
+    And the browser blocked a navigation to a "data:" address
+    When the agent reads the console
+    Then the page's message is as it was written
+    And the browser's own message shows only the address's media type
+
+  # Upstream #22156: downloads were written with the process umask.
+  @backlog @desktop
+  Scenario: Files the agent's browser downloads are readable by the user alone
+    When the agent's page downloads a file
+    Then the file and the folder it is saved in can be read only by the user
 
   @backlog @desktop @priority-high
   Scenario: Agent clicks do not steal composer focus

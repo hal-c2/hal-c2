@@ -13,6 +13,8 @@
 #   https://github.com/pingdotgg/t3code/pull/19749
 #   https://github.com/pingdotgg/t3code/pull/19437
 #   https://github.com/pingdotgg/t3code/pull/16231
+#   https://github.com/pingdotgg/t3code/pull/22575
+#   https://github.com/pingdotgg/t3code/pull/22713
 #   apps/server-ex/lib/hal_c2/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
 #   apps/server/src/storageCleanup.ts (deletion effects finished, symbolic links, numbered rotations, settings re-read, independent steps)
 #   apps/server/src/workspace/workspaceLease.ts (removal and terminal start share one lease per folder)
@@ -122,6 +124,19 @@ Feature: Storage cleanup
       Given a worktree about to be removed has dependencies hardlinked from a shared package store
       When the rules remove it
       Then the space recovered leaves out the hardlinked files
+
+    # Upstream #22713: pnpm clones or reflinks its store's files into a worktree on the same
+    # disk, and those share their space with the store.
+    @backlog @mc @priority-low
+    Scenario Outline: Dependencies cloned from a package store count only when they are copies
+      Given a worktree about to be removed has pnpm dependencies from a store <where>
+      When the rules remove it
+      Then the space recovered <counts> those dependencies
+
+      Examples:
+        | where                     | counts           |
+        | on the same disk          | leaves out       |
+        | on another disk           | includes         |
 
     # Upstream #20211: cleanup results name the machine, the checkout, the full folder and the thread.
     @backlog @mc @shared
@@ -443,6 +458,24 @@ Feature: Storage cleanup
       Then a notice offers to reclaim 2.7 GiB
       And the user can copy the doctor command that targets that machine's data
       And the user can dismiss the notice
+
+    # Upstream #22575: with several machines connected the notice is one section, explained
+    # once, with a row per machine.
+    @shared @backlog @priority-low
+    Scenario: Several machines with space to reclaim share one notice
+      Given "Office Mac" could reclaim 1.1 GiB and "Studio" 2.4 GiB
+      When the user opens storage settings
+      Then one notice explains reclaiming space once
+      And it lists "Studio" with 2.4 GiB before "Office Mac" with 1.1 GiB
+      And each machine's row copies the doctor command for that machine
+
+    # Upstream #22575: dismissing one machine's row hides only that row, and it stays hidden.
+    @desktop @backlog @priority-low
+    Scenario: Dismissing one machine's reclaim row keeps the others
+      Given the reclaim notice lists "Studio" and "Office Mac"
+      When the user dismisses the row for "Office Mac"
+      Then only "Studio" is listed
+      And "Office Mac" stays hidden after HAL-C2 restarts
 
     @mc @shared @backlog @priority-low
     Scenario Outline: The reclaim notice is not shown

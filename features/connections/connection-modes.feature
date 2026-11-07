@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24588
+#   https://github.com/pingdotgg/t3code/pull/19666
+#   https://github.com/pingdotgg/t3code/pull/23647
 #   https://github.com/pingdotgg/t3code/pull/20272
 #   https://github.com/pingdotgg/t3code/pull/15630
 #   https://github.com/pingdotgg/t3code/pull/20059
@@ -9,6 +12,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19372
 #   https://github.com/pingdotgg/t3code/pull/19432
 #   https://github.com/pingdotgg/t3code/pull/15468
+#   https://github.com/pingdotgg/t3code/pull/25239
 #   docs/user/remote-access.md (Pair over a LAN or private network, Tailscale HTTPS, Hosted web app,
 #     Desktop-managed SSH)
 #   docs/internals/remote.md
@@ -175,6 +179,16 @@ Feature: How clients reach an environment
     Then the desktop app connects to that server
     And no second server is started on the host
 
+  # Upstream #23647: after an update, an older server reused on the host could not read the
+  # pairing the desktop made, and the environment showed reconnecting for good.
+  @backlog @desktop
+  Scenario: An SSH host running an older server it cannot pair with says why
+    Given the host already runs a HAL-C2 server older than the desktop app
+    And that server cannot accept the pairing the desktop app makes
+    When the user connects to the SSH environment
+    Then the connection is blocked, naming both versions and asking to restart or update the host's server
+    And it does not keep reconnecting
+
   @backlog @desktop
   Scenario: An SSH launch ignores a runtime record whose server has gone
     Given the host's runtime record names a server that is no longer running
@@ -213,6 +227,14 @@ Feature: How clients reach an environment
     Given the server on the host starts but does not answer its health check in time
     When the user connects to the SSH environment
     Then the connection fails saying the server did not become ready
+
+  # Upstream #19666: retrying an interrupted SSH pairing started a second setup on a slow host.
+  @backlog @desktop @priority-low
+  Scenario: Retrying an interrupted SSH connection finishes the setup already under way
+    Given the user's first connection to an SSH host was interrupted while the host was still setting up
+    When the user connects to the SSH environment again
+    Then the desktop app waits for that setup and pairs with it once
+    And no second setup is started on the host
 
   @backlog @desktop @priority-high
   Scenario: An SSH host that asks for a password
@@ -265,6 +287,15 @@ Feature: How clients reach an environment
     When the desktop app connects
     Then the window is restored and brought forward
     And the user is asked for the password
+
+  # Upstream #25239: a prompt that came while pairing, signing in or on any page outside the
+  # main window's views was dropped.
+  @backlog @desktop @priority-low
+  Scenario: A password prompt that comes before the app is ready is still shown
+    Given an SSH host that needs a password
+    And the user is still pairing or signing in
+    When the desktop app connects to that host
+    Then the user is asked for the password once the app can show it
 
   @backlog @desktop @priority-low
   Scenario: Closing the window cancels a waiting password prompt
@@ -590,6 +621,16 @@ Feature: How clients reach an environment
     Then the old learned route is dropped and the new one saved
     And a route the user paired is never rewritten
     And the live session is not replaced by the change, only by the better-route check
+
+  # Upstream #24588: a dead LAN address held up every other route for the whole check. The
+  # same change made upstream's background service listen on private networks by default; the
+  # MC keeps listening on loopback unless told otherwise.
+  @backlog @shared
+  Scenario: A dead route does not hold up the others
+    Given a client holds a learned LAN route that never answers and a tailnet route
+    When the client checks its routes
+    Then the tailnet route is tried after a head start of half a second, not after the LAN check gives up
+    And a route that answered late is tried before routes that are still silent
 
   # Upstream #20445: a credential paired over HTTPS, loopback or the tailnet is not copied to a
   # learned plain-HTTP address on the local network or the internet; tailnet addresses are still learned.

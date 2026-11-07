@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24231
+#   https://github.com/pingdotgg/t3code/pull/24595
+#   https://github.com/pingdotgg/t3code/pull/23273
+#   https://github.com/pingdotgg/t3code/pull/20046
 #   https://github.com/pingdotgg/t3code/pull/19806
 #   https://github.com/pingdotgg/t3code/pull/19678
 #   https://github.com/pingdotgg/t3code/pull/18664
@@ -15,6 +19,8 @@
 #   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
+#   https://github.com/pingdotgg/t3code/pull/22897
+#   https://github.com/pingdotgg/t3code/pull/21074
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
@@ -182,6 +188,14 @@ Feature: Cursor
       | the user chose the 500,000 token window | 500,000 tokens   |
       | the user chose no window                | 1,000,000 tokens |
 
+  # Upstream #21074: Cursor rejected its long-context variants ("Invalid parameters for registry
+  # model") because the request never asked for Max Mode.
+  @backlog @priority-high
+  Scenario: A Cursor model variant that only runs in Max Mode runs
+    Given Cursor's catalog marks every variant of a model with a long context as Max Mode
+    When the user sends a message on that model with the long context, in a new thread or an existing one
+    Then the turn runs in Max Mode instead of failing with "Invalid parameters"
+
   # Upstream #19678: a model the account's catalog rejects is explained
   @backlog
   Scenario: A model the Cursor account does not offer says so
@@ -287,6 +301,25 @@ Feature: Cursor
     Then the sandboxed thread still runs in its sandbox
     And its tools still work
 
+  # Upstream #20046: Cursor's SDK has no sandbox on Windows, so default threads failed to start.
+  @backlog
+  Scenario Outline: A Cursor thread on a Windows MC runs without Cursor's default sandbox
+    Given the MC runs on Windows
+    When a Cursor thread in <mode> starts its first turn
+    Then the turn runs without Cursor's sandbox
+    And the thread warns that Cursor has no sandbox on Windows
+
+    Examples:
+      | mode              |
+      | auto              |
+      | approval required |
+
+  @backlog
+  Scenario: A Cursor mode that needs a sandbox is refused on a Windows MC
+    Given the MC runs on Windows
+    When a Cursor thread in auto-accept edits starts its first turn
+    Then the turn fails saying Cursor cannot sandbox on Windows
+
   @backlog
   Scenario: Cursor text generation that its sandbox blocks is retried without the sandbox
     Given Cursor is picked for text generation
@@ -338,6 +371,15 @@ Feature: Cursor
       | .agents/skills |
       | .codex/skills  |
       | .claude/skills |
+
+  # Upstream #24595: Cursor's built-in skills live in ~/.cursor/skills-cursor and were missing.
+  @backlog @priority-low
+  Scenario: Cursor's built-in skills are offered as system skills after the others
+    Given Cursor's built-in skill "review" in ".cursor/skills-cursor" of the user's home
+    And the project has its own skill "review"
+    When the user opens the skill list in a Cursor thread
+    Then Cursor's built-in skills are offered as system skills
+    And "review" is the project's skill
 
   @backlog @priority-low
   Scenario: A project's Cursor skill wins over the user's skill of the same name
@@ -420,8 +462,37 @@ Feature: Cursor
     When Cursor's whole reply is a connection error such as "Something went wrong communicating with the server. Please try again."
     Then the turn fails as a connection problem instead of showing the error as Cursor's answer
 
+  # Upstream #23273: commentary earlier in the turn hid a later message that was only the error.
+  @backlog
+  Scenario: A Cursor message that is only a connection error fails the turn after commentary
+    Given a Cursor turn wrote "Checking the build first." and ran a step
+    When Cursor's next message is only the error "Error: RetriableError: WritableIterable is closed" and the run finishes
+    Then the turn fails with "Provider turn failed."
+    And a later ordinary message in the same turn lets it complete
+
   # Upstream #16146: a failed Cursor run fails the turn with Cursor's own message and code,
   # and an SDK failure names the SDK's reason, code and HTTP status.
+  # Upstream #24231: Cursor's SDK resumed a finished turn from an older checkpoint after its
+  # connection broke, gave up, and the answered turn read "Provider error".
+  @backlog
+  Scenario: A finished Cursor turn whose late resume gives up still completes
+    Given a Cursor turn has answered and Cursor reported the turn ended
+    When the connection to Cursor breaks and the run ends with "Agent turn stopped after repeated resume attempts made no progress"
+    Then the turn completes instead of failing
+    And the failed resume's text is not shown as the answer
+
+  @backlog
+  Scenario Outline: A Cursor run that gives up still fails when the turn had not finished
+    Given a Cursor turn is running
+    When <event>
+    Then the turn fails
+
+    Examples:
+      | event                                                                                     |
+      | the run ends with the no-progress error before Cursor reports the turn ended              |
+      | Cursor reports the turn ended and the run then ends with "Checkpoint persistence failed"  |
+      | Cursor continues after the turn ended and stops mid-answer with the no-progress error     |
+
   @backlog
   Scenario: A failed Cursor turn shows the reason Cursor gave
     Given a Cursor turn is running
@@ -602,3 +673,11 @@ Feature: Cursor
     Given the subagents setting is HAL-C2 workers
     When a Cursor session is started
     Then Cursor starts as usual, because it has no switch for its subagents
+
+  # Upstream #22897: a write to a stream the Cursor SDK already closed took the whole server down.
+  @backlog @priority-high
+  Scenario: A Cursor stream closing under a write does not stop the MC
+    Given a Cursor turn is running
+    When the Cursor SDK rejects a write because its stream already closed
+    Then the MC keeps running
+    And other threads are unaffected

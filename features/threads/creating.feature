@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23967
+#   https://github.com/pingdotgg/t3code/pull/19724
 #   https://github.com/pingdotgg/t3code/pull/14538
 #   https://github.com/pingdotgg/t3code/pull/17959
 #   https://github.com/pingdotgg/t3code/pull/17371
@@ -189,6 +191,15 @@ Feature: Creating threads
     Then the first message is sent in the existing thread
     And no second thread is created
 
+  # Upstream #19724: a thread the sidebar had not listed yet sent its link back to the start page.
+  @backlog @shared @priority-high
+  Scenario: A just-created thread opens before the thread list has it
+    Given another client has just created the thread "Fix checkout"
+    And the thread list here does not show "Fix checkout" yet
+    When the user opens a link to "Fix checkout"
+    Then "Fix checkout" opens with its history
+    But a link to a deleted or archived thread still returns to the start page
+
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: Starting a thread in the background opens a fresh draft
     Given the user has written a first message in a draft
@@ -344,6 +355,15 @@ Feature: Creating threads
     When the user starts a new thread
     Then the user is told the environment is offline
     And no draft is sent to the environment
+
+  # Upstream #23967: a new thread waited on the project's settings from the chosen machine,
+  # which never answered while it was offline, so nothing opened.
+  @backlog @desktop @mobile @priority-high
+  Scenario: A new thread on a project whose chosen machine is offline opens its draft at once
+    Given "shop" lives on two machines and the one chosen for new threads is offline
+    When the user starts a new thread in "shop"
+    Then the draft opens at once with the usual defaults
+    And the user can pick the machine that is online from the draft
 
   @backlog @desktop
   Scenario: Opening a folder that is already a project starts a thread in it
@@ -506,14 +526,20 @@ Feature: Creating threads
     And the current project is still the default choice
 
   # Upstream #17664: the draft screen's picker searches like the sidebar's project filter.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: The new thread's project picker ends with Add project
+    Given the user has many projects and is writing a new thread
+    When the user opens the draft's project picker
+    Then every project is listed, with "Add project" last
+
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The new thread's project picker can be searched
     Given the user has many projects and is writing a new thread
     When the user opens the draft's project picker and types part of a project's name
-    Then only matching projects are listed, with "Add project" last
+    Then only matching projects are listed
     And choosing one moves the draft into that project
 
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A project search with no match says so
     Given the user is searching the new thread's project picker
     When nothing matches the search

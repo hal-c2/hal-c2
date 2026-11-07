@@ -86,6 +86,8 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.Discovery.offline/3" => @offline,
       "HalC2.Cluster handle_call :status" => @reads,
       "HalC2.Cluster handle_call :fingerprint" => @reads,
+      "HalC2.Cluster.removed?/1" => @reads,
+      "HalC2.Cluster handle_call {:removed?, _}" => @reads,
       "HalC2.Cluster handle_call :entry" =>
         "describes this MC to an inviter, whose admit takes it; changes nothing",
       "HalC2.Cluster.invite/1" => "makes a cluster-only invite; changes no table",
