@@ -152,6 +152,7 @@ defmodule HalC2.Web.Router do
              device_type: params["client_device_type"],
              os: params["client_os"],
              user_agent: conn |> get_req_header("user-agent") |> List.first(),
+             ip: conn.remote_ip,
              scopes: requested,
              proof_jkt: proof[:thumbprint],
              proof: proof
@@ -445,7 +446,11 @@ defmodule HalC2.Web.Router do
       conn
       |> WebSockAdapter.upgrade(
         HalC2.Web.Socket,
-        %{session: session, trace: socket_trace(conn)},
+        %{
+          session: session,
+          client: HalC2.Auth.client_report(conn.query_params),
+          trace: socket_trace(conn)
+        },
         timeout: 60_000
       )
       |> halt()

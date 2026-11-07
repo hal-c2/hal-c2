@@ -162,7 +162,7 @@ defmodule HalC2.AuthPropTest do
               [n, oneof([:token, :session]), seen, frequency([{1, nil}, {3, :rpc}, {1, :media}])]}},
             {3, {:call, __MODULE__, :revoke_client, [seen]}},
             {1, {:call, __MODULE__, :revoke_others, [seen]}},
-            {2, {:call, __MODULE__, :connect, [seen]}},
+            {2, {:call, __MODULE__, :connect, [seen, report()]}},
             {4, {:call, __MODULE__, :make_proof, [n, seen, key(), variant(), offset()]}}
           ]
         end ++
@@ -224,6 +224,9 @@ defmodule HalC2.AuthPropTest do
 
   defp link_ttl, do: frequency([{6, nil}, {1, 1_000}, {1, 60_000}])
   defp maybe_key, do: frequency([{3, nil}, {2, key()}])
+
+  # What a socket reports about its client; `nil` is a value it leaves out.
+  defp report, do: {oneof([nil, "desktop", "mobile", "toaster"]), oneof([nil, "1.0.0", "1.1.0"])}
   defp key, do: integer(0, Reg.key_count() - 1)
 
   # Key-bound tickets are rare (a DPoP session's RPC ticket), so they are picked often.
@@ -254,7 +257,7 @@ defmodule HalC2.AuthPropTest do
     ])
   end
 
-  def precondition(state, {:call, _, :connect, [h]}), do: Map.has_key?(state.sessions, h)
+  def precondition(state, {:call, _, :connect, [h, _]}), do: Map.has_key?(state.sessions, h)
 
   def precondition(state, {:call, _, :issue_ticket, [_, :session, h, _]}),
     do: valid?(state, h)
@@ -372,8 +375,19 @@ defmodule HalC2.AuthPropTest do
   def next_state(state, _r, {:call, _, :revoke_others, [keep]}),
     do: drop_sessions(state, Map.keys(state.sessions) -- [keep])
 
-  def next_state(state, _r, {:call, _, :connect, [h]}),
-    do: %{state | sockets: Map.update(state.sockets, h, 1, &(&1 + 1))}
+  # A connection records what it reports and keeps what it leaves out.
+  def next_state(state, _r, {:call, _, :connect, [h, {surface, version}]}) do
+    {was_surface, was_version} = Map.get(state.sessions[h], :reported, {nil, nil})
+    # An unknown surface is dropped, like one left out.
+    surface = if surface in ["desktop", "mobile"], do: surface
+    reported = {surface || was_surface, version || was_version}
+
+    %{
+      state
+      | sockets: Map.update(state.sockets, h, 1, &(&1 + 1)),
+        sessions: put_in(state.sessions, [h, :reported], reported)
+    }
+  end
 
   def next_state(state, _r, {:call, _, :disconnect, [h]}),
     do: %{state | sockets: Map.update!(state.sockets, h, &(&1 - 1))}
@@ -549,7 +563,7 @@ defmodule HalC2.AuthPropTest do
       for {h, s} <- state.sessions,
           s.expires > state.clock or Map.get(state.sockets, h, 0) > 0 do
         {h, s.scopes, s.expires, if(s.key, do: "dpop-access-token", else: "bearer-access-token"),
-         Map.get(state.sockets, h, 0) > 0}
+         Map.get(state.sockets, h, 0) > 0, Map.get(s, :reported, {nil, nil})}
       end
 
     ordered? and result == Enum.sort(expected)
@@ -559,7 +573,7 @@ defmodule HalC2.AuthPropTest do
     expected =
       for {h, s} <- state.sessions, s.expires > state.clock do
         {h, s.scopes, s.expires, if(s.key, do: "dpop-access-token", else: "bearer-access-token"),
-         false}
+         false, Map.get(s, :reported, {nil, nil})}
       end
 
     result == Enum.sort(expected)
@@ -748,7 +762,9 @@ defmodule HalC2.AuthPropTest do
     rows
     |> Enum.map(fn row ->
       {:session, h} = Reg.get({:id, row["sessionId"]})
-      {h, row["scopes"], ms(row["expiresAt"]), row["method"], connected? and row["connected"]}
+
+      {h, row["scopes"], ms(row["expiresAt"]), row["method"], connected? and row["connected"],
+       {row["client"]["surface"], row["client"]["appVersion"]}}
     end)
     |> Enum.sort()
   end
@@ -923,13 +939,15 @@ defmodule HalC2.AuthPropTest do
 
   # Sockets are processes that register with Auth, forward the revocation they are
   # sent, and answer a barrier so a test can read what they received.
-  def connect(h) do
+  def connect(h, {surface, version}) do
     {id, _} = Reg.get({:session, h})
     parent = self()
+    # Raw query values, as the socket upgrade passes them to `Auth.client_report/1`.
+    query = %{"clientSurface" => surface || "", "clientAppVersion" => version || " "}
 
     pid =
       spawn(fn ->
-        Auth.connected(id)
+        Auth.connected(id, Auth.client_report(query))
         send(parent, {:connected, self()})
         socket_loop(parent, h)
       end)

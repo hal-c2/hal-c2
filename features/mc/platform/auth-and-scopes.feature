@@ -65,7 +65,7 @@ Feature: MC authentication and scopes
     When a client exchanges it
     Then the exchange fails as an invalid grant
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: Pairing tokens can be typed by hand
     When the MC mints a pairing token
     Then it is 12 characters long
@@ -373,7 +373,7 @@ Feature: MC authentication and scopes
     When an administrator lists pairing links
     Then only the "Tablet" link is listed
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A client's surface and app version are recorded when it connects
     Given a paired client
     When it opens a socket reporting its surface and app version
@@ -438,7 +438,7 @@ Feature: MC authentication and scopes
     Then the MC records what the client presented
     And only what it left out is read from the user agent
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: The address a client paired from is recorded without IPv6 wrapping
     When a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address
     Then the authorized clients list shows the plain IPv4 address
@@ -698,7 +698,7 @@ Feature: MC authentication and scopes
       | a paired client's session                 | the session was revoked                      |
       | a session that is already revoked         | no active session has that id                |
 
-  @backlog @mc
+  @mc
   Scenario: Access can be managed from the command line while the MC is stopped
     Given the MC is not running
     When an operator mints a pairing link and lists sessions from the command line

@@ -1538,7 +1538,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
              )
 
     # A socket that was still opening when the revoke ran is told to close all the same.
-    GenServer.cast(HalC2.Auth, {:connected, context.device, self()})
+    GenServer.cast(HalC2.Auth, {:connected, context.device, self(), %{}})
     assert_receive {:hal_c2_session_revoked, _}, 5_000
     context
   end
@@ -2306,6 +2306,105 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
       assert HalC2.Auth.Dpop.thumbprint(jwk) == expected
     end
 
+    context
+  end
+
+  # --- pairing by hand, what a client reported, offline access ------------------------
+
+  step "the MC mints a pairing token", context do
+    Map.put(context, :token, HalC2.Auth.create_pairing_token(context.mc.store))
+  end
+
+  step "it is 12 characters long", context do
+    assert String.length(context.token) == 12
+    context
+  end
+
+  step "it uses no characters that look alike, such as 0 and O or 1 and I", context do
+    assert context.token =~ ~r/\A[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{12}\z/
+    # Typed by hand, it pairs in either letter case.
+    assert {200, %{"access_token" => _}} =
+             Mc.exchange(context.mc, " " <> String.downcase(context.token) <> " ")
+
+    context
+  end
+
+  defp client_row(session_id) do
+    Enum.find(HalC2.Auth.clients(), &(&1["sessionId"] == session_id))["client"]
+  end
+
+  defp report_connect(context, query) do
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(context.access_token)
+    Mc.connect(context.mc, "wsTicket=#{ticket}&" <> query)
+    context
+  end
+
+  step "it opens a socket reporting its surface and app version", context do
+    report_connect(context, "clientSurface=mobile&clientAppVersion=1.2.3")
+  end
+
+  step "the authorized clients list shows that surface and version for it", context do
+    assert %{"surface" => "mobile", "appVersion" => "1.2.3"} =
+             client_row(session_id(context.access_token))
+
+    context
+  end
+
+  step "a later connection that reports only a version keeps the surface it reported before",
+       context do
+    report_connect(context, "clientAppVersion=1.2.4")
+
+    assert %{"surface" => "mobile", "appVersion" => "1.2.4"} =
+             client_row(session_id(context.access_token))
+
+    context
+  end
+
+  step "a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address",
+       context do
+    # A dual-stack listener reports an IPv4 peer as ::ffff:127.0.0.1.
+    host = Application.get_env(:hal_c2, :host)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if host,
+        do: Application.put_env(:hal_c2, :host, host),
+        else: Application.delete_env(:hal_c2, :host)
+    end)
+
+    Application.put_env(:hal_c2, :host, "::")
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert {:ok, {{0, 0, 0, 0, 0, 0, 0, 0}, _}} = ThousandIsland.listener_info(HalC2.Web.Listener)
+    Map.put(context, :access, standard!(context))
+  end
+
+  step "the authorized clients list shows the plain IPv4 address", context do
+    assert %{"ipAddress" => "127.0.0.1"} = client_row(session_id(context.access))
+    context
+  end
+
+  step "the MC is not running", context do
+    # A client paired earlier, so there is a session to list.
+    id = session_id(standard!(context))
+    Mc.stop(context.mc)
+    refute Process.whereis(HalC2.Auth)
+    Map.put(context, :listed, id)
+  end
+
+  step "an operator mints a pairing link and lists sessions from the command line", context do
+    assert [link, _expires] = mix_output(Mix.Tasks.HalC2.Pair, ["http://192.168.1.5:3780"])
+    Map.merge(context, %{link: link, printed: auth_cli(["session", "list"])})
+  end
+
+  step "both commands work against the MC's stored access records", context do
+    assert String.starts_with?(context.link, "http://192.168.1.5:3780/?token=")
+    assert Enum.any?(context.printed, &String.starts_with?(&1, context.listed <> "\t"))
+    context
+  end
+
+  step "the minted link works once the MC starts", context do
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    token = context.link |> URI.parse() |> Map.fetch!(:query) |> URI.decode_query()
+    assert {200, %{"access_token" => _}} = Mc.exchange(context.mc, token["token"])
     context
   end
 end
