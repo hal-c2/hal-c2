@@ -16,7 +16,7 @@ export interface AttachmentPreview {
 
 export interface AttachmentPreviews {
   /** What the timeline shows for an attachment; starts resolving it the first time. */
-  readonly get: (attachmentId: string) => AttachmentPreview;
+  readonly get: (attachmentId: string, kind?: "image" | "file") => AttachmentPreview;
   /**
    * The attachments are being shown anew (another thread opened): forget
    * unavailable links and failed previews, so showing them again retries.
@@ -26,11 +26,21 @@ export interface AttachmentPreviews {
   readonly settled: () => Promise<void>;
 }
 
+/**
+ * The MC's attachment links last an hour; a link older than this is asked for
+ * again, a little early so a click never meets a dead one.
+ */
+export const ATTACHMENT_LINK_TTL_MS = 50 * 60_000;
+
 interface Entry {
   link: AttachmentLink;
+  /** When the link was resolved (epoch ms); null while it is still being asked for. */
+  resolvedAt: number | null;
   image: ImagePreview | null;
   /** The preview was asked for and did not arrive (network error, too large, undecodable). */
   failed: boolean;
+  /** A file has a link to open but no preview to draw. */
+  readonly kind: "image" | "file";
 }
 
 const PENDING: AttachmentLink = { state: "pending" };
@@ -44,9 +54,12 @@ const PENDING: AttachmentLink = { state: "pending" };
 export function createAttachmentPreviews(options: {
   readonly client: Pick<TuiClient, "getAttachmentUrl" | "getAttachmentImage">;
   readonly inlineImages: boolean;
+  /** The clock links age by (default: the real one). */
+  readonly nowMs?: () => number;
   readonly onChange: () => void;
 }): AttachmentPreviews {
   const { client } = options;
+  const nowMs = options.nowMs ?? Date.now;
   const entries = new Map<string, Entry>();
   const inFlight = new Set<Promise<unknown>>();
   const track = <T>(promise: Promise<T>): Promise<T> => {
@@ -56,16 +69,24 @@ export function createAttachmentPreviews(options: {
     return promise;
   };
 
-  const start = (attachmentId: string): Entry => {
-    const entry: Entry = { link: PENDING, image: null, failed: false };
+  const start = (attachmentId: string, kind: "image" | "file"): Entry => {
+    const entry: Entry = { link: PENDING, resolvedAt: null, image: null, failed: false, kind };
     entries.set(attachmentId, entry);
+    resolve(attachmentId, entry);
+    return entry;
+  };
+
+  /** Ask for the link (again); an image already drawn stays drawn meanwhile. */
+  const resolve = (attachmentId: string, entry: Entry): void => {
+    entry.resolvedAt = null;
     void track(
       (async () => {
         const url = await client.getAttachmentUrl(attachmentId).catch(() => null);
         if (entries.get(attachmentId) !== entry) return;
         entry.link = url ? { state: "ready", url } : { state: "unavailable" };
+        entry.resolvedAt = nowMs();
         options.onChange();
-        if (!url || !options.inlineImages) return;
+        if (!url || !options.inlineImages || entry.kind === "file" || entry.image) return;
         const image = await client.getAttachmentImage(attachmentId, url).catch(() => null);
         if (entries.get(attachmentId) !== entry) return;
         entry.image = image;
@@ -73,12 +94,14 @@ export function createAttachmentPreviews(options: {
         options.onChange();
       })(),
     );
-    return entry;
   };
 
   return {
-    get: (attachmentId) => {
-      const entry = entries.get(attachmentId) ?? start(attachmentId);
+    get: (attachmentId, kind = "image") => {
+      const entry = entries.get(attachmentId) ?? start(attachmentId, kind);
+      if (entry.resolvedAt !== null && nowMs() - entry.resolvedAt >= ATTACHMENT_LINK_TTL_MS) {
+        resolve(attachmentId, entry);
+      }
       return { link: entry.link, image: entry.image };
     },
     forgetFailures: () => {

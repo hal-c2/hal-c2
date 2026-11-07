@@ -47,6 +47,9 @@ export type TuiThreadShell = Omit<OrchestrationThreadShell, "snoozedUntil" | "sn
     readonly snoozedAt: string | null;
     /** Set while the user has turned automatic settlement off for the thread. */
     readonly autoSettleDisabledAt?: string | null;
+    /** Why the latest run failed, its class, and when a usage limit resets. */
+    readonly lastErrorClass?: OrchestrationV2ThreadShell["lastErrorClass"];
+    readonly usageLimitResetAt?: string | null;
     /** The machine an MC is moving the thread to, until it arrives. */
     readonly moving?: OrchestrationV2ThreadMoveTarget | null;
     /** Set on the row a machine keeps for a thread that moved away (clusterClient.ts drops it). */
@@ -188,6 +191,8 @@ export function presentTuiThreadShell(thread: OrchestrationV2ThreadShell): TuiTh
             startedAt: iso(thread.titleRegeneration.startedAt),
           },
     session: shellSession(thread),
+    ...(thread.lastErrorClass ? { lastErrorClass: thread.lastErrorClass } : {}),
+    ...(thread.usageLimitResetAt ? { usageLimitResetAt: thread.usageLimitResetAt } : {}),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
@@ -707,6 +712,22 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     const intent = turnItem.inputIntent;
     if (intent !== "turn_start") intents.set(turnItem.messageId as string, intent);
   }
+  // A reply a steer interrupted mid-way: its item stopped as interrupted though the
+  // user never asked to stop the run (a stop leaves an interrupt request behind).
+  const stopped = new Set(
+    projection.turnItems.flatMap((item) =>
+      item.type === "run_interrupt_request" ? [item.runId as string] : [],
+    ),
+  );
+  const cutOff = new Set(
+    projection.turnItems.flatMap((item) =>
+      item.type === "assistant_message" &&
+      item.status === "interrupted" &&
+      !stopped.has(item.runId as string)
+        ? [item.messageId as string]
+        : [],
+    ),
+  );
   // The provider thread carries the context it has used; a model change keeps the thread.
   const providerThread =
     projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
@@ -830,6 +851,7 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       // Another agent's thread sent this message (a subagent reporting to its parent).
       ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
       ...(intents.has(message.id) ? { intent: intents.get(message.id)! } : {}),
+      ...(cutOff.has(message.id) ? { cutOff: true } : {}),
       // Still waiting for its turn.
       ...(message.runId !== null && queuedRuns.has(message.runId)
         ? {

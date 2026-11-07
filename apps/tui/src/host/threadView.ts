@@ -215,6 +215,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const muted = new Set(mutedStore.load());
   /** Turns the user stopped in this session: their work stays open once they settle. */
   const interruptedTurns = new Set<string>();
+  /** The error the user dismissed on each thread; a different one shows again. */
+  const dismissedErrors = new Map<string, string>();
+  /** The error the timeline last drew, to redraw when the shell row says another. */
+  let shownError = "null";
   /** The code block or table just copied, and the timer that clears the mark. */
   let copied: string | null = null;
   let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -223,6 +227,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const attachments = createAttachmentPreviews({
     client,
     inlineImages: options.inlineImages === true,
+    nowMs: options.nowMs,
     onChange: () => publishTimeline(),
   });
   const diagrams = options.diagrams ?? createMermaidDiagrams(client);
@@ -255,6 +260,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     };
   };
 
+  /** The error the thread's shell row reports for its latest run. */
+  const threadError = () => {
+    const row = detail ? shellThread(detail.id) : null;
+    const message = row?.session?.lastError;
+    if (!detail || !row || !message) return null;
+    return {
+      message,
+      usageLimit:
+        row.lastErrorClass === "usage_limit" ? { resetAt: row.usageLimitResetAt ?? null } : null,
+      dismissed: dismissedErrors.get(detail.id) === message,
+    };
+  };
+
   const publishTimeline = () => {
     timeline = buildTimelineState({
       detail,
@@ -274,6 +292,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       emptyHint: projectHint
         ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
         : "Select a thread to view its conversation.",
+      error: threadError(),
       attachments: attachments.get,
       cellPixels: cellPixels(),
       diagrams: diagrams.get,
@@ -954,7 +973,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       if (!next.detail) publishTimeline();
     }
 
-    if (prev && prev.detail === next.detail && prev.threadPage === next.threadPage) return;
+    if (prev && prev.detail === next.detail && prev.threadPage === next.threadPage) {
+      // The error comes from the shell row, which changes without the thread.
+      const error = JSON.stringify(threadError());
+      if (error !== shownError) {
+        shownError = error;
+        publishTimeline();
+      }
+      return;
+    }
+    shownError = JSON.stringify(threadError());
     const threadChanged = (detail?.id ?? null) !== (next.detail?.id ?? null);
     detail = next.detail;
     page = next.threadPage;
@@ -1072,6 +1100,15 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.fold.toggle":
         setView({ expandedFolds: toggled(view.expandedFolds, String(field(payload, "id"))) });
         return true;
+      case "timeline.error.dismiss":
+      case "timeline.error.show": {
+        const error = threadError();
+        if (!detail || !error) return true;
+        if (action === "timeline.error.dismiss") dismissedErrors.set(detail.id, error.message);
+        else dismissedErrors.delete(detail.id);
+        publishTimeline();
+        return true;
+      }
       case "timeline.message.toggle":
         setView({ expandedMessages: toggled(view.expandedMessages, String(field(payload, "id"))) });
         return true;
