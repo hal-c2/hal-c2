@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/18830 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/25201 (dropped)
 #   docs/user/mobile-notifications.md (publishing must be on, HAL-C2 Connect required, 15-minute results)
 #   packages/contracts/src/relay.ts (RelayAgentAwarenessPhase, RelayAgentActivityState,
 #     RelayAgentActivityPublishRequest, RelayAgentActivityPublishProofInvalidReason,
@@ -157,6 +158,8 @@ Feature: Publishing agent activity
     When a newer update for the thread publishes successfully
     Then the pending retry is cancelled
 
+  # Upstream #25201: relinks and publishing changes after the startup catch-up stayed queued, so
+  # active threads went unpublished. Dropped with HAL-C2 Connect.
   @dropped @mc
   Scenario: Unchanged activity is published again after relinking
     Given publishing was on and the MC published a thread's state

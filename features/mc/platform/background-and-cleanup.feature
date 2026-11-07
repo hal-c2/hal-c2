@@ -13,6 +13,7 @@
 #   docs/internals/resource-telemetry.md (host power feed)
 #   apps/server/src/background/BackgroundPolicy.ts (foreground rule, thermal, suspended, stale power)
 #   apps/server/src/background/HostPowerMonitor.ts (older reports ignored)
+#   https://github.com/pingdotgg/t3code/pull/24362
 
 Feature: Background work and storage cleanup on the MC
   The MC only does periodic work that a client in front is looking at, and within the
@@ -78,6 +79,15 @@ Feature: Background work and storage cleanup on the MC
     When its connection is replaced while a report is on its way
     Then the client's next report still reaches the MC
     And the MC keeps refreshing that checkout's git status
+
+  # Upstream #24362: a report the MC never answered on a live connection stopped every later
+  # report, and the client's leases ran out.
+  @backlog @shared
+  Scenario: A report the MC never answers does not stop later reports
+    Given a client in front reports it shows a checkout's status
+    When the MC never answers one report while the connection stays up
+    Then the client gives up on it after 15 seconds
+    And its next report reaches the MC before its leases run out
 
   @mc
   Scenario: The performance profile works for clients in the background too

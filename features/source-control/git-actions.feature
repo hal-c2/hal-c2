@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24473
+#   https://github.com/pingdotgg/t3code/pull/24117
 #   https://github.com/pingdotgg/t3code/pull/23999
 #   https://github.com/pingdotgg/t3code/pull/15625
 #   https://github.com/pingdotgg/t3code/pull/18862
@@ -40,6 +42,19 @@ Feature: Recommended git action and the git menu
       | is ahead of its upstream with an open pull request             | Push              |
       | is pushed and ahead of the default branch with no pull request | Create PR         |
       | is up to date with an open pull request                        | View PR           |
+
+  # Upstream #24117: a dirty branch behind its upstream was offered a commit and push whose push could not fast-forward.
+  @backlog @shared
+  Scenario Outline: Uncommitted changes on a branch behind its upstream recommend only a commit
+    Given the checkout has uncommitted changes on <branch> that is behind its upstream
+    When the user looks at the thread's git actions
+    Then the recommended action is "Commit"
+
+    Examples:
+      | branch                                 |
+      | the default branch                     |
+      | a branch with an open pull request     |
+      | a feature branch with a remote         |
 
   @desktop @tui
   Scenario Outline: The recommended action is withheld with a reason
@@ -221,6 +236,29 @@ Feature: Recommended git action and the git menu
     When the user goes from "Deploy" to "Docs" and runs "Commit, push & PR"
     Then the commit, push and pull request are made in the "feature/docs" worktree
     And its progress and result are shown on "Docs"
+  # Upstream #24473: a commit waiting on its generated message resumed on a branch another
+  # client had switched to, and Commit & push pushed that branch.
+  @backlog @mc @priority-high
+  Scenario Outline: A commit action and a branch change in the same checkout wait for each other
+    Given two clients share a checkout on "feature/tax"
+    When one client runs "<action>" and the other <change> before it finishes
+    Then the commit, and any push and pull request, are made on "feature/tax"
+    And the other client's change happens once the action has finished
+
+    Examples:
+      | action            | change                           |
+      | Commit            | switches the checkout to "main"  |
+      | Commit & push     | switches the checkout to "main"  |
+      | Commit, push & PR | checks out pull request 42 there |
+
+  # Upstream #24473: the other way round, a commit that arrives during a switch waits for it.
+  @backlog @mc @priority-high
+  Scenario: A commit started during a branch switch lands on the switched-to branch
+    Given one client is checking out pull request 42 in the project's folder
+    When another client runs "Commit" before the checkout finishes
+    Then the commit starts once the checkout has finished
+    And it lands on the pull request's branch
+
 
   Rule: Publishing a repository without a remote
 

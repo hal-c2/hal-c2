@@ -8,6 +8,7 @@
 #   https://github.com/pingdotgg/t3code/pull/23839
 #   https://github.com/pingdotgg/t3code/pull/23676
 #   https://github.com/pingdotgg/t3code/pull/23780
+#   https://github.com/pingdotgg/t3code/pull/25877
 #   docs/user/keyboard-focus.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
@@ -167,6 +168,48 @@ Feature: Keyboard focus and keyboard-only use
         | PageUp   | up        |
         | PageDown | down      |
 
+    # Upstream #25877: F6 moves between the workspace areas, as in Windows, VS Code and browsers.
+    @backlog @desktop @priority-high
+    Scenario Outline: F6 moves keyboard focus between the workspace areas
+      Given the thread has its sidebar, conversation, composer, terminal and right panel open
+      And keyboard focus is in the <from>
+      When the user presses <keys>
+      Then keyboard focus moves to the <to>
+      And the conversation does not scroll
+
+      Examples:
+        | from         | keys         | to           |
+        | sidebar      | F6           | conversation |
+        | conversation | F6           | composer     |
+        | composer     | Shift+F6     | conversation |
+        | sidebar      | mod+F6       | conversation |
+        | conversation | mod+Shift+F6 | sidebar      |
+
+    # Upstream #25877: each area remembers the control the user left in it.
+    @backlog @desktop
+    Scenario: An area reached with F6 focuses the control last used in it
+      Given the user last focused the commit button in the right panel
+      And keyboard focus has since moved to the composer
+      When the user presses F6 until the right panel is reached
+      Then the commit button has keyboard focus
+
+    # Upstream #25877: in settings F6 moves between the section list and the open section.
+    @backlog @desktop
+    Scenario: F6 in settings moves between the section list and the open section
+      Given the user is in settings with the "General" section open
+      And the section list has keyboard focus
+      When the user presses F6
+      Then keyboard focus is in the "General" section
+      And Shift+F6 brings it back to the section list
+
+    # Upstream #25877: opening the sidebar does not take focus; it says it opened instead.
+    @backlog @desktop
+    Scenario: Showing or hiding the sidebar leaves focus where it was
+      Given the composer has keyboard focus
+      When the user shows the sidebar with its shortcut
+      Then the composer still has keyboard focus
+      And a screen reader hears that the sidebar is shown
+
   Rule: Keyboard-only thread list
 
     @desktop
@@ -208,6 +251,43 @@ Feature: Keyboard focus and keyboard-only use
       Given the thread list has keyboard focus on thread "B"
       When the user presses the menu key
       Then the menu for thread "B" opens beside it
+
+    # Upstream #25877: the thread list is one tree with one Tab stop; Right and Left fold its groups.
+    @backlog @desktop
+    Scenario Outline: The thread list moves like a tree
+      Given the thread list has keyboard focus on the project folder "shop"
+      When the user presses <key>
+      Then <result>
+
+      Examples:
+        | key   | result                                                 |
+        | Left  | "shop" closes without opening a thread                 |
+        | Right | "shop" opens, and a second Right moves to its first thread |
+        | Tab   | focus leaves the thread list for the next area         |
+
+    # Upstream #25877: Tab from a thread reaches that thread's own buttons.
+    @backlog @desktop
+    Scenario: Tab from a thread reaches its own buttons
+      Given the thread list has keyboard focus on thread "B"
+      When the user presses Tab
+      Then keyboard focus is on the first of thread "B"'s own buttons
+
+    # Upstream #25877: F2 renames the focused thread.
+    @backlog @desktop
+    Scenario: F2 renames the focused thread
+      Given the thread list has keyboard focus on thread "B"
+      When the user presses F2
+      Then thread "B"'s title can be edited in place
+
+    # Upstream #25877: a menu opened from the keyboard starts on its first action, Space
+    # chooses an action, and Tab closes it.
+    @backlog @desktop
+    Scenario: A thread menu opened from the keyboard can be used from the keyboard
+      Given the thread list has keyboard focus on thread "B"
+      When the user opens its menu with Shift+F10
+      Then the menu's first action has keyboard focus
+      And Space chooses the focused action
+      And Tab closes the menu with focus back on thread "B"
 
   Rule: Keyboard-only settings navigation
 

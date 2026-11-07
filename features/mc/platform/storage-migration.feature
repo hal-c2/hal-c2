@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25301
 #   packages/shared/src/devHome.ts (the ~/.hal-c2 and ~/.t3 homes and T3CODE_HOME being replaced)
 #   apps/server/src/config.ts (userdata and dev state dirs, caches, worktrees, runtime)
 #   apps/server/src/cloud/bootService.ts (service units: HAL_C2_HOME lines in systemd units and launchd plists)
@@ -288,6 +289,16 @@ Feature: Moving in from T3 Code and the old HAL-C2 home
       When HAL-C2 starts again
       Then it copies from "~/.t3" from the beginning
       And the unfinished copy is not used
+    # Upstream #25301: every start killed during the copy left a database-sized copy behind.
+    @backlog @mc
+    Scenario: Copies left by interrupted starts are removed on the next start
+      Given two starts were stopped partway through copying from the old home
+      And another HAL-C2 that is still running is making a copy of its own
+      When HAL-C2 starts again
+      Then both unfinished copies are removed before it copies again
+      And the running HAL-C2's copy is kept
+      And a copy that cannot be removed is logged and the start goes on
+
 
   Rule: Background services installed before still work
 

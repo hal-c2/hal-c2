@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25204
+#   https://github.com/pingdotgg/t3code/pull/24898
+#   https://github.com/pingdotgg/t3code/pull/24833
+#   https://github.com/pingdotgg/t3code/pull/25014
+#   https://github.com/pingdotgg/t3code/pull/24794
+#   https://github.com/pingdotgg/t3code/pull/24480
 #   https://github.com/pingdotgg/t3code/pull/19525
 #   https://github.com/pingdotgg/t3code/pull/22918
 #   https://github.com/pingdotgg/t3code/pull/14545
@@ -117,6 +123,14 @@ Feature: Provider instances
     Then the chooser starts from blue
     And there is no way to clear a colour until one has been picked
 
+  # Upstream #25014: the chooser showed a blue but offered no way to apply it unchanged.
+  @backlog @desktop @priority-low
+  Scenario: The colour the accent chooser starts from can be added as it is
+    Given the instance "claudeAgent_work" has no accent colour
+    When the user opens its accent colour chooser and adds the colour shown
+    Then the instance's accent colour is that blue
+    And dismissing the chooser without adding a colour leaves the instance without one
+
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (resolveProviderInstanceDisplayName)
   @backlog @desktop @mobile
   Scenario Outline: An instance is named by what the MC calls it, or else by its id
@@ -153,6 +167,23 @@ Feature: Provider instances
     When the user disables "Codex Work"
     Then "Codex" has no badge
     And the threads that ran on "Codex Work" still show its badge
+
+  # Upstream #24833: the lineage list showed every subagent with the bare provider icon.
+  # Upstream #24898: so did the chat's subagents card and the phone's subagent group.
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: Subagents show which account they run on
+    Given "Claude" and "Claude Work" are both instances of the same provider
+    And a thread has subagents running on each of them
+    When the user looks at <place>
+    Then each subagent's icon carries its account's badge
+    And its status still shows beside the badge
+
+    Examples:
+      | place                                   |
+      | the thread's lineage list               |
+      | the subagents card in the chat          |
+      | the subagents card's expanded rows      |
+      | the phone's list of the thread's agents |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, normalizeProviderAccentColor)
   @backlog @desktop @mobile @priority-low
@@ -233,12 +264,22 @@ Feature: Provider instances
     Then the new instance appears in the provider list
     And instances the change did not touch keep running
 
+  # Upstream #24794: one failed provider check stopped every later settings change from being applied.
   @backlog
   Scenario: A settings change that cannot be applied leaves the other instances working
     Given the user has the provider list open
     When settings are saved that one instance cannot start with
     Then that instance is listed as unavailable
     And later settings changes are still applied
+
+  # Upstream #24480: a turn that looked up an instance while its replacement was starting got the closed old one.
+  @backlog @mc
+  Scenario: No turn starts on an instance that is being replaced
+    Given the user saved new settings for a provider instance
+    And its replacement is still starting
+    When a turn starts on that instance
+    Then the turn fails as if the instance did not exist
+    And it does not run on the instance that was replaced
 
   # Upstream #16580: provider settings saved while the provider list is starting are not lost
   @backlog
@@ -495,6 +536,14 @@ Feature: Provider instances
     Given a provider's launch arguments are `--name it\'s --verbose`
     When the provider starts
     Then it is given "--name", "it's" and "--verbose" as three arguments
+  # Upstream #25204: words after a lone "--" were read as flags, so "--effort low -- --effort high" ran at high.
+  @backlog @mc @priority-low
+  Scenario: Launch arguments after a lone "--" are not read as settings
+    Given Claude's launch arguments are `--effort low -- --effort high`
+    When HAL-C2 reads the settings Claude was launched with
+    Then the effort is "low"
+    And "--effort high" is passed on as plain words
+
 
   # Upstream #14319: cached discovery hid new models after a CLI update.
   @backlog

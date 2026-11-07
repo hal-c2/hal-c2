@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25604
 #   XDG Base Directory specification (https://specifications.freedesktop.org/basedir-spec/latest/)
 #   https://wiki.archlinux.org/title/XDG_Base_Directory
 #   packages/shared/src/devHome.ts (resolveHalC2Home, resolveWorktreeHalC2Home: a worktree's .hal-c2 outranks HAL_C2_HOME)
@@ -404,6 +405,18 @@ Feature: Where HAL-C2 keeps its files
       Given settings.json is a symbolic link into a dotfiles repository
       When settings are saved
       Then the target file is rewritten and the link remains
+
+    # Upstream #25604: a save through exactly 40 links was refused though the system reads such a path.
+    @backlog @mc @priority-low
+    Scenario Outline: A save follows as many links as the system does
+      Given settings.json is reached through a chain of <count> symbolic links
+      When settings are saved
+      Then <outcome>
+
+      Examples:
+        | count | outcome                                               |
+        | 40    | the file at the end is rewritten and the links remain |
+        | 41    | the save is refused, as reading the path would be     |
 
   Rule: The desktop app's and the hosted server's files are sorted by kind
 

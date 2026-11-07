@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26109
+#   https://github.com/pingdotgg/t3code/pull/26893
+#   https://github.com/pingdotgg/t3code/pull/26288
+#   https://github.com/pingdotgg/t3code/pull/24358
 #   https://github.com/pingdotgg/t3code/pull/18095
 #   https://github.com/pingdotgg/t3code/pull/23233
 #   https://github.com/pingdotgg/t3code/pull/17900
@@ -46,6 +50,10 @@
 #   apps/tui/src/host/sections/updates.ts (the terminal client's notice and Updates page)
 #   apps/server/src/desktopUpdate/DesktopAppUpdate.ts, DesktopAppUpdate.test.ts (desktop update refusals, timeouts,
 #     stages, ignoring other runs)
+#   https://github.com/pingdotgg/t3code/pull/28132
+#   https://github.com/pingdotgg/t3code/pull/26210
+#   https://github.com/pingdotgg/t3code/pull/23532
+#   https://github.com/pingdotgg/t3code/pull/23430
 
 Feature: Updating the server, the desktop app and providers
   The app and the MC can live on different machines and update separately.
@@ -67,6 +75,16 @@ Feature: Updating the server, the desktop app and providers
       When the client disconnects while the update downloads
       Then the update carries on to the end
       And the client sees the server's new version when it reconnects
+
+    # Upstream #23532: a client that lost its progress connection said the update failed and
+    # offered to retry while the server was still installing.
+    @backlog @shared
+    Scenario: A client that loses the update's progress does not call it failed
+      Given the user started updating "server" and it has begun downloading
+      When the client's connection to "server" drops
+      Then the client waits for "server" to come back on the new version
+      And it offers no retry while it waits
+      But if "server" comes back on the old version and never reports the new one, the update is reported failed
 
     @mc
     Scenario: Only one server update runs at a time
@@ -149,6 +167,26 @@ Feature: Updating the server, the desktop app and providers
       When the user presses it
       Then the confirmation lists each machine on a line of its own
 
+    # Upstream #26210: the confirmation was a wall of wrapped text, with the version on every
+    # line and this app apart from the machine it runs on.
+    @backlog @desktop
+    Scenario: The update confirmation shows each machine as one row
+      Given this app runs the server "laptop", and "server" and "box" also have updates
+      When the user presses the update button
+      Then the confirmation names the version once
+      And each machine is one row with its server update, its provider updates and its running threads
+      And this app is part of the "laptop" row
+      And the total of running threads is shown at the end
+
+    # Upstream #26210: machines left out fold away with their reasons.
+    @backlog @desktop @priority-low
+    Scenario: Machines the update leaves out fold into one closed section
+      Given "box" cannot be updated because it is not connected
+      And "server" gets provider updates but not its server update
+      When the user presses the update button
+      Then a closed "1 skipped" section holds "box" with its reason
+      And "server" keeps its row with its server update marked skipped
+
     @backlog @desktop
     Scenario: Updating everything brings providers current before servers and the app last
       Given this app, the server "server" and providers on "server" and "laptop" have updates
@@ -163,6 +201,14 @@ Feature: Updating the server, the desktop app and providers
       When the user updates everything and the app's download fails
       Then "server" and the providers are still updated
       And this app is not installed
+
+    # Upstream #26109: after this app restarted, a server still restarting was offered its update again.
+    @backlog @desktop
+    Scenario: A server still restarting after this app's update is not offered its update again
+      Given the user updated everything and this app restarted before "server" came back
+      When the user looks at the sidebar, Connections or the composer
+      Then "server" shows as updating, not as having an update
+      And it shows its new version once it is back, or its update again if it has not come back in 32 minutes
 
     @backlog @desktop
     Scenario Outline: Updating everything leaves out a machine it cannot update
@@ -335,6 +381,14 @@ Feature: Updating the server, the desktop app and providers
         | 5     | 6     | 0     | 1 more change on GitHub    |
         | 5     | 5     | 4     | 4 older releases on GitHub |
 
+    # Upstream #24358: the "Full Changelog" link was listed as a change and counted toward the changes left out.
+    @backlog @desktop @priority-low
+    Scenario: The full changelog link is not listed as a change
+      Given a nightly release's notes end with its "Full Changelog" comparison link
+      When the user reads the release notes
+      Then "Full Changelog" is not one of the listed changes
+      And it is not counted among the changes left out
+
     # Upstream #21210: version and release links follow the repository updates come from.
     @backlog @desktop @priority-low
     Scenario: Release links go to the repository the app updates from
@@ -376,6 +430,16 @@ Feature: Updating the server, the desktop app and providers
       And an update is available
       When the user points at the update button in the sidebar
       Then the user sees only where the update stands
+    # Upstream #26893: every track shows a short note for each release; once the clients follow,
+    # this replaces the scenario above for stable updates.
+    @backlog @desktop @priority-low
+    Scenario: The release notes open with a short note on every track
+      Given an update is available whose release carries a summary
+      When the user points at the update button in the sidebar
+      Then each release shows its highlights and its number of changes and contributors, linking to GitHub
+      And the offered release says how long ago it shipped, such as "3h ago"
+      And a release without a summary lists its changes as before
+
 
     @desktop
     Scenario Outline: The user switches update track
@@ -395,6 +459,47 @@ Feature: Updating the server, the desktop app and providers
       When the user switches the update track to Nightly and it fails with "Network unreachable"
       Then the user is told "Could not change update track" with the reason
       And the update track is still Stable
+    # Upstream #26288: one switch moves every machine between Stable and Nightly
+    @backlog @desktop @mc
+    Scenario: Switching the update track lists what it will move and skip first
+      Given "server" runs as a service and "studio" is another desktop app paired with this one
+      When the user picks the Nightly track in Settings > About > Update track
+      Then the user is shown each machine the switch will move and each it skips, with the reason
+      And confirming moves "server" and "studio" to the newest Nightly, and this app last
+
+    @backlog @desktop @mc @priority-high
+    Scenario Outline: A track switch never moves a machine onto a release that cannot read its data
+      Given "server"'s database holds changes up to <held>
+      And the newest Stable release knows changes up to <known>
+      When the user switches the update track to Stable
+      Then "server" is <outcome>
+
+      Examples:
+        | held       | known      | outcome                                              |
+        | 69         | 72         | moved to the newest Stable release                   |
+        | 72         | 69         | skipped, because its data is newer than Stable reads |
+        | 72         | not stated | skipped, because the switch cannot confirm it is safe |
+
+    @backlog @desktop @mc @priority-high
+    Scenario: Outside a track switch nothing moves to the other track or to an older release
+      Given the update track is Nightly
+      And the last track switch set no release floor
+      When the user checks for updates
+      Then no Stable release and no older Nightly release is offered
+
+    @backlog @desktop @mc
+    Scenario: A track switch that did not finish keeps the new track and can be reviewed again
+      Given a switch to Stable stopped after moving "server" but not "studio"
+      Then the update track is Stable and "studio" stays on its Nightly build
+      When the user chooses "Review"
+      Then the machines are checked again and "studio" is offered the switch
+
+    @backlog @desktop @priority-low
+    Scenario: A machine on the other track points to the track switch instead of an update button
+      Given "server" is on the Stable track and this app is on Nightly
+      Then "server"'s notice says to switch tracks in Settings > About > Update track
+      And updating everything skips "server"
+
 
     # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (updateChannelConfiguredByUser), apps/desktop/src/updates/updateChannels.ts
     @desktop
@@ -493,6 +598,13 @@ Feature: Updating the server, the desktop app and providers
       When the user switches the update track to Stable
       Then the app offers the latest stable release even though it is older
       And installing it is allowed to go back in version
+
+    # Upstream #23430: prerelease names with a second hyphen were cut short and compared equal.
+    @backlog @mc @priority-low
+    Scenario: Prereleases that differ after a second hyphen are different versions
+      Given an environment runs "1.4.0-nightly-2"
+      When "1.4.0-nightly-3" is released
+      Then "1.4.0-nightly-3" is offered as an update
 
     @desktop
     Scenario: A failed install brings the MC back and says so
@@ -831,6 +943,19 @@ Feature: Updating the server, the desktop app and providers
       Given updating Codex takes longer than the MC waits
       When the user updates Codex
       Then the user is told "Update timed out."
+
+    # Upstream #28132: a silent 300 MB download outlived the five-minute limit and was killed,
+    # leaving the provider half installed; the limit is now 30 minutes and the message names it.
+    @backlog @mc @priority-high
+    Scenario Outline: A provider update is given 30 minutes before it times out
+      Given updating Claude stays silent for <duration> while it downloads
+      When the user updates Claude
+      Then <outcome>
+
+      Examples:
+        | duration   | outcome                                                    |
+        | 6 minutes  | the update finishes                                        |
+        | 31 minutes | the user is told "Update timed out after 30 minutes."      |
 
     @mc
     Scenario: The user turns off provider update checks

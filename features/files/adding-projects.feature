@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24915
+#   https://github.com/pingdotgg/t3code/pull/26068
+#   https://github.com/pingdotgg/t3code/pull/26767
+#   https://github.com/pingdotgg/t3code/pull/24698
 #   https://github.com/pingdotgg/t3code/pull/23170
 #   https://github.com/pingdotgg/t3code/pull/22492
 #   https://github.com/pingdotgg/t3code/pull/18265
@@ -6,6 +10,7 @@
 #   https://github.com/pingdotgg/t3code/pull/22780
 #   https://github.com/pingdotgg/t3code/pull/22180
 #   https://github.com/pingdotgg/t3code/pull/22254
+#   https://github.com/pingdotgg/t3code/pull/25819
 #   docs/user/project-settings.md
 #   apps/server-ex/lib/hal_c2/projects.ex (project.create, browse)
 #   apps/server/src/workspace/WorkspaceEntries.ts (browse: home, relative paths, prefix, errors)
@@ -36,6 +41,10 @@
 #   packages/contracts/src/filesystem.ts (filesystem.browse)
 #   packages/contracts/src/rpc.ts (projects.mutate, filesystem.browse, projectClone.start, projectClone.retry, projectClone.cancel, subscribeProjectClones, sourceControl.lookupRepository, sourceControl.cloneRepository;
 #     projects.add is an unrouted name, dropped in parity/rpc.feature)
+#   https://github.com/pingdotgg/t3code/pull/28064
+#   https://github.com/pingdotgg/t3code/pull/28243
+#   https://github.com/pingdotgg/t3code/pull/23024
+#   https://github.com/pingdotgg/t3code/pull/24005
 
 Feature: Adding projects
   A project is a folder on an environment. The user adds one by picking a folder on that
@@ -175,6 +184,40 @@ Feature: Adding projects
       When a client browses "/root/"
       Then an empty list is returned without an error
 
+    # Upstream #28064: a reopened folder browser showed the listing it had cached minutes before.
+    @backlog @shared
+    Scenario: Reopening the folder browser shows folders added or removed since
+      Given the user browsed "/home/sam/code" and closed the folder browser
+      And the folder "/home/sam/code/delta" was created outside HAL-C2
+      When the user reopens the folder browser at "/home/sam/code" some seconds later
+      Then "delta" is listed
+
+    # Upstream #28243: Tab in the folder browser left the path field instead of completing it.
+    @backlog @desktop @tui
+    Scenario Outline: Tab completes the folder name being typed
+      Given "/home/sam" holds the folders <folders>
+      And the user is browsing for a local folder
+      When the user types "<typed>" and presses Tab
+      Then the path reads "<path>"
+      And the user is still typing the path
+      And no project is added
+
+      Examples:
+        | folders                          | typed           | path                  |
+        | "Creations" and "Documents"      | ~/Creation      | ~/Creations/          |
+        | "Coding" and "Codex"             | ~/Cod           | ~/Cod                 |
+        | "Coding-old" and "Coding-new"    | ~/Cod           | ~/Coding-             |
+        | "Creations" and "Documents"      | ~/Zz            | ~/Zz                  |
+
+    # Upstream #28243: a highlighted folder is entered, not added.
+    @backlog @desktop @tui
+    Scenario: Tab enters the highlighted folder
+      Given the user is browsing for a local folder at "~/"
+      And the folder "Creations" is highlighted
+      When the user presses Tab
+      Then the path reads "~/Creations/"
+      And the folders inside "Creations" are listed
+
     @tui
     Scenario: Adding a folder that is already a project opens it instead
       Given "shop" is already a project on "laptop"
@@ -283,6 +326,15 @@ Feature: Adding projects
       Then the user is told why the repository could not be found
       And the user can correct the name
 
+    # Upstream #26068: the whole "project/repository" was sent as the repository name, so Azure
+    # never found it.
+    @backlog @mc
+    Scenario: An Azure DevOps repository is looked up by its project and name
+      Given the repository "app" exists in the Azure DevOps project "shop"
+      When the user enters "shop/app" as an Azure DevOps repository
+      Then the user is asked where to clone "shop/app"
+      And a bare "app" is looked up in the project of the current checkout
+
     @backlog @mobile @priority-low
     Scenario: Nothing is looked up until something is typed
       When the user opens the GitHub repository source with nothing typed
@@ -299,6 +351,23 @@ Feature: Adding projects
       Given "laptop" keeps new projects in "/home/sam/code"
       When the user starts adding a local folder on the phone
       Then the path offered starts in "/home/sam/code"
+
+    # Upstream #25819: the path field reset whenever the chosen environment changed, so one that
+    # dropped out for a moment and came back wiped what the user had typed.
+    @backlog @mobile
+    Scenario: A typed folder path survives its environment dropping out and returning
+      Given the user typed "/home/sam/code/shop" as the local folder on "laptop"
+      When "laptop" drops out for a moment and comes back
+      Then the path still reads "/home/sam/code/shop"
+
+    # Upstream #25819
+    @backlog @mobile @priority-low
+    Scenario: Each environment keeps the folder path typed for it
+      Given the phone is paired with "laptop" and "desktop"
+      And the user typed "/home/sam/code/shop" as the local folder on "laptop"
+      When the user switches to "desktop" and edits its path
+      And the user switches back to "laptop"
+      Then the path reads "/home/sam/code/shop"
 
     @backlog @mobile
     Scenario: Browsing for a folder goes into a folder and back out of it
@@ -543,6 +612,15 @@ Feature: Adding projects
       When the user removes the project from the clone's failure notice
       Then the project "shop" is no longer listed
 
+    # Upstream #24915: a client that dropped mid-remove left the failed clone's notice and its folder reserved.
+    @backlog @mc @priority-high
+    Scenario: Removing a failed clone's project also forgets the clone, even if the client drops
+      Given a clone of "acme/shop" into "~/shop" failed
+      And the client disconnects while the user removes the project
+      When the user reconnects
+      Then no notice says the clone failed
+      And "acme/shop" can be cloned into "~/shop" again
+
     # Likely already implemented: apps/desktop-qt/src/native/ProjectCloneController.cpp
     @backlog @desktop @mobile @priority-high
     Scenario: A cancelled clone is announced as cancelled and can be retried from there
@@ -669,6 +747,14 @@ Feature: Adding projects
       And the clone reported to every client carries "https://example.com/acme/shop.git"
       And a failure's message has the credentials removed
 
+    # Upstream #24698: git repeats the clone URL, query string included, in its error.
+    @mc @backlog @priority-high
+    Scenario: A token in a clone address's query never reaches clients in a failure
+      When a client starts cloning "https://example.com/acme/shop.git?access_token=s3cret" into "/home/sam/shop"
+      And git fails, repeating the address in its error
+      Then the failure every client sees names "https://example.com/acme/shop.git" without its query
+      And the rest of git's message is kept
+
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (cloneRepository, CLONE_ENV)
     @mc
     Scenario: A clone fails with git's own words when it would have asked for a password
@@ -782,6 +868,13 @@ Feature: Adding projects
         | two words  |
         |            |
 
+    # Upstream #23024: an owner with a trailing slash went to the lookup and failed with a generic error.
+    @backlog @desktop @mobile
+    Scenario: An owner without a repository name asks for the full name
+      When the user looks up the GitHub repository "acme/"
+      Then GitHub is not asked
+      And the user reads "Repository name incomplete" and "Enter the full owner/repository name."
+
     # Legacy: packages/client-runtime/src/operations/projects.ts (normalizePastedCloneUrl)
     @backlog @desktop @mobile @tui
     Scenario: A pasted owner and repository name is cloned from GitHub over HTTPS
@@ -876,6 +969,18 @@ Feature: Adding projects
       Then the user can choose SSH or HTTPS and the folder on "server"
       And ".env" is checked to copy while ".dev.vars" and "notes.txt" are offered unchecked
 
+    # Upstream #24005: switching an Azure DevOps address between SSH and HTTPS kept the SSH host and path.
+    @backlog @desktop @mc
+    Scenario Outline: An Azure DevOps address switched between SSH and HTTPS is one Azure accepts
+      Given the checkout of "shop" on "laptop" has the remote <from>
+      When the user adds "shop" to "server" and chooses <protocol>
+      Then "server" clones from <to>
+
+      Examples:
+        | from                                                    | protocol | to                                                      |
+        | "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo"   | HTTPS    | "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo" |
+        | "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo" | SSH      | "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo"   |
+
     @backlog @desktop
     Scenario: The chosen files are copied once the clone on the other machine finishes
       Given the user added "shop" to "server" with ".env" chosen to copy
@@ -944,3 +1049,49 @@ Feature: Adding projects
       Given the repository "shop" has a favicon
       When a clone of "shop" finishes into an empty folder
       Then the project's icon is the repository's favicon, not a letter
+
+  # Upstream #26767: a No project thread's folder becomes a project where it is
+  @backlog
+  Rule: Turning a No project thread into a project
+
+    Background:
+      Given the thread "Convert PNGs" was started with No project and works in its own scratch folder
+
+    @mc @shared @mobile
+    Scenario: Turning a No project thread into a project keeps it in its folder
+      When the user chooses "Turn into project" from the thread's menu
+      Then a project rooted at the thread's folder is created, without moving any file
+      And "Convert PNGs" belongs to that project and its agent session carries on there
+      And the user is offered to initialize Git in the new project
+
+    @mc
+    Scenario: The other threads in the folder and their scheduled tasks move with it
+      Given a fork and an archived thread also work in the folder of "Convert PNGs"
+      And a scheduled task is bound to "Convert PNGs"
+      And another No project thread works in a different scratch folder
+      When "Convert PNGs" is turned into a project
+      Then the fork, the archived thread and the scheduled task belong to the new project
+      And the other No project thread stays under No project
+
+    @mc @shared @mobile
+    Scenario: A thread cannot be turned into a project while work in its folder runs
+      Given a subagent working in the folder of "Convert PNGs" is still running
+      Then "Turn into project" is disabled for "Convert PNGs"
+      And an attempt that reaches the MC changes nothing
+
+    @mc @priority-low
+    Scenario: Turning a thread into a project again finishes a move that stopped part way
+      Given turning "Convert PNGs" into a project stopped after the project was created
+      When the user turns "Convert PNGs" into a project again
+      Then every thread in the folder belongs to that same project
+
+    @shared @mobile
+    Scenario Outline: Only a No project thread with a folder offers to become a project
+      Given the thread <kind>
+      Then its menu <offers> "Turn into project"
+
+      Examples:
+        | kind                                       | offers         |
+        | was started with No project and has a folder | offers       |
+        | was started with No project and has no folder yet | does not offer |
+        | belongs to the project "shop"              | does not offer |

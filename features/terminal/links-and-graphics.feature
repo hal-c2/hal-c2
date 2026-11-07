@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23527
+#   https://github.com/pingdotgg/t3code/pull/24013
 #   https://github.com/pingdotgg/t3code/pull/15020
 #   https://github.com/pingdotgg/t3code/pull/22872
 #   https://github.com/pingdotgg/t3code/pull/21199
@@ -21,6 +23,7 @@
 #   Cross-domain: tui/appearance.feature owns inline images and graphics detection in the terminal
 #   client itself; settings/integrations.feature owns the "Open links in" preference and
 #   navigation/appearance.feature owns terminal fonts.
+#   https://github.com/pingdotgg/t3code/pull/28189
 
 Feature: Links and rendering inside terminals
   A terminal shows the program's colours faithfully and turns web addresses and file paths in
@@ -68,6 +71,20 @@ Feature: Links and rendering inside terminals
     Scenario: A link after wide characters still lines up with its text
       Given the shell prints Chinese text followed by a web address
       Then the link covers exactly the address
+    # Upstream #24013: a wide character's second cell read as a space, which ended the link.
+    @desktop @backlog
+    Scenario Outline: A link holding wide characters opens in full
+      Given the shell prints <output>
+      Then the whole of it is underlined, both cells of its last character included
+      And following it opens <opens>
+
+      Examples:
+        | output                                    | opens                                     |
+        | "https://ja.wikipedia.org/wiki/日本語"     | "https://ja.wikipedia.org/wiki/日本語"     |
+        | the path "docs/日本語/notes.md"            | "docs/日本語/notes.md"                     |
+        | "https://example.com/party/🎉"            | "https://example.com/party/🎉"            |
+        | "https://example.com/a b"                 | "https://example.com/a", as a real space still ends a link |
+
 
     @tui
     Scenario Outline: Oversized output is not turned into links
@@ -159,6 +176,15 @@ Feature: Links and rendering inside terminals
         | C:\Users\Jane Doe\project\index.ts:12 wrapped in double quotes | C:\Users\Jane Doe\project\index.ts |
         | C:\Users\Jane Doe\project\index.ts in double quotes, then :12  | C:\Users\Jane Doe\project\index.ts |
 
+    # Upstream #23527: PowerShell's prompt prints its folder unquoted, so a folder with a space split
+    # into two links.
+    @backlog @desktop @priority-low
+    Scenario: A PowerShell prompt's folder with a space is one link
+      Given the shell prints the prompt "PS C:\dev\ai-test\dir 1\test>"
+      When the user follows "dir 1" in the terminal
+      Then the link followed is "C:\dev\ai-test\dir 1\test"
+      And no separate link covers "1\test"
+
     # git status prints a branch and its upstream as "## main...origin/main".
     @desktop
     Scenario: A branch range in git's output is not a file path
@@ -177,6 +203,28 @@ Feature: Links and rendering inside terminals
         | line                                         | route                               |
         | GET /api/trpc/post.list,user.me?batch=1 200  | /api/trpc/post.list,user.me?batch=1 |
         | proxying /api/users?page=2 to localhost:4000 | /api/users?page=2                   |
+
+    # Upstream #28189: the Windows drive rule matched the last letter of a URL scheme, so
+    # "redis://..." became a link to a file that does not exist.
+    @backlog @desktop
+    Scenario Outline: An address with a scheme other than http is not a file path
+      Given the shell prints "<line>"
+      When the user follows "<text>" in the terminal
+      Then nothing is opened
+
+      Examples:
+        | line                                               | text                                  |
+        | Connected to redis://127.0.0.1:6379/0              | s://127.0.0.1:6379/0                  |
+        | postgres://app@localhost:5432/shop                 | s://app@localhost:5432/shop           |
+        | uploaded to s3://bucket/key                        | //bucket/key                          |
+        | at main (file:///Users/me/app/src/index.mjs:3:7)   | e:///Users/me/app/src/index.mjs:3:7   |
+
+    # Upstream #28189
+    @backlog @desktop
+    Scenario: A file path beside a non-web address is still a link
+      Given the shell prints "src/config.ts:12 uses redis://127.0.0.1:6379/0"
+      When the user follows "src/config.ts:12" in the terminal
+      Then "src/config.ts" opens in the editor at line 12
 
     @desktop
     Scenario Outline: The terminal's menu opens or copies the link under the pointer

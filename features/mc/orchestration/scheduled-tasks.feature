@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27098
+#   https://github.com/pingdotgg/t3code/pull/25647
 #   https://github.com/pingdotgg/t3code/pull/17458
 #   https://github.com/pingdotgg/t3code/pull/22070
 #   https://github.com/pingdotgg/t3code/pull/17451
@@ -15,6 +17,9 @@
 #   packages/contracts/src/scheduledTask.ts, rpc.ts (scheduledTasks.subscribe)
 #   V2 commands issued: message.dispatch (queue_after_active, scheduledTaskId), and a
 #     thread launch with an initial message
+#   https://github.com/pingdotgg/t3code/pull/27983
+#   https://github.com/pingdotgg/t3code/pull/28104
+#   https://github.com/pingdotgg/t3code/pull/28474
 Feature: Scheduled tasks
   A scheduled task sends a prompt on a schedule, either into a thread it is bound
   to or as the first message of a new thread each time.
@@ -151,6 +156,14 @@ Feature: Scheduled tasks
     When a client runs task "a" now
     Then the answer is task "a" after the run, with its outcome
 
+  # Upstream #25647: a refused run_scheduled_task_now answered "The operation could not be
+  # completed." whatever the reason.
+  @backlog @mc
+  Scenario: An agent told a task cannot run now is told why
+    Given task "a" runs when its webhook URL receives a request
+    When an agent runs task "a" now
+    Then the agent is told "Webhook tasks run when their URL receives a request."
+
   # Upstream #17458: run_scheduled_task_now answered with the task's binding, so a run that
   # started a new thread answered with none.
   @backlog @mc
@@ -179,6 +192,14 @@ Feature: Scheduled tasks
     Given task "a" is running
     When a client runs task "a" now
     Then it fails with "Schedule task is already running."
+
+  # Upstream #28474: an interrupt just as a run began left the task busy until a restart.
+  @backlog @mc @priority-high
+  Scenario: A task whose run was interrupted as it began can run again
+    Given a run of task "a" was interrupted just as it began
+    When a client runs task "a" now
+    Then the task runs
+    And its due runs and waiting webhook runs are not skipped
 
   @mc
   Scenario: A due task that is still running is not started again
@@ -229,6 +250,15 @@ Feature: Scheduled tasks
     Given the next task is due in 3 hours
     Then the MC checks its schedule again within a minute
 
+  # Upstream #27098: idle servers stopped polling every few seconds; in review, a task whose next
+  # run was beyond the year 9999 stalled every other task. The once-a-minute check above stays.
+  @backlog @mc @priority-low
+  Scenario: A task due thousands of years from now does not hold up the others
+    Given task "a" is next due in the year 11533
+    And task "b" is due now
+    When the MC checks its schedule
+    Then task "b" runs
+
   @mc
   Scenario: A run cut short by a restart is recorded as failed
     Given task "a" was running when the MC stopped
@@ -276,6 +306,13 @@ Feature: Scheduled tasks
     When the agent of "caller" schedules "Check CI" every hour
     Then the task is bound to "caller", uses its model and modes, and was created by an agent through MCP
 
+  # Upstream #28104: schedule_task and update_scheduled_task take a one-time schedule.
+  @backlog @mc
+  Scenario: An agent schedules a task to run once
+    When an agent schedules "Check CI" to run once tomorrow at 09:00
+    Then the task's next run is tomorrow at 09:00
+    And after that run it has no next run
+
   @mc
   Scenario: An agent's task title defaults to the start of its prompt
     When an agent schedules a task without a title
@@ -300,6 +337,23 @@ Feature: Scheduled tasks
     Given thread "caller" has a task bound to it
     When the agent of "caller" updates the task to not be bound to its thread
     Then each run launches a new worktree from origin's main
+
+  # Upstream #27983: unbound tasks hardcoded main, so every run on a repository whose default
+  # branch is anything else failed with ref_not_found before the prompt started.
+  @backlog @mc @priority-high
+  Scenario Outline: An agent's unbound task starts from the project's default branch
+    Given "demo" is a repository where <repository>
+    When an agent schedules a task in "demo" that is not bound to its thread
+    Then each run launches a new worktree from <base>
+
+    Examples:
+      | repository                                                       | base               |
+      | origin's default branch is "master"                              | "origin/master"    |
+      | origin has "master" but records no default branch                | "origin/master"    |
+      | the only remote is "upstream", whose default branch is "develop" | "upstream/develop" |
+      | there is no remote and the local branch is "master"              | "master"           |
+      | origin has "main" and a stale local "master" exists              | "origin/main"      |
+      | no remote or local branch is named "main" or "master"            | "main"             |
 
   # Upstream #22070: tasks bound to a deleted thread were left behind with their webhook deliveries.
   @backlog @mc

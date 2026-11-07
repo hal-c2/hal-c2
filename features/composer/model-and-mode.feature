@@ -1,7 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27859
+#   https://github.com/pingdotgg/t3code/pull/25511
+#   https://github.com/pingdotgg/t3code/pull/28044
+#   https://github.com/pingdotgg/t3code/pull/28409
+#   https://github.com/pingdotgg/t3code/pull/28076
+#   https://github.com/pingdotgg/t3code/pull/28057
 #   https://github.com/pingdotgg/t3code/pull/20886
 #   https://github.com/pingdotgg/t3code/pull/22242
 #   https://github.com/pingdotgg/t3code/pull/19900
+#   https://github.com/pingdotgg/t3code/pull/24205
 #   https://github.com/pingdotgg/t3code/pull/11933
 #   https://github.com/pingdotgg/t3code/pull/14961
 #   https://github.com/pingdotgg/t3code/pull/19928
@@ -12,6 +19,9 @@
 #   https://github.com/pingdotgg/t3code/pull/25609
 #   https://github.com/pingdotgg/t3code/pull/21404
 #   https://github.com/pingdotgg/t3code/pull/21406
+#   https://github.com/pingdotgg/t3code/pull/23957
+#   https://github.com/pingdotgg/t3code/pull/25869
+#   https://github.com/pingdotgg/t3code/pull/27114
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
@@ -36,6 +46,8 @@
 #   apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx (one update notice for balanced machines)
 #   apps/web/src/components/BranchToolbar.logic.ts (resolveEnvironmentOptionLabel, shouldShowEnvironmentIndicator)
 #   Auto balance is desktop and terminal only; phones pick the machine by hand (settings/load-balancing.feature).
+#   https://github.com/pingdotgg/t3code/pull/23448
+#   https://github.com/pingdotgg/t3code/pull/23493
 
 Feature: Choosing the model, effort, permissions and workspace for a turn
   Before sending, the user decides which model runs the turn, how hard it
@@ -63,10 +75,40 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then Codex, "Codex Work" and Claude each list only their own models
     And a provider that is turned off in settings is not listed
 
+  # Upstream #25511: a second instance showed the default instance's draft model, whose slug its
+  # own catalog lacks, so its effort control vanished and sending asked for a model it had disabled.
+  @backlog @shared
+  Scenario: A second instance with no draft model of its own uses its own default
+    Given the draft picked "Kimi K3.1 Pro" on the default OpenCode instance
+    When the user switches the draft to a second OpenCode instance "Kimi" without picking a model
+    Then the composer shows "Kimi"'s own default model with its effort choices
+    And sending asks "Kimi" only for a model in its own catalog
+
   @desktop
   Scenario: The chosen model is shown with its provider
     When the user chooses the model "gpt-5-codex"
     Then the composer shows "gpt-5-codex" marked as a Codex model
+
+  # Upstream #24205: the model button repeated what the provider icon says ("Claude Opus 5.5" beside
+  # the Claude icon), and aggregator catalogs added a vendor ("NVIDIA: Nemotron 3 Super").
+  @backlog @shared
+  Scenario Outline: The model button shows the name the user would say
+    When the user chooses the <provider> model "<full>"
+    Then the model button reads "<short>"
+    And the full name "<full>" is shown in its tooltip and in the model picker
+
+    Examples:
+      | provider | full                     | short            |
+      | Claude   | Claude Opus 5.5          | Opus 5.5         |
+      | Codex    | GPT-5.5                  | 5.5              |
+      | OpenCode | NVIDIA: Nemotron 3 Super | Nemotron 3 Super |
+
+  # Upstream #24205
+  @backlog @shared @priority-low
+  Scenario: A short name the model manifest gives wins over the worked-out one
+    Given the model manifest names "Claude Opus 5.5" "Opus" for short
+    When the user chooses "Claude Opus 5.5"
+    Then the model button reads "Opus"
 
   @desktop
   Scenario Outline: Searching the models matches provider and model names
@@ -236,6 +278,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses to work in a new worktree from branch "main"
     Then the first turn works in a new worktree based on "main"
 
+  # Upstream #27114: at the default chat width a project on several machines showed only the
+  # machine's name, with the checkout or worktree choice hidden in its menu.
+  @backlog @desktop @priority-low
+  Scenario: At the default chat width the machine, workspace and branch each have their own control
+    Given the project can run on more than one machine
+    When the user starts a new thread at the default chat width
+    Then the composer shows the machine, whether it works locally or in a new worktree, and the branch as separate controls
+    And only a phone-width composer folds the machine and workspace into one control
+
   # Upstream #21404: the phone could inherit new-worktree mode for a plain folder and then
   # refuse to start on a branch that cannot exist.
   @backlog @shared
@@ -269,7 +320,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the workspace label reads "Worktree"
 
   # Upstream #13555: the collapsed bar's labels must not flip while the user scrolls.
-  @desktop @backlog @priority-low
+  # Upstream #25869: dropped with the collapsing composer.
+  @desktop @dropped
   Scenario: The collapsed composer bar keeps its labels steady while the user scrolls
     Given the user has collapsed the composer bar on a thread with a long branch name
     When the user scrolls the thread
@@ -392,7 +444,9 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the favourites are listed first, each under its own provider's name
     But in a thread that has already run a turn the picker opens on the thread's provider
 
-  @backlog @desktop
+  # Upstream #28076: the folded "Legacy models" section became a "Show more" row, so this is
+  # replaced by "A provider's older models are shown in place from the end of the list".
+  @dropped @desktop
   Scenario: A provider's older models are folded away until asked for
     Given Codex lists two current models and three it calls legacy
     When the user looks through Codex's models
@@ -406,20 +460,28 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   Scenario: A favourite older model is listed outside the folded section
     Given Codex lists the legacy model "gpt-4.1" and the user marked it as a favourite
     When the user looks through Codex's models
-    Then "gpt-4.1" is listed above Codex's current models without opening "Legacy models"
+    Then "gpt-4.1" is listed above Codex's current models without choosing "Show more"
     When the user removes it from the favourites
-    Then "gpt-4.1" is back in "Legacy models"
+    Then "gpt-4.1" is back among the older models behind "Show more"
 
   @backlog @desktop
   Scenario: Searching the models finds a provider's older models too
     Given Codex lists the legacy model "gpt-4.1"
     When the user searches the models for "4.1"
-    Then "gpt-4.1" is listed without opening "Legacy models"
+    Then "gpt-4.1" is listed without choosing "Show more"
 
   @backlog @desktop
   Scenario: A search that matches no model says so
     When the user searches the models for "zzz"
     Then the user is told "No models found"
+
+  # Upstream #23493: Enter or Escape that confirmed or cancelled input-method text closed the picker.
+  @backlog @desktop
+  Scenario: Confirming input-method text in the model search keeps the picker open
+    Given the user is searching the models with a Japanese input method
+    When the user presses Enter to confirm the composed text, or Escape to cancel it
+    Then the picker stays open with the search text as the input method left it
+    But Enter outside composition still chooses the highlighted model, and Escape closes the picker
 
   @backlog @desktop
   Scenario: A model the provider has just added is marked as new
@@ -512,6 +574,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses "opus" and "sonnet" with Shift held again
     Then only "gpt-5-codex" is chosen and the thread starts on it alone
 
+  # Upstream #23448: registry agents lost their own logos once several models were chosen.
+  @backlog @desktop @priority-low @plugin-acp-registry
+  Scenario: Several registry agents chosen together keep their own logos
+    Given the user is starting a new thread with a model of the registry agent "Goose" chosen
+    When the user chooses a model of the registry agent "Amp" with Shift held
+    Then the composer shows the logos of "Goose" and "Amp"
+
   @backlog @desktop @priority-low
   Scenario: Choosing a model without Shift goes back to one model
     Given the user has chosen "gpt-5-codex" and "opus" for a new thread
@@ -560,6 +629,109 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | fast mode on and nothing else to set     | Fast                |
       | fast mode off and nothing else to set    | Normal              |
 
+  # Upstream #25869: the composer names the effort as a word after the model, such as
+  # "Opus 5.5 Extra High", and a bolt after it when Fast is on. Settings › Appearance ›
+  # Effort display shows the level as rising bars instead; Max, Ultracode and Ultrathink stay words.
+  @backlog @shared
+  Scenario Outline: The composer names the model's effort as the user chose to see it
+    Given the thread runs on "Opus 5.5" with <effort> effort
+    And the effort display is set to "<display>"
+    When the user looks at the composer
+    Then the model reads "Opus 5.5" followed by <shown>
+
+    Examples:
+      | effort     | display | shown                     |
+      | Extra High | Words   | "Extra High"              |
+      | Extra High | Bars    | four bars                 |
+      | Low        | Bars    | one bar                   |
+      | Max        | Bars    | "Max"                     |
+
+  # Upstream #25869: the composer names the permissions only when they are not the user's
+  # default; they change from the effort menu or the permissions key.
+  @backlog @shared @priority-high
+  Scenario: The composer names the permissions only when they differ from the default
+    Given the default permissions are Supervised
+    And the thread runs in Supervised
+    When the user looks at the composer
+    Then the composer does not name the permissions
+    When the user sets the thread's permissions to Full access from the effort menu
+    Then the composer names "Full access" beside the model
+
+  # Upstream #25869: a new thread always says which permissions its first message will use,
+  # and choosing them there opens the permissions as the permissions key does.
+  @backlog @shared @priority-high
+  Scenario: A new thread says which permissions its first message uses
+    Given the default permissions are Full access
+    When the user starts a new thread
+    Then the draft says it will run in "Full access"
+    When the user chooses the permissions it names
+    Then the user can pick other permissions for the thread
+
+  # Upstream #28057: the model and its effort were two touching targets that read as one label;
+  # now one control opens the model list with the chosen model's efforts beside it.
+  @backlog @shared
+  Scenario: One control chooses the model and then its effort
+    When the user opens the model control in the composer
+    Then the models are listed with the chosen model's efforts beside them, and speed and permissions below
+    When the user picks a model that has efforts
+    Then the picker stays open on that model's current effort
+    And picking a model without efforts chooses it at once
+
+  # Upstream #28057: the effort and permissions keys open the same control at their part.
+  @backlog @desktop @priority-low
+  Scenario Outline: A key opens the model control at its part
+    When the user presses <keys>
+    Then the model control opens on <part>
+    And pressing it while the control is open moves there
+
+    Examples:
+      | keys        | part                   |
+      | mod+shift+e | the current effort     |
+      | mod+shift+a | the permissions        |
+
+  # Upstream #28076: picks kept closing the picker at odd times; a pick now leaves it open.
+  @backlog @shared @priority-low
+  Scenario: The model control stays open until the user leaves it
+    Given the user opened the model control
+    When the user picks an effort, turns fast mode on or changes the permissions
+    Then the control stays open with the focus in it
+    And Escape or a click outside closes it
+
+  # Upstream #28076: "Legacy models" became a "Show more" row at the end of the list. Replaces
+  # "A provider's older models are folded away until asked for" once the clients carry it.
+  @backlog @shared @priority-low
+  Scenario: A provider's older models are shown in place from the end of the list
+    Given Codex lists two current models and three it calls legacy
+    When the user chooses "Show more" at the end of Codex's models
+    Then the three older models are listed in place and the row reads "Show less"
+    And the list scrolls inside the picker
+
+  # Upstream #28409: an agent's own options stretched the control and its effort column.
+  @backlog @shared
+  Scenario: An agent's own options do not crowd the model control
+    Given an ACP agent offers a long model name, a session mode, auto-approve and its own thinking levels
+    When the user opens the model control
+    Then the agent's thinking levels are the efforts, shown as rising bars
+    And each other option is one row naming its value, opening its choices beside it, and an on or off option is a switch
+    And the composer names only the model, cut short when long, with its effort, fast mode and context window
+    And the picker keeps one height while the user moves between providers
+
+  # Upstream #28409: Grok listed its levels from strongest to weakest.
+  @backlog @shared @priority-low
+  Scenario: Grok's efforts are listed from lowest to highest
+    When the user opens the model control on a Grok model
+    Then its efforts run from the lowest to the highest
+
+  # Upstream #28044: Ultrathink is a word in the prompt, not a setting, so the effort choices
+  # leave it out. Replaces turning on Ultrathink above once the clients carry it.
+  @backlog @shared @priority-low
+  Scenario: Ultrathink is typed, not picked
+    Given the thread runs on Claude
+    When the user opens the effort choices or steps the effort
+    Then Ultrathink is not offered
+    When the user types "Ultrathink: design the cache" and sends it
+    Then the effort reads "Ultrathink" and the turn runs at Ultrathink
+
   @backlog @desktop
   Scenario: Fast mode is marked beside the model's other options
     Given the thread runs on a model set to high effort with fast mode on
@@ -604,7 +776,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | low    | down      | high |
 
   # Upstream #19928: stepping into Ultrathink follows the same rules as choosing it.
-  @backlog @desktop @tui @priority-low
+  # Upstream #28044: stepping no longer reaches Ultrathink, which is only typed.
+  @dropped @desktop @tui
   Scenario: Stepping the effort into Ultrathink adds its prefix and keeps the caret in place
     Given the thread runs on Claude at the effort just below Ultrathink
     And the user has typed "design the cache" with the caret before "cache"
@@ -614,7 +787,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the caret is still before "cache"
 
   # Upstream #19928: slash commands never get the Ultrathink prefix, so stepping skips it.
-  @backlog @desktop @tui @priority-low
+  # Upstream #28044: stepping never reaches Ultrathink now, so there is nothing to skip.
+  @dropped @desktop @tui
   Scenario: Stepping the effort skips Ultrathink for a slash command
     Given the thread runs on Claude at the effort just below Ultrathink
     And the user has typed "/review the cache"
@@ -695,3 +869,35 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given Fast is on with high reasoning
     When the user looks at the traits trigger
     Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon
+
+  # Upstream #23957: a fallback to another instance of the same provider dropped the picked effort.
+  @backlog @shared @priority-high
+  Scenario: A composer that falls back to another account keeps the effort picked for the model
+    Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
+    And "Claude Personal" is turned off and the account "Claude Team" is ready
+    When the user starts a new thread
+    Then the composer shows Claude Opus at extra high effort on "Claude Team"
+    And the first turn is sent at extra high effort
+
+  # Upstream #23957: options belong to the model they were picked with.
+  @backlog @shared
+  Scenario Outline: A fallback account takes no options that were not picked for what it shows
+    Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
+    And "Claude Personal" is turned off and <fallback> is ready
+    When the user starts a new thread
+    Then the composer shows <shown>
+
+    Examples:
+      | fallback                                       | shown                                       |
+      | "Claude Team", with high effort of its own     | "Claude Team" at its own high effort        |
+      | only a Codex account                           | the Codex model at its default effort       |
+
+  # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
+  # composer fell back to another account.
+  @backlog @shared
+  Scenario: A fallback keeps the effort of a model saved under an alias
+    Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
+    And "Codex Personal" is turned off and the account "Codex Work" is ready
+    When the user opens the thread
+    Then the composer shows "gpt-5.4" on "Codex Work" at high effort
+    But a custom model named "5.4" on "Codex Personal" is not taken for "gpt-5.4"

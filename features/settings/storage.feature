@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26038
+#   https://github.com/pingdotgg/t3code/pull/24097
+#   https://github.com/pingdotgg/t3code/pull/24689
 #   https://github.com/pingdotgg/t3code/pull/16473
 #   https://github.com/pingdotgg/t3code/pull/17910
 #   https://github.com/pingdotgg/t3code/pull/17909
@@ -21,6 +24,7 @@
 #   apps/web/src/components/settings/StorageSettings.tsx (project worktree modes, retention limits and default)
 #   packages/contracts/src/settings.ts (storageCleanup, project worktree cleanup)
 #   apps/tui/src/host/sections/storage.ts
+#   https://github.com/pingdotgg/t3code/pull/21545
 
 Feature: Storage cleanup
   The MC can remove worktrees and old files it created so disk use does not
@@ -85,6 +89,22 @@ Feature: Storage cleanup
         | is shared with another thread           |
         | is checked out on a different branch    |
         | holds ignored files besides node_modules |
+
+    # Upstream #21545: on Windows, a terminal or live session at the worktree was missed when the
+    # path's case differed, and the worktree was removed.
+    @backlog @mc
+    Scenario Outline: A Windows worktree in use is kept whatever the case of its path
+      Given the MC runs on Windows
+      And the user turned on deleting worktrees idle for 8 days
+      And an idle thread's worktree is "C:\work\shop-wt"
+      And <user> is open at "c:\Work\Shop-WT"
+      When the MC sweeps storage
+      Then the worktree is kept
+
+      Examples:
+        | user                 |
+        | a terminal           |
+        | a live agent session |
 
     # Upstream #17563 made what counts as local changes a choice, and its default no longer
     # keeps a worktree for ignored files such as ".env" alone; the row above is then true
@@ -210,6 +230,22 @@ Feature: Storage cleanup
       Then its worktree is kept
       When the cleanup steps have finished and the MC sweeps storage again
       Then the worktree is removed
+    # Upstream #26038: with deleting worktrees of deleted threads on, every session that stopped
+    # started a full sweep, back to back on busy machines.
+    @backlog @mc
+    Scenario Outline: A stopped session sweeps storage only when a deleted thread's worktree waits on it
+      Given the user turned on deleting worktrees of deleted threads
+      And <state>
+      When a thread's agent session stops
+      Then the MC <sweeps>
+
+      Examples:
+        | state                                                                    | sweeps                  |
+        | no deleted thread's worktree was kept by the last sweep                  | does not sweep storage  |
+        | the last sweep kept a deleted thread's worktree for its open session     | sweeps storage          |
+        | the last sweep kept a deleted thread's worktree for its local changes, and the session ran in it | sweeps storage |
+        | a thread was deleted and no sweep has finished since                     | sweeps storage          |
+
 
     @backlog @mc @priority-high
     Scenario Outline: A worktree with work the default branch lacks is kept by the merge and unchanged rules
@@ -285,6 +321,21 @@ Feature: Storage cleanup
         | was cancelled    |
         | was rolled back  |
 
+    # Upstream #24689: a new worktree whose first prompt hit a usage limit was removed as unchanged
+    # while the thread waited for the reset.
+    @backlog @mc @priority-high
+    Scenario Outline: A worktree waiting for its usage limit to reset is kept
+      Given the user turned on deleting unchanged worktrees
+      And a thread in a new worktree with no commits stopped on a usage limit and <waits>
+      When the MC sweeps storage
+      Then the worktree is kept because its thread has pending work
+
+      Examples:
+        | waits                                         |
+        | is set to resume at the reset                 |
+        | is snoozed until a reset that has not come    |
+        | auto-resume is on but nothing is scheduled yet |
+
     @backlog @mc @priority-high
     Scenario: Cleanup never follows a symbolic link out of the folder it cleans
       Given the user turned on deleting browser captures after 14 days
@@ -292,6 +343,21 @@ Feature: Storage cleanup
       When the MC sweeps storage
       Then the file the link points to is untouched
       And the link is left in place
+    # Upstream #24097: any link above the folder made every sweep report "No expired files"
+    @backlog @mc
+    Scenario Outline: Cleanup runs when the HAL-C2 home is reached through a link
+      Given the user turned on deleting <kind> after 30 days
+      And <link>
+      And the folder holds <kind> 40 days old
+      When the MC sweeps storage
+      Then the old <kind> are <outcome>
+
+      Examples:
+        | kind             | link                                             | outcome |
+        | rotated logs     | the HAL-C2 home is a symbolic link to another disk | deleted |
+        | browser captures | the HAL-C2 home is a symbolic link to another disk | deleted |
+        | rotated logs     | the logs folder itself is a symbolic link         | kept    |
+
 
     @backlog @mc @priority-low
     Scenario: Only numbered rotations of a log are deleted

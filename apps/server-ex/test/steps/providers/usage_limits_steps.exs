@@ -24,6 +24,9 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
   defp route(conn, "/v0/management/auth-files", _, %{unlisted: true}, _),
     do: send_resp(conn, 500, "")
 
+  defp route(conn, "/v0/management/auth-files", _, %{files: files}, _),
+    do: json(conn, %{"files" => files})
+
   defp route(conn, "/v0/management/auth-files", _, _, _) do
     json(conn, %{
       "files" => [
@@ -44,13 +47,41 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
     })
   end
 
+  defp route(conn, "/v0/management/reset-quota", _, %{cooldown_fails: true}, _),
+    do: send_resp(conn, 500, "")
+
   defp route(conn, "/v0/management/reset-quota", _, _, _), do: json(conn, %{})
 
-  defp route(conn, "/v0/management/api-call", %{"url" => url}, hub, state),
-    do: json(conn, %{"status_code" => 200, "body" => JSON.encode!(upstream(url, hub, state))})
+  defp route(conn, "/v0/management/api-call", %{"url" => url}, hub, state) do
+    case upstream(url, hub, state) do
+      :fail ->
+        json(conn, %{"status_code" => 500, "body" => ""})
+
+      {:fail, message} ->
+        json(conn, %{"status_code" => 500, "body" => message, "error" => message})
+
+      body ->
+        json(conn, %{"status_code" => 200, "body" => JSON.encode!(body)})
+    end
+  end
+
+  defp upstream("https://chatgpt.com/backend-api/wham/usage", %{leak: true}, _),
+    do: {:fail, "token sk-secret-123 rejected"}
 
   defp upstream("https://chatgpt.com/backend-api/wham/usage", %{crash: true}, _),
     do: %{"plan_type" => "pro", "rate_limit" => "garbled"}
+
+  defp upstream("https://chatgpt.com/backend-api/wham/usage", %{no_plan: true}, _) do
+    %{
+      "rate_limit" => %{
+        "primary_window" => %{
+          "used_percent" => 30,
+          "reset_at" => 1_790_000_000,
+          "limit_window_seconds" => nil
+        }
+      }
+    }
+  end
 
   defp upstream("https://chatgpt.com/backend-api/wham/usage", hub, _) do
     %{
@@ -70,6 +101,13 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
     }
   end
 
+  defp upstream(
+         "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",
+         %{credits_fail: true},
+         _
+       ),
+       do: :fail
+
   defp upstream("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits", hub, _) do
     credit =
       &%{"id" => &1, "status" => &2, "reset_type" => "codex_rate_limits", "expires_at" => &3}
@@ -87,14 +125,28 @@ defmodule HalC2.Steps.Providers.UsageLimits.Hub do
   end
 
   defp upstream("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume", _, state) do
-    Agent.update(state, &Map.put(&1, :redeemed, true))
-    %{"code" => "reset"}
+    code = Agent.get(state, & &1[:answer]) || "reset"
+    if code == "reset", do: Agent.update(state, &Map.put(&1, :redeemed, true))
+    %{"code" => code}
   end
 
-  defp upstream("https://api.anthropic.com/api/oauth/usage", _, _) do
+  defp upstream("https://api.anthropic.com/api/oauth/usage", hub, _) do
+    scoped =
+      if hub[:scoped],
+        do: [
+          %{
+            "kind" => "weekly_scoped",
+            "percent" => 70,
+            "resets_at" => "2026-09-28T00:00:00Z",
+            "scope" => %{"model" => %{"display_name" => "Sonnet"}}
+          }
+        ],
+        else: []
+
     %{
       "five_hour" => %{"utilization" => 40, "resets_at" => "2026-09-24T15:00:00Z"},
-      "seven_day" => %{"utilization" => 60, "resets_at" => nil}
+      "seven_day" => %{"utilization" => 60, "resets_at" => nil},
+      "limits" => scoped
     }
   end
 
@@ -603,6 +655,323 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     assert %{"availableCount" => 1, "nextCreditId" => "c2"} =
              account["usageLimits"]["resetCredits"]
 
+    context
+  end
+
+  # --- hub edge cases ---------------------------------------------------------------
+
+  step "a hub that lists a disabled Codex account, an enabled Claude account and a Gemini account",
+       context do
+    files = [
+      %{"id" => "codex-off", "auth_index" => "0", "provider" => "codex", "disabled" => true},
+      %{"id" => "claude-on", "auth_index" => "1", "provider" => "claude"},
+      %{"id" => "gemini-x", "auth_index" => "2", "provider" => "gemini"}
+    ]
+
+    context |> add_hub() |> put_hub(:files, files)
+  end
+
+  step "only the enabled Claude account is reported", context do
+    assert [%{"accounts" => [%{"id" => "claude-on"}]}] = context.hubs
+    context
+  end
+
+  step "a reset credit cannot be redeemed on the disabled Codex account", context do
+    drain_hub()
+
+    context =
+      consume(context, %{"sourceId" => "hub", "accountId" => "codex-off", "creditId" => "c1"})
+
+    assert {:error, "The Codex hub account is missing or disabled.", _} = context.reply
+    refute_received {:hub, "/v0/management/api-call", _}
+    context
+  end
+
+  step "a hub whose Codex account reports its windows but whose credit lookup fails", context do
+    context |> add_hub() |> put_hub(:credits_fail, true)
+  end
+
+  step "the account shows its windows with no reset credits", context do
+    [%{"accounts" => accounts}] = context.hubs
+    limits = Enum.find(accounts, &(&1["id"] == "codex-a"))["usageLimits"]
+    assert [%{"kind" => "session"}, %{"kind" => "weekly"}] = limits["windows"]
+    refute Map.has_key?(limits, "resetCredits")
+    refute Map.has_key?(limits, "unavailable")
+    context
+  end
+
+  step "a hub Claude account that reports a weekly limit scoped to one model", context do
+    context |> add_hub() |> put_hub(:scoped, true)
+  end
+
+  step "the account shows its session and weekly windows and the model's own weekly window",
+       context do
+    [%{"accounts" => accounts}] = context.hubs
+    limits = Enum.find(accounts, &(&1["id"] == "claude-b"))["usageLimits"]
+
+    assert [
+             %{"kind" => "session"},
+             %{"kind" => "weekly", "id" => "seven_day"},
+             %{"kind" => "weekly", "id" => "seven_day_sonnet", "usedPercent" => 70}
+           ] = limits["windows"]
+
+    context
+  end
+
+  step "a hub Codex account on the Free plan whose usage report names no plan", context do
+    files = [
+      %{
+        "id" => "codex-free",
+        "auth_index" => "0",
+        "provider" => "codex",
+        "id_token" => %{"chatgpt_plan_type" => "free"}
+      }
+    ]
+
+    context |> add_hub() |> put_hub(:files, files) |> put_hub(:no_plan, true)
+  end
+
+  step "the account is labelled with the Free plan from its sign-in details", context do
+    [%{"accounts" => [account]}] = context.hubs
+    assert account["plan"] == "ChatGPT Free Subscription"
+    context
+  end
+
+  step "its quota is shown as that plan's window, not as a session window", context do
+    [%{"accounts" => [account]}] = context.hubs
+    assert [%{"kind" => "monthly", "usedPercent" => 30}] = account["usageLimits"]["windows"]
+    context
+  end
+
+  step ~r/^the hub answers the redemption with (?<answer>success|nothing to reset|no credit|already redeemed)$/,
+       %{args: [answer]} = context do
+    code =
+      %{
+        "success" => "reset",
+        "nothing to reset" => "nothing_to_reset",
+        "no credit" => "no_credit",
+        "already redeemed" => "already_redeemed"
+      }[answer]
+
+    context = put_hub(context, :answer, code)
+    drain_hub()
+    %{account: account, credit: credit} = context.hub_credit
+    consume(context, %{"sourceId" => "hub", "accountId" => account["id"], "creditId" => credit})
+  end
+
+  step ~r/^the user is told (?<outcome>the reset was applied|there was nothing to reset right now|the account has no reset credit left|the credit was already redeemed)$/,
+       %{args: [outcome]} = context do
+    expected =
+      %{
+        "the reset was applied" => "reset",
+        "there was nothing to reset right now" => "nothingToReset",
+        "the account has no reset credit left" => "noCredit",
+        "the credit was already redeemed" => "alreadyRedeemed"
+      }[outcome]
+
+    assert {:ok, %{"outcome" => ^expected}} = context.reply
+    context
+  end
+
+  step ~r/^the hub's cooldown for that account is (?<state>cleared|left alone)$/,
+       %{args: [state]} = context do
+    if state == "cleared",
+      do: assert_received({:hub, "/v0/management/reset-quota", %{"auth_index" => "0"}}),
+      else: refute_received({:hub, "/v0/management/reset-quota", _})
+
+    context
+  end
+
+  step "the user uses the reset credit and the hub cannot clear the account's cooldown",
+       context do
+    context = put_hub(context, :cooldown_fails, true)
+    drain_hub()
+    %{account: account, credit: credit} = context.hub_credit
+    consume(context, %{"sourceId" => "hub", "accountId" => account["id"], "creditId" => credit})
+  end
+
+  step "the reset is reported as applied", context do
+    assert {:ok, %{"outcome" => "reset"}} = context.reply
+    context
+  end
+
+  step "the user is warned that routing may resume only after the hub's cooldown expires",
+       context do
+    assert {:ok, %{"warning" => warning}} = context.reply
+    assert warning =~ "Routing may resume after its cooldown expires"
+    context
+  end
+
+  # --- failed checks ---------------------------------------------------------------
+
+  # The turn starts on a working Codex; the checks of its limits then fail from the start.
+  step "the last check of Codex's limits failed", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on("Codex work", "codex", "wait for me")
+
+    World.await_running(context, "Codex work")
+
+    context = Map.put(context, :codex_command, Application.get_env(:hal_c2, :codex_command))
+    World.put_app_env(:codex_command, [script(context, "codex-fails", "exit 1")])
+    context = limits(context)
+    {limits, context} = usage_limits(context, "codex")
+    assert %{"windows" => [], "unavailable" => %{"reason" => "probeFailed"}} = limits
+    context
+  end
+
+  step "a running Codex turn reports one rate-limit window", context do
+    context = World.post_message(context, "Codex work", "rate limit", %{"dispatchMode" => nil})
+    World.await_runs(context, "Codex work", ["completed"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "that window is shown", context do
+    {limits, context} = usage_limits(context, "codex")
+    assert %{"usedPercent" => 77} = window(limits, "primary")
+    context
+  end
+
+  step "Codex's limits still say the last check failed until a check succeeds", context do
+    {limits, context} = usage_limits(context, "codex")
+    assert %{"reason" => "probeFailed"} = limits["unavailable"]
+
+    World.put_app_env(:codex_command, context.codex_command)
+    {_, context} = World.call!(context, "server.refreshProviders", %{"instanceId" => "codex"})
+    {limits, context} = usage_limits(context, "codex")
+    refute Map.has_key?(limits, "unavailable")
+    assert %{"usedPercent" => 42} = window(limits, "primary")
+    context
+  end
+
+  step "a Claude subscription account whose check says it has limits but returns none", context do
+    context = World.fake_providers(context)
+    flag = Path.join(context.fakes.dir, "claude-usage-empty")
+    File.write!(flag, "")
+    System.put_env("FAKE_CLAUDE_USAGE_EMPTY", flag)
+    Map.put(context, :empty_flag, flag)
+  end
+
+  step "the MC checks Claude's limits", context do
+    context = limits(context)
+
+    {_, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    context
+  end
+
+  step "the check is reported as failed, not as not supported", context do
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert %{"windows" => [], "unavailable" => %{"reason" => "probeFailed"}} = limits
+    context
+  end
+
+  step "the next check that returns limits shows them", context do
+    File.rm!(context.empty_flag)
+
+    {_, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert [_ | _] = limits["windows"]
+    refute Map.has_key?(limits, "unavailable")
+    context
+  end
+
+  # --- background checks off -------------------------------------------------------
+
+  step "the health check interval is set to never", context do
+    context = context |> limits() |> add_hub()
+    assert [%{"id" => "hub", "accounts" => [_, _]}] = read_hubs()
+    World.merge_settings(%{"backgroundActivity" => %{"profile" => "balanced"}})
+    report_activity(context, true)
+
+    World.merge_settings(%{
+      "backgroundActivity" => %{
+        "profile" => "custom",
+        "baseProfile" => "balanced",
+        "overrides" => %{"providerHealthRefreshInterval" => 0}
+      }
+    })
+
+    assert HalC2.ProviderUsageLimits.interval() == :off
+    drain_hub()
+    context
+  end
+
+  step "a minute passes and the MC runs its periodic checks", context do
+    World.run_periodic_checks()
+    context
+  end
+
+  step "no usage hub is read", context do
+    refute_received {:hub, "/v0/management/auth-files", _}
+    context
+  end
+
+  step "refreshing by hand still reads them", context do
+    {_, context} = World.call!(context, "server.refreshProviders", %{})
+    assert_received {:hub, "/v0/management/auth-files", _}
+    context
+  end
+
+  # --- refusals and hub safety --------------------------------------------------------
+
+  step ~r/^Codex refuses the reset credit because (?<why>it was already redeemed|nothing needs resetting|the account has no credit)$/,
+       %{args: [why]} = context do
+    outcome =
+      %{
+        "it was already redeemed" => "alreadyRedeemed",
+        "nothing needs resetting" => "nothingToReset",
+        "the account has no credit" => "noCredit"
+      }[why]
+
+    context = limits(context)
+    System.put_env("FAKE_CODEX_CONSUME_OUTCOME", outcome)
+    context
+  end
+
+  step "the reset is not reported as applied", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
+  step "a hub account whose upstream request fails with a message that holds a secret", context do
+    context |> add_hub() |> put_hub(:leak, true)
+  end
+
+  step "the account is reported as not read", context do
+    [%{"accounts" => accounts}] = context.hubs
+
+    assert %{"unavailable" => %{"reason" => "probeFailed"}} =
+             Enum.find(accounts, &(&1["id"] == "codex-a"))["usageLimits"]
+
+    context
+  end
+
+  step "the secret text is not in anything sent to clients", context do
+    refute inspect(context.hubs) =~ "sk-secret-123"
+    refute inspect(HalC2.UsageLimitSources.current()) =~ "sk-secret-123"
+    context
+  end
+
+  step "a hub that lists two accounts", context do
+    context |> add_hub() |> tap(fn _ -> assert [%{"accounts" => [_, _]}] = read_hubs() end)
+  end
+
+  step "the user uses a reset credit naming an account the hub does not list", context do
+    drain_hub()
+    consume(context, %{"sourceId" => "hub", "accountId" => "ghost", "creditId" => "c1"})
+  end
+
+  step "the MC sends nothing to the hub's upstream", context do
+    refute_received {:hub, "/v0/management/api-call", _}
+    context
+  end
+
+  step "the user is told the account is missing or disabled", context do
+    assert {:error, "The Codex hub account is missing or disabled.", _} = context.reply
     context
   end
 

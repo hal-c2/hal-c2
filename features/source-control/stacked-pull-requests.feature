@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24118
+#   https://github.com/pingdotgg/t3code/pull/24730
 #   https://github.com/pingdotgg/t3code/pull/20415
 #   https://github.com/pingdotgg/t3code/pull/20388
 #   https://github.com/pingdotgg/t3code/pull/17116
@@ -123,6 +125,15 @@ Feature: Stacked pull requests
     When the user chooses layer 43
     Then pull request 43 is shown
     And the stack closes
+
+  # Upstream #24730: on the phone, a layer opened from the stack showed the previous pull request's
+  # title and link until its own details arrived, and kept them offline.
+  @backlog @desktop @mobile
+  Scenario: A layer opened from the stack never shows the pull request it was opened from
+    Given pull request 42 is open with its stack
+    When the user opens layer 43 before its details have loaded
+    Then pull request 43 shows that it is loading
+    And nothing of pull request 42's title or link is shown for it
 
   @backlog @desktop
   Scenario: A stack is read only when it is opened
@@ -324,6 +335,20 @@ Feature: Stacked pull requests
       | a stack rebase| GitHub accepts it       | "Stack rebased"                                                                           |
       | a stack merge | it fails                | "Stack operation did not complete" with the reason                                        |
       | a stack rebase| it fails                | "Stack operation did not complete" with the reason                                        |
+
+  # Upstream #24118: a failed stack action showed "PullRequestOperationError: Pull request
+  # operation runAction failed:" before GitHub's reason.
+  @backlog @desktop
+  Scenario Outline: A failed stack action gives GitHub's reason in plain words
+    Given GitHub refuses <action>
+    When the user is told how it ended
+    Then the reason is GitHub's own words, without the operation's name, cut at 320 characters
+    And with no useful reason the user gets <hint>
+
+    Examples:
+      | action        | hint                                                              |
+      | a stack merge | the same hint a single pull request's merge gives                 |
+      | a stack rebase| a rebase hint that does not suggest updating with a merge commit |
 
   @backlog @mc
   Scenario: A stack merge is submitted as one merge with the head the user saw
