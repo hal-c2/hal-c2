@@ -39,6 +39,10 @@ at. **Create over Tailscale** publishes the chosen machine on your tailnet and
 makes the link for that address. A phone's own camera can read the code too: it
 opens a page on that machine that hands the link to the HAL-C2 app.
 
+A phone can pair with several machines that are not clustered. Pairing a phone
+that is already paired adds the new machine beside the first, and the phone
+lists their threads together. Remove one under **Settings → Pairing**.
+
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while

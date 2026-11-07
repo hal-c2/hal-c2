@@ -102,7 +102,7 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   m_runtime = std::make_unique<ShellRuntime>(
       ShellRuntime::Options{configDir, options.bricksQmlDir, QStringLiteral("HalC2/Mobile/MobileShell.qml"), options.mobileQmlDir}, m_bridge.get(),
       m_theme.get());
-  // The one environment the phone is paired with.
+  // The environment the shell connects to, and pairing with the others.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
   // And those paired beside it (SavedEnvironmentsController) are listed as this device too.
   if (auto* saved = m_native->shared<SavedEnvironmentsController>()) saved->setDevice(options.device);
