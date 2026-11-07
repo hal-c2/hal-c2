@@ -11,7 +11,8 @@ defmodule HalC2.RestartNotePropTest do
     before the stop (a released session's work was gone already, only its records left);
   - the next turn the thread starts hears what the restart ended, once, naming each
     piece of that work (the `<server_restart>` section `Handoff.plan/5` builds from the
-    thread's `restartNote`), and the turn after it does not;
+    thread's `restartNote`), and the turn after it does not; a turn the restart's own
+    continuation starts, whose message says so, consumes the note without repeating it;
   - a session-long monitor or a delegated task, which runs on in its own thread, is
     never named, and a restart leaves the task running;
   - a wake (`HalC2.Orchestration.Wake`) whose run had not reached its provider when the
@@ -77,7 +78,10 @@ defmodule HalC2.RestartNotePropTest do
       [
         {3, {:call, __MODULE__, :restart, []}}
       ] ++
-        if(state.wake, do: [], else: [{4, {:call, __MODULE__, :turn, [state.runs + 1, work()]}}]) ++
+        if(state.wake,
+          do: [],
+          else: [{4, {:call, __MODULE__, :turn, [state.runs + 1, work(), started_by(state)]}}]
+        ) ++
         if(state.wake != nil or state.runs == 0,
           do: [],
           else: [{2, {:call, __MODULE__, :wake, [state.runs + 1]}}]
@@ -89,7 +93,12 @@ defmodule HalC2.RestartNotePropTest do
 
   defp work, do: resize(3, list(oneof(@kinds)))
 
-  def precondition(state, {:call, _, :turn, [n, _]}),
+  # What starts the turn: the user, or, once a restart left a note, the continuation it
+  # asked for (a continuation not sent leaves the note to the user's turn).
+  defp started_by(%{note: nil}), do: :user
+  defp started_by(_state), do: frequency([{2, :user}, {1, :continuation}])
+
+  def precondition(state, {:call, _, :turn, [n, _, _]}),
     do: state.wake == nil and n == state.runs + 1
 
   def precondition(state, {:call, _, :wake, [n]}),
@@ -99,7 +108,7 @@ defmodule HalC2.RestartNotePropTest do
   def precondition(state, {:call, _, :end_work, [n]}), do: state.open != [] and n == state.last
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :turn, [n, kinds]}),
+  def next_state(state, _result, {:call, _, :turn, [n, kinds, _]}),
     do: %{state | runs: n, last: n, open: Enum.map(kinds, &named/1), released: false, note: nil}
 
   def next_state(state, _result, {:call, _, :wake, [n]}), do: %{state | runs: n, wake: n}
@@ -117,8 +126,8 @@ defmodule HalC2.RestartNotePropTest do
   # The work a restart ends that the agent hears named.
   defp ended(state), do: Enum.reject(state.open, &is_nil/1)
 
-  def postcondition(state, {:call, _, :turn, _}, context) do
-    case state.note do
+  def postcondition(state, {:call, _, :turn, [_, _, how]}, context) do
+    case if(how == :continuation, do: nil, else: state.note) do
       nil ->
         context == nil or not String.contains?(context, "<server_restart>")
 
@@ -159,9 +168,15 @@ defmodule HalC2.RestartNotePropTest do
   # --- commands -------------------------------------------------------------------
 
   # Turn `n` starts, which hands over what the thread's context holds for it, and
-  # finishes with `kinds` left running in the background. Returns the context.
-  def turn(n, kinds) do
+  # finishes with `kinds` left running in the background. Returns the context. A
+  # continuation's message says what the restart ended itself, so its run hears no note.
+  def turn(n, kinds, how) do
     run = "run-#{n}"
+
+    message =
+      if how == :continuation,
+        do: "message:restart-continuation:run-#{n - 1}",
+        else: "message:user-#{n}"
 
     context =
       HalC2.Streams.transact(@thread, :thread, fn state ->
@@ -170,6 +185,7 @@ defmodule HalC2.RestartNotePropTest do
         ids = %{
           driver: "claudeAgent",
           run: run,
+          message: message,
           thread: @thread,
           provider_thread: @provider_thread
         }

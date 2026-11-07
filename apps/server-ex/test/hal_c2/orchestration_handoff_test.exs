@@ -265,4 +265,47 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert "[earlier messages omitted]\n\n" <> _ = transcript = Handoff.transcript(state, 3)
     assert String.length(transcript) <= 60_000
   end
+
+  # A thread a restart left a note on, about the background work its last turn left.
+  defp noted do
+    state([
+      {"thread", %{"id" => "t", "restartNote" => "The server stopped and ended `npm run dev`."}},
+      {"provider-thread",
+       %{"id" => "pt", "nativeThreadRef" => %{"driver" => "claudeAgent", "nativeId" => "n"}}}
+    ])
+  end
+
+  defp plan(state, message) do
+    ids = %{
+      driver: "claudeAgent",
+      run: "run-2",
+      message: message,
+      thread: "t",
+      provider_thread: "pt"
+    }
+
+    Handoff.plan(
+      state,
+      HalC2.StreamState.get(state, "provider-thread")["pt"],
+      ids,
+      2,
+      "2026-10-01T10:02:00Z"
+    )
+  end
+
+  defp consumes_note?(changes),
+    do: Enum.any?(changes, &match?({"thread", "t", %{"u" => ["restartNote"]}}, &1))
+
+  test "the user's next turn after a restart hears its note, and takes it" do
+    plan = plan(noted(), "message:user-2")
+    assert plan.context =~ "<server_restart>\nThe server stopped and ended `npm run dev`."
+    assert consumes_note?(plan.changes)
+  end
+
+  # The continuation says what the restart ended itself; one never sent leaves the note.
+  test "the restart's own continuation takes its note without repeating it" do
+    plan = plan(noted(), "message:restart-continuation:run-1")
+    refute (plan.context || "") =~ "<server_restart>"
+    assert consumes_note?(plan.changes)
+  end
 end

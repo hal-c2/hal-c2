@@ -333,7 +333,7 @@ defmodule HalC2.Orchestration.Recovery do
 
   # What the agent hears on its next turn about the background work of its finished
   # turn that the settle ends (`restartNote`, which `HalC2.Orchestration.Handoff` hands
-  # over once). A continuation about it says so itself (`continue/0` drops the note).
+  # over once). A continuation about it says so itself, and its run takes the note unsaid.
   defp note(state, thread_id) do
     with %{"status" => "completed"} = run <- latest_run(state),
          [_ | _] = work <- ended_work(state, run),
@@ -348,20 +348,6 @@ defmodule HalC2.Orchestration.Recovery do
     else
       _ -> []
     end
-  end
-
-  @doc false
-  # The note `settle/2` left, once a continuation tells the agent itself.
-  def drop_note(thread_id) do
-    HalC2.Streams.transact(thread_id, :thread, fn state ->
-      case StreamState.get(state, "thread")[thread_id] do
-        %{"restartNote" => _} = thread ->
-          {[{"thread", thread_id, Patch.diff(thread, Map.delete(thread, "restartNote"))}], :ok}
-
-        _ ->
-          {[], :ok}
-      end
-    end)
   end
 
   # What the run left running in the background, as the continuation names it: a
@@ -475,7 +461,6 @@ defmodule HalC2.Orchestration.Recovery do
         # ended, so its agent can start it again rather than wait on it.
         waiting =
           for {thread_id, run, commands} <- background, continue?(thread_id, run) do
-            drop_note(thread_id)
             continuation(thread_id, run, background_text(commands))
             thread_id
           end
