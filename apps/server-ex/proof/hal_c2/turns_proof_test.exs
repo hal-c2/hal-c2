@@ -202,7 +202,7 @@ defmodule HalC2.TurnsProofTest do
         "A turn cut off by a restart is interrupted at boot"
       ],
       "mc/orchestration/queue-and-steering.feature" => [
-        "A held queue does not start when a run ends"
+        "A held queue does not start when a run the user did not start ends"
       ]
     }
 

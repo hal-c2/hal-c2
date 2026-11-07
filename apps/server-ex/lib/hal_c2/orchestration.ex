@@ -3951,15 +3951,24 @@ defmodule HalC2.Orchestration do
   end
 
   # The thread was to work in a worktree of its own that could not be made, and
-  # still has none: what it was sent waits for one.
+  # still has none: what it was sent waits for one. Only since the last run that
+  # started: a thread the user went on with in the project checkout works there.
   defp worktree_missing?(state, thread) do
-    thread["worktreePath"] == nil and
+    {waiting, others} =
       state
       |> StreamState.list("run")
-      |> Enum.any?(
+      |> Enum.split_with(
         &(get_in(&1, ["workspacePreparation", "type"]) == "worktree" and
             &1["status"] in ~w(preparing failed cancelled interrupted))
       )
+
+    last_started =
+      others
+      |> Enum.filter(& &1["startedAt"])
+      |> Enum.map(& &1["ordinal"])
+      |> Enum.max(fn -> 0 end)
+
+    thread["worktreePath"] == nil and Enum.any?(waiting, &(&1["ordinal"] > last_started))
   end
 
   # A steer for a turn that completed before it arrived (the client still showed the
