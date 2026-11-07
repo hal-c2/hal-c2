@@ -16,7 +16,29 @@ defmodule HalC2.Projects do
   alias HalC2.Orchestration.Entities
 
   @spec mutate(map) :: {:ok, map} | {:error, String.t()}
-  def mutate(%{"type" => "project.create", "projectId" => id} = m) do
+  def mutate(m) do
+    case apply_mutation(m) do
+      {:error, {:owned, message, _owner}} -> {:error, message}
+      reply -> reply
+    end
+  end
+
+  @doc """
+  `mutate/1` for a client: a folder another project owns is refused with that
+  project's id in `projectId`, so the client can open the project it was after.
+  """
+  @spec mutate_for_client(map) :: {:ok, map} | {:error, String.t() | map}
+  def mutate_for_client(m) do
+    case apply_mutation(m) do
+      {:error, {:owned, message, owner}} ->
+        {:error, %{"_tag" => "WorkspaceInUse", "message" => message, "projectId" => owner}}
+
+      reply ->
+        reply
+    end
+  end
+
+  defp apply_mutation(%{"type" => "project.create", "projectId" => id} = m) do
     root = workspace_root(m["workspaceRoot"] || "")
 
     cond do
@@ -30,7 +52,7 @@ defmodule HalC2.Projects do
         {:error, "#{root} does not exist on this machine"}
 
       owner = owner(root, id) ->
-        {:error, "Workspace #{root} already belongs to project #{owner}."}
+        {:error, {:owned, "Workspace #{root} already belongs to project #{owner}.", owner}}
 
       true ->
         File.mkdir_p!(root)
@@ -58,7 +80,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  def mutate(%{"type" => "project.update", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.update", "projectId" => id} = m) do
     fields =
       m
       |> Map.take(
@@ -90,12 +112,14 @@ defmodule HalC2.Projects do
         end)
 
       owner ->
-        {:error, "Workspace #{fields["workspaceRoot"]} already belongs to project #{owner}."}
+        {:error,
+         {:owned, "Workspace #{fields["workspaceRoot"]} already belongs to project #{owner}.",
+          owner}}
     end
   end
 
   # A project with threads is deleted only with `force`, which deletes its threads first.
-  def mutate(%{"type" => "project.delete", "projectId" => id} = m) do
+  defp apply_mutation(%{"type" => "project.delete", "projectId" => id} = m) do
     case {threads(id), m["force"] == true} do
       {[_ | _], false} ->
         {:error, "Project #{id} is not empty."}
@@ -111,7 +135,7 @@ defmodule HalC2.Projects do
     end
   end
 
-  def mutate(%{"type" => type}), do: {:error, "#{type} is not supported"}
+  defp apply_mutation(%{"type" => type}), do: {:error, "#{type} is not supported"}
 
   defp update(id, fun) do
     HalC2.Streams.transact(id, :project, fn state ->
@@ -380,6 +404,8 @@ defmodule HalC2.Projects do
 
   # A project's folder as stored: `~` is this MC's home and `.`/`..` are resolved. A
   # relative path stays as typed, for `relative?/1` to refuse: it has no meaning here.
+  defp workspace_root(""), do: ""
+
   defp workspace_root(path) do
     path = expand(path)
     if relative?(path), do: path, else: Path.expand(path)

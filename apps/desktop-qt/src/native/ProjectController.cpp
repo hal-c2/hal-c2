@@ -220,8 +220,21 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
       {QStringLiteral("workspaceRoot"), root},
   };
   m_client->call(this, environmentId, QStringLiteral("projects.mutate"), command,
-                 [this, environmentId, projectId, failureTitle](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, environmentId, projectId, failureTitle, newThread](const QJsonValue& detail, const std::optional<QString>& error) {
                    if (error) {
+                     // The folder, written another way than the project's own, is that
+                     // project's: the MC names it, and it opens like the folder typed
+                     // the same way would have.
+                     const QString owner = detail.toObject().value(QLatin1String("projectId")).toString();
+                     if (!owner.isEmpty() && m_store->project(environmentId + QLatin1Char(':') + owner)) {
+                       if (newThread) {
+                         followInSidebar(environmentId, owner);
+                         NativeShell::of(this)->controller<DraftController>()->start(environmentId, owner);
+                       } else {
+                         openProject(environmentId, owner);
+                       }
+                       return;
+                     }
                      NativeShell::of(this)->controller<ToastController>()->error(failureTitle, *error);
                      return;
                    }

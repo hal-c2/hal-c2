@@ -225,6 +225,14 @@ Feature: Adding projects
       Then no second project is created
       And the user is told the project was already added
 
+    # A folder written another way (`..`, `~`) is not matched by the client; the MC's refusal names the project.
+    @desktop
+    Scenario: Adding an existing project's folder written another way opens its latest thread
+      Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
+      When the user adds the local folder of "shop" again written with a detour
+      Then no second project is created
+      And the thread "Fix checkout" opens
+
     @desktop @mobile @priority-high
     Scenario: Adding an existing project from the desktop and mobile apps opens its latest thread
       Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"

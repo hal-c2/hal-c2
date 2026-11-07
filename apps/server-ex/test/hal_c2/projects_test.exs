@@ -67,6 +67,46 @@ defmodule HalC2.ProjectsTest do
     assert ".hidden" in Enum.map(all, & &1["name"])
   end
 
+  test "no folder is refused, not read as the MC's working directory", %{tmp_dir: dir} do
+    assert {:error, "a workspace folder is required"} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "e",
+               "workspaceRoot" => ""
+             })
+
+    assert {:ok, _} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => dir
+             })
+
+    assert {:ok, %{"workspaceRoot" => ""}} =
+             Projects.mutate(%{
+               "type" => "project.update",
+               "projectId" => "p1",
+               "workspaceRoot" => ""
+             })
+  end
+
+  test "a folder another project owns is refused with that project's id for a client", %{
+    tmp_dir: dir
+  } do
+    create = %{"type" => "project.create", "projectId" => "p1", "workspaceRoot" => dir}
+    assert {:ok, _} = Projects.mutate_for_client(create)
+
+    typed = Path.join([dir, "x", ".."])
+
+    assert {:error, %{"_tag" => "WorkspaceInUse", "projectId" => "p1", "message" => message}} =
+             Projects.mutate_for_client(%{create | "projectId" => "p2", "workspaceRoot" => typed})
+
+    assert message =~ "already belongs to project p1"
+
+    assert {:error, ^message} =
+             Projects.mutate(%{create | "projectId" => "p3", "workspaceRoot" => typed})
+  end
+
   test "a project folder is expanded and canonical, and a relative one is refused", %{
     tmp_dir: dir
   } do
