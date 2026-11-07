@@ -1660,6 +1660,9 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     status =
       cond do
+        # A limit that lands as the user stops the run still leaves the thread limited,
+        # for the user to resume; `TurnWriter` keeps it from resuming on its own.
+        state.interrupted and failed? and Map.get(state.turn, :limits, %{}) != %{} -> "failed"
         state.interrupted or aborted -> "interrupted"
         failed? -> "failed"
         true -> "completed"

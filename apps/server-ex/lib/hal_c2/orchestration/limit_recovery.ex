@@ -19,6 +19,7 @@ defmodule HalC2.Orchestration.LimitRecovery do
   import HalC2.Projection.JS, only: [epoch_ms: 1]
 
   @interval 30_000
+  @stale_ms 86_400_000
 
   @doc "Options: `interval`, the sweep period in ms, or nil for no timer."
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -64,12 +65,15 @@ defmodule HalC2.Orchestration.LimitRecovery do
         command = command(shell, auto_resume, now_ms, snooze, held_queue?(state)),
         command != nil do
       case HalC2.Orchestration.dispatch(command) do
-        {:ok, _} -> :ok
-        error -> Logger.warning("limit recovery for #{thread_id} failed: #{inspect(error)}")
-      end
+        {:ok, _} ->
+          command
 
-      command
+        error ->
+          Logger.warning("limit recovery for #{thread_id} failed: #{inspect(error)}")
+          nil
+      end
     end
+    |> Enum.reject(&is_nil/1)
   end
 
   @doc """
@@ -96,7 +100,9 @@ defmodule HalC2.Orchestration.LimitRecovery do
 
       recovery["runId"] != thread["latestRunId"] or
           recovery["resetAt"] != thread["usageLimitResetAt"] ->
-        if auto_resume or (snooze and reset_ms > now_ms) do
+        # A reset more than a day overdue is old news (an update's sweep found it), so it is
+        # not freshly armed; a choice the user made for it still runs.
+        if (auto_resume and reset_ms > now_ms - @stale_ms) or (snooze and reset_ms > now_ms) do
           %{
             "type" => "thread.metadata.update",
             "commandId" => "limit-arm:#{identity(thread, reset_ms)}",
@@ -104,13 +110,14 @@ defmodule HalC2.Orchestration.LimitRecovery do
             "limitRecovery" => %{
               "runId" => thread["latestRunId"],
               "resetAt" => thread["usageLimitResetAt"],
-              "autoResume" => auto_resume,
+              "autoResume" => auto_resume and reset_ms > now_ms - @stale_ms,
               "snooze" => snooze and reset_ms > now_ms
             }
           }
         end
 
       recovery["autoResume"] != true or reset_ms > now_ms or
+        switched_agent?(recovery, thread) or
           (epoch_ms(thread["snoozedUntil"]) || 0) > now_ms ->
         nil
 
@@ -139,6 +146,12 @@ defmodule HalC2.Orchestration.LimitRecovery do
         end
     end
   end
+
+  # A choice made for one agent is not carried out by another the user switched to.
+  defp switched_agent?(%{"instanceId" => made_for}, thread) when is_binary(made_for),
+    do: get_in(thread, ["modelSelection", "instanceId"]) != made_for
+
+  defp switched_agent?(_recovery, _thread), do: false
 
   defp held_queue?(state),
     do:

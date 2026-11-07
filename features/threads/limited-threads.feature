@@ -68,7 +68,7 @@ Feature: Threads stopped by a usage limit
     When the user cancels the scheduled resume
     Then "Port tests" does not continue at 14:00
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A rejected automatic resume keeps the reset time
     Given "Port tests" is scheduled to resume at 14:00
     When the provider rejects the automatic resume
@@ -103,7 +103,7 @@ Feature: Threads stopped by a usage limit
       | settles "Port tests"  |
 
   # Upstream #21114: a later recovery sweep revived a thread the user had stopped.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: Stopping a limited thread cancels its automatic resume for good
     Given the user turned on auto-resume for limited threads
     And Claude stopped "Port tests" on a usage limit that resets at 14:00
@@ -113,7 +113,7 @@ Feature: Threads stopped by a usage limit
     And a snooze the thread had is kept
 
   # Upstream #24634: a limit that landed just after Stop or task_cancel was still resumed at the reset.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario Outline: A usage limit that lands as the run is stopped is not resumed
     Given the user turned on auto-resume for limited threads
     And Claude is running "Port tests"
@@ -127,7 +127,7 @@ Feature: Threads stopped by a usage limit
       | the parent agent cancelling its task       |
 
   # Upstream #21114: a stopped usage-limit thread no longer auto-resumes, so resuming it is an explicit choice.
-  @shared @mc @backlog
+  @shared @mc @backlog-desktop @backlog-mobile
   Scenario: A stopped limited thread can be set to resume at the reset again
     Given the user stopped "Port tests" after it stopped on a usage limit that resets at 14:00
     When the user chooses to resume at the reset
@@ -142,7 +142,7 @@ Feature: Threads stopped by a usage limit
 
   # Upstream #21735: after an update, a recovery sweep armed and resumed threads whose limits had
   # reset days before; a reset more than 24 hours overdue is no longer freshly armed.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A limit stop days old is not freshly scheduled to resume
     Given the user turned on auto-resume for limited threads
     And Claude stopped "Port tests" on a usage limit that reset four days ago
@@ -269,7 +269,7 @@ Feature: Threads stopped by a usage limit
     Then the user is told why the limit recovery could not be changed
     And "Port tests" is not scheduled to resume
 
-  @backlog @mc
+  @mc
   Scenario Outline: A recovery choice is refused once the limit stop is no longer current
     Given "Port tests" stopped on a usage limit that resets at 14:00
     And <change>
@@ -302,21 +302,21 @@ Feature: Threads stopped by a usage limit
     Then "Port tests" is snoozed until the reset at 14:00
     And "also update the changelog" stays queued until the user resumes the queue
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A limit that had already reset when the agent stopped is never resumed on its own
     Given the user turned on auto-resume for limited threads
     When Claude stops "Port tests" at 14:05 on a usage limit that reset at 14:00
     Then "Port tests" is not scheduled to resume
     And it does not continue on its own
 
-  @backlog @mc
+  @mc
   Scenario: The automatic resume is a message written by the server
     Given "Port tests" is scheduled to resume at 14:00
     When 14:00 passes
     Then "Port tests" receives the user message "Continue where you left off." written by the server
     And its turn starts at once
 
-  @backlog @mc
+  @mc
   Scenario: A scheduled resume waits out a longer snooze the user set
     Given "Port tests" is scheduled to resume at 14:00
     And the user snoozed "Port tests" until 16:00
@@ -324,7 +324,7 @@ Feature: Threads stopped by a usage limit
     Then "Port tests" does not continue
     And it continues on its own once the snooze ends at 16:00
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A scheduled resume is not sent when the thread changed underneath it
     Given "Port tests" is scheduled to resume at 14:00
     And <change> before 14:00
@@ -337,7 +337,7 @@ Feature: Threads stopped by a usage limit
       | "Port tests" started waiting on an approval     |
       | the user deleted "Port tests"                   |
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: Turning off snooze until reset leaves a snooze the user set by hand
     Given "Port tests" was snoozed until its limit resets at 14:00
     And the user then snoozed "Port tests" until 18:00
@@ -345,7 +345,7 @@ Feature: Threads stopped by a usage limit
     Then "Port tests" stays snoozed until 18:00
 
   # The other option is forgotten only when the choice is for a different stop or reset time.
-  @backlog @mc
+  @mc
   Scenario: Changing one recovery option keeps the other for the same limit stop
     Given "Port tests" is scheduled to resume at 14:00
     When the user also snoozes "Port tests" until the reset without naming the resume option

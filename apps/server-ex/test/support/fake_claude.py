@@ -168,7 +168,14 @@ for line in sys.stdin:
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         # FAKE_CLAUDE_HOLD_INTERRUPT: an interrupt the CLI never answers, so the
         # host has to settle the turn itself.
-        if sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
+        # FAKE_CLAUDE_STOP_LIMIT_FILE names a file holding an epoch: once it exists, the limit
+        # resetting then lands as an interrupt ends the run.
+        limit_file = os.environ.get("FAKE_CLAUDE_STOP_LIMIT_FILE")
+        stop_limit = int(open(limit_file).read()) if limit_file and os.path.exists(limit_file) else None
+        if sub == "interrupt" and stop_limit and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
+            send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour", "resetsAt": stop_limit}})
+            send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
+        elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
         continue
     if msg.get("type") != "user":
@@ -202,6 +209,11 @@ for line in sys.stdin:
             f.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     record("user", text)
+    # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
+    # automatic resume with a 429 naming no reset.
+    if os.path.exists(os.environ.get("FAKE_CLAUDE_REJECT_RESUME_FILE", "")) and text == "Continue where you left off.":
+        send({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 429, "result": "Rate limited", "session_id": session})
+        continue
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
         resets = int(text.rsplit(" ", 1)[1])

@@ -662,7 +662,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # The changes that end the run.
   defp ended(stream, ids, status, failure, checkpoint, at) do
-    failure = queued_start_failure(stream, ids, status, failure)
+    failure = stream |> queued_start_failure(ids, status, failure) |> kept_reset(stream, ids)
     done = %{"status" => status, "completedAt" => at}
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
@@ -686,8 +686,53 @@ defmodule HalC2.Orchestration.TurnWriter do
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
-    ] ++ held_queue(stream, status, failure)
+    ] ++ held_queue(stream, status, failure) ++ stopped_limit(stream, ids, status, failure)
   end
+
+  # A limit that ended a run the user (or a parent agent) had asked to stop is not resumed
+  # on its own: the stop leaves the choice to resume at the reset with the user.
+  defp stopped_limit(stream, ids, "failed", %{"class" => "usage_limit"} = failure) do
+    request = "turn-item:run:#{ids.run}:signal:interrupt-request"
+
+    if StreamState.get(stream, "turn-item")[request] != nil and failure["resetAt"] != nil,
+      do: [
+        Orchestration.upsert(
+          stream,
+          "thread",
+          ids.thread,
+          &Map.put(&1, "limitRecovery", %{
+            "runId" => ids.run,
+            "resetAt" => failure["resetAt"],
+            "autoResume" => false,
+            "snooze" => false
+          })
+        )
+      ],
+      else: []
+  end
+
+  defp stopped_limit(_stream, _ids, _status, _failure), do: []
+
+  # An automatic resume the provider rejects with a limit that names no reset leaves the
+  # reset time of the stop it continued, so the thread still says when the limit lifts.
+  defp kept_reset(%{"class" => "usage_limit", "resetAt" => nil} = failure, stream, ids) do
+    run = StreamState.get(stream, "run")[ids.run] || %{}
+    message = StreamState.get(stream, "message")[run["userMessageId"]] || %{}
+    continued = StreamState.get(stream, "run")[message["usageLimitContinuationOfRunId"]]
+
+    reset =
+      continued &&
+        HalC2.Projection.ThreadError.latest_root_provider_failure(
+          continued,
+          StreamState.list(stream, "turn-item")
+        )
+
+    if reset && reset["class"] == "usage_limit" && reset["resetAt"],
+      do: Map.put(failure, "resetAt", reset["resetAt"]),
+      else: failure
+  end
+
+  defp kept_reset(failure, _stream, _ids), do: failure
 
   # A run that left the queue and failed before its provider turn began (the runtime's
   # `start_failure/2`): the timeline says the queued message's provider could not start.

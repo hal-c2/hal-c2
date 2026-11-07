@@ -1377,7 +1377,13 @@ defmodule HalC2.Steps.Threads do
   # the step names.
 
   step "a connected environment with the thread {string} on Claude", %{args: [title]} = context do
+    # Files the fake Claude looks for once its turns are under way (see fake_claude.py).
+    flags = Path.join(System.tmp_dir!(), "limit-flags-#{System.unique_integer([:positive])}")
+    World.put_env("FAKE_CLAUDE_STOP_LIMIT_FILE", flags <> ".stop")
+    World.put_env("FAKE_CLAUDE_REJECT_RESUME_FILE", flags <> ".reject")
+
     context
+    |> Map.put(:limit_flags, flags)
     |> World.agents()
     |> World.create_project("shop")
     |> World.create_thread(title, nil, %{
@@ -1447,6 +1453,27 @@ defmodule HalC2.Steps.Threads do
     at = next_clock(time)
     assert resumes(context, thread, at - 1) == []
     continues(context, thread, at)
+  end
+
+  step ~r/^"(?<thread>[^"]+)" does not continue on its own at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    assert resumes(context, thread, next_clock(time)) == []
+    refute continued?(context, thread)
+    context
+  end
+
+  step ~r/^Claude stops "(?<thread>[^"]+)" at (?<now>\d{1,2}:\d{2}) on a usage limit that reset at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _now, _time]} = context do
+    # The window reported has already reset five minutes before the stop.
+    reset = System.system_time(:millisecond) - 300_000
+
+    {{:ok, _}, context} =
+      World.send_message(context, thread, "usage limit until #{div(reset, 1000)}")
+
+    World.await_runs(context, thread, ["failed"])
+    World.await_row(World.thread_id(context, thread), &(&1["lastErrorClass"] == "usage_limit"))
+
+    Map.merge(context, %{limit_reset: reset, limit_time: "00:00", current: thread, thread: thread})
   end
 
   step ~r/^"(?<thread>[^"]+)" does not continue at (?<time>\d{1,2}:\d{2})$/,
@@ -1592,6 +1619,355 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # --- limited-threads.feature: stops, rejections and refusals -----------------------
+
+  step "the provider rejects the automatic resume", context do
+    File.write!(context.limit_flags <> ".reject", "1")
+    thread = World.current(context)
+    at = context.limit_reset + 60_000
+    assert [%{"type" => "message.dispatch"}] = resumes(context, thread, at)
+    World.await_runs(context, thread, ["failed", "failed"])
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" still records (?<time>\d{1,2}:\d{2}) as its reset time$/,
+       %{args: [thread, time]} = context do
+    row = World.row(context, thread)
+    assert row["lastErrorClass"] == "usage_limit"
+    assert JS.epoch_ms(row["usageLimitResetAt"]) == next_clock(time)
+    context
+  end
+
+  step ~r/^Claude stopped "(?<thread>[^"]+)" on a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    context = limit_stop(context, thread, time)
+    # The sweep arms the resume the setting asks for.
+    assert [%{"type" => "thread.metadata.update"}] =
+             recoveries(context, thread, System.system_time(:millisecond))
+
+    row =
+      World.await_row(
+        World.thread_id(context, thread),
+        &(&1["limitRecovery"]["autoResume"] == true)
+      )
+
+    Map.put(context, :snoozed_before, row["snoozedUntil"])
+  end
+
+  step ~r/^"(?<thread>[^"]+)" does not continue on its own at (?<time>\d{1,2}:\d{2}), nor after a restart$/,
+       %{args: [thread, time]} = context do
+    at = next_clock(time)
+    assert resumes(context, thread, at) == []
+    context = Map.put(context, :mc, Mc.restart(context.mc))
+    assert resumes(context, thread, at) == []
+    refute continued?(context, thread)
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" is snoozed until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    row = World.await_row(World.thread_id(context, thread), &(&1["snoozedUntil"] != nil))
+    assert JS.epoch_ms(row["snoozedUntil"]) == next_clock(time)
+    context
+  end
+
+  step "it does not continue on its own", context do
+    assert resumes(context, World.current(context), System.system_time(:millisecond)) == []
+    refute continued?(context, World.current(context))
+    context
+  end
+
+  step "the thread no longer shows a scheduled resume", context do
+    World.await_row(
+      World.thread_id(context, World.current(context)),
+      &(&1["limitRecovery"]["autoResume"] == false)
+    )
+
+    context
+  end
+
+  step "a snooze the thread had is kept", context do
+    assert World.row(context, World.current(context))["snoozedUntil"] == context.snoozed_before
+    context
+  end
+
+  step "Claude is running {string}", %{args: [thread]} = context do
+    {{:ok, _}, context} = World.send_message(context, thread, "wait for it")
+
+    World.await_thread(
+      context,
+      thread,
+      &Enum.any?(HalC2.StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
+    )
+
+    Map.put(context, :current, thread)
+  end
+
+  step ~r/^(?<who>the user|the parent agent cancelling its task) stops "(?<thread>[^"]+)" and Claude reports a usage limit that resets at (?<time>\d{1,2}:\d{2}) as the run ends$/,
+       %{args: [who, thread, time]} = context do
+    reset = next_clock(time)
+    File.write!(context.limit_flags <> ".stop", Integer.to_string(div(reset, 1000)))
+    id = World.thread_id(context, thread)
+
+    if who == "the user" do
+      {{:ok, _}, context} =
+        World.dispatch(context, %{
+          "type" => "run.interrupt",
+          "commandId" => "cmd-#{System.unique_integer([:positive])}",
+          "threadId" => id
+        })
+
+      finish_stop(context, thread, reset, time)
+    else
+      assert {:ok, _} = HalC2.Mcp.Tools.interrupt(id, %{}, "parent-agent")
+      finish_stop(context, thread, reset, time)
+    end
+  end
+
+  defp finish_stop(context, thread, reset, time) do
+    id = World.thread_id(context, thread)
+    World.await_row(id, &(&1["lastErrorClass"] == "usage_limit"))
+    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread, thread: thread})
+  end
+
+  step "the user can still choose to resume it at the reset", context do
+    thread = World.current(context)
+    context = choose_recovery(context, thread, %{"autoResume" => true})
+
+    assert [%{"usageLimitContinuationOfRunId" => _}] =
+             resumes(context, thread, context.limit_reset)
+
+    context
+  end
+
+  step ~r/^the user stopped "(?<thread>[^"]+)" after it stopped on a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    context
+    |> limit_stop(thread, time)
+    |> then(
+      &World.dispatch(&1, %{"type" => "run.interrupt", "threadId" => World.thread_id(&1, thread)})
+    )
+    |> elem(1)
+  end
+
+  step "Claude stopped {string} on a usage limit that reset four days ago",
+       %{args: [thread]} = context do
+    reset = System.system_time(:millisecond) - 4 * 86_400_000
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.send_message(context, thread, "usage limit until #{div(reset, 1000)}")
+
+    World.await_runs(context, thread, ["failed"])
+    World.await_row(id, &(&1["lastErrorClass"] == "usage_limit"))
+    Map.merge(context, %{limit_reset: reset, limit_time: "00:00", current: thread})
+  end
+
+  step "no resume was ever scheduled for it", context do
+    refute World.row(context, World.current(context))["limitRecovery"]
+    context
+  end
+
+  step "{string} is not scheduled to resume", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    LimitRecovery.sweep()
+    row = World.row(context, thread)
+    refute row["limitRecovery"] && row["limitRecovery"]["autoResume"]
+    assert id
+    context
+  end
+
+  step "a limit stop whose reset passed an hour ago is still scheduled to resume", context do
+    row = World.row(context, World.current(context))
+    now = System.system_time(:millisecond)
+
+    thread =
+      Map.merge(row, %{
+        "usageLimitResetAt" =>
+          DateTime.to_iso8601(DateTime.from_unix!(now - 3_600_000, :millisecond)),
+        "latestRunCompletedAt" =>
+          DateTime.to_iso8601(DateTime.from_unix!(now - 7_200_000, :millisecond)),
+        "limitRecovery" => nil
+      })
+
+    assert %{"type" => "thread.metadata.update", "limitRecovery" => %{"autoResume" => true}} =
+             LimitRecovery.command(thread, true, now)
+
+    context
+  end
+
+  step "a newer turn has run on {string} since", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    stale = World.row(context, thread)
+    {{:ok, _}, context} = World.send_message(context, thread, "Let's try something else")
+    World.await_runs(context, thread, ["failed", "completed"])
+    World.await_row(id, &(&1["status"] != "failed"))
+    Map.put(context, :stale_row, stale)
+  end
+
+  step "the user settled {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.settle", "threadId" => id})
+    World.await_row(id, &(&1["settledOverride"] == "settled"))
+    context
+  end
+
+  step "the choice names a reset time other than {word}", context do
+    Map.put(context, :other_reset, true)
+  end
+
+  step ~r/^the choice is refused with "(?<message>[^"]+)"$/, %{args: [message]} = context do
+    assert {:error, ^message, _} = context.reply
+    context
+  end
+
+  # --- limited-threads.feature: the automatic resume ---------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" receives the user message "(?<text>[^"]+)" written by the server$/,
+       %{args: [thread, text]} = context do
+    assert [%{"text" => ^text, "creationSource" => "server", "createdBy" => "user"}] =
+             context.resumed
+
+    context
+  end
+
+  step "its turn starts at once", context do
+    thread = World.current(context)
+
+    World.await_thread(context, thread, fn state ->
+      length(HalC2.StreamState.list(state, "run")) == 2
+    end)
+
+    context
+  end
+
+  step ~r/^the user snoozed "(?<thread>[^"]+)" until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    id = World.thread_id(context, thread)
+    until = DateTime.to_iso8601(DateTime.from_unix!(clock_at(context, time), :millisecond))
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => id,
+        "snoozedUntil" => until
+      })
+
+    World.await_row(id, &(&1["snoozedUntil"] != nil))
+    Map.put(context, :snooze_end, clock_at(context, time))
+  end
+
+  step "{string} does not continue", %{args: [thread]} = context do
+    assert context.resumed == []
+    refute continued?(context, thread)
+    context
+  end
+
+  step ~r/^it continues on its own once the snooze ends at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [time]} = context do
+    continues(context, World.current(context), clock_at(context, time))
+  end
+
+  step ~r/^the user switched "(?<thread>[^"]+)" to another agent before (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _time]} = context do
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "provider.switch",
+        "threadId" => id,
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
+      })
+
+    World.await_row(id, &(&1["modelSelection"]["instanceId"] == "codex"))
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" (?:started waiting|is waiting) on an approval(?: before (?<time>\d{1,2}:\d{2}))?$/,
+       %{args: [thread | _]} = context do
+    id = "request-#{System.unique_integer([:positive])}"
+
+    context =
+      World.put_entity(context, thread, "runtime-request", id, %{
+        "s" => %{
+          "id" => id,
+          "threadId" => World.thread_id(context, thread),
+          "status" => "pending",
+          "kind" => "command_execution_approval",
+          "createdAt" => World.iso_from_now(0)
+        }
+      })
+
+    World.await_row(World.thread_id(context, thread), &(&1["pendingRuntimeRequest"] != nil))
+    context
+  end
+
+  step ~r/^the user deleted "(?<thread>[^"]+)" before (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _time]} = context do
+    id = World.thread_id(context, thread)
+    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.delete", "threadId" => id})
+    context
+  end
+
+  step "{string} was snoozed until its limit resets at {word}",
+       %{args: [thread, time]} = context do
+    context = limit_stop(context, thread, time)
+    context = choose_recovery(context, thread, %{"snooze" => true, "autoResume" => false})
+    assert World.row(context, thread)["snoozedUntil"] != nil
+    context
+  end
+
+  step ~r/^the user then snoozed "(?<thread>[^"]+)" until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    id = World.thread_id(context, thread)
+    until = DateTime.to_iso8601(DateTime.from_unix!(clock_at(context, time), :millisecond))
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => id,
+        "snoozedUntil" => until
+      })
+
+    World.await_row(id, &(JS.epoch_ms(&1["snoozedUntil"]) == clock_at(context, time)))
+    Map.put(context, :hand_snooze, clock_at(context, time))
+  end
+
+  step "the user turns off snoozing until the reset for {string}", %{args: [thread]} = context do
+    choose_recovery(context, thread, %{"snooze" => false, "autoResume" => false})
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _time]} = context do
+    assert JS.epoch_ms(World.row(context, thread)["snoozedUntil"]) == context.hand_snooze
+    context
+  end
+
+  step "the user also snoozes {string} until the reset without naming the resume option",
+       %{args: [thread]} = context do
+    row = World.row(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.metadata.update",
+        "threadId" => row["id"],
+        "limitRecovery" => %{
+          "runId" => row["latestRunId"],
+          "resetAt" => row["usageLimitResetAt"],
+          "snooze" => true
+        }
+      })
+
+    context
+  end
+
+  step "it is still scheduled to resume at {word}", %{args: [time]} = context do
+    row = World.row(context, World.current(context))
+    assert row["limitRecovery"]["autoResume"] == true
+    assert JS.epoch_ms(row["limitRecovery"]["resetAt"]) == next_clock(time)
+    context
+  end
+
   # Every command a sweep at `at` dispatches for the thread.
   defp recoveries(context, thread, at) do
     id = World.thread_id(context, thread)
@@ -1607,26 +1983,34 @@ defmodule HalC2.Steps.Threads do
 
     World.await_runs(context, thread, ["failed"])
     World.await_row(World.thread_id(context, thread), &(&1["lastErrorClass"] == "usage_limit"))
-    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread})
+    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread, thread: thread})
   end
 
+  # The choice names the stop as the thread shows it, or the one a newer turn has since
+  # replaced, or a reset time that is not the stop's.
   defp choose_recovery(context, thread, choice) do
-    row = World.row(context, thread)
+    row = context[:stale_row] || World.row(context, thread)
 
-    {{:ok, _}, context} =
+    reset =
+      if context[:other_reset],
+        do: shifted(row["usageLimitResetAt"]),
+        else: row["usageLimitResetAt"]
+
+    {reply, context} =
       World.dispatch(context, %{
         "type" => "thread.metadata.update",
         "threadId" => row["id"],
-        "limitRecovery" =>
-          Map.merge(
-            %{"runId" => row["latestRunId"], "resetAt" => row["usageLimitResetAt"]},
-            choice
-          )
+        "limitRecovery" => Map.merge(%{"runId" => row["latestRunId"], "resetAt" => reset}, choice)
       })
 
-    World.await_row(row["id"], &(&1["limitRecovery"]["autoResume"] == choice["autoResume"]))
-    context
+    if match?({:ok, _}, reply),
+      do: World.await_row(row["id"], &(&1["limitRecovery"]["autoResume"] == choice["autoResume"]))
+
+    Map.put(context, :reply, reply)
   end
+
+  defp shifted(iso),
+    do: DateTime.to_iso8601(DateTime.from_unix!(JS.epoch_ms(iso) + 3_600_000, :millisecond))
 
   # The continuation messages a sweep at `at` sends to the thread.
   defp resumes(context, thread, at) do
