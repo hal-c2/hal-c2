@@ -282,6 +282,10 @@ defmodule HalC2.Usage do
   # Parses the directory's files that changed since they were cached, in parallel.
   defp parse_dir(%{provider: provider, dir: dir} = source, state, files_since) do
     if File.exists?(dir) do
+      # A history folder that exists but cannot be listed fails the scan: reading it as
+      # empty would report a total with its usage silently missing.
+      with {:error, reason} <- File.ls(dir), do: raise("cannot list #{dir}: #{reason}")
+
       files = Transcripts.list(dir, files_since, if(provider == "grok", do: "updates.jsonl"))
 
       changed =
@@ -450,7 +454,9 @@ defmodule HalC2.Usage do
           %{version: @cache_version, files: %{} = files, sources: %{} = sources} ->
             # An entry that is not a parsed transcript is dropped, so that one
             # transcript is read from the start while the rest stay cached.
-            files = for {path, entry} <- files, valid_entry?(path, entry), into: %{}, do: {path, entry}
+            files =
+              for {path, entry} <- files, valid_entry?(path, entry), into: %{}, do: {path, entry}
+
             %{state | files: files, sources: sources, loaded: true}
 
           _ ->
@@ -475,7 +481,7 @@ defmodule HalC2.Usage do
        when is_binary(path) and is_integer(size) and is_integer(mtime) and is_binary(provider) and
               is_list(records) and is_list(tail) and
               (is_nil(position) or is_tuple(position)),
-       do: true
+       do: Enum.all?(records ++ tail, &(is_tuple(&1) and tuple_size(&1) == 6))
 
   defp valid_entry?(_path, _entry), do: false
 

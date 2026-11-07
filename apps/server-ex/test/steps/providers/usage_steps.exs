@@ -585,22 +585,10 @@ defmodule HalC2.Steps.Providers.Usage do
   end
 
   step "the transcripts cannot be scanned", context do
-    # A cached transcript whose records are not records makes the scan itself fail.
-    bad = Path.join(context.mc.home, "claude/projects/bad/bad.jsonl")
-
-    entry = %{
-      size: 1,
-      mtime_ms: now(),
-      provider: "claude",
-      records: [:not_a_record],
-      tail: [],
-      position: nil
-    }
-
-    cache =
-      :erlang.term_to_binary(%{version: 1, files: %{bad => entry}, sources: %{}})
-
-    File.write!(Path.join(context.mc.home, "usage-scan-cache.bin"), cache)
+    # A history folder the MC may not list.
+    dir = Path.join(context.usage_dirs.claude, "projects")
+    File.chmod!(dir, 0o000)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dir, 0o755) end)
     context
   end
 
@@ -736,6 +724,11 @@ defmodule HalC2.Steps.Providers.Usage do
         saved = cache |> File.read!() |> :erlang.binary_to_term()
         files = Map.put(saved.files, main, %{})
         File.write!(cache, :erlang.term_to_binary(%{saved | files: files}))
+
+      "has one entry whose records are damaged" ->
+        saved = cache |> File.read!() |> :erlang.binary_to_term()
+        files = Map.update!(saved.files, main, &%{&1 | records: [:not_a_record]})
+        File.write!(cache, :erlang.term_to_binary(%{saved | files: files}))
     end
 
     Map.merge(context, %{damaged: damage, claude_main: main})
@@ -745,7 +738,7 @@ defmodule HalC2.Steps.Providers.Usage do
     reads = World.usage_reads()
 
     affected =
-      if context.damaged == "has one entry that is damaged",
+      if context.damaged =~ "has one entry",
         do: [context.claude_main],
         else: Path.wildcard(Path.join(context.mc.home, "{claude,codex,grok}/**/*.jsonl"))
 
@@ -753,7 +746,7 @@ defmodule HalC2.Steps.Providers.Usage do
       assert {^path, _provider, nil} = List.keyfind(reads, path, 0)
     end
 
-    if context.damaged == "has one entry that is damaged",
+    if context.damaged =~ "has one entry",
       do: assert(length(reads) == 1, "undamaged entries stay cached: #{inspect(reads)}")
 
     context
@@ -874,6 +867,9 @@ defmodule HalC2.Steps.Providers.Usage do
   end
 
   step "the two identical events inside a single rollout are both counted", context do
+    # The Background's 300 and the copied rollout's 321 are the other contributors.
+    codex = output(context.usage, "codex")
+    assert codex - 300 - 321 == 40 + 5 + 40
     context
   end
 

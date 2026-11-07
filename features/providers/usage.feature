@@ -232,6 +232,7 @@ Feature: Usage
       | was written by an older version of the MC      |
       | is not readable                                |
       | has one entry that is damaged                  |
+      | has one entry whose records are damaged        |
 
   # Legacy: apps/server/src/usage/UsageService.ts (in-flight scans keyed by request and prices)
   @backlog @mc @priority-low
