@@ -2273,20 +2273,36 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  # The caller's run settles (its checkpoint taken), and the wake policy is answered
-  # with the run read before: the settled run must stay settled.
+  # The caller's checkpoint is held while the wake policy is changed, so whatever
+  # the command plans is planned from a run that has not settled yet; releasing
+  # the checkpoint then settles it, and the change must not put it back to
+  # running (upstream #25662 planned from such a stale read).
   step "the run of {string} completed its checkpoint just before the wake policy is changed to always",
        %{args: [parent]} = context do
+    parent_id = World.thread_id(context, parent)
+
+    Application.put_env(
+      :hal_c2,
+      :effects_hook,
+      {__MODULE__, :hold_checkpoint, [self(), parent_id]}
+    )
+
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :effects_hook) end)
     [seen | _] = World.runs(context, parent)
     World.send_turn(context, parent, "say Carrying on")
+    assert_receive {:checkpoint_held, effect, holder}, 5_000
+
+    {reply, context} = World.dispatch(context, wake_command(context, "always"))
+    assert {:ok, _} = reply
+
+    Application.delete_env(:hal_c2, :effects_hook)
+    send(holder, {:release_checkpoint, effect})
 
     World.await_state(context, parent, fn state ->
       run = StreamState.get(state, "run")[seen["id"]]
       run["status"] == "completed" and run["checkpointId"] != nil
     end)
 
-    {reply, context} = World.dispatch(context, wake_command(context, "always"))
-    assert {:ok, _} = reply
     Map.put(context, :seen_run, seen["id"])
   end
 
@@ -3952,6 +3968,22 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # 66 units of "a", then 👨 (2 units) and its joiner (1 unit) as the 69th: a cut
+  # at 69 units would leave the title ending in that joiner.
+  step "the provider of {string} starts a subagent with no title and a prompt with a joined emoji where the cut falls",
+       %{args: [_parent]} = context do
+    prompt = String.duplicate("a", 66) <> "👨‍👩‍👧" <> String.duplicate("b", 30)
+    context = claude_parent(context)
+    start_native(context, "joined", %{"prompt" => prompt}, %{"prompt" => prompt})
+  end
+
+  step "the subagent's title ends before the joiner, and is followed by {string}",
+       %{args: [suffix]} = context do
+    row = World.await_row(context.native["childThreadId"], & &1)
+    assert row["title"] == String.duplicate("a", 66) <> "👨" <> suffix
+    context
+  end
+
   # The child is visited (a client has it open) and its caller's turn has finished,
   # as a parent the user can settle is.
   step "a delegated Codex subagent of {string} is open in a client",
@@ -3983,17 +4015,39 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   step "the user sends the subagent another message", context do
+    before_ids =
+      context |> World.runs("subagent") |> Enum.map(& &1["id"]) |> MapSet.new()
+
+    context = Map.put(context, :runs_before_reply, before_ids)
     World.send_turn(context, "subagent", "say Still here")
     context
   end
 
+  # The run the "say Still here" message started (or steered) is the one that must
+  # end: an older completed run of the subagent does not count, as upstream #23456
+  # was that new run never ending.
   step "the subagent's reply is shown and its run completes", context do
+    before_ids = context[:runs_before_reply] || MapSet.new()
+
     World.await_state(context, "subagent", fn state ->
+      messages = StreamState.list(state, "message")
+      runs = StreamState.list(state, "run")
+
+      sent =
+        Enum.find(messages, &(&1["role"] == "user" and &1["text"] =~ "say Still here"))
+
+      reply_run =
+        sent &&
+          Enum.find(
+            runs,
+            &(&1["id"] == sent["runId"] or &1["userMessageId"] == sent["id"] or
+                not MapSet.member?(before_ids, &1["id"]))
+          )
+
       Enum.any?(
-        StreamState.list(state, "message"),
+        messages,
         &(&1["role"] == "assistant" and &1["text"] =~ "Still here")
-      ) and
-        Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "completed"))
+      ) and match?(%{"status" => "completed"}, reply_run)
     end)
 
     context

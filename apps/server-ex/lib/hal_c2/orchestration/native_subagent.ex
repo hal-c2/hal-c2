@@ -550,13 +550,24 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   # The first `bytes` of a UTF-16 binary as UTF-8, dropping a lone surrogate the
-  # cut would leave at the end.
+  # cut would leave at the end, and a trailing joiner or variation selector the
+  # cut split from the character it joined or selected (a ZWJ sequence, a flag).
   defp utf16_prefix(utf16, bytes) do
     part = binary_part(utf16, 0, bytes)
 
     case :unicode.characters_to_binary(part, :utf16, :utf8) do
-      text when is_binary(text) -> text
+      text when is_binary(text) -> trim_trailing_joiners(text)
       _ -> utf16_prefix(utf16, bytes - 2)
+    end
+  end
+
+  # Each is three UTF-8 bytes; grapheme helpers would keep one joined to the
+  # character before it, so the drop is by bytes.
+  defp trim_trailing_joiners(text) do
+    if String.ends_with?(text, ["\u200D", "\uFE0E", "\uFE0F"]) do
+      text |> binary_part(0, byte_size(text) - 3) |> trim_trailing_joiners()
+    else
+      text
     end
   end
 

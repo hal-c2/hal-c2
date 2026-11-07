@@ -1233,6 +1233,11 @@ Feature: Delegating tasks to subagents
     Then the subagent's title is cut before the emoji, not through it, and followed by "..."
     And the agents list shows that title without a replacement character
 
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
+  Scenario: A subagent titled from its prompt does not end in a joiner
+    When the provider of "parent" starts a subagent with no title and a prompt with a joined emoji where the cut falls
+    Then the subagent's title ends before the joiner, and is followed by "..."
+
   @mc
   Scenario: A subagent starts awake whatever state its parent is in
     Given thread "parent" is snoozed
