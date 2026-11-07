@@ -539,7 +539,9 @@ const Steps steps([] {
     expect(QFile::exists(pairingFile(world)), S("the phone no longer keeps the pairing"));
     leaveEnvironment(world);
     threadRow(world, threadOf(world, c[0]));
-    expect(world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected"), S("the connection is %1").arg(show(world.state(S("connection")))));
+    // One that took the removed one's place may still be answering.
+    world.waitFor([&] { return world.state(S("connection")).toMap().value(S("phase")) == QLatin1String("connected"); },
+                  [&] { return S("the phone to connect to %1; the connection is %2").arg(c[0], show(world.state(S("connection")))); });
   });
 });
 

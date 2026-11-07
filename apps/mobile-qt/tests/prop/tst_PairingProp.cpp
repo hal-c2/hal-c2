@@ -321,6 +321,9 @@ struct Sut {
                              {QStringLiteral("environmentId"), QStringLiteral("env-") + QString::fromLatin1(kNames[*m.paired])}};
       RC_ASSERT(phone->kept() == kept);
       RC_ASSERT(phone->shell->client()->phase() != McClient::Phase::Closed);
+      // Nor does its connection name one it left ("Connecting to …").
+      const QString described = phone->shell->client()->descriptor().value(QStringLiteral("label")).toString();
+      RC_ASSERT(described.isEmpty() || described == QString::fromLatin1(kLabels[*m.paired]));
     } else {
       RC_ASSERT(!QFile::exists(phone->file));
       RC_ASSERT(phone->shell->client()->phase() == McClient::Phase::Closed);

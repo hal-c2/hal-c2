@@ -494,6 +494,8 @@ private slots:
       QCOMPARE(phone.kept().value(QLatin1String("environmentId")).toString(), QStringLiteral("env-b"));
       QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), office.sessions.last());
       QVERIFY(beside(phone).isEmpty());
+      // Its connection names nothing of the one it left while it opens.
+      QVERIFY(!phone.state(QStringLiteral("connection")).value(QStringLiteral("title")).toString().contains(QStringLiteral("My MacBook")));
       QVERIFY(phone.waitForThreads({office.threadTitle()}));
       QVERIFY(phone.waitForConnection(QStringLiteral("connected")));
       QCOMPARE(phone.shell->client()->origin(), office.mc.origin());
@@ -642,8 +644,13 @@ private slots:
     phone.dispatch(QStringLiteral("pairing.cancel"));
     QCOMPARE(phone.phase(), QStringLiteral("pairing"));
     QVERIFY(phone.waitForState(QStringLiteral("pairing"), [](const QVariantMap& pairing) { return pairing.value(QStringLiteral("phase")) == QLatin1String("paired"); }));
-    QCOMPARE(phone.pairingState().value(QStringLiteral("label")).toString(), QStringLiteral("Office Mac"));
-    QCOMPARE(phone.kept().value(QLatin1String("token")).toString(), office.sessions.last());
+    // Beside the MacBook, which the shell still connects to.
+    QCOMPARE(phone.pairingState().value(QStringLiteral("label")).toString(), QStringLiteral("My MacBook"));
+    QCOMPARE(phone.kept(), kept);
+    QVERIFY(phone.waitForState(QStringLiteral("savedEnvironments"), [](const QVariantMap& saved) {
+      const QVariantList environments = saved.value(QStringLiteral("environments")).toList();
+      return environments.size() == 1 && environments.first().toMap().value(QStringLiteral("id")) == QLatin1String("env-b");
+    }));
   }
 
   // Started again, the phone opens the environment it kept without asking.
