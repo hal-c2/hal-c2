@@ -3513,15 +3513,53 @@ defmodule HalC2.Orchestration do
       thread["activeProviderThreadId"] != nil or
         StreamState.get(state, "provider-thread") != %{}
 
-    if is_binary(target) and target != current and conversation? do
-      case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
-        :ok -> nil
-        {:error, message} -> {:error, message}
-      end
+    cond do
+      not is_binary(target) ->
+        nil
+
+      target == current ->
+        model_switch_refusal(state, thread, command, target)
+
+      not HalC2.Settings.instance_enabled?(target, driver_for(target)) ->
+        {:error, "The target provider instance is unavailable."}
+
+      conversation? ->
+        case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
+          :ok -> nil
+          {:error, message} -> {:error, message}
+        end
+
+      true ->
+        nil
     end
   end
 
   defp refusal(_type, _command, _thread, _state), do: nil
+
+  # An ACP agent's session switches models only when it offers a way to (a `model`
+  # config option or a model list); its runtime records whether it did on the session
+  # (`canSwitchModel`).
+  defp model_switch_refusal(state, thread, command, instance) do
+    model = get_in(command, ["modelSelection", "model"])
+
+    session =
+      StreamState.get(state, "provider-session")[
+        Entities.provider_session_id(instance, thread["id"])
+      ]
+
+    if is_binary(model) and model != get_in(thread, ["modelSelection", "model"]) and
+         session["canSwitchModel"] == false,
+       do: {:error, "The active ACP session does not expose a model-switch capability."}
+  end
+
+  # A message naming another model for the thread's own ACP session, which cannot take it.
+  defp message_model_refusal(state, thread, command) do
+    current = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+
+    if get_in(command, ["modelSelection", "instanceId"]) in [nil, current] do
+      with {:error, reason} <- model_switch_refusal(state, thread, command, current), do: reason
+    end
+  end
 
   defp future?(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
@@ -3910,6 +3948,9 @@ defmodule HalC2.Orchestration do
         {[], {:error, error}}
 
       reason = model_locked(thread, command) ->
+        {[], {:error, reason}}
+
+      reason = message_model_refusal(state, thread, command) ->
         {[], {:error, reason}}
 
       reason = handoff_refusal(state, thread, command) ->

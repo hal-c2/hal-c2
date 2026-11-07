@@ -215,7 +215,7 @@ Feature: Changing model and provider mid-thread
     When the user sends "Carry on" to "t1"
     Then each item of the handoff is marked as historical, with its role, kind and status and the thread and run it came from
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A handoff tells the agent its history is context, not a new request
     Given the conversation of "t1" is longer than the handoff budget
     When a run starts a new provider thread for "t1"
@@ -325,17 +325,23 @@ Feature: Changing model and provider mid-thread
     Then the run for "Next" starts a new provider thread on "codex-work"
     And a handoff from "codex" to "codex-work" carries the earlier conversation
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Switching to a provider instance that cannot run is refused
     Given provider instance "claudeAgent" is disabled
     When the user switches "t1" to "claudeAgent"
     Then the command fails with "The target provider instance is unavailable."
 
-  @backlog @mc @priority-high
-  Scenario: A model change the running agent cannot take is refused
+  @mc @priority-high
+  Scenario Outline: A model change the running agent cannot take is refused
     Given "t1" runs on an ACP agent whose session does not offer switching models
-    When the user sets another model for "t1"
+    When the user <changes> "t1"
     Then the command fails with "The active ACP session does not expose a model-switch capability."
+    And "t1" keeps its model
+
+    Examples:
+      | changes                                |
+      | sets another model for                 |
+      | sends a message on another model to    |
 
   @backlog @mc
   Scenario Outline: A change the provider cannot take in place restarts it on the same conversation

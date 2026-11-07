@@ -1176,7 +1176,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     cond do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
-          {:ok, result} -> {:ok, native, opened(state, result)}
+          {:ok, result} -> {:ok, native, opened(state, result, turn)}
           {:error, _} -> new_session(state, turn)
         end
 
@@ -1186,7 +1186,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state = %{state | replaying: false}
 
         case result do
-          {:ok, result} -> {:ok, native, opened(state, result || %{})}
+          {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
           {:error, _} -> new_session(state, turn)
         end
 
@@ -1204,7 +1204,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            %{"cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)},
            60_000
          ) do
-      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result)}
+      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result, turn, true)}
       {:ok, other} -> {:error, {:unexpected, other}, state}
       {:error, reason} -> {:error, reason, state}
     end
@@ -1277,11 +1277,28 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # A session that opens without saying its model gets the turn's model set again.
-  defp opened(state, result) do
+  # Whether it offers a way to switch models is recorded on the provider session
+  # (`canSwitchModel`): a new session's answer says so, a continued one only when it
+  # names its model.
+  defp opened(state, result, turn, new? \\ false) do
     named? =
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
 
+    if named? or new?, do: record_model_switch(state, turn, named?)
     remember_model(if(named?, do: state, else: %{state | model: nil}), result)
+  end
+
+  defp record_model_switch(state, turn, switches?) do
+    id = Entities.provider_session_id(Entities.instance(turn.ids), state.thread_id)
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "provider-session", id, fn
+          nil -> nil
+          session -> Map.put(session, "canSwitchModel", switches?)
+        end)
+      ]
+    end)
   end
 
   defp remember_model(state, result) do

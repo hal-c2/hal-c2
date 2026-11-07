@@ -169,7 +169,7 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert Handoff.transcript(state, 4) ==
              Enum.join(
                [
-                 "[earlier messages omitted]",
+                 "[earlier messages omitted: 6 items kept whole, 1 left out]",
                  "User: the original request",
                  "User: second request",
                  "Assistant: second " <> long,
@@ -262,7 +262,7 @@ defmodule HalC2.Orchestration.HandoffTest do
 
     state = state(turn(1, "first", String.duplicate("x", 100)) ++ turn(2, "second", answer))
 
-    assert "[earlier messages omitted]\n\n" <> _ = transcript = Handoff.transcript(state, 3)
+    assert "[earlier messages omitted: " <> _ = transcript = Handoff.transcript(state, 3)
     assert String.length(transcript) <= 60_000
   end
 end

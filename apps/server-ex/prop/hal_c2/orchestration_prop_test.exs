@@ -75,6 +75,8 @@ defmodule HalC2.OrchestrationPropTest do
   @plugin "prop-plugin"
   @threads ~w(t1 t2)
   @instances ~w(codex codex-work)
+  # An instance switched to but turned off in settings, which refuses the switch.
+  @disabled "codex-off"
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
@@ -148,7 +150,8 @@ defmodule HalC2.OrchestrationPropTest do
                   "driver" => "codex",
                   "enabled" => true,
                   "environment" => named.("codex-work")
-                }
+                },
+                @disabled => %{"driver" => "codex", "enabled" => false}
               }
             },
             0
@@ -203,6 +206,7 @@ defmodule HalC2.OrchestrationPropTest do
         [tid, msg, oneof(@instances), oneof([:taken, :taken, :refused])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {2, {:call, __MODULE__, :switch, [tid, oneof(@instances)]}},
+      {1, {:call, __MODULE__, :switch, [tid, @disabled]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
       {1, {:call, __MODULE__, :archive, [tid]}},
@@ -749,6 +753,8 @@ defmodule HalC2.OrchestrationPropTest do
   defp step(state, _result, {:call, _, :release, [_tid]}), do: state
 
   # The thread's next turn runs on the instance; the turn in progress finishes where it is.
+  defp step(state, _result, {:call, _, :switch, [_tid, @disabled]}), do: state
+
   defp step(state, _result, {:call, _, :switch, [tid, instance]}),
     do: update(state, tid, &%{&1 | instance: instance})
 
@@ -973,6 +979,9 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
+
+  defp expected_reply(_state, :switch, [_tid, @disabled]),
+    do: {:error, "The target provider instance is unavailable."}
 
   defp expected_reply(_state, :switch, _args), do: :ok
 
