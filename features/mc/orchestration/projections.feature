@@ -267,7 +267,7 @@ Feature: What the engine projects for clients
   Scenario: Finished plans and handoffs in a bounded snapshot carry only their status
     Given the newest turns of "t1" include a completed plan and a finished handoff
     When a client asks for a bounded snapshot of "t1"
-    Then each carries its status and says its detail is in its timeline item
+    Then each carries its status and says its detail is in its turn item
     And neither carries the plan text or the handoff summary a second time
 
   @mc

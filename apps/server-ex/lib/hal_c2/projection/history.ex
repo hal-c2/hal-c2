@@ -19,7 +19,12 @@ defmodule HalC2.Projection.History do
   The snapshot also carries everything the thread keeps small (the thread, runs,
   requests, plans, handoffs, checkpoints), so what the user can still act on is held
   whatever its age, plus the messages of queued runs. A plan or handoff that is no
-  longer actionable carries its status alone: its text is in its timeline item.
+  longer actionable keeps its shape but blanks its bulky text and sets
+  `detailInTurnItem`: the text is in its turn item. A pending or ready handoff and a
+  pending transfer count as actionable.
+
+  Imported threads can hold rows with no run. They cannot be paged by run, so the
+  result says `runlessHistory` instead of letting a nil cursor read as "complete".
   """
 
   alias HalC2.StreamState
@@ -31,6 +36,7 @@ defmodule HalC2.Projection.History do
   @max_cursor 4_096
   @budget 1_000_000
   @windowed ~w(turn-item message node)
+  @waiting ~w(pending ready)
 
   @doc "The newest user turns of a thread, with what the user can act on."
   @spec snapshot(StreamState.t()) :: map
@@ -54,7 +60,8 @@ defmodule HalC2.Projection.History do
       "rows" => encode(small ++ windowed),
       "cursor" => cursor,
       "offset" => state.seq,
-      "overBudget" => size > @budget
+      "overBudget" => size > @budget,
+      "runlessHistory" => runless?(state)
     }
   end
 
@@ -69,7 +76,8 @@ defmodule HalC2.Projection.History do
          "rows" => encode(windowed_rows(state, runs)),
          "cursor" => next,
          "offset" => state.seq,
-         "overBudget" => false
+         "overBudget" => false,
+         "runlessHistory" => runless?(state)
        }}
     end
   end
@@ -117,23 +125,34 @@ defmodule HalC2.Projection.History do
     for {"message", _, %{"runId" => run}} = row <- rows, run in queued, do: row
   end
 
+  # A handoff waits to be delivered while `pending` or `ready` (the MC writes `ready`,
+  # then `consumed` or `failed`); a context transfer waits while `pending`.
   defp actionable?({"plan", _id, %{"status" => status}}), do: status == "active"
-  defp actionable?({"context-handoff", _id, %{"status" => status}}), do: status == "pending"
+  defp actionable?({"context-handoff", _id, %{"status" => status}}), do: status in @waiting
+  defp actionable?({"context-transfer", _id, %{"status" => status}}), do: status == "pending"
   defp actionable?({"runtime-request", _id, %{"status" => status}}), do: status == "pending"
   defp actionable?(_row), do: false
 
-  defp compact("plan", %{"status" => status} = plan) when status != "active",
-    do: detail_in_timeline(plan)
+  # What is no longer actionable keeps its shape, as the contract decodes it, with its
+  # bulky text blanked and `detailInTurnItem` saying the detail is in its timeline item.
+  defp compact("plan", %{"status" => status} = plan) when status != "active" do
+    plan
+    |> Map.drop(["explanation"])
+    |> then(&if(&1["kind"] == "proposed_plan", do: Map.put(&1, "markdown", ""), else: &1))
+    |> Map.put("detailInTurnItem", true)
+  end
 
-  defp compact("context-handoff", %{"status" => status} = handoff) when status != "pending",
-    do: detail_in_timeline(handoff)
+  defp compact("context-handoff", %{"status" => status} = handoff) when status not in @waiting,
+    do: handoff |> Map.put("summaryText", "") |> Map.put("detailInTurnItem", true)
 
   defp compact(_kind, entity), do: entity
 
-  defp detail_in_timeline(entity) do
-    entity
-    |> Map.take(~w(id threadId runId kind status createdAt updatedAt))
-    |> Map.put("detailInTimeline", true)
+  # Imported history keeps its messages and items outside any run, which these pages
+  # do not reach yet: a client is told, so a missing cursor is not read as the start.
+  defp runless?(state) do
+    Enum.any?(@windowed, fn kind ->
+      state |> StreamState.get(kind) |> Enum.any?(fn {_id, entity} -> entity["runId"] == nil end)
+    end)
   end
 
   defp encode(rows),

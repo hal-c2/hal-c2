@@ -92,7 +92,7 @@ defmodule HalC2.Rpc do
   # turns, or the page before the `cursor` an earlier answer gave.
   def handle("hal-c2.threadHistory", %{"threadId" => thread_id} = input) do
     HalC2.Streams.read(thread_id, fn state ->
-      if (is_nil(input["cursor"]) and not is_map_key(input, "cursor")) or input["cursor"] == nil,
+      if input["cursor"] == nil,
         do: {:ok, HalC2.Projection.History.snapshot(state)},
         else: HalC2.Projection.History.page(state, input["cursor"])
     end)

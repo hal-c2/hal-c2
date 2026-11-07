@@ -844,9 +844,13 @@ defmodule HalC2.Steps.Orchestration.Projections do
   end
 
   step "the steering messages do not count as turns of their own", context do
-    # Twenty user turns fill a page, whatever steered them.
-    assert length(user_messages(context.history)) == 20 + 2 - 2
-    assert Enum.all?(~w(steer-1 steer-2), &("steer-" <> _ = &1))
+    # The steering messages are in the page with their turn, yet twenty user turns,
+    # run 11 among them, still fill it.
+    ids = for [_kind, id, _] <- context.history["rows"], do: id
+    assert "steer-1" in ids and "steer-2" in ids
+    turns = user_messages(context.history)
+    assert length(turns) == 20
+    assert "msg-11" in turns
     context
   end
 
@@ -945,16 +949,16 @@ defmodule HalC2.Steps.Orchestration.Projections do
          "s" =>
            Map.merge(owned, %{
              "id" => "plan-1",
+             "nodeId" => "node-1",
              "kind" => "proposed_plan",
              "status" => "active",
              "markdown" => "# Plan"
            })
        }},
       {"context-handoff", "handoff-1",
-       %{
-         "s" =>
-           Map.merge(owned, %{"id" => "handoff-1", "status" => "pending", "summaryText" => "s"})
-       }},
+       %{"s" => Map.merge(owned, handoff("handoff-1", "ready", "the summary"))}},
+      {"context-transfer", "transfer-1",
+       %{"s" => Map.merge(owned, %{"id" => "transfer-1", "status" => "pending"})}},
       {"runtime-request", "request-1",
        %{
          "s" =>
@@ -975,6 +979,7 @@ defmodule HalC2.Steps.Orchestration.Projections do
     for key <- [
           {"plan", "plan-1"},
           {"context-handoff", "handoff-1"},
+          {"context-transfer", "transfer-1"},
           {"runtime-request", "request-1"},
           {"message", "msg-q"}
         ],
@@ -992,18 +997,16 @@ defmodule HalC2.Steps.Orchestration.Projections do
     plan =
       Map.merge(owned, %{
         "id" => "plan-1",
+        "nodeId" => "node-2",
         "kind" => "proposed_plan",
         "status" => "completed",
         "markdown" => "# the plan text"
       })
 
     handoff =
-      Map.merge(owned, %{
-        "id" => "handoff-1",
-        "status" => "consumed",
-        "summaryText" => "the summary",
-        "history" => [%{"text" => "hi"}]
-      })
+      owned
+      |> Map.merge(handoff("handoff-1", "failed", "the summary"))
+      |> Map.put("history", [%{"text" => "hi"}])
 
     commit(
       context,
@@ -1016,20 +1019,21 @@ defmodule HalC2.Steps.Orchestration.Projections do
     Map.put(context, :thread, thread)
   end
 
-  step "each carries its status and says its detail is in its timeline item", context do
-    for {id, status} <- [{"plan-1", "completed"}, {"handoff-1", "consumed"}] do
+  step "each carries its status and says its detail is in its turn item", context do
+    for {id, status} <- [{"plan-1", "completed"}, {"handoff-1", "failed"}] do
       entity = history_row(context.history, id)
       assert entity["status"] == status
-      assert entity["detailInTimeline"] == true
+      assert entity["detailInTurnItem"] == true
     end
 
     context
   end
 
   step "neither carries the plan text or the handoff summary a second time", context do
-    refute Map.has_key?(history_row(context.history, "plan-1"), "markdown")
+    assert history_row(context.history, "plan-1")["markdown"] == ""
     handoff = history_row(context.history, "handoff-1")
-    assert handoff["summaryText"] in [nil, ""]
+    assert handoff["summaryText"] == ""
+    assert handoff["targetRunId"] == "run-2"
     refute Map.has_key?(handoff, "history")
     context
   end
@@ -1073,6 +1077,22 @@ defmodule HalC2.Steps.Orchestration.Projections do
     do: for(["message", "msg-" <> _ = id, _] <- history["rows"], do: id) |> Enum.sort_by(&msg_n/1)
 
   defp msg_n("msg-" <> n), do: String.to_integer(n)
+
+  # A handoff as the MC writes it: no run of its own, the target run instead.
+  defp handoff(id, status, summary) do
+    %{
+      "id" => id,
+      "status" => status,
+      "targetRunId" => "run-2",
+      "fromProviderThreadIds" => ["pt-1"],
+      "toProviderThreadId" => "pt-2",
+      "coveredRunOrdinals" => [1],
+      "strategy" => "summary",
+      "summaryMessageId" => "msg-1",
+      "summaryText" => summary,
+      "createdByProviderInstanceId" => "codex"
+    }
+  end
 
   defp history_row(history, id), do: hd(for [_, ^id, entity] <- history["rows"], do: entity)
 
