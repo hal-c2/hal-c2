@@ -515,9 +515,9 @@ Feature: Delegating tasks to subagents
     Then the task summary is the last one
 
   @mc
-  Scenario: A task that ends without an answer says so
+  Scenario: A task that fails without an answer says why it failed
     When the subagent fails without an assistant message
-    Then the delivered result says there was no answer
+    Then the delivered result says why it failed
 
   @mc
   Scenario: Checking a task's status

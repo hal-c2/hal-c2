@@ -1652,20 +1652,16 @@ defmodule HalC2.Orchestration.Delegation do
   defp failure_text(_child, _run, status) when status != "failed", do: nil
 
   defp failure_text(child, %{"id" => run_id} = run, "failed") do
-    error_item_text(child, run_id) || session_error(child, run)
+    error_item_text(child, run_id) || run_failure(child, run)
   end
 
   defp failure_text(_child, _run, _status), do: nil
 
-  # What the provider session recorded when the run ended without an error item: an
-  # adapter that ends a run with a plain-text failure leaves it as the session's `lastError`.
-  defp session_error(child, run) do
-    session_id =
-      (StreamState.get(child, "provider-thread")[run["providerThreadId"]] || %{})[
-        "providerSessionId"
-      ]
-
-    case (StreamState.get(child, "provider-session")[session_id] || %{})["lastError"] do
+  # What the run recorded when it ended without an error item: an adapter that ends a
+  # run with a plain-text failure leaves it on the run (`TurnWriter`), not on the provider
+  # session, whose `lastError` outlives the run and may be an earlier run's.
+  defp run_failure(child, %{"id" => run_id}) do
+    case (StreamState.get(child, "run")[run_id] || %{})["failure"] do
       message when is_binary(message) and message != "" -> message
       _ -> nil
     end

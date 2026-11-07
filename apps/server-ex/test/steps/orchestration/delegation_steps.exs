@@ -966,10 +966,11 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  step "the delivered result says there was no answer", context do
+  step "the delivered result says why it failed", context do
     message = await_result_message(context, "parent")
     assert message["text"] =~ ~s(status="failed")
-    assert message["text"] =~ "\n(no answer)\n"
+    assert message["text"] =~ "\nthe turn failed\n"
+    refute message["text"] =~ "(no answer)"
     context
   end
 

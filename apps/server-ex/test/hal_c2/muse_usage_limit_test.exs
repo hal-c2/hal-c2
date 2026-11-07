@@ -8,7 +8,8 @@ defmodule HalC2.MuseUsageLimitTest do
   @moduletag :tmp_dir
   @tid "muse-limit-thread"
   @fake Path.expand("../support/fake_muse_msp.py", __DIR__)
-  @reset_ms 1_794_096_057_000
+  # A day on, whole seconds: a reset already past is no limit.
+  @reset_ms div(System.os_time(:millisecond), 1000) * 1000 + 86_400_000
   @message "API error 429: Subscription quota exhausted. (rate_limit_error)"
 
   setup %{tmp_dir: dir} do
@@ -45,13 +46,18 @@ defmodule HalC2.MuseUsageLimitTest do
     {:ok, %{work: work, dir: dir}}
   end
 
-  defp muse(dir, error) do
+  defp muse(dir, error, extra \\ %{}) do
     fake = Path.join(dir, "fake-muse")
     File.mkdir_p!(Path.join(fake, "bin"))
 
     File.write!(
       Path.join(fake, "config.json"),
-      JSON.encode!(%{"turns" => [%{"match" => "go", "steps" => [%{"fail" => error}]}]})
+      JSON.encode!(
+        Map.merge(
+          %{"turns" => [%{"match" => "go", "steps" => [%{"fail" => error}]}]},
+          extra
+        )
+      )
     )
 
     bin = Path.join([fake, "bin", "muse"])
@@ -141,5 +147,35 @@ defmodule HalC2.MuseUsageLimitTest do
 
     assert [%{"title" => "Provider error", "failure" => %{"message" => "model fell over"}}] =
              for(i <- StreamState.list(state, "turn-item"), i["type"] == "error", do: i)
+  end
+
+  test "a plain rate limit without a quota fails the turn and is not Limited", %{
+    dir: dir,
+    work: work
+  } do
+    muse(dir, %{"kind" => "modelError", "message" => @message, "retryable" => false})
+
+    state = fail_run(work)
+    thread = HalC2.Projection.Shell.thread_shell(state)
+
+    assert thread["lastErrorClass"] == "provider_error"
+    assert thread["usageLimitResetAt"] == nil
+  end
+
+  test "a quota refusal of turn/start is a usage limit with its reset", %{dir: dir, work: work} do
+    muse(dir, %{}, %{
+      "refuseStart" => %{
+        "message" => @message,
+        "data" => %{"quota" => %{"limitKind" => "tierLimit", "resetsAtMs" => @reset_ms}}
+      }
+    })
+
+    state = fail_run(work)
+    thread = HalC2.Projection.Shell.thread_shell(state)
+
+    assert thread["lastErrorClass"] == "usage_limit"
+
+    assert thread["usageLimitResetAt"] ==
+             @reset_ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
   end
 end

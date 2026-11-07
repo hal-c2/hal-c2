@@ -10,6 +10,7 @@
 #   versionExit  `muse --version`'s exit status (default 0)
 #   models    model/list's models (default one Meta model, fake/one)
 #   modelListExit  exit instead of answering model/list
+#   refuseStart {message, data, code}: turn/start is refused with that JSON-RPC error
 #   overloaded  {method: n}: the first n calls of method are refused as overloaded (-32001)
 #   turns     [{"match": substring, "steps": [...]}], first match wins
 #   mismatch  "session/start", "session/resume" or "turn/start": answered under another id
@@ -296,6 +297,9 @@ def handle(msg):
         return "other-" + id if config().get("mismatch") == method else id
 
     refused = state["overloaded"].get(method, 0)
+    refuse = config().get("refuseStart")
+    if method == "turn/start" and refuse:
+        return error(refuse.get("code", -32020), refuse["message"], refuse.get("data"))
     if refused < config().get("overloaded", {}).get(method, 0):
         state["overloaded"][method] = refused + 1
         return error(-32001, "overloaded")
