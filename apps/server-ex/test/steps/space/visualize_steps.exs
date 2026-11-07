@@ -94,7 +94,7 @@ defmodule HalC2.Steps.Space.Visualize do
 
   step "an older MC indexed them, not saying who typed what", context do
     # Index casts land before this write returns.
-    Store.delete_meta("messages_typed")
+    Store.delete_meta("messages_typed_2")
     {:ok, db} = Exqlite.Sqlite3.open(Store.path())
     :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
     :ok = Exqlite.Sqlite3.execute(db, "UPDATE messages SET typed = NULL")

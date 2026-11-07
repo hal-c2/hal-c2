@@ -323,6 +323,10 @@ struct Model {
   qsizetype settledShown = kSettledPage;
   // The MC's settings document lists settled plugin threads (sidebarShowSettledPluginThreads).
   bool showPlugins = false;
+  // This device lists busy threads in a Working section (sidebarWorkingShelfEnabled,
+  // on until turned off). No thread here runs, so the section stays empty, but the
+  // inbox then orders by when threads came back and cannot be arranged.
+  bool workingShelf = true;
 };
 
 Model initialModel() {
@@ -382,9 +386,15 @@ Sections sectionsOf(const Model& model, bool scoped) {
     if (!l.pinKey && l.created != r.created) return l.created > r.created;
     return compareIdentity(left, right) < 0;
   });
-  std::sort(sections.active.begin(), sections.active.end(), [](const Living& left, const Living& right) {
+  std::sort(sections.active.begin(), sections.active.end(), [&model](const Living& left, const Living& right) {
     const Row& l = *left.row;
     const Row& r = *right.row;
+    if (model.workingShelf) {
+      const int leftAt = std::max(l.created, l.unsettled.value_or(0));
+      const int rightAt = std::max(r.created, r.unsettled.value_or(0));
+      if (leftAt != rightAt) return leftAt > rightAt;
+      return compareIdentity(left, right) < 0;
+    }
     if (l.activeKey.has_value() != r.activeKey.has_value()) return !l.activeKey.has_value();
     if (l.activeKey && *l.activeKey != *r.activeKey) return *l.activeKey < *r.activeKey;
     const int leftAt = std::max(l.created, l.unsettled.value_or(0));
@@ -436,7 +446,9 @@ std::string sectionOf(const Model& model, const std::string& key) {
 }
 
 // What the shell redoes on every refresh: a scope whose project went shows
-// everything, and only listed rows stay selected.
+// everything, offline members or not (every scope here was picked from the
+// list; only one restored at start waits for them), and only listed rows stay
+// selected.
 void normalize(Model& model) {
   if (!model.connected) return;
   if (model.scope && !groupExists(model.environments, *model.scope)) model.scope.reset();
@@ -474,8 +486,16 @@ void arrange(Model& model, const std::string& section, const std::vector<std::st
   }
   if (pinning) orderKeys.insert(q(key), std::nullopt);
   QStringList keys;
-  for (const std::string& each : ordered) keys.append(q(each));
-  for (const sidebar::OrderAssignment& assignment : sidebar::planReorder(keys, orderKeys, q(key))) {
+  QSet<QString> writable;
+  for (const std::string& each : ordered) {
+    keys.append(q(each));
+    if (online(model, split(each).first)) writable.insert(q(each));
+  }
+  // Rows on an offline environment are not written; a drop they make
+  // impossible to store is not made.
+  const auto planned = sidebar::planWritableReorder(keys, orderKeys, q(key), writable, !pinned);
+  if (!planned) return;
+  for (const sidebar::OrderAssignment& assignment : *planned) {
     const std::string assigned = assignment.key.toStdString();
     const std::string type = pinning && assigned == key ? "thread.pin" : pinned ? "thread.pin.reorder" : "thread.active.reorder";
     dispatch(model, assigned, Cmd{type, std::nullopt, assignment.orderKey.toStdString()});
@@ -500,6 +520,8 @@ struct Projection {
   std::vector<ProjectView> projects;
   std::string scope;
   std::vector<std::string> selected;
+  bool workingShelf = false;
+  size_t working = 0;
   bool operator==(const Projection&) const = default;
 };
 
@@ -525,6 +547,7 @@ std::ostream& operator<<(std::ostream& os, const Projection& view) {
   rows("active", view.active);
   rows("snoozed", view.snoozed);
   rows("settled", view.settled);
+  os << "\n  workingShelf " << view.workingShelf << ", working " << view.working;
   os << "\n  settledTotal " << view.settledTotal << ", scope '" << view.scope << "', selected";
   for (const std::string& key : view.selected) os << " " << key;
   os << "\n  projects:";
@@ -575,6 +598,7 @@ Projection expected(const Model& model, const std::string& open = {}) {
   view.settled = rows(paged, false, true);
   view.settledTotal = int(sections.settled.size());
   view.scope = model.scope ? groupKey(*model.scope) : "";
+  view.workingShelf = model.workingShelf;
   for (const std::string& key : listed) {
     if (model.selected.count(key)) view.selected.push_back(key);
   }
@@ -648,6 +672,8 @@ Projection read(const QVariantMap& state) {
   view.snoozed = rows("snoozed");
   view.settled = rows("settled");
   view.settledTotal = state.value(QStringLiteral("settledTotal")).toInt();
+  view.workingShelf = state.value(QStringLiteral("workingShelf")).toBool();
+  view.working = size_t(state.value(QStringLiteral("working")).toList().size());
   view.scope = string(state.value(QStringLiteral("scopeProjectKey")));
   for (const QVariant& key : state.value(QStringLiteral("selectedKeys")).toList()) view.selected.push_back(key.toString().toStdString());
   for (const QVariant& value : state.value(QStringLiteral("projects")).toList()) {
@@ -1306,6 +1332,7 @@ struct MoveRow : Command {
   std::optional<std::pair<std::string, std::vector<std::string>>> plan(const Model& model) const {
     const std::string section = sectionOf(model, key);
     if (section != "pinned" && section != "active") return std::nullopt;
+    if (section == "active" && model.workingShelf) return std::nullopt;
     std::vector<std::string> ordered = sectionKeys(model, section);
     const auto index = std::find(ordered.begin(), ordered.end(), key) - ordered.begin();
     const auto other = index + (up ? -1 : 1);
@@ -1359,6 +1386,7 @@ struct DropRow : Command {
     const std::string from = sectionOf(model, key);
     if (from.empty() || (section != "pinned" && section != "active")) return std::nullopt;
     if (section == from && placed(model) == sectionKeys(model, section)) return std::nullopt;
+    if (section == from && section == "active" && model.workingShelf) return std::nullopt;
     if (section != from && section != "pinned") return std::nullopt;
     return std::pair{section, placed(model)};
   }
@@ -1366,7 +1394,7 @@ struct DropRow : Command {
     const std::string from = sectionOf(model, key);
     if (from.empty() || section == "snoozed") return normalize(model);
     if (section == from) {
-      if ((section == "pinned" || section == "active") && placed(model) != sectionKeys(model, section)) {
+      if ((section == "pinned" || (section == "active" && !model.workingShelf)) && placed(model) != sectionKeys(model, section)) {
         arrange(model, section, placed(model), key);
       }
     } else if (section == "pinned") {
@@ -1490,6 +1518,24 @@ struct ShowPlugins : Command {
     sut.expect(next);
   }
   void show(std::ostream& os) const override { os << "ShowPlugins"; }
+};
+
+// The user turns the Working section on or off on this device.
+struct WorkingShelf : Command {
+  explicit WorkingShelf(const Model&) {}
+
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.connected); }
+  void apply(Model& model) const override {
+    model.workingShelf = !model.workingShelf;
+    normalize(model);
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    RC_ASSERT(sut.native->controller<SettingsController>()->writeDevice(QStringLiteral("sidebarWorkingShelfEnabled"), next.workingShelf));
+    sut.expect(next);
+  }
+  void show(std::ostream& os) const override { os << "WorkingShelf"; }
 };
 
 // The MC holds its answers to commands, or gives them.
@@ -1730,6 +1776,169 @@ std::string genOrderKey() {
   return key;
 }
 
+// --- The Working section's grace ---------------------------------------------
+
+// Threads as the Working section sees them, and a clock in milliseconds; each
+// step changes one and the tracker observes the list again. The model is what
+// the scenarios say: a thread that stops working stays two seconds unless it
+// asks for something, fails or is moved, and leaving is its return.
+struct Busy {
+  bool present = true;
+  bool running = false;
+  bool approval = false;
+  bool failed = false;
+  std::string placement;  // "", pinned, snoozed, settled or archived
+  int arranged = 0;       // its active order key
+};
+
+struct Shelf {
+  qint64 now = 0;
+  std::vector<Busy> threads = std::vector<Busy>(3);
+  // What the tracker should hold per thread.
+  std::vector<bool> inSection = std::vector<bool>(3);
+  std::vector<std::optional<qint64>> leaveBy = std::vector<std::optional<qint64>>(3);
+  std::vector<int> seenArranged = std::vector<int>(3);
+  std::vector<std::optional<qint64>> returned = std::vector<std::optional<qint64>>(3);
+};
+
+QString shelfKey(size_t index) {
+  return QStringLiteral("e:w%1").arg(index);
+}
+
+sidebar::Thread shelfThread(size_t index, const Busy& busy) {
+  sidebar::Thread thread;
+  thread.environmentId = QStringLiteral("e");
+  thread.id = QStringLiteral("w%1").arg(index);
+  thread.createdAt = iso(0);
+  if (busy.running) thread.runtime = sidebar::RuntimeSummary{QStringLiteral("running"), QStringLiteral("r"), std::nullopt, iso(0)};
+  thread.hasPendingApprovals = busy.approval;
+  if (busy.failed) thread.latestRun = sidebar::RunSummary{QStringLiteral("r"), QStringLiteral("failed"), iso(0), iso(0), iso(0)};
+  if (busy.placement == "pinned") thread.pinnedAt = iso(0);
+  if (busy.placement == "snoozed") {
+    thread.snoozedAt = iso(0);
+    thread.snoozedUntil = iso(24 * 60);
+  }
+  if (busy.placement == "settled") thread.settledOverride = QStringLiteral("settled");
+  if (busy.placement == "archived") thread.archivedAt = iso(0);
+  thread.activeOrderKey = QStringLiteral("a%1").arg(busy.arranged);
+  return thread;
+}
+
+// What one observe() does to the model.
+void observeShelf(Shelf& shelf) {
+  for (size_t i = 0; i < shelf.threads.size(); ++i) {
+    const Busy& busy = shelf.threads[i];
+    if (!busy.present) {
+      shelf.inSection[i] = false;
+      shelf.leaveBy[i].reset();
+      shelf.returned[i].reset();
+      continue;
+    }
+    const bool was = shelf.inSection[i];
+    if (busy.running && !busy.approval) {
+      shelf.inSection[i] = true;
+      shelf.leaveBy[i].reset();
+    } else if (was && !busy.approval && !busy.failed && busy.placement.empty() && busy.arranged == shelf.seenArranged[i]) {
+      if (!shelf.leaveBy[i]) shelf.leaveBy[i] = shelf.now + sidebar::kWorkingExitGraceMs;
+      shelf.inSection[i] = *shelf.leaveBy[i] > shelf.now;
+    } else {
+      shelf.inSection[i] = false;
+    }
+    if (!shelf.inSection[i]) shelf.leaveBy[i].reset();
+    if (was && !shelf.inSection[i]) shelf.returned[i] = shelf.now;
+    shelf.seenArranged[i] = busy.arranged;
+  }
+}
+
+struct ShelfSut {
+  sidebar::WorkingTracker tracker;
+
+  void observe(const Shelf& shelf) {
+    QList<sidebar::Thread> threads;
+    for (size_t i = 0; i < shelf.threads.size(); ++i) {
+      if (shelf.threads[i].present) threads.append(shelfThread(i, shelf.threads[i]));
+    }
+    tracker.observe(threads, kT0.toMSecsSinceEpoch() + shelf.now);
+  }
+
+  void expect(const Shelf& shelf) const {
+    std::optional<qint64> next;
+    for (size_t i = 0; i < shelf.threads.size(); ++i) {
+      const std::string name = "w" + std::to_string(i);
+      if (shelf.threads[i].present) {
+        const bool listed = tracker.isWorking(shelfThread(i, shelf.threads[i]));
+        if (listed != shelf.inSection[i]) RC_FAIL(name + (listed ? " is in the Working section" : " is not in the Working section"));
+      }
+      const auto returned = tracker.returnedAt(shelfKey(i));
+      const auto want = shelf.returned[i] ? std::optional<qint64>(kT0.toMSecsSinceEpoch() + *shelf.returned[i]) : std::nullopt;
+      if (returned != want) RC_FAIL(name + " returned at the wrong time");
+      if (shelf.leaveBy[i] && (!next || *shelf.leaveBy[i] < *next)) next = shelf.leaveBy[i];
+    }
+    const auto deadline = tracker.nextDeadline();
+    RC_ASSERT(deadline == (next ? std::optional<qint64>(kT0.toMSecsSinceEpoch() + *next) : std::nullopt));
+  }
+};
+
+using ShelfCommand = rc::state::Command<Shelf, ShelfSut>;
+
+// Time passes, up to a little past the grace, and the sidebar refreshes.
+struct ShelfTick : ShelfCommand {
+  qint64 ms = *rc::gen::element<qint64>(0, 1, 500, 1999, 2000, 2001, 3000);
+  explicit ShelfTick(const Shelf&) {}
+  void apply(Shelf& shelf) const override {
+    shelf.now += ms;
+    observeShelf(shelf);
+  }
+  void run(const Shelf& shelf, ShelfSut& sut) const override {
+    Shelf next = shelf;
+    apply(next);
+    sut.observe(next);
+    sut.expect(next);
+  }
+  void show(std::ostream& os) const override { os << "Tick(+" << ms << "ms)"; }
+};
+
+// One thread changes: a run starts or ends, it asks or answers, fails, the
+// user moves it, or it goes and comes back.
+struct ShelfChange : ShelfCommand {
+  size_t index = size_t(*rc::gen::inRange(0, 3));
+  std::string what = *rc::gen::element<std::string>("run", "run", "end", "end", "approval", "fail", "place", "arrange", "presence");
+  std::string placement = *rc::gen::element<std::string>("", "", "pinned", "snoozed", "settled", "archived");
+  explicit ShelfChange(const Shelf&) {}
+  void apply(Shelf& shelf) const override {
+    Busy& busy = shelf.threads[index];
+    if (what == "run") {
+      busy.running = true;
+      busy.failed = false;
+    } else if (what == "end") {
+      busy.running = false;
+    } else if (what == "approval") {
+      busy.approval = !busy.approval;
+    } else if (what == "fail") {
+      busy.running = false;
+      busy.failed = true;
+    } else if (what == "place") {
+      busy.placement = placement;
+    } else if (what == "arrange") {
+      ++busy.arranged;
+    } else {
+      busy.present = !busy.present;
+    }
+    observeShelf(shelf);
+  }
+  void run(const Shelf& shelf, ShelfSut& sut) const override {
+    Shelf next = shelf;
+    apply(next);
+    sut.observe(next);
+    sut.expect(next);
+  }
+  void show(std::ostream& os) const override {
+    os << "Change(w" << index << " " << what;
+    if (what == "place") os << " '" << placement << "'";
+    os << ")";
+  }
+};
+
 }  // namespace
 
 class SidebarProp : public QObject {
@@ -1745,7 +1954,17 @@ private slots:
           0.5, rc::state::gen::commands(initial, rc::state::gen::execOneOfWithArgs<
                                                      CreateThread, CreateThread, CreateThread, ChangeThread, ChangeProject, MoveThread,
                                                      MoveThread, SetOnline, Membership, Tick, Resend, Disconnect, Reconnect, RowAction,
-                                                     RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, ShowMore, ShowPlugins, Hold>()));
+                                                     RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, ShowMore, ShowPlugins, WorkingShelf, Hold>()));
+      rc::state::runAll(commands, initial, sut);
+    }));
+  }
+
+  void workingThreadsWaitBeforeTheyLeave() {
+    QVERIFY(rc::check("a thread that stops working stays two seconds, unless it asks, fails or is moved", [] {
+      const Shelf initial;
+      ShelfSut sut;
+      const auto commands = *rc::state::gen::commands(
+          initial, rc::state::gen::execOneOfWithArgs<ShelfTick, ShelfTick, ShelfChange, ShelfChange, ShelfChange>());
       rc::state::runAll(commands, initial, sut);
     }));
   }
@@ -1814,6 +2033,62 @@ private slots:
         if (l.has_value() != r.has_value()) return pinned ? l.has_value() : !l.has_value();
         if (l) return *l < *r;
         return section.shown.indexOf(left) < section.shown.indexOf(right);
+      });
+      if (sorted != ordered) {
+        RC_FAIL("ordered " + ordered.join(QLatin1Char(',')).toStdString() + ", sorts as " + sorted.join(QLatin1Char(',')).toStdString());
+      }
+    }));
+  }
+
+  void reorderBesideOfflineRowsWritesOnlyWritableRows() {
+    QVERIFY(rc::check("planWritableReorder writes only the writable rows, and what it writes sorts as dropped", [] {
+      const bool pinned = *rc::gen::arbitrary<bool>();
+      const int count = *rc::gen::inRange(1, 7);
+      const int keyed = *rc::gen::inRange(0, count + 1);
+      const QStringList spread = sidebar::spreadOrderKeys(keyed);
+      QStringList shown;
+      QHash<QString, sidebar::Nullable> orderKeys;
+      QSet<QString> writable;
+      for (int i = 0; i < count; ++i) {
+        const QString key = QStringLiteral("e:r%1").arg(i);
+        shown.append(key);
+        const int slot = pinned ? i : i - (count - keyed);
+        orderKeys.insert(key, slot >= 0 && slot < keyed ? sidebar::Nullable(spread.at(slot)) : std::nullopt);
+        if (*rc::gen::arbitrary<bool>()) writable.insert(key);
+      }
+      const bool everyRow = *rc::gen::arbitrary<bool>();
+      if (everyRow) writable = QSet<QString>(shown.begin(), shown.end());
+      const int from = *rc::gen::inRange(0, count);
+      const int to = *rc::gen::inRange(0, count);
+      QStringList ordered = shown;
+      ordered.move(from, to);
+      const QString moved = shown.at(from);
+      RC_TAG(pinned ? "pinned" : "active");
+
+      const auto planned = sidebar::planWritableReorder(ordered, orderKeys, moved, writable, !pinned);
+      RC_TAG(planned ? "stored" : "refused");
+      if (everyRow) {
+        // With every row writable it is planReorder.
+        RC_ASSERT(bool(planned));
+        const QList<sidebar::OrderAssignment> plain = sidebar::planReorder(ordered, orderKeys, moved);
+        RC_ASSERT(planned->size() == plain.size());
+        for (qsizetype i = 0; i < plain.size(); ++i) {
+          RC_ASSERT(planned->at(i).key == plain.at(i).key && planned->at(i).orderKey == plain.at(i).orderKey);
+        }
+      }
+      if (!planned) return;
+      QHash<QString, sidebar::Nullable> after = orderKeys;
+      for (const sidebar::OrderAssignment& assignment : *planned) {
+        RC_ASSERT(writable.contains(assignment.key));
+        after.insert(assignment.key, assignment.orderKey);
+      }
+      QStringList sorted = shown;
+      std::stable_sort(sorted.begin(), sorted.end(), [&](const QString& left, const QString& right) {
+        const sidebar::Nullable& l = after.value(left);
+        const sidebar::Nullable& r = after.value(right);
+        if (l.has_value() != r.has_value()) return pinned ? l.has_value() : !l.has_value();
+        if (l) return *l < *r;
+        return shown.indexOf(left) < shown.indexOf(right);
       });
       if (sorted != ordered) {
         RC_FAIL("ordered " + ordered.join(QLatin1Char(',')).toStdString() + ", sorts as " + sorted.join(QLatin1Char(',')).toStdString());

@@ -37,6 +37,14 @@ class ShellStore;
 // (the folder explorer's) Settings → Project opens on that project first.
 // Settings asks about several of a logical project's checkouts at once
 // (askToRemove).
+//
+// `project.rename {projectKey}` (`<environmentId>:<projectId>`, the legacy
+// sidebar's project menu) asks for the folder's new name: it publishes
+// `projectRename` {projectKey, title, environment} until
+// `project.rename.submit {title}` renames it or `project.rename.cancel`
+// closes it. An empty name is refused and the question stays; the same name
+// closes it without asking the MC; a name the MC refuses is told, and the
+// question stays.
 class ProjectController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -73,12 +81,16 @@ private:
   };
 
   void openFolder(const QString& path, bool newThread = false);
+  // Adds the folder at `path` on the MC's machine, whichever machine this is.
+  void addOnEnvironment(const QString& path);
   // Opens the project's latest thread still in play, else its draft.
   void openProject(const QString& environmentId, const QString& projectId);
   // Moves a scoped sidebar to the project, so what was added is where the user is.
   void followInSidebar(const QString& environmentId, const QString& projectId);
   void askToRemove(const QString& projectKey);
   void confirmRemoval();
+  void submitRename(const QString& title);
+  void publishRename();
   // Deletes the first of `keys`, then the rest; a failure stops there.
   void remove(QStringList keys, const QString& title);
   void publish();
@@ -91,6 +103,8 @@ private:
   bool m_active = false;
   // The projects waiting for the user's answer.
   std::optional<Removal> m_removal;
+  // The project whose new name is asked for.
+  QString m_renaming;
   // A project the MC created whose row has not reached the shell yet; its
   // draft opens when the row does.
   std::optional<std::pair<QString, QString>> m_created;

@@ -120,7 +120,7 @@ defmodule HalC2.StorageCleanup do
         mc == node(),
         thread["deletedAt"] == nil do
       running? =
-        thread["activeRunId"] != nil or (thread["pendingBackgroundTasks"] || []) != [] or
+        thread["activeRunId"] != nil or running_background?(thread) or
           session?(id)
 
       {id, activity_at(thread), running?}
@@ -198,8 +198,12 @@ defmodule HalC2.StorageCleanup do
   defp idle?(thread) do
     thread["branch"] != nil and thread["activeRunId"] == nil and
       thread["status"] in ["idle", "failed", "completed", "interrupted", "cancelled"] and
-      (thread["pendingBackgroundTasks"] || []) == [] and thread["pendingRuntimeRequest"] == nil
+      not running_background?(thread) and thread["pendingRuntimeRequest"] == nil
   end
+
+  # A row stored before `runningBackgroundTasks` listed all of it as pending.
+  defp running_background?(thread),
+    do: (thread["runningBackgroundTasks"] || thread["pendingBackgroundTasks"] || []) != []
 
   # A running terminal, or a provider session of a thread, working in the worktree.
   defp busy?(path) do

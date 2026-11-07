@@ -50,6 +50,7 @@ const QList<Row>& rows() {
       {"sidebarAutoSettleOnMerge", false, true},
       {"sidebarAutoSettleAfterDays", false, 3},
       {"sidebarShowSettledPluginThreads", false, false},
+      {"sidebarWorkingShelfEnabled", true, true},
       {"notificationMode", true, QStringLiteral("off")},
       {"inAppNotificationsEnabled", true, false},
       {"timestampFormat", true, QStringLiteral("locale")},
@@ -78,6 +79,10 @@ const QList<Row>& rows() {
       {"planModeEnabled", true, false},
       {"contextWindowMeterEnabled", true, false},
       {"legacySidebarEnabled", true, false},
+      // The legacy sidebar's (SidebarController's tree): its options menu sorts, Settings counts.
+      {"sidebarProjectSortOrder", true, QStringLiteral("updated_at")},
+      {"sidebarThreadSortOrder", true, QStringLiteral("updated_at")},
+      {"sidebarThreadPreviewCount", true, 6},
       // Appearance.
       {"appearanceContrast", true, 100},
       {"glassOpacity", true, 96},

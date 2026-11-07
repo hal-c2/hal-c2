@@ -2350,6 +2350,26 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
   return count == 1 ? tr("1 attachment") : tr("%1 attachments").arg(count);
 }
 
+QSet<QString> ComposerController::unsentThreads() const {
+  QSet<QString> threads;
+  for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
+    if (m_store->thread(it.key()) && draftPreview(it.key())) threads.insert(it.key());
+  }
+  return threads;
+}
+
+void ComposerController::discardDraft(const QString& target) {
+  const auto kept = m_drafts.find(target);
+  if (kept == m_drafts.end() || !m_store->thread(target)) return;
+  kept->attachments.clear();
+  kept->excerpts.clear();
+  setText(target, QString(), 0);
+  // The attachments went too, which the text alone does not save; other
+  // windows' composers and every sidebar see the empty draft.
+  save();
+  for (const auto& window : NativeShell::of(this)->shell()->windows()) window->sidebar()->draftEdited(target);
+}
+
 namespace {
 
 template <typename Excerpts>
@@ -3067,9 +3087,11 @@ void ComposerController::publish() {
     m_publishedStash = stash;
     m_bridge->publish(QStringLiteral("composerStash"), stash);
   }
-  // Other windows list the draft by what it holds.
-  if (!m_draftId.isEmpty()) {
-    for (const auto& window : NativeShell::of(this)->shell()->windows()) window->sidebar()->draftEdited(m_draftId);
+  // Other windows list the draft by what it holds, and mark a thread's row
+  // while its composer holds something unsent.
+  const QString edited = m_draftId.isEmpty() ? m_thread : m_draftId;
+  if (!edited.isEmpty()) {
+    for (const auto& window : NativeShell::of(this)->shell()->windows()) window->sidebar()->draftEdited(edited);
   }
 }
 

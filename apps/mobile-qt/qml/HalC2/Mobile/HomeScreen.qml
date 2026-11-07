@@ -52,6 +52,14 @@ ColumnLayout {
         }
 
         MobileIconButton {
+            objectName: "addProject"
+            iconName: "folder-plus"
+            label: qsTr("Add project")
+            enabled: (Shell.state.route ?? null) !== null
+            onClicked: addProjectDialog.open()
+        }
+
+        MobileIconButton {
             objectName: "newThread"
             iconName: "square-pen"
             label: qsTr("New thread")
@@ -60,6 +68,10 @@ ColumnLayout {
             // several, the shell asks which (DraftController).
             onClicked: Shell.dispatch("thread.new", screen.scope !== null ? { projectKey: screen.scope } : {})
         }
+    }
+
+    AddProjectDialog {
+        id: addProjectDialog
     }
 
     // The way out of a narrowed list, and the way to see that it is one.
