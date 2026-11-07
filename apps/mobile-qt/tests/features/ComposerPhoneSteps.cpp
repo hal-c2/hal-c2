@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QInputMethodEvent>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -398,6 +399,85 @@ const Steps phoneSteps([] {
   });
   step(S("the user is told the server does not support file attachments"), [told](World& world, const Captures&, const Table&) {
     told(world, S("The server does not support file attachments"));
+  });
+
+  // Dictation lands as the input method's composing text, then its commit.
+  step(S("the user dictated into the draft and dictation has finished"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    expect(input->hasActiveFocus(), S("the composer did not take the keyboard"));
+    QInputMethodEvent composing(S("fix the bug"), {});
+    QCoreApplication::sendEvent(input, &composing);
+    QInputMethodEvent committed;
+    committed.setCommitString(S("fix the bug"));
+    QCoreApplication::sendEvent(input, &committed);
+    world.sync();
+    expect(input->property("text").toString() == QLatin1String("fix the bug"),
+           S("the dictation landed as %1").arg(input->property("text").toString()));
+  });
+  step(S("the draft ends with %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.state(S("composer")).toMap().value(S("text")).toString().endsWith(c[0]); },
+                  [&] { return S("the draft to end with %1; it is %2").arg(c[0], show(world.state(S("composer")))); });
+  });
+  step(S("the message can be sent"), [dispatched](World& world, const Captures&, const Table&) {
+    world.tap(S("primaryAction"));
+    world.waitFor([&] { return dispatched(world).size() == 1; }, S("the message to be sent"));
+    expect(dispatched(world).constFirst().value(QLatin1String("text")).toString().endsWith(S("and the tests")),
+           S("the MC was sent %1").arg(show(dispatched(world).constFirst().toVariantMap())));
+  });
+
+  // The caret stays in view however the prompt is being written.
+  step(S("an Android phone using (FUTO|HeliBoard|Gboard)"), [](World&, const Captures&, const Table&) {
+    // The keyboard's make changes nothing the editor owes the caret.
+  });
+  step(S("a new thread with no project"), [](World& world, const Captures&, const Table&) {
+    world.back();
+    world.waitFor([&] { return world.state(S("route")).toMap().value(S("kind")) == QLatin1String("home") && world.find(S("newThread")) != nullptr; },
+                  S("the home screen"));
+    world.tap(S("newThread"));
+    world.waitFor([&] { return world.state(S("route")).toMap().value(S("kind")) == QLatin1String("draft"); }, S("a draft"));
+    world.item(S("composer"));
+  });
+  step(S("a saved draft reopened from the thread list"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    world.type(S("a draft kept from before, with enough words to matter"));
+    world.waitFor([&] { return world.state(S("composer")).toMap().value(S("text")).toString().startsWith(S("a draft kept")); },
+                  S("the draft to be kept"));
+    world.back();
+    world.waitFor([&] { return world.find(S("homeScreen")) != nullptr; }, S("the home screen"));
+    openThread(world, S("Fix checkout"));
+    QQuickItem* reopened = world.item(S("input"));
+    world.waitFor([&] { return reopened->property("text").toString().startsWith(S("a draft kept")); },
+                  [&] { return S("the saved draft; the composer reads %1").arg(reopened->property("text").toString()); });
+  });
+  step(S("the user types until the prompt wraps past the lines the composer shows"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    for (int n = 0; n < 24; ++n) world.type(S("and then the checkout totals are checked again "));
+    world.sync();
+    QObject* flick = world.item(S("promptScroll"))->property("contentItem").value<QObject*>();
+    expect(flick != nullptr, S("the prompt has no scroller"));
+    expect(input->property("contentHeight").toDouble() > flick->property("height").toDouble(),
+           S("the prompt fits the lines shown after all"));
+  });
+  step(S("the line with the caret stays in view"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    QObject* flick = world.item(S("promptScroll"))->property("contentItem").value<QObject*>();
+    world.waitFor(
+        [&] {
+          const QRectF caret = input->property("cursorRectangle").toRectF();
+          const double y = input->y() + caret.y();
+          const double top = flick->property("contentY").toDouble();
+          return y >= top - 1 && y + caret.height() <= top + flick->property("height").toDouble() + 1;
+        },
+        [&] {
+          const QRectF caret = input->property("cursorRectangle").toRectF();
+          return S("the caret at %1 in view %2..%3").arg(input->y() + caret.y()).arg(flick->property("contentY").toDouble()).arg(flick->property("contentY").toDouble() + flick->property("height").toDouble());
+        });
   });
 
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

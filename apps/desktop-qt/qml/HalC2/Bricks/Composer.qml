@@ -429,6 +429,9 @@ Rectangle {
             return;
         }
         textDebounce.stop();
+        // What the keyboard is still composing (dictation, a correction it
+        // is about to make) is part of the message: settle it first.
+        Qt.inputMethod.commit();
         const text = input.text;
         // The controller clears its published prompt only after accepting the send.
         // Until then this remains the user's recoverable draft.
@@ -1045,6 +1048,22 @@ Rectangle {
                     }
 
                     ScrollView {
+                        id: promptScroll
+
+                        // The caret's line stays in view as the prompt wraps
+                        // past the lines shown, whatever keyboard is typing.
+                        function keepCaretInView() {
+                            const flick = promptScroll.contentItem;
+                            if (!flick || flick.contentY === undefined)
+                                return;
+                            const caret = input.cursorRectangle;
+                            const y = input.y + caret.y;
+                            if (y < flick.contentY)
+                                flick.contentY = y;
+                            else if (y + caret.height > flick.contentY + flick.height)
+                                flick.contentY = y + caret.height - flick.height;
+                        }
+
                         objectName: "promptScroll"
                         Layout.fillWidth: true
                         // Two lines at rest, one while scrolled away, and up to
@@ -1076,6 +1095,7 @@ Rectangle {
                             // A resting composer comes back when the user turns to it.
                             onActiveFocusChanged: if (activeFocus) composer.scrollCollapsed = false
                             onPressed: composer.scrollCollapsed = false
+                            onCursorRectangleChanged: promptScroll.keepCaretInView()
 
                             padding: 0
                             enabled: composer.ready && !composer.model.editorDisabled
