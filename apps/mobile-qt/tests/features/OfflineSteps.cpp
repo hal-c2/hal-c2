@@ -310,10 +310,6 @@ const Steps steps([] {
     expect(world.shows(S("What was loaded stays readable until the connection returns.")), S("the notice says: %1").arg(screen(world)));
   });
   step(S("the user opens a thread the phone has never loaded"), [](World& world, const Captures&, const Table&) { beInThread(world, kNeverOpened); });
-  step(S("the user is told the thread will load when the connection returns"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.shows(S("This thread will load when the connection returns.")); },
-                  [&] { return S("the thread to say it loads later; the screen says: %1").arg(screen(world)); });
-  });
   step(S("the user is told the app will keep retrying automatically"), [](World& world, const Captures&, const Table&) {
     // Something changed meanwhile, which the phone hears of once it is back.
     world.mc.threads.insert(S("thread-away"), {{S("id"), S("thread-away")},
