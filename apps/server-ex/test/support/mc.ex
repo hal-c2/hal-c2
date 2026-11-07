@@ -732,11 +732,13 @@ defmodule HalC2.Test.Mc do
   (`{module, beam}`, or `{module, beam, running beam}` for one with no beam file) in
   place of the code it runs. Those modules join the running release at the code
   that runs, and are loaded back when the scenario ends. `changes["sys.config"]` is
-  the release's configuration rather than a manifest entry.
+  the release's configuration rather than a manifest entry, and `changes["bin"]`
+  (`%{name => script}`) the bundle's launchers.
   """
   def bundle(mc, version, changes \\ %{}, modules \\ []) do
     dir = tmp_dir(mc, "bundle")
     {sys, changes} = Map.pop(changes, "sys.config", [])
+    {bin, changes} = Map.pop(changes, "bin", %{})
     {root, from} = {HalC2.Upgrade.release_root(), HalC2.Upgrade.version()}
 
     running =
@@ -779,13 +781,20 @@ defmodule HalC2.Test.Mc do
         HalC2.Upgrade.Source.file_name(version, HalC2.Upgrade.platform())
       )
 
+    for {name, script} <- bin do
+      file = Path.join([dir, "bin", name])
+      File.mkdir_p!(Path.dirname(file))
+      File.write!(file, script)
+      File.chmod!(file, 0o755)
+    end
+
     :ok =
       :erl_tar.create(
         String.to_charlist(path),
         [
           {~c"releases", String.to_charlist(Path.join(dir, "releases"))},
           {~c"lib", String.to_charlist(Path.join(dir, "lib"))}
-        ],
+        ] ++ if(bin == %{}, do: [], else: [{~c"bin", String.to_charlist(Path.join(dir, "bin"))}]),
         [:compressed]
       )
 

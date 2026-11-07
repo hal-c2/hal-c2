@@ -342,7 +342,19 @@ defmodule HalC2.Upgrade do
       _ -> :ok
     end
 
+    if root = release_root(), do: prune(root)
     {:noreply, state}
+  end
+
+  # Every start from a release, however it was started (the service, an SSH host
+  # running the installed version directly, by hand), removes what no version uses.
+  defp prune(root) do
+    case HalC2.Upgrade.Prune.run(root, version()) do
+      {:ok, _removed} -> :ok
+      {:error, reason} -> Logger.info("old versions are kept: #{reason}")
+    end
+  rescue
+    error -> Logger.warning("removing old versions failed: #{Exception.message(error)}")
   end
 
   # One update at a time: it runs off this process, and a request while it does is
@@ -379,6 +391,9 @@ defmodule HalC2.Upgrade do
       root == nil ->
         failure("This MC runs from a checkout; update it with `mix hal_c2.upgrade`.")
 
+      not exact?(target) ->
+        failure("#{inspect(target)} is not an exact version; name one such as 1.2.3.")
+
       target == from ->
         failure("This MC already runs #{target}.")
 
@@ -392,7 +407,7 @@ defmodule HalC2.Upgrade do
           plan = plan(bundle)
 
           case stage(plan, bundle, root, target) do
-            :ok -> activate(plan, root, from, target, outcome, result)
+            :ok -> activate(plan, {bundle, root}, from, target, outcome, result)
             {:error, reason} -> failure("Installing #{target} failed: #{reason}")
           end
         end
@@ -400,6 +415,9 @@ defmodule HalC2.Upgrade do
   end
 
   defp run(_input, _progress), do: failure("No target version was given.")
+
+  # A version names one release; "latest", a range or "1.2" would leave the MC to guess.
+  defp exact?(target), do: is_binary(target) and match?({:ok, _}, Version.parse(target))
 
   # The bundle's release beside the running one, under `root`.
   defp stage(plan, bundle, root, target) do
@@ -423,15 +441,15 @@ defmodule HalC2.Upgrade do
     end
   end
 
-  defp activate({:restart, reasons}, root, _from, target, outcome, result),
-    do: restart(root, target, outcome, result, Enum.join(reasons, "; "))
+  defp activate({:restart, reasons}, staged, _from, target, outcome, result),
+    do: restart(staged, target, outcome, result, Enum.join(reasons, "; "))
 
-  defp activate({:in_place, _how}, root, from, target, outcome, result) do
+  defp activate({:in_place, how}, {bundle, root} = staged, from, target, outcome, result) do
     spec = release_spec(root, from, target)
 
     case HalC2.Upgrade.Release.plan(spec) do
       {:restart, reasons} ->
-        restart(root, target, outcome, result, Enum.join(reasons, "; "))
+        restart(staged, target, outcome, result, Enum.join(reasons, "; "))
 
       {:ok, plan} ->
         config =
@@ -446,6 +464,9 @@ defmodule HalC2.Upgrade do
 
         case HalC2.Upgrade.Release.install(spec, plan, config) do
           {:ok, report} ->
+            with {:error, reason} <- if(how == :release, do: copy_bin(bundle, root), else: :ok),
+                 do: Logger.warning("#{target}'s launchers did not go in: #{reason}")
+
             moved(target, outcome, %{"status" => "committed"})
 
             Logger.info(
@@ -481,7 +502,7 @@ defmodule HalC2.Upgrade do
             )
 
             record(Map.merge(outcome, %{"status" => "rolled-back", "reason" => why}))
-            restart(root, target, outcome, result, why)
+            restart(staged, target, outcome, result, why)
         end
     end
   end
@@ -496,8 +517,13 @@ defmodule HalC2.Upgrade do
     __MODULE__.after_upgrade()
   end
 
-  defp restart(root, target, outcome, result, why) do
-    if System.get_env("HAL_C2_SERVICE") == "1" do
+  # The staged version is asked first whether it can run here (`HalC2.Upgrade.Preflight`);
+  # until it says yes nothing the next start reads has changed, so a refusal leaves
+  # the MC as it was. Its launchers go in only then.
+  defp restart({bundle, root}, target, outcome, result, why) do
+    with true <- System.get_env("HAL_C2_SERVICE") == "1" || :not_service,
+         :ok <- HalC2.Upgrade.Preflight.run(bundle, target),
+         {:launchers, :ok} <- {:launchers, copy_bin(bundle, root)} do
       File.cp!(start_data(root), previous_start(root))
       set_start_version(root, target)
       record(Map.put(outcome, "status", "restarting"))
@@ -512,9 +538,18 @@ defmodule HalC2.Upgrade do
 
       {:ok, result}
     else
-      failure(
-        "#{target} needs a restart (#{why}), and this MC was not started by bin/hal-c2-service, which would start it again."
-      )
+      :not_service ->
+        failure(
+          "#{target} needs a restart (#{why}), and this MC was not started by bin/hal-c2-service, which would start it again. " <>
+            "Remote updates that restart the MC need the background service: run `hal-c2-mc install` on the server machine."
+        )
+
+      {:launchers, {:error, reason}} ->
+        failure("Installing #{target}'s launchers failed: #{reason}")
+
+      {:error, reason} ->
+        Logger.warning("#{target} cannot run on this machine, so the MC stays on it: #{reason}")
+        failure("#{target} cannot run on this machine: #{reason}")
     end
   end
 
@@ -526,27 +561,22 @@ defmodule HalC2.Upgrade do
              {:error, "the bundle is not #{target}"},
          :ok <- copy_new(bundle, root, "lib"),
          :ok <- copy_new(bundle, root, "releases"),
-         :ok <- copy_new(bundle, root, "."),
-         :ok <- copy_bin(bundle, root) do
+         :ok <- copy_new(bundle, root, ".") do
       :ok
     end
   end
 
-  # Versioned directories never change once written; only missing ones are copied.
-  defp copy_new(bundle, root, "." = _dir) do
-    for erts <- Path.wildcard(Path.join(bundle, "erts-*")),
-        target = Path.join(root, Path.basename(erts)),
-        not File.exists?(target),
-        do: File.cp_r!(erts, target)
-
-    :ok
-  end
-
+  # Versioned directories never change once written; only missing ones are copied, each
+  # whole or not at all (`.partial` until it is), so an install cut off is redone.
   defp copy_new(bundle, root, dir) do
-    for entry <- File.ls!(Path.join(bundle, dir)),
-        source = Path.join([bundle, dir, entry]),
+    sources =
+      if dir == ".",
+        do: Path.wildcard(Path.join(bundle, "erts-*")),
+        else: for(entry <- File.ls!(Path.join(bundle, dir)), do: Path.join([bundle, dir, entry]))
+
+    for source <- sources,
         File.dir?(source),
-        target = Path.join([root, dir, entry]),
+        target = Path.join([root, dir, Path.basename(source)]) |> Path.expand(),
         not File.exists?(target) do
       staged = target <> ".partial"
       File.rm_rf!(staged)
@@ -559,9 +589,12 @@ defmodule HalC2.Upgrade do
     error -> {:error, Exception.message(error)}
   end
 
+  # The launchers of a bundle this MC checked, into its own release root.
+  # sobelow_skip ["Traversal.FileModule"]
   defp copy_bin(bundle, root) do
     for file <- Path.wildcard(Path.join([bundle, "bin", "*"])) do
       target = Path.join([root, "bin", Path.basename(file)])
+      File.mkdir_p!(Path.dirname(target))
       File.cp!(file, target <> ".new")
       File.rename!(target <> ".new", target)
     end
