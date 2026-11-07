@@ -111,6 +111,7 @@ defmodule HalC2.Application do
       HalC2.ProviderUsageLimits,
       HalC2.UsageLimitSources,
       HalC2.StorageCleanup,
+      HalC2.Store.Compactor,
       HalC2.Orchestration.IdleSessions,
       {Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
       {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
