@@ -2301,21 +2301,19 @@ defmodule HalC2.Codex.ThreadRuntime do
       http_429?(error)
   end
 
+  # Only the structured status counts: a message that merely contains the
+  # characters "429" ("context exceeds 14290 tokens") is an ordinary failure,
+  # and calling it a usage limit would hold the queue for a reset that never
+  # comes.
   defp http_429?(error) do
-    info = error["codexErrorInfo"]
+    case error["codexErrorInfo"] do
+      %{} = info ->
+        info["httpStatusCode"] == 429 or
+          Enum.any?(Map.values(info), &match?(%{"httpStatusCode" => 429}, &1))
 
-    from_info =
-      case info do
-        %{} ->
-          info["httpStatusCode"] == 429 or
-            Enum.any?(Map.values(info), &match?(%{"httpStatusCode" => 429}, &1))
-
-        _ ->
-          false
-      end
-
-    from_info or
-      (is_binary(error["message"]) and String.contains?(error["message"], "429"))
+      _ ->
+        false
+    end
   end
 
   defp sharing_limit?(error) when is_map(error) do
@@ -2637,15 +2635,23 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # One patch can touch several files: every one is listed on the item (a
-  # rename under its new path, with where it came from), not only the first.
+  # rename under its new path, with where it came from), not only the first,
+  # and `diffStr` carries every file's diff, as the clients render that one
+  # string.
   defp complete_item(state, %{
          "type" => "fileChange",
          "id" => native,
-         "changes" => [change | _] = changes
+         "changes" => [_ | _] = changes
        }) do
     ids = state.turn.ids
     at = Entities.now()
     item_id = item_id(ids, native)
+
+    diff =
+      changes
+      |> Enum.map(& &1["diff"])
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+      |> Enum.join("\n")
 
     details =
       for change <- changes do
@@ -2670,7 +2676,7 @@ defmodule HalC2.Codex.ThreadRuntime do
             at,
             %{
               "fileName" => hd(details)["path"],
-              "diffStr" => change["diff"] || "",
+              "diffStr" => diff,
               "changes" => details
             }
           )
@@ -2803,7 +2809,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> HalC2.StreamState.get("thread")
       |> Map.get(state.thread_id, %{})
 
-    thread["parentThreadId"] != nil
+    get_in(thread, ["lineage", "relationshipToParent"]) == "subagent"
   end
 
   # What a web search looked for.

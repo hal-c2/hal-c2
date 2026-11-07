@@ -4307,6 +4307,12 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  step "the change shows every file's diff", context do
+    assert context.file_change["diffStr"] =~ "@@ -1 +1 @@\n-a\n+b"
+    assert context.file_change["diffStr"] =~ "@@ -0 +1 @@\n+b"
+    context
+  end
+
   # --- approvals: files from the started change, file access by pattern ---------------------------
 
   step "Codex started a change to edit {string} and delete {string}",
@@ -4797,6 +4803,38 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  step "Codex ends a turn with an error whose message mentions 14290 tokens", context do
+    context = start_waiting(context)
+    {_, runtime} = World.codex_runtime(context, @thread)
+
+    error = %{
+      "message" => "context exceeds 14290 tokens",
+      "codexErrorInfo" => "responseStreamDisconnected"
+    }
+
+    codex_error(context, error, false)
+
+    World.codex_notify(context, @thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "failed", "error" => error}
+    })
+
+    context
+  end
+
+  step "the turn fails as an ordinary error, not a usage limit", context do
+    state = World.await_runs(context, @thread, ["failed"])
+
+    assert [%{"lastError" => "context exceeds 14290 tokens"}] =
+             StreamState.list(state, "provider-session")
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(get_in(&1, ["failure", "class"]) == "usage_limit")
+           )
+
+    context
+  end
+
   step "the thread is marked as limited", context do
     World.await_runs(context, @thread, ["failed"])
     assert failure_of(context)["class"] == "usage_limit"
@@ -4994,9 +5032,14 @@ Red"} <- StreamState.get(state, "message")[message],
         context
 
       "is itself a Codex subagent" ->
+        # The lineage shape `NativeSubagent.start/3` writes for a real child.
         context =
-          World.put_entity(context, @thread, "thread", World.thread_id(context, @thread), %{
-            "s" => %{"parentThreadId" => "th-parent"}
+          World.patch_thread(context, @thread, %{
+            "lineage" => %{
+              "parentThreadId" => "th-parent",
+              "relationshipToParent" => "subagent",
+              "rootThreadId" => "th-parent"
+            }
           })
 
         {_, runtime} = World.codex_runtime(context, @thread)

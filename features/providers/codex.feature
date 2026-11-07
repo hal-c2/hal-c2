@@ -456,6 +456,10 @@ Feature: Codex
     Then the thread is marked as limited
     And the run does not fail as a provider error
 
+  Scenario: A Codex error that only mentions 429 in passing is not a usage limit
+    When Codex ends a turn with an error whose message mentions 14290 tokens
+    Then the turn fails as an ordinary error, not a usage limit
+
   Scenario: A workspace plan out of credits says who can fix it
     Given the Codex account is on a workspace plan with no credits left
     When Codex stops on a usage limit
@@ -809,6 +813,7 @@ Feature: Codex
     When Codex applies one patch that edits "a.ts", adds "b.ts" and renames "c.ts" to "d.ts"
     Then the change in the timeline lists "a.ts", "b.ts" and "d.ts"
     And the rename shows it came from "c.ts"
+    And the change shows every file's diff
 
   Scenario: Codex offers its compact and feedback commands in the composer
     When the user types a slash in a Codex thread
