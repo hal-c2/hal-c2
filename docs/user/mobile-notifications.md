@@ -2,10 +2,10 @@
 
 The HAL-C2 phone app can tell you when an agent finishes, fails, needs approval,
 or asks you a question, and can keep a card on the lock screen that follows the
-agents' work. Alerts come from the machine you paired with, through a
+agents' work. Alerts come from the first machine you paired with, through a
 [UnifiedPush](https://unifiedpush.org) distributor app on the phone such as
-ntfy. No HAL-C2 service sits in between, and the distributor cannot read what
-it carries.
+ntfy. Machines paired beside it do not send alerts yet. No HAL-C2 service sits
+in between, and the distributor cannot read what it carries.
 
 ## Turn on alerts
 
@@ -21,7 +21,7 @@ To turn alerts off, use **Open system settings**: Android owns the permission.
 If the system has blocked HAL-C2, the app says so and points to the same place;
 it notices when you allow it again.
 
-Forgetting the paired machine also stops its alerts, even if it is offline at
+Forgetting the first machine also stops its alerts, even if it is offline at
 the time.
 
 ## Ongoing agent activity

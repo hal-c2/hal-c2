@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22352
 #   https://github.com/pingdotgg/t3code/pull/10439 (find in thread)
 #   https://github.com/pingdotgg/t3code/pull/14658
 #   https://github.com/pingdotgg/t3code/pull/25463
@@ -194,6 +195,21 @@ Feature: Searching threads
   Scenario: Find in thread is offered from the command palette
     When the user chooses "Find in thread" in the command palette
     Then the find bar opens on the open thread
+  # Upstream #22352: a phone had no way to open find in thread
+  @backlog @shared
+  Scenario: Find in thread is the first entry of the thread title's menu
+    Given the open thread can be searched
+    When the user opens the menu on the thread's title
+    Then "Find in thread" is its first entry, even for a client that can only read
+    When the user chooses it
+    Then the find bar opens on the open thread with the cursor in its field
+
+  # Upstream #22352: find works on the open thread only.
+  @backlog @shared @priority-low
+  Scenario: The sidebar's thread menu does not offer find in thread
+    When the user opens a thread's menu in the sidebar
+    Then it does not offer "Find in thread"
+
 
   # Upstream #10439: find messages and plans in the current thread
   @backlog @desktop @priority-low

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25236
+#   https://github.com/pingdotgg/t3code/pull/24016
 #   apps/web/src/components/CommandPalette.tsx (add project flow)
 #   apps/web/src/components/CommandPalette.logic.ts
 #   Command palette entries: action:add-project, action:add-project:wsl-folder
@@ -80,6 +82,14 @@ Feature: Adding a project from the command palette
     When the user types a relative path while adding a project
     Then the palette says "Relative paths require an active project."
 
+  # Upstream #25236: projects restored on two environments shared an id, and "./" browsed the other one's folder.
+  @backlog @desktop
+  Scenario: A relative path browses the current project's folder on its own environment
+    Given the project "shop" on "studio" and a project on "laptop" have the same id
+    And "shop" on "studio" is the current project
+    When the user types "./" while adding a project
+    Then the palette browses the folder of "shop" on "studio"
+
   @desktop
   Scenario: Cloning asks for a repository then a destination
     When the user adds a project from a Git URL
@@ -116,6 +126,20 @@ Feature: Adding a project from the command palette
     Given the user is browsing for a project folder
     When the user types a path that does not exist
     Then the palette offers "Create & Add" with "Enter"
+
+  # Upstream #24016: Enter that confirmed IME composition submitted the repository, folder or clone destination.
+  @backlog @desktop
+  Scenario Outline: Enter that confirms input-method text does not submit the step
+    Given the user is typing the <field> with an input method
+    When the user presses Enter to confirm the composed text
+    Then the composed text is entered
+    And the step is not submitted until the user presses Enter again
+
+    Examples:
+      | field             |
+      | repository        |
+      | local folder      |
+      | clone destination |
 
   @desktop
   Scenario Outline: A highlighted folder is added with mod+Enter

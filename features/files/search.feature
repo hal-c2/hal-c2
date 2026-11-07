@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23182
 #   apps/server-ex/lib/hal_c2/workspace.ex (search_entries, rank, search_contents)
 #   apps/web/src/components/search/ProjectContentSearchDialog.tsx
 #   apps/server/src/workspace/WorkspaceSearchIndex.ts (content time budget, per-file cap, whole words, ranges)
@@ -180,6 +181,16 @@ Feature: Searching project files
       When a client searches the contents of "shop" for "total"
       Then the matches found so far are returned
       And the result is marked as truncated
+
+    # Upstream #23182: a rescan after a save or a turn that outlasted its wait threw away the
+    # working index, and the rebuild that followed failed the search.
+    @mc @backlog
+    Scenario: A slow rescan keeps content search answering from the index it had
+      Given a rescan of "shop" takes longer than the MC waits for it
+      When a file in "shop" is saved and the rescan runs out of time
+      And a client searches the contents of "shop" for "total"
+      Then the search answers from the index "shop" had before the rescan
+      And the rescan's results are used once it finishes
 
     # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
     @mc @backlog @priority-low

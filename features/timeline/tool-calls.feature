@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23351
+#   https://github.com/pingdotgg/t3code/pull/27110
+#   https://github.com/pingdotgg/t3code/pull/26529
+#   https://github.com/pingdotgg/t3code/pull/24937
+#   https://github.com/pingdotgg/t3code/pull/23227
 #   https://github.com/pingdotgg/t3code/pull/23595
 #   https://github.com/pingdotgg/t3code/pull/20101
 #   https://github.com/pingdotgg/t3code/pull/21146
@@ -56,6 +61,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15506
 #   https://github.com/pingdotgg/t3code/pull/22131
 #   https://github.com/pingdotgg/t3code/pull/22895
+#   https://github.com/pingdotgg/t3code/pull/26304
+#   https://github.com/pingdotgg/t3code/pull/21378
 
 Feature: Tool calls and file changes
   The agent's work shows as tool calls between its messages. Calls group into a short
@@ -329,6 +336,20 @@ Feature: Tool calls and file changes
     When the user reads the activity group
     Then the command is shown as succeeded
 
+  # Upstream #23351: the failure text heuristic overrode a reported exit code of 0, so a grep for "ENOENT" showed as failed.
+  @backlog @mc @desktop @mobile @tui @priority-high
+  Scenario Outline: A command that exited 0 is a success whatever its text says
+    Given the provider reported a command as completed with exit code 0
+    And the command's <part> says <text>
+    When the user reads the activity group
+    Then the command is shown as succeeded
+
+    Examples:
+      | part    | text                                |
+      | output  | "ENOENT: no such file or directory" |
+      | output  | "exit code 2"                       |
+      | command | "rg \"ENOENT\""                     |
+
   # Upstream #21146: reasoning rows are no longer scanned for failure text.
   @backlog @desktop @mobile @tui
   Scenario: Reasoning that mentions a failed exit code is not shown as a failed call
@@ -475,6 +496,35 @@ Feature: Tool calls and file changes
     Then the details show "src/cart.ts" with "+3" and "-1"
     And the details offer "Open diff" for that file
 
+  # Upstream #26304: "Open diff" on a tool call opens the patch that call recorded, not the turn's
+  # checkpoint diff, so it works in a project that is not a Git repository.
+  @backlog @desktop @tui
+  Scenario Outline: Opening a tool call's diff shows the change that call made
+    Given the project <kind>
+    And the agent changed "src/cart.ts" in a tool call
+    When the user chooses "Open diff" on that tool call
+    Then the diff view shows the change that tool call made to "src/cart.ts"
+    And the diff view says it shows one tool call
+
+    Examples:
+      | kind                        |
+      | is a Git repository         |
+      | is not a Git repository     |
+  # Upstream #26529: Claude's edits recorded its raw JSON result, so "Open diff" showed JSON.
+  @backlog @mc @desktop @tui @plugin-claude
+  Scenario Outline: Opening a Claude edit's diff shows a diff
+    Given Claude <edit> in a tool call
+    When the user chooses "Open diff" on that tool call
+    Then <shown>
+
+    Examples:
+      | edit                                      | shown                                                     |
+      | edited "src/cart.ts"                      | the diff view shows the lines Claude changed               |
+      | wrote the new file "src/basket.ts"        | the diff view shows "src/basket.ts" as an added file       |
+      | wrote an empty new file "src/empty.ts"    | the diff view says there is no patch for this selection    |
+      | failed to edit "src/cart.ts"              | the tool call shows Claude's error                         |
+
+
   @desktop
   Scenario: A file change that renamed a file shows where it came from
     Given the agent renamed "src/cart.ts" to "src/basket.ts"
@@ -557,6 +607,20 @@ Feature: Tool calls and file changes
     Then the row opens at once
     And its one-line label shows at most 200 characters while its details show the whole command
 
+  # Upstream #23227: the live summary of a running turn still showed a whole approval prompt or thought.
+  @backlog @mobile
+  Scenario Outline: The live summary of a running turn stays one short line
+    Given a turn is running and <activity>
+    When the user looks at the activity log's live summary
+    Then the summary is one line of at most 200 characters ending in "..." where it was cut
+    And opening it shows the whole text, which copies in full
+
+    Examples:
+      | activity                                                        |
+      | the agent asks to run a command thousands of characters long    |
+      | several tools ran and the agent asks to run a very long command |
+      | the agent is thinking a long thought without any punctuation    |
+
   @mobile
   Scenario Outline: A turn that failed says why in the activity log
     Given the turn ended <how>
@@ -567,6 +631,18 @@ Feature: Tool calls and file changes
       | with an error                                 | the error's title, its message and when it happened                    |
       | at a provider usage limit that resets at 17:00 | "Usage limit reached. Retry after" that time, without the message      |
       | at a provider usage limit with no reset time  | "Usage limit reached." alone                                           |
+  # Upstream #24937: a turn stopped at a usage limit listed every tool call on its own row.
+  @backlog @shared
+  Scenario Outline: A turn stopped at a usage limit keeps its tool calls grouped
+    Given a turn ran 3 commands and then <ended>
+    When the user reads the turn
+    Then <calls>
+
+    Examples:
+      | ended                         | calls                                                                       |
+      | stopped at its usage limit    | they read "Ran 3 commands" with the usage limit row under the group          |
+      | failed with a provider error  | each command is listed on its own row above the error                        |
+
 
   @mc @shared
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
@@ -684,6 +760,23 @@ Feature: Tool calls and file changes
       | "src/cart.ts" with 3 lines added and 1 removed                     | 1 changed file +3 -1          |
       | "src/cart.ts" and "src/checkout.ts" with 5 lines added in all      | 2 changed files +5            |
       | "src/cart.ts" and "src/checkout.ts" with no line counts            | 2 changed files               |
+
+  # Upstream #27110: a checkpoint over a vendored or generated tree listed every file in each
+  # snapshot and live event, up to 1.9 MB for one checkpoint.
+  @backlog @mc @priority-high
+  Scenario: A turn that changed thousands of files sends clients at most 200 of them
+    Given a turn changed 15000 files
+    When a client receives the turn's checkpoint
+    Then it lists at most 200 of the changed files
+    And it carries the totals of all 15000 files and their added and removed lines
+    And the full list is still kept for the turn's diff
+
+  # Upstream #27110
+  @backlog @shared @priority-high
+  Scenario: A turn's changed files say how many more are only in the full diff
+    Given a turn changed 250 files and the client was sent 200 of them
+    Then the changed files' heading counts all 250 files and their lines
+    And the list ends with "50 more files in the full diff"
 
   @backlog @shared @mobile @priority-low
   Scenario: Large line counts are grouped the way the user's locale writes numbers
@@ -1081,6 +1174,14 @@ Feature: Tool calls and file changes
     And an image inside a link still follows the link
     And a click with a modifier key, or one the page itself handled, does not open the viewer
     And closing the viewer leaves the page open
+
+  # Upstream #21378: a video's full screen button was greyed out in an HTML page.
+  @backlog @shared @priority-low
+  Scenario: A video in an inline HTML page can go full screen
+    Given an agent published an HTML page with a video that has controls
+    When the user presses the video's full screen button
+    Then the video fills the screen
+    And Escape brings it back into the page
 
   @backlog @shared @priority-low
   Scenario Outline: A link in an inline HTML page opens the way a chat link does

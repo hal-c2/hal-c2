@@ -15,6 +15,7 @@
 # Moving a thread to another machine from the menu is specified in threads/moving-between-machines.feature.
 #   https://github.com/pingdotgg/t3code/pull/10637
 #   https://github.com/pingdotgg/t3code/pull/15436
+#   https://github.com/pingdotgg/t3code/pull/26202
 
 Feature: Thread menu and selecting several threads
   Every thread has a menu of the things the user can do to it. Selecting several threads
@@ -72,6 +73,30 @@ Feature: Thread menu and selecting several threads
       | path      | the thread's workspace path | Path copied      |
       | branch    | "chore/logs"                | Branch copied    |
       | thread id | the id of "Tidy logs"       | Thread ID copied |
+
+  # Upstream #26202: "Copy thread" copies the thread as a reference that pastes back as one, on
+  # this machine or another that can read it; "Copy thread ID" still copies the bare id for scripts.
+  @backlog @shared
+  Scenario: Copying a thread copies a reference that pastes as the thread
+    When the user copies the thread "Tidy logs" from its menu
+    And the user pastes into a draft
+    Then the draft references "Tidy logs"
+    When the user copies the thread ID of "Tidy logs"
+    Then the clipboard holds the id of "Tidy logs"
+
+  # Upstream #26202: the copy-thread key and palette entry are now "Copy thread", named by the
+  # thread's title; a thread's pull request link still wins.
+  @backlog @shared
+  Scenario Outline: The copy-thread key and palette entry copy the thread as a reference
+    Given the user is looking at "Tidy logs", <pr>
+    When the user <copies>
+    Then the clipboard holds <value>
+
+    Examples:
+      | pr                             | copies                                  | value                          |
+      | which has no pull request      | presses the copy-thread key             | a reference to "Tidy logs"     |
+      | which has no pull request      | runs "Copy thread" from the palette     | a reference to "Tidy logs"     |
+      | which links a pull request     | presses the copy-thread key             | the pull request's link        |
 
   @tui
   Scenario: The path cannot be copied from a thread without a workspace

@@ -7,6 +7,7 @@
 #include <QQuickStyle>
 #include <QtQml/qqml.h>
 
+#include "ComposerController.h"
 #include "DraftController.h"
 #include "LayoutController.h"
 #include "LicensesController.h"
@@ -74,6 +75,9 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // The phone layout's timeline reads as the activity log the phone has
   // always had (TimelineModel::Folds::Phone); the desktop layout's as the desktop's.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
+  // A phone loses its connection often: what the user sends then waits on
+  // the phone and goes once it is back (the outbox), in either layout.
+  m_native->controller<ComposerController>()->setWaitsOffline(true);
   m_native->controller<TerminalController>()->setSingleScreen(true);
   m_native->controller<SpaceController>()->setPageShownBySteps(true);
   m_native->controller<ThreadStore>()->setFolds(TimelineModel::Folds::Phone);
@@ -102,7 +106,7 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   m_runtime = std::make_unique<ShellRuntime>(
       ShellRuntime::Options{configDir, options.bricksQmlDir, QStringLiteral("HalC2/Mobile/MobileShell.qml"), options.mobileQmlDir}, m_bridge.get(),
       m_theme.get());
-  // The one environment the phone is paired with.
+  // The environment the shell connects to, and pairing with the others.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
   // And those paired beside it (SavedEnvironmentsController) are listed as this device too.
   if (auto* saved = m_native->shared<SavedEnvironmentsController>()) saved->setDevice(options.device);

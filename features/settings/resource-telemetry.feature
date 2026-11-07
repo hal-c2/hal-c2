@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26067
 #   https://github.com/pingdotgg/t3code/pull/24229
 #   https://github.com/pingdotgg/t3code/pull/19645
 #   https://github.com/pingdotgg/t3code/pull/16838
@@ -349,6 +350,18 @@ Feature: Resource monitor
       | logical   | Logical bytes |
       | all I/O   | All I/O bytes |
       | nothing   | Unavailable   |
+
+  # Upstream #26067: a value that rounded up to 1024 kept the smaller unit, so 1023.6 B/s read "1024 B/s".
+  @backlog @desktop @priority-low
+  Scenario Outline: A size that rounds up to the next unit is shown in that unit
+    Given a process's <figure> is <value>
+    When the user watches the live process tree
+    Then the figure reads "<shown>"
+
+    Examples:
+      | figure     | value                 | shown     |
+      | write rate | 1023.6 bytes a second | 1.00 KB/s |
+      | memory     | 1023.6 MB             | 1.00 GB   |
 
   @backlog @desktop
   Scenario: Application I/O with nothing recorded says so
