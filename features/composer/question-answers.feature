@@ -59,18 +59,19 @@ Feature: Answering the agent's questions from the composer
     When the user reopens the pending question
     Then "Which database?" is shown again with its options
 
+  # Questions of one request are stepped through one at a time, as the web did.
   @desktop
-  Scenario: Questions asked while the composer is open are shown whole above its editor
+  Scenario: Questions asked while the composer is open are shown above its editor
     Given the composer is on screen
     When the agent asks two long questions in place of the first
-    Then the questions, their options and the answer button sit above the composer's editor
+    Then each question, its options and the answer button sit above the composer's editor as the user steps through them
 
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: A question can be dismissed without an answer
     When the user dismisses the question without answering
     Then the agent is told the question was dismissed
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A question that could not be dismissed stays and says why
     Given the environment refuses to dismiss the question
     When the user dismisses the question without answering
@@ -151,7 +152,7 @@ Feature: Answering the agent's questions from the composer
     Then the user is told the file could not be attached because there are too many attachments
     And the file is not attached
 
-  @backlog @desktop
+  @desktop
   Scenario: An answer is not sent while its files are still uploading or failed
     Given the answer to "Which database?" has a file that has not finished uploading
     When the user submits the answers
@@ -172,7 +173,7 @@ Feature: Answering the agent's questions from the composer
     Then the question is listed with the answer "use this one"
     And "schema.sql" is listed under the answer and can be opened
 
-  @backlog @desktop
+  @desktop
   Scenario: A number key picks the option in that place
     Given the user is not typing in the composer
     When the user presses 2
@@ -180,7 +181,7 @@ Feature: Answering the agent's questions from the composer
     When the user is typing an answer and presses 2
     Then "2" is typed into the answer and no option is picked
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Picking an option of a single-choice question moves on to the next question
     Given the agent asked "Which database?" and "Which cache?" in one request
     When the user picks "Postgres"
@@ -188,7 +189,7 @@ Feature: Answering the agent's questions from the composer
 
   # Upstream #17364: the move after a pick was still pending when the user moved by hand,
   # and it then skipped or undid that move.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: Moving by hand right after a pick is not moved again
     Given the agent asked "Which database?", "Which cache?" and "Which queue?" in one request
     When the user picks "Postgres" and at once <moves>
@@ -199,14 +200,14 @@ Feature: Answering the agent's questions from the composer
       | presses Next                           | Which cache?   |
       | goes back to a question already shown  | Which database? |
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A question that allows several answers waits for the user to move on
     Given the question allows several answers
     Then the user is told "Select one or more options."
     When the user picks "Postgres"
     Then "Which database?" is still shown so "SQLite" can be picked too
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Several questions are stepped through and answered together
     Given the agent asked "Which database?" and "Which cache?" in one request
     Then the question is marked "1/2" and the user can go on to the next question
@@ -214,7 +215,7 @@ Feature: Answering the agent's questions from the composer
     Then the user can go back to the previous question to change its answer
     And submitting sends both answers to the agent together
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The first question still unanswered is the one shown
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the user answered "Which database?" and left the thread
@@ -242,7 +243,7 @@ Feature: Answering the agent's questions from the composer
     Then the file is not attached
     And the user is told there are too many attachments
 
-  @backlog @desktop
+  @desktop
   Scenario: The question is folded away on the desktop to read the conversation
     When the user hides the question and its options
     Then only the question's title stays above the composer
@@ -250,12 +251,12 @@ Feature: Answering the agent's questions from the composer
     When the user shows the question again
     Then the options and what the user already picked are shown
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A question asked during a turn still lets the user stop the turn
     Given the agent asked the question while its turn is still running
     Then the user can stop the turn as well as answer the question
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Files cannot be removed from an answer that is on its way
     Given the user typed "use this schema" and attached "schema.sql"
     When the user submits the answer and the agent has not taken it yet

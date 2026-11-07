@@ -191,16 +191,83 @@ Item {
             verify(requests.pending, "the card shows");
             const submit = findChild(requests, "questionSubmit");
             verify(submit.mapToItem(root, 0, submit.height).y <= root.height, "the answer button is inside the window");
+            const position = findChild(requests, "questionPosition");
+            compare(position.text, "1/3");
+            // A pick moves on to the next question by itself.
             mouseClick(findChild(requests, "questionOption-First 0 (Recommended)"));
+            tryCompare(position, "text", "2/3");
             mouseClick(findChild(requests, "questionOption-Second 1"));
+            tryCompare(position, "text", "3/3");
             verify(!submit.enabled, "one question is still open");
+            // The last pick sends every answer.
             mouseClick(findChild(requests, "questionOption-First 2 (Recommended)"));
-            verify(submit.enabled);
-            mouseClick(submit);
-            compare(lastAction().action, "composer.question.answer");
+            tryVerify(() => lastAction()?.action === "composer.question.answer");
             compare(lastAction().payload.answers[ids[0]], "First 0 (Recommended)");
             compare(lastAction().payload.answers[ids[1]], "Second 1");
             compare(lastAction().payload.answers[ids[2]], "First 2 (Recommended)");
+        }
+
+        function twoQuestions() {
+            const asked = (id, text, labels) => ({
+                    id: id,
+                    header: id,
+                    question: text,
+                    options: labels.map(label => ({ label: label, description: "" })),
+                    multiSelect: false,
+                    allowCustomAnswer: true
+                });
+            return {
+                requestId: "request-two",
+                questions: [asked("database", "Which database?", ["Postgres", "SQLite"]), asked("cache", "Which cache?", ["Redis", "Memcached"])],
+                canRespond: true,
+                responding: false,
+                problem: ""
+            };
+        }
+
+        // Moving by hand right after a pick is not moved again (upstream #17364).
+        function test_movingByHandCancelsTheMoveAfterAPick() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            waitForRendering(root);
+            const title = findChild(requests, "questionTitle");
+            compare(title.text, "Which database?");
+            verify(!findChild(requests, "questionPrevious").enabled, "the first question has none before it");
+            mouseClick(findChild(requests, "questionOption-Postgres"));
+            verify(requests.advancing);
+            mouseClick(findChild(requests, "questionNext"));
+            verify(!requests.advancing, "the move by hand cancels the one after the pick");
+            compare(title.text, "Which cache?");
+            mouseClick(findChild(requests, "questionPrevious"));
+            compare(title.text, "Which database?");
+            verify(findChild(requests, "questionOption-Postgres").checked, "the first answer is kept");
+        }
+
+        function test_foldedQuestionShowsOnlyItsTitle() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            waitForRendering(root);
+            mouseClick(findChild(requests, "questionFold"));
+            verify(findChild(requests, "questionTitle").visible);
+            for (const name of ["questionOption-Postgres", "questionAnswer-database", "questionSubmit", "questionNext"])
+                verify(!findChild(requests, name).visible, name + " is folded away");
+            mouseClick(findChild(requests, "questionFold"));
+            verify(findChild(requests, "questionOption-Postgres").visible);
+        }
+
+        function test_numberKeyPicksUnlessTyping() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [question(true)] });
+            waitForRendering(root);
+            root.forceActiveFocus();
+            keyClick(Qt.Key_2);
+            verify(findChild(requests, "questionOption-SQLite").checked, "2 picks the second option");
+            const field = findChild(requests, "questionAnswer-database");
+            field.forceActiveFocus();
+            keyClick(Qt.Key_3);
+            compare(field.text, "3");
+            verify(!findChild(requests, "questionOption-MySQL").checked, "typing picks nothing");
+            verify(!findChild(requests, "questionOption-SQLite").checked, "typing lets go of the pick");
         }
 
         function test_questionCanBeDismissed() {
