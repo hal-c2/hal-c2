@@ -271,7 +271,7 @@ defmodule HalC2.Orchestration.Recovery do
     capturing = capturing(thread_id)
 
     HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = changes(state, Entities.now(), trigger, capturing)
+      changes = changes(state, Entities.now(), trigger, capturing) ++ note(state, thread_id)
       requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
 
       what =
@@ -286,9 +286,12 @@ defmodule HalC2.Orchestration.Recovery do
   end
 
   # The background work of the thread's finished latest run that is still marked active
-  # (`ended_work/2`): it ran in the provider process, which is gone.
+  # (`ended_work/2`): it ran in the provider process, which is gone. A thread whose
+  # sessions were all released before the stop (`Orchestration.release_session/1`) is
+  # not woken for it: that work was gone already, and only its records were left.
   defp ended_background(state) do
     with %{"status" => "completed"} = run <- latest_run(state),
+         false <- released?(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]],
          [_ | _] = work <- ended_work(state, run) do
@@ -298,12 +301,57 @@ defmodule HalC2.Orchestration.Recovery do
     end
   end
 
+  defp released?(state) do
+    sessions = StreamState.list(state, "provider-session")
+    sessions != [] and Enum.all?(sessions, &(&1["status"] == "stopped"))
+  end
+
+  # What the agent hears on its next turn about the background work of its finished
+  # turn that the settle ends (`restartNote`, which `HalC2.Orchestration.Handoff` hands
+  # over once). A continuation about it says so itself (`continue/0` drops the note).
+  defp note(state, thread_id) do
+    with %{"status" => "completed"} = run <- latest_run(state),
+         [_ | _] = work <- ended_work(state, run),
+         %{} = thread <- StreamState.get(state, "thread")[thread_id],
+         text =
+           "The server stopped after your last turn, which ended the background work " <>
+             "it had left running: " <>
+             Enum.map_join(work, ", ", &named/1) <>
+             ". None of it is running now; start again what you still need.",
+         %{} = patch <- Patch.diff(thread, Map.put(thread, "restartNote", text)) do
+      [{"thread", thread_id, patch}]
+    else
+      _ -> []
+    end
+  end
+
+  @doc false
+  # The note `settle/2` left, once a continuation tells the agent itself.
+  def drop_note(thread_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "thread")[thread_id] do
+        %{"restartNote" => _} = thread ->
+          {[{"thread", thread_id, Patch.diff(thread, Map.delete(thread, "restartNote"))}], :ok}
+
+        _ ->
+          {[], :ok}
+      end
+    end)
+  end
+
   # What the run left running in the background, as the continuation names it: a
   # command by its command line, other work as `%{"kind", "label"}`. Monitors that run
-  # for the life of the session (`persistent`) are not waited on, so not named.
+  # for the life of the session (`persistent`) are not waited on, so not named, and a
+  # task the thread delegated runs on in its own thread.
   defp ended_work(state, run) do
+    delegated =
+      for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),
+          into: MapSet.new(),
+          do: id
+
     for %{"type" => type} = item <- StreamState.list(state, "turn-item"),
         type in @background and item["status"] in @active and item["runId"] == run["id"],
+        item["nodeId"] not in delegated,
         not match?(%{"persistent" => true}, item["input"]),
         do: work(item)
   end
@@ -402,6 +450,7 @@ defmodule HalC2.Orchestration.Recovery do
         # ended, so its agent can start it again rather than wait on it.
         waiting =
           for {thread_id, run, commands} <- background, continue?(thread_id, run) do
+            drop_note(thread_id)
             continuation(thread_id, run, background_text(commands))
             thread_id
           end

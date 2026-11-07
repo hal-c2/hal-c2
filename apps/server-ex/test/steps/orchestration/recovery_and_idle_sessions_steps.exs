@@ -1551,6 +1551,79 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # A Claude thread "t1" whose last turn completed with a subagent left running, whose
+  # provider process died without ending it, and whose session the idle release stopped.
+  step "a completed thread has leftover background tool or subagent records", context do
+    context =
+      context |> World.providers() |> World.log_claude_prompts() |> World.named_thread("t1")
+
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+
+    context =
+      for {text, n} <- [{"Hi", 1}, {waiting_on("a subagent"), 2}], reduce: context do
+        context ->
+          context = World.dispatch_message(context, "t1", text, claude)
+          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+          World.await_run(context, "t1", &(&1["ordinal"] == n and &1["status"] == "completed"))
+          context
+      end
+
+    context = context |> Map.put(:thread, "t1") |> leave_waiting()
+    :ok = HalC2.Orchestration.release_session(World.thread_id(context, "t1"))
+    Map.put(context, :claude, claude)
+  end
+
+  step "the thread is not woken", context do
+    id = World.thread_id(context, "t1")
+    :ok = HalC2.Orchestration.Effects.drain(id)
+    state = World.state(context, "t1")
+
+    assert Enum.map(HalC2.StreamState.list(state, "run"), & &1["ordinal"]) |> Enum.sort() == [
+             1,
+             2
+           ]
+
+    refute Enum.any?(
+             Map.keys(state.entities["message"] || %{}),
+             &String.starts_with?(&1, "message:restart-continuation:")
+           )
+
+    last = Enum.find(HalC2.StreamState.list(state, "run"), &(&1["ordinal"] == 2))
+
+    background =
+      for item <- HalC2.StreamState.list(state, "turn-item"),
+          item["runId"] == last["id"],
+          item["type"] in ~w(command_execution dynamic_tool subagent),
+          do: item
+
+    assert background != []
+    assert Enum.all?(background, &(&1["status"] == "interrupted"))
+    context
+  end
+
+  step "its background cleanup note reaches the provider once, on the next manual turn",
+       context do
+    before = length(World.claude_prompts(context))
+
+    for {text, n} <- [{"Next", 3}, {"Again", 4}] do
+      context = World.dispatch_message(context, "t1", text, context.claude)
+      assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+      World.await_run(context, "t1", &(&1["ordinal"] == n and &1["status"] == "completed"))
+    end
+
+    [first, second] = context |> World.claude_prompts() |> Enum.drop(before)
+    assert first =~ "<server_restart>"
+
+    assert first =~
+             ~s(ended the background work it had left running: the subagent "Survey the repo".)
+
+    refute second =~ "<server_restart>"
+
+    thread = World.state(context, "t1").entities["thread"][World.thread_id(context, "t1")]
+    refute Map.has_key?(thread, "restartNote")
+    context
+  end
+
   # --- native subagents ------------------------------------------------------------------
 
   # Claude's own subagent (its Agent tool), running in the background when the provider

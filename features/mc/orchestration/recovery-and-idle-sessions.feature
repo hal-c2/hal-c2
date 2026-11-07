@@ -685,9 +685,12 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then no continuation is asked of "t1"
 
-  @backlog @mc @priority-high
+  # Upstream #15604: a thread whose session the idle release had stopped is not woken for
+  # the stale background records it left; the next turn the user starts hears what ended.
+  @mc @priority-high
   Scenario: A settled thread stays asleep after a restart
-    Given a completed thread has leftover background tool or subagent records
+    Given project "demo" continues threads after a server update
+    And a completed thread has leftover background tool or subagent records
     When the MC restarts
     Then the thread is not woken
     And its background cleanup note reaches the provider once, on the next manual turn

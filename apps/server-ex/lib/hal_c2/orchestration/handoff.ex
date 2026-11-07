@@ -67,6 +67,7 @@ defmodule HalC2.Orchestration.Handoff do
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
     {moved, moved_changes} = moved(state)
+    {restart, restart_changes} = restart_note(state)
 
     {fork, fork_changes} =
       case carried(provider_thread, driver, fresh) do
@@ -77,7 +78,7 @@ defmodule HalC2.Orchestration.Handoff do
           {fork, fork_changes}
 
         carried ->
-          fallback = wrap(transcript(state, ordinal), "", moved, nil)
+          fallback = wrap(transcript(state, ordinal), "", moved, nil, restart)
 
           {Map.put(carried, :fallback, fallback),
            fork_changes ++ [consumed(state, provider_thread)]}
@@ -98,10 +99,11 @@ defmodule HalC2.Orchestration.Handoff do
 
     %{
       fork: fork,
-      context: wrap(history, merged, moved, legacy),
+      context: wrap(history, merged, moved, legacy, restart),
       changes:
         Enum.reject(
-          fork_changes ++ delta_changes ++ merge_changes ++ moved_changes ++ legacy_changes,
+          fork_changes ++
+            delta_changes ++ merge_changes ++ moved_changes ++ restart_changes ++ legacy_changes,
           &is_nil/1
         )
     }
@@ -118,6 +120,20 @@ defmodule HalC2.Orchestration.Handoff do
 
         {"This thread moved to another machine: the project that was at #{from}#{machine} is now at #{to}. Paths from earlier in the conversation refer to the old location.",
          [Orchestration.upsert(state, "thread", thread["id"], &Map.delete(&1, "arrived"))]}
+
+      _ ->
+        {nil, []}
+    end
+  end
+
+  # The first run after a restart ended background work the thread's last turn left
+  # running hears which (the thread's `restartNote`, from `HalC2.Orchestration.Recovery`,
+  # which the run consumes).
+  defp restart_note(state) do
+    case state |> StreamState.get("thread") |> Map.values() |> List.first() do
+      %{"restartNote" => note} = thread when is_binary(note) ->
+        {note,
+         [Orchestration.upsert(state, "thread", thread["id"], &Map.delete(&1, "restartNote"))]}
 
       _ ->
         {nil, []}
@@ -574,11 +590,12 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  defp wrap(nil, "", nil, nil), do: nil
+  defp wrap(nil, "", nil, nil, nil), do: nil
 
-  defp wrap(history, merged, moved, legacy) do
+  defp wrap(history, merged, moved, legacy, restart) do
     [
       moved && "<moved>\n#{moved}\n</moved>",
+      restart && "<server_restart>\n#{restart}\n</server_restart>",
       legacy && "<imported_history>\n#{legacy}\n</imported_history>",
       history &&
         "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n#{history}\n</conversation_history>",
