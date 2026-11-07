@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24489
+#   https://github.com/pingdotgg/t3code/pull/24109
 #   https://github.com/pingdotgg/t3code/pull/23900
 #   https://github.com/pingdotgg/t3code/pull/20073
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
@@ -108,6 +110,15 @@ Feature: Archiving and deleting threads
     When the user archives "Old spike"
     Then the user is told "Thread archived, but navigation failed"
 
+  # Upstream #24109: an archive that finished after the user had moved on opened a draft over where they had gone.
+  @backlog @desktop @mobile
+  Scenario: Moving elsewhere before the archive finishes keeps the user there
+    Given the user is viewing "Old spike"
+    And the user archives "Old spike"
+    When the user opens "Newer work" before the archive finishes
+    Then "Newer work" stays open once "Old spike" is archived
+    And the user can still undo the archive
+
   @tui
   Scenario: Deleting a thread asks for confirmation
     When the user deletes "Old spike"
@@ -150,6 +161,14 @@ Feature: Archiving and deleting threads
     Given "Old spike" is the only thread using its worktree
     When the user deletes "Old spike"
     Then the user is asked whether to delete the worktree too
+
+  # Upstream #24489: a second thread recorded the same worktree with a trailing slash and the prompt called it unshared.
+  @backlog @desktop @priority-high
+  Scenario: A worktree another thread names with a different spelling is not offered for removal
+    Given "Old spike" works in "/repo/wt"
+    And another thread works in the same worktree recorded as "/repo/wt/"
+    When the user deletes "Old spike"
+    Then the user is not offered to delete the worktree
 
   @desktop @mobile @backlog-mobile
   Scenario: The worktree is removed without asking when the user chose automatic cleanup

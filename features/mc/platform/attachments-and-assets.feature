@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24245
 #   https://github.com/pingdotgg/t3code/pull/24275
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URLs, claims, persist, signed asset URLs)
 #   apps/server-ex/lib/hal_c2/web/router.ex (POST /api/attachments/upload/:token, GET /api/assets/:token)
@@ -336,6 +337,14 @@ Feature: Attachments and assets served by the MC
       | GIF                                     |
       | WebP                                    |
       | JPEG whose metadata is large            |
+  # Upstream #24245: an attachment's size went missing when the home was reached through a link
+  @backlog @mc @priority-low
+  Scenario: An image attachment's size is given when the HAL-C2 home is behind a symbolic link
+    Given the HAL-C2 home is reached through a symbolic link
+    And a thread has a PNG image attachment of 390 by 844 pixels
+    When the client asks for an asset URL for the attachment
+    Then the answer carries the width 390 and the height 844
+
 
   # Legacy: packages/shared/src/imageDimensions.ts (readJpeg, exifOrientationSwapsAxes)
   @backlog @mc @priority-low

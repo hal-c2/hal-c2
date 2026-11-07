@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QQuickItem>
 #include <QRegularExpression>
+#include <QTest>
 #include <QVariantMap>
 
 #include <functional>
@@ -276,6 +277,81 @@ QString openDraft(World& world) {
   return draftOf(world, composerTarget(world));
 }
 
+// Several questions in one request, as Claude's AskUserQuestion asks them:
+// "Which database?", "Which cache?" and "Which queue?", each with two options,
+// in place of the question the agent asked first.
+const QHash<QString, QPair<QString, QStringList>> kAsked{
+    {QStringLiteral("Which database?"), {QStringLiteral("database"), {QStringLiteral("Postgres"), QStringLiteral("SQLite")}}},
+    {QStringLiteral("Which cache?"), {QStringLiteral("cache"), {QStringLiteral("Redis"), QStringLiteral("Memcached")}}},
+    {QStringLiteral("Which queue?"), {QStringLiteral("queue"), {QStringLiteral("RabbitMQ"), QStringLiteral("SQS")}}},
+};
+
+void askTogether(World& world, const QStringList& texts) {
+  const QString requestId = first(world, QStringLiteral("questions")).value(QStringLiteral("requestId")).toString();
+  set(world, QStringLiteral("runtime-request"), requestId, {{QStringLiteral("status"), QStringLiteral("resolved")}});
+  QJsonArray asked;
+  for (const QString& text : texts) {
+    expect(kAsked.contains(text), QStringLiteral("no question \"%1\" to ask").arg(text));
+    QJsonArray options;
+    for (const QString& label : kAsked.value(text).second) options.append(QJsonObject{{QStringLiteral("label"), label}, {QStringLiteral("description"), QString()}});
+    asked.append(QJsonObject{{QStringLiteral("id"), kAsked.value(text).first},
+                             {QStringLiteral("header"), kAsked.value(text).first},
+                             {QStringLiteral("question"), text},
+                             {QStringLiteral("options"), options},
+                             {QStringLiteral("multiSelect"), false},
+                             {QStringLiteral("allowCustomAnswer"), true}});
+  }
+  request(world, QStringLiteral("user_input_request"), {{QStringLiteral("questions"), asked}});
+}
+
+// The question card above the composer on screen (TurnRequests.qml), once no
+// pick is still about to move it to the next question.
+void settleQuestion(World& world) {
+  composerBrick(world);
+  world.waitFor([&] {
+    QQuickItem* requests = composerPart(world, QStringLiteral("turnRequests"));
+    return requests && !requests->property("advancing").toBool();
+  }, QStringLiteral("the question card to stop moving on"));
+}
+
+QString questionShownNow(World& world) {
+  QQuickItem* title = composerPart(world, QStringLiteral("questionTitle"));
+  return title && title->isVisible() ? title->property("text").toString() : QString();
+}
+
+void expectQuestionShown(World& world, const QString& text) {
+  composerBrick(world);
+  world.waitFor([&] { return questionShownNow(world) == text; }, [&] { return QStringLiteral("\"%1\"; the card shows \"%2\"").arg(text, questionShownNow(world)); });
+}
+
+bool optionPicked(World& world, const QString& label) {
+  QQuickItem* option = composerPart(world, QStringLiteral("questionOption-") + label);
+  return option && option->property("checked").toBool();
+}
+
+// Takes the keyboard out of the composer's editor (and any field), as a click
+// on the conversation does.
+// Takes the keyboard off the composer to the question card, as a click on
+// the card does: number keys pick only there.
+void keyboardToCard(World& world) {
+  composerEditor(world)->setFocus(false);
+  QQuickItem* card = composerPart(world, QStringLiteral("questionCard"));
+  expect(card && card->isVisible(), QStringLiteral("no question card is shown"));
+  card->forceActiveFocus(Qt::MouseFocusReason);
+  world.sync();
+  expect(card->hasActiveFocus(), QStringLiteral("the question card did not take the keyboard"));
+}
+
+// Clicks the question card's `name` as the user does.
+void clickPart(World& world, const QString& name) {
+  Brick& brick = composerBrick(world);
+  QQuickItem* item = composerPart(world, name);
+  expect(item && item->isVisible() && item->isEnabled(),
+         QStringLiteral("%1 cannot be clicked (%2)").arg(name, item ? QStringLiteral("visible %1, enabled %2").arg(item->isVisible()).arg(item->isEnabled()) : QStringLiteral("none")));
+  QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(item));
+  world.sync();
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -362,6 +438,8 @@ const Steps steps([] {
   // approval cannot be answered, a toast, or what Source Control settings
   // shows instead of the tools it found.
   step(QStringLiteral("the user is told %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // A question's hints are on its card above the composer.
+    if (!world.brick && !listed(world, QStringLiteral("questions")).isEmpty()) composerBrick(world);
     const auto told = [&] {
       for (const QVariant& item : listed(world, QStringLiteral("approvals"))) {
         if (item.toMap().value(QStringLiteral("problem")) == c[0]) return true;
@@ -478,27 +556,32 @@ const Steps steps([] {
     set(world, QStringLiteral("runtime-request"), requestId, {{QStringLiteral("status"), QStringLiteral("resolved")}});
     request(world, QStringLiteral("user_input_request"), longQuestions());
   });
-  step(QStringLiteral("the questions, their options and the answer button sit above the composer's editor"),
+  step(QStringLiteral("each question, its options and the answer button sit above the composer's editor as the user steps through them"),
        [](World& world, const Captures&, const Table&) {
          composerBrick(world);
          world.waitFor([&] { return composerPart(world, QStringLiteral("questionAnswer-direction")) != nullptr; },
-                       QStringLiteral("the second question to show"));
-         const qreal editorTop = composerEditor(world)->mapToScene(QPointF()).y();
-         for (const QString& part : {QStringLiteral("questionOption-Yes, start now (Recommended)"), QStringLiteral("questionAnswer-lint"),
-                                     QStringLiteral("questionOption-Decide later"), QStringLiteral("questionAnswer-direction"),
-                                     QStringLiteral("questionSubmit")}) {
-           QQuickItem* item = composerPart(world, part);
-           expect(item != nullptr, QStringLiteral("the composer has no %1").arg(part));
-           const qreal top = item->mapToScene(QPointF()).y();
-           const qreal bottom = item->mapToScene(QPointF(0, item->height())).y();
-           expect(item->isVisible() && top >= 0 && bottom <= editorTop,
-                  QStringLiteral("%1 (visible: %2) spans %3..%4, the editor starts at %5")
-                      .arg(part)
-                      .arg(item->isVisible())
-                      .arg(top)
-                      .arg(bottom)
-                      .arg(editorTop));
-         }
+                       QStringLiteral("the second question to arrive"));
+         const auto above = [&](const QStringList& parts) {
+           const qreal editorTop = composerEditor(world)->mapToScene(QPointF()).y();
+           for (const QString& part : parts) {
+             QQuickItem* item = composerPart(world, part);
+             expect(item != nullptr, QStringLiteral("the composer has no %1").arg(part));
+             const qreal top = item->mapToScene(QPointF()).y();
+             const qreal bottom = item->mapToScene(QPointF(0, item->height())).y();
+             expect(item->isVisible() && top >= 0 && bottom <= editorTop,
+                    QStringLiteral("%1 (visible: %2) spans %3..%4, the editor starts at %5")
+                        .arg(part)
+                        .arg(item->isVisible())
+                        .arg(top)
+                        .arg(bottom)
+                        .arg(editorTop));
+           }
+         };
+         above({QStringLiteral("questionTitle"), QStringLiteral("questionOption-Yes, start now (Recommended)"), QStringLiteral("questionAnswer-lint"),
+                QStringLiteral("questionNext"), QStringLiteral("questionSubmit")});
+         clickPart(world, QStringLiteral("questionNext"));
+         above({QStringLiteral("questionTitle"), QStringLiteral("questionOption-Decide later"), QStringLiteral("questionAnswer-direction"),
+                QStringLiteral("questionSubmit")});
        });
   step(QStringLiteral("the user dismisses the question without answering"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("composer.question.dismiss"),
@@ -512,6 +595,175 @@ const Steps steps([] {
     expect(commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(), QStringLiteral("the agent was also given an answer"));
   });
 
+  // Answering from the composer's question card (composer/question-answers.feature):
+  // one question of a request at a time, picked, typed and stepped through as
+  // the user does.
+  step(QStringLiteral("the agent asked %1 and %1 in one request").arg(q), [](World& world, const Captures& c, const Table&) {
+    askTogether(world, {c[0], c[1]});
+  });
+  step(QStringLiteral("the agent asked %1, %1 and %1 in one request").arg(q), [](World& world, const Captures& c, const Table&) {
+    askTogether(world, {c[0], c[1], c[2]});
+  });
+  step(QStringLiteral("%1 is shown with %1 kept as the first answer").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectQuestionShown(world, c[0]);
+    expect(optionPicked(world, c[1]), QStringLiteral("\"%1\" is no longer picked").arg(c[1]));
+  });
+  step(QStringLiteral("%1 is still shown so %1 can be picked too").arg(q), [](World& world, const Captures& c, const Table&) {
+    settleQuestion(world);
+    expectQuestionShown(world, c[0]);
+    QQuickItem* option = composerPart(world, QStringLiteral("questionOption-") + c[1]);
+    expect(option && option->isVisible() && option->isEnabled() && !optionPicked(world, c[1]), QStringLiteral("\"%1\" cannot be picked").arg(c[1]));
+  });
+  step(QStringLiteral("%1 is still shown a moment later").arg(q), [](World& world, const Captures& c, const Table&) {
+    settleQuestion(world);
+    expectQuestionShown(world, c[0]);
+  });
+  step(QStringLiteral("the user picks %1 and at once (presses Next|goes back to a question already shown)").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The pick's move to the next question is still to come when the user moves.
+    clickPart(world, QStringLiteral("questionOption-") + c[0]);
+    QQuickItem* requests = composerPart(world, QStringLiteral("turnRequests"));
+    expect(requests->property("advancing").toBool(), QStringLiteral("the pick did not wait to move on"));
+    clickPart(world, QStringLiteral("questionNext"));
+    if (c[1] == QLatin1String("goes back to a question already shown")) clickPart(world, QStringLiteral("questionPrevious"));
+  });
+  step(QStringLiteral("the question is marked %1 and the user can go on to the next question").arg(q), [](World& world, const Captures& c, const Table&) {
+    composerBrick(world);
+    world.waitFor([&] { return composerPart(world, QStringLiteral("questionPosition")) && composerPart(world, QStringLiteral("questionPosition"))->property("text") == c[0]; },
+                  QStringLiteral("the question to be marked %1").arg(c[0]));
+    clickPart(world, QStringLiteral("questionNext"));
+    expectQuestionShown(world, QStringLiteral("Which cache?"));
+  });
+  step(QStringLiteral("the user answers both questions"), [](World& world, const Captures&, const Table&) {
+    clickPart(world, QStringLiteral("questionPrevious"));
+    expectQuestionShown(world, QStringLiteral("Which database?"));
+    clickPart(world, QStringLiteral("questionOption-Postgres"));
+    // Typed, as a pick on the last question would send the answers at once.
+    expectQuestionShown(world, QStringLiteral("Which cache?"));
+    Brick& brick = composerBrick(world);
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-cache"));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(field));
+    typeInComposer(world, QStringLiteral("Redis"));
+    expect(field->property("text") == QLatin1String("Redis"), QStringLiteral("the answer reads \"%1\"").arg(field->property("text").toString()));
+  });
+  step(QStringLiteral("the user can go back to the previous question to change its answer"), [](World& world, const Captures&, const Table&) {
+    clickPart(world, QStringLiteral("questionPrevious"));
+    expectQuestionShown(world, QStringLiteral("Which database?"));
+    clickPart(world, QStringLiteral("questionOption-SQLite"));
+    expect(optionPicked(world, QStringLiteral("SQLite")) && !optionPicked(world, QStringLiteral("Postgres")), QStringLiteral("the answer did not change"));
+  });
+  step(QStringLiteral("submitting sends both answers to the agent together"), [](World& world, const Captures&, const Table&) {
+    settleQuestion(world);
+    clickPart(world, QStringLiteral("questionSubmit"));
+    const QList<QJsonObject> sent = commandsOf(world, QStringLiteral("runtime-request.respond"));
+    const QJsonObject answers = sent.isEmpty() ? QJsonObject() : sent.last().value(QLatin1String("answers")).toObject();
+    expect(sent.size() == 1 && answers.value(QLatin1String("database")) == QLatin1String("SQLite") && answers.value(QLatin1String("cache")) == QLatin1String("Redis"),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the user answered %1 and left the thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectQuestionShown(world, c[0]);
+    clickPart(world, QStringLiteral("questionOption-Postgres"));
+    expectQuestionShown(world, QStringLiteral("Which cache?"));
+    // Back on the first question, so coming back is what moves on.
+    clickPart(world, QStringLiteral("questionPrevious"));
+    expectQuestionShown(world, c[0]);
+    world.startNewThread({});
+    world.waitFor([&] { return questionShownNow(world).isEmpty(); }, QStringLiteral("the question to go with the thread"));
+  });
+  step(QStringLiteral("the agent asks %1 and the user has typed %1 without sending it").arg(q), [](World& world, const Captures& c, const Table&) {
+    startWorking(world);
+    question(world, c[0], {QStringLiteral("Postgres"), QStringLiteral("SQLite"), QStringLiteral("MySQL")});
+    expectQuestionShown(world, c[0]);
+    Brick& brick = composerBrick(world);
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-") + kQuestion);
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(field));
+    typeInComposer(world, c[1]);
+    expect(field->property("text") == c[1], QStringLiteral("the answer reads \"%1\"").arg(field->property("text").toString()));
+  });
+  step(QStringLiteral("the user opens a new thread and comes back"), [](World& world, const Captures&, const Table&) {
+    world.startNewThread({});
+    world.waitFor([&] { return questionShownNow(world).isEmpty(); }, QStringLiteral("the question to go with the thread"));
+    look(world, threadKey(world));
+  });
+  step(QStringLiteral("the answer still reads %1 on the same question").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectQuestionShown(world, QStringLiteral("Which database?"));
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-") + kQuestion);
+    expect(field->isVisible() && field->property("text") == c[0], QStringLiteral("the answer reads \"%1\"").arg(field->property("text").toString()));
+  });
+  step(QStringLiteral("the user opens the thread again"), [](World& world, const Captures&, const Table&) {
+    look(world, threadKey(world));
+  });
+  step(QStringLiteral("the user is not typing in the composer"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    settleQuestion(world);
+    keyboardToCard(world);
+  });
+  step(QStringLiteral("%1 is picked").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(optionPicked(world, c[0]), QStringLiteral("\"%1\" is not picked").arg(c[0]));
+  });
+  step(QStringLiteral("the user is typing an answer and presses (\\d)"), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = composerBrick(world);
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-") + kQuestion);
+    expect(field && field->isVisible(), QStringLiteral("the question takes no typed answer"));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(field));
+    expect(field->hasActiveFocus(), QStringLiteral("the answer field did not take the keyboard"));
+    QTest::keyClick(&brick.window(), c[0].at(0).toLatin1());
+    world.sync();
+  });
+  step(QStringLiteral("%1 is typed into the answer and no option is picked").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-") + kQuestion);
+    expect(field->property("text") == c[0], QStringLiteral("the answer reads \"%1\"").arg(field->property("text").toString()));
+    for (const QString& label : {QStringLiteral("Postgres"), QStringLiteral("SQLite")}) expect(!optionPicked(world, label), QStringLiteral("\"%1\" is picked").arg(label));
+  });
+  step(QStringLiteral("the user hides the question and its options"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    settleQuestion(world);
+    clickPart(world, QStringLiteral("questionFold"));
+  });
+  step(QStringLiteral("only the question's title stays above the composer"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* title = composerPart(world, QStringLiteral("questionTitle"));
+    expect(title && title->isVisible() && title->property("text") == QLatin1String("Which database?"), QStringLiteral("the question's title is gone"));
+    for (const QString& part : {QStringLiteral("questionOption-Postgres"), QStringLiteral("questionAnswer-database"), QStringLiteral("questionSubmit")}) {
+      expect(!composerPart(world, part)->isVisible(), QStringLiteral("%1 is still shown").arg(part));
+    }
+  });
+  step(QStringLiteral("number keys pick nothing while it is hidden"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = composerBrick(world);
+    keyboardToCard(world);
+    QTest::keyClick(&brick.window(), '1');
+    world.sync();
+    expect(!optionPicked(world, QStringLiteral("Postgres")), QStringLiteral("1 picked \"Postgres\""));
+  });
+  step(QStringLiteral("the user shows the question again"), [](World& world, const Captures&, const Table&) { clickPart(world, QStringLiteral("questionFold")); });
+  step(QStringLiteral("the options and what the user already picked are shown"), [](World& world, const Captures&, const Table&) {
+    for (const QString& part : {QStringLiteral("questionOption-Postgres"), QStringLiteral("questionOption-SQLite"), QStringLiteral("questionAnswer-database"),
+                                QStringLiteral("questionSubmit")}) {
+      expect(composerPart(world, part)->isVisible(), QStringLiteral("%1 is not shown").arg(part));
+    }
+    expect(!optionPicked(world, QStringLiteral("Postgres")) && !optionPicked(world, QStringLiteral("SQLite")), QStringLiteral("an option was picked while hidden"));
+  });
+  step(QStringLiteral("the environment refuses to dismiss the question"), [](World& world, const Captures&, const Table&) {
+    world.mc.refusals.insert(QStringLiteral("thread.user-input.dismiss"), QStringLiteral("The provider is still writing the question"));
+  });
+  step(QStringLiteral("the question is still waiting for an answer"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !first(world, QStringLiteral("questions")).value(QStringLiteral("responding")).toBool(); }, QStringLiteral("the dismissal to settle"));
+    const QVariantMap shown = first(world, QStringLiteral("questions"));
+    expect(shown.value(QStringLiteral("canRespond")).toBool(), QStringLiteral("the question is %1").arg(show(shown)));
+  });
+  step(QStringLiteral("the agent asked the question while its turn is still running"), [](World& world, const Captures&, const Table&) {
+    expect(turn(world).value(QStringLiteral("running")).toBool() && !listed(world, QStringLiteral("questions")).isEmpty(),
+           QStringLiteral("the turn is %1").arg(show(turn(world))));
+  });
+  step(QStringLiteral("the user can stop the turn as well as answer the question"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    settleQuestion(world);
+    QQuickItem* option = composerPart(world, QStringLiteral("questionOption-Postgres"));
+    expect(option && option->isVisible() && option->isEnabled(), QStringLiteral("the question cannot be answered"));
+    QQuickItem* action = composerPart(world, QStringLiteral("primaryAction"));
+    expect(action && action->isVisible() && action->property("stopMode").toBool(), QStringLiteral("the composer offers no Stop"));
+    clickPart(world, QStringLiteral("primaryAction"));
+    const QJsonObject command = lastCommand(world, QStringLiteral("run.interrupt"));
+    expect(command.value(QLatin1String("runId")) == world.mc.part<FakeStreams>().run, QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+  });
   // Plans.
   step(QStringLiteral("the agent (?:has proposed|proposed) a plan(?: and the thread is idle)?"), [](World& world, const Captures&, const Table&) {
     proposePlan(world, true);
@@ -643,6 +895,17 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("the thread shows the reason, or %1 when none is given").arg(q), [](World& world, const Captures& c, const Table&) {
+    // A question the MC would not dismiss: the reason it gave, under the fallback.
+    if (c[0] == QLatin1String("Failed to dismiss the question.")) {
+      world.waitFor([&] {
+        const QVariantList shown = toasts(world);
+        return std::any_of(shown.cbegin(), shown.cend(), [&](const QVariant& toast) {
+          return toast.toMap().value(QStringLiteral("title")) == c[0] &&
+                 toast.toMap().value(QStringLiteral("description")) == QLatin1String("The provider is still writing the question");
+        });
+      }, [&] { return QStringLiteral("the reason; the toasts are %1").arg(show(toasts(world))); });
+      return;
+    }
     const auto told = [&](const QString& description) {
       world.waitFor([&] {
         for (const QVariant& item : toasts(world)) {
@@ -1091,7 +1354,20 @@ const Steps steps([] {
 }  // namespace
 
 void pickAnswer(World& world, const QString& label) {
-  answer(world, label);
+  settleQuestion(world);
+  clickPart(world, QStringLiteral("questionOption-") + label);
+  // One question that takes one answer is answered by the pick alone, as the
+  // timeline's question card does.
+  const QVariantList asked = first(world, QStringLiteral("questions")).value(QStringLiteral("questions")).toList();
+  if (asked.size() == 1 && !asked.first().toMap().value(QStringLiteral("multiSelect")).toBool()) clickPart(world, QStringLiteral("questionSubmit"));
+}
+
+bool questionShown(World& world, const QString& text) {
+  if (!composerBrickShown(world) || world.state(QStringLiteral("turn")).toMap().value(QStringLiteral("questions")).toList().isEmpty()) return false;
+  if (!kAsked.contains(text)) return false;
+  settleQuestion(world);
+  expectQuestionShown(world, text);
+  return true;
 }
 
 void openTurnThread(World& world) {

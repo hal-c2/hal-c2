@@ -23,6 +23,11 @@ defmodule HalC2.Store do
   `:store_slow_write_ms` (10 s) logs one warning and goes on waiting. A store that
   dies still ends the call, as any `GenServer.call/3` does.
 
+  A store made by this MC gives the pages it frees back to the disk a little at a time
+  (`reclaim/2`, `PRAGMA auto_vacuum = INCREMENTAL`); one made before cannot until
+  the doctor rewrites it (`HalC2.Doctor`). Events the log no longer needs are
+  removed by `HalC2.Store.Compaction`, through `compact/2`.
+
   The meta table records the schema version the file was written with. An MC
   refuses to open a store from a newer schema rather than misread it. It also holds
   the store's `id/1`, which names this log: offsets are only comparable within it.
@@ -317,6 +322,28 @@ defmodule HalC2.Store do
   end
 
   @doc """
+  Every sidebar row as stored, `{id, kind, seq, json}` with the row's JSON undecoded,
+  for checking the rows against the log (`HalC2.Projection.Check`).
+  """
+  @spec shell_entries(String.t()) :: [{String.t(), String.t(), non_neg_integer, String.t()}]
+  def shell_entries(path) do
+    sql = "SELECT s.id, h.kind, h.seq, h.row FROM shell h JOIN streams s ON s.key = h.stream"
+
+    with_query(path, sql, fn db, stmt ->
+      step_reduce(db, stmt, [], fn [id, kind, seq, row], acc -> [{id, kind, seq, row} | acc] end)
+    end)
+  end
+
+  @doc """
+  Forgets what was derived from a stream's log: its snapshot, cold rows, sidebar row
+  and indexed messages, so its next load derives them again. Only for a stream no
+  process has loaded (`HalC2.Projection.Check.rebuild/2`).
+  """
+  @spec drop_projections(GenServer.server(), String.t()) :: :ok | {:error, :unknown_stream}
+  def drop_projections(store \\ __MODULE__, stream_id),
+    do: write(store, {:drop_projections, stream_id})
+
+  @doc """
   Records finished messages of a stream, as `{id, role, text, created_at, typed?}`, and
   forgets those given as `{id, :deleted}`. Asynchronous, and ignored for a stream that has
   no events. A call to the store from the same process afterwards (`:sys.get_state/1`,
@@ -402,6 +429,50 @@ defmodule HalC2.Store do
           {:ok, %{log: integer, checkpointed: integer}} | {:error, term}
   def checkpoint(store \\ __MODULE__), do: write(store, :checkpoint)
 
+  @doc """
+  Applies a batch of a compaction (`HalC2.Store.Compaction`) in one transaction:
+  `{:rewrite, seq, kind, entity, patch}` replaces an event's patch, and only that
+  entity's, and `{:delete, seq}` removes an event. Returns how many events it removed.
+  """
+  @spec compact(GenServer.server(), [
+          {:rewrite, pos_integer, String.t(), String.t(), HalC2.Patch.t()}
+          | {:delete, pos_integer}
+        ]) :: {:ok, non_neg_integer} | {:error, term}
+  def compact(store \\ __MODULE__, ops), do: write(store, {:compact, ops})
+
+  @doc """
+  Gives up to `pages` free pages back to the disk, for a store that frees them while
+  running. Returns how many bytes it still holds free.
+  """
+  @spec reclaim(GenServer.server(), pos_integer) :: {:ok, non_neg_integer}
+  def reclaim(store \\ __MODULE__, pages), do: write(store, {:reclaim, pages})
+
+  @doc """
+  How big the store is and how much of it is free, in bytes, and whether it gives free
+  pages back while running (`:incremental`) or only to a `VACUUM` (`:none`).
+  """
+  @spec space(String.t() | reference) :: %{
+          size: non_neg_integer,
+          free: non_neg_integer,
+          vacuum: :none | :full | :incremental
+        }
+  def space(path) do
+    with_reader(path, fn db -> space_of(db) end)
+  end
+
+  @doc false
+  def space_of(db) do
+    [page_size, pages, free, mode] =
+      for pragma <- ~w(page_size page_count freelist_count auto_vacuum),
+          do: db |> run_sql("PRAGMA " <> pragma) |> hd() |> hd()
+
+    %{
+      size: page_size * pages,
+      free: page_size * free,
+      vacuum: Enum.at([:none, :full, :incremental], mode)
+    }
+  end
+
   @doc "The MC's database in its data directory, which the application and mix tasks open."
   def home_path, do: Path.join(HalC2.Paths.data_dir(), "hal-c2.sqlite")
 
@@ -454,8 +525,8 @@ defmodule HalC2.Store do
   connection.
 
   Options: `:limit` caps how many events are read; `:kinds` reads only those entity
-  kinds (`["thread", "project"]` is indexed for building the shell); `:through` stops
-  after that `seq`.
+  kinds (`["thread", "project"]` is indexed for building the shell); `:entities` only
+  the entities with those ids; `:through` stops after that `seq`.
   """
   @spec reduce_stream(String.t(), String.t(), non_neg_integer, acc, (event, acc -> acc), keyword) ::
           acc
@@ -468,18 +539,25 @@ defmodule HalC2.Store do
         do: "AND e.kind IN (#{Enum.map_join(kinds, ", ", &"'#{safe_kind!(&1)}'")})",
         else: ""
 
+    entities = Keyword.get(opts, :entities)
+
+    entity_filter =
+      if entities, do: "AND e.entity IN (SELECT value FROM json_each(?5))", else: ""
+
     sql = """
     SELECT e.seq, e.kind, e.entity, e.patch, e.at FROM events e
     JOIN streams s ON s.key = e.stream
-    WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} ORDER BY e.seq LIMIT ?3
+    WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} #{entity_filter}
+    ORDER BY e.seq LIMIT ?3
     """
 
-    args = [
-      stream_id,
-      after_seq,
-      Keyword.get(opts, :limit, -1),
-      Keyword.get(opts, :through, @no_seq_limit)
-    ]
+    args =
+      [
+        stream_id,
+        after_seq,
+        Keyword.get(opts, :limit, -1),
+        Keyword.get(opts, :through, @no_seq_limit)
+      ] ++ if(entities, do: [JSON.encode!(Enum.to_list(entities))], else: [])
 
     with_query(path, sql, args, fn db, stmt ->
       step_reduce(db, stmt, acc, fn [seq, kind, entity, patch, at], acc ->
@@ -710,6 +788,24 @@ defmodule HalC2.Store do
   defp cold_row([kind, id, run, created, changed, entity]),
     do: {kind, id, run, created, changed, :erlang.binary_to_term(entity)}
 
+  @doc """
+  The streams of `kind` with an event after `after_seq`, and the seq of their last
+  event, read from the index alone.
+  """
+  @spec stream_ends(String.t(), String.t(), non_neg_integer) :: [{String.t(), pos_integer}]
+  def stream_ends(path, kind, after_seq \\ 0) do
+    sql = """
+    SELECT id, last FROM (
+      SELECT s.id, (SELECT MAX(e.seq) FROM events e WHERE e.stream = s.key) AS last
+      FROM streams s WHERE s.kind = ?1
+    ) WHERE last > ?2 ORDER BY id
+    """
+
+    with_query(path, sql, [kind, after_seq], fn db, stmt ->
+      db |> step_reduce(stmt, [], fn [id, last], acc -> [{id, last} | acc] end) |> Enum.reverse()
+    end)
+  end
+
   @doc "All streams with their latest seq, for building indexes."
   @spec list_streams(String.t()) :: [%{id: String.t(), kind: String.t(), seq: non_neg_integer}]
   def list_streams(path) do
@@ -740,7 +836,9 @@ defmodule HalC2.Store do
     File.mkdir_p!(Path.dirname(path))
     {:ok, db} = Sqlite3.open(path)
 
+    # Before any table exists, or it has no effect: a new store frees pages as it runs.
     for pragma <- [
+          "auto_vacuum = INCREMENTAL",
           "journal_mode = WAL",
           "synchronous = NORMAL",
           "foreign_keys = ON",
@@ -1006,6 +1104,59 @@ defmodule HalC2.Store do
           [key, seq, kind, IO.iodata_to_binary(JSON.encode_to_iodata!(row))]
         )
     end)
+  end
+
+  def handle_call({:drop_projections, stream_id}, _from, state) do
+    with_existing_stream(state, stream_id, fn key ->
+      :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
+
+      try do
+        for table <- ~w(hot_snapshots cold shell messages),
+            do: :ok = exec(state.db, "DELETE FROM #{table} WHERE stream = ?1", [key])
+
+        :ok = Sqlite3.execute(state.db, "COMMIT")
+      rescue
+        error ->
+          Sqlite3.execute(state.db, "ROLLBACK")
+          reraise error, __STACKTRACE__
+      end
+    end)
+  end
+
+  def handle_call({:compact, ops}, _from, state) do
+    :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
+
+    try do
+      removed =
+        Enum.reduce(ops, 0, fn
+          {:rewrite, seq, kind, entity, patch}, removed ->
+            :ok =
+              exec(
+                state.db,
+                "UPDATE events SET patch = ?2 WHERE seq = ?1 AND kind = ?3 AND entity = ?4",
+                [seq, encode_patch(patch), kind, entity]
+              )
+
+            removed
+
+          {:delete, seq}, removed ->
+            :ok = exec(state.db, "DELETE FROM events WHERE seq = ?1", [seq])
+            {:ok, n} = Sqlite3.changes(state.db)
+            removed + n
+        end)
+
+      :ok = Sqlite3.execute(state.db, "COMMIT")
+      {:reply, {:ok, removed}, state}
+    rescue
+      error ->
+        Sqlite3.execute(state.db, "ROLLBACK")
+        {:reply, {:error, error}, state}
+    end
+  end
+
+  def handle_call({:reclaim, pages}, _from, state) when is_integer(pages) and pages > 0 do
+    :ok = Sqlite3.execute(state.db, "PRAGMA incremental_vacuum(#{pages})")
+    {:reply, {:ok, space_of(state.db).free}, state}
   end
 
   def handle_call(:id, _from, state), do: {:reply, read_id(state.db), state}

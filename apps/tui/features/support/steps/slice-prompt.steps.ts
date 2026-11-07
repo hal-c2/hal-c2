@@ -68,6 +68,41 @@ async function typeTrigger(ctx: World, trigger: string) {
 
 step(/^the user types "([/$@])" in the prompt$/, typeTrigger);
 
+// composer/context-references.feature: the word after the trigger searches its picker.
+step(/^the user types "@(\w+)" in the prompt$/, async (ctx: World, query: string) => {
+  await withContext(ctx);
+  ctx.fake!.override(
+    "listEntries",
+    async () =>
+      [
+        { path: "src", kind: "directory" },
+        ...FILES.map((path) => ({ path, kind: "file" })),
+      ] as never,
+  );
+  await typeText(ctx, "@");
+  await settle(ctx);
+  await typeText(ctx, query);
+  await settle(ctx);
+});
+
+step(/^the user types "([^"]*)" into the composer$/, async (ctx: World, text: string) => {
+  await withContext(ctx);
+  await typeText(ctx, text);
+  await settle(ctx);
+});
+
+step("no slash command or skill suggestions are offered", (ctx: World) => {
+  const { open, title } = select(ctx);
+  expect(open && (title === "commands" || title === "skills")).toBe(false);
+});
+
+step(/^the user is offered files and folders matching "(\w+)"$/, (ctx: World, query: string) => {
+  expect(select(ctx)).toMatchObject({ open: true, title: "files" });
+  expect(labels(ctx)).toContain(`${query}/`);
+  expect(labels(ctx).some((label) => !label.endsWith("/"))).toBe(true);
+  for (const label of labels(ctx)) expect(label).toContain(query);
+});
+
 const LISTS: Record<string, { title: string; labels: string[]; pick: string; text: string }> = {
   "slash commands": {
     title: "commands",

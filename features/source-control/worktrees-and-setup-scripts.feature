@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25212
+#   https://github.com/pingdotgg/t3code/pull/27815
 #   https://github.com/pingdotgg/t3code/pull/15833
 #   https://github.com/pingdotgg/t3code/pull/21032
 #   https://github.com/pingdotgg/t3code/pull/11773
@@ -12,6 +14,8 @@
 #   https://github.com/pingdotgg/t3code/pull/13314
 #   https://github.com/pingdotgg/t3code/pull/21099
 #   https://github.com/pingdotgg/t3code/pull/18359
+#   https://github.com/pingdotgg/t3code/pull/25700
+#   https://github.com/pingdotgg/t3code/pull/26758
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)
@@ -32,6 +36,7 @@
 #   apps/server/src/vcs/GitVcsDriverCore.ts (renameBranch, resolveAvailableBranchName)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: checkout progress, timeouts, base ref, folder name)
 #   apps/server/src/project/ProjectSetupScriptRunner.ts, WorktreeSetupTracker.ts (output cleaning and caps)
+#   https://github.com/pingdotgg/t3code/pull/23576
 
 Feature: Worktrees and setup scripts
   A thread can start in its own worktree. The MC creates it from a base ref, runs the
@@ -99,6 +104,16 @@ Feature: Worktrees and setup scripts
     Then the worktree's fetch is tried once more and the worktree is made
     And a lock failure that persists tells the user a local reference could not be updated
 
+  # Upstream #25700: worktrees share one Git config, and parallel launches lost the race for its
+  # lock: branches without worktrees, renames that failed, lost base records and upstreams.
+  @backlog @mc @priority-high
+  Scenario: Threads launched in new worktrees of one repository at once all get their worktrees
+    Given the project starts worktrees from origin
+    When 12 threads are launched in new worktrees of the project at the same moment
+    Then each thread has its own worktree on its own branch
+    And each branch records the base it started from and the upstream it tracks
+    And each temporary branch is renamed from its thread's first message
+
   @mc
   Scenario: Without a remote the fetch stage is skipped
     Given "shop" has no remote
@@ -117,6 +132,20 @@ Feature: Worktrees and setup scripts
     Given the branch "feature/add-tax" already exists
     When the temporary branch of a new worktree is renamed to "feature/add-tax"
     Then the worktree's branch is "feature/add-tax-1"
+
+  # Upstream #27815: with a branch named like the prefix, git refused every nested generated name
+  # and the thread stayed on its temporary branch with only a logged warning.
+  @mc @backlog
+  Scenario Outline: A generated name blocked by a branch at its parent path is flattened
+    Given the branch "<existing>" already exists
+    When the temporary branch of a new worktree is renamed to "hal-c2/fix-login"
+    Then the worktree's branch is "<result>"
+
+    Examples:
+      | existing                              | result               |
+      | hal-c2                                | hal-c2-fix-login     |
+      | hal-c2 and hal-c2-fix-login           | hal-c2-fix-login-1   |
+      | hal-c2 and hal-c2-fix-login/child     | hal-c2-fix-login-1   |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolveAvailableBranchName: 100 candidates)
   @mc
@@ -235,6 +264,21 @@ Feature: Worktrees and setup scripts
   Scenario: A branch with slashes gets a single folder name
     When a worktree is created for the branch "feature/tax/rates" with no path given
     Then its folder under the repository's name is "feature-tax-rates"
+  # Upstream #25212: a long branch name made a folder past the filesystem's limit, so checkout failed.
+  @backlog @mc
+  Scenario: A long branch gets a short folder name of its own
+    Given two branches of 280 characters that share their first 200
+    When a worktree is created for each with no path given
+    Then each folder name is 40 characters: the start of the branch and a hash of the whole name
+    And the two folders differ
+    And each branch keeps its full name
+
+  # Upstream #25212: names cut short never split a character.
+  @backlog @mc @priority-low
+  Scenario: A long branch name is never cut through a character
+    When a worktree is created with no path given for a long branch whose 40th character is an emoji
+    Then its folder name holds whole characters only
+
 
   @mc
   Scenario: Submodule initialization is its own setup stage
@@ -297,6 +341,29 @@ Feature: Worktrees and setup scripts
       | prints a line that looks like a completion mark |
       | is a few lines long with a here-document        |
       | has a syntax error on its last line             |
+
+  # Upstream #23576: the script's end was written for the configured shell, not the one that
+  # started, so a fish fallback never saw its end and setup kept waiting.
+  @backlog @mc
+  Scenario Outline: The end of a setup script is noticed in the shell that actually started
+    Given the environment's shell setting is <configured>
+    And the shell that starts is <started>
+    When the user sends the first message of a thread in a new worktree
+    Then the setup script stage ends with the script's own exit status
+
+    Examples:
+      | configured                  | started                     |
+      | "/usr/bin/fish --login"     | fish                        |
+      | a shell that is not there   | the system's fallback shell |
+      | PowerShell by its full path | PowerShell                  |
+
+  # Upstream #23576: cmd.exe cannot report a script's end.
+  @backlog @mc
+  Scenario: A setup script is refused when only cmd.exe starts
+    Given the only shell that starts on the Windows environment is cmd.exe
+    When the user sends the first message of a thread in a new worktree
+    Then the setup script stage fails saying the shell is not supported
+    And the idle setup terminal is closed
 
   # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (observeTerminalCompletion), ThreadLaunchService.ts
   @mc
@@ -714,6 +781,8 @@ Feature: Worktrees and setup scripts
     And storage cleanup accepts both the default and the custom folder
 
   # Upstream #18359: a thread whose worktree was deleted could never start another turn.
+  # Upstream #26758: a deleted thread branch is restored from its fetched copy before the project's
+  # branch is used, and a detached project checkout no longer breaks the recovery.
   @backlog @mc @shared @priority-high
   Scenario Outline: A thread whose worktree was deleted gets it back on its next message
     Given the thread "Fix checkout" worked in its own worktree on "feature/cart"
@@ -723,9 +792,11 @@ Feature: Worktrees and setup scripts
     And the turn runs in it
 
     Examples:
-      | branch                         | from                                                          |
-      | "feature/cart" still exists    | on "feature/cart"                                             |
-      | "feature/cart" was deleted too | with "feature/cart" started from the project's current branch |
+      | branch                                                              | from                                                                                                   |
+      | "feature/cart" still exists                                         | on "feature/cart"                                                                                      |
+      | "feature/cart" was deleted but "origin/feature/cart" was fetched    | with "feature/cart" started from "origin/feature/cart"                                                 |
+      | "feature/cart" was deleted too                                      | with "feature/cart" started from the project's current branch                                          |
+      | "feature/cart" was deleted too and the project checkout is detached | with "feature/cart" started from the project's remote default branch, or its commit when there is none |
 
   # Upstream #18359: a thread whose worktree could not be made again stops before the agent starts.
   @backlog @mc @shared

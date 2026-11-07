@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25437
+#   https://github.com/pingdotgg/t3code/pull/24871
 #   https://github.com/pingdotgg/t3code/pull/21314
 #   https://github.com/pingdotgg/t3code/pull/23863
 #   https://github.com/pingdotgg/t3code/pull/23904
@@ -8,6 +10,7 @@
 #   https://github.com/pingdotgg/t3code/pull/18120
 #   https://github.com/pingdotgg/t3code/pull/21155
 #   https://github.com/pingdotgg/t3code/pull/24781
+#   https://github.com/pingdotgg/t3code/pull/26183
 #   https://github.com/hal-c2/hal-c2/issues/518
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
@@ -318,6 +321,31 @@ Feature: A thread hears when a pull request it owns needs attention
     When "ci/test" passes and an optional "ci/lint" fails
     Then the thread hears that the required checks passed
 
+  # Upstream #26183: required-check globs became backtracking regexes, and a pattern with many
+  # stars blocked the server for every client.
+  @backlog @mc @priority-high
+  Scenario: A Forgejo required-check pattern with many wildcards does not stall the MC
+    Given a thread watches the checks of a Forgejo pull request whose branch requires "*a*a*a*a*a*a*a*a*a*a*a*a*b"
+    When the MC compares it with check names 200 characters long
+    Then the comparison finishes at once
+    And other clients of the MC are answered meanwhile
+
+  # Upstream #26183: "*" and "**" match any run of characters, "/" included, and "?" one
+  # character; patterns with classes, choices or escapes are reported as not evaluable.
+  @backlog @mc @priority-low
+  Scenario Outline: A Forgejo required-check pattern is matched as a glob
+    Given a thread watches the checks of a Forgejo pull request whose branch requires "<pattern>"
+    When a check named "<name>" reports
+    Then the requirement <result>
+
+    Examples:
+      | pattern | name          | result                       |
+      | ci/*    | ci/test/linux | matches it                   |
+      | ci/**   | ci/test/linux | matches it                   |
+      | ci/tes? | ci/test       | matches it                   |
+      | ci/tes? | ci/tests      | does not match it            |
+      | ci/[ab] | ci/a          | is reported as not evaluable |
+
   # Upstream #16668: Forgejo reports a job that did not run as "skipped", which was read as pending
   # and kept the watch open after every job had finished.
   @backlog @mc @priority-low
@@ -330,6 +358,15 @@ Feature: A thread hears when a pull request it owns needs attention
       | state   | counted |
       | skipped | skipped |
       | warning | neutral |
+
+  # Upstream #24871: Forgejo dates statuses to the second, so a pending status could replace the
+  # final one it shared a second with.
+  @backlog @mc @priority-low
+  Scenario: A Forgejo check that finished within a second of starting counts as finished
+    Given a thread watches the checks of a Forgejo pull request
+    When "ci/test" reports pending and then success in the same second
+    Then the watch counts "ci/test" as passed
+    And the thread is woken with "All checks passed"
 
   # Upstream #23904: the watch said the required checks passed while other jobs still ran, and
   # never woke the thread when they finished.
@@ -350,6 +387,16 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the thread is woken once, told no checks have reported
     And the message does not say the checks passed
     And neither a restart nor watching it again wakes the thread for that commit again
+
+  # Upstream #25437: nothing on the host changed when the 15 minutes passed, so the notice waited
+  # for the next full reread, about 30 minutes in.
+  @backlog @mc @priority-low
+  Scenario: A watched pull request with no checks is told within minutes of the deadline
+    Given a thread watches the checks of a GitHub pull request
+    And nothing about the pull request changes on GitHub
+    When 15 minutes pass with no check on its latest commit
+    Then the thread is told no checks have reported within the next two minutes
+    And its comments are not read any more often
 
   # Upstream #23863: a watch whose checks were seen is not told that none reported.
   @backlog @mc @priority-low

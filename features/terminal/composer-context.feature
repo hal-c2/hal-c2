@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24251
 #   docs/user/composer.md (terminal excerpts as context chips)
 #   apps/web/src/lib/terminalContext.ts (normalizeTerminalContextSelection, formatTerminalContextLabel, expired contexts)
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (terminalSelectionMenuItems, terminalContextMenuItems)
@@ -81,6 +82,19 @@ Feature: Adding terminal output to a message
     When the user sends the message
     Then nothing is sent and the draft is kept
     And the user sees a "warning" toast "Expired terminal context won't be sent" saying "Remove it or re-add it to include terminal output."
+
+  # Upstream #24251: with several expired excerpts the toasts said "it". This replaces the
+  # two-excerpt description of the passing outline above.
+  @backlog @desktop @priority-low
+  Scenario Outline: Toasts about several expired terminal excerpts say "them"
+    Given the draft <draft> and holds two terminal excerpts whose text is gone
+    When the user sends the message
+    Then the user sees a "warning" toast "<title>" saying "<description>"
+
+    Examples:
+      | draft                      | title                                          | description                                            |
+      | reads "Why did this fail?" | Expired terminal contexts omitted from message | Re-add them if you want that terminal output included. |
+      | is otherwise empty         | Expired terminal contexts won't be sent        | Remove them or re-add them to include terminal output. |
 
   # This is the web's draft format. The desktop's drafts never held placeholders and the
   # WebEngine's storage is deliberately not migrated.

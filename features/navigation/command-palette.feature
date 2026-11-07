@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23156
 #   https://github.com/pingdotgg/t3code/pull/24032
 #   https://github.com/pingdotgg/t3code/pull/25133
 #   https://github.com/pingdotgg/t3code/pull/24709
@@ -197,6 +198,20 @@ Feature: Command palette
         | field               | says           |
         | branch              | Branch: zebra  |
         | linked pull request | PR: #42        |
+
+    # Upstream #23156: a thread's palette row showed its linked pull request as pending while
+    # the sidebar knew it was merged, closed or a draft.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A thread's palette row shows its linked pull request's state
+      Given "Fix checkout" is linked to pull request 42, which is <state>
+      When the user finds "Fix checkout" in the palette
+      Then its row shows pull request 42 as <state>, as the sidebar does
+
+      Examples:
+        | state  |
+        | merged |
+        | closed |
+        | a draft |
 
     @desktop
     Scenario Outline: Threads are found by more than their title

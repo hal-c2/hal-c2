@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25131
 #   https://github.com/pingdotgg/t3code/pull/18406
 #   https://github.com/pingdotgg/t3code/pull/19312
 #   apps/desktop-qt/src/native/SettingsController.cpp (the MC's settings document, this device's preferences)
@@ -7,6 +8,7 @@
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (the config shape: config, config.settings, config.themes)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
 #   settings/scopes-and-inheritance.feature holds the MC's side of the document.
+#   https://github.com/pingdotgg/t3code/pull/23427
 
 Feature: Saving settings from the desktop
   The desktop reads and saves the MC's settings document, and keeps what belongs to this
@@ -126,3 +128,25 @@ Feature: Saving settings from the desktop
       Then "appearance" is shown at its default
       When the user sets "appearance" to "dark"
       Then this device's preferences hold "appearance" as "dark" in place of the unreadable value
+
+    # Upstream #23427: leaving a field the user had not edited saved its stale value over a newer one.
+    @backlog @desktop
+    Scenario: Leaving a field without editing it saves nothing
+      Given the user put the cursor in the project name field and changed nothing
+      And another client renames the project to "shop-v2"
+      When the user leaves the field
+      Then the project is still named "shop-v2"
+
+    # Upstream #25131: fields that save when left lost their text when Escape closed Settings.
+    @backlog @desktop
+    Scenario Outline: Closing Settings with Escape keeps what was typed in a field
+      Given the user typed a new value into <field> in Settings
+      When the user closes Settings with Escape
+      Then the new value of <field> is saved
+
+      Examples:
+        | field                         |
+        | the thread title instructions |
+        | the project name              |
+        | the branch naming             |
+        | the worktree location         |

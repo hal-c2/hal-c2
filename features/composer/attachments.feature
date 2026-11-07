@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26522
 #   https://github.com/pingdotgg/t3code/pull/21356
 #   https://github.com/pingdotgg/t3code/pull/21355
 #   https://github.com/pingdotgg/t3code/pull/23832
@@ -33,6 +34,7 @@
 #   apps/web/src/lib/imageCompression.ts (HEIC conversion, size ceilings, downscale ladder)
 #   apps/web/src/components/chat/composerSubmission.ts (what a message without text sends)
 #   packages/client-runtime/src/textPaste.ts (when a paste is folded into a file, its name)
+#   https://github.com/pingdotgg/t3code/pull/28499
 
 Feature: Attaching images and files to a message
   The user adds images and files to a turn by choosing, dropping, pasting or
@@ -391,6 +393,14 @@ Feature: Attaching images and files to a message
       | a 1800 by 1200 pixel JPEG                  | the original file, not encoded again                         |
       | a 3000 by 3000 pixel GIF                   | the original file                                            |
       | a 3000 by 2000 pixel PNG that cannot be decoded | the original file                                       |
+  # Upstream #26522: a PNG under the 10 MiB limit was rejected after resizing came out larger.
+  @backlog @mobile @desktop
+  Scenario: A PNG that grows past the size limit when scaled down is scaled again until it fits
+    When the user attaches a 1668 by 2388 pixel PNG of 6.8 MB with transparency
+    And scaling it to 2000 pixels on its longest side encodes to 11 MB
+    Then the attached image is a smaller PNG under the 10 MiB limit that keeps its transparency
+    And no more than three further sizes are tried before the image is refused
+
 
   @backlog @desktop @priority-high
   Scenario: A message is not sent while a pasted image is still being scaled down
@@ -400,6 +410,7 @@ Feature: Attaching images and files to a message
     And the user sees an "info" toast "Still compressing a pasted image." saying "Send again once its thumbnail appears."
 
   # Upstream #23832: a pasted image showed nothing until it was scaled down, worst on remote environments.
+  # Upstream #28499: the tile showed placeholder text while its thumbnail loaded on a slow link.
   @backlog @desktop
   Scenario: A pasted image shows its tile at once
     When the user pastes a large screenshot into the composer

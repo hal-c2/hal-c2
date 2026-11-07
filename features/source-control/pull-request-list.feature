@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27100
+#   https://github.com/pingdotgg/t3code/pull/23635
+#   https://github.com/pingdotgg/t3code/pull/25219
+#   https://github.com/pingdotgg/t3code/pull/26079
 #   https://github.com/pingdotgg/t3code/pull/23887
 #   https://github.com/pingdotgg/t3code/pull/23034
 #   https://github.com/pingdotgg/t3code/pull/22633
@@ -59,6 +63,12 @@
 #   https://github.com/pingdotgg/t3code/pull/25008
 #   https://github.com/pingdotgg/t3code/pull/25713
 #   https://github.com/pingdotgg/t3code/pull/21389
+#   https://github.com/pingdotgg/t3code/pull/24350
+#   https://github.com/pingdotgg/t3code/pull/22029
+#   https://github.com/pingdotgg/t3code/pull/23594
+#   https://github.com/pingdotgg/t3code/pull/24772
+#   https://github.com/pingdotgg/t3code/pull/26877
+#   https://github.com/pingdotgg/t3code/pull/23464
 
 Feature: Browsing pull requests
   The pull requests page gathers pull requests from every project in the workspace, with
@@ -87,6 +97,20 @@ Feature: Browsing pull requests
     Examples:
       | state  |
       | open   |
+      | closed |
+      | merged |
+
+  # Upstream #24772: Forgejo has no merged list, so merged and closed lists each held the other's
+  # pull requests and came up short.
+  @backlog @mc
+  Scenario Outline: A Forgejo list by state holds only pull requests in that state
+    Given a Forgejo repository with merged pull requests and pull requests closed without merging
+    When the user lists <state> pull requests
+    Then every listed pull request is <state>
+    And the list is filled to its page size when there are enough
+
+    Examples:
+      | state  |
       | closed |
       | merged |
 
@@ -175,6 +199,27 @@ Feature: Browsing pull requests
     When one of them reads newer status from the host
     Then both show the newer status
 
+  # Upstream #26877: only GitHub rows carried a review decision, so GitLab merge requests showed no
+  # approval and the approved filter found none.
+  @backlog @mc
+  Scenario Outline: A GitLab merge request shows its approval
+    Given a merge request on GitLab <edition> that <approval>
+    When the user lists merge requests
+    Then its row shows it as <shown>
+
+    Examples:
+      | edition              | approval                                  | shown                    |
+      | Community Edition    | someone approved                          | approved                 |
+      | Enterprise Edition   | meets the project's approval rules        | approved                 |
+      | Enterprise Edition   | still needs approvals by the rules        | waiting for a review     |
+
+  # Upstream #26877
+  @backlog @mc @priority-low
+  Scenario: A GitLab list whose approvals cannot be read still loads
+    Given GitLab refuses to say which merge requests are approved
+    When the user lists merge requests
+    Then the merge requests are listed without an approval
+
   @backlog @desktop
   Scenario: A newer read that omits review or check status keeps what was known
     Given a row shows pull request 42 as approved with passing checks
@@ -227,6 +272,21 @@ Feature: Browsing pull requests
       | the cafe CLI's git credential helper      | git.cafe                     | is sent     |
       | CAFE_TOKEN with CAFE_HOST naming git.cafe | a page git.cafe redirects to | is not sent |
 
+  # Upstream #26079: a pull request opened before GitHub sync caught up is renumbered, and
+  # GitCafe answers the old number with a redirect that every read failed on.
+  @backlog @mc @priority-low
+  Scenario Outline: A renumbered GitCafe pull request is followed to its new number
+    Given pull request 1000000069 of "cafe" on git.cafe was renumbered to 26061
+    When the MC reads pull request 1000000069 and git.cafe redirects it to <target>
+    Then <result>
+
+    Examples:
+      | target                                  | result                                         |
+      | its own API at /pulls/26061             | pull request 26061 is read                     |
+      | another host                            | the read fails and the token is not sent there |
+      | a sibling host such as staging.git.cafe | the read fails and the token is not sent there |
+      | a page outside its API                  | the read fails                                 |
+
   @backlog @mc @shared @priority-low
   Scenario: A thread's linked git.cafe pull request is shown as GitCafe
     Given a thread links "https://git.cafe/acme/shop/pulls/7"
@@ -235,6 +295,8 @@ Feature: Browsing pull requests
 
   # Upstream #22633: git.cafe lists no line totals, so linked rows showed none. The list itself
   # stays without them, since counting takes seconds per pull request there.
+  # Upstream #27100: each sync re-read the changed-file list of every open pull request to find
+  # cached totals; now one pull request read is all an unchanged one costs.
   @backlog @mc @shared @priority-low
   Scenario: A linked GitCafe pull request shows its line counts
     Given a thread links a GitCafe pull request that adds 159 lines and removes 37
@@ -325,6 +387,56 @@ Feature: Browsing pull requests
       | condition                               | reason                                          |
       | the GitHub CLI is not installed         | the GitHub CLI is required and how to install it |
       | the GitHub CLI is not signed in         | the user should run gh auth login and retry     |
+
+  # Upstream #24350: "acme/shop could not be read." did not say a token saved in Settings was
+  # overriding the server's token and the gh login.
+  @backlog @mc @shared
+  Scenario Outline: A private repository GitHub refuses names the credential it refused
+    Given the pull requests of the private repository "acme/shop" are read with <credential>
+    And GitHub says that credential cannot see "acme/shop"
+    When the user lists pull requests
+    Then "acme/shop" reports it is unavailable because <credential> cannot see it
+    And it says what to do about <credential>
+
+    Examples:
+      | credential                         |
+      | the GitHub token saved in Settings |
+      | the MC's environment token         |
+      | the GitHub CLI's login             |
+
+  # Upstream #24350: after the app sign-in falls back to the user's own credential, the error
+  # names the credential that made the last request.
+  @backlog @mc
+  Scenario: A refusal after the app sign-in fell back names the credential that was refused
+    Given the GitHub app sign-in cannot see "acme/shop" and the read falls back to the GitHub CLI's login
+    And GitHub says the GitHub CLI's login cannot see "acme/shop" either
+    When the user lists pull requests
+    Then "acme/shop" reports it is unavailable because the GitHub CLI's login cannot see it
+
+  # Upstream #24350: on the phone the reason fits one line until the user opens it.
+  @backlog @mobile @priority-low
+  Scenario: A long unavailable reason opens in full on the phone
+    Given "acme/shop" is unavailable with a reason longer than one line
+    When the user lists pull requests on the phone
+    Then the reason is cut to one line
+    And opening it shows the whole reason
+
+  # Upstream #22029: a Bitbucket Server remote was sent to the Bitbucket Cloud API, credentials and all.
+  @backlog @mc
+  Scenario: A Bitbucket Server repository is not read through Bitbucket Cloud
+    Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
+    And no Bitbucket API address is configured
+    When the user lists pull requests
+    Then "proj/repo" reports that its host cannot be browsed here yet
+    And nothing about "proj/repo" is sent to bitbucket.org
+
+  # Upstream #22029: a configured Bitbucket API address keeps every host readable through it.
+  @backlog @mc @priority-low
+  Scenario: A configured Bitbucket API address reads a Bitbucket Server repository through it
+    Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
+    And a Bitbucket API address is configured
+    When the user lists pull requests
+    Then the pull requests of "proj/repo" are read through the configured address
 
   # Upstream #17725: "az devops login" signs in with a token that "az account show" does not know.
   @backlog @mc @priority-low
@@ -671,13 +783,22 @@ Feature: Browsing pull requests
     Then the two are listed apart, told apart by their hosts
 
   # Legacy: apps/web/src/components/pullRequest/pullRequestProjectFilter.logic.test.ts (saved worktree selection stays)
-  @backlog @desktop
+  # Upstream #25219: the phone keeps a saved worktree as its repository's choice too.
+  @backlog @desktop @mobile
   Scenario: A repository narrowed to by one of its worktrees is listed as that worktree
     Given "acme/shop" is a project and also has a worktree as a project
     And the page was saved narrowed to the worktree
     When the user opens the project menu
     Then "acme/shop" is listed once, as that worktree
     And the narrowing still applies
+
+  # Upstream #25219: the phone repeated a repository for each checkout and could not tell environments apart.
+  @backlog @desktop @mobile
+  Scenario: A repository is listed once per environment, named by its environment
+    Given "acme/shop" has two checkouts on "laptop" and one on "server"
+    When the user opens the project menu of the pull requests page
+    Then "acme/shop" is listed once for "laptop" and once for "server"
+    And each says which environment it is on
 
   @backlog @desktop @mobile
   Scenario Outline: A qualifier typed into the search becomes a filter
@@ -1037,6 +1158,23 @@ Feature: Browsing pull requests
     Then the rows stay and the page says "Loading more"
     And the choice cannot be pressed until the hosts have answered
     And the next pull requests follow the ones listed
+
+  # Upstream #23594: a failed refresh showed in the load-more footer and stopped paging.
+  @backlog @mobile
+  Scenario: A failed refresh for one environment does not stop paging the others
+    Given refreshing pull requests fails for "Office Mac"
+    And the other environments have further pages
+    When the user reaches the end of the list
+    Then the next pages load for the other environments
+    And the footer does not show the refresh failure for "Office Mac"
+
+  # Upstream #23464: the phone kept two refresh streams open per environment when its pull
+  # request summaries and details were both shown.
+  @backlog @shared @priority-low
+  Scenario: A client keeps one pull request refresh stream per environment
+    Given a thread's pull request summary and its pull request details are both shown for "laptop"
+    Then the client subscribes to pull request refreshes from "laptop" once
+    And both are updated when "laptop" refreshes a pull request
 
   # Legacy: apps/web/src/routes/_chat.pull-requests.tsx (MAX_PAGE_SIZE, "Narrow your search to find more pull requests.")
   @backlog @desktop
@@ -1778,6 +1916,16 @@ Feature: Browsing pull requests
     Given several pull requests were updated at the same instant across a page boundary
     When the user loads more pull requests
     Then every one of them is listed exactly once
+
+  # Upstream #23635: Bitbucket times are finer than a millisecond, so a pull request updated later
+  # in a page's last millisecond was skipped for good.
+  @backlog @mc
+  Scenario: A Bitbucket pull request updated in the same millisecond as a page's last is not skipped
+    Given two Bitbucket pull requests were updated within one millisecond
+    And a page of the list ends between them
+    When the user loads more pull requests
+    Then the other one is listed on the next page
+    And no pull request is listed twice
 
   @backlog @mc
   Scenario Outline: A host that cannot search text lists without narrowing

@@ -1,4 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24392
+#   https://github.com/pingdotgg/t3code/pull/26563
+#   https://github.com/pingdotgg/t3code/pull/24688
+#   https://github.com/pingdotgg/t3code/pull/26060
+#   https://github.com/pingdotgg/t3code/pull/23129
+#   https://github.com/pingdotgg/t3code/pull/23725
+#   https://github.com/pingdotgg/t3code/pull/25486
+#   https://github.com/pingdotgg/t3code/pull/23466
+#   https://github.com/pingdotgg/t3code/pull/26730
+#   https://github.com/pingdotgg/t3code/pull/23138
+#   https://github.com/pingdotgg/t3code/pull/21543
+#   https://github.com/pingdotgg/t3code/pull/23225
 #   https://github.com/pingdotgg/t3code/pull/20894
 #   https://github.com/pingdotgg/t3code/pull/23548
 #   https://github.com/pingdotgg/t3code/pull/22110
@@ -79,6 +91,18 @@
 #   apps/server/src/pullRequest/azureDevOpsPullRequestJson.ts, bitbucketPullRequestJson.ts (comment filters, threads)
 #   apps/server/src/pullRequest/ForgejoPullRequestProvider.ts, forgejoPullRequestJson.ts (reactions, checks, threads)
 #   packages/shared/src/gitPatchPath.ts (file names with control characters in a patch header)
+#   https://github.com/pingdotgg/t3code/pull/21988
+#   https://github.com/pingdotgg/t3code/pull/22053
+#   https://github.com/pingdotgg/t3code/pull/23638
+#   https://github.com/pingdotgg/t3code/pull/22374
+#   https://github.com/pingdotgg/t3code/pull/25916
+#   https://github.com/pingdotgg/t3code/pull/26064
+#   https://github.com/pingdotgg/t3code/pull/26177
+#   https://github.com/pingdotgg/t3code/pull/26073
+#   https://github.com/pingdotgg/t3code/pull/26349
+#   https://github.com/pingdotgg/t3code/pull/22382
+#   https://github.com/pingdotgg/t3code/pull/23468
+#   https://github.com/pingdotgg/t3code/pull/25195
 
 Feature: Reviewing a pull request
   Opening a pull request shows its description, conversation, checks and code. The user
@@ -244,6 +268,20 @@ Feature: Reviewing a pull request
     When the user marks it not viewed
     Then GitHub records "src/cart.ts" as not viewed
 
+  # Upstream #26349: shift-clicking a file's Viewed mark gives the files between it and the last
+  # one marked the same state, in the order they are shown.
+  @backlog @desktop
+  Scenario Outline: Shift-clicking a Viewed mark marks a run of files
+    Given pull request 42 shows "a.ts", "b.ts", "c.ts" and "d.ts" in that order, <start>
+    And the user last clicked the Viewed mark of "a.ts"
+    When the user shift-clicks the Viewed mark of "d.ts"
+    Then "a.ts" to "d.ts" are all <state> and folded to match
+
+    Examples:
+      | start             | state      |
+      | none viewed       | viewed     |
+      | all viewed        | not viewed |
+
   @mc
   Scenario: A viewed file that changed again is flagged
     Given "src/cart.ts" is marked viewed in pull request 42
@@ -333,6 +371,14 @@ Feature: Reviewing a pull request
     When the user opens its code
     Then the files arrive in slices and every file's line counts are known
 
+  # Upstream #22374: GitLab merge requests showed no added and removed lines.
+  @backlog @mc @shared
+  Scenario: A GitLab merge request shows its line counts
+    Given GitLab merge request 5 adds 12 lines and removes 4 across 3 files
+    When the user opens merge request 5
+    Then it shows 12 added and 4 removed lines
+    And each of the 3 files shows its own added and removed lines
+
   # Upstream #13835: a turn finishing anywhere in the environment reset the open pull request's
   # code to the top; it now refreshes in the background and keeps the reader's place.
   @backlog @desktop @mobile
@@ -358,6 +404,15 @@ Feature: Reviewing a pull request
   Scenario: Reading a whole changed file
     When the user expands the unchanged lines around a change in "src/cart.ts"
     Then the file's contents on both sides are shown
+
+  # Upstream #23638: GitHub moves a pull request's base to the base branch's tip, so expanding read
+  # the old side from there and the patch no longer matched it.
+  @backlog @mc @priority-high
+  Scenario: Unchanged lines expand from the merge base after the base branch moved on
+    Given main gained lines in "src/cart.ts" after pull request 42 branched from it
+    When the user expands the unchanged lines around a change in "src/cart.ts"
+    Then the unchanged lines are shown
+    And the old side is "src/cart.ts" as it was at the merge base, not at main's tip
 
   # Upstream #12583: a line comment on expanded context outside the host's hunks made the host
   # reject the whole review; such lines no longer take comments.
@@ -742,6 +797,21 @@ Feature: Reviewing a pull request
     Then "#12" links to issue 12 of the repository and "#7" to issue 7
     And the words around them are unchanged
 
+  # Upstream #26060: a description written on GitHub ran its lines together, since one newline was not a break.
+  @backlog @desktop @mobile
+  Scenario Outline: A single newline in a description breaks the line where its host does
+    Given the description of a pull request on <host> has two lines separated by one newline
+    When the user reads the description
+    Then the two lines are shown <shown>
+
+    Examples:
+      | host         | shown                         |
+      | GitHub       | on separate lines             |
+      | Forgejo      | on separate lines             |
+      | Azure DevOps | on separate lines             |
+      | GitLab       | run together in one paragraph |
+      | Bitbucket    | run together in one paragraph |
+
   # Legacy: apps/web/src/components/pullRequest/pullRequestMarkdown.logic.ts (remarkPullRequestAutolinks)
   @backlog @desktop
   Scenario: A full commit hash links to the commit and is shown shortened
@@ -764,6 +834,21 @@ Feature: Reviewing a pull request
       | "#0" or "#012"                                       |
       | "#12" inside a link the author wrote                 |
       | "#12" inside code                                    |
+
+    # Upstream #26177: a reference glued to a preceding "." or "-" no longer links.
+    Examples:
+      | written                                              |
+      | "foo.#12" glued to a period                          |
+      | "foo-#12" glued to a hyphen                          |
+
+  # Upstream #26177: long runs of "." or ".-" made reference linking quadratic, and anyone could
+  # freeze the client with a comment on a public repository.
+  @backlog @desktop @mobile
+  Scenario: A comment with a long run of periods opens at once and still links its references
+    Given a comment on pull request 42 has 50,000 periods, then 50,000 ".-" pairs, then "#1"
+    When the user reads the comment
+    Then the comment is shown at once
+    And "#1" links to issue 1 of the repository
       | a hash that is shorter or longer than a full commit  |
       | a commit hash glued to a word                        |
 
@@ -1186,6 +1271,19 @@ Feature: Reviewing a pull request
     Then that remark offers "Fix in a thread"
     But an approval or a remark with no words does not
 
+  # Upstream #23468: Azure DevOps wrote a file comment's path with a leading slash, so it named no
+  # file in the diff and "Fix in a thread" pointed the agent at a root path.
+  @backlog @mc @desktop
+  Scenario Outline: An Azure DevOps file comment names the path the diff shows
+    Given an Azure DevOps comment on pull request 42 is pinned to the path "<azure path>"
+    When the user opens pull request 42
+    Then the comment is <shown>
+
+    Examples:
+      | azure path  | shown                                         |
+      | /src/app.ts | pinned to "src/app.ts", as the diff names it  |
+      | /           | a general comment, not pinned to a file       |
+
   @backlog @desktop
   Scenario: The timeline lists what happened to the pull request
     Given pull request 42 was opened, received 2 commits and a comment, and was merged
@@ -1222,6 +1320,20 @@ Feature: Reviewing a pull request
     When the user opens the timeline of pull request 42
     Then the approval is an entry of its own naming "hubot" and "approved"
     And the conversation is split around it
+
+  # Upstream #23138: the phone's timeline read Bitbucket's and GitCafe's lowercase verdicts as comments.
+  @backlog @desktop @mobile
+  Scenario Outline: A verdict reads the same in the timeline whichever host spelled it
+    Given pull request 42 is on <host>, which reports a review of "hubot" as "<state>"
+    When the user opens the timeline of pull request 42
+    Then the entry for "hubot" reads <verdict>, as the overview of pull request 42 does
+
+    Examples:
+      | host      | state             | verdict           |
+      | GitHub    | APPROVED          | approved          |
+      | Bitbucket | approved          | approved          |
+      | GitCafe   | changes_requested | changes requested |
+      | GitCafe   | commented         | commented         |
 
   @backlog @desktop
   Scenario: A verdict's words stay visible in the timeline
@@ -1362,6 +1474,15 @@ Feature: Reviewing a pull request
     When the user submits the review
     Then the user sees an "error" toast "The review could not be submitted"
     And the summary and the line comment are still held
+
+  # Upstream #22382: the toast for a refused review gave no reason; it now carries the host's own,
+  # cut to 320 characters, or a hint when the host gives nothing readable.
+  @backlog @desktop
+  Scenario: A refused review says why the host refused it
+    Given GitHub refuses reviews on pull request 42 saying "Review cannot be requested from pull request author"
+    When the user submits the review
+    Then the user sees an "error" toast "The review could not be submitted"
+    And the toast says "Review cannot be requested from pull request author"
 
   @backlog @desktop
   Scenario: A review is sent once
@@ -1647,6 +1768,14 @@ Feature: Reviewing a pull request
     And the user refreshes pull request 42
     Then the code is scoped to all commits again
 
+  # Upstream #25916: the Code tab still asked for the diff of a commit the pull request dropped.
+  @backlog @desktop @mobile
+  Scenario: A commit the pull request dropped is not asked for
+    Given the code of pull request 42 is scoped to a commit
+    When the author force-pushes and the commit is no longer part of the change
+    Then the scope reads "All commits"
+    And the diff of the dropped commit is not asked for
+
   @backlog @desktop
   Scenario: A change with no commits cannot stay scoped to one
     Given the code of pull request 42 is scoped to a commit
@@ -1799,6 +1928,14 @@ Feature: Reviewing a pull request
     And "src/cart.test.ts" and "src/tax.test.ts" follow, in the order of the sources they cover
     And "src/orphan.test.ts" comes after them
 
+  # Upstream #23129: a test named after a source with a dot in its name, like
+  # "cart.logic.test.ts", never found its source and sorted last.
+  @backlog @desktop @priority-low
+  Scenario: A test of a source with a dotted name is read after that source
+    Given pull request 42 changes "src/a.logic.ts", "src/b.ts", "src/c.tsx", "src/a.logic.test.ts", "src/b.test.ts" and "src/c.browser.test.tsx"
+    When the user reads the diff of pull request 42
+    Then the tests are read as "src/a.logic.test.ts", "src/b.test.ts", "src/c.browser.test.tsx"
+
   # Legacy: apps/web/src/components/pullRequest/pullRequestFileOrder.logic.test.ts (orders the same diff the same way whatever order it arrives in)
   @backlog @desktop
   Scenario: The order of the files does not depend on the order the host sent them in
@@ -1901,6 +2038,43 @@ Feature: Reviewing a pull request
     Given the user opened the file tree while reading the code of a pull request
     When the user reads the code of another pull request
     Then the file tree is open
+  # Upstream #26730: the diff listed test files after all source while the tree kept them in their folders.
+  @backlog @desktop @mobile
+  Scenario: A pull request's diff lists its files in the file tree's order
+    Given pull request 42 changes "src/cart.ts", "src/cart.test.ts" and "lib/tax.ts"
+    When the user reads the code of pull request 42
+    Then the diff shows the files in the same order as the file tree
+    And "src/cart.test.ts" is shown with the other files of "src"
+
+  # Upstream #26730: test files can be hidden from a pull request's diff and its tree.
+  @backlog @desktop
+  Scenario: Hiding test files from a pull request's diff
+    Given pull request 42 changes "src/cart.ts", "src/cart.test.ts" and "fixtures/cart.json"
+    When the user hides test files while reading its code
+    Then only "src/cart.ts" is in the diff and the file tree
+    And the user is told 2 test files are hidden
+
+  # Upstream #26730: the count of hidden test files is the way back.
+  @backlog @desktop
+  Scenario: The count of hidden test files shows them again
+    Given the user hid test files while reading the code of pull request 42
+    When the user chooses "2 test files hidden"
+    Then the test files are in the diff and the file tree again
+
+  # Upstream #26730: hiding test files is one remembered choice for pull request diffs and thread diffs.
+  @backlog @desktop
+  Scenario: Hidden test files stay hidden in the next diff the user reads
+    Given the user hid test files while reading the code of pull request 42
+    When the user opens the diff of a thread's changes, or the code of another pull request
+    Then test files are hidden there too
+
+  # Upstream #26730: a file asked for by a link stays visible with test files hidden.
+  @backlog @desktop
+  Scenario: A test file a link points to is shown while test files are hidden
+    Given the user hid test files
+    When the user follows a link to the diff of "src/cart.test.ts" in pull request 42
+    Then the diff of "src/cart.test.ts" is shown
+
 
   # Upstream #18126 gives the phone the code, file diffs and line comments as well; see
   # "The review page" and the scenarios after it, which carry @mobile.
@@ -1930,6 +2104,15 @@ Feature: Reviewing a pull request
     Given the description of pull request 42 has an image from "cursor.com/artifacts/"
     When the user opens pull request 42 on the phone
     Then its attachments show that image
+
+  # Upstream #23466: an image written as "![shot](https://)" replaced the whole pull request with
+  # an error screen.
+  @backlog @mobile
+  Scenario: A pull request with a broken image address stays readable
+    Given the description of pull request 42 has a screenshot and an image whose address is "https://"
+    When the user opens pull request 42 on the phone
+    Then the description is shown
+    And its attachments show only the screenshot
 
   @mc
   Scenario: Images in a private pull request are fetched by the MC
@@ -2241,6 +2424,30 @@ Feature: Reviewing a pull request
     Then the pipeline is listed as one check named "Pipeline" with a link to it
     And the jobs behind it are not listed
 
+  # Upstream #24392: opening a GitLab merge request read it twice, for its detail and again for
+  # its checks, spending the shared GitLab request budget.
+  @backlog @mc @priority-low
+  Scenario: Opening a GitLab merge request reads it once for its detail and its checks
+    Given a GitLab merge request was not read in the last minute
+    When the user opens it and its checks are shown
+    Then GitLab is asked for the merge request once
+    And a change the user makes to it, or a refresh, reads it afresh
+
+  # Upstream #24688: a trigger job passes once it starts its child pipeline, so a failed child
+  # read as "All checks passed".
+  @backlog @mc @priority-low
+  Scenario Outline: A GitLab child pipeline is its own check
+    Given the pipeline of a GitLab merge request has a trigger job "deploy" that started a child pipeline
+    And the child pipeline failed, and the trigger job <allowed> to fail
+    When the user reads its checks
+    Then "deploy" is listed beside "Pipeline" as <result>, linking to the child pipeline
+
+    Examples:
+      | allowed    | result    |
+      | is not     | a failure |
+      | is allowed | neutral   |
+
+  # Upstream #25195: a pipeline waiting on a delayed job read as neutral, as if it had finished.
   @backlog @mc @priority-low
   Scenario Outline: A GitLab pipeline state is read as a check state
     Given the pipeline of a GitLab merge request is "<state>"
@@ -2253,9 +2460,14 @@ Feature: Reviewing a pull request
       | failed    | failure   |
       | canceled  | cancelled |
       | skipped   | skipped   |
-      | scheduled | neutral   |
+      | scheduled | pending   |
       | running   | pending   |
       | created   | pending   |
+
+    # Upstream #21543: a pipeline still being cancelled was listed as pending.
+    Examples:
+      | state     | result    |
+      | canceling | cancelled |
 
   @backlog @mc @priority-low
   Scenario: A GitLab merge request without a pipeline has no checks
@@ -2657,6 +2869,17 @@ Feature: Reviewing a pull request
     When the user chooses "Write guide" in the menu of pull request 42 and leaves the page
     Then the user is told when the guide is ready, or that it failed
     And the guide is kept for pull request 42 and its menu offers "Rewrite guide"
+
+  # Upstream #26073: a failed guide showed the provider's raw output, pushing Try again out of reach.
+  @backlog @shared @priority-low
+  Scenario: A failed review guide says so briefly and can be tried again
+    Given "Review guides (beta)" is on
+    And writing the guide for pull request 42 failed with a long provider output
+    When the user opens its Guide tab
+    Then the tab says "Could not write a review guide" and points to the guide model setting
+    And "Try again" can be reached without scrolling through the output
+    And the provider's output is in collapsed technical details
+    And a failed rewrite of an existing guide is reported the same way
     When a new commit is pushed to pull request 42
     Then the guide is shown as stale
 
@@ -2667,6 +2890,60 @@ Feature: Reviewing a pull request
     And every changed file is in some stop
     And every excerpt and note sits on changed lines
     And the guide's instructions can shape what comes first, but not the format or the coverage
+
+  # Upstream #23725: an excerpt spanning two earlier ones in a stop grew the first and left the
+  # second, so the lines they shared showed twice.
+  @backlog @mc @priority-low
+  Scenario: Excerpts in a stop that touch are shown as one
+    Given a guide stop cites "src/report.ts" lines 8 to 14, then 16 to 20, then 13 to 17
+    When the MC stores the guide
+    Then the stop shows one excerpt of "src/report.ts", lines 8 to 20
+
+  # Upstream #23225: a guide took a cached diff page as complete before the fresh one arrived.
+  @backlog @shared @priority-low
+  Scenario: A guide reads the pull request's current diff, not one cached from an earlier revision
+    Given the client has the diff of pull request 42 from an earlier revision
+    And a new revision changes "api.ts" and adds "new.ts"
+    When the user opens the guide for the new revision
+    Then its stops show "api.ts" as the new revision has it
+    And "new.ts" is not reported missing
+
+  # Upstream #25486: a guide kept behind the phone's Overview went on refreshing every five seconds.
+  @backlog @mobile @priority-low
+  Scenario: A guide the user switched away from stops refreshing until it is shown again
+    Given the user is reading the guide of pull request 42 on the phone
+    When the user switches to the pull request's overview
+    Then the guide is no longer refreshed while it is hidden
+    And switching back shows the kept guide and refreshes it once
+
+  # Upstream #26064: switching tabs on the phone moved the page up by the header's height.
+  @backlog @mobile @priority-low
+  Scenario: Switching a pull request's tabs on the phone keeps the page where it was
+    Given the user is reading pull request 42 on the phone with its header partly scrolled away
+    When the user switches between its overview, guide and activity
+    Then the header and title stay where they were
+
+  # Upstream #21988: a textconv diff driver rewrote the hunks a guide was measured against, so its
+  # excerpts were dropped.
+  @backlog @mc @priority-low
+  Scenario: A guide keeps its excerpts in a file a text conversion driver changes
+    Given the repository shows "notes.docx" through a text conversion diff driver
+    And pull request 42 changes "notes.docx"
+    When the MC writes a guide for pull request 42
+    Then the guide's excerpts of "notes.docx" sit on its changed lines
+
+  # Upstream #22053: paths git quotes, with spaces or escaped characters, lost their excerpts.
+  @backlog @mc @priority-low
+  Scenario Outline: A guide keeps its excerpts in a file whose name git quotes
+    Given pull request 42 changes "<file>"
+    When the MC writes a guide for pull request 42
+    Then the guide has excerpts of "<file>" on its changed lines
+
+    Examples:
+      | file                  |
+      | docs/release notes.md |
+      | src/café.ts           |
+      | src/"quoted".ts       |
 
   @backlog @mc @priority-low
   Scenario Outline: Which providers can write a guide
@@ -2777,6 +3054,13 @@ Feature: Reviewing a pull request
         | requirements.txt                | Code      |
         | CMakeLists.txt                  | Code      |
 
+      # Upstream #26563: Convex _generated/ output and evaluation files counted as Code.
+      Examples: Generated output and evaluations
+        | path                            | kind      |
+        | convex/_generated/api.ts        | Generated |
+        | src/cart.eval.ts                | Tests     |
+        | evals/checkout.ts               | Tests     |
+
     @backlog @mc
     Scenario: A split that would not add up to the total is not offered
       Given the host lists only some of the files pull request 42 changes
@@ -2812,8 +3096,9 @@ Feature: Reviewing a pull request
       When the user opens the thread's details
       Then the split of pull request 42 shows under its changed files
 
-    # Upstream #22189 and #22255: the phone's changed files say the same split, and hiding
+    # Upstream #22189: the phone's changed files say the same split, and hiding
     # test files hides mocks and fixtures too.
+    # Upstream #22255: same change as #22189.
     @backlog @mobile
     Scenario: The phone's changed files of a pull request show its split
       When the user opens the changed files of pull request 42 on the phone

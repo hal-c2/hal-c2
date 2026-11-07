@@ -39,6 +39,39 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
+  # --- a cancelled queued run ----------------------------------------------------------
+
+  step "run 1 of {string} is running and run 2 was queued behind it",
+       %{args: [thread]} = context do
+    started = World.iso_from_now(-60)
+
+    context
+    |> World.numbered_run(thread, 1, "running", %{"startedAt" => started})
+    |> World.numbered_run(thread, 2, "queued")
+    |> Map.merge(%{thread: thread, started: started})
+  end
+
+  step "run 2 is cancelled before it starts", context do
+    World.numbered_run(context, context.thread, 2, "cancelled", %{
+      "startedAt" => nil,
+      "completedAt" => World.iso_from_now(0)
+    })
+  end
+
+  step "the shell row of {string} has status {string} because run {int} is the latest run",
+       %{args: [thread, status, n]} = context do
+    row = World.row(context, thread)
+    assert row["status"] == status
+    assert row["latestRunId"] == "run-#{n}"
+    context
+  end
+
+  step "the activity start time is the start of run {int}", %{args: [n]} = context do
+    assert World.row(context, context.thread)["activityRunStartedAt"] == context.started
+    assert n == 1
+    context
+  end
+
   # --- pending requests, messages, plans -----------------------------------------------
 
   step "the provider asked for approval of a command in {string}", %{args: [thread]} = context do
@@ -756,6 +789,331 @@ defmodule HalC2.Steps.Orchestration.Projections do
       else: until_live(client, [frame | acc])
   end
 
+  # --- bounded history -------------------------------------------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" has (?<n>\d+) user turns$/, %{args: [thread, n]} = context do
+    commit(context, thread, Enum.flat_map(1..String.to_integer(n), &user_turn/1))
+    Map.put(context, :thread, thread)
+  end
+
+  step ~r/^a client asks for a bounded snapshot of "(?<thread>[^"]+)"$/,
+       %{args: [thread]} = context do
+    history(context, thread, nil)
+  end
+
+  step "it receives the newest 10 user turns and a cursor for older history", context do
+    assert user_messages(context.history) == for(n <- 51..60, do: "msg-#{n}")
+    assert is_binary(context.history["cursor"])
+    context
+  end
+
+  step "it asks for the page before that cursor", context do
+    history(context, context.thread, context.history["cursor"])
+  end
+
+  step "it receives the 20 user turns before them", context do
+    assert user_messages(context.history) == for(n <- 31..50, do: "msg-#{n}")
+    context
+  end
+
+  step ~r/^an earlier turn of "(?<thread>[^"]+)" ran 400 tool calls and was steered twice$/,
+       %{args: [thread]} = context do
+    big = user_turn(11, 400)
+
+    steering =
+      for i <- 1..2 do
+        message = %{"id" => "steer-#{i}", "runId" => "run-11", "role" => "user", "text" => "also"}
+        {"message", message["id"], %{"s" => message}}
+      end
+
+    turns = for n <- 1..30, n != 11, do: user_turn(n)
+    commit(context, thread, Enum.concat([big, steering | turns]))
+    Map.put(context, :thread, thread)
+  end
+
+  step "a client pages back to that turn", context do
+    context = history(context, context.thread, nil)
+    history(context, context.thread, context.history["cursor"])
+  end
+
+  step "the page holds the whole turn, from the user's message to its last item", context do
+    rows = context.history["rows"]
+    assert ["message", "msg-11"] in for([kind, id, _] <- rows, do: [kind, id])
+    assert length(for ["turn-item", "item-11-" <> _, _] <- rows, do: 1) == 400
+    context
+  end
+
+  step "the steering messages do not count as turns of their own", context do
+    # The steering messages are in the page with their turn, yet twenty user turns,
+    # run 11 among them, still fill it.
+    ids = for [_kind, id, _] <- context.history["rows"], do: id
+    assert "steer-1" in ids and "steer-2" in ids
+    turns = user_messages(context.history)
+    assert length(turns) == 20
+    assert "msg-11" in turns
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" has hundreds of turns started by background work between two user messages$/,
+       %{args: [thread]} = context do
+    auto =
+      for n <- 2..301 do
+        run = %{"id" => "run-#{n}", "ordinal" => n, "status" => "completed"}
+        {"run", run["id"], %{"s" => run}}
+      end
+
+    commit(context, thread, user_turn(1) ++ auto ++ user_turn(302))
+    Map.put(context, :thread, thread)
+  end
+
+  step "the snapshot holds at most 150 turns of any kind", context do
+    runs = for ["turn-item", _, %{"runId" => run}] <- context.history["rows"], uniq: true, do: run
+    assert length(runs) <= 150
+    assert user_messages(context.history) == ["msg-302"]
+    context
+  end
+
+  step ~r/^a client asks for older history of "(?<thread>[^"]+)" with (?<cursor>an empty cursor|a cursor the MC never gave|a cursor longer than 4,096 characters)$/,
+       %{args: [thread, cursor]} = context do
+    cursor =
+      case cursor do
+        "an empty cursor" -> ""
+        "a cursor the MC never gave" -> "not-a-cursor"
+        _ -> String.duplicate("a", 4_097)
+      end
+
+    {reply, context} =
+      World.call(context, "hal-c2.threadHistory", %{
+        "threadId" => World.thread_id(context, thread),
+        "cursor" => cursor
+      })
+
+    Map.put(context, :reply, World.normalize_reply(reply))
+  end
+
+  step "the request fails as an invalid history cursor", context do
+    assert {:error, "invalid history cursor", %{"_tag" => "InvalidHistoryCursor"}} = context.reply
+    context
+  end
+
+  step ~r/^a client holds a cursor into the history of "(?<thread>[^"]+)"$/,
+       %{args: [thread]} = context do
+    commit(context, thread, Enum.flat_map(1..40, &user_turn/1))
+    context = history(context, thread, nil)
+    cursor = context.history["cursor"]
+    context = history(context, thread, cursor)
+    Map.merge(context, %{thread: thread, cursor: cursor, before: user_messages(context.history)})
+  end
+
+  step "{string} gains new turns", %{args: [thread]} = context do
+    commit(context, thread, Enum.flat_map(41..50, &user_turn/1))
+    context
+  end
+
+  step "the client asks for the page before that cursor", context do
+    history(context, context.thread, context.cursor)
+  end
+
+  step "it receives the same older turns as before, with none skipped or repeated", context do
+    assert user_messages(context.history) == context.before
+    assert context.before == Enum.uniq(context.before)
+    context
+  end
+
+  step "the item the cursor names has since left the timeline", context do
+    {:ok, _} =
+      HalC2.Streams.commit(
+        World.thread_id(context, context.thread),
+        :thread,
+        [{"run", "run-31", %{"s" => %{"status" => "rolled_back"}}}]
+      )
+
+    context
+  end
+
+  step "it receives the turns before the position the cursor recorded", context do
+    assert user_messages(context.history) == context.before
+    context
+  end
+
+  step ~r/^an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns$/,
+       context do
+    thread = context.thread
+    owned = %{"threadId" => World.thread_id(context, thread), "runId" => "run-1"}
+    queued = %{"id" => "run-q", "ordinal" => 0, "status" => "queued", "userMessageId" => "msg-q"}
+    message = %{"id" => "msg-q", "runId" => "run-q", "role" => "user", "text" => "later"}
+
+    changes = [
+      {"plan", "plan-1",
+       %{
+         "s" =>
+           Map.merge(owned, %{
+             "id" => "plan-1",
+             "nodeId" => "node-1",
+             "kind" => "proposed_plan",
+             "status" => "active",
+             "markdown" => "# Plan"
+           })
+       }},
+      {"context-handoff", "handoff-1",
+       %{"s" => Map.merge(owned, handoff("handoff-1", "ready", "the summary"))}},
+      {"context-transfer", "transfer-1",
+       %{"s" => Map.merge(owned, %{"id" => "transfer-1", "status" => "pending"})}},
+      {"runtime-request", "request-1",
+       %{
+         "s" =>
+           Map.merge(owned, %{"id" => "request-1", "kind" => "approval", "status" => "pending"})
+       }},
+      {"run", "run-q", %{"s" => queued}},
+      {"message", "msg-q", %{"s" => message}}
+    ]
+
+    commit(context, thread, changes)
+    context
+  end
+
+  step "the snapshot still carries the plan, the handoff, the approval and the queued message",
+       context do
+    ids = for [kind, id, _] <- context.history["rows"], do: {kind, id}
+
+    for key <- [
+          {"plan", "plan-1"},
+          {"context-handoff", "handoff-1"},
+          {"context-transfer", "transfer-1"},
+          {"runtime-request", "request-1"},
+          {"message", "msg-q"}
+        ],
+        do: assert(key in ids, "#{inspect(key)} is not in the snapshot")
+
+    # Bounded all the same: the oldest turns' items are not.
+    refute {"turn-item", "item-1-1"} in ids
+    context
+  end
+
+  step ~r/^the newest turns of "(?<thread>[^"]+)" include a completed plan and a finished handoff$/,
+       %{args: [thread]} = context do
+    owned = %{"threadId" => World.thread_id(context, thread), "runId" => "run-2"}
+
+    plan =
+      Map.merge(owned, %{
+        "id" => "plan-1",
+        "nodeId" => "node-2",
+        "kind" => "proposed_plan",
+        "status" => "completed",
+        "markdown" => "# the plan text"
+      })
+
+    handoff =
+      owned
+      |> Map.merge(handoff("handoff-1", "failed", "the summary"))
+      |> Map.put("history", [%{"text" => "hi"}])
+
+    commit(
+      context,
+      thread,
+      user_turn(1) ++
+        user_turn(2) ++
+        [{"plan", "plan-1", %{"s" => plan}}, {"context-handoff", "handoff-1", %{"s" => handoff}}]
+    )
+
+    Map.put(context, :thread, thread)
+  end
+
+  step "each carries its status and says its detail is in its turn item", context do
+    for {id, status} <- [{"plan-1", "completed"}, {"handoff-1", "failed"}] do
+      entity = history_row(context.history, id)
+      assert entity["status"] == status
+      assert entity["detailInTurnItem"] == true
+    end
+
+    context
+  end
+
+  step "neither carries the plan text or the handoff summary a second time", context do
+    assert history_row(context.history, "plan-1")["markdown"] == ""
+    handoff = history_row(context.history, "handoff-1")
+    assert handoff["summaryText"] == ""
+    assert handoff["targetRunId"] == "run-2"
+    refute Map.has_key?(handoff, "history")
+    context
+  end
+
+  step ~r/^what the user can still act on in "(?<thread>[^"]+)" is larger than one megabyte$/,
+       %{args: [thread]} = context do
+    plan = %{
+      "id" => "plan-1",
+      "threadId" => World.thread_id(context, thread),
+      "runId" => "run-1",
+      "kind" => "proposed_plan",
+      "status" => "active",
+      "markdown" => String.duplicate("x", 1_200_000)
+    }
+
+    commit(context, thread, user_turn(1) ++ [{"plan", "plan-1", %{"s" => plan}}])
+    Map.put(context, :thread, thread)
+  end
+
+  step "nothing the user can act on is left out", context do
+    assert history_row(context.history, "plan-1")["markdown"] |> byte_size() == 1_200_000
+    context
+  end
+
+  step "the snapshot is marked as over its payload budget", context do
+    assert context.history["overBudget"] == true
+    context
+  end
+
+  defp commit(context, thread, changes),
+    do: {:ok, _} = HalC2.Streams.commit(World.thread_id(context, thread), :thread, changes)
+
+  defp history(context, thread, cursor) do
+    input = %{"threadId" => World.thread_id(context, thread)}
+    input = if cursor, do: Map.put(input, "cursor", cursor), else: input
+    {reply, context} = World.call!(context, "hal-c2.threadHistory", input)
+    Map.merge(context, %{thread: thread, history: reply})
+  end
+
+  defp user_messages(history),
+    do: for(["message", "msg-" <> _ = id, _] <- history["rows"], do: id) |> Enum.sort_by(&msg_n/1)
+
+  defp msg_n("msg-" <> n), do: String.to_integer(n)
+
+  # A handoff as the MC writes it: no run of its own, the target run instead.
+  defp handoff(id, status, summary) do
+    %{
+      "id" => id,
+      "status" => status,
+      "targetRunId" => "run-2",
+      "fromProviderThreadIds" => ["pt-1"],
+      "toProviderThreadId" => "pt-2",
+      "coveredRunOrdinals" => [1],
+      "strategy" => "summary",
+      "summaryMessageId" => "msg-1",
+      "summaryText" => summary,
+      "createdByProviderInstanceId" => "codex"
+    }
+  end
+
+  defp history_row(history, id), do: hd(for [_, ^id, entity] <- history["rows"], do: entity)
+
+  # A run a user message started, with its items.
+  defp user_turn(n, items \\ 3) do
+    run = %{
+      "id" => "run-#{n}",
+      "ordinal" => n,
+      "status" => "completed",
+      "userMessageId" => "msg-#{n}"
+    }
+
+    message = %{"id" => "msg-#{n}", "runId" => run["id"], "role" => "user", "text" => "ask #{n}"}
+
+    [{"run", run["id"], %{"s" => run}}, {"message", message["id"], %{"s" => message}}] ++
+      for i <- 1..items do
+        item = %{"id" => "item-#{n}-#{i}", "runId" => run["id"], "type" => "reasoning"}
+        {"turn-item", item["id"], %{"s" => Map.put(item, "ordinal", n * 1000 + i)}}
+      end
+  end
+
   # --- the full projection ------------------------------------------------------------
 
   step "{string} has a finished run with a message, an item, a plan, a checkpoint and a pending request",
@@ -875,6 +1233,200 @@ defmodule HalC2.Steps.Orchestration.Projections do
     refute Enum.any?(context.events, &(hd(&1) == context.past))
     context
   end
+
+  # --- bulky bodies off the wire ---------------------------------------------------------
+
+  @bulky %{
+    "a command that printed a long output" =>
+      {"turn-item", "command_execution",
+       %{"command" => "mix test", "exitCode" => 2, "output" => String.duplicate("log\n", 5_000)},
+       ["output"], ["command", "exitCode"]},
+    "a file change" =>
+      {"turn-item", "file_change",
+       %{
+         "path" => "lib/a.ex",
+         "additions" => 3,
+         "deletions" => 1,
+         "oldStr" => "old",
+         "newStr" => "new",
+         "diffStr" => "@@ -1 +1 @@\n-old\n+new"
+       }, ~w(oldStr newStr diffStr), ~w(path additions deletions)},
+    "a handoff to another provider" =>
+      {"context-handoff", nil,
+       %{
+         "sourceProviderInstanceId" => "codex",
+         "targetProviderInstanceId" => "claudeAgent",
+         "summaryText" => "the whole summary of the conversation",
+         "history" => [%{"role" => "user", "text" => "hello"}],
+         "delivery" => %{"sent" => true},
+         "status" => "ready"
+       }, ~w(history delivery), ~w(sourceProviderInstanceId targetProviderInstanceId status)}
+  }
+
+  step ~r/^"(?<thread>[^"]+)" has (?<item>a command that printed a long output|a file change|a handoff to another provider)$/,
+       %{args: [thread, item]} = context do
+    {kind, type, fields, left_out, kept} = Map.fetch!(@bulky, item)
+    id = "bulky-1"
+    entity = Map.merge(%{"id" => id, "runId" => "run-1", "type" => type}, fields)
+    entity = if type, do: entity, else: Map.delete(entity, "type")
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, kind, id, %{"s" => entity})
+    |> Map.merge(%{thread: thread, bulky: {kind, id, fields, left_out, kept}})
+  end
+
+  step ~r/^a client reads or follows "(?<thread>[^"]+)"$/, %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
+    context |> World.put_client(client) |> Map.merge(%{frames: frames, thread: thread})
+  end
+
+  step ~r/^the item arrives without (?<what>.+)$/, %{args: [_what]} = context do
+    {kind, id, _fields, left_out, _kept} = context.bulky
+    entity = held(context.frames, kind, id)
+
+    for key <- left_out do
+      # A handoff's summary text is emptied; everything else is absent.
+      assert entity[key] in [nil, ""], "#{key} was sent: #{inspect(entity[key])}"
+    end
+
+    context
+  end
+
+  step ~r/^it still carries (?<what>.+)$/, %{args: [_what]} = context do
+    {kind, id, fields, _left_out, kept} = context.bulky
+    entity = held(context.frames, kind, id)
+    for key <- kept, do: assert(entity[key] == fields[key], "#{key} is missing")
+    context
+  end
+
+  step ~r/^a command in "(?<thread>[^"]+)" exited with code 0 but its output reports an error$/,
+       %{args: [thread]} = context do
+    item = %{
+      "id" => "cmd-1",
+      "runId" => "run-1",
+      "type" => "command_execution",
+      "command" => "make",
+      "exitCode" => 0,
+      "output" => "error: build failed",
+      "outputIndicatesFailure" => true
+    }
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, "turn-item", "cmd-1", %{"s" => item})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the command arrives without its output", context do
+    assert held(context.frames, "turn-item", "cmd-1")["output"] == nil
+    context
+  end
+
+  step "it is marked as having failed", context do
+    assert held(context.frames, "turn-item", "cmd-1")["outputIndicatesFailure"] == true
+    context
+  end
+
+  step ~r/^a subagent in "(?<thread>[^"]+)" has a prompt, progress or result longer than 32,768 bytes$/,
+       %{args: [thread]} = context do
+    # Multi-byte characters, so a cut at the limit may land inside one.
+    long = String.duplicate("é", 20_000)
+
+    item = %{
+      "id" => "sub-long",
+      "runId" => "run-1",
+      "type" => "subagent",
+      "prompt" => long,
+      "progress" => long,
+      "result" => long
+    }
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, "turn-item", "sub-long", %{"s" => item})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the text is cut at 32,768 bytes without splitting a character", context do
+    entity = held(context.frames, "turn-item", "sub-long")
+    suffix = "\n… output truncated for transport"
+
+    for key <- ~w(prompt progress result) do
+      text = entity[key]
+      assert String.valid?(text)
+      body = String.replace_suffix(text, suffix, "")
+      assert byte_size(body) <= 32_768 and byte_size(body) > 32_760
+    end
+
+    context
+  end
+
+  step ~r/^each cut text ends with "(?<tail>… output truncated for transport)"$/,
+       %{args: [tail]} = context do
+    entity = held(context.frames, "turn-item", "sub-long")
+    for key <- ~w(prompt progress result), do: assert(String.ends_with?(entity[key], tail))
+    context
+  end
+
+  step ~r/^a call to a provider-defined tool in "(?<thread>[^"]+)" has an input larger than 16,384 bytes$/,
+       %{args: [thread]} = context do
+    big = "\n\n  " <> String.duplicate("x", 300) <> "\n" <> String.duplicate("y", 20_000)
+    tool = %{"id" => "tool-big", "runId" => "run-1", "type" => "dynamic_tool", "input" => big}
+    small = %{"id" => "tool-small", "runId" => "run-1", "type" => "dynamic_tool", "input" => "ls"}
+
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.put_entity(thread, "turn-item", "tool-big", %{"s" => tool})
+    |> World.put_entity(thread, "turn-item", "tool-small", %{"s" => small})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the input arrives as its first non-blank line, cut to 160 characters, marked truncated",
+       context do
+    assert %{"summary" => summary, "truncated" => true} =
+             held(context.frames, "turn-item", "tool-big")["input"]
+
+    assert summary == String.duplicate("x", 160)
+    context
+  end
+
+  step "a smaller input arrives unchanged", context do
+    assert held(context.frames, "turn-item", "tool-small")["input"] == "ls"
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" was handed off with its conversation history and a summary$/,
+       %{args: [thread]} = context do
+    handoff = %{
+      "id" => "handoff-1",
+      "status" => "ready",
+      "summaryText" => "everything that was said",
+      "history" => [%{"role" => "user", "text" => "hi"}],
+      "delivery" => %{"sent" => true}
+    }
+
+    context
+    |> World.put_entity(thread, "context-handoff", "handoff-1", %{"s" => handoff})
+    |> Map.put(:thread, thread)
+  end
+
+  step "the handoff arrives with its status", context do
+    assert held(context.frames, "context-handoff", "handoff-1")["status"] == "ready"
+    context
+  end
+
+  step "without the history, the delivery record or the summary text", context do
+    handoff = held(context.frames, "context-handoff", "handoff-1")
+    refute Map.has_key?(handoff, "history")
+    refute Map.has_key?(handoff, "delivery")
+    assert handoff["summaryText"] == ""
+    context
+  end
+
+  defp held(frames, kind, id),
+    do: hd(for frame <- frames, [^kind, ^id, entity] <- frame["rows"] || [], do: entity)
 
   defp shape(stream),
     do: %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}

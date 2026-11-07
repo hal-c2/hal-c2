@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23475
+#   https://github.com/pingdotgg/t3code/pull/15000
+#   https://github.com/pingdotgg/t3code/pull/25588
 #   https://github.com/pingdotgg/t3code/pull/15036
 #   https://github.com/pingdotgg/t3code/pull/19947
 #   https://github.com/pingdotgg/t3code/pull/23471
@@ -11,6 +14,7 @@
 #   https://github.com/pingdotgg/t3code/pull/17710
 #   https://github.com/pingdotgg/t3code/pull/16192
 #   https://github.com/pingdotgg/t3code/pull/25530
+#   https://github.com/pingdotgg/t3code/pull/23580
 #   docs/user/source-control.md (merge, auto-merge, revert, fork workflows, reviewers, labels)
 #   packages/contracts/src/pullRequest.ts (PullRequestAction, PullRequestMergeMethod, PullRequestUpdateMethod, PullRequestCapabilities, PullRequestViewerPermissions)
 #   packages/contracts/src/rpc.ts (pullRequests.runAction, pullRequests.reviewerCandidates, pullRequests.requestReviewers, pullRequests.labelCandidates, pullRequests.setLabels)
@@ -31,6 +35,7 @@
 #   apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts, AzureDevOpsPullRequestCli.ts
 #   apps/server/src/pullRequest/ForgejoPullRequestProvider.ts
 #   packages/client-runtime/src/state/pullRequests.ts (reviewer and label edits update the open pull request and menus)
+#   https://github.com/pingdotgg/t3code/pull/26077
 
 Feature: Acting on a pull request
   From the review the user can merge, change draft state, close and reopen, update the
@@ -128,6 +133,36 @@ Feature: Acting on a pull request
     Given pull request 42 comes from a fork and its workflows wait for approval
     When the user approves its workflows
     Then the workflows start
+  # Upstream #25588: the author of a fork's pull request can allow or stop maintainer edits from its actions.
+  @backlog @mc @shared
+  Scenario Outline: The author lets maintainers edit their pull request's branch, or stops them
+    Given the user opened pull request 42 from their fork of "acme/shop"
+    And maintainer edits are <before>
+    When the user <action> edits from maintainers
+    Then maintainers of "acme/shop" <after> push to the branch of pull request 42
+    And the user is told this also gives the branch's workflows access to the repository's secrets
+
+    Examples:
+      | before  | action | after   |
+      | off     | allows | can     |
+      | on      | stops  | can no longer |
+
+  # Upstream #25588: the choice is hidden where GitHub does not offer it.
+  @backlog @mc @shared
+  Scenario: Maintainer edits are not offered where GitHub does not allow them
+    Given pull request 42 comes from a branch of "acme/shop" itself
+    When the user looks at its actions
+    Then allowing edits from maintainers is not offered
+
+  # Upstream #25588: a failed save puts the previous choice back.
+  @backlog @mc @shared
+  Scenario: A failed change to maintainer edits keeps the previous choice
+    Given maintainer edits are off for pull request 42
+    And GitHub refuses the change
+    When the user allows edits from maintainers
+    Then maintainer edits read as off again
+    And the user is told the change failed
+
 
   @mc
   Scenario Outline: Actions the user is not allowed to take are refused with the reason
@@ -321,6 +356,20 @@ Feature: Acting on a pull request
     When the user opens the reviewer menu
     Then "hubot" is marked "Already asked"
     And "acme/core" is marked "team" and "Already asked"
+
+  # Upstream #23580: Forgejo and Gitea answer the assignee list in one piece, and reading it as
+  # pages repeated every assignee hundreds of times.
+  @backlog @mc @priority-low
+  Scenario Outline: The <host> reviewer menu lists each assignee once
+    Given a pull request on <host> whose repository has the assignees "hubot", "mona" and "octo"
+    When the user opens the reviewer menu
+    Then "hubot", "mona" and "octo" are each listed once, apart from the pull request's author
+    And the list is read with one request
+
+    Examples:
+      | host    |
+      | Forgejo |
+      | Gitea   |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx (colour and description, applied marker)
   @backlog @desktop @priority-low
@@ -547,6 +596,17 @@ Feature: Acting on a pull request
     When the user tries to close pull request 42 before the merge answers
     Then nothing more is sent
 
+  # Upstream #26077: Merge and Merge stack appeared only once the stack was read and pushed the
+  # stack picker aside, so a quick click opened the merge confirmation.
+  @backlog @desktop
+  Scenario: The merge control holds its place while the stack is read
+    Given pull request 42 is open with passing checks and its stack is still being read
+    When the user opens pull request 42
+    Then the merge control is shown in its place and cannot be pressed
+    And resting on it says the stack is still being read
+    When the stack has been read
+    Then the merge control can be pressed and nothing beside it has moved
+
   @backlog @desktop
   Scenario Outline: The merge control follows the state of the pull request
     Given pull request 42 is <state>
@@ -677,6 +737,22 @@ Feature: Acting on a pull request
     Then the repository switches to the pull request's branch and a thread opens on it
     And the user sees a "success" toast "Checked out here"
 
+  # Upstream #15000: a pull request from another GitHub host could check out a same-named
+  # repository on the checkout's host, with the wrong commit and remote.
+  @backlog @mc @priority-high
+  Scenario Outline: A pull request from another host is checked out from that host
+    Given the checkout's "acme/web" is on github.com
+    And pull request 42 of "acme/web" is on <host>
+    When the user checks out pull request 42 <where>
+    Then the branch holds the pull request's commit from <host>
+    And it tracks the repository on <host>
+
+    Examples:
+      | host                      | where                  |
+      | github.acme.dev           | in this repository     |
+      | github.acme.dev           | in a separate worktree |
+      | a Forgejo at git.acme.dev | in this repository     |
+
   # Upstream #15036: Check out here could throw away local edits and commits and still say it worked.
   @backlog @mc @desktop @priority-high
   Scenario Outline: Checking out here never discards the user's work
@@ -771,6 +847,15 @@ Feature: Acting on a pull request
     Then the pull request is checked out in a worktree and a thread opens
     And its composer holds a request to resolve the conflicts with "main" on the pull request's branch
     And the user sees a "success" toast "Checkout ready"
+
+  # Upstream #23475: Resolve conflicts stayed enabled for a connection that may not check out, and did nothing.
+  @backlog @desktop @mobile
+  Scenario: A device that may not check out cannot start resolving conflicts on a checkout
+    Given pull request 42 is in conflict with "main"
+    And this device was paired without access to change source control or operate threads
+    When the user opens pull request 42
+    Then resolving the conflicts on a checkout cannot be chosen
+    And adding the request to an open composer still can
 
   @backlog @desktop
   Scenario: Handing findings to an agent

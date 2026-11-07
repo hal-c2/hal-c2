@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25444
+#   https://github.com/pingdotgg/t3code/pull/26874
 #   https://github.com/pingdotgg/t3code/pull/19697
 #   https://github.com/pingdotgg/t3code/pull/22607
 #   https://github.com/pingdotgg/t3code/pull/21401
@@ -106,6 +108,20 @@ Feature: Pinning and arranging threads
     Then there is no undo left for settling "Beta"
     And "Beta" stays pinned
 
+  # Upstream #25444: an Undo from before an archive or delete stayed on offer and then failed or came back.
+  @backlog @desktop
+  Scenario Outline: Archiving or deleting a thread withdraws its earlier undo
+    Given the user just <changed> "Beta"
+    When the user <ends> "Beta" before the undo times out
+    Then there is no undo left for <changed> "Beta"
+
+    Examples:
+      | changed  | ends     |
+      | unpinned | deletes  |
+      | settled  | archives |
+      | snoozed  | archives |
+      | archived | deletes  |
+
   @backlog @desktop @mobile
   Scenario Outline: An undo that fails says so and leaves the thread as it is
     Given the user just <changed> "Beta"
@@ -133,6 +149,15 @@ Feature: Pinning and arranging threads
       | changed  | notice             |
       | settled  | Settled 2 threads  |
       | unpinned | Unpinned 2 threads |
+  # Upstream #26874: the undo notice covered the bottom thread row for five seconds.
+  @backlog @desktop
+  Scenario: The undo notice never covers a thread or moves the list
+    Given the sidebar is at its narrowest
+    When the user settles the bottom thread "Beta"
+    Then the undo notice sits in the sidebar footer beside its buttons and reads "Settled, Ctrl+Z to undo"
+    And the thread now at the bottom of the list is fully visible and has not moved
+    And where the footer has no room for the count, the notice reads "Ctrl+Z to undo" without cutting a word
+
 
   @desktop
   Scenario: Undo reopens an archived thread the user was viewing

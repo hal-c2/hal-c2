@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27832
 #   apps/desktop-qt/src/native/ToastController.cpp (timing, dismiss, a failure without a reason)
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml
 #   apps/desktop-qt/tests/native/features/ToastSteps.cpp
@@ -130,3 +131,13 @@ Feature: Toasts
     When a toast is shown
     Then it is below the header, at the right
     And it covers neither the window controls, the terminal drawer nor the composer
+
+  # Upstream #27832: after a few prompts, a toast asked once for a star on T3 Code's GitHub
+  # repository, skipped when the environment's GitHub account had already starred it.
+  # Dropped: HAL-C2 does not ask its users to promote a repository from inside the app.
+  @dropped @desktop
+  Scenario: A toast asks once for a GitHub star after the user's sixth prompt
+    Given the user has sent five prompts and never dismissed the star request
+    When the user sends a sixth prompt
+    Then a toast asks the user to star the project on GitHub
+    And closing it in any way keeps it from coming back

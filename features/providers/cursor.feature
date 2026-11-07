@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24639
+#   https://github.com/pingdotgg/t3code/pull/24702
+#   https://github.com/pingdotgg/t3code/pull/26065
+#   https://github.com/pingdotgg/t3code/pull/26592
+#   https://github.com/pingdotgg/t3code/pull/21448
+#   https://github.com/pingdotgg/t3code/pull/27143
 #   https://github.com/pingdotgg/t3code/pull/24231
 #   https://github.com/pingdotgg/t3code/pull/24595
 #   https://github.com/pingdotgg/t3code/pull/23273
@@ -68,6 +74,15 @@ Feature: Cursor
     Then every client of the MC is offered the Cursor sign-in page
     And Cursor is signed in once the user finishes on the website
 
+  # Upstream #24702: a sign-in whose account had no email was refused as "Could not save the Cursor sign-in."
+  @backlog
+  Scenario: A Cursor account without an email still signs in
+    Given Cursor is enabled and signed out
+    And the user's Cursor account reports no email
+    When the user signs in to Cursor and finishes on the website
+    Then Cursor is signed in
+    And the user is not told the sign-in could not be saved
+
   # Both servers end a sign-in after five minutes (ProviderAuth, CursorAuth AUTH_TIMEOUT_MS).
   Scenario: The Cursor sign-in request expires if nobody answers it
     Given Cursor is waiting for the user to open its sign-in page
@@ -98,6 +113,16 @@ Feature: Cursor
     When Cursor rejects the account
     Then Cursor's status and the sign-in say a paid Cursor plan is needed
     And the rejected sign-in is not kept
+
+  # Upstream #24639: Enterprise teams can block Cursor's account endpoint while models and local
+  # runs still work; the blocked read failed the whole status check.
+  @backlog @priority-low
+  Scenario: Cursor is ready when the team blocks reading the account
+    Given the user's Cursor team has turned off the account details endpoint
+    When the user opens the provider list
+    Then Cursor is ready with its models
+    And the account shows as "Cursor account" or "Cursor API key" without an email
+    And a rejected sign-in or key still fails as an authentication error
 
   @backlog
   Scenario: A Cursor model catalog request that does not finish is reported
@@ -248,6 +273,16 @@ Feature: Cursor
     When the user opens the limits view
     Then Cursor shows no login warning
 
+  # Upstream #27143: a Keychain token left behind by an old Cursor install was read and its 401
+  # shown as "Sign in to Cursor again" to users who no longer have Cursor.
+  @backlog @priority-low
+  Scenario: A keychain login left by a removed Cursor install is ignored
+    Given the user turned on Cursor account usage
+    And the system keychain still holds a login from a Cursor install that was removed
+    When the user opens the limits view
+    Then the keychain is not read for Cursor
+    And Cursor shows no login warning
+
   # Upstream #13870: once one environment reports Cursor account usage, another environment's
   # keychain is not read to report the same account again.
   @backlog @priority-low
@@ -288,6 +323,15 @@ Feature: Cursor
   Scenario: A command Cursor leaves running ends with its turn
     When Cursor ends a turn with a command still running
     Then the command it left running ends with the turn
+
+  # Upstream #21448: a read Cursor never reported back was closed as a successful read with no
+  # output when the run finished normally, while the reply said the read failed.
+  @backlog @priority-high
+  Scenario: A tool call Cursor never finished is not shown as a success
+    Given Cursor starts reading "secret.txt" and never reports a result for it
+    When the Cursor run finishes normally
+    Then the read of "secret.txt" is shown as interrupted
+    And it stays visible in the timeline
 
   Scenario: A Cursor command the user stops shows as interrupted
     Given Cursor is running a command
@@ -536,6 +580,13 @@ Feature: Cursor
     Then the thread shows the tool call as "mcp__docs__search"
     And a result the server marks as an error shows the call as failed
 
+  # Upstream #26065: a file with one match in a counting grep said "1 matches".
+  @backlog @shared @priority-low
+  Scenario: A counting search says "1 match" for a file with one match
+    When Cursor counts the matches of a text search across files
+    Then a file with one match says "1 match"
+    And a file with three matches says "3 matches"
+
   @backlog
   Scenario: A Cursor command shows its output while it runs
     Given Cursor is running a long shell command
@@ -564,6 +615,20 @@ Feature: Cursor
     Then a child thread opens with the task as its first message
     And the subagent's tool calls appear in the child thread
     And the subagent's result is shown when it finishes
+  # Upstream #26592: a subagent's empty directory listing, lint check or MCP result failed the parent run.
+  @backlog
+  Scenario Outline: A Cursor subagent's <tool> with nothing in it does not fail the parent run
+    Given Cursor hands a task to one of its subagents
+    When the subagent's <tool> comes back with <empty>
+    Then the parent run goes on
+    And the child thread shows the <tool>
+
+    Examples:
+      | tool              | empty                         |
+      | directory listing | a folder holding only folders |
+      | lint check        | no problems                   |
+      | MCP tool call     | no content                    |
+
 
   # Upstream #17419: subagent cards show Cursor's reasoning effort.
   @backlog @shared

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26151
+#   https://github.com/pingdotgg/t3code/pull/26145
+#   https://github.com/pingdotgg/t3code/pull/23755
 #   https://github.com/pingdotgg/t3code/pull/18552
 #   https://github.com/pingdotgg/t3code/pull/24560
 #   https://github.com/pingdotgg/t3code/pull/19491
@@ -20,6 +23,11 @@
 #   https://github.com/pingdotgg/t3code/pull/24850
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/22889
+#   https://github.com/pingdotgg/t3code/pull/26502
+#   https://github.com/pingdotgg/t3code/pull/26503
+#   https://github.com/pingdotgg/t3code/pull/26681
+#   https://github.com/pingdotgg/t3code/pull/26448
+#   https://github.com/pingdotgg/t3code/pull/25661
 #   apps/server-ex/lib/hal_c2/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (a turn whose MCP server changed resumes in a new process)
@@ -163,6 +171,15 @@ Feature: The HAL-C2 MCP server agents receive
       | providerInstanceId "nowhere"                 | it fails with code "invalid_request"                             |
       | model 7                                      | each provider lists at most 25 models, each with an id and a label |
 
+  # Upstream #26502: a search word found inside a provider's name was dropped, so "code" on Codex
+  # gave the default listing instead of filtering models.
+  @backlog @mc
+  Scenario: A search word that is part of a provider's name still filters its models
+    Given provider "codex" offers the models "gpt-code-1" and "gpt-chat-1"
+    When the agent of "caller" asks for the orchestrator capabilities with query "code"
+    Then "codex" lists "gpt-code-1" and not "gpt-chat-1"
+    And a query of "codex" still names the provider and lists its models
+
   # Upstream #22889: the capabilities list the models worth choosing and say how many were left
   # out. Replaces the two scenarios above once the MC carries it.
   @backlog @mc
@@ -192,6 +209,15 @@ Feature: The HAL-C2 MCP server agents receive
   Scenario: Searching the capabilities matches every word
     When the agent of "caller" asks for the orchestrator capabilities searching "sonnet 4"
     Then the listed models are those whose id or label has both words, legacy models included
+
+  # Upstream #26448: "codex" found only the one legacy model with "codex" in its id. A word that
+  # names a provider (its id, driver or name) matches all its models; the rest still narrow.
+  @backlog @mc
+  Scenario: Searching the capabilities by a provider's name lists that provider's current models
+    Given provider "codex" offers current models and one legacy model "gpt-5.3-codex-spark"
+    When the agent of "caller" asks for the orchestrator capabilities searching "codex"
+    Then "codex" lists its current models
+    And searching "codex gpt 5" lists only its models whose id or label has "gpt" and "5"
 
   # Upstream #22889: delegating is not limited to the models the short list shows.
   @backlog @mc
@@ -249,6 +275,37 @@ Feature: The HAL-C2 MCP server agents receive
     Given the settings that grant agents browser and device access cannot be read
     When a run of "caller" starts
     Then the agent's credential carries neither the browser nor the device capability
+
+  # Upstream #25661: agents drove simulators over ssh and simctl, out of sight of the Device panel
+  # and fighting other threads for them, since only Codex was told to use the device tools.
+  @backlog @mc @priority-high
+  Scenario Outline: Every session with device access is told to drive devices through the device tools
+    Given the agent of "caller" runs on <provider> with the device capability
+    When its session starts
+    Then its instructions say to open devices with the device tools and run every launch, tap, screenshot and recording through them
+    And they say ssh, simctl and adb stay for builds, installs and logs, and for device actions only when the user asks
+
+    Examples:
+      | provider                         |
+      | Codex                            |
+      | Claude, and its native subagents |
+      | OpenCode                         |
+      | Cursor                           |
+      | an ACP agent                     |
+
+  # Upstream #25661: a session without device access is told nothing new.
+  @backlog @mc
+  Scenario: A session without device access gets no device instructions
+    Given the agent of "caller" runs without the device capability
+    When its session starts
+    Then its instructions say nothing about devices
+
+  # Upstream #25661: a failed screenshot said only "Device screenshot failed.".
+  @backlog @mc
+  Scenario: A device tool that fails says why
+    Given no device is open in the thread of "caller"
+    When the agent of "caller" asks for a device screenshot
+    Then it fails saying no device is open in this thread and to open one first
 
   @mc
   Scenario: Threads of other projects are invisible
@@ -453,6 +510,14 @@ Feature: The HAL-C2 MCP server agents receive
     Then the tool's result is printed as JSON
     And the call used a fresh authenticated MCP session
 
+  # Upstream #23755: a terminal call printed structured JSON twice, once more as its text fallback.
+  @mc @backlog
+  Scenario: A terminal tool call prints structured JSON once
+    Given a tool answers with a structured result and the same JSON as its text, plus the text "The command failed."
+    When the tool is called from a terminal
+    Then the printed result holds the structured result and "The command failed."
+    And not the JSON a second time as text
+
   @mc
   Scenario Outline: A terminal tool call that cannot be made says why
     When the terminal call is made <how>
@@ -547,6 +612,8 @@ Feature: The HAL-C2 MCP server agents receive
 
   # Upstream #24850: the instructions and tool text were cut by 60%, each rule stated once where
   # the agent decides, and these rules changed.
+  # Upstream #26503: the preview rule also forbade checking an edit the user asked to see in the browser.
+  # Upstream #26681: the no-sleep rule had lost its pull request scope, so agents stopped waiting on deploys.
   @backlog @mc
   Scenario Outline: The agent's instructions say when to use each HAL-C2 tool
     Given the "hal-c2" server is attached to "caller"
@@ -555,11 +622,13 @@ Feature: The HAL-C2 MCP server agents receive
 
     Examples:
       | rule                                                                                                          |
-      | the provider's own subagent is for same-provider work with no extra settings that ends within the turn       |
+      | the provider's own subagent is for same-provider work with no extra settings that ends within the turn        |
       | delegate_task is for another provider's model, settings the user asked for, a worktree, or work past the turn |
-      | to link a pull request it creates, takes over or pushes to, and not one it only reads or reviews             |
+      | to link a pull request it creates, takes over or pushes to, and not one it only reads or reviews              |
       | to watch a pull request only when asked to, or when the asked work waits on its checks or reviews             |
-      | to open the browser preview only when the current request asks for browser work                              |
+      | to open the browser preview only when the current request asks for browser work                               |
+      | to check and record its own edit in the browser preview when the current request asks for browser work        |
+      | to wait on a pull request only through watch_pull_request, while a wait such as a deploy is allowed           |
 
   @mc
   Scenario: Agents without a system prompt receive the orchestration instructions on a thread's first run only
@@ -645,6 +714,22 @@ Feature: The HAL-C2 MCP server agents receive
     Given the user saved a secret on a card that asked for a one-use reference
     When the agent asks to save that secret to a file
     Then the request is refused
+
+  # Upstream #26145: a long link in the reason ran off the card and could not be copied whole.
+  @backlog @shared @priority-low
+  Scenario: A long link in a secret card's reason can be read and copied whole
+    Given an agent asks for a secret with a reason holding a long dashboard link
+    When the user looks at the card
+    Then the whole link is shown within the card
+    And the user can select and copy it
+
+  # Upstream #26151: clicking the card's empty space left nothing focused, so a paste went nowhere.
+  @backlog @desktop @priority-low
+  Scenario: Clicking a secret card puts the cursor in its field
+    Given an agent asks for a secret
+    When the user clicks the card outside its field
+    Then the card's field takes the typing and a paste
+    But a click that ends selecting the reason keeps that selection
 
   @backlog @mc @priority-low
   Scenario: A delegation to a provider whose probe failed tries it again once

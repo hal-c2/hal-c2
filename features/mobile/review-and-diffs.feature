@@ -8,6 +8,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19431
 #   https://github.com/pingdotgg/t3code/pull/19240
 #   https://github.com/pingdotgg/t3code/pull/25223
+#   https://github.com/pingdotgg/t3code/pull/28272
 #   apps/mobile/src/features/review/ (diff source selector, viewed files, comments, notices)
 #   apps/mobile/src/features/diffs/
 #   apps/mobile/modules/hal-c2-review-diff
@@ -17,9 +18,11 @@
 #   apps/mobile/src/features/threads/GitActionProgressOverlay.tsx (progress, result and failure notice)
 #   apps/mobile/src/state/use-vcs-action-state.ts (latest output line, elapsed seconds, notice dismissed after 5 seconds)
 #   apps/mobile/src/state/use-selected-thread-git-actions.ts (pull notices, new worktree becomes the checkout, refused changes)
+#   https://github.com/pingdotgg/t3code/pull/23602
 # Diff sources, checkpoints and source control actions are specified in
 # features/source-control/ and features/timeline/. This file covers reading and commenting
 # on a diff on a small screen.
+#   https://github.com/pingdotgg/t3code/pull/22926
 
 Feature: Reviewing changes on a phone
   A phone shows one changed file at a time in a readable width, remembers what the user has
@@ -361,6 +364,43 @@ Feature: Reviewing changes on a phone
     When the user looks at the review header
     Then the header shows 12 added, 4 removed and "2 comments"
 
+  # Upstream #22926
+  @backlog @mobile @priority-low
+  Scenario Outline: A review discussion with one comment counts it in the singular
+    Given a review discussion on "src/cart.ts" has <count>
+    When the user sees it <where>
+    Then it reads "<label>"
+
+    Examples:
+      | count      | where                  | label      |
+      | 1 comment  | on the diff            | 1 comment  |
+      | 1 comment  | in the timeline        | 1 comment  |
+      | 2 comments | on the diff            | 2 comments |
+
+  # Upstream #23602: a review comment added from the review screen stays on the diff and in the count.
+  @backlog @mobile
+  Scenario: A review comment waiting in the draft is shown on the diff
+    Given the user commented on lines 10 to 14 of "src/cart.ts" while reviewing
+    And the comment is waiting in the draft for "Fix checkout"
+    When the user returns to the diff of "src/cart.ts"
+    Then the comment is shown on lines 10 to 14
+    And the review header counts "1 comment"
+
+  # Upstream #23602: removing the comment from the draft takes it off the diff.
+  @backlog @mobile
+  Scenario: Removing a review comment from the draft takes it off the diff
+    Given the draft for "Fix checkout" carries a comment on lines 10 to 14 of "src/cart.ts"
+    When the user removes the comment from the draft
+    Then the comment is no longer shown on the diff
+    And the review header counts no comments
+
+  # Upstream #23602: a pull request attached to the draft is not counted as a review comment.
+  @backlog @mobile @priority-low
+  Scenario: A pull request attached to the draft is not a review comment
+    Given the draft for "Fix checkout" carries a pull request reference and one review comment
+    When the user looks at the review header
+    Then the header shows "1 comment"
+
   @backlog @mobile
   Scenario: A review that cannot be loaded says why above whatever is cached
     Given the user reviewed the latest turn earlier
@@ -602,6 +642,13 @@ Feature: Reviewing changes on a phone
   Scenario: A commit message left empty is written for the user
     When the user commits with an empty commit message
     Then the commit gets a generated message
+
+  # Upstream #28272: on Android a long changed-file list left the commit actions out of reach.
+  @backlog @mobile
+  Scenario: The commit actions can be reached past a long list of changed files
+    Given the thread has thirteen changed files
+    When the user opens the commit form and scrolls down
+    Then the list scrolls and the commit actions can be reached
 
   @backlog @mobile
   Scenario: Acting on the default branch asks how to continue

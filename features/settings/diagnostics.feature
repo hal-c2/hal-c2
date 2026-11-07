@@ -10,6 +10,7 @@
 #   apps/web/src/components/settings/ExpandableText.tsx (long causes and messages)
 #   apps/tui/src/features.backlog.test.ts (provider maintenance and server diagnostics)
 #   apps/tui/src/host/sections/diagnostics.ts (bounded lists, the force kill that asks first)
+#   https://github.com/pingdotgg/t3code/pull/23438
 
 @priority-low
 Feature: Diagnostics
@@ -76,6 +77,15 @@ Feature: Diagnostics
     Given the MC recorded failing and slow spans
     When the user asks for trace diagnostics
     Then the latest failures, most common failures and slowest spans are listed
+
+  # Upstream #23438: failures and interruptions in the traces clients forward were left out of
+  # the totals.
+  @backlog @mc @priority-low
+  Scenario: Trace diagnostics count the failures and interruptions of client traces
+    Given a client forwarded traces holding a failed span, an interrupted span and a successful span
+    When the user asks for trace diagnostics
+    Then the failure and the interruption are counted with the MC's own
+    And the successful span is not counted as either
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
   @backlog @mc @priority-high

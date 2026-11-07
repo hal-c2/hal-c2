@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22064
+#   https://github.com/pingdotgg/t3code/pull/28446
+#   https://github.com/pingdotgg/t3code/pull/26762
+#   https://github.com/pingdotgg/t3code/pull/18642
 #   https://github.com/pingdotgg/t3code/pull/19523
 #   https://github.com/pingdotgg/t3code/pull/24349
 #   https://github.com/pingdotgg/t3code/pull/20785
@@ -67,6 +71,15 @@
 #   https://github.com/pingdotgg/t3code/pull/25759
 #   https://github.com/pingdotgg/t3code/pull/24587
 #   https://github.com/pingdotgg/t3code/pull/21393
+#   https://github.com/pingdotgg/t3code/pull/25837
+#   https://github.com/pingdotgg/t3code/pull/26367
+#   https://github.com/pingdotgg/t3code/pull/26299
+#   https://github.com/pingdotgg/t3code/pull/26333
+#   https://github.com/pingdotgg/t3code/pull/25299
+#   https://github.com/pingdotgg/t3code/pull/28516
+#   https://github.com/pingdotgg/t3code/pull/26434
+#   https://github.com/pingdotgg/t3code/pull/23538
+#   https://github.com/pingdotgg/t3code/pull/22141
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -347,6 +360,15 @@ Feature: Plans and subagents
     Then the worker's notification reads "Tax tests finished"
     And the notification links to the worker's thread
 
+  # Upstream #22141: every completion of a continued child showed the first, interrupted result.
+  @backlog @shared
+  Scenario: Each completion of a continued worker shows its own task's result
+    Given the user stopped a delegated worker, which reported "interrupted"
+    And the worker was continued in the same thread and finished with "12 tests added"
+    When the user reads the parent thread
+    Then the later notification shows "12 tests added"
+    And a notification whose task's result is unavailable shows its own text, not another task's result
+
   # Upstream #18099: a resumed subagent's notification shows it running again.
   @backlog @shared
   Scenario: A failed subagent that is resumed shows as running
@@ -419,6 +441,20 @@ Feature: Plans and subagents
   Scenario: A working subagent shows its latest progress
     Given a subagent that is still working after reporting "Reading the tax code"
     Then the subagent's row reads "Reading the tax code"
+
+  # Upstream #23538: the phone's subagent previews kept an image's "!" and cut links whose address
+  # held parentheses, in the transcript row and the Agents sheet alike.
+  @backlog @mobile @priority-low
+  Scenario Outline: A subagent preview keeps a link's label and drops its markup
+    Given a subagent that finished with "<result>"
+    When the user reads the subagent's row on a phone
+    Then the row reads "<preview>"
+
+    Examples:
+      | result                                        | preview             |
+      | ![screenshot](screenshots/shot.png) Verified  | screenshot Verified |
+      | See [docs](https://example.com/T3_(protocol)) | See docs            |
+      | Wrote [report](outputs/report%20(final).md)   | Wrote report        |
 
   @shared
   Scenario: The user moves between a subagent and its parent
@@ -570,6 +606,8 @@ Feature: Plans and subagents
     When the user looks at the parent thread
     Then the tool is still shown as running
 
+  # Upstream #28516: child approvals in the parent on web, desktop and mobile; the answer goes to
+  # the child's environment and thread.
   @mc @shared
   Scenario: A subagent's approval request shows up in the parent thread
     Given a subagent asks for approval to run a command
@@ -577,6 +615,30 @@ Feature: Plans and subagents
     Then the approval is listed there
     When the user answers it
     Then the subagent continues with the answer
+
+  # Upstream #28516
+  @backlog @shared
+  Scenario: A failed answer to a subagent's approval from the parent can be tried again
+    Given a subagent's approval request is listed in the parent thread
+    When the user answers it and the answer does not reach the subagent
+    Then the parent shows the error by the request
+    And the user can answer it again
+
+  # Upstream #28516: declining one of several waiting subagents settles only that one.
+  @backlog @shared
+  Scenario: Answering one of several subagents' approvals leaves the others waiting
+    Given five subagents each wait for approval in the parent thread
+    When the user declines the fifth
+    Then only the fifth subagent goes on
+    And the other four approvals are still listed
+
+  # Upstream #28516: on a phone the subagents' approvals and the parent's question scroll together,
+  # so a long question cannot push them off the screen.
+  @backlog @mobile
+  Scenario: A subagent's approval stays reachable below a long question on a phone
+    Given the parent thread has a long question open and several subagents wait for approval
+    When the user scrolls the waiting requests
+    Then every subagent's approval and the question can be reached
 
   # TUI: implemented in apps/tui/src/orchestrationV2Adapter.ts
   @shared
@@ -603,6 +665,62 @@ Feature: Plans and subagents
       | fails                  | Context compaction failed   |
       | is cancelled           | Context compaction stopped  |
       | is interrupted         | Context compaction stopped  |
+
+  # Upstream #26299: a compaction the user asked for read "Compacting after being idle", as if it
+  # happened on its own. It now says how long it has been compacting, and a compaction asked for
+  # by "Compact and send" says so when it finishes.
+  @backlog @shared
+  Scenario Outline: A running compaction says how long it has run
+    Given the user chose "Compact and send" on a stale thread
+    When the compaction <state>
+    Then the timeline marks "<marker>"
+
+    Examples:
+      | state                                   | marker                             |
+      | has run for 12 seconds                  | Compacting for 12s                 |
+      | is running and its start is not known   | Compacting…                        |
+      | finishes                                | Context compacted before sending   |
+
+  # Upstream #26333: a handoff from a superseded attempt opened that attempt's fold above the
+  # user's message, so the thread read out of order.
+  @backlog @desktop @tui
+  Scenario: A context handoff stays outside a superseded attempt's fold
+    Given the user's message was answered by an attempt that was superseded and handed off its context
+    When the user looks at the thread
+    Then the user's message comes before the superseded attempt's fold
+    And the context handoff is shown outside the fold
+    And the fold starts at the attempt's first output
+
+  # Upstream #25299: the background work line names the newest subagent activity instead of a
+  # list of names; with one subagent it also shows how long it has run, and Open and Stop.
+  @backlog @shared
+  Scenario Outline: The background work line says what the newest subagent is doing
+    Given the turn finished and left <subagents> working
+    When "<newest>" reports "<activity>"
+    Then the background work line reads "<title>"
+    And it describes "<newest>: <activity>"
+
+    Examples:
+      | subagents                                | newest    | activity      | title                 |
+      | the subagents "Tax", "Docs" and "Lint"   | Docs      | reading files | Waiting on 3 subagents |
+
+  # Upstream #25299
+  @backlog @shared
+  Scenario: The background work line for one subagent opens or stops it
+    Given the turn finished and left the subagent "Tax tests" working for 40 seconds
+    Then the background work line says what "Tax tests" is doing and that it has run 40s
+    When the user opens it from the line
+    Then the thread of "Tax tests" opens
+    When the user stops it from the line
+    Then the line goes away once "Tax tests" stops
+
+  # Upstream #25837: a skipped compaction showed "Context compaction stopped" and a "Run
+  # interrupted" row that only repeated it.
+  @backlog @shared
+  Scenario: A skipped compaction is marked once
+    Given the user sent a queued message now while the context was compacting
+    Then the timeline marks "Context compaction stopped" once
+    And no "Run interrupted" row is shown for the compaction
 
   @desktop
   Scenario Outline: A context compaction says what it did
@@ -683,6 +801,13 @@ Feature: Plans and subagents
       | situation                               | marker                   | action                   |
       | this thread was forked from another     | Forked from conversation | Open source conversation |
       | another thread was forked from this one | Conversation fork        | Open fork                |
+  # Upstream #22064: the phone showed a fork's row as the other thread's raw ID
+  @mobile @backlog @priority-low
+  Scenario: A fork's row on the phone is labelled, not shown as a thread ID
+    Given the user opens a forked thread on the phone
+    Then the fork's row reads "Thread forked", folded or open
+    And the row's details still hold the thread IDs to copy
+
 
   @desktop
   Scenario: A fork learns where it came from after its history loaded
@@ -1050,12 +1175,31 @@ Feature: Plans and subagents
     When the command finishes
     Then the Agents tab lists no running command
 
+  # Upstream #28446: a background command's label showed the shell wrapper with the script
+  # squashed onto one line.
+  @backlog @shared @priority-low
+  Scenario: A background command is named without its shell wrapper
+    Given Codex runs '/bin/zsh -lc "bun test cart"' as a background command
+    When the user looks at the running command
+    Then it reads "Running bun test cart"
+    And its details show the script with its line breaks
+
   @desktop
   Scenario: A subagent's thread opens from the Agents tab
     Given the agent started the subagent "Tax tests" 12 seconds ago
     And the user opens the Agents tab
     When the user opens "Tax tests" from the Agents tab
     Then the subagent's thread is shown
+
+  # Upstream #26762: opening a thread no longer loads its whole family, and a link to a child
+  # the sidebar does not list was disabled.
+  @backlog @shared
+  Scenario: A child thread the sidebar does not list still opens from its parent
+    Given "Fix checkout" has the idle fork "Try coupons", which the sidebar does not list
+    When the user opens "Try coupons" from the threads linked to "Fix checkout"
+    Then "Try coupons" is shown
+    And it still links back to "Fix checkout" and can merge back
+    And opening "Fix checkout" loads only its own thread, not its forks and subagents
 
   @backlog @shared @priority-low
   Scenario: Subagent descriptions read as display names
@@ -1075,6 +1219,23 @@ Feature: Plans and subagents
     Given a delegated subagent finished and the parent then sent it a long task
     When the user opens the thread's lineage
     Then the subagent is listed as running with its timer going, not as done
+
+  # Upstream #26434: a task delegated to another machine showed initials, since its own
+  # driver is "remote"; the icon now comes from the provider on the machine it runs on.
+  @backlog @shared
+  Scenario: A subagent on another machine shows the icon of the provider it runs on
+    Given the agent delegated a task to Codex on the cluster machine "work"
+    When the user sees the subagent in the lineage or the timeline
+    Then it shows the Codex icon, not initials
+    And a subagent whose provider is not known on "work" shows the generic agent icon
+
+  # Upstream #26434: a thread delegated from another machine names its parent in its lineage.
+  @backlog @shared
+  Scenario: A thread delegated from another machine has its parent in the lineage
+    Given the thread was delegated by a thread on the cluster machine "work"
+    When the user opens the thread's lineage
+    Then the parent thread is listed in it
+    And choosing the parent opens it while "work" can be reached
 
   @backlog @shared @priority-low
   Scenario: A subagent's finish notification looks like its card
@@ -1134,6 +1295,7 @@ Feature: Plans and subagents
     Then the subagent's details show the effort "High", not the model's default
     And the effort stays when the subagent later reports its model under another name
 
+  # Upstream #18642: the phone's Agents sheet shows workflow phases and links to their members.
   @backlog @mc @shared @plugin-claude
   Scenario: A Claude workflow shows its phases and members in the lineage
     Given Claude runs a workflow with two phases
@@ -1141,6 +1303,22 @@ Feature: Plans and subagents
     Then the workflow shows each phase with its members, their status, counts and elapsed time
     And a queued member stays pending and its timer starts only when it starts running
     And opening a member shows its original prompt and its final answer
+  # Upstream #18642: the phone's agents list shows each workflow member's model, effort and speed, finished ones too.
+  @backlog @mc @shared @plugin-claude
+  Scenario: A workflow member shows its model, effort and speed after it finishes
+    Given Claude ran a workflow whose members have finished
+    When the user opens the workflow's members
+    Then each member shows the model, effort and speed it ran with
+
+  # Upstream #18642: Stop on a workflow member asks first, and stopping clears the parent's task before the child.
+  @backlog @mc @shared @plugin-claude
+  Scenario: Stopping a workflow member asks first and stops it for good
+    Given Claude runs a workflow with a member still running
+    When the user stops the member
+    Then they are asked to confirm before it stops
+    And when they cancel, the member keeps running
+    And when they confirm, the parent no longer waits on that member and the member stops
+
 
   # Upstream #20786: a running workflow member's thread shows the text it has answered so far,
   # read from its transcript, instead of only its prompt until it finishes.
@@ -1186,6 +1364,20 @@ Feature: Plans and subagents
     When the user stops it from the thread's lineage
     Then its card and thread read as finished with Claude's own outcome
     And a stop Claude does not confirm is not shown as cancelled
+
+  # Upstream #26367: the parent agent can answer its subagents' questions, so they do not mark
+  # the parent as needing the user; a subagent's approval request still does.
+  @backlog @shared
+  Scenario Outline: Only a subagent's approval request marks its parent as needing the user
+    Given a <kind> subagent of "Fix login" <asks>
+    When the user looks at the thread list
+    Then "Fix login" <result>
+
+    Examples:
+      | kind      | asks                              | result                         |
+      | local     | asks a question                   | is not marked as needing input |
+      | delegated | asks a question                   | is not marked as needing input |
+      | local     | asks for approval to run a command | is marked as needing approval  |
 
   @backlog @shared
   Scenario: A finished subagent's open question no longer asks the parent for input

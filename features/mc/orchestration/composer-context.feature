@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23784
 #   apps/server-ex/lib/hal_c2/composer_context.ex (context links, markers, hal_c2_context envelope,
 #     attachment remapping)
 #   packages/shared/src/composerContextReferences.ts (the shared format)
@@ -79,6 +80,13 @@ Feature: Inline context in messages
       | mention            | the path                                                      |
       | skill              | the skill name                                                |
       | thread             | the thread title and id, and how to read it as reference only |
+
+  # Upstream #23784: agents read an attached thread by the id in its marker and got thread_not_found.
+  @backlog @mc @priority-high
+  Scenario: An attached thread's payload gives the exact call that reads it
+    When a message references thread "t1" as context
+    Then its payload names the call that reads it with the thread's own id as its argument
+    And not the id that pairs the reference with its marker
 
   @mc
   Scenario: A context of an unknown kind is passed as data

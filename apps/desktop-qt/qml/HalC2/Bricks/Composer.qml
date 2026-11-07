@@ -547,6 +547,7 @@ Rectangle {
 
             ListView {
                 id: suggestionList
+                objectName: "suggestionList"
 
                 anchors.fill: parent
                 anchors.margins: Theme.space.xs
@@ -1432,6 +1433,8 @@ Rectangle {
                             // What the button does, which is also its accessible name.
                             readonly property string label: stopMode ? qsTr("Stop")
                                 : editing ? qsTr("Update queued message")
+                                // With no connection the message waits on this device to be sent.
+                                : composer.model?.waitsForConnection === true ? qsTr("Queue")
                                 : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
                                 : planAction === "refine" ? qsTr("Refine") : planAction === "implement" ? qsTr("Implement") : qsTr("Send")
                             Accessible.name: label
