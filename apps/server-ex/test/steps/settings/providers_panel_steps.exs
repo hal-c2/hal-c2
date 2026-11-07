@@ -85,8 +85,28 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
 
   # --- the ACP Registry ------------------------------------------------------------------
 
+  # Search offers a package agent only when its package manager is installed, so npm and
+  # uv are put on PATH for the search, whatever the machine running the scenario has.
   step "the user searches the ACP Registry for {string}", %{args: [query]} = context do
-    {reply, context} = World.call(context, "server.searchAcpRegistry", %{"query" => query})
+    bin = Path.join(context.mc.home, "runner-bin")
+    File.mkdir_p!(bin)
+
+    for tool <- ~w(npm uv) do
+      path = Path.join(bin, tool)
+      File.write!(path, "#!/bin/sh\nexit 0\n")
+      File.chmod!(path, 0o755)
+    end
+
+    path = System.get_env("PATH")
+    System.put_env("PATH", bin <> ":" <> (path || ""))
+
+    {reply, context} =
+      try do
+        World.call(context, "server.searchAcpRegistry", %{"query" => query})
+      after
+        if path, do: System.put_env("PATH", path), else: System.delete_env("PATH")
+      end
+
     Map.put(context, :reply, reply)
   end
 
