@@ -7,10 +7,9 @@ OpenCode server.
 
 ## Local or external server
 
-Leave **Server URL** empty to let HAL-C2 start OpenCode locally. A password in
-provider settings applies to both that server and HAL-C2's connection. With no
-password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
-environment.
+Leave **Server URL** empty to let HAL-C2 start OpenCode locally. Each local server
+listens only on this machine, with a password HAL-C2 makes for it; the password
+setting and `OPENCODE_SERVER_PASSWORD` are not used for it.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. HAL-C2 uses only that configured password for an external server; it
