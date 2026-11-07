@@ -2129,7 +2129,9 @@ defmodule HalC2.Web.Socket do
 
   defp stream_message(state, id, {:events, events, seq}) do
     buffer = Map.get(state.buffers, id, %{events: [], bytes: 0})
-    bytes = buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
+    # Sized once; `buffer_events/6` adds them to whatever the buffer still holds.
+    size = Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2))
+    bytes = buffer.bytes + size
     # Buffers from before the count was kept count from what they hold.
     count = Map.get_lazy(buffer, :count, fn -> length(buffer.events) end) + length(events)
 
@@ -2148,11 +2150,11 @@ defmodule HalC2.Web.Socket do
         {:push, Protocol.encode(resync), state}
 
       true ->
-        buffer_events(state, id, buffer, events, seq)
+        buffer_events(state, id, buffer, events, seq, size)
     end
   end
 
-  defp buffer_events(state, id, buffer, events, seq) do
+  defp buffer_events(state, id, buffer, events, seq, size) do
     progress? = Enum.all?(events, &Map.get(&1, :progress, false))
     held? = Map.has_key?(buffer, :hold)
 
@@ -2166,7 +2168,7 @@ defmodule HalC2.Web.Socket do
     buffer =
       Map.merge(buffer, %{
         events: Enum.reverse(events, buffer.events),
-        bytes: buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2)),
+        bytes: buffer.bytes + size,
         count: Map.get_lazy(buffer, :count, fn -> length(buffer.events) end) + length(events),
         seq: seq
       })

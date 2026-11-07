@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ClusterSocket, type ShapeFrame, withShapeProtocol } from "./clusterSocket.ts";
+import { ClusterSocket, type ShapeFrame, withProtocol } from "./clusterSocket.ts";
 
 class FakeSocket {
   readyState: WebSocket["readyState"] = 0;
@@ -38,9 +38,9 @@ function setup() {
   return { socket, sockets };
 }
 
-describe("withShapeProtocol", () => {
+describe("withProtocol", () => {
   it("names protocol 3 and keeps the credential", () => {
-    const url = new URL(withShapeProtocol("ws://mc:5733/ws?wsTicket=abc"));
+    const url = new URL(withProtocol("ws://mc:5733/ws?wsTicket=abc"));
     expect(url.searchParams.get("protocol")).toBe("3");
     expect(url.searchParams.get("wsTicket")).toBe("abc");
   });
