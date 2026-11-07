@@ -100,6 +100,7 @@ Feature: Threads settle on their own
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
+  # Upstream #11846: per-thread auto-settle switch
   @mc
   Scenario: A thread with auto-settle disabled is never settled on its own
     Given thread "t1" has auto-settle disabled
@@ -108,6 +109,7 @@ Feature: Threads settle on their own
     When the MC sweeps for threads to settle
     Then thread "t1" is not settled
 
+  # Upstream #11846: per-thread auto-settle switch
   @mc
   Scenario: Disabled auto-settle survives a manual settle and un-settle
     Given thread "t1" has auto-settle disabled
@@ -235,6 +237,7 @@ Feature: Threads settle on their own
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
 
+  # Upstream #15355: Stop ends a dev server left running before a provider switch
   @backlog @mc
   Scenario: Stop ends a dev server left by another provider
     Given a thread moved from one provider to another left a dev server running
@@ -242,6 +245,7 @@ Feature: Threads settle on their own
     Then every provider session of the thread holding background work is interrupted
     And a command left running no longer keeps the thread from settling, though subagents and monitors do
 
+  # Upstream #15388: merged threads settle even after the agent wakes on its own
   @backlog @mc
   Scenario: An agent waking on its own does not undo a merge settle
     Given a thread's pull request merged and later an agent notification started a turn

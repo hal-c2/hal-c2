@@ -392,7 +392,7 @@ defmodule HalC2.Devices.Proxy do
           end
         end
     after
-      10_000 -> {:error, :timeout}
+      Application.get_env(:hal_c2, :device_hub_upgrade_timeout, 10_000) -> {:error, :timeout}
     end
   end
 

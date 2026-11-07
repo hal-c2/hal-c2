@@ -286,6 +286,7 @@ Feature: Stacked pull requests
     And told the remote branches are rebased from bottom to top onto "main", rewriting branch history and maybe restarting checks
     And told that if a layer fails, earlier updates remain
 
+  # Upstream #17116: the stack merge and rebase dialogs close on confirm and report through toasts
   @backlog @desktop
   Scenario: A confirmed stack action runs in the background and cannot be started twice
     When the user confirms a stack merge
@@ -293,6 +294,7 @@ Feature: Stacked pull requests
     And the user is told "Merging stack..." until the merge ends, then how it ended
     And the stack's actions are disabled while it runs
 
+  # Upstream #17559: a pull request's merge actions stay visible while its stack lookup refreshes
   @backlog @desktop
   Scenario: A pull request's merge actions stay while its stack is refreshed
     Given a pull request that is not part of a stack offers "Auto-merge"
@@ -450,6 +452,7 @@ Feature: Stacked pull requests
     Then the user is told "GitHub returned an unreadable stack operation response."
     And nothing is changed
 
+  # Upstream #16551: Rebase stack cascades, moving each layer onto the rebased layer below
   @backlog @mc
   Scenario: Rebasing the stack moves each layer's own commits onto the rebased layer below
     Given a stack of three layers where the base branch has moved

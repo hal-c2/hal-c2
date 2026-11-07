@@ -29,6 +29,7 @@ Feature: Navigating the phone app and opening links into it
     When the user opens "Fix checkout" from the home screen
     Then going back returns to the home screen
 
+  # Upstream #17268: navigation is preserved after a native swipe back
   @backlog @mobile @priority-low
   Scenario: A tap right after swiping back opens what was tapped
     Given the user opened "Fix checkout" from the home screen
@@ -82,6 +83,7 @@ Feature: Navigating the phone app and opening links into it
     Then the user is told the thread is unavailable
     And the user can return home
 
+  # Upstream #14697: thread links stay open until the shell is live
   @backlog @shared @mobile
   Scenario: A link to a thread the client has not seen yet waits for the environment
     Given the client still shows the thread list it saved before going offline
@@ -234,6 +236,8 @@ Feature: Navigating the phone app and opening links into it
     When the user chooses "Navigate up" in its header
     Then the screen behind it is shown
 
+  # Upstream #15068: back from a live subagent card returns to the parent
+  # Upstream #15844: back from a finished subagent row returns to the parent
   @backlog @mobile
   Scenario Outline: Back from a subagent's thread returns to its parent
     Given the user opened a subagent's thread from <entry> in its parent's feed
