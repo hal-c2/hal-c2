@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23475
+#   https://github.com/pingdotgg/t3code/pull/15000
+#   https://github.com/pingdotgg/t3code/pull/25588
 #   https://github.com/pingdotgg/t3code/pull/15036
 #   https://github.com/pingdotgg/t3code/pull/19947
 #   https://github.com/pingdotgg/t3code/pull/23471
@@ -11,6 +14,11 @@
 #   https://github.com/pingdotgg/t3code/pull/17710
 #   https://github.com/pingdotgg/t3code/pull/16192
 #   https://github.com/pingdotgg/t3code/pull/25530
+#   https://github.com/pingdotgg/t3code/pull/23580
+#   https://github.com/pingdotgg/t3code/pull/24990
+#   https://github.com/pingdotgg/t3code/pull/30579
+#   https://github.com/pingdotgg/t3code/pull/22489
+#   https://github.com/pingdotgg/t3code/pull/30518
 #   docs/user/source-control.md (merge, auto-merge, revert, fork workflows, reviewers, labels)
 #   packages/contracts/src/pullRequest.ts (PullRequestAction, PullRequestMergeMethod, PullRequestUpdateMethod, PullRequestCapabilities, PullRequestViewerPermissions)
 #   packages/contracts/src/rpc.ts (pullRequests.runAction, pullRequests.reviewerCandidates, pullRequests.requestReviewers, pullRequests.labelCandidates, pullRequests.setLabels)
@@ -31,6 +39,15 @@
 #   apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts, AzureDevOpsPullRequestCli.ts
 #   apps/server/src/pullRequest/ForgejoPullRequestProvider.ts
 #   packages/client-runtime/src/state/pullRequests.ts (reviewer and label edits update the open pull request and menus)
+#   https://github.com/pingdotgg/t3code/pull/26077
+#   https://github.com/pingdotgg/t3code/pull/29962
+#   https://github.com/pingdotgg/t3code/pull/29005
+#   https://github.com/pingdotgg/t3code/pull/29465
+#   https://github.com/pingdotgg/t3code/pull/29486
+#   https://github.com/pingdotgg/t3code/pull/30441
+#   https://github.com/pingdotgg/t3code/pull/30483
+#   https://github.com/pingdotgg/t3code/pull/30453
+#   https://github.com/pingdotgg/t3code/pull/25761
 
 Feature: Acting on a pull request
   From the review the user can merge, change draft state, close and reopen, update the
@@ -74,6 +91,27 @@ Feature: Acting on a pull request
     Given pull request 42 is closed
     When the user reopens it
     Then pull request 42 is open
+
+  # Upstream #25761: after an action, clients waited for fresh reads although the host's reply
+  # already said what changed.
+  @backlog @mc @shared
+  Scenario Outline: A pull request action shows the host's reply at once
+    When the user <action> pull request 42 on GitHub
+    Then the pull request, its row in the list and its thread's card show it <state> from the host's reply
+    And the MC does not read the pull request again to learn it
+
+    Examples:
+      | action                 | state             |
+      | merges                 | merged            |
+      | closes                 | closed            |
+      | marks ready for review | ready for review  |
+      | turns auto-merge on    | set to auto-merge |
+
+  # Upstream #25761: a host whose reply says nothing about the pull request is read as before.
+  @backlog @mc
+  Scenario: A pull request action whose reply says nothing is read again
+    When the user merges a GitLab merge request
+    Then the MC reads the merge request again to show it merged
 
   @backlog @mc @priority-low
   Scenario: Bitbucket cannot reopen a declined pull request
@@ -128,6 +166,65 @@ Feature: Acting on a pull request
     Given pull request 42 comes from a fork and its workflows wait for approval
     When the user approves its workflows
     Then the workflows start
+  # Upstream #25588: the author of a fork's pull request can allow or stop maintainer edits from its actions.
+  @backlog @mc @shared
+  Scenario Outline: The author lets maintainers edit their pull request's branch, or stops them
+    Given the user opened pull request 42 from their fork of "acme/shop"
+    And maintainer edits are <before>
+    When the user <action> edits from maintainers
+    Then maintainers of "acme/shop" <after> push to the branch of pull request 42
+    And the user is told this also gives the branch's workflows access to the repository's secrets
+
+    Examples:
+      | before  | action | after   |
+      | off     | allows | can     |
+      | on      | stops  | can no longer |
+
+  # Upstream #25588: the choice is hidden where GitHub does not offer it.
+  @backlog @mc @shared
+  Scenario: Maintainer edits are not offered where GitHub does not allow them
+    Given pull request 42 comes from a branch of "acme/shop" itself
+    When the user looks at its actions
+    Then allowing edits from maintainers is not offered
+
+  # Upstream #30518: GitLab merge requests from forks can allow or stop maintainer edits.
+  @backlog @mc @shared @priority-low
+  Scenario Outline: The author of a GitLab merge request from a fork lets maintainers edit it, or stops them
+    Given the user opened a GitLab merge request from their fork and may push to its source branch
+    And maintainer edits are <before>
+    When the user <action> edits from maintainers
+    Then maintainers of the target project <after> push to its source branch
+
+    Examples:
+      | before | action | after         |
+      | off    | allows | can           |
+      | on     | stops  | can no longer |
+
+  # Upstream #30518: GitLab ignores the setting unless collaboration is possible, so it is offered
+  # only to the author, on a fork, where it would hold.
+  @backlog @mc @shared @priority-low
+  Scenario Outline: GitLab maintainer edits are not offered where they cannot hold
+    Given a GitLab merge request where <case>
+    When the user looks at its actions
+    Then allowing edits from maintainers is not offered
+
+    Examples:
+      | case                                                  |
+      | the source branch is in the target project itself     |
+      | the user is not its author                            |
+      | the user cannot push to its source branch             |
+      | its source branch is protected                        |
+      | the fork or the target project is private             |
+
+  # Upstream #25588: a failed save puts the previous choice back.
+  @backlog @mc @shared
+  Scenario: A failed change to maintainer edits keeps the previous choice
+    Given maintainer edits are off for pull request 42
+    And GitHub refuses the change
+    When the user allows edits from maintainers
+    Then maintainer edits read as off again
+    And the user is told the change failed
+
 
   @mc
   Scenario Outline: Actions the user is not allowed to take are refused with the reason
@@ -178,11 +275,29 @@ Feature: Acting on a pull request
       | its branch has moved past the pull request's last commit   |
       | the account may not write to the branch's repository       |
 
+  # Upstream #30453: GitLab merge requests can delete their source branch too.
   @backlog @desktop @mobile @priority-low
-  Scenario: Deleting a branch is offered only for GitHub pull requests that are done
+  Scenario: Deleting a branch is offered only for GitHub and GitLab pull requests that are done
     When the user opens the menu of a pull request
     Then Delete branch is not offered for an open pull request
-    And it is not offered for a pull request on any other host
+    And it is not offered for a pull request on a host other than GitHub or GitLab
+
+  # Upstream #30453: GitLab says whether the viewer may remove the source branch, and stops
+  # offering it once the branch is gone; a fork's branch is deleted in the fork.
+  @backlog @mc @priority-low
+  Scenario Outline: A GitLab merge request's source branch <outcome>
+    Given GitLab merge request 7 has merged from "feature/tax" of <project>
+    And <situation>
+    When the user deletes its branch
+    Then the branch <outcome>
+
+    Examples:
+      | project             | situation                                                 | outcome                          |
+      | "acme/shop"         | GitLab lets the user remove the source branch             | is deleted in "acme/shop"        |
+      | the fork "sam/shop" | GitLab lets the user remove the source branch             | is deleted in "sam/shop"         |
+      | "acme/shop"         | GitLab does not let the user remove the source branch     | is not offered to be deleted     |
+      | "acme/shop"         | the branch was already removed                            | is not offered to be deleted     |
+      | "acme/shop"         | the branch has moved past the merge request's last commit | is kept and the user is told why |
 
   @mc
   Scenario: Asking people for a review
@@ -194,6 +309,39 @@ Feature: Acting on a pull request
     Given pull request 42 was opened by "octocat"
     When the user searches reviewers for "octo"
     Then "octocat" is not suggested
+
+  # Upstream #22489: the reviewer menu filtered only its first page of 100 people, so others on a
+  # larger repository could not be asked.
+  @backlog @mc @shared
+  Scenario Outline: The reviewer menu on <host> finds people past its first page
+    Given a pull request on <host> whose repository has 300 people who may be asked to review
+    And "zed" is not among the first 100 the menu loaded
+    When the user searches the reviewer menu for "ze"
+    Then "zed" is offered below the loaded people who match
+    When the user asks "zed" to review it
+    Then "zed" is marked as requested in the reviewer menu
+
+    Examples:
+      | host   |
+      | GitHub |
+      | GitLab |
+
+  # Upstream #22489: hosts that cannot search keep narrowing the loaded page.
+  @backlog @mc @shared @priority-low
+  Scenario: A host that cannot search people narrows the people it loaded
+    Given a pull request on Forgejo whose repository has more people than the reviewer menu loaded
+    When the user searches the reviewer menu for "ze"
+    Then only loaded people matching "ze" are offered
+    And the menu says not everyone is listed
+
+  # Upstream #22489: a GitLab reviewer requested but not on the first page never showed, so the
+  # request could not be taken back.
+  @backlog @mc @priority-low
+  Scenario: GitLab's requested reviewers lead the reviewer menu
+    Given "zed" was asked to review a GitLab merge request and is not among the first 100 people loaded
+    When the user opens the reviewer menu
+    Then "zed" is listed first, marked as requested
+    And the user can take back the request
 
   @mc
   Scenario: Asking for a review without write access
@@ -321,6 +469,20 @@ Feature: Acting on a pull request
     When the user opens the reviewer menu
     Then "hubot" is marked "Already asked"
     And "acme/core" is marked "team" and "Already asked"
+
+  # Upstream #23580: Forgejo and Gitea answer the assignee list in one piece, and reading it as
+  # pages repeated every assignee hundreds of times.
+  @backlog @mc @priority-low
+  Scenario Outline: The <host> reviewer menu lists each assignee once
+    Given a pull request on <host> whose repository has the assignees "hubot", "mona" and "octo"
+    When the user opens the reviewer menu
+    Then "hubot", "mona" and "octo" are each listed once, apart from the pull request's author
+    And the list is read with one request
+
+    Examples:
+      | host    |
+      | Forgejo |
+      | Gitea   |
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx (colour and description, applied marker)
   @backlog @desktop @priority-low
@@ -455,6 +617,19 @@ Feature: Acting on a pull request
     When the user chooses to arrange auto-merge for pull request 42 from its review
     Then the user is told it merges #42 as soon as the host considers it ready, which may be immediately
 
+  # Upstream #29962: on the phone, closing a pull request was only on its small status pill.
+  @backlog @mobile
+  Scenario Outline: The phone's pull request actions menu closes and reopens it
+    Given pull request 42 is <state> and the user may change it
+    When the user opens the actions menu of pull request 42 on the phone
+    Then the menu offers "<action>"
+    And choosing it <confirms>
+
+    Examples:
+      | state  | action | confirms                                 |
+      | open   | Close  | asks the user to confirm before it closes |
+      | closed | Reopen | reopens it                               |
+
   @backlog @desktop
   Scenario: Approving workflows says how many will run
     Given pull request 42 comes from a fork and 2 of its workflows wait for approval
@@ -547,6 +722,17 @@ Feature: Acting on a pull request
     When the user tries to close pull request 42 before the merge answers
     Then nothing more is sent
 
+  # Upstream #26077: Merge and Merge stack appeared only once the stack was read and pushed the
+  # stack picker aside, so a quick click opened the merge confirmation.
+  @backlog @desktop
+  Scenario: The merge control holds its place while the stack is read
+    Given pull request 42 is open with passing checks and its stack is still being read
+    When the user opens pull request 42
+    Then the merge control is shown in its place and cannot be pressed
+    And resting on it says the stack is still being read
+    When the stack has been read
+    Then the merge control can be pressed and nothing beside it has moved
+
   @backlog @desktop
   Scenario Outline: The merge control follows the state of the pull request
     Given pull request 42 is <state>
@@ -596,6 +782,51 @@ Feature: Acting on a pull request
     Given auto-merge is armed on pull request 42 with the squash method
     When the user opens pull request 42
     Then the merge control offers "Auto-merge (squash)" and shows squash as the method
+
+  # Upstream #29465: the phone showed a disabled merge button over two lines that read like
+  # errors while auto-merge was pending.
+  # Upstream #29486: the phone kept a disabled "Squash and merge" for merged, closed, draft and
+  # conflicting pull requests, with the reason in a muted line underneath.
+  @backlog @mobile
+  Scenario Outline: The phone's merge button names the state of the pull request
+    Given pull request 42 is <state>
+    When the user opens pull request 42 on the phone
+    Then the merge button reads "<label>"
+    And no line under it repeats the reason
+
+    Examples:
+      | state                                           | label                       |
+      | open with squash auto-merge armed               | Auto-merge pending (squash) |
+      | merged                                          | Merged                      |
+      | closed and the user may reopen it               | Reopen pull request         |
+      | closed and the user may not reopen it           | Closed                      |
+      | a draft the user may mark ready                 | Mark ready for review       |
+      | a draft the user may not mark ready             | Draft                       |
+      | in conflict with its base                       | Resolve conflicts to merge  |
+
+  @backlog @mobile
+  Scenario: A pending auto-merge can still be cancelled from the phone's merge button
+    Given auto-merge is armed on pull request 42
+    When the user opens the merge button's menu on the phone
+    Then it offers "Disable auto-merge"
+
+  @backlog @mobile
+  Scenario: The line under the phone's merge button is kept for what the button cannot say
+    Given pull request 42 is open with passing checks
+    And the user's account may not merge it
+    When the user opens pull request 42 on the phone
+    Then the merge button cannot be pressed
+    And the line under it says the account cannot merge this pull request
+
+  # Upstream #29005: a merge started on one pull request showed as pending on another after
+  # switching threads.
+  @backlog @shared
+  Scenario: A pending action shows only on the pull request it was started on
+    Given the user started merging pull request 42 and it has not finished
+    When the user switches to a thread whose pull request is 57
+    Then pull request 57 shows no pending merge
+    When the user switches back
+    Then pull request 42 still shows its merge as pending
 
   @backlog @desktop
   Scenario: A branch that fell behind its base offers to catch up
@@ -676,6 +907,22 @@ Feature: Acting on a pull request
     When the user checks out pull request 42 in this repository from its review
     Then the repository switches to the pull request's branch and a thread opens on it
     And the user sees a "success" toast "Checked out here"
+
+  # Upstream #15000: a pull request from another GitHub host could check out a same-named
+  # repository on the checkout's host, with the wrong commit and remote.
+  @backlog @mc @priority-high
+  Scenario Outline: A pull request from another host is checked out from that host
+    Given the checkout's "acme/web" is on github.com
+    And pull request 42 of "acme/web" is on <host>
+    When the user checks out pull request 42 <where>
+    Then the branch holds the pull request's commit from <host>
+    And it tracks the repository on <host>
+
+    Examples:
+      | host                      | where                  |
+      | github.acme.dev           | in this repository     |
+      | github.acme.dev           | in a separate worktree |
+      | a Forgejo at git.acme.dev | in this repository     |
 
   # Upstream #15036: Check out here could throw away local edits and commits and still say it worked.
   @backlog @mc @desktop @priority-high
@@ -772,6 +1019,15 @@ Feature: Acting on a pull request
     And its composer holds a request to resolve the conflicts with "main" on the pull request's branch
     And the user sees a "success" toast "Checkout ready"
 
+  # Upstream #23475: Resolve conflicts stayed enabled for a connection that may not check out, and did nothing.
+  @backlog @desktop @mobile
+  Scenario: A device that may not check out cannot start resolving conflicts on a checkout
+    Given pull request 42 is in conflict with "main"
+    And this device was paired without access to change source control or operate threads
+    When the user opens pull request 42
+    Then resolving the conflicts on a checkout cannot be chosen
+    And adding the request to an open composer still can
+
   @backlog @desktop
   Scenario: Handing findings to an agent
     Given pull request 42 has 2 unresolved review threads and 1 failing check
@@ -839,12 +1095,95 @@ Feature: Acting on a pull request
     And the user sees a "success" toast "Added to the composer"
     And the buttons say "Fix in this thread" and "Fix findings in this thread"
 
+  # Upstream #30579: a pull request comment can be brought into the chat to ask about it, not only
+  # as a task to fix.
   @backlog @desktop
-  Scenario: A second hand-off replaces the first and keeps the user's own words
-    Given the composer holds a request handed over earlier and "Also check the tests."
-    When the user chooses a different hand-off for pull request 42
-    Then the earlier request is replaced
+  Scenario: A pull request comment is added to the chat to ask about it
+    Given pull request 42 is open beside the thread "Tax work"
+    When the user adds a review comment of pull request 42 to the chat
+    Then the composer of "Tax work" holds the comment and pull request 42 as references
+    And the composer's text is left for the user's own question
+
+  # Upstream #30579: a comment on a line brings its whole conversation, plain conversation comments
+  # can be added too, and several stack.
+  @backlog @desktop
+  Scenario Outline: What adding a pull request comment to the chat brings
+    Given pull request 42 is open beside the thread "Tax work"
+    When the user adds <comment> to the chat
+    Then the composer holds <brought>
+
+    Examples:
+      | comment                                         | brought                                              |
+      | a comment on a line with two loaded replies     | the comment and both replies                         |
+      | a plain conversation comment                    | that comment                                         |
+      | a second comment after a first                  | both comments                                        |
+      | a comment when the draft already names #42      | the comment, and pull request 42 once                |
+
+  # Upstream #30579: a later fix leaves the added comments in place.
+  @backlog @desktop
+  Scenario: A comment added to the chat survives a later hand-off
+    Given the composer of "Tax work" holds a comment of pull request 42 added to the chat
+    When the user chooses to fix a finding of pull request 42 in this thread
+    Then the comment is still in the composer beside the finding
+
+  # Upstream #30579: adding to the chat never opens a new thread.
+  @backlog @desktop
+  Scenario: A comment can be added to the chat only beside a composer
+    Given pull request 42 is open with no thread beside it
+    When the user looks at a comment of pull request 42
+    Then adding it to the chat is not offered
+    And fixing it says "Fix in a thread"
+
+  # Upstream #30579: bookkeeping bots hide in HTML comments does not reach the agent.
+  @backlog @desktop
+  Scenario: A bot's hidden bookkeeping is left out of a comment added to the chat
+    Given a comment on pull request 42 holds a hidden HTML comment and the remark "This leaks a handle"
+    When the user adds it to the chat and sends
+    Then the agent reads "This leaks a handle" without the hidden HTML comment
+    And an HTML comment inside a code block of the comment is kept
+
+  # Upstream #24990: a second finding or selection handed to the composer replaced the first; hand-offs
+  # now add to the draft.
+  @backlog @desktop
+  Scenario: A second hand-off joins the first and keeps the user's own words
+    Given the composer holds a finding of pull request 42 handed over earlier and "Also check the tests."
+    When the user hands over a second finding of pull request 42
+    Then the composer holds both findings
     And "Also check the tests." and the references the user attached are kept
+    And what the request says about pull request 42 is not repeated for the second finding
+
+  # Upstream #24990: handing the same thing over twice changes nothing.
+  @backlog @desktop
+  Scenario: Handing the same finding over twice leaves the draft as it was
+    Given the composer holds a finding of pull request 42 handed over earlier
+    When the user hands over the same finding again
+    Then the composer holds that finding once and nothing else has changed
+
+  # Upstream #24990: selections and findings from a pull request name it, so the same file in two pull
+  # requests can be told apart, and two repositories' pull requests with one number keep apart.
+  @backlog @desktop
+  Scenario: A finding handed over from a pull request names that pull request
+    Given the user handed over a finding on line 78 of "src/menu.ts" from pull request 42
+    And a finding on the same file from pull request 50
+    When the user reads the composer
+    Then one reference reads "#42 menu.ts L78" and the other names #50
+    And a selection from the thread's own diff names no pull request
+
+  # Upstream #24990: two repositories with the same pull request number no longer overwrite each
+  # other's context in the draft.
+  @backlog @desktop
+  Scenario: Pull requests with the same number in two repositories keep their own context
+    Given the user handed over a finding of pull request 42 of "acme/shop"
+    When the user hands over a finding of pull request 42 of "acme/api"
+    Then the composer holds the context of both pull requests
+
+  # Upstream #24990: a fix and a question about the same pull request in one draft no longer tell
+  # the agent not to change any code.
+  @backlog @desktop
+  Scenario: Asking about and fixing one pull request in one draft still lets the agent fix it
+    Given the composer holds a question about a finding of pull request 42
+    When the user also hands over a fix of another finding of pull request 42
+    Then the request does not tell the agent to leave the code alone
 
   @backlog @desktop
   Scenario: Only one hand-off prepares at a time
@@ -1050,11 +1389,23 @@ Feature: Acting on a pull request
     When the user adds the label "tax"
     Then the user is told "This host cannot change the labels on a change request."
 
+    # Upstream #30483: GitLab merge requests can change their labels now.
     Examples:
       | host         |
-      | GitLab       |
       | Azure DevOps |
       | Bitbucket    |
+
+  # Upstream #30483: GitLab merge requests had no Labels row; labels are changed as additions
+  # and removals, so two clients changing different labels keep both.
+  @backlog @mc @shared @priority-low
+  Scenario: Labels of a GitLab merge request are changed by who may manage it
+    Given a GitLab merge request in a project whose group defines the label "backend"
+    And the user may manage the merge request
+    When the user opens its label menu
+    Then the project's and its groups' labels are offered, the applied ones marked
+    When the user adds "backend" while another client removes "tax"
+    Then the merge request has "backend" and not "tax"
+    And a user who may not manage the merge request is not offered the label menu
 
   @backlog @mc @priority-low
   Scenario: Reviewer candidates cannot be listed on Azure DevOps
@@ -1300,6 +1651,16 @@ Feature: Acting on a pull request
     Then agent co-author trailers and generated-by footers are removed from the proposed message
     And human co-authors and Markdown examples are kept
     And the setting is off by default
+
+  # Upstream #30441: the setting did nothing on GitLab, which always wrote the messages itself.
+  @backlog @mc @priority-low
+  Scenario: Merging on GitLab leaves out agent credits
+    Given "Remove agent credits when merging" is on
+    And the GitLab project's merge and squash messages would carry an agent co-author trailer
+    When the user merges a GitLab merge request
+    Then GitLab merges with messages that leave the agent credits out
+    And a merge request whose messages carry no agent credits keeps GitLab's own messages
+    And a push since the user looked fails the merge instead of merging commits the messages do not cover
 
   # Upstream #23133: Claude Code's footer now links to claude.com, and it was left in the message.
   @backlog @mc @priority-low

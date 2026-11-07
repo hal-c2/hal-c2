@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24473
+#   https://github.com/pingdotgg/t3code/pull/24117
 #   https://github.com/pingdotgg/t3code/pull/23999
 #   https://github.com/pingdotgg/t3code/pull/15625
 #   https://github.com/pingdotgg/t3code/pull/18862
+#   https://github.com/pingdotgg/t3code/pull/22119
+#   https://github.com/pingdotgg/t3code/pull/23242
+#   https://github.com/pingdotgg/t3code/pull/28494
 #   docs/user/source-control.md
 #   docs/internals/consistency-action-names.md
 #   apps/web/src/components/GitActionsControl.logic.ts (buildMenuItems, resolveQuickAction)
@@ -41,6 +46,19 @@ Feature: Recommended git action and the git menu
       | is pushed and ahead of the default branch with no pull request | Create PR         |
       | is up to date with an open pull request                        | View PR           |
 
+  # Upstream #24117: a dirty branch behind its upstream was offered a commit and push whose push could not fast-forward.
+  @backlog @shared
+  Scenario Outline: Uncommitted changes on a branch behind its upstream recommend only a commit
+    Given the checkout has uncommitted changes on <branch> that is behind its upstream
+    When the user looks at the thread's git actions
+    Then the recommended action is "Commit"
+
+    Examples:
+      | branch                                 |
+      | the default branch                     |
+      | a branch with an open pull request     |
+      | a feature branch with a remote         |
+
   @desktop @tui
   Scenario Outline: The recommended action is withheld with a reason
     Given the checkout <state>
@@ -69,6 +87,16 @@ Feature: Recommended git action and the git menu
     When the user looks at the thread's git actions
     Then the recommended action is "Publish repository"
     And the git menu offers only committing and publishing
+
+  # Upstream #22119: a branch in a repository whose only remote is "github" was offered
+  # "Publish repository" and no Push or Create PR.
+  @backlog @shared
+  Scenario: A repository whose only remote is not called origin can push and open pull requests
+    Given the checkout's only remote is "github"
+    And the checkout is on a branch with commits that were never pushed
+    When the user looks at the thread's git actions
+    Then the git menu offers pushing and creating a pull request
+    And "Publish repository" is not recommended
 
   @tui
   Scenario: Publishing a repository from the terminal client
@@ -105,6 +133,21 @@ Feature: Recommended git action and the git menu
     When the user creates a pull request
     Then the pull request holds the branch's commits, and its title and description are written from them
     And the staged, unstaged and untracked files are left as they were
+
+  # Upstream #28494: squash and rebase merges land new commits, so a merged branch still counted
+  # its own commit as unpushed and offered "Push & create PR", which then failed.
+  @backlog @mc @priority-high
+  Scenario Outline: A branch whose pull request was <merged> offers nothing to ship
+    Given the branch's pull request was <merged> into the default branch
+    And the branch has no commits since the pull request's head and no changed files
+    When a client reads the branch's remote status
+    Then the branch has nothing to push and nothing to include in a pull request
+    But a commit added after the merge is counted again
+
+    Examples:
+      | merged         |
+      | squash-merged  |
+      | rebase-merged  |
 
   # The shell's git bridge words these itself (apps/web/src/hooks/useGitActions.ts).
   @backlog @desktop @priority-high
@@ -184,6 +227,16 @@ Feature: Recommended git action and the git menu
     And the user chooses "View PR" on the toast "Created PR #42"
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
+  # Upstream #23242: a pull request whose lookup failed right after it was opened was reported as
+  # a failed action; it is now reported as created, without its link.
+  @backlog @mc @shared
+  Scenario: A pull request whose lookup fails after it opens is reported as created
+    Given the checkout has commits on a feature branch with a remote
+    And the host fails to list pull requests once the new one is opened
+    When the user creates a pull request
+    Then the action is reported as having created a pull request for "feature/tax"
+    And no link to it is offered
+
   @desktop
   Scenario: An action with nothing to do says why
     Given the checkout is up to date with nothing to do
@@ -221,6 +274,29 @@ Feature: Recommended git action and the git menu
     When the user goes from "Deploy" to "Docs" and runs "Commit, push & PR"
     Then the commit, push and pull request are made in the "feature/docs" worktree
     And its progress and result are shown on "Docs"
+  # Upstream #24473: a commit waiting on its generated message resumed on a branch another
+  # client had switched to, and Commit & push pushed that branch.
+  @backlog @mc @priority-high
+  Scenario Outline: A commit action and a branch change in the same checkout wait for each other
+    Given two clients share a checkout on "feature/tax"
+    When one client runs "<action>" and the other <change> before it finishes
+    Then the commit, and any push and pull request, are made on "feature/tax"
+    And the other client's change happens once the action has finished
+
+    Examples:
+      | action            | change                           |
+      | Commit            | switches the checkout to "main"  |
+      | Commit & push     | switches the checkout to "main"  |
+      | Commit, push & PR | checks out pull request 42 there |
+
+  # Upstream #24473: the other way round, a commit that arrives during a switch waits for it.
+  @backlog @mc @priority-high
+  Scenario: A commit started during a branch switch lands on the switched-to branch
+    Given one client is checking out pull request 42 in the project's folder
+    When another client runs "Commit" before the checkout finishes
+    Then the commit starts once the checkout has finished
+    And it lands on the pull request's branch
+
 
   Rule: Publishing a repository without a remote
 

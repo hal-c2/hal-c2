@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27817
+#   https://github.com/pingdotgg/t3code/pull/22089
+#   https://github.com/pingdotgg/t3code/pull/23343
 #   https://github.com/pingdotgg/t3code/pull/23789
 #   https://github.com/pingdotgg/t3code/pull/19902
 #   https://github.com/pingdotgg/t3code/pull/10958
@@ -29,6 +32,11 @@
 #   Shared domain: tui/launch.feature holds pairing the terminal client from its command line;
 #   mobile/pairing-and-environments.feature holds pairing from a phone;
 #   settings/connections.feature holds creating, copying and revoking links on the desktop page.
+#   https://github.com/pingdotgg/t3code/pull/25591
+#   https://github.com/pingdotgg/t3code/pull/26178
+#   https://github.com/pingdotgg/t3code/pull/26318
+#   https://github.com/pingdotgg/t3code/pull/28529
+#   https://github.com/pingdotgg/t3code/pull/29684
 
 Feature: Pairing a client with an environment
   Pairing turns a one-time link into a lasting session for one device. Links are minted on
@@ -42,6 +50,22 @@ Feature: Pairing a client with an environment
     When an operator asks the MC for a pairing link with its LAN address
     Then it prints the address with a one-time token
     And the token grants standard scopes for five minutes
+  # Upstream #22089: a pairing code typed in lowercase was refused, and the phone's code field
+  # does not capitalise.
+  @backlog @mc
+  Scenario: A pairing code is accepted in any letter case
+    Given an operator printed the pairing code "K7QX2MRP9TWD"
+    When a device pairs with the code typed as "k7qx2mrp9twd"
+    Then the device pairs
+    And the code cannot be used again in either case
+
+  # Upstream #22089: only the pairing code's own form is folded.
+  @backlog @mc @priority-low
+  Scenario: A credential that is not a pairing code must match its case
+    Given the desktop app was started with a lowercase credential of its own
+    When a device pairs with that credential in uppercase
+    Then the pairing is refused
+
 
   # Upstream #23789: pairing against an MC on another protocol printed a token it could not use.
   @backlog @mc
@@ -62,12 +86,43 @@ Feature: Pairing a client with an environment
     When an operator runs "pair https://box.tailnet.ts.net" on the installed MC's command line
     Then it prints the address with a one-time token
 
+  # Upstream #29684: `t3 up --base-dir` told the user to run `t3 pair` without it, which found no
+  # server or paired with a different one.
+  @backlog @mc @priority-low
+  Scenario: The pairing command an MC suggests at startup reaches that MC
+    Given an operator started an MC with its own HAL-C2 home and port
+    When the MC says how to pair a client
+    Then the command it suggests names that home
+    And running that command prints a pairing link for that MC, not another one on the machine
+
+  # Upstream #27817: a startup clean-up logged a line to standard output before a token
+  # printed for a script, so `TOKEN=$(...)` captured both.
+  @backlog @mc @priority-low
+  Scenario: A pairing link captured by a script is all the command prints to standard output
+    Given the MC's home holds an abandoned upload that is cleaned up when a command starts
+    When an operator captures the standard output of asking for a pairing link
+    Then the captured text is only the pairing link
+
   @mc
   Scenario: A pairing command given an option it does not have says so
     Given an administrator's client
     When an operator asks for a pairing link with the option "--tailnet"
     Then the command fails naming "--tailnet"
     And no pairing link is listed
+
+  # Upstream #23343: `t3 auth pairing create --base-url` without http(s):// is refused before a token is issued.
+  @backlog @mc
+  Scenario Outline: A pairing link for an address that is not http or https is refused before a token is issued
+    Given an administrator's client
+    When an operator asks for a pairing link for "<address>"
+    Then the command fails saying the address must start with http:// or https://
+    And no pairing link is listed
+
+    Examples:
+      | address            |
+      | 192.168.1.5:3773   |
+      | localhost:3773     |
+      | ftp://box.lan:3773 |
 
   @mc
   Scenario: A pairing command given two addresses says it takes one
@@ -211,6 +266,14 @@ Feature: Pairing a client with an environment
     When the user makes a pairing link over Tailscale
     Then the tailnet address reaches the MC
 
+  # Upstream #28529: a Tailscale Serve command that ignored the stop signal held up cleanup.
+  @backlog @mc @priority-low
+  Scenario: A Tailscale Serve command that hangs is stopped
+    Given the Tailscale Serve command never finishes and ignores being asked to stop
+    When the user makes a pairing link over Tailscale
+    Then the command is killed shortly after its time runs out
+    And the client is told Tailscale could not publish the MC
+
   @mc
   Scenario: No pairing link is made when Tailscale cannot publish the MC
     Given Tailscale is not running on the MC's machine
@@ -297,6 +360,39 @@ Feature: Pairing a client with an environment
     When the user pairs it again with a fresh link
     Then it reconnects with a new session
     And keeps its local view of the environment
+
+  # Upstream #25591: a fresh link pasted at another address of a known environment was exchanged,
+  # but the client kept connecting with its older, narrower session.
+  # Upstream #26178: only a route the user adds from that environment's settings may bring a new
+  # address, so the link here is used from there.
+  @backlog @shared
+  Scenario: Pairing a known environment at another address connects with the new session
+    Given a device paired with an environment at "127.0.0.1:3773"
+    When the user adds a route to it from its settings with a fresh link at "localhost:3773"
+    Then it connects with the new link's session and its access
+    And the earlier address is kept as a fallback with its own session
+
+  # Upstream #26178: an environment names its own id, so a link to a server claiming a saved
+  # environment's id could add itself as that environment's fallback and serve it fake threads.
+  @backlog @shared @priority-high
+  Scenario Outline: A pairing link not started from an environment cannot add an address to it
+    Given a device paired with the environment "work" at "work.lan:3773"
+    When the user pairs with a link to <address> whose server says it is "work"
+    Then <outcome>
+
+    Examples:
+      | address            | outcome                                                              |
+      | "evil.example:3773" | the pairing is refused and "work" keeps only "work.lan:3773"         |
+      | "work.lan:3773"     | "work" is paired again at "work.lan:3773" with the new session       |
+
+  # Upstream #26318: on the phone a link could open the pairing form already aimed at a saved
+  # environment, so a code entered there added its server as one of that environment's routes.
+  @backlog @mobile @priority-high
+  Scenario: A link to the phone's pairing form cannot aim it at a saved environment
+    Given the phone has the saved environment "work"
+    When the user opens a link to the pairing form that names "work" as the environment to add a route to
+    Then the form adds a new environment, not a route to "work"
+    And adding a route from "work"'s own settings still aims the form at "work"
 
   # Access to the machine the terminal is connected to is managed from its connection
   # settings (the `authAccess` stream, `hal-c2.revokeClient`, `hal-c2.revokeOtherClients`).

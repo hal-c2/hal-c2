@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29878
+#   https://github.com/pingdotgg/t3code/pull/23351
+#   https://github.com/pingdotgg/t3code/pull/21542
+#   https://github.com/pingdotgg/t3code/pull/27110
+#   https://github.com/pingdotgg/t3code/pull/26529
+#   https://github.com/pingdotgg/t3code/pull/24937
+#   https://github.com/pingdotgg/t3code/pull/23227
 #   https://github.com/pingdotgg/t3code/pull/23595
 #   https://github.com/pingdotgg/t3code/pull/20101
 #   https://github.com/pingdotgg/t3code/pull/21146
@@ -56,6 +63,19 @@
 #   https://github.com/pingdotgg/t3code/pull/15506
 #   https://github.com/pingdotgg/t3code/pull/22131
 #   https://github.com/pingdotgg/t3code/pull/22895
+#   https://github.com/pingdotgg/t3code/pull/26304
+#   https://github.com/pingdotgg/t3code/pull/21378
+#   https://github.com/pingdotgg/t3code/pull/29844
+#   https://github.com/pingdotgg/t3code/pull/27841
+#   https://github.com/pingdotgg/t3code/pull/30318
+#   https://github.com/pingdotgg/t3code/pull/30479
+#   https://github.com/pingdotgg/t3code/pull/30724
+#   https://github.com/pingdotgg/t3code/pull/30000
+#   https://github.com/pingdotgg/t3code/pull/29736
+#   https://github.com/pingdotgg/t3code/pull/29737
+#   https://github.com/pingdotgg/t3code/pull/28631
+#   https://github.com/pingdotgg/t3code/pull/30389
+#   https://github.com/pingdotgg/t3code/pull/29309
 
 Feature: Tool calls and file changes
   The agent's work shows as tool calls between its messages. Calls group into a short
@@ -92,8 +112,8 @@ Feature: Tool calls and file changes
   # The running group is one line: what the agent is doing now, with the count of the calls
   # before it at its end. It changes as calls land and never animates.
   # Proved by tst_Timeline.qml (test_runningToolCallsReadAsOneLiveRow), not yet by a step (hal-c2/hal-c2#213).
-  # TUI: the latest call and "+N previous tool calls" are still two lines (apps/tui/src/host/timelineState.ts).
-  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
+  # TUI: one row, the count in its right-hand part (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A running turn's tool calls read as one live row
     Given the agent has run five tool calls in a row in the running turn
     Then one row shows the latest tool call with "+4 previous tool calls" beside it
@@ -101,6 +121,27 @@ Feature: Tool calls and file changes
     Then the row shows the sixth tool call with "+5 previous tool calls" beside it
     When the user opens the row
     Then all six tool calls are shown
+
+  # TUI: a subagent's row is never folded away (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: A subagent's row stays beside the live row
+    Given the agent delegated a task and then ran three tool calls in the running turn
+    Then the subagent's row is shown
+    And the latest tool call is shown with "+2 previous tool calls" beside it
+
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: A command whose output cannot be fetched says so
+    Given the agent ran a command that finished
+    And the MC cannot supply its output
+    When the user opens the command's details
+    Then the details read "Output unavailable" rather than loading
+
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: An older reply never replaces a newer one
+    Given the agent's command is still running and printing
+    And the user has opened the command's details
+    When the output is fetched again and the second reply arrives before the first
+    Then the details show the second reply's output
 
   # Upstream #16284: the live row also says what the agent is thinking about.
   @backlog @shared
@@ -329,6 +370,20 @@ Feature: Tool calls and file changes
     When the user reads the activity group
     Then the command is shown as succeeded
 
+  # Upstream #23351: the failure text heuristic overrode a reported exit code of 0, so a grep for "ENOENT" showed as failed.
+  @backlog @mc @desktop @mobile @tui @priority-high
+  Scenario Outline: A command that exited 0 is a success whatever its text says
+    Given the provider reported a command as completed with exit code 0
+    And the command's <part> says <text>
+    When the user reads the activity group
+    Then the command is shown as succeeded
+
+    Examples:
+      | part    | text                                |
+      | output  | "ENOENT: no such file or directory" |
+      | output  | "exit code 2"                       |
+      | command | "rg \"ENOENT\""                     |
+
   # Upstream #21146: reasoning rows are no longer scanned for failure text.
   @backlog @desktop @mobile @tui
   Scenario: Reasoning that mentions a failed exit code is not shown as a failed call
@@ -383,7 +438,8 @@ Feature: Tool calls and file changes
     Then the details show its input
     And no exit code is shown
 
-  @mc @shared @backlog @priority-high
+  # Upstream #15094: an opened command streams its output while it runs.
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: An opened command shows its output while it runs
     Given the agent's command is still running and printing
     When the user opens the command's details
@@ -399,26 +455,27 @@ Feature: Tool calls and file changes
     Then the whole command is shown
     And no details are offered when the command fits
 
-  @mc @shared @backlog @priority-high
+  # Upstream #15094: a finished command's final output is fetched when its row is opened.
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A finished command's output is fetched when it is opened
     Given the agent ran a command that finished
     When the user opens the command's details
     Then the command's final output is shown
 
-  @mc @backlog @priority-high
+  @mc
   Scenario: Command output does not ride the thread
     Given the agent's command prints 17 MB of output
     And no client has opened the command's details
     Then no client receives any of that output
     And the thread's history and stream do not grow by it
 
-  @mc @backlog
-  Scenario: A running command keeps only the last 64K characters of output
-    Given the agent's command has printed more than 64K characters
+  @mc
+  Scenario: A running command keeps only the last 64K bytes of output
+    Given the agent's command has printed more than 64K bytes
     When the user opens the command's details
-    Then the last 64K characters are shown
+    Then the last 64K bytes are shown
 
-  @mc @backlog
+  @mc
   Scenario: A client that falls behind is sent the whole tail again
     Given a client watching a running command falls more than 16 KB behind
     Then it is sent the whole kept output instead of the missed parts, at most every 500 ms
@@ -437,6 +494,72 @@ Feature: Tool calls and file changes
     Given the agent's command prints dark text on a dark background
     When the user opens the command's details
     Then that text is drawn in a colour readable on its background
+
+  # Upstream #21542: extended underline codes were read as unrelated codes, so a curly
+  # underline turned text italic and an underline colour reset bold and red.
+  @shared @backlog @priority-low
+  Scenario Outline: Underline styles in command output leave the other styles alone
+    Given the agent's command prints bold red text and then <code>
+    When the user opens the command's details
+    Then the text after it is still bold and red
+    And <underline>
+
+    Examples:
+      | code                                  | underline                         |
+      | a curly underline                     | it is underlined, not italic      |
+      | underline off, in its colon form      | it is not underlined              |
+      | a 24-bit underline colour             | its underline colour is not drawn |
+      | a 256-colour underline colour         | its underline colour is not drawn |
+      | a colon-form 24-bit underline colour  | its underline colour is not drawn |
+
+  # Upstream #29736: a control code with a fractional or unsupported parameter threw or dropped
+  # earlier output.
+  @mc @shared @backlog @priority-low
+  Scenario Outline: A control code with parameters the output does not support leaves the text alone
+    Given the agent's command prints "a", "b" and "c" on three lines, then <code>, then "X"
+    When the user opens the command's details
+    Then the output reads "a", "b" and "cX" on three lines
+
+    Examples:
+      | code                                          |
+      | a cursor move up by "1.5" rows                |
+      | an erase of the display with an intermediate byte |
+      | a cursor move with a colon parameter          |
+
+  # Upstream #30479: a title sequence left open before the next escape swallowed the rest of the line.
+  @mc @shared @backlog @priority-low
+  Scenario: Text after a title sequence left open still shows
+    Given the agent's command sets a title without ending it, then prints "red" in red
+    When the user opens the command's details
+    Then the output reads "red" in red
+    And a title or link sequence ended properly, or split across two writes, is still hidden
+
+  # Upstream #30724: only four character-set sequences were read whole; any other escape with
+  # intermediate bytes printed its last byte, so "before ESC#8 after" read "before8after".
+  @mc @shared @backlog @priority-low
+  Scenario Outline: An escape sequence with intermediate bytes is hidden whole
+    Given the agent's command prints "before", then <sequence>, then "after"
+    When the user opens the command's details
+    Then the output reads "beforeafter"
+
+    Examples:
+      | sequence                                |
+      | the screen alignment test "ESC # 8"     |
+      | the UTF-8 selection "ESC % G"           |
+      | the 96-character set "ESC - A"          |
+      | the multi-byte designation "ESC ( % 5"  |
+
+  # Upstream #29737: unsupported erase modes were read as erasing the whole line or display.
+  @mc @shared @backlog @priority-low
+  Scenario Outline: An erase mode the output does not support leaves the text alone
+    Given the agent's command prints "a", "b" and "c" on three lines, then <code>, then "X"
+    When the user opens the command's details
+    Then the output reads "a", "b" and "cX" on three lines
+
+    Examples:
+      | code                         |
+      | an erase of the line, mode 3 |
+      | an erase of the display, mode 4 |
 
   @desktop
   Scenario: A file search's details list where each match is
@@ -474,6 +597,66 @@ Feature: Tool calls and file changes
     When the user opens the file change's details
     Then the details show "src/cart.ts" with "+3" and "-1"
     And the details offer "Open diff" for that file
+
+  # Upstream #26304: "Open diff" on a tool call opens the patch that call recorded, not the turn's
+  # checkpoint diff, so it works in a project that is not a Git repository.
+  @backlog @desktop @tui
+  Scenario Outline: Opening a tool call's diff shows the change that call made
+    Given the project <kind>
+    And the agent changed "src/cart.ts" in a tool call
+    When the user chooses "Open diff" on that tool call
+    Then the diff view shows the change that tool call made to "src/cart.ts"
+    And the diff view says it shows one tool call
+
+    Examples:
+      | kind                        |
+      | is a Git repository         |
+      | is not a Git repository     |
+  # Upstream #26529: Claude's edits recorded its raw JSON result, so "Open diff" showed JSON.
+  @backlog @mc @desktop @tui @plugin-claude
+  Scenario Outline: Opening a Claude edit's diff shows a diff
+    Given Claude <edit> in a tool call
+    When the user chooses "Open diff" on that tool call
+    Then <shown>
+
+    Examples:
+      | edit                                      | shown                                                     |
+      | edited "src/cart.ts"                      | the diff view shows the lines Claude changed               |
+      | wrote the new file "src/basket.ts"        | the diff view shows "src/basket.ts" as an added file       |
+      | wrote an empty new file "src/empty.ts"    | the diff view says there is no patch for this selection    |
+      | failed to edit "src/cart.ts"              | the tool call shows Claude's error                         |
+
+  # Upstream #28631: only the first diff of an ACP tool call that changed several files reached
+  # its patch, though every file was listed.
+  @backlog @mc @desktop @tui
+  Scenario: Opening the diff of an ACP tool call that changed several files shows each change
+    Given an ACP agent changed "src/a.ts" and "src/b.ts" in one tool call
+    When the user chooses "Open diff" on that tool call
+    Then the diff view shows the change to "src/a.ts" and the change to "src/b.ts"
+
+  # Upstream #29309: Claude and ACP agents record edits by absolute path, so a file named in their
+  # tool-call diff opened nothing and had no Open or Reveal items.
+  @backlog @desktop @tui
+  Scenario Outline: A file in a tool call's diff named by its absolute path <opens>
+    Given the project "shop" is at "/home/me/shop"
+    And the agent changed "<path>" in a tool call
+    When the user opens that tool call's diff and chooses the file's name
+    Then <opens>
+
+    Examples:
+      | path                       | opens                                       |
+      | /home/me/shop/src/cart.ts  | "src/cart.ts" opens in a file tab           |
+      | /home/me/other/notes.md    | nothing opens, as for a file outside "shop" |
+
+  # Upstream #29878: the phone read only the first path of a patch that changed several files, so
+  # it said "Changed 1 file" and left a renamed file off the list.
+  @backlog @mobile
+  Scenario: A patch that changed several files lists every file on the phone
+    Given the agent changed "src/a.ts", "src/b.ts" and renamed "src/c.ts" in one patch
+    When the user reads the activity group on the phone
+    Then it reads "Changed 3 files"
+    And the row names "src/a.ts +2 more" and expanding it lists all three files
+
 
   @desktop
   Scenario: A file change that renamed a file shows where it came from
@@ -557,6 +740,27 @@ Feature: Tool calls and file changes
     Then the row opens at once
     And its one-line label shows at most 200 characters while its details show the whole command
 
+  # Upstream #23227: the live summary of a running turn still showed a whole approval prompt or thought.
+  @backlog @mobile
+  Scenario Outline: The live summary of a running turn stays one short line
+    Given a turn is running and <activity>
+    When the user looks at the activity log's live summary
+    Then the summary is one line of at most 200 characters ending in "..." where it was cut
+    And opening it shows the whole text, which copies in full
+
+    Examples:
+      | activity                                                        |
+      | the agent asks to run a command thousands of characters long    |
+      | several tools ran and the agent asks to run a very long command |
+      | the agent is thinking a long thought without any punctuation    |
+
+  # Upstream #27841: a shortened title or work-log label could end in half of an emoji.
+  @backlog @shared @priority-low
+  Scenario: A shortened activity label keeps an emoji whole
+    Given a tool call's label is too long and has an emoji where it is cut
+    When the user looks at its row in the activity log
+    Then the label is cut before the emoji or after it, not through it
+
   @mobile
   Scenario Outline: A turn that failed says why in the activity log
     Given the turn ended <how>
@@ -567,6 +771,18 @@ Feature: Tool calls and file changes
       | with an error                                 | the error's title, its message and when it happened                    |
       | at a provider usage limit that resets at 17:00 | "Usage limit reached. Retry after" that time, without the message      |
       | at a provider usage limit with no reset time  | "Usage limit reached." alone                                           |
+  # Upstream #24937: a turn stopped at a usage limit listed every tool call on its own row.
+  @backlog @shared
+  Scenario Outline: A turn stopped at a usage limit keeps its tool calls grouped
+    Given a turn ran 3 commands and then <ended>
+    When the user reads the turn
+    Then <calls>
+
+    Examples:
+      | ended                         | calls                                                                       |
+      | stopped at its usage limit    | they read "Ran 3 commands" with the usage limit row under the group          |
+      | failed with a provider error  | each command is listed on its own row above the error                        |
+
 
   @mc @shared
   Scenario Outline: An ACP agent's read, search and fetch tools keep their meaning
@@ -684,6 +900,23 @@ Feature: Tool calls and file changes
       | "src/cart.ts" with 3 lines added and 1 removed                     | 1 changed file +3 -1          |
       | "src/cart.ts" and "src/checkout.ts" with 5 lines added in all      | 2 changed files +5            |
       | "src/cart.ts" and "src/checkout.ts" with no line counts            | 2 changed files               |
+
+  # Upstream #27110: a checkpoint over a vendored or generated tree listed every file in each
+  # snapshot and live event, up to 1.9 MB for one checkpoint.
+  @backlog @mc @priority-high
+  Scenario: A turn that changed thousands of files sends clients at most 200 of them
+    Given a turn changed 15000 files
+    When a client receives the turn's checkpoint
+    Then it lists at most 200 of the changed files
+    And it carries the totals of all 15000 files and their added and removed lines
+    And the full list is still kept for the turn's diff
+
+  # Upstream #27110
+  @backlog @shared @priority-high
+  Scenario: A turn's changed files say how many more are only in the full diff
+    Given a turn changed 250 files and the client was sent 200 of them
+    Then the changed files' heading counts all 250 files and their lines
+    And the list ends with "50 more files in the full diff"
 
   @backlog @shared @mobile @priority-low
   Scenario: Large line counts are grouped the way the user's locale writes numbers
@@ -963,6 +1196,26 @@ Feature: Tool calls and file changes
     Then the input is highlighted for the current theme
     And an input that is not JSON shows as plain text
 
+  # Upstream #30389: images that MCP and OpenCode tools returned, such as the preview's screenshot, were not shown.
+  @backlog @mc @shared
+  Scenario Outline: An image a tool returned is shown in the call's details
+    Given <provider> called a tool that returned text and an image
+    When the user inspects the call
+    Then the image is shown beside the tool's text
+
+    Examples:
+      | provider                |
+      | an agent, over MCP      |
+      | OpenCode                |
+
+  # Upstream #30389: tool results that were JSON showed as plain text.
+  @backlog @shared @priority-low
+  Scenario: Tool results that are JSON are highlighted
+    Given a tool call whose result is valid JSON
+    When the user inspects the call
+    Then the result is highlighted for the current theme
+    And a result that is not JSON shows as plain text
+
   @backlog @shared @priority-high
   Scenario: An expanded command or tool call shows its output
     Given a finished command whose output was not sent with the thread
@@ -970,7 +1223,9 @@ Feature: Tool calls and file changes
     Then the MC supplies its stored output, limited to 256 KiB per value
     And a call with nothing more to show does not expand
 
-  @backlog @shared @priority-high
+  # TUI: commands only; other tool calls carry no output the MC can supply.
+  # Upstream #15506: an expanded tool call shows the call above a muted result, without cards.
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call
     Then the full call shows first and its result below it, muted, without cards or labels
@@ -1041,6 +1296,26 @@ Feature: Tool calls and file changes
     When the agent previews it in the dark appearance
     Then the page is rendered with the dark color scheme
 
+  # Upstream #29844: a console line cut at 500 characters could keep half an emoji, and strict JSON
+  # parsers then rejected the whole preview result.
+  @backlog @mc @priority-low
+  Scenario: An HTML preview's long console line is cut without splitting a character
+    Given an agent's HTML page logs a line of 600 characters with an emoji at the 500th
+    When the agent previews the page
+    Then the console line it gets back is cut before the emoji
+    And the preview still returns its screenshot
+
+  # Upstream #30318: under Clash or Mihomo fake-IP DNS, a public CDN resolved into 198.18.0.0/15 and
+  # the preview reported only the browser's generic connection error.
+  @backlog @mc @priority-low
+  Scenario: An HTML preview explains a resource blocked by fake-IP DNS
+    Given the MC's DNS resolves "cdn.example.com" to "198.18.0.7"
+    When an agent previews an HTML page that loads a script from "cdn.example.com"
+    Then the resource is still blocked
+    And the preview warns that "cdn.example.com" resolved to "198.18.0.7", possibly by fake-IP DNS
+    And it suggests inlining the resource or exempting the host from fake-IP
+    And no more than three such warnings are given for one preview
+
   @backlog @mobile @priority-low
   Scenario: Dragging over an inline HTML page taller than its frame scrolls the page, then the thread
     Given an inline page taller than the most its frame can show
@@ -1082,6 +1357,14 @@ Feature: Tool calls and file changes
     And a click with a modifier key, or one the page itself handled, does not open the viewer
     And closing the viewer leaves the page open
 
+  # Upstream #21378: a video's full screen button was greyed out in an HTML page.
+  @backlog @shared @priority-low
+  Scenario: A video in an inline HTML page can go full screen
+    Given an agent published an HTML page with a video that has controls
+    When the user presses the video's full screen button
+    Then the video fills the screen
+    And Escape brings it back into the page
+
   @backlog @shared @priority-low
   Scenario Outline: A link in an inline HTML page opens the way a chat link does
     Given an agent published an HTML page linking to <target>
@@ -1106,3 +1389,79 @@ Feature: Tool calls and file changes
     Given an inline HTML page sends the app a key it made up itself
     When that key is the shortcut to settle, steer or undo
     Then the thread is unchanged
+
+  # Upstream #30000: a Labs setting, "Tool calls in chat", hides tool calls so a thread reads like
+  # a chat. Tool calls are commands, file edits, file and web searches, and MCP tools.
+  @backlog @shared @priority-low
+  Scenario Outline: The tool calls setting decides what a finished turn shows
+    Given "Tool calls in chat" is set to "<level>" in Labs
+    When a turn that ran a command, edited a file and wrote two messages finishes
+    Then the turn shows <shown>
+
+    Examples:
+      | level           | shown                                                                    |
+      | Show all        | every call and message, its work folded under "Worked for"               |
+      | Hide successful | only the calls that failed, with its messages under "Worked for"         |
+      | Hide all        | no calls, its in-between message folded under "Worked for"               |
+      | Zen             | the user's message and the agent's last reply, with no "Worked for" row  |
+
+  # Upstream #30000: part of the Labs "Tool calls in chat" setting.
+  @backlog @shared @priority-low
+  Scenario: With successful calls hidden, a call shows while it runs
+    Given "Tool calls in chat" is set to "Hide successful"
+    When the agent runs a command
+    Then the command shows while it runs
+    And it goes once it succeeds, but stays if it fails
+
+  # Upstream #30000: part of the Labs "Tool calls in chat" setting.
+  @backlog @shared @priority-low
+  Scenario: A turn with nothing left to fold has no "Worked for" row
+    Given "Tool calls in chat" is set to "Hide all"
+    When a turn that only ran commands before its reply finishes
+    Then the turn shows its reply with no "Worked for" row
+
+  # Upstream #30000: part of the Labs "Tool calls in chat" setting.
+  @backlog @shared @priority-low
+  Scenario Outline: What needs the user shows whatever tool calls are set to
+    Given "Tool calls in chat" is set to "<level>"
+    When the turn waits on an approval or a question, hits an error, or the provider retries
+    Then that approval, question, error or retry shows and can be answered
+    And undo still offers every turn, though their calls are hidden
+
+    Examples:
+      | level           |
+      | Hide successful |
+      | Hide all        |
+      | Zen             |
+
+  # Upstream #30000: part of the Labs "Tool calls in chat" setting.
+  @backlog @shared @priority-low
+  Scenario: A turn in Zen shows one live line while it works
+    Given "Tool calls in chat" is set to "Zen"
+    When the agent works through several steps
+    Then "Working for …" shows above one line with the agent's latest step, replaced in place
+    And when the turn ends, both give way to the agent's reply
+    And compaction dividers, plans and HTML and MCP app output still show
+
+  # Upstream #30000: part of the Labs "Tool calls in chat" setting.
+  @backlog @shared @priority-low
+  Scenario: Zen keeps an answer the agent finished before reading a steer
+    Given "Tool calls in chat" is set to "Zen"
+    And the agent finished an answer before it read the user's steer
+    When the turn ends with a later reply
+    Then both the earlier answer and the later reply show
+
+  # Upstream #30000: part of the Labs "Tool calls in chat" setting.
+  @backlog @shared @priority-low
+  Scenario: Find and citations show messages that tool calls settings hide
+    Given "Tool calls in chat" is set to "Zen"
+    When the user opens find in the thread
+    Then the agent's in-between messages show while find is open
+    And following a citation shows the message it points to
+
+  # Upstream #30000: the setting belongs to the device, like the boring sidebar.
+  @backlog @shared @priority-low
+  Scenario: The tool calls setting is kept per device
+    Given "Tool calls in chat" is set to "Zen" on the laptop
+    When the user opens the same thread on the phone
+    Then the phone shows every tool call

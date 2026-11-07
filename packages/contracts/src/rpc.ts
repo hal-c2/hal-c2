@@ -1727,6 +1727,15 @@ const WsOrchestrationV2GetFullThreadDiffRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetCommandOutputRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getCommandOutput,
+  {
+    payload: OrchestrationV2RpcSchemas.getCommandOutput.input,
+    success: OrchestrationV2RpcSchemas.getCommandOutput.output,
+    error: Schema.Union([OrchestrationGetTurnDiffError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2SearchThreadsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.searchThreads, {
   payload: OrchestrationSearchThreadsInput,
   success: OrchestrationSearchThreadsResult,
@@ -2479,6 +2488,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
+  WsOrchestrationV2GetCommandOutputRpc,
   WsOrchestrationV2SearchThreadsRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22084
 #   https://github.com/pingdotgg/t3code/pull/24769
 #   https://github.com/pingdotgg/t3code/pull/21307
 #   https://github.com/pingdotgg/t3code/pull/11943
@@ -13,6 +14,7 @@
 #   https://github.com/pingdotgg/t3code/pull/12048
 #   https://github.com/pingdotgg/t3code/pull/12052
 #   https://github.com/pingdotgg/t3code/pull/21405
+#   https://github.com/pingdotgg/t3code/pull/27699
 # The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
 # the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 
@@ -150,6 +152,15 @@ Feature: Push notifications and live agent activity
     Then "Fix checkout" is shown
     And going back returns to the home screen
 
+  # Upstream #22084: a tapped alert was marked handled before the app moved to the thread, so a
+  # move that failed was never retried and the alert was cleared unopened.
+  @backlog @mobile
+  Scenario: A tapped alert the app could not open yet still opens its thread
+    Given the user tapped an alert for "Fix checkout" before the app could show threads
+    When the app is ready to show threads
+    Then "Fix checkout" is shown
+    And the alert is cleared only once it has been opened
+
   @mobile
   Scenario: No alert is shown while the app is open
     Given device notifications are on
@@ -201,6 +212,20 @@ Feature: Push notifications and live agent activity
     When the agent in "Fix checkout" starts working a second later
     Then the lock screen shows it working without waiting for the next update
     But a change of only its elapsed time waits for the next update
+
+  # Upstream #27699: Android showed both an alert and a Done card for one finished turn.
+  @backlog @mobile
+  Scenario Outline: One finished turn shows one notification on Android
+    Given alerts for finished turns are <alerts> on an Android phone
+    And the phone was showing agent work in progress for "Fix checkout"
+    When the agent in "Fix checkout" finishes its turn
+    Then the phone shows <shown>
+    And a repeated or late delivery of that turn's update does not bring a second one back
+
+    Examples:
+      | alerts | shown                                 |
+      | on     | the alert, and no Done card beside it |
+      | muted  | the Done card                         |
 
   # Upstream #21307: ended Live Activities stayed on the lock screen after opening the app or signing out.
   @backlog @mobile @priority-low

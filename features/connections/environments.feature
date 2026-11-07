@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24716
 #   https://github.com/pingdotgg/t3code/pull/21658
 #   https://github.com/pingdotgg/t3code/pull/21070
 #   https://github.com/pingdotgg/t3code/pull/18575
@@ -36,6 +37,7 @@
 #   mobile/pairing-and-environments.feature holds managing environments from a phone.
 #   https://github.com/pingdotgg/t3code/pull/14972
 #   https://github.com/pingdotgg/t3code/pull/15467
+#   https://github.com/pingdotgg/t3code/pull/22962
 
 Feature: Managing environments on a client
   A client keeps a list of the environments it has paired with. Each shows its machine, label
@@ -456,6 +458,16 @@ Feature: Managing environments on a client
     Then the WSL backend is not started
     And the Windows backend keeps running
 
+  # Upstream #22962: under WSL's default networking Windows reaches WSL through localhost, so a
+  # port a Windows program already listens on gave a pairing link to the wrong server.
+  @backlog @mc @priority-low
+  Scenario: An MC in WSL with no port configured skips ports Windows already uses
+    Given the MC runs inside WSL with no port configured
+    And a Windows program already listens on the MC's default port
+    When the MC starts
+    Then it serves clients on a port that neither WSL nor Windows uses
+    And its pairing link names that port
+
   # Legacy: apps/desktop/src/app/DesktopConnectionCatalogStore.ts, apps/desktop/src/settings/DesktopSavedEnvironments.ts
   # Uncertain: depends on how the Qt desktop stores secrets (see desktop/shell-host.feature, password store).
   @backlog @desktop @priority-low
@@ -478,6 +490,14 @@ Feature: Managing environments on a client
     When the client connects
     Then it checks the direct routes in parallel and uses the first that answers as that environment
     And a route that is blocked is skipped, while an incompatible server stops the walk
+
+  # Upstream #24716: after a reorder, adding one route and removing another left only one route listed.
+  @backlog @desktop @mobile
+  Scenario: A route added after the routes were reordered stays listed
+    Given an environment's routes "A" and "B" were reordered to "B", "A" and saved
+    When the user adds route "C" and removes route "A"
+    Then the environment's routes list "B" and "C"
+    And either can be removed
 
   @backlog @desktop
   Scenario: The desktop retries a transient failure when signing in to its own MC

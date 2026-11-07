@@ -1,4 +1,19 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/28040
+#   https://github.com/pingdotgg/t3code/pull/30322
+#   https://github.com/pingdotgg/t3code/pull/29280
+#   https://github.com/pingdotgg/t3code/pull/23033
+#   https://github.com/pingdotgg/t3code/pull/29168
+#   https://github.com/pingdotgg/t3code/pull/29582
+#   https://github.com/pingdotgg/t3code/pull/25322
+#   https://github.com/pingdotgg/t3code/pull/25224
+#   https://github.com/pingdotgg/t3code/pull/24257
+#   https://github.com/pingdotgg/t3code/pull/23284
+#   https://github.com/pingdotgg/t3code/pull/24978
+#   https://github.com/pingdotgg/t3code/pull/27924
+#   https://github.com/pingdotgg/t3code/pull/25225
+#   https://github.com/pingdotgg/t3code/pull/24467
+#   https://github.com/pingdotgg/t3code/pull/23160
 #   https://github.com/pingdotgg/t3code/pull/24600
 #   https://github.com/pingdotgg/t3code/pull/21787
 #   https://github.com/pingdotgg/t3code/pull/23840
@@ -56,6 +71,27 @@
 #   https://github.com/pingdotgg/t3code/pull/25426
 #   https://github.com/pingdotgg/t3code/pull/22541
 #   https://github.com/pingdotgg/t3code/pull/21750
+#   https://github.com/pingdotgg/t3code/pull/26188
+#   https://github.com/pingdotgg/t3code/pull/25611
+#   https://github.com/pingdotgg/t3code/pull/23938
+#   https://github.com/pingdotgg/t3code/pull/27931
+#   https://github.com/pingdotgg/t3code/pull/19066
+#   https://github.com/pingdotgg/t3code/pull/23388
+#   https://github.com/pingdotgg/t3code/pull/21443
+#   https://github.com/pingdotgg/t3code/pull/27281
+#   https://github.com/pingdotgg/t3code/pull/22308
+#   https://github.com/pingdotgg/t3code/pull/23234
+#   https://github.com/pingdotgg/t3code/pull/26286
+#   https://github.com/pingdotgg/t3code/pull/27399
+#   https://github.com/pingdotgg/t3code/pull/24664
+#   https://github.com/pingdotgg/t3code/pull/28604
+#   https://github.com/pingdotgg/t3code/pull/29026
+#   https://github.com/pingdotgg/t3code/pull/29068
+#   https://github.com/pingdotgg/t3code/pull/25341
+#   https://github.com/pingdotgg/t3code/pull/31277
+#   https://github.com/pingdotgg/t3code/pull/30004
+#   https://github.com/pingdotgg/t3code/pull/21045
+#   https://github.com/pingdotgg/t3code/pull/29618
 
 @plugin-codex @mc
 Feature: Codex
@@ -154,6 +190,27 @@ Feature: Codex
     Given the project allows the HAL-C2 tools
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
+
+  # Upstream #28604: Codex sessions never got the thread id Claude sessions get, so a tool started
+  # from a Codex agent's shell could not find its thread.
+  @backlog
+  Scenario: A command a Codex agent runs knows which thread it belongs to
+    Given the Codex thread "t1" and the Codex thread "t2" share one Codex process
+    When the agent of "t1" runs a command in its shell
+    Then the command's environment names "t1" as its thread
+    And the shell environment the user set in Codex's config is kept
+
+  # Upstream #29026: Codex ran the blocking thread wait inside Code Mode, where the model kept
+  # working around the wait.
+  # Upstream #29068: the direct-only server is named apart from the other HAL-C2 tools, and waits
+  # recorded under the earlier name are still shown as waits.
+  @backlog
+  Scenario: Codex calls the thread wait as a tool of its own
+    Given the project allows the HAL-C2 tools
+    When a Codex turn starts
+    Then Codex can call "hal_c2_thread_wait" directly, outside Code Mode
+    And Codex's other HAL-C2 tools stay where they were
+    And a wait Codex makes is shown as the thread waiting
 
   Scenario: Codex keeps its own subagents unless the subagents setting says otherwise
     Given the project allows the HAL-C2 tools
@@ -254,6 +311,16 @@ Feature: Codex
     When the user picks the other account from the thread's model picker
     Then the thread continues on that account without moving its history
 
+  # Upstream #24664: two instances whose CODEX_HOME was set only in their environment variables
+  # counted as one home, so switching between them resumed the thread in the wrong home.
+  @backlog
+  Scenario: Codex instances with different CODEX_HOME variables are different homes
+    Given the Codex instances "work" and "personal" leave their home blank
+    And their environment variables set CODEX_HOME to "~/work-codex" and "~/personal-codex"
+    When the user switches a "work" thread to "personal"
+    Then the conversation is handed over to "personal"
+    And "personal" does not try to resume the "work" session
+
   Scenario: Accounts with a different Codex home are not offered for an existing thread
     Given a Codex instance with a separate Codex home
     When the user opens the model picker in an existing Codex thread
@@ -305,6 +372,74 @@ Feature: Codex
     When the Codex app-server exits unexpectedly
     Then the turn fails saying Codex exited unexpectedly
 
+  # Upstream #27924: when a write to the app-server failed while its output stayed open, pending
+  # and later requests waited forever and the session was never retired.
+  @backlog @priority-high
+  Scenario: Codex requests fail at once when the app-server stops taking input
+    Given a Codex turn is running
+    When the Codex app-server stops accepting input but keeps its output open
+    Then the turn fails with the write error instead of waiting
+    And later requests to that app-server fail with the same error
+    And the next Codex turn starts a new app-server
+
+  # Upstream #26188: after the shared app-server was killed (an OOM killer took its whole
+  # scope), every later Codex turn failed until the server restarted.
+  @backlog @priority-high
+  Scenario Outline: Codex starts a new app-server after its old one was killed
+    Given the Codex app-server was killed by a signal
+    When the user <action>
+    Then a new Codex app-server is started
+    And the turn runs
+
+    Examples:
+      | action                                        |
+      | sends a follow-up on a thread that used Codex |
+      | starts a new Codex thread                     |
+      | delegates a task to Codex                     |
+
+  # Upstream #26188: a turn running when the app-server is killed fails at once instead of hanging.
+  @backlog @priority-high
+  Scenario: A turn running when Codex's app-server is killed fails at once
+    Given a Codex turn is running
+    When the Codex app-server is killed by a signal
+    Then the turn fails within seconds
+    And the next Codex turn starts a new app-server
+
+  # Upstream #25224: Codex answering a new run's start with an earlier run's turn left the new run running forever.
+  @backlog @priority-high
+  Scenario: A turn start that Codex answers with an earlier run's turn is not taken as started
+    Given a Codex thread whose earlier run had a turn
+    When a new run starts a turn and Codex answers with the earlier run's turn
+    Then the new run does not take that turn as its own
+    And the new run is not left running
+
+  # Upstream #25611: Codex ending a turn with serverOverloaded failed work that could resume.
+  @backlog
+  Scenario: Codex reporting it is overloaded is retried in the same conversation
+    Given a Codex turn is running
+    When Codex ends the turn because its servers are overloaded
+    Then the MC retries the turn in the same Codex conversation without resending the message
+    And the run stays active while it waits
+
+  # Upstream #25611: the retries wait 2 to 30 seconds, at most five of them.
+  @backlog
+  Scenario: Codex overload retries give up after five attempts
+    Given every Codex retry ends because its servers are overloaded
+    Then the MC waits between 2 and 30 seconds before each retry
+    And after five retries the run fails
+
+  # Upstream #25611: Stop and steering reach the retried turn.
+  @backlog
+  Scenario Outline: A Codex turn waiting to retry an overload still takes <action>
+    Given a Codex turn is waiting to retry after Codex was overloaded
+    When the user <does>
+    Then <result>
+
+    Examples:
+      | action  | does                     | result                                      |
+      | Stop    | stops the turn           | no retry is started and the run ends        |
+      | a steer | steers "also check docs" | the retried turn receives "also check docs" |
+
   # Upstream #19733: the reader ends the session on a line above 128 MiB.
   @backlog
   Scenario: A Codex message larger than 128 MiB ends the session
@@ -348,10 +483,30 @@ Feature: Codex
     Then the turn runs at "high"
     And a reasoning level the user picks is used instead, in plan mode too
 
+  # Upstream #27931: with ChatGPT sign-in, models newer than the installed CLI came without reasoning choices.
+  @backlog @priority-high
+  Scenario: A model newer than the installed Codex still offers its reasoning levels
+    Given Codex is signed in with a ChatGPT account
+    And the account's model catalog lists a model the installed Codex does not know yet
+    When the user opens the options for that model
+    Then the reasoning levels the catalog lists for it are offered
+
   Scenario: Codex subagents appear as child threads
     When Codex starts a subagent
     Then the subagent's work is shown as a child of the turn
     And the user can open the subagent's own thread
+
+  # Upstream #24467: a native Codex child thread copied its parent's reasoning effort.
+  @backlog @priority-low
+  Scenario Outline: A Codex subagent's thread shows its own reasoning effort
+    Given a Codex thread with reasoning effort "high"
+    When Codex starts a subagent <reported>
+    Then the subagent's thread shows <shown>
+
+    Examples:
+      | reported                       | shown                     |
+      | that reports effort "low"      | reasoning effort "low"    |
+      | that reports no effort         | no reasoning effort       |
 
   Scenario: Codex auto mode uses Codex's automatic reviewer
     Given the thread runs Codex in auto mode
@@ -418,6 +573,20 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows the account's email and its ChatGPT Pro plan
 
+  # Upstream #24978: after a downgrade the badge kept the plan cached in Codex's login token.
+  @backlog @mc
+  Scenario Outline: Codex's plan follows its usage read after the plan changes
+    Given Codex's account says ChatGPT Pro from its cached login
+    And Codex's usage read reports <usage plan>
+    When Codex's usage has been checked
+    Then Codex shows the <shown> plan
+
+    Examples:
+      | usage plan      | shown        |
+      | ChatGPT Free    | ChatGPT Free |
+      | no plan         | ChatGPT Pro  |
+      | an unknown plan | ChatGPT Pro  |
+
   # Upstream #23361: a turn stopped by a ChatGPT sharing limit showed Codex's raw error. OpenAI's
   # partner guidelines give each limit its own recovery.
   @backlog @shared
@@ -430,6 +599,25 @@ Feature: Codex
       | plan                               | action                  |
       | a personal ChatGPT plan            | Manage usage            |
       | a ChatGPT Business workspace       | Copy request for admin  |
+
+  # Upstream #25341: Codex reports a used-up ChatGPT sharing allowance as a stream disconnect,
+  # which failed the thread with no way to recover.
+  @mc @shared @backlog @priority-high
+  Scenario: A sharing limit reported as a disconnect leaves the thread limited, not failed
+    Given Codex is signed in with a personal ChatGPT plan
+    When a turn stops with "stream disconnected before completion: The ChatGPT user has reached their Subscription Sharing usage limit."
+    Then the thread is marked limited, not failed
+    And without a reset time from the sharing limit, the user is offered a manual retry
+    And an ordinary Codex usage reset is not taken as the sharing limit's reset
+
+  # Upstream #25341: one limit showed two stacked notices on the desktop.
+  # Upstream #31277: the phone showed the same two notices; it now shows one, aligned.
+  @backlog @shared
+  Scenario: A ChatGPT sharing limit shows one notice above the composer
+    Given a turn stopped at a ChatGPT sharing limit
+    Then one usage-limit notice shows above the composer
+    And its "Manage usage" or "Copy request for admin" action sits inside that notice
+    And screen readers announce the notice
 
   # Upstream #23361: ChatGPT Business usage limits offer a copyable admin request.
   @backlog @shared
@@ -513,6 +701,30 @@ Feature: Codex
     When the MC picks the Codex to run
     Then it runs the managed Codex installation instead
 
+  # Upstream #22308: a failed managed Codex download was reported as a disk problem.
+  @backlog @priority-low
+  Scenario Outline: A managed Codex download that fails over the network says to check the connection
+    Given the MC is installing its managed Codex
+    When the download <failure>
+    Then the installation fails asking the user to check their internet connection
+    And the user is not told to check disk space
+
+    Examples:
+      | failure                         |
+      | is cut off part way             |
+      | is answered with HTTP 404       |
+      | is still running at 45 minutes  |
+
+  # Upstream #30004: a raised managed Codex pin never reached existing installs, and the old
+  # Codex compacted after every tool call on a model its catalog did not know.
+  @backlog @priority-high
+  Scenario: A managed Codex older than the MC's pinned version is updated in the background
+    Given the managed Codex installed is older than the version the MC pins
+    When the MC starts
+    Then the pinned version is installed in the background
+    And threads keep running on the installed Codex until the new one is verified and takes over
+    And a failed update leaves the installed Codex in place
+
   Scenario: Codex signed in with an API key says so
     Given Codex is signed in with an OpenAI API key
     When Codex's usage has been checked
@@ -542,6 +754,14 @@ Feature: Codex
     When the user disconnects the account
     Then Codex on that environment is no longer signed in with it
 
+  # Upstream #23160: a signed-out HAL-C2-managed Codex can switch to the Codex CLI's own login from Settings.
+  @backlog @shared @mc
+  Scenario: A signed-out managed Codex can switch to the Codex CLI's own login
+    Given a Codex instance whose ChatGPT account was connected through HAL-C2
+    And its account is remembered but no longer signed in
+    When the user chooses to use the existing Codex CLI in its provider settings
+    Then the instance uses the Codex CLI's own login from then on
+
   @backlog @shared @priority-low
   Scenario: A connected ChatGPT account's email is hidden until the user reveals it
     Given Codex is connected with a ChatGPT account
@@ -554,6 +774,28 @@ Feature: Codex
     Given the user has never connected a ChatGPT account
     When the user connects one
     Then HAL-C2 explains that using Codex counts against the ChatGPT plan's usage
+
+  # Upstream #30322: a ChatGPT account connected through HAL-C2 has no service tier choices, and
+  # the model picker did not say why Fast was missing.
+  @backlog @shared @priority-low
+  Scenario: A ChatGPT account connected through HAL-C2 explains why Fast is not offered
+    Given Codex uses a ChatGPT account connected through HAL-C2
+    When the user opens the model picker
+    Then the picker says the plan connection offers no faster service tiers
+    And it points to using the Codex CLI's own login to get them
+    And the explanation can be read by focusing it from the keyboard
+
+  # Upstream #29280: a rejected ChatGPT sign-in left a saved connection the user could reconnect
+  # but never remove.
+  @backlog @mc @shared
+  Scenario: A ChatGPT connection whose sign-in never finished can be removed
+    Given Codex has two ChatGPT connections whose sign-in was rejected and one signed-in account
+    When the user removes one of the unfinished connections
+    Then it is gone after a reload, and the other unfinished connection can still be reconnected
+    And the signed-in account and its credentials are kept
+    And a signed-in account offers no such removal
+    When the user removes the last unfinished connection
+    Then connecting a new ChatGPT account is offered
 
   # Upstream #21750: a callback address pasted without its scheme still finishes the sign-in.
   @backlog @mc
@@ -593,6 +835,15 @@ Feature: Codex
     Given resuming the Codex thread fails with an error that is not about a missing conversation
     When the user sends a message
     Then the user sees that error
+    And no new Codex conversation is started
+
+  # Upstream #21045: a conversation another Codex client held open was silently replaced with a
+  # fresh one, leaving its native history behind.
+  @backlog @priority-high
+  Scenario: A Codex conversation open in another Codex client is not replaced
+    Given the Codex app has the thread's Codex conversation open on the same Codex home
+    When the user sends a message
+    Then the turn fails telling the user to quit the other Codex client and try again
     And no new Codex conversation is started
 
   Scenario: Ordinary Codex thread sources do not crash a running turn
@@ -665,6 +916,20 @@ Feature: Codex
       | ends                   | label   |
       | is stopped by the user | Stopped |
       | fails                  | Failed  |
+
+  # Upstream #27399: a Codex hook that stopped the turn on purpose left only "Stopped by the provider".
+  @backlog @shared
+  Scenario: A turn a Codex hook stopped says why
+    Given a Codex hook stops the running turn with the reason "Run /handoff before compacting"
+    When Codex ends the turn as interrupted
+    Then the turn reads as stopped with "Run /handoff before compacting"
+
+  # Upstream #27399
+  @backlog
+  Scenario: The user's own stop reason wins over a Codex hook's
+    Given a Codex hook stopped the running turn with a reason
+    When the user stops the turn as well
+    Then the turn reads as stopped by the user
 
   Scenario: Codex is not told about browser or device tools it does not have
     Given the "hal-c2" server is attached to a Codex thread without browser or device tools
@@ -742,6 +1007,18 @@ Feature: Codex
       | change files  | no reason                       | each file with what would be done to it     |
       | change files  | no reason and a file to move    | the file's old path and its new path        |
       | change files  | no reason and no files, a root  | the folder Codex wants to write under       |
+
+  # Upstream #24257: a permission request naming only glob or special paths showed as a command approval.
+  @backlog
+  Scenario Outline: A Codex request for file access by pattern is a file approval
+    When Codex asks for extra access to <access> naming only "<path>"
+    Then the approval shows as <kind>
+    And Codex is answered as before
+
+    Examples:
+      | access      | path      | kind                   |
+      | write files | /w/out/** | a file change approval |
+      | read files  | /w/in/**  | a file read approval   |
 
   @mc
   Scenario: A Codex approval for many files lists the first 20 and counts the rest
@@ -905,6 +1182,62 @@ Feature: Codex
     When Codex sends two messages without a phase with the same text in one turn
     Then the thread shows both messages
 
+  # Upstream #19066: images Codex generated were saved but never shown in the reply.
+  @backlog @priority-high
+  Scenario: An image Codex generates is shown under its reply
+    Given Codex generates an image with its image tool during a turn
+    When the turn finishes
+    Then the image is shown under Codex's final reply
+    And an image the reply already shows is not shown twice
+
+  # Upstream #19066: an image that finished after the turn ended was lost.
+  @backlog
+  Scenario: An image Codex finishes after its last message still joins the reply
+    Given Codex is still generating an image when it sends its final reply
+    When the image is saved
+    Then the image is shown under that reply
+
+  # Upstream #19066: images saved on a Windows host did not load on other devices.
+  @backlog @shared
+  Scenario Outline: A Codex image saved on a Windows MC loads on every client
+    Given the MC runs on Windows
+    And Codex saved a generated image at "<path>"
+    When the user reads the reply on the desktop, the phone or the terminal
+    Then the image loads
+
+    Examples:
+      | path                                  |
+      | C:\Users\ana\.codex\images\fox.png    |
+      | \\fileserver\share\images\fox.png     |
+
+  # Upstream #23284: an image a Codex tool returned as a data address was saved but not shown.
+  @backlog @shared
+  Scenario: An image a Codex tool returns is shown with the tool call
+    Given a Codex tool call returns an image as embedded image data
+    When the user expands the tool call
+    Then the image is shown
+    And no image data text is shown
+
+  # Upstream #23388: newer Codex builds send partial answers, which were dropped.
+  @backlog
+  Scenario: A partial answer from Codex is kept apart from its final answer
+    When Codex sends a partial answer and then a final answer with the same text in one turn
+    Then the thread keeps the partial answer
+    And the final answer is shown once
+
+  # Upstream #23388: a Codex history holding a partial answer could not be read.
+  @backlog @priority-high
+  Scenario Outline: The user <action> a Codex thread whose history holds a partial answer
+    Given a Codex thread's history holds a partial answer
+    When the user <action> the thread
+    Then it succeeds with the whole history
+
+    Examples:
+      | action  |
+      | forks   |
+      | resumes |
+      | reads   |
+
   @mc
   Scenario: A Codex question with blanks is still askable
     When Codex asks a question with no heading, no text and unlabelled choices
@@ -1000,6 +1333,33 @@ Feature: Codex
     When Codex reports an older state for that subagent
     Then the subagent stays completed
 
+  # Upstream #25322: stopping the subagent's late turn waited on its own reply and froze every Codex thread for 10 seconds.
+  @backlog @mc @priority-high
+  Scenario: A subagent turn that starts after its parent stopped does not hold up other Codex threads
+    Given a Codex run was stopped while one of its subagents was still working
+    And another Codex thread shares the same app-server
+    When the subagent starts another turn and HAL-C2 stops it
+    Then the other thread keeps receiving its events without a pause
+
+  # Upstream #29168: the wake text cut the command at 200 and its output at 1,000 UTF-16 units, so an
+  # emoji at a cut left a lone surrogate, Codex never answered the turn start, and the wake hung.
+  @backlog @priority-high
+  Scenario: A background command whose output is cut through an emoji still wakes the agent
+    Given a Codex agent started a background command that finishes after the turn settled
+    And its command or the start of its output's last 1,000 characters falls inside an emoji
+    When the command finishes
+    Then the agent is woken with the command and its output tail, cut before or after the emoji, not through it
+    And the wake turn starts and finishes
+
+  # Upstream #28040: an error code missing from the schema made Codex's failure notifications
+  # undecodable, so the run stayed running with no error.
+  @backlog @priority-high
+  Scenario: A Codex turn that fails with an error code HAL-C2 does not know fails
+    Given a ChatGPT-account Codex rejects the thread's model with the code "modelNotFound"
+    When the user sends a turn
+    Then the turn fails with Codex's message
+    And the thread does not stay working
+
   # Upstream #23840: a parent that ended its turn stayed idle when its native subagent finished
   # later, until the user sent a message.
   @backlog
@@ -1069,6 +1429,21 @@ Feature: Codex
     Then Codex receives error -32001 "Too many Codex requests are already active."
     And the 32 waiting requests are unaffected
 
+  # Upstream #23234: each stop over a waiting approval held one of Codex's 32 request slots forever.
+  @backlog @mc @priority-high
+  Scenario: Approvals still reach the user after many Codex turns were stopped while waiting
+    Given 32 Codex turns on one Codex instance were stopped while an approval waited
+    When a Codex turn in another thread asks for an approval
+    Then the approval is shown to the user
+
+  # Upstream #23234: Codex settling a request frees the MC's wait on it.
+  @backlog @mc
+  Scenario: A request Codex settles itself is no longer waited on
+    Given the MC is waiting on the user for a Codex approval
+    When Codex reports that the request is resolved
+    Then the MC stops waiting on it without answering Codex
+    And answering that approval afterwards fails as no longer pending
+
   @mc
   Scenario: A message from Codex that HAL-C2 cannot read does not end the turn
     Given a Codex turn is running
@@ -1099,6 +1474,13 @@ Feature: Codex
     Given the MC is waiting on Codex for an answer
     When Codex exits with code 1
     Then the request fails with "Codex App Server process exited with code 1"
+
+  # Upstream #23938: Codex exiting before it started showed only its exit code.
+  @backlog @priority-high
+  Scenario: Codex that exits before it starts says why
+    Given the Codex command exits with code 1 after printing "Error: Missing optional dependency @openai/codex-darwin-arm64"
+    When the MC checks Codex or starts a turn with it
+    Then the provider status and the failed turn both end with "Error: Missing optional dependency @openai/codex-darwin-arm64"
 
   # Upstream #24600: requests hung when Codex closed its output but kept running.
   @backlog @priority-high
@@ -1159,6 +1541,35 @@ Feature: Codex
     Then the lock is replaced by a link to the shared home's lock
     And the instance is enabled
 
+  # Upstream #26286: Codex 0.165 keeps one writer per thread through lock files in
+  # "thread-writer-locks"; a shadow home with its own folder let two Codex processes write one thread.
+  @backlog @priority-high
+  Scenario: Accounts sharing a Codex home share its thread writer locks
+    Given a shared Codex home and a second Codex instance with its own shadow home
+    When the second instance is prepared
+    Then its "thread-writer-locks" folder is a link to the shared home's
+
+  # Upstream #26286: a lock still in the shadow home's own folder may belong to a live writer.
+  @backlog
+  Scenario Outline: A Codex account's own thread writer locks are replaced only when no thread is locked
+    Given a Codex instance's shadow home has its own "thread-writer-locks" folder holding <locks>
+    When the instance is prepared
+    Then <outcome>
+    And the instance is enabled
+
+    Examples:
+      | locks          | outcome                                                                        |
+      | no thread lock | the folder is replaced by a link to the shared home's                          |
+      | a thread lock  | the folder is kept with a warning, and replaced once its locks are gone        |
+
+  # Upstream #26286: Codex 0.166 guards its login with "auth.lock", which is each account's own.
+  @backlog
+  Scenario: A Codex account's login lock is its own
+    Given a Codex instance's shadow home has "auth.lock" as a link to the shared home's
+    When the instance is prepared
+    Then the link is removed and the account keeps its own "auth.lock"
+    And the instance is enabled
+
   @mc
   Scenario: Codex skills that cannot be read in 20 seconds are reported
     Given Codex does not answer when asked for the project's skills
@@ -1201,12 +1612,67 @@ Feature: Codex
       | 0.155.0 | unsupported |
       | 0.156.0 | supported   |
 
+  # Upstream #21443: a Codex too old for app-server failed its probe with no version, so no advisory.
+  @backlog @mc @priority-high
+  Scenario: A Codex too old to start its app-server still reports its version
+    Given the installed Codex prints version "0.1.4161006"
+    And Codex exits with code 1 when its app-server starts
+    When the MC checks Codex
+    Then Codex is reported as "broken" for this HAL-C2 release with version "0.1.4161006"
+    And the user is offered the update before the probe's failure message
+
+  # Upstream #21443: the version is read the same way when the probe fails.
+  @backlog @mc @priority-low
+  Scenario Outline: A Codex whose app-server fails reports what its version command says
+    Given Codex exits with code 1 when its app-server starts
+    And its version command <answer>
+    When the MC checks Codex
+    Then Codex is reported as "<status>" with <version>
+
+    Examples:
+      | answer                             | status  | version                   |
+      | prints "codex-cli 0.159.0-alpha.1" | unknown | version "0.159.0-alpha.1" |
+      | exits with code 1                  | unknown | no version                |
+      | does not answer within 4 seconds   | unknown | no version                |
+
+  # Upstream #27281: a broken Codex version failed turns with a protocol decode error.
+  @backlog @priority-high
+  Scenario: A turn on a broken Codex version says to update Codex
+    Given the installed Codex is version "0.144.3", which this HAL-C2 release marks broken
+    When the user sends a turn to Codex
+    Then the turn fails with "Codex 0.144.3 does not work with this HAL-C2 release. Update Codex to >=0.159.0, then retry."
+
+  # Upstream #27281: after updating Codex, the next message in the same thread runs on it.
+  @backlog @priority-high
+  Scenario: The next message after updating a broken Codex runs on the new version
+    Given a turn failed because the installed Codex version is broken
+    And the user updated Codex to a supported version
+    When the user sends another message in the same thread
+    Then the turn runs on the updated Codex
+
   @backlog @priority-high
   Scenario: A thread whose Codex session was archived outside HAL-C2 resumes it
     Given the native Codex session of a thread was archived by Codex itself
     When the user sends a turn
     Then the MC unarchives that same session and resumes it once
     And an unrelated resume error is shown as it is
+
+  # Upstream #29582: rollback resumed an unloaded Codex thread without the archived-session recovery
+  # sending a message had, so the whole restore failed and no files came back.
+  @backlog @priority-high
+  Scenario: A checkpoint restores after the thread's Codex session was archived outside HAL-C2
+    Given the native Codex session of a thread was archived by Codex itself
+    And Codex no longer has the thread loaded
+    When the user restores the thread to an earlier checkpoint
+    Then the MC unarchives that same session, and the conversation and files are restored
+
+  # Upstream #29618: forking sent the fork straight to the archived session and failed, though
+  # resuming it already unarchived and retried.
+  @backlog @priority-high
+  Scenario: Forking a thread whose Codex session was archived outside HAL-C2
+    Given the native Codex session of a thread was archived by Codex itself
+    When the user forks the thread
+    Then the MC unarchives that session and the fork starts with the thread's conversation
 
   @backlog @mc @plugin-codex @priority-high
   Scenario: Stop ends a Codex command after its thread was settled
@@ -1254,6 +1720,16 @@ Feature: Codex
     Then the goal never shows as paused while it starts
     And Codex is asked to start working toward "ship the fix"
 
+  # Upstream #23033: an oversized objective reached Codex as a generic start failure, and retrying it
+  # could clear the previous goal first.
+  @backlog @shared
+  Scenario: A goal over Codex's 4,000-character limit is refused before Codex is asked
+    Given a Codex thread is working toward "ship the fix"
+    When the user sends "/goal" with an objective of 4,100 characters
+    Then the turn fails saying the objective has 4,100 characters and must be at most 4,000
+    And the message stays in the thread
+    And the thread is still working toward "ship the fix"
+
   Rule: An MCP app a Codex tool returns runs inside the thread
 
     # Upstream #16236: a tool result pointing at a ui:// resource is an MCP app.
@@ -1263,6 +1739,14 @@ Feature: Codex
       When the user looks at the tool call
       Then the app is shown and running in the thread
       And the user can open it full screen and close it again
+
+    # Upstream #25225: Codex marks a write deferred to an app's form as a failed tool result.
+    @backlog @shared
+    Scenario: An MCP app from a tool call marked failed is still shown
+      Given a Codex tool call returned an MCP app with a result marked as an error
+      When the user looks at the tool call
+      Then the app is shown and running in the thread
+      And the tool call still shows that it failed
 
     @backlog @shared
     Scenario Outline: An MCP app asks before it does anything that is not reading

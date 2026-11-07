@@ -615,7 +615,7 @@ const Steps steps([] {
     QFile file(world.mc.part<FakeAttachments>().saves->filePath(QStringLiteral("build.log")));
     expect(file.open(QIODevice::ReadOnly) && file.readAll() == "built\n", QStringLiteral("the saved file is missing or differs"));
   });
-  step(QStringLiteral("the environment is unreachable"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the attachment's environment is unreachable"), [](World& world, const Captures&, const Table&) {
     serve(world);
     world.mc.part<FakeAttachments>().unreachable = true;
     openSent(world, QStringLiteral("build.log"), QStringLiteral("text/plain"), "built\n");

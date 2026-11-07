@@ -23,6 +23,8 @@
 #   apps/server/src/orchestration-v2/ProjectionMaintenance.ts, ProjectionStore.ts (checking and
 #     rebuilding projections, compacting the log)
 #   docs/internals/overview.md (event sourcing)
+#   https://github.com/pingdotgg/t3code/pull/27629
+#   https://github.com/pingdotgg/t3code/pull/29806
 
 Feature: The MC's event store and projections
   Every change to a project or thread is an entity patch appended to one SQLite log.
@@ -293,6 +295,29 @@ Feature: The MC's event store and projections
     When the log is compacted while clients send commands
     Then the commands are accepted between the batches of 50 events it works through
 
+  # Upstream #29806: compaction removed only superseded events and an upstream log reached 12 GB,
+  # so upstream now prunes every event its projections applied more than a day ago and dropped
+  # checking and rebuilding projections from the log.
+  # Dropped: the MC's log is its source of truth. Projections are rebuilt and checked from it
+  # (the rebuild and doctor scenarios in this file) and a thread move ships its stream, so the
+  # MC compacts superseded patches instead of pruning applied ones.
+  @dropped @mc
+  Scenario: Events the projections applied more than a day ago are pruned
+    Given the projections applied a thread's events more than a day ago
+    When the log is pruned
+    Then those events are removed from the log
+    But the thread's newest event and its creation are kept
+    And at least the last day of events is kept
+
+  # Upstream #29806: a client resuming from before what the log still holds loads a snapshot
+  # instead of replaying only part of the history.
+  @backlog @mc @priority-high
+  Scenario: A client resuming from before what the log still holds loads a snapshot
+    Given a client last read a thread at an offset the log no longer holds
+    When the client resumes from its offset
+    Then it receives a snapshot of the thread and follows on from there
+    And it ends in the same state as a client that stayed connected
+
   # Upstream #19436: t3 doctor reclaims database space
   @mc @priority-low
   Scenario: The doctor command reclaims the space of a store that cannot shrink online
@@ -335,6 +360,7 @@ Feature: The MC's event store and projections
   # Upstream #20948 lets t3 doctor delete, by opt-in, the database T3 Code kept for rolling
   # back to before 0.1.0. The MC keeps no second database: what HAL-C2 moved in from lives in
   # the old home, which HAL-C2 never changes.
+  # Upstream #27629: on Windows deleting that database failed while doctor held it open.
   @dropped @mc
   Scenario: The doctor command offers to delete the database kept for rolling back
     Given a store kept beside the current one only for rolling back to an older version

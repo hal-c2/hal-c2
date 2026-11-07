@@ -1,10 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25696
+#   https://github.com/pingdotgg/t3code/pull/24614
+#   https://github.com/pingdotgg/t3code/pull/22291
 #   https://github.com/pingdotgg/t3code/pull/24589
 #   https://github.com/pingdotgg/t3code/pull/24648
 #   https://github.com/pingdotgg/t3code/pull/23783
 #   https://github.com/pingdotgg/t3code/pull/18163
 #   https://github.com/pingdotgg/t3code/pull/19423
+#   https://github.com/pingdotgg/t3code/pull/26435
+#   https://github.com/pingdotgg/t3code/pull/31266
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/28418
 #   packages/contracts/src/orchestrationV2.ts (thread.updated, thread.removed, project.updated,
 #     project.removed, shell and thread projection schemas)
 #   packages/contracts/src/rpc.ts (orchestration.getThreadProjection, orchestration.subscribeShell,
@@ -135,6 +141,14 @@ Feature: What the engine projects for clients
     # A distinct session error carries no class; both servers drop the turn's classification.
     Then the shell row of "t1" shows the session's error without the turn's classification
 
+  # Upstream #24614: a provider whose event stream failed showed its formatted internal error,
+  # stack trace and nested cause as the session error.
+  @mc @backlog
+  Scenario: A provider session that breaks shows a readable error, not its stack trace
+    Given the provider session of "t1" fails with an error carrying a stack trace and a nested cause
+    Then the shell row of "t1" shows the same short, redacted message a failed turn would
+    And the full cause is written to the MC's log
+
   @mc
   Scenario: An error from an earlier run is not shown after a later run succeeds
     Given run 1 of "t1" failed and run 2 completed
@@ -204,6 +218,15 @@ Feature: What the engine projects for clients
       | the user follows a link to "t1-child"               | "t1-child" opens                                          |
       | the phone sends a message queued for "t1-child"     | the message is sent once its family is read, not dropped  |
       | the user deletes a thread that shares the worktree  | the MC is asked which threads use the worktree first      |
+  # Upstream #25696: at 32,767 threads the shell snapshot hit SQLite's variable limit, so no
+  # client got a thread list and startup could fail.
+  @backlog @mc @priority-low
+  Scenario: The shell snapshot loads with more than 32,767 threads
+    Given the environment holds 32,767 active threads
+    When a client asks for the shell snapshot
+    Then it receives every thread
+    And the MC starts again with them without error
+
 
   @mc
   Scenario: The archived shell snapshot lists archived threads and their projects
@@ -324,6 +347,31 @@ Feature: What the engine projects for clients
     When a client asks for a bounded snapshot of "t1"
     Then the snapshot still carries the plan, the handoff, the approval and the queued message
 
+  # Upstream #22291: a question an agent asked before working on fell out of the newest turns,
+  # so the sidebar said the thread needed input but the opened thread showed nothing to answer.
+  @mc @backlog @priority-high
+  Scenario: An open question older than the newest turns still opens its answer panel
+    Given the agent in "t1" asked a question and kept working long after
+    When the user opens "t1"
+    Then the question and its answer panel are shown
+    And once the question is answered the snapshot no longer carries it
+
+  # Upstream #26435: the window left no room for a large pending card, so it fell out.
+  @mc @backlog @priority-high
+  Scenario: A large open question fits a bounded snapshot beside the newest history
+    Given the agent in "t1" asked a question with a large card early in a very long history
+    When a client asks for a bounded snapshot of "t1"
+    Then the snapshot carries the whole question
+    And it still holds the newest turns of "t1"
+
+  # Upstream #31266: one stored Stop request counted as a pending card and turned the history
+  # floor off, so a thread full of runs and checkpoint file lists opened with one row.
+  @mc @backlog @priority-high
+  Scenario: A thread that was stopped once still opens with its newest turns
+    Given "t1" was stopped once and its runs and checkpoint file lists fill most of a snapshot
+    When a client asks for a bounded snapshot of "t1"
+    Then it receives at least half a snapshot's worth of its newest history, not a single row
+
   @mc
   Scenario: Finished plans and handoffs in a bounded snapshot carry only their status
     Given the newest turns of "t1" include a completed plan and a finished handoff
@@ -374,6 +422,15 @@ Feature: What the engine projects for clients
     When a client reads or follows "t1"
     Then the text is cut at 32,768 bytes without splitting a character
     And each cut text ends with "… output truncated for transport"
+
+  # Upstream #28418: the marker went on after the cap, so cut text was over it, and cutting it again
+  # added a line on each pass; a live update could differ from the same item in a snapshot.
+  @backlog @mc
+  Scenario: Cut subagent text fits the limit with its marker and reads the same live and in a snapshot
+    Given a subagent in "t1" has a prompt in Japanese longer than 32,768 bytes
+    When a client follows "t1" and another client reads "t1" afresh
+    Then both hold the same cut prompt
+    And the cut prompt with its "… output truncated for transport" is at most 32,768 bytes
 
   @mc
   Scenario: Subagent text that grows is cut to the same text a snapshot shows

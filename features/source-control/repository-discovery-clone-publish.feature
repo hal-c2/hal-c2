@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27511
+#   https://github.com/pingdotgg/t3code/pull/26770
 #   https://github.com/pingdotgg/t3code/pull/16316
 #   https://github.com/pingdotgg/t3code/pull/15395
 #   https://github.com/pingdotgg/t3code/pull/19219
@@ -24,6 +26,12 @@
 #   apps/web/src/components/GitActionsControl.tsx (publish repository)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Publish repository)
 #   apps/tui/src/features.backlog.test.ts (repository-setup-publishing)
+#   https://github.com/pingdotgg/t3code/pull/21325
+#   https://github.com/pingdotgg/t3code/pull/22246
+#   https://github.com/pingdotgg/t3code/pull/26176
+#   https://github.com/pingdotgg/t3code/pull/29688
+#   https://github.com/pingdotgg/t3code/pull/30142
+#   https://github.com/pingdotgg/t3code/pull/29457
 
 Feature: Finding hosting tools, cloning and publishing repositories
   The MC finds which version control and hosting tools it can use and whether they are
@@ -58,6 +66,15 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Given the GitHub CLI is installed but not signed in
     When the user asks which source control tools are available
     Then GitHub is reported not authenticated and the user is told to run gh auth login
+
+  # Upstream #27511: an expired glab login failed as "GitLab CLI command failed.", and the pull
+  # request list only said it could not load.
+  @mc @backlog
+  Scenario: An expired GitLab CLI login says to sign in again
+    Given the GitLab CLI's login can no longer be renewed and glab answers "invalid_grant"
+    When the user opens the pull requests of a GitLab project
+    Then the user is told "GitLab CLI is not authenticated. Run `glab auth login` and retry."
+    But a glab network failure is not reported as a sign-in problem
 
   @mc
   Scenario: Bitbucket is found through its environment variables
@@ -239,6 +256,21 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the host is reported as GitHub for "acme/shop"
     And "origin" is listed among the checkout's remotes
 
+  # Upstream #26176: a lookup for "evil.com#.ghe.com/o/n" passed the ".ghe.com" check and sent the
+  # GitHub token to api.evil.com; a host that is not a plain host name is refused.
+  @mc @backlog @priority-high
+  Scenario Outline: A repository lookup on a host that is not a plain host name sends no token
+    Given the MC has a GitHub token
+    When a client looks up the repository "<selector>"
+    Then the lookup is refused as a repository it cannot read
+    And no request carrying the token leaves the MC
+
+    Examples:
+      | selector                  |
+      | evil.com#.ghe.com/o/n     |
+      | evil.com?.ghe.com/o/n     |
+      | user@evil.com.ghe.com/o/n |
+
   # Legacy: packages/shared/src/sourceControl.ts (detectSourceControlProviderFromRemoteUrl, isSshRemoteUrl)
   @mc @backlog
   Scenario Outline: A remote is told apart by its host name, however the address is written
@@ -260,11 +292,28 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | https://git.gitea.mycorp.example/acme/app.git   | Forgejo               |
       | https://git.example.test/acme/app.git          | git.example.test      |
 
+    # Upstream #29457: git reads "host:path" with no user as an SSH remote, taking the user from the
+    # SSH config, but no host was found in it, so its pull requests never listed.
+    @backlog
+    Examples:
+      | remote                           | host               |
+      | github.com:acme/app.git          | GitHub             |
+      | gitlab.mycorp.example:acme/app   | GitLab Self-Hosted |
+
     # Upstream #19362: "*.ghe.com" remotes are GitHub by their name; "ghe.com" itself is not.
     Examples:
       | remote                                          | host                  |
       | https://acme.ghe.com/acme/app.git               | GitHub                |
       | https://ghe.com/acme/app.git                    | ghe.com               |
+
+    # Upstream #22246: a per-account SSH alias such as "github.com-work" asked for the alias's
+    # credentials and skipped pull request sync.
+    Examples:
+      | remote                                          | host                     |
+      | git@github.com-work:acme/app.git                | GitHub                   |
+      | ssh://git@github.com-work/acme/app.git          | GitHub                   |
+      | git@github.com-evil.example:acme/app.git        | github.com-evil.example  |
+      | https://github.com-work/acme/app.git            | github.com-work          |
 
   # Upstream #15395: a self-hosted GitLab without "gitlab" in its name stayed unknown, so linking a bare merge request number asked for a full URL.
   # Legacy: apps/server/src/sourceControl/SourceControlProviderDiscovery.ts (refineUnknownRemote), gitLabAuthStatus.ts
@@ -402,6 +451,21 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | GitHub | acme/shop  |
       | GitLab | acme/infra |
 
+  # Upstream #21325: ".git" was dropped only at the very end, so "web.git/" and "web.git?tab=readme"
+  # looked up "acme/web.git" and found nothing.
+  @mc @backlog
+  Scenario Outline: A pasted GitHub address ending in ".git" with more after it names the repository
+    When the user looks up "<pasted>" on GitHub
+    Then the repository "<repository>" is looked up
+
+    Examples:
+      | pasted                                     | repository       |
+      | https://github.com/acme/web.git/           | acme/web         |
+      | https://github.com/acme/web.git?tab=readme | acme/web         |
+      | acme/web.git/                              | acme/web         |
+      | github.com/acme/web.git                    | acme/web         |
+      | acme/web.git.git                           | acme/web.git     |
+
   @mc
   Scenario Outline: Looking up, cloning and publishing on other hosts
     When the user looks up "acme/shop" on <host>
@@ -473,6 +537,15 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the repository is created and added as the remote
     And the result says the remote was added without pushing
 
+  # Upstream #26770: the Forgejo CLI's sign-in check read the empty repository and failed before reaching the server.
+  @backlog @mc @priority-low
+  Scenario: A repository with no commits can be published to Forgejo
+    Given the project "notes" is a git repository with no commits
+    And the Forgejo CLI is signed in to "codeberg.org"
+    When the user publishes "notes" to Forgejo on "codeberg.org"
+    Then the repository is created and added as the remote
+    And Forgejo is not reported as signed out
+
   # Upstream #19219: a publish whose first push failed said only that it could not be completed,
   # and publishing again failed too.
   @backlog @mc
@@ -483,6 +556,29 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the user is told the repository was created and the push was refused
     And they are told to push again rather than publish again
     And they are given the command that switches the remote to HTTPS
+
+  # Upstream #30142: a publish that chose SSH itself left an SSH remote the machine's key could not
+  # use, so every later fetch failed too.
+  @backlog @mc
+  Scenario Outline: A publish over SSH the host refuses falls back to HTTPS unless the user chose SSH
+    Given the user publishes "notes" to GitHub <choice>
+    And GitHub refuses the user's SSH key
+    When the repository is created and the first push is refused
+    Then <outcome>
+
+    Examples:
+      | choice                       | outcome                                                                  |
+      | without choosing a protocol  | the remote is switched to the HTTPS address and the push is tried again  |
+      | choosing SSH                 | the publish says the push was refused, as before                         |
+
+  # Upstream #29688: status refreshed only when the whole publish succeeded, so Git actions still
+  # offered Publish, which would create the repository again.
+  @backlog @mc @shared
+  Scenario: A publish whose first push fails still shows the new remote
+    Given the user publishes "notes" to GitHub over SSH
+    When the repository is created and added as "origin" but the first push fails
+    Then the project's Git actions offer to push to "origin" rather than to publish
+    And "notes" is grouped with other checkouts of its new repository
 
   # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (publishRepository: selectRemoteUrl)
   @mc @priority-high

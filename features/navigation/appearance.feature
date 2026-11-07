@@ -1,10 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24209
+#   https://github.com/pingdotgg/t3code/pull/22100
+#   https://github.com/pingdotgg/t3code/pull/24193
 #   https://github.com/pingdotgg/t3code/pull/18814
 #   https://github.com/pingdotgg/t3code/pull/9814
 #   https://github.com/pingdotgg/t3code/pull/18288
+#   https://github.com/pingdotgg/t3code/pull/26138
 #   https://github.com/pingdotgg/t3code/pull/8011
 #   https://github.com/pingdotgg/t3code/pull/15642
 #   https://github.com/pingdotgg/t3code/pull/11594
+#   https://github.com/pingdotgg/t3code/pull/27936
+#   https://github.com/pingdotgg/t3code/pull/26559
 #   docs/user/appearance.md (appearance, composer context, motion)
 #   apps/web/src/components/settings/ThemeSettings.tsx (mode tiles, light and dark pairing)
 #   apps/web/src/components/settings/SettingsPanels.tsx (AppearanceSettingsPanel: interface, motion, fonts)
@@ -40,6 +46,7 @@ Feature: Appearance
         | Light  | light                                   |
         | Dark   | dark                                    |
 
+    # Upstream #24193: on Linux the System appearance missed live light and dark changes until restart.
     @desktop
     Scenario: System appearance follows the operating system as it changes
       Given the user chose the System appearance
@@ -188,6 +195,16 @@ Feature: Appearance
       Then the app shows a Nightly version pill
       And the setting still reads "Artwork"
 
+    # Upstream #27936: the setting kept showing "Artwork" with no word that the theme overrode it.
+    @backlog @desktop @priority-low
+    Scenario: The artwork setting explains when the theme hides artwork
+      Given environment identification is set to "Artwork"
+      And the user chose a theme they imported or created
+      When the user looks at the environment identification setting
+      Then it explains that the current theme hides environment artwork
+      When the user chooses a built-in theme
+      Then the app shows the environment's artwork again
+
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (CustomThemeCollectionCard, variantNavigation)
     @backlog @desktop @priority-low
     Scenario: A theme collection offers its variants separately for light and dark
@@ -294,6 +311,25 @@ Feature: Appearance
         | Version pill | the app shows a Dev version pill        |
         | None         | the app shows no environment marker     |
 
+    # Upstream #26138: on a release build the setting was hidden, so no artwork could be turned on.
+    @backlog @desktop @priority-low
+    Scenario Outline: Any build can show the Nightly or Dev artwork
+      Given the app is a <build> build
+      When the user sets environment identification to "<mode>"
+      Then the app shows the <art> artwork
+
+      Examples:
+        | build   | mode            | art     |
+        | release | Nightly artwork | Nightly |
+        | release | Dev artwork     | Dev     |
+        | Dev     | Nightly artwork | Nightly |
+
+    # Upstream #26138
+    @backlog @desktop @priority-low
+    Scenario: A release build shows no environment marker until the user picks one
+      Given the app is a release build and the user has not set environment identification
+      Then the app shows no environment marker
+
     # A rice's sidebar can leave off the brand band (Sidebar.showBrand); the
     # stage moves above the list then.
     @desktop @mobile @backlog-mobile @priority-low
@@ -308,6 +344,14 @@ Feature: Appearance
         | Artwork      | the sidebar shows a "Dev" pill above the list |
         | Version pill | the sidebar shows a "Dev" pill above the list |
         | None         | the sidebar shows no stage above the list  |
+
+    # Upstream #24209: the sidebar logo was announced as "Go to threads" though it opens the new
+    # task screen, and its name left out the brand the user sees.
+    @backlog @desktop @priority-low
+    Scenario: The sidebar's logo is announced by the brand it shows
+      When a screen reader or voice control reaches the sidebar's logo
+      Then it is named "HAL-C2 home"
+      And activating it opens the new task screen
 
     @desktop
     Scenario Outline: The app's name carries its stage unless it is the latest release
@@ -400,6 +444,14 @@ Feature: Appearance
       And panel animations are set to 200 ms
       When the user toggles the right panel
       Then the right panel opens immediately
+    # Upstream #22100: the merge and stop controls of a thread spun with raw icons that ignored reduced motion.
+    @backlog @desktop @priority-low
+    Scenario: A thread's merge and stop controls do not spin with reduced motion or out of sight
+      Given the operating system asks for reduced motion
+      When the user merges a thread back or stops it
+      Then its control shows that it is busy without spinning
+      And without reduced motion it spins only while it is in view
+
 
     @desktop
     Scenario: Switching threads never replays panel transitions
@@ -495,6 +547,14 @@ Feature: Appearance
       Then the user sees an interface font and a monospace font
       And the prompt follows the interface font
       And the terminal follows the monospace font
+
+    # Upstream #26559: with separate fonts off, the prompt kept its own hidden 14px size.
+    @backlog @desktop
+    Scenario: The prompt grows with the interface font size until fonts are set apart
+      Given advanced typography is off
+      When the user sets the interface font size from 16 to 20
+      Then the prompt's text grows with the interface's
+      And with advanced typography on, the prompt keeps its own font and size
 
     @backlog @desktop
     Scenario: Advanced typography separates the prompt and terminal fonts

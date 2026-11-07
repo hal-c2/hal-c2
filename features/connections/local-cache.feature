@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13767
+#   https://github.com/pingdotgg/t3code/pull/26435
 #   apps/desktop-qt/src/native/LocalCache.cpp (the client's SQLite cache: thread list rows, thread copies and their cursors)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the kept thread list, `have`, changed rows and resets)
 #   apps/desktop-qt/src/native/ThreadStore.cpp, TimelineModel.cpp (restoring a thread, resuming it, trimming what is kept)
@@ -111,6 +112,15 @@ Feature: What a client keeps between runs
     When the user leaves the thread for more than five minutes and returns
     Then the thread comes back as its newest turns without being sent again
     And its earlier turns can be loaded again
+
+  # Upstream #26435: a question missing from what the phone kept could be neither answered nor
+  # dismissed, even after reopening the thread, while the thread list said it needed input.
+  @backlog @desktop @mobile @priority-high
+  Scenario: A question missing from what the client kept is recovered when the thread opens
+    Given what the client kept of "shop" lacks a question the agent is still waiting on
+    When the app starts again and the user opens the thread
+    Then the question is shown and can be answered or dismissed
+    And once dismissed it stays dismissed after the app starts again
 
   @desktop @mobile @backlog-mobile
   Scenario: Losing what the client kept loses nothing

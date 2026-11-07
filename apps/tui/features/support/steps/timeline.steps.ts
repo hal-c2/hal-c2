@@ -39,6 +39,7 @@ type Line = {
     chunks: Array<{ text: string; attributes?: number; link?: { url: string }; fg?: unknown }>;
   };
   parts?: ReadonlyArray<unknown> | null;
+  right?: { text: Line["text"] } | null;
 };
 type Item = { key: string; kind: string; align: string; boxed: boolean; lines: Line[] };
 
@@ -78,7 +79,7 @@ step(
     expect(shown.map((item) => item.kind)).toEqual(["message", "work", "message"]);
     expect(itemText(shown[0]!)).toBe("Looking at the build.");
     expect(itemText(shown[1]!)).toContain("bun run build");
-    expect(itemText(shown[1]!)).toContain("+1 previous tool call");
+    expect(plain(shown[1]!.lines[0]!.right!.text)).toBe("+1 previous tool call");
     expect(itemText(shown[2]!)).toBe("The build passes now.");
     const screen = await snapshot(ctx);
     expect(screen.indexOf("Looking at the build.")).toBeLessThan(screen.indexOf("bun run build"));

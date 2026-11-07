@@ -1,10 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27376
 #   https://github.com/pingdotgg/t3code/pull/20764
 #   https://github.com/pingdotgg/t3code/pull/17396
 #   https://github.com/pingdotgg/t3code/pull/17859
 #   https://github.com/pingdotgg/t3code/pull/13516 (Escape in settings returns to the last main page)
 #   https://github.com/pingdotgg/t3code/pull/25651
 #   https://github.com/pingdotgg/t3code/pull/25686
+#   https://github.com/pingdotgg/t3code/pull/27540
+#   https://github.com/pingdotgg/t3code/pull/28298
 #   apps/web/src/components/settings/settingsSearch.ts
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts
 #   apps/web/src/components/settings/SettingsSidebarNav.tsx
@@ -211,6 +214,20 @@ Feature: Settings search and navigation
       When the user searches settings for "zzzz"
       Then the user is told no settings match
 
+    # Upstream #28298: Enter confirming an input method candidate opened a result, and Escape
+    # cancelling a composition cleared the search.
+    @backlog @shared @priority-low
+    Scenario Outline: Ending an input method composition in the settings search leaves the search alone
+      Given the user is typing "設定" in the settings search with an input method
+      When the user presses <key> to <ends> the composition
+      Then the settings stay where they were
+      And the search still holds what the user typed
+
+      Examples:
+        | key    | ends    |
+        | Enter  | confirm |
+        | Escape | cancel  |
+
     @desktop
     Scenario: Escape clears the search
       Given the user has searched settings for "model"
@@ -248,6 +265,20 @@ Feature: Settings search and navigation
     Scenario: Every word of the search must match
       When the user searches settings for "composer vim"
       Then only "Vim keys in the composer" is listed
+
+    # Upstream #27540: rows whose catalog entry lacked a word of their own title, such as
+    # "Delete old rotated logs" or "CODEX_HOME path", were not found by typing that title.
+    @backlog @desktop
+    Scenario Outline: A setting is found by the title it shows
+      When the user searches settings for "<title>"
+      Then "<title>" is listed
+
+      Examples:
+        | title                      |
+        | Automatic worktree cleanup |
+        | Delete settled worktrees   |
+        | Delete old rotated logs    |
+        | CODEX_HOME path            |
 
     @desktop
     Scenario Outline: Settings that do not apply here are not found
@@ -406,6 +437,25 @@ Feature: Settings search and navigation
       Given no environment is the primary one
       When the user searches settings for "writing style"
       Then "Writing style" is the first result
+
+    # Upstream #27376: the fallback model could not be found in settings search.
+    @backlog @desktop
+    Scenario Outline: The fallback model is found in settings search
+      When the user searches settings for "<query>"
+      Then "Fallback model" is a result
+
+      Examples:
+        | query          |
+        | fallback       |
+        | fallback agent |
+        | fallback model |
+
+    # Upstream #27376: choosing the other scope from the notice left the user on the notice.
+    @backlog @desktop
+    Scenario: The fallback model opens for all environments from a project's settings
+      Given the settings are scoped to the project "shop"
+      When the user opens the search result "Fallback model" and chooses all environments
+      Then the page shows the fallback model setting, not the scope notice
 
   Rule: Restoring defaults
 

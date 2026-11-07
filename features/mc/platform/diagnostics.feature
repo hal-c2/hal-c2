@@ -1,7 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23274
+#   https://github.com/pingdotgg/t3code/pull/24556
 #   https://github.com/pingdotgg/t3code/pull/19789
 #   https://github.com/pingdotgg/t3code/pull/13697
 #   https://github.com/pingdotgg/t3code/pull/13355
+#   https://github.com/pingdotgg/t3code/pull/22753
+#   https://github.com/pingdotgg/t3code/pull/27904
+#   https://github.com/pingdotgg/t3code/pull/27986
+#   https://github.com/pingdotgg/t3code/pull/29770
+#   https://github.com/pingdotgg/t3code/pull/27503
+#   https://github.com/pingdotgg/t3code/pull/29786
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
 #   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry shape)
@@ -111,6 +119,29 @@ Feature: MC diagnostics
     Given tracing is enabled on the MC
     When a turn runs
     Then trace diagnostics list the turn's spans
+
+  # Upstream #27904: traces and logged failures kept the connection ticket and proof in request URLs,
+  # and the state folder was readable by everyone.
+  # Upstream #27986: pairing tokens and OAuth codes, states and challenges are redacted the same way.
+  @backlog @mc @priority-high
+  Scenario Outline: Credentials in a request's address never reach a trace or a log
+    Given tracing is enabled on the MC
+    When a request arrives whose address carries <credential>
+    Then its traces, exported spans and logged failures show the value replaced by a redaction marker
+    And the rest of the request is still traced
+
+    Examples:
+      | credential                                  |
+      | the ticket that opens a connection          |
+      | the proof that binds a request to a device  |
+      | a pairing token or pairing link             |
+      | an OAuth code, state or challenge           |
+
+  # Upstream #27904: the state folder was readable by everyone.
+  @backlog @mc @priority-low
+  Scenario: The MC's state folder is readable only by its owner
+    When the MC starts
+    Then its state folder can be read only by the user the MC runs as
 
   # Upstream #13697 times Node's event loop. The MC runs on the BEAM, which has no single loop
   # to time, so a stall recorder is not carried.
@@ -268,6 +299,21 @@ Feature: MC diagnostics
     Then it moves aside as the newest backup and the oldest backup is dropped
     And the MC keeps writing to a new trace file
 
+  # Upstream #27503: rotation read any number-like suffix as a backup, so files such as
+  # "debug.log.04" or "debug.log.4.0" beside the log were deleted.
+  @backlog @mc @priority-low
+  Scenario Outline: Rolling the trace file over keeps files that are not its backups
+    Given tracing is enabled on the MC
+    And the trace file's folder holds the file "<name>" beside the trace file's backups
+    When the trace file reaches 10 MiB
+    Then "<name>" is kept
+
+    Examples:
+      | name                    |
+      | server.trace.ndjson.04  |
+      | server.trace.ndjson.4.0 |
+      | server.trace.ndjson.0x4 |
+
   @mc
   Scenario: The MC accepts client spans
     Given client tracing is on
@@ -278,6 +324,15 @@ Feature: MC diagnostics
   Scenario: The MC forwards client spans to a configured collector
     Given an OTLP collector is configured on the MC
     When client spans arrive
+    Then the MC forwards them to the collector
+
+  # Upstream #29786: the collector addresses were read by decoding the whole settings file, so a
+  # retired "token" streaming mode still on disk dropped them and nothing was exported.
+  @backlog @mc @priority-low
+  Scenario: A settings file with a value from an older version keeps its collector
+    Given an OTLP collector is configured in settings.json
+    And settings.json still sets the response streaming mode to the retired "token"
+    When the MC starts and client spans arrive
     Then the MC forwards them to the collector
 
   # The standard OpenTelemetry switch turns export off without losing the local trace file.
@@ -367,6 +422,16 @@ Feature: MC diagnostics
     Then the log continues in a new file for that thread
     And at most ten files are kept for that thread, the oldest dropped first
 
+  # Upstream #29770: delegated thread IDs share a long prefix, so every delegated thread of one
+  # parent wrote into the same provider log.
+  @backlog @mc @priority-low
+  Scenario: Delegated threads each get their own provider event log
+    Given provider event logging is on
+    And "parent" delegated two tasks whose thread IDs share a prefix longer than a log name holds
+    When both delegated threads run
+    Then each writes its events to a provider log of its own
+    And a thread with a short ID keeps its log's name
+
   @backlog @mc @priority-low
   Scenario: Old and excess provider event logs are removed
     Given provider event logging is on
@@ -375,6 +440,15 @@ Feature: MC diagnostics
     Then files older than 14 days are removed
     And the oldest files are removed until the logs fit in 512 MiB
     And the file a thread is still writing to is kept
+
+  # Upstream #23274: a running server held every finished thread's current log as in use, so neither limit reclaimed it.
+  @backlog @mc @priority-low
+  Scenario: A finished thread's provider log falls under the limits while the MC keeps running
+    Given provider event logging is on
+    And a thread wrote its provider log and has written nothing since the last check
+    When the MC checks the provider logs again without restarting
+    Then that thread's log is removed like any other once it is older than 14 days
+    And it counts as removable when the logs pass 512 MiB
 
   @backlog @mc @priority-low
   Scenario: Provider events outside any thread share one log
@@ -442,6 +516,19 @@ Feature: MC diagnostics
     Then the logged options name the model, mode and working folder
     And they hold no environment values and no credential for the "hal-c2" server
 
+  # Upstream #24556: signed asset and upload URLs carry their token in the path, so they get no HTTP span.
+  @backlog @mc @priority-high
+  Scenario Outline: Traces never record a signed URL's token
+    Given tracing is enabled on the MC
+    When a client uses <url>
+    Then no recorded trace holds that URL's token
+
+    Examples:
+      | url                      |
+      | a signed asset URL       |
+      | an attachment upload URL |
+      | a webhook URL            |
+
   # The triage command is run by an operator next to an installed HAL-C2, with or without an
   # MC running.
   @backlog @mc @priority-low
@@ -484,6 +571,29 @@ Feature: MC diagnostics
     Given Codex is not installed
     When the operator runs "hal-c2 triage --agent codex"
     Then the command fails saying "codex" is not installed or was not found on the path
+
+  # Upstream #22753: triage ran only from a terminal, out of reach from the apps.
+  @backlog @mc @desktop @mobile
+  Scenario: The user starts triage from the command palette
+    When the user chooses "Triage an issue" in the command palette
+    Then a thread under "No project" opens on the machine on screen, asking "What went wrong?"
+    And its draft links the triage playbook
+    And the user can pick any provider, describe the problem and send it
+
+  # Upstream #22753: the source of the running version is fetched while the user writes.
+  @backlog @mc @priority-low
+  Scenario: Triage from the app fetches the source of the version the MC runs
+    When a client asks the MC to prepare triage
+    Then the context file and the prompt are written as "hal-c2 triage" writes them
+    And the source of the MC's version is fetched into the triage source checkouts in the background
+    And the context tells the agent it runs inside the MC it checks, so it gives restart steps instead of restarting
+
+  # Upstream #22753
+  @backlog @desktop @mobile @priority-low
+  Scenario: Triage that cannot start points to the command
+    Given the machine on screen cannot start threads under "No project"
+    When the user chooses "Triage an issue"
+    Then the user is told triage could not start and to run "hal-c2 triage" instead
 
   @backlog @mc @priority-low
   Scenario: With no agent installed the triage files are left to paste into any agent

@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22339
+#   https://github.com/pingdotgg/t3code/pull/27497
+#   https://github.com/pingdotgg/t3code/pull/22412
+#   https://github.com/pingdotgg/t3code/pull/21839
+#   https://github.com/pingdotgg/t3code/pull/25737
+#   https://github.com/pingdotgg/t3code/pull/25228
+#   https://github.com/pingdotgg/t3code/pull/23416
+#   https://github.com/pingdotgg/t3code/pull/24255
+#   https://github.com/pingdotgg/t3code/pull/25768
 #   https://github.com/pingdotgg/t3code/pull/20950
 #   https://github.com/pingdotgg/t3code/pull/24627
 #   https://github.com/pingdotgg/t3code/pull/23106
@@ -79,6 +88,14 @@
 #   https://github.com/pingdotgg/t3code/pull/21469
 #   https://github.com/pingdotgg/t3code/pull/25804
 #   https://github.com/pingdotgg/t3code/pull/25702
+#   https://github.com/pingdotgg/t3code/pull/25555
+#   https://github.com/pingdotgg/t3code/pull/14989
+#   https://github.com/pingdotgg/t3code/pull/25496
+#   https://github.com/pingdotgg/t3code/pull/26432
+#   https://github.com/pingdotgg/t3code/pull/23732
+#   https://github.com/pingdotgg/t3code/pull/30601
+#   https://github.com/pingdotgg/t3code/pull/30706
+#   https://github.com/pingdotgg/t3code/pull/29360
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -103,6 +120,24 @@ Feature: Viewing and editing files
       When a client reads "logs/big.log" from "shop"
       Then the first megabyte is returned
       And the result is marked as truncated
+
+    # Upstream #14989: on network and FUSE filesystems a read can return less than asked; the
+    # server returned that prefix as the whole file, and saving an edit cut the rest of it off.
+    @backlog @mc @priority-high
+    Scenario: A file the filesystem hands over in pieces is read whole
+      Given "src/app.ts" in "shop" is on a filesystem that returns it a few bytes at a time
+      When a client reads "src/app.ts" from "shop"
+      Then all of the file's contents are returned
+      And the result is not marked as truncated
+
+    # Upstream #24255: a preview cut at the 1 MiB limit inside a multibyte character ended in a
+    # replacement character; the cut now falls before the split character.
+    @mc @backlog
+    Scenario: A file cut at the size limit does not end in a broken character
+      Given "notes/long.md" in "shop" is 3 MB of text with a multibyte character across the one-megabyte mark
+      When a client reads "notes/long.md" from "shop"
+      Then the returned text ends before that character
+      And it does not end in a replacement character
 
     @mc
     Scenario Outline: Files that cannot be shown as text are refused
@@ -215,6 +250,14 @@ Feature: Viewing and editing files
       And "data" and "raw.csv" stay in the path, dimmed, and lead back down
       And "raw.csv" keeps its tab
 
+    # Upstream #30706: a folder tab closed and reopened came back without the dimmed trail back down,
+    # and at the project's top without its path at all.
+    @backlog @desktop @priority-low
+    Scenario: A reopened folder tab keeps the trail back down
+      Given the user moved from "src/cli" up to "src" in the files panel
+      When the user closes that tab and reopens it
+      Then the files panel shows "src" with "cli" still in the path, dimmed, leading back down
+
     # Upstream #15045: the project crumb goes to the Files explorer
     @shared @backlog
     Scenario: The project in the path leads to the file explorer
@@ -233,6 +276,22 @@ Feature: Viewing and editing files
         | /tmp           |
         | C:\            |
         | \\server\share |
+
+    # Upstream #22412: the ~ crumb of a home path was plain text
+    @desktop @backlog
+    Scenario: The "~" in a home path opens the home folder
+      Given the files panel shows "~/.claude/CLAUDE.md"
+      When the user chooses "~" in its path
+      Then the files panel lists the home folder
+      And ".claude" and "CLAUDE.md" stay in the path and lead back down
+
+    # Upstream #22412: a project folder named ~ is not the home folder
+    @desktop @backlog @priority-low
+    Scenario: A project folder named "~" is a project folder
+      Given the files panel shows "~/notes.md" in the project
+      When the user chooses "~" in its path
+      Then the files panel shows the project's folder "~"
+
 
     # Upstream #15045: a host folder gets a file tree of its own
     @shared @backlog @priority-low
@@ -333,6 +392,13 @@ Feature: Viewing and editing files
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
+    # Upstream #21839: a portrait or square video in the file preview played inside a 16:9 box.
+    @backlog @shared @priority-low
+    Scenario: A portrait video in the file preview keeps its own shape
+      Given "media/phone.mp4" is a 1080 by 1920 recording
+      When the user opens "media/phone.mp4"
+      Then the video is shown at its own proportions, fitted inside the preview
+
     # Upstream #25702: a phrase that wraps across lines in a PDF was not found.
     @backlog @desktop @mobile
     Scenario Outline: Searching a PDF finds a phrase across a line break
@@ -344,6 +410,28 @@ Feature: Viewing and editing files
         | text                                          | search            |
         | "quarterly" ending one line and "outlook" starting the next | quarterly outlook |
         | "quar-" ending one line and "terly" starting the next       | quarterly         |
+
+    # Upstream #25555: a PDF that reloaded went back to its first page and default zoom.
+    @backlog @desktop @mobile
+    Scenario: A PDF that reloads keeps the reader's place and zoom
+      Given the user has "docs/report.pdf" open on page 4, zoomed in and scrolled sideways
+      When the agent changes "docs/report.pdf" and the viewer reloads it
+      Then the document shows the same place on page 4 at the same zoom
+      And a document that lost pages shows its last page instead
+
+    # Upstream #25496: switching threads lost the place in an open PDF.
+    @backlog @desktop
+    Scenario: A PDF keeps the reader's place across thread switches
+      Given the user has "docs/report.pdf" open on page 3 at 65% zoom
+      When the user switches to another thread and back
+      Then the document shows the same place on page 3 at 65% zoom
+
+    # Upstream #25555
+    @backlog @desktop @mobile
+    Scenario: Opening a different PDF starts at its beginning
+      Given the user has "docs/report.pdf" open on page 4, zoomed in
+      When the user opens "docs/manual.pdf"
+      Then it shows its first page at the default zoom
 
     @desktop @mobile
     Scenario: Media files of a thread on another machine are previewed
@@ -360,6 +448,15 @@ Feature: Viewing and editing files
       When the agent runs a command that does not touch the video
       Then the video stays paused at 5 seconds
       But once the agent changes "media/intro.mp4" the new video loads, once
+
+    # Upstream #23732: a PDF in the preview reloaded at its first page whenever the agent responded.
+    @backlog @desktop
+    Scenario: A PDF preview keeps its page until its file changes
+      Given the user is reading page 4 of "docs/spec.pdf" in the preview
+      When the agent runs a command that does not touch the PDF
+      And the PDF's link is renewed
+      Then the preview still shows page 4
+      But once the agent changes "docs/spec.pdf" the new PDF loads
 
     # Upstream #17352: images, video, HTML and PDF preview before a thread's first message
     @backlog @desktop @mobile
@@ -518,6 +615,26 @@ Feature: Viewing and editing files
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
+    # Upstream #30601: a CSV or TSV labelled with a generic type other than application/octet-stream
+    # opened as raw text.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A CSV or TSV under a generic file type is shown as a table
+      When the user opens "<path>" of type "<type>" rendered
+      Then <outcome>
+
+      Examples:
+        | path       | type                     | outcome                            |
+        | data/a.csv | binary/octet-stream      | the file is shown as a comma table |
+        | data/a.tsv | application/unknown      | the file is shown as a tab table   |
+        | data/a.csv | application/octet-stream | the file is shown as a comma table |
+
+    # Upstream #27497: a cell cut where an emoji's two halves met ended in a broken character.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A table cell cut at its limit keeps every character whole
+      Given "data/a.csv" has a cell of 1,999 letters followed by an emoji
+      When the user opens "data/a.csv" as a table
+      Then the cell is cut before the emoji, not through it
+
     # Upstream #21362: Word, Excel and PowerPoint files are previewed in the Files tab.
     @backlog @desktop @priority-low
     Scenario Outline: An office file is shown rendered
@@ -673,6 +790,15 @@ Feature: Viewing and editing files
       When the user turns word wrap off
       Then long lines scroll sideways
 
+    # Upstream #26432: the wrap button of a file or attachment preview changed the Word wrap
+    # setting, so one click turned wrapping off in every code block, table and diff.
+    @backlog @desktop @priority-high
+    Scenario: The wrap button of a file preview changes only that preview
+      Given the Word wrap setting is on
+      When the user turns word wrap off for "src/app.ts"
+      Then the Word wrap setting is still on
+      And code blocks, tables and diffs in the conversation still wrap
+
     @desktop
     Scenario: The path trail lets the user jump to a sibling file
       Given the user is looking at "src/lib/cart.ts"
@@ -753,6 +879,14 @@ Feature: Viewing and editing files
         | hide       | "src/app.ts"                            | hidden  |
         | show       | a file outside the project on the host  | hidden  |
         | show       | an attachment                           | hidden  |
+
+    # Upstream #25737: the file tree beside an open file had a fixed width.
+    @backlog @desktop @priority-low
+    Scenario: The file tree beside a file can be made wider and keeps its width
+      Given the user is looking at "src/lib/cart.ts" with the file tree beside it
+      When the user widens the file tree, by pointer or keyboard
+      Then the file tree is wider, within the room the panel has
+      And it opens at that width the next time
 
     @desktop
     Scenario: A folder in the path trail lists what is in it
@@ -847,6 +981,21 @@ Feature: Viewing and editing files
       Given the thread runs on this computer, which has the editor "VS Code"
       When the user opens "src/app.ts" in "VS Code"
       Then "VS Code" opens "src/app.ts" on this computer
+
+    # Upstream #23416: on Linux "zed" can be the OpenZFS event daemon; the Zed editor ships "zeditor".
+    @backlog @mc @desktop @priority-low
+    Scenario: Zed on Linux is started as "zeditor" when that is installed
+      Given the environment's host is Linux with both "zeditor" and the OpenZFS "zed" on its path
+      When the user opens "src/app.ts" in "Zed"
+      Then "zeditor" is started for "src/app.ts"
+      And "zed" is used only where "zeditor" is not installed
+
+    # Upstream #25228: an MC started before the user logged in has no display to give the editor.
+    @backlog @mc @desktop @priority-low
+    Scenario: An editor opens on the Linux desktop of an MC started before login
+      Given the environment's host is Linux and its MC started before the user logged in to the desktop
+      When the user opens "src/app.ts" in "VS Code"
+      Then "VS Code" opens "src/app.ts" on the user's desktop session
 
     # The client's own MC can be on another machine while its cluster has one here:
     # that member starts the editor, from the editors it has. The desktop's is proved
@@ -1125,6 +1274,14 @@ Feature: Viewing and editing files
       When the user unticks "Ship cart"
       Then "TODO.md" records "Ship cart" as open
 
+    # Upstream #22339: ticking a task in a preview that showed only the first megabyte saved that part as the whole file.
+    @backlog @desktop @mobile @priority-high
+    Scenario: A Markdown preview of only part of a file cannot tick its tasks
+      Given "TODO.md" is larger than one megabyte and its preview shows only its first part
+      When the user opens "TODO.md" in the rendered view
+      Then its tasks cannot be ticked or unticked
+      And "TODO.md" keeps everything after the part shown
+
     @desktop @tui
     Scenario: A failed save is reported and the edit is kept
       Given writing "src/app.ts" fails
@@ -1145,6 +1302,14 @@ Feature: Viewing and editing files
       When the user makes another edit
       Then the file ends up with both edits
       And the file is not shown as saved until the last edit is written
+
+    # Upstream #25768: switching with an edit pending wrote the draft once from each view.
+    @backlog @desktop
+    Scenario: Switching a Markdown file between its preview and the editor saves a pending edit once
+      Given the user edited "README.md" and the edit is not saved yet
+      When the user switches "README.md" between the rendered Markdown and the editor
+      Then the edit is written to "README.md" once
+      And an edit made after the switch is written after it
 
     @desktop
     Scenario Outline: Edits waiting to be written are saved when the app goes away
@@ -1315,6 +1480,21 @@ Feature: Viewing and editing files
         | file      | shown                  |
         | cart.ts   | coloured as TypeScript |
         | notes.txt | plain                  |
+
+    # Upstream #29360: an Office file, archive or SQLite database labelled "binary/octet-stream" or
+    # "application/unknown" said "No preview for this file"; only "application/octet-stream" fell back
+    # to the file's name.
+    @backlog @desktop @priority-low
+    Scenario Outline: An attachment of a generic file type is previewed by its name
+      Given the user has attached "<file>" of type "<type>" to a draft
+      When the user opens the attachment from the draft
+      Then it is previewed as the kind its name says
+
+      Examples:
+        | file       | type                |
+        | plan.docx  | binary/octet-stream |
+        | export.zip | application/unknown |
+        | shop.sqlite | binary/octet-stream |
 
     @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer
@@ -1514,7 +1694,7 @@ Feature: Viewing and editing files
 
       Examples:
         | state                                         | message                                  |
-        | the environment is unreachable                | Reconnect to the environment and try again. |
+        | the attachment's environment is unreachable   | Reconnect to the environment and try again. |
         | the environment no longer has the attachment  | The attachment is unavailable.           |
 
     @desktop

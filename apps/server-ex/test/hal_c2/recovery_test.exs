@@ -60,6 +60,69 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert Recovery.settle("t1") == {0, nil}
   end
 
+  # The boot ends a cut-off run, so its `completedAt` counts the time the MC was down.
+  test "a cut-off run keeps when it was last seen working" do
+    {:ok, _} =
+      HalC2.Streams.commit("t4", :thread, [
+        {"thread", "t4", %{"s" => %{"id" => "t4", "title" => "Cut"}}},
+        {"run", "r1",
+         %{
+           "s" => %{
+             "id" => "r1",
+             "ordinal" => 1,
+             "status" => "running",
+             "activeAttemptId" => "a1",
+             "requestedAt" => "2026-09-23T10:00:00.000Z",
+             "startedAt" => "2026-09-23T10:00:01.000Z"
+           }
+         }},
+        {"run-attempt", "a1",
+         %{
+           "s" => %{
+             "id" => "a1",
+             "status" => "running",
+             "updatedAt" => "2026-09-23T10:00:02.000Z"
+           }
+         }},
+        {"turn-item", "done",
+         %{
+           "s" => %{
+             "id" => "done",
+             "runId" => "r1",
+             "status" => "completed",
+             "ordinal" => 0,
+             "updatedAt" => "2026-09-23T10:00:40.000Z"
+           }
+         }},
+        {"turn-item", "busy",
+         %{
+           "s" => %{
+             "id" => "busy",
+             "runId" => "r1",
+             "status" => "running",
+             "ordinal" => 1,
+             "updatedAt" => "2026-09-23T10:01:30.000Z"
+           }
+         }},
+        {"turn-item", "other",
+         %{
+           "s" => %{
+             "id" => "other",
+             "runId" => "r0",
+             "status" => "completed",
+             "ordinal" => 2,
+             "updatedAt" => "2026-09-23T11:00:00.000Z"
+           }
+         }}
+      ])
+
+    assert {_, nil} = Recovery.settle("t4")
+    run = StreamState.get(HalC2.Streams.state("t4"), "run")["r1"]
+    assert run["status"] == "interrupted"
+    assert run["lastActivityAt"] == "2026-09-23T10:01:30.000Z"
+    assert run["completedAt"] != run["lastActivityAt"]
+  end
+
   # An MC from before recovery settled runs could leave a message streaming, or a steer
   # on it, in a run that has since gone to disk with the thread's older runs.
   test "a message left streaming in an older run on disk is settled too" do

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21276
+#   https://github.com/pingdotgg/t3code/pull/27850
 #   https://github.com/pingdotgg/t3code/pull/18388
 #   https://github.com/pingdotgg/t3code/pull/19241
 #   https://github.com/pingdotgg/t3code/pull/16729
@@ -6,6 +8,7 @@
 #   https://github.com/pingdotgg/t3code/pull/24268
 #   https://github.com/pingdotgg/t3code/pull/25156
 #   https://github.com/pingdotgg/t3code/pull/24270
+#   https://github.com/pingdotgg/t3code/pull/19463
 #   apps/mobile/src/features/files/ (tree, search, previews, copy, save or share, attachments)
 #   apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
 #   apps/mobile/src/features/files/FileTreeBrowser.tsx
@@ -18,6 +21,9 @@
 #   apps/mobile/src/components/AudioFilePreview.tsx (audio controls)
 #   docs/internals/mobile-navigation.md (AVKit video, Quick Look previews)
 #   apps/mobile/modules/hal-c2-native-controls/ios/HalC2NativeVideoPresentation.swift (audio session while a video is open)
+#   https://github.com/pingdotgg/t3code/pull/21894
+#   https://github.com/pingdotgg/t3code/pull/30929
+#   https://github.com/pingdotgg/t3code/pull/29044
 # Workspace files are specified in features/source-control/ and the files domain. This file
 # covers browsing and previewing them on a phone.
 
@@ -42,6 +48,13 @@ Feature: Browsing a thread's files on a phone
     When the user opens the thread's files
     Then "docs" is listed before the files
     And "part2.md" is listed before "part10.md"
+  # Upstream #21276: a folder that held too many entries made the tree fail instead of listing them.
+  @backlog @mobile @priority-low
+  Scenario: A folder of 200,000 files lists every one
+    Given the workspace folder "data" holds 200,000 files
+    When the user opens the folder "data"
+    Then every file in "data" is listed, in order
+
 
   @backlog @mobile
   Scenario: Top-level folders start open and deeper folders start closed
@@ -117,6 +130,15 @@ Feature: Browsing a thread's files on a phone
     Given the agent has created "src/tax.ts" since the tree was loaded
     When the user refreshes the files
     Then "src/tax.ts" is listed
+
+  # Upstream #27850: a text file waited for its details before its contents were asked for, two
+  # round trips one after the other over Tailscale.
+  @backlog @mobile @priority-low
+  Scenario: Opening a text file asks for its details and contents together
+    When the user opens "src/tax.ts" for the first time
+    Then the phone asks the MC for its details and its contents at once
+    And a picture still waits for its details before it is fetched
+    And a folder opened this way shows its listing, not an error
 
   # Upstream #24270: a file tree kept its loads and errors across workspace switches.
   @backlog @mobile
@@ -288,6 +310,38 @@ Feature: Browsing a thread's files on a phone
     When the user opens the attachment
     Then the user is told there is no preview for this file
     And the user is offered to save or share it
+
+  # Upstream #19463: the desktop browsed ZIP attachments; the phone only offered to save them.
+  @backlog @mobile
+  Scenario: A ZIP attachment opens as a folder tree
+    Given a message has the attached archive "logs.zip"
+    When the user opens the attachment
+    Then its folders and files are listed and can be filtered
+    When the user opens a text file or picture in it
+    Then that entry is shown in the usual preview
+    And the user can save that entry or add it to the composer
+
+  # Upstream #19463
+  @backlog @mobile @priority-low
+  Scenario Outline: A ZIP attachment too big to read offers to save it instead
+    Given a message has an attached archive <limit>
+    When the user opens the attachment
+    Then the user is told why the archive cannot be browsed
+    And the user is offered to save the archive
+
+    Examples:
+      | limit                            |
+      | larger than 50 MB                |
+      | holding more than 2,048 entries  |
+      | that unpacks far beyond its size |
+
+  # Upstream #19463
+  @backlog @mobile @priority-low
+  Scenario: An entry too large to preview in a ZIP attachment can still be saved
+    Given the archive "logs.zip" holds a 12 MB text file
+    When the user opens that entry
+    Then the user is told it is too large to preview
+    And the user can save it
 
   @backlog @mobile
   Scenario: A draft attachment can be removed from the draft where it is read
@@ -478,6 +532,13 @@ Feature: Browsing a thread's files on a phone
     Given the user is watching "demo.mp4"
     When the time-limited link the video was loaded from expires
     Then the video keeps playing
+
+  # Upstream #21894: a portrait video was boxed into a wide frame in the file preview.
+  @backlog @mobile @priority-low
+  Scenario: A video preview takes the video's own shape
+    Given "shop" holds the portrait video "clip.mp4"
+    When the user previews "clip.mp4" from the project's files
+    Then its still and its playback are shown upright at the video's own proportions
 
   @backlog @mobile @priority-low
   Scenario: A video that cannot be played says so and offers to save or share it
@@ -722,6 +783,16 @@ Feature: Browsing a thread's files on a phone
     When the user swipes the picture away
     Then the full-screen picture closes
 
+  # Upstream #29044: on iOS a tapped image of a pull request waited for every other image of
+  # the gallery to download, with nothing to show or close meanwhile.
+  @backlog @mobile
+  Scenario: A tapped picture opens while the rest of its gallery loads
+    Given a pull request shows 24 pictures and one of them is slow to download
+    When the user taps another of its pictures
+    Then that picture opens full screen at once
+    And a picture still loading shows a loading page that can be closed
+    And a picture that failed to load shows its error on its own page, leaving the others viewable
+
   # Upstream #15047: on Android swipe-to-close took the pinch, so pinch wins there and the
   # picture closes with its close button or Back.
   @backlog @mobile @priority-low
@@ -730,6 +801,14 @@ Feature: Browsing a thread's files on a phone
     When the user pinches the picture apart
     Then the picture zooms in
     And swiping does not close the picture, but its close button and Back do
+
+  # Upstream #30929: a very wide picture fitted as a thin strip, and a pinch starting beside the strip did nothing.
+  @backlog @mobile @priority-low
+  Scenario: A pinch anywhere on the viewer zooms a very wide picture
+    Given the user is looking at a 16000 by 900 picture full screen
+    When the user pinches apart starting in the space above and below the picture
+    Then the picture zooms in
+    But a pinch while the picture is still loading does nothing until it has loaded
 
   # Upstream #19241: the Android image viewer keeps panning after an interrupted pinch.
   @backlog @mobile @priority-low

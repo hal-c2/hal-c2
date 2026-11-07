@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27222
+#   https://github.com/pingdotgg/t3code/pull/27836
 #   https://github.com/pingdotgg/t3code/pull/20306
 #   https://github.com/pingdotgg/t3code/pull/22846
 #   https://github.com/pingdotgg/t3code/pull/12513
@@ -42,6 +44,10 @@
 #   docs/user/ (continuing threads after an update)
 #   https://github.com/pingdotgg/t3code/pull/15323
 #   https://github.com/pingdotgg/t3code/pull/15604
+#   https://github.com/pingdotgg/t3code/pull/19229
+#   https://github.com/pingdotgg/t3code/pull/28646
+#   https://github.com/pingdotgg/t3code/pull/29647
+#   https://github.com/pingdotgg/t3code/pull/30560
 Feature: Recovering from restarts and releasing idle sessions
   Provider processes that cannot go on through a restart (reattach-after-restart.feature)
   are killed at the next boot, before any thread goes on. At boot the engine ends
@@ -53,6 +59,7 @@ Feature: Recovering from restarts and releasing idle sessions
   Background:
     Given an MC with a project "demo"
 
+  # Upstream #28646: a cancelled answer, reasoning or plan cut by a restart stayed marked as streaming.
   @mc
   Scenario: A turn cut off by a restart is interrupted at boot
     Given thread "t1" had a running turn with a streaming answer and a running command
@@ -102,6 +109,24 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the subagent thread is settled or interrupted
     And it is not left running
 
+  # Upstream #19229: a question the agent asked was gone after a restart, and the thread only
+  # said how long it had worked. Here it covers a program the MC could not reattach.
+  @backlog @mc @shared @priority-high
+  Scenario: A question whose program a restart ended is still asked
+    Given the agent of "t1" asked the user a question
+    And its program was not reattached when the MC restarted
+    Then the question of "t1" is still waiting for the user
+    And "t1" is still shown as waiting for input
+
+  # Upstream #19229: the answer goes back as a user message, each question followed by its
+  # answer, in a new run that resumes the same conversation.
+  @backlog @mc @priority-high
+  Scenario: Answering a question whose program a restart ended starts a run with the answer
+    Given the agent of "t1" asked "Which colour?" and its program was ended by a restart
+    When the user answers "Blue"
+    Then a new run of "t1" starts in the same provider conversation
+    And the agent receives a message giving "Which colour?" with the answer "Blue"
+
   @mc
   Scenario: Work cut off by a restart says the restart ended it
     Given thread "t1" had a running turn with a running command
@@ -142,15 +167,25 @@ Feature: Recovering from restarts and releasing idle sessions
     Then "t1" receives one continuation turn
     And the continuation names the background command the restart ended
 
+  # Upstream #29647: a long label cut inside an emoji left half of it, and Codex dropped the whole
+  # continuation it could not read.
+  @backlog @mc @priority-high
+  Scenario: A long background command label is shortened without splitting an emoji
+    Given project "demo" continues threads after a server update
+    And thread "t1" left running a background command whose long label has an emoji where it is shortened
+    When the MC restarts
+    Then the continuation names the command by a shortened label that ends on a whole character
+    And Codex receives the continuation
+
   # Upstream #19291: a run that ended to wait on a monitor or subagent never woke after an update,
   # and its delegating parent took the interim message as the result.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A run that ended to wait on work the restart stopped is continued
     Given project "demo" continues threads after a server update
     And thread "t1" ended its turn to wait on <work>
     When the MC restarts
     Then "t1" receives one continuation turn
-    And a task delegated to "t1" reports "interrupted" until that continuation ends, not "completed"
+    And the continuation names <work> the restart ended
 
     Examples:
       | work                  |
@@ -158,6 +193,23 @@ Feature: Recovering from restarts and releasing idle sessions
       | a subagent            |
       | a background task     |
 
+  # Upstream #19291. A continuation keeps the task working until it ends (see "A restart does not
+  # report a delegated child's interrupted result as final"); with none, the
+  # interim message is not the task's result.
+  @mc @priority-high
+  Scenario Outline: A task whose child waited on work the restart stopped is not completed by it
+    Given thread "parent" has a running turn on "codex" in worktree "/work/p"
+    And a task delegated to "t1" ended its turn to wait on <work>
+    When the MC restarts
+    Then the task delegated to "t1" ends "interrupted", not "completed"
+
+    Examples:
+      | work                  |
+      | a monitor             |
+      | a subagent            |
+      | a background task     |
+
+  # Open in #1179.
   @backlog @mc
   Scenario: A shutdown releases every provider session at once
     Given ten threads have provider sessions open
@@ -166,7 +218,7 @@ Feature: Recovering from restarts and releasing idle sessions
     And none is left running for the next MC to resume beside it
 
   # Upstream #12513: helpers that ignored SIGTERM hung shutdown and survived the backend;
-  # they are now killed a second after the stop request.
+  # they are now killed a second after the stop request. Open in #1179.
   @backlog @mc
   Scenario: A helper process that ignores the stop request does not outlive the MC
     Given a provider's helper process ignores the request to stop
@@ -174,7 +226,9 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the helper is killed a second after it was asked to stop
     And the MC finishes shutting down
 
-  @backlog @mc @priority-high
+  # The boot kills what a dead MC's records name before it takes requests
+  # (`HalC2.Subprocess.Orphans`); a process no MC recorded is not its to stop.
+  @mc @priority-high
   Scenario: Agents a killed MC left running are stopped before new ones start
     Given an MC was killed while its agents were still running
     When a new MC on the same files launches its first agent
@@ -188,6 +242,17 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then "t1" receives "Continue where you left off." from the server on the same model
     And it starts immediately
+
+  # Upstream #27836: a command the cut turn started could still be running after the restart,
+  # and the agent, told only to continue, ran a deploy or push a second time.
+  @mc @backlog @priority-high
+  Scenario: A thread continued after a restart is told to check before repeating what it did
+    Given project "demo" continues threads after a server update
+    And thread "t1" was running a deploy when the MC restarted
+    When "t1" is continued after the restart
+    Then the message starts with "Continue where you left off."
+    And it tells the agent its last turn was cut short and a command it started may have finished or still be running
+    And it tells the agent to confirm an action did not take effect before repeating it, and to say so when it cannot tell
 
   @mc
   Scenario Outline: A cut-off thread is not continued
@@ -229,7 +294,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then "t1" receives one "Continue where you left off." message
 
   # Upstream #18461: a turn that crashed the server was otherwise resumed after every restart.
-  @backlog @mc
+  @mc
   Scenario: A thread is continued at most three times in a row without the user
     Given project "demo" continues threads after a server update
     And "t1" has been continued after 3 restarts in a row without a message from the user
@@ -240,9 +305,19 @@ Feature: Recovering from restarts and releasing idle sessions
     When the user sends "Try again" to "t1"
     Then "t1" may be continued after a later restart again
 
+  # A cut-off run is ended at the next boot: its time down is not time it worked.
+  @mc
+  Scenario: A crash loop is stopped however long the MC stayed down between restarts
+    Given project "demo" continues threads after a server update
+    And "t1" has been continued after 3 restarts in a row, each a minute's work before the MC was down ten minutes
+    And thread "t1" was mid-turn on a provider conversation that can resume
+    When the MC restarts
+    Then no continuation message is sent to "t1"
+    And "t1" waits for the user's next message
+
   # Upstream #20306: the restart guard counts only continuations requested within five minutes
   # of the interrupted run finishing; rapid loops still stop at three.
-  @backlog @mc
+  @mc
   Scenario: Continuations far apart do not use up the restart limit
     Given project "demo" continues threads after a server update
     And "t1" has been continued after 3 restarts, each after more than five minutes of work
@@ -250,7 +325,8 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then "t1" receives "Continue where you left off." from the server
 
-  @backlog @mc
+  # Upstream #18461.
+  @mc
   Scenario Outline: A cut-off thread that should not be answered for is not continued
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn when the MC stopped
@@ -262,17 +338,58 @@ Feature: Recovering from restarts and releasing idle sessions
       | reason                                                         |
       | the restart closed an approval "t1" was waiting on             |
       | the restart closed a question "t1" was asking the user         |
-      | the restart closed a request for a secret from "t1"            |
       | the provider's turn had already ended                          |
       | "t1" is settled                                                |
       | "t1" is snoozed until tomorrow                                 |
 
-  @backlog @mc
+    # The MC has no secret requests yet: no provider adapter asks for one (#1182).
+    @backlog
+    Examples:
+      | reason                                                         |
+      | the restart closed a request for a secret from "t1"            |
+
+  @mc
   Scenario: A continuation is checked again when it is delivered
     Given project "demo" continues threads after a server update
     And the continuation of "t1" was recorded but not yet delivered
     When "t1" is archived before it is delivered
     Then no continuation message is sent to "t1"
+
+  # Upstream #27222: a continuation whose resumed session timed out before its prompt reached the
+  # provider failed for good, and the delegated task it belonged to settled on that failure.
+  @backlog @mc @priority-high
+  Scenario: A continuation that fails before its agent took the prompt is tried again
+    Given project "demo" continues threads after a server update
+    And the continuation of "t1" failed before its provider accepted the prompt
+    When a minute passes, and if that fails too another three minutes
+    Then "t1" is continued again, at most twice
+    And a delegated task "t1" works on stays open until the last try's outcome
+
+  # Upstream #27222
+  @backlog @mc
+  Scenario Outline: A failed continuation is not tried again when trying again cannot help
+    Given project "demo" continues threads after a server update
+    And the continuation of "t1" failed before its provider accepted the prompt, because <reason>
+    Then "t1" is not continued again
+    And the failure shows in "t1"
+
+    Examples:
+      | reason                                         |
+      | the provider's usage limit was reached         |
+      | the provider refused it for lack of permission |
+      | the provider found the request invalid         |
+      | the user stopped "t1" while it waited to retry |
+
+  # Upstream #27222: a parent's Stop just before an update was cut off before reaching its
+  # delegated children, and recovery continued them anyway.
+  @backlog @mc @priority-high
+  Scenario: A delegated child is not continued after its parent was stopped
+    Given project "demo" continues threads after a server update
+    And thread "child" was mid-turn on a task that thread "parent" delegated
+    And the user stopped "parent" just before the MC stopped
+    When the MC restarts
+    Then no continuation message is sent to "child"
+    And the task is settled as cancelled
 
   # The runtime is the MC's process driving the provider; its provider process
   # goes down with it.
@@ -360,6 +477,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | launches a subagent in the background     |
       | reports progress on a subagent it resumed |
 
+  # Open in #1180.
   @backlog @mc @plugin-claude
   Scenario: A Claude workflow that keeps reporting progress outlives the background cap
     Given thread "t1" left a Claude workflow running in the background
@@ -376,20 +494,22 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC checks for idle sessions
     Then the provider process of "t1" stops
 
-  @backlog @mc
+  @mc
   Scenario: Stopping a thread settles its native subagents' own threads
     Given thread "t1" has a provider-native subagent running with its own thread
     When the user stops "t1"
     Then the subagent reads as stopped, not running, and its timer stops
     And the subagent's thread no longer shows a working turn
 
-  @backlog @mc
+  @mc
   Scenario: A restart settles a native subagent the stop left running
     Given thread "t1" was stopped while its native subagent's record still read as running
     When the MC restarts
     Then the subagent and its thread read as stopped
 
   # Upstream #22846: ending a native subagent's turn left the provider turn under it running.
+  # Open in #1187: the MC records no provider turn under a native subagent, and has no
+  # command to stop one subagent.
   @backlog @mc
   Scenario Outline: Ending a native subagent's turn also ends its provider turn
     Given thread "t1" has a provider-native subagent with a running turn
@@ -654,27 +774,58 @@ Feature: Recovering from restarts and releasing idle sessions
     When 14:00 passes
     Then nothing is sent to "t1"
 
-  @backlog @mc @priority-high
+  # Upstream #15323: a child the restart interrupted reported that as its result before its
+  # continuation ran.
+  @mc @priority-high
   Scenario: A restart does not report a delegated child's interrupted result as final
-    Given "continue threads after restarts" is on
-    When the MC restarts mid-delegation
-    Then the child's interrupted result is held until its continuation settles
-
-  @backlog @mc @priority-high
-  Scenario: A restart keeps queued work waiting and work the user stopped stopped
-    Given "continue threads after restarts" is on and a thread has held queued work and a stopped run
+    Given project "demo" continues threads after a server update
+    And thread "parent" has a running turn on "codex" in worktree "/work/p"
+    And the agent in "parent" delegates a task
+    And the continuation a restart asks of the subagent waits to be sent
     When the MC restarts
-    Then the queued work waits for recovery and the stopped run is not continued
+    Then the task is "running" however often it is checked while the continuation waits
+    When the continuation is sent
+    Then the task, its node and its turn item end "completed"
 
+  # Upstream #30560: a restart between saving a message and starting its run left the message
+  # sent and its run held, and resuming the queue marked the thread done.
   @backlog @mc @priority-high
+  Scenario: A message whose run never started before a restart waits in the queue
+    Given the user sent "Next" in "t1" and the MC stopped before its provider started the run
+    When the MC restarts
+    Then "Next" waits in the held queue as not yet sent, in the order it was sent
+    When the user resumes the queue of "t1"
+    Then the run for "Next" starts and the agent answers it
+
+  # Upstream #15323: a restart continued a run the user had stopped and started the queue held behind it.
+  @mc @priority-high
+  Scenario: A restart keeps queued work waiting and work the user stopped stopped
+    Given project "demo" continues threads after a server update
+    And the user had asked to stop the running turn of "t1", with a message queued behind it
+    When the MC restarts
+    Then no continuation is asked of "t1"
+    And the message queued on "t1" is held for the user
+
+  @mc
+  Scenario: A turn the user had asked to stop is not continued after a restart
+    Given project "demo" continues threads after a server update
+    And the user had asked to stop the running turn of "t1"
+    When the MC restarts
+    Then no continuation is asked of "t1"
+
+  # Upstream #15604: a thread whose session the idle release had stopped is not woken for
+  # the stale background records it left; the next turn the user starts hears what ended.
+  @mc @priority-high
   Scenario: A settled thread stays asleep after a restart
-    Given a completed thread has leftover background tool or subagent records
+    Given project "demo" continues threads after a server update
+    And a completed thread has leftover background tool or subagent records
     When the MC restarts
     Then the thread is not woken
     And its background cleanup note reaches the provider once, on the next manual turn
 
   # Upstream #19750: work a subagent started belongs to that subagent, so losing it leaves
-  # the parent waiting on the subagent. The note names the subagent to resume.
+  # the parent waiting on the subagent. The note names the subagent to resume. Open in
+  # #1181, with the Codex scenario after it.
   @backlog @mc @plugin-claude
   Scenario: A restart that cut a Claude subagent's background command wakes the thread
     Given "continue threads after restarts" is on
@@ -692,7 +843,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the continuation of "t1" names the subagent by its own thread id
     And says it will not report back on its own
 
-  @backlog @mc
+  @mc
   Scenario: A wake that never started does not hide the run that lost the work
     Given "continue threads after restarts" is on
     And a wake of "t1" was still starting when the MC stopped, after a settled run whose background work was lost

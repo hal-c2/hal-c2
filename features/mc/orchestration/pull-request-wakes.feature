@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25437
+#   https://github.com/pingdotgg/t3code/pull/24871
 #   https://github.com/pingdotgg/t3code/pull/21314
 #   https://github.com/pingdotgg/t3code/pull/23863
 #   https://github.com/pingdotgg/t3code/pull/23904
@@ -8,7 +10,13 @@
 #   https://github.com/pingdotgg/t3code/pull/18120
 #   https://github.com/pingdotgg/t3code/pull/21155
 #   https://github.com/pingdotgg/t3code/pull/24781
+#   https://github.com/pingdotgg/t3code/pull/26183
+#   https://github.com/pingdotgg/t3code/pull/29767
+#   https://github.com/pingdotgg/t3code/pull/30291
+#   https://github.com/pingdotgg/t3code/pull/29450
+#   https://github.com/pingdotgg/t3code/pull/30403
 #   https://github.com/hal-c2/hal-c2/issues/518
+#   https://github.com/pingdotgg/t3code/pull/29633
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
 #   apps/server-ex/lib/hal_c2/pull_requests/github.ex (@summary_selection: the review and comment marker)
@@ -49,6 +57,20 @@ Feature: A thread hears when a pull request it owns needs attention
     When its checks start failing and the MC reads "acme/app#12" again
     Then the message to the agent of "t1" says "acme/app#12" stays linked and watched
     And it tells the agent not to link, watch or list it again
+
+  # Upstream #29767: a push that left the branch conflicting was not news, so the agent never
+  # learned its fix did not work.
+  @backlog @mc
+  Scenario Outline: A push that leaves the branch conflicting wakes the thread again
+    Given the agent of "t1" was woken because "acme/app#12" conflicts with its base branch
+    When <what> and the MC reads "acme/app#12" again
+    Then <outcome>
+
+    Examples:
+      | what                                                      | outcome                                                           |
+      | the agent pushes a new head that still conflicts          | the agent of "t1" is woken again about the conflict              |
+      | the host reports no head for "acme/app#12" this time      | the agent of "t1" is not woken                                    |
+      | the host has not yet worked out whether the new head merges | the agent of "t1" is not woken until the host says it conflicts |
 
   # A thread whose pull requests are all done settles on its own, unless the user
   # keeps it active or another of them is still open.
@@ -92,6 +114,19 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the agent of "t1" is woken once about "acme/app#12"
     When the MC reads "acme/app#12" again
     Then the agent of "t1" is not woken again
+
+  # Upstream #30403: GitLab comments carried no edit time, so a bot rewriting its comment never
+  # woke the watcher; resolving a thread moves GitLab's stamp on every note, which is no edit.
+  @mc @backlog @priority-low
+  Scenario Outline: A GitLab comment that is <changed> <wakes>
+    Given the agent of "t1" watches GitLab merge request "acme/app!12" and was woken for a bot's comment
+    When the comment is <changed> and the MC reads "acme/app!12" again
+    Then the agent of "t1" <wakes>
+
+    Examples:
+      | changed                       | wakes              |
+      | rewritten by the bot          | is woken once      |
+      | in a thread that was resolved | is not woken again |
 
   @mc
   Scenario Outline: Changes that are not worth acting on wake nothing
@@ -167,6 +202,15 @@ Feature: A thread hears when a pull request it owns needs attention
     And the message says "gh pr checks https://github.com/acme/app/pull/12"
     And the message says "gh api repos/acme/app/pulls/12/reviews"
     And the message says "list_thread_pull_requests"
+
+  # Upstream #29633: a long comment cut inside an emoji kept half of it, and Codex and the Anthropic
+  # API refused the wake.
+  @backlog @mc @priority-high
+  Scenario: A long comment is shortened in the wake without splitting an emoji
+    Given a trusted reviewer comments on "acme/app#12" at length with an emoji where the wake shortens it
+    When the MC reads "acme/app#12" again
+    Then the message quotes the comment shortened to end on a whole character
+    And the agent of "t1" receives the wake
 
   @mc
   Scenario: News the thread already heard does not wake it again
@@ -311,12 +355,62 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the agent of "t1" is not woken
     And thread "t1" still shows "acme/app#12" as open
 
+  # Upstream #29450: a watch stopped after eight failed reads, so a long outage cut off every later
+  # check and review update.
+  @backlog @mc
+  Scenario: A watch outlasts a long outage of its host
+    Given "t1" watches "acme/app#12"
+    And the host cannot be reached for 30 minutes
+    When the host answers again and the checks of "acme/app#12" have passed
+    Then the agent of "t1" is woken once to say the checks passed
+
+  @backlog @mc @priority-low
+  Scenario: A watch the host keeps refusing ends and says so
+    Given "t1" watches "acme/app#12"
+    When the host refuses access to "acme/app#12" read after read
+    Then the watch of "acme/app#12" ends
+    And the agent of "t1" is told the watch stopped because the host refused access
+
+  # Upstream #30291: one sweep read no pull request until every host had answered, so one slow
+  # host held back every other watched pull request's wake.
+  @backlog @mc @priority-low
+  Scenario: A slow host does not hold back wakes from other hosts
+    Given "t1" watches "acme/app#12" on github.com and "t2" watches "corp/api#7" on a GitHub Enterprise host
+    And the GitHub Enterprise host is taking many seconds to answer
+    When the checks of "acme/app#12" start failing and the MC reads both again
+    Then the agent of "t1" is woken without waiting for the GitHub Enterprise host
+
   # Upstream #18775: a failed optional check stopped a Forgejo watch from passing.
   @backlog @mc @priority-low
   Scenario: A Forgejo watch passes when the required checks pass
     Given a thread watches the checks of a Forgejo pull request whose branch requires "ci/test"
     When "ci/test" passes and an optional "ci/lint" fails
     Then the thread hears that the required checks passed
+
+  # Upstream #26183: required-check globs became backtracking regexes, and a pattern with many
+  # stars blocked the server for every client.
+  @backlog @mc @priority-high
+  Scenario: A Forgejo required-check pattern with many wildcards does not stall the MC
+    Given a thread watches the checks of a Forgejo pull request whose branch requires "*a*a*a*a*a*a*a*a*a*a*a*a*b"
+    When the MC compares it with check names 200 characters long
+    Then the comparison finishes at once
+    And other clients of the MC are answered meanwhile
+
+  # Upstream #26183: "*" and "**" match any run of characters, "/" included, and "?" one
+  # character; patterns with classes, choices or escapes are reported as not evaluable.
+  @backlog @mc @priority-low
+  Scenario Outline: A Forgejo required-check pattern is matched as a glob
+    Given a thread watches the checks of a Forgejo pull request whose branch requires "<pattern>"
+    When a check named "<name>" reports
+    Then the requirement <result>
+
+    Examples:
+      | pattern | name          | result                       |
+      | ci/*    | ci/test/linux | matches it                   |
+      | ci/**   | ci/test/linux | matches it                   |
+      | ci/tes? | ci/test       | matches it                   |
+      | ci/tes? | ci/tests      | does not match it            |
+      | ci/[ab] | ci/a          | is reported as not evaluable |
 
   # Upstream #16668: Forgejo reports a job that did not run as "skipped", which was read as pending
   # and kept the watch open after every job had finished.
@@ -330,6 +424,15 @@ Feature: A thread hears when a pull request it owns needs attention
       | state   | counted |
       | skipped | skipped |
       | warning | neutral |
+
+  # Upstream #24871: Forgejo dates statuses to the second, so a pending status could replace the
+  # final one it shared a second with.
+  @backlog @mc @priority-low
+  Scenario: A Forgejo check that finished within a second of starting counts as finished
+    Given a thread watches the checks of a Forgejo pull request
+    When "ci/test" reports pending and then success in the same second
+    Then the watch counts "ci/test" as passed
+    And the thread is woken with "All checks passed"
 
   # Upstream #23904: the watch said the required checks passed while other jobs still ran, and
   # never woke the thread when they finished.
@@ -350,6 +453,16 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the thread is woken once, told no checks have reported
     And the message does not say the checks passed
     And neither a restart nor watching it again wakes the thread for that commit again
+
+  # Upstream #25437: nothing on the host changed when the 15 minutes passed, so the notice waited
+  # for the next full reread, about 30 minutes in.
+  @backlog @mc @priority-low
+  Scenario: A watched pull request with no checks is told within minutes of the deadline
+    Given a thread watches the checks of a GitHub pull request
+    And nothing about the pull request changes on GitHub
+    When 15 minutes pass with no check on its latest commit
+    Then the thread is told no checks have reported within the next two minutes
+    And its comments are not read any more often
 
   @backlog @mc @priority-low
   Scenario: A GitHub pull request whose checks were seen does not count as having none

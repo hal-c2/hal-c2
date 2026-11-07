@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27837
+#   https://github.com/pingdotgg/t3code/pull/27741
 #   https://github.com/pingdotgg/t3code/pull/18322
 #   https://github.com/pingdotgg/t3code/pull/19465
 #   https://github.com/pingdotgg/t3code/pull/24022
@@ -52,6 +54,14 @@
 #   apps/web/src/components/composerContextPresentation.tsx, apps/web/src/components/contextChipParts.tsx,
 #   apps/web/src/components/ThreadContextChip.tsx (what a reference shows and opens)
 #   apps/web/src/composerDraftStore.ts (where context added from another panel lands in the draft)
+#   https://github.com/pingdotgg/t3code/pull/28209
+#   https://github.com/pingdotgg/t3code/pull/26201
+#   https://github.com/pingdotgg/t3code/pull/26269
+#   https://github.com/pingdotgg/t3code/pull/25066
+#   https://github.com/pingdotgg/t3code/pull/21537
+#   https://github.com/pingdotgg/t3code/pull/23447
+#   https://github.com/pingdotgg/t3code/pull/29013
+#   https://github.com/pingdotgg/t3code/pull/30345
 
 Feature: Referencing files, skills, commands and context
   The user pulls things into a message by typing a trigger character or by
@@ -121,6 +131,7 @@ Feature: Referencing files, skills, commands and context
       | Please use /skill    |
       | Please use /skill:re |
 
+  # Upstream #19107: a slash typed after other text searches skills, so a skill can be chipped mid-sentence.
   @shared @backlog-mobile @backlog-tui
   Scenario: A slash typed after other text searches skills
     Given the provider offers the skill "review"
@@ -172,6 +183,18 @@ Feature: Referencing files, skills, commands and context
       | /default | planning | the thread switches back to building     |
       | /model   | building | the user is asked to choose a model      |
 
+  # Upstream #27837: "/Model" opened the model picker but "/Model opus" closed it.
+  @backlog @desktop
+  Scenario Outline: The model command with a search opens the model picker in any case
+    When the user types "<typed>"
+    Then the model picker is open, searching for "opus"
+
+    Examples:
+      | typed       |
+      | /model opus |
+      | /Model opus |
+      | /MODEL opus |
+
   @backlog @desktop
   Scenario: Pull requests are found by number or by title
     Given the project's repository has pull request 42 "Fix login"
@@ -203,6 +226,17 @@ Feature: Referencing files, skills, commands and context
     When the user types "#4"
     Then both are suggested, the linked one naming "owner/repo-b"
     And a linked pull request whose details have not loaded yet is not suggested
+
+  # Upstream #26269: typing words after "#" left out the thread's linked pull requests unless the
+  # search returned them. Linked ones matching the words (title, branch, repository or number)
+  # come first and show at once; the search's results follow when they arrive.
+  @backlog @desktop @mobile
+  Scenario: Pull requests linked to the thread come first for a typed word
+    Given the thread links the pull request "Fix doctor checks" on the branch "doctor-fix"
+    And the repository has newer pull requests about "doctor" that are not linked
+    When the user types "#doctor"
+    Then "Fix doctor checks" is suggested before the search's results come back
+    And it stays first once the other matches are listed below it
 
   # Legacy: packages/shared/src/composerInlineTokens.ts (SCOPED_PACKAGE_REFERENCE_REGEX)
   @backlog @desktop
@@ -237,6 +271,25 @@ Feature: Referencing files, skills, commands and context
     When the user references the thread "Auth refactor"
     Then the draft references "Auth refactor"
     And the agent can read that thread's history
+
+  # Upstream #26201: a thread on a machine the composer's environment can reach (upstream's linked
+  # machines; for HAL-C2, another machine of the MC's cluster) is offered and attached like a local one.
+  @backlog @shared @priority-high
+  Scenario: The thread picker offers threads on the other machines of the cluster
+    Given the machine "beast" is in the MC's cluster and has a thread "Deploy the API"
+    When the user types "@Deploy" in a draft on this machine
+    Then "Deploy the API" is offered as a thread on "beast"
+    When the user picks it
+    Then the draft references "Deploy the API" on "beast"
+    And the message can be sent
+
+  # Upstream #26201: a pasted or dropped reference to a cluster machine's thread stays a live reference.
+  @backlog @shared
+  Scenario: A reference to a thread on another machine of the cluster pastes as a live reference
+    Given the user copied a reference to "Deploy the API" on the cluster machine "beast"
+    When the user pastes it into a draft on this machine
+    Then the draft references "Deploy the API" on "beast"
+    And it is not marked as unreadable
 
   @backlog @desktop
   Scenario: A thread from another environment cannot be referenced
@@ -344,6 +397,15 @@ Feature: Referencing files, skills, commands and context
     And the message cites the paragraph with the comment "Too slow?"
     And the draft no longer quotes it
 
+  # Upstream #29013: the place to return to kept the quote's source, so closing Settings or Usage
+  # scrolled the thread back up to it.
+  @backlog @shared @priority-low
+  Scenario: Leaving Settings after going to a quote's source keeps the thread where the user left it
+    Given the user went to the source of a quote in a sent message
+    And then scrolled to the end of the thread
+    When the user opens Settings or Usage and closes it again
+    Then the thread is still at its end and does not jump back to the quote's source
+
   @desktop
   Scenario: A stashed quote is listed by its text
     Given the draft quotes the assistant's paragraph about caching with the comment "Too slow?"
@@ -393,6 +455,13 @@ Feature: Referencing files, skills, commands and context
     Given a draft references the terminal excerpt "npm test output"
     When the user copies that text and pastes it into another thread's draft
     Then the other draft references "npm test output" as well
+
+  # Upstream #21537: copied context whose text held an apostrophe pasted as a bare link.
+  @backlog @desktop @mobile
+  Scenario: Copied references with an apostrophe survive a paste through another app
+    Given a draft references the terminal excerpt "error: can't find module"
+    When the user copies that text and it reaches another draft only as rich text
+    Then the other draft references "error: can't find module" as well
 
   @backlog @mobile @priority-low
   Scenario: Copying a sent message brings its references along
@@ -482,6 +551,15 @@ Feature: Referencing files, skills, commands and context
     Given the draft holds an annotation of the preview
     When the preview reloads and the user annotates it again
     Then the draft holds both annotations
+
+  # Upstream #30345: an annotation comment cut at 47 characters could keep half an emoji in its chip,
+  # the reference sent with the message, and a title seeded from it.
+  @backlog @desktop @priority-low
+  Scenario: A long annotation comment's chip is cut before an emoji, not through it
+    Given the user annotated the preview with a comment of 60 characters with an emoji at the 47th
+    When the annotation is attached to the draft
+    Then its chip label is cut before the emoji and ends in "…"
+    And the message sent with it names the annotation the same way
 
   # Upstream #24022: Annotate did nothing on a PDF open in the preview.
   @backlog @desktop
@@ -607,6 +685,17 @@ Feature: Referencing files, skills, commands and context
       | $rev   | skills        | Searching workspace skills... |
       | #login | pull requests | Finding pull request...       |
 
+  # Upstream #28209: a project skill typed straight after opening a thread was "No matching
+  # command." until the project's skills arrived, though it existed.
+  @backlog @desktop @mobile
+  Scenario: A project skill typed before the project's skills arrive is not reported missing
+    Given the project "shop" has the skill "caveman"
+    And the user has just opened a thread in "shop" and its skills are still being read
+    When the user types "/caveman"
+    Then the suggestion list says "Searching workspace skills..."
+    And once the skills arrive "caveman" is offered
+    And the list never says "No matching command." while they are being read
+
   @desktop
   Scenario: The suggestion list is walked with the arrow keys and wraps at its ends
     Given the user typed "@s" and three files are offered
@@ -703,6 +792,7 @@ Feature: Referencing files, skills, commands and context
     Then the skill "deploy" is still offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (formatProviderSkillDisplayName)
+  # Passes today; upstream #27741 shows the id as written instead, see the backlog scenario below.
   @desktop
   Scenario Outline: A skill without a display name is named from its id
     Given the provider offers the skill "<id>" with no display name
@@ -714,6 +804,21 @@ Feature: Referencing files, skills, commands and context
       | lint-fix      | Lint Fix      |
       | pdf_reader    | Pdf Reader    |
       | plugin:review | Plugin Review |
+
+  # Upstream #27741: a skill without a display name was title-cased and split on ":", "_" and
+  # "-", so "frontend-design:frontend-design" read "Frontend Design Frontend Design". It is now
+  # shown as written, in the skill menu and the composer's and messages' chips.
+  @backlog @desktop
+  Scenario Outline: A skill without a display name is shown by its own name
+    Given the provider offers the skill "<id>" with no display name
+    When the user types "$" into the composer
+    Then the skill is shown as "<shown>"
+
+    Examples:
+      | id                              | shown                           |
+      | lint-fix                        | lint-fix                        |
+      | pdf_reader                      | pdf_reader                      |
+      | frontend-design:frontend-design | frontend-design:frontend-design |
 
   @backlog @desktop
   Scenario Outline: A skill says where it comes from
@@ -798,6 +903,15 @@ Feature: Referencing files, skills, commands and context
       | routes/posts.$postId.tsx   |
       | app/[id]/page.tsx          |
 
+  # Upstream #25066: desktop chips were tinted pills whose colours fell to 1.7:1 on some themes;
+  # the phone's chips had already lost their pill.
+  @backlog @shared @priority-low
+  Scenario: References in text read like links on every theme
+    Given the user's theme is any built-in theme, light or dark
+    When a message holds a file, skill and thread reference
+    Then each reference is drawn as coloured text and icon without a pill, at the size of the text around it
+    And each reference's colour has a contrast of at least 4.5:1 against the background
+
   @backlog @desktop
   Scenario: Threads on this environment are offered ahead of files
     Given the environment has another thread "Auth refactor" and the project has the file "auth.ts"
@@ -878,6 +992,15 @@ Feature: Referencing files, skills, commands and context
     And the user opened another thread meanwhile
     When the file arrives
     Then the other thread's draft carries no new attachment
+
+  # Upstream #23447: a pasted file whose chip was deleted while it downloaded came back once it arrived.
+  @backlog @desktop
+  Scenario: A pasted file whose chip was deleted while it arrived stays out of the draft
+    Given the user pasted a reference whose file is still being fetched
+    When the user deletes its chip
+    And the file arrives
+    Then the draft does not carry the file and its chip does not return
+    But if the user undid the deletion before the file arrived, the file is attached
 
   @backlog @desktop
   Scenario: A copied preview annotation brings its screenshot along

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23156
 #   https://github.com/pingdotgg/t3code/pull/24032
 #   https://github.com/pingdotgg/t3code/pull/25133
 #   https://github.com/pingdotgg/t3code/pull/24709
@@ -8,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/8513
 #   https://github.com/pingdotgg/t3code/pull/10158
 #   https://github.com/pingdotgg/t3code/pull/25315
+#   https://github.com/pingdotgg/t3code/pull/29891
 #   docs/user/keyboard-focus.md
 #   docs/user/appearance.md (Change theme, Change appearance)
 #   apps/web/src/components/CommandPalette.tsx
@@ -196,6 +198,20 @@ Feature: Command palette
         | branch              | Branch: zebra  |
         | linked pull request | PR: #42        |
 
+    # Upstream #23156: a thread's palette row showed its linked pull request as pending while
+    # the sidebar knew it was merged, closed or a draft.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A thread's palette row shows its linked pull request's state
+      Given "Fix checkout" is linked to pull request 42, which is <state>
+      When the user finds "Fix checkout" in the palette
+      Then its row shows pull request 42 as <state>, as the sidebar does
+
+      Examples:
+        | state  |
+        | merged |
+        | closed |
+        | a draft |
+
     @desktop
     Scenario Outline: Threads are found by more than their title
       Given a thread whose <field> contains "zebra"
@@ -303,6 +319,15 @@ Feature: Command palette
     @desktop
     Scenario: Choosing a project opens its latest thread
       Given the project "docs-site" has the threads "Write intro" and "Fix links"
+      When the user searches the palette for "docs-site"
+      And the user moves the highlight to "docs-site" and presses Enter
+      Then the thread "Fix links" opens
+
+    # Upstream #29891: the latest-thread pick skips subagent and side-chat threads.
+    @backlog @desktop @mobile @priority-high
+    Scenario: Choosing a project opens its latest main thread, not a subagent or side chat
+      Given the project "docs-site" has the thread "Fix links"
+      And a subagent of "Fix links" and a side chat on it were updated after its last message
       When the user searches the palette for "docs-site"
       And the user moves the highlight to "docs-site" and presses Enter
       Then the thread "Fix links" opens

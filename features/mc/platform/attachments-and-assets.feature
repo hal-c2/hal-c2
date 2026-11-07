@@ -1,5 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24245
 #   https://github.com/pingdotgg/t3code/pull/24275
+#   https://github.com/pingdotgg/t3code/pull/27440
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URLs, claims, persist, signed asset URLs)
 #   apps/server-ex/lib/hal_c2/web/router.ex (POST /api/attachments/upload/:token, GET /api/assets/:token)
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (project-favicon-assets, native-app-icon-assets,
@@ -336,6 +338,14 @@ Feature: Attachments and assets served by the MC
       | GIF                                     |
       | WebP                                    |
       | JPEG whose metadata is large            |
+  # Upstream #24245: an attachment's size went missing when the home was reached through a link
+  @backlog @mc @priority-low
+  Scenario: An image attachment's size is given when the HAL-C2 home is behind a symbolic link
+    Given the HAL-C2 home is reached through a symbolic link
+    And a thread has a PNG image attachment of 390 by 844 pixels
+    When the client asks for an asset URL for the attachment
+    Then the answer carries the width 390 and the height 844
+
 
   # Legacy: packages/shared/src/imageDimensions.ts (readJpeg, exifOrientationSwapsAxes)
   @backlog @mc @priority-low
@@ -401,6 +411,15 @@ Feature: Attachments and assets served by the MC
     And the client reads the URL within its hour
     Then the MC serves the file
     And a URL signed by a different MC's key is still refused
+
+  # Upstream #27440: a thread with hundreds of images asked for every image's signed URL at once,
+  # and over a remote connection the burst queued behind itself.
+  @backlog @shared @priority-low
+  Scenario: A thread with many images asks its machine for a few image addresses at a time
+    Given the thread "Screenshots" on a remote machine has 300 images
+    When the user opens "Screenshots"
+    Then at most 6 image addresses are asked of that machine at once
+    And the images on screen are shown as their addresses arrive
 
   @mc
   Scenario: Upload and asset URLs work through any MC of the cluster

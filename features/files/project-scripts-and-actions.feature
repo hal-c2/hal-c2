@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/18412
+#   https://github.com/pingdotgg/t3code/pull/31857
 #   https://github.com/pingdotgg/t3code/pull/13903
 #   https://github.com/pingdotgg/t3code/pull/18891
 #   https://github.com/pingdotgg/t3code/pull/20891
@@ -22,6 +23,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15394
 #   https://github.com/pingdotgg/t3code/pull/15490
 #   https://github.com/pingdotgg/t3code/pull/16290
+#   https://github.com/pingdotgg/t3code/pull/23640
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -182,6 +184,22 @@ Feature: Project actions
       Then "Stop db" runs when a thread settles
       And "Teardown" no longer does
 
+    # Upstream #31857: a project action's dev server kept running after its thread settled; an
+    # action can now opt in to having its terminal stopped then.
+    @backlog @mc @shared
+    Scenario Outline: An action that stops on settle has its terminal stopped when the thread settles
+      Given "Dev" of "shop" is set to stop when its thread settles
+      And the user ran "Dev" in a thread of "shop", and its dev server is running
+      When the thread settles <how>
+      Then "Dev"'s terminal and the processes it started are stopped
+      And its output can still be read
+      But a terminal the user opened in that thread keeps running
+
+      Examples:
+        | how                       |
+        | by the user's hand        |
+        | automatically after a day |
+
   Rule: Adding, editing and removing actions
 
     @desktop @mobile @tui @backlog-mobile
@@ -205,6 +223,13 @@ Feature: Project actions
     Scenario: Editing an action
       When the user changes the command of "Dev" to "bun run dev --host"
       Then "Dev" runs "bun run dev --host"
+
+    # Upstream #23640: on a phone or tablet the edit control of a saved action showed only on hover.
+    @backlog @mobile
+    Scenario: A saved action can be edited from a touch screen
+      Given the user is on a touch screen with no pointer that hovers
+      When the user looks at the project's actions
+      Then each saved action offers to be edited without first hovering or focusing it
 
     @desktop @mobile @tui @backlog-mobile
     Scenario: Deleting an action asks first and cannot be undone

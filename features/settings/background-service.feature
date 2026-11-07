@@ -1,8 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29244
 #   https://github.com/pingdotgg/t3code/pull/23541 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/19486
 #   https://github.com/pingdotgg/t3code/pull/14361
 #   https://github.com/pingdotgg/t3code/pull/22856
+#   https://github.com/pingdotgg/t3code/pull/27996
+#   https://github.com/pingdotgg/t3code/pull/24673
+#   https://github.com/pingdotgg/t3code/pull/29901
+#   https://github.com/pingdotgg/t3code/pull/29872
+#   https://github.com/pingdotgg/t3code/pull/23878
 #   docs/user/background-service.md
 #   apps/server-ex/lib/hal_c2/background_policy.ex (profiles, leases, host power, pause rules)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (server.reportClientActivity)
@@ -151,6 +157,23 @@ Feature: Background activity and the background service
         | git fetch               | -5    | 0 seconds                    |
         | provider health         | empty | the smallest allowed         |
 
+    # Upstream #24673: retyping 300 as 120 saved 30, 3, 0, 1 and 12 on the way, and 0 turns
+    # health checks off.
+    @backlog @shared
+    Scenario: An interval is saved when the user finishes editing it
+      Given the provider health check interval is 300 seconds
+      When the user deletes it and types 120
+      Then nothing is saved while the user types
+      When the user leaves the field
+      Then the interval is saved as 120 seconds, once
+
+    # Upstream #24673
+    @backlog @shared @priority-low
+    Scenario: An interval cleared and left keeps its saved value
+      Given the provider health check interval is 300 seconds
+      When the user clears it and leaves the field
+      Then the interval is still 300 seconds
+
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (host power monitor intervals, minimum 5, normalizeIntervalSeconds)
     @backlog @desktop @priority-low
     Scenario Outline: Host power checks cannot be set faster than every 5 seconds
@@ -262,6 +285,16 @@ Feature: Background activity and the background service
       When the user installs the background service again
       Then the service runs normally
 
+    # Upstream #23878: a plain install rewrote a service that served another home onto the empty
+    # default one, so the user's projects and threads disappeared from the app.
+    @backlog @mc
+    Scenario: Installing the service refuses to move a service that serves another HAL-C2 home
+      Given the background service serves the HAL-C2 home "/srv/hal-c2"
+      When the user installs the background service for the default HAL-C2 home
+      Then the install is refused before anything is downloaded, stopped or rewritten
+      And the error names "/srv/hal-c2" and how to install for it
+      And service status, update, restart and uninstall name that home the same way and change nothing
+
     @backlog @mc
     Scenario: The service survives an agent process being killed for memory
       Given the background service is running a provider's agent process
@@ -317,11 +350,33 @@ Feature: Background activity and the background service
       Then the service definition is rewritten
       And a running service is marked as waiting for a restart
 
+    # Upstream #29901: an update run again without restarting said the service ran the new version
+    # it had not switched to yet.
+    @backlog @mc @priority-low
+    Scenario: An update that leaves the service waiting for a restart says which version still runs
+      Given the background service was pointed at 0.1.6 and is waiting for a restart
+      When the user updates to 0.1.6 again without restarting the service
+      Then the update ends saying the service is still running the version before 0.1.6
+
     @backlog @mc @priority-low
     Scenario: Restarting the service leaves a service for another HAL-C2 home alone
       Given a background service that serves a different HAL-C2 home
       When the user restarts the service from this home
       Then the other home's service is not restarted
+
+    # Upstream #29872: uninstalling the service from a test home removed the live service of
+    # another home.
+    @backlog @mc @priority-low
+    Scenario Outline: Uninstalling the service leaves a service for another HAL-C2 home alone
+      Given a background service that <serves>
+      When the user uninstalls the service from this home
+      Then <outcome>
+
+      Examples:
+        | serves                                    | outcome                                                                   |
+        | serves a different HAL-C2 home            | the service is kept and the user is told to name its home to remove it    |
+        | names no HAL-C2 home                      | the service is removed                                                    |
+        | has a status that cannot be read          | the service is removed                                                    |
 
     @backlog @mc
     Scenario: A repair that fails does not leave the service stopped
@@ -335,6 +390,16 @@ Feature: Background activity and the background service
       When the user installs the background service
       Then the installer turns lingering on if it may
       And otherwise the status says to run the loginctl enable-linger command as an administrator
+
+    # Upstream #29244: with the XDG config root relocated, setup wrote the unit outside systemd's
+    # search path, and the installer's shell could disagree with the user manager about that root.
+    @backlog @mc @priority-low
+    Scenario: On Linux the service is installed where the user's service manager looks
+      Given the user's service manager reads its user units from a relocated config folder
+      And the installing shell names a different config folder
+      When the user installs the background service
+      Then the service is written where the service manager looks, and starts at login
+      And its status, restart and uninstall use that same folder
 
     @backlog @mc @priority-low
     Scenario: Windows has no background service yet
@@ -350,3 +415,60 @@ Feature: Background activity and the background service
       When the user restarts the service from a terminal in one of its threads
       Then the user is told the restart is under way
       And the MC comes back running under the service
+
+
+    # Upstream #27996: the background service listened on the whole local network with a pairing
+    # code as its only lock, and nothing said so. Setting up now asks how other devices reach the
+    # machine. Its HAL-C2 Connect route is left out (Connect is not supported yet).
+    @backlog @mc @priority-high
+    Scenario: A new background service answers only on this machine until the local network is chosen
+      Given the background service is not installed
+      When the user installs the background service without choosing the local network
+      Then the MC answers only on this machine
+      When the user chooses to let other devices reach it over the local network
+      Then the MC also answers on the local network with a pairing code as its lock
+
+    # Upstream #27996: a service installed before the choice existed keeps listening on the network.
+    @backlog @mc
+    Scenario: A service from before the choice keeps the local network and says so
+      Given the background service was installed before the local network was a choice
+      When the user checks the service status
+      Then the status shows the local network as on, the old default
+
+    # Upstream #27996: one command sets up how devices reach the machine, from a terminal or a script.
+    @backlog @mc
+    Scenario Outline: Setting up the service <how>
+      Given the background service is not installed
+      When the user sets up the service <how>
+      Then <outcome>
+
+      Examples:
+        | how                                         | outcome                                                       |
+        | from a terminal                             | the user is asked whether other devices use the local network |
+        | with the local network named on the command | nothing is asked and the local network is on                  |
+        | with no terminal and no choice given        | setup stops and prints the options to pass                    |
+
+    # Upstream #27996: running setup again restarts only for a setting read at start.
+    @backlog @mc
+    Scenario: Setting up again restarts the service only when its listening changed
+      Given the background service runs with the local network on
+      When the user sets up the service again with the local network on
+      Then the service is not restarted
+      When the user sets up the service again with the local network off
+      Then the user is warned that running agent turns will stop
+      And the service restarts answering only on this machine
+
+    # Upstream #27996: the status shows the service and how other devices reach it together.
+    @backlog @mc
+    Scenario: The service status shows how other devices reach this machine
+      Given the background service runs with the local network on
+      When the user checks the service status
+      Then the status shows the service's version and that the local network is on with a pairing code as its lock
+      And it says anyone on the local network or tailnet can reach the port
+
+    # Upstream #27996: where no background service can run, setup prints the command to run instead.
+    @backlog @mc @priority-low
+    Scenario: Without a background service setup names the command to run the MC in a terminal
+      Given the machine cannot run a background service
+      When the user sets up the service
+      Then setup prints the command that runs the MC in a terminal with the chosen routes

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27252
+#   https://github.com/pingdotgg/t3code/pull/23313
 #   https://github.com/pingdotgg/t3code/pull/19646
 #   https://github.com/pingdotgg/t3code/pull/24299
 #   https://github.com/pingdotgg/t3code/pull/23169
@@ -10,6 +12,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15442
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/24172
+#   https://github.com/pingdotgg/t3code/pull/26782
+#   https://github.com/pingdotgg/t3code/pull/28520
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, message.updated, run.created,
 #     run.updated, run-attempt.created, run-attempt.updated, node.updated, turn-item.updated,
 #     provider-session.attached, provider-session.updated, provider-session.detach,
@@ -367,6 +371,7 @@ Feature: Runs and turns
       | the provider gives up on its usage limit     | Usage limit reached    |
       | the user stops the turn while it is retrying | Provider retry stopped |
 
+  # Upstream #26782: a database that could not be written during a turn read as "Provider turn failed."
   @backlog @mc @priority-high
   Scenario Outline: A failed turn says what the user can do about it
     When a turn of "t1" fails because <cause>
@@ -379,6 +384,7 @@ Feature: Runs and turns
       | the provider could not start the turn                   | The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.   |
       | the provider's event stream closed mid-turn             | The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.  |
       | the MC cannot tell whether handed-over history arrived  | HAL-C2 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.       |
+      | the MC cannot write its database while recording it     | The MC could not write its database. Check free disk space and that its data folder is writable, then retry the turn.    |
       | of an internal error the provider did not explain       | Provider turn failed.                                                                                                    |
 
   @mc @priority-high
@@ -393,6 +399,19 @@ Feature: Runs and turns
       | an API key, token, password or secret          | "[REDACTED]" in place of the value       |
       | a prefixed key, client secret or refresh token | "[REDACTED]" in place of the value       |
       | a URL that cannot be read                      | "[REDACTED_URL]" in place of the URL     |
+  # Upstream #23313: values under keys like "client_secret" or "clientSecret" survived, being no bare key word.
+  @backlog @mc @priority-high
+  Scenario Outline: A failure message hides values under compound credential keys
+    When the provider fails a turn of "t1" with a message holding <text>
+    Then the failure the thread records shows <shown>
+
+    Examples:
+      | text                                                 | shown                                          |
+      | client_secret=abc refresh_token=def                  | client_secret=[REDACTED] refresh_token=[REDACTED] |
+      | {"client_secret":"abc"}                              | {"client_secret":"[REDACTED]"}                 |
+      | clientSecret: abc                                    | clientSecret: [REDACTED]                       |
+      | max_tokens=4096 input_tokens: 12                     | max_tokens=4096 input_tokens: 12               |
+
 
   @mc @priority-low
   Scenario: A very long failure message is cut short
@@ -617,6 +636,59 @@ Feature: Runs and turns
     Then the run is settled as stopped with its partial output kept
     And its pending requests are closed and its checkpoint is captured
     And a late result from the provider cannot undo the stop or replace a newer attempt
+
+  # Upstream #28520: a run whose provider turn had already completed stayed running through Stop and
+  # Force stop, and every later message stayed queued until the server restarted.
+  @backlog @mc @shared @priority-high
+  Scenario Outline: Stopping a run whose provider turn already finished ends it
+    Given "t1" has a run still running whose provider turn already completed
+    When the user chooses "<stop>"
+    Then the run ends as interrupted
+    And the next message to "t1" starts a run
+
+    Examples:
+      | stop       |
+      | Stop       |
+      | Force stop |
+
+  # Upstream #27252: under kernel memory throttling every provider froze for hours; Stop waited on
+  # the provider with no time limit and queued every later action of the thread behind it.
+  @backlog @mc @shared @priority-high
+  Scenario: A Stop the agent does not answer within 15 seconds says so and offers Force stop
+    Given "t1" has a running turn whose provider does not answer
+    When the user presses Stop
+    Then the thread says "Stopping" until the turn really ends
+    And after 15 seconds it says "Agent not responding to Stop" and offers "Force stop"
+    And the turn is not marked stopped while the agent may still be running
+    And later actions on "t1" are not held behind the Stop
+
+  # Upstream #27252
+  @backlog @mc @shared @priority-high
+  Scenario: Force stop ends the turn and kills the thread's own agent
+    Given the user was offered "Force stop" for "t1"
+    When the user chooses "Force stop"
+    Then the agent of "t1" and its processes are killed, even while the kernel throttles them
+    And the turn ends saying "Force stopped by user"
+    And the next message to "t1" starts a fresh provider session
+
+  # Upstream #27252: Codex and OpenCode serve every thread of an instance from one process.
+  @backlog @mc @shared
+  Scenario Outline: Force stop leaves a shared provider process running while other threads work in it
+    Given "t1" and <others> share one provider process
+    When the user force stops "t1"
+    Then the turn of "t1" ends
+    And <outcome>
+
+    Examples:
+      | others                       | outcome                                                                          |
+      | two threads that are working | the process keeps running and the user is told it still serves 2 working threads |
+      | only idle threads            | the process is released and the idle threads reopen it on their next turn        |
+
+  # Upstream #27252: killing processes stays a user decision.
+  @backlog @mc
+  Scenario: Agents cannot force stop a thread
+    When an agent looks for a way to force stop a thread through HAL-C2's tools
+    Then none is offered
 
   # Upstream #15571: an interrupted provider start cleans up its session
   @mc @priority-high

@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/17316
+#   https://github.com/pingdotgg/t3code/pull/26267
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (preview, previewAutomation and localServers shapes; unknown MC)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (cross-MC subscriptions, remote/4 errors, unsubscribe on close)
 #   apps/server-ex/lib/hal_c2/preview.ex (serverEpoch per MC run, watcher monitoring)
@@ -97,6 +98,27 @@ Feature: Preview across MCs and devices
     Given the desktop is connected to an MC on another machine
     When the user opens a new browser tab
     Then the suggestions are the dev servers running on the MC's machine
+
+  # Upstream #26267: a server's row cut off where it came from, and hovering hid it behind Stop.
+  @backlog @desktop @priority-low
+  Scenario: A running dev server's row says where it came from
+    Given a dev server a thread's terminal started listens on port 47123
+    When the user looks at the running servers
+    Then its row shows "localhost:47123" and, below it, the terminal and process that run it
+    And pointing at the row leaves that text in view beside Stop
+
+  # Upstream #26267: as with pull request links, a modified or middle click opens the system browser.
+  @backlog @desktop
+  Scenario Outline: A dev server can be opened in the system browser
+    Given a dev server on the MC's machine listens on port 47123
+    When the user <clicks> its row in the running servers
+    Then <result>
+
+    Examples:
+      | clicks                          | result                                                         |
+      | clicks                          | a browser tab opens on it in the panel                         |
+      | mod-clicks                      | the system browser opens it at an address this client can reach |
+      | middle-clicks                   | the system browser opens it at an address this client can reach |
 
   @backlog @desktop @mobile @priority-low
   Scenario: A client with no MC of its own forwards a dev server's port itself

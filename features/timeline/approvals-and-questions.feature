@@ -8,6 +8,8 @@
 #   https://github.com/pingdotgg/t3code/pull/12900
 #   https://github.com/pingdotgg/t3code/pull/21503
 #   https://github.com/pingdotgg/t3code/pull/21393
+#   https://github.com/pingdotgg/t3code/pull/26255
+#   https://github.com/pingdotgg/t3code/pull/30744
 #   docs/user/permission-modes.md
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, thread.user-input.dismiss, approval_request, user_input_request)
 #   packages/contracts/src/providerPolicy.ts (ProviderApprovalDecision)
@@ -104,6 +106,26 @@ Feature: Approvals and agent questions
     Then the user sees "2/3"
     When the user moves back
     Then the user sees "1/3"
+
+  # Upstream #26255: a pending approval is answered on the timeline row of the call it waits on,
+  # with its full command, not in a notice away from that row. The phone keeps its approval card.
+  @backlog @desktop @tui @priority-high
+  Scenario: A pending approval is answered on the row of the call it waits on
+    Given the agent asks to run "npm run migrate -- --all"
+    When the user looks at the thread
+    Then the call's row shows the whole command, says it is waiting for approval and offers Approve and Decline
+    And the thread shows nothing working while it waits
+    When the user approves it from the row
+    Then the row reads as a running command
+
+  # Upstream #26255: an approval whose call is not in the loaded history, or inside a folded group,
+  # is still shown and can be answered.
+  @backlog @desktop @tui @priority-high
+  Scenario: A pending approval whose row is not loaded can still be answered
+    Given the agent asks to run "npm test" in a turn older than the loaded history
+    When the user looks at the thread
+    Then the approval for "npm test" is shown at the end of the thread
+    And the user can answer it there
 
   # Legacy: packages/client-runtime/src/pendingRequests.ts (derivePendingRequests sorts by createdAt)
   @backlog @desktop @mobile @priority-high
@@ -256,6 +278,15 @@ Feature: Approvals and agent questions
     Given the agent asks "Which database?" and the user has typed "DuckDB" without sending it
     When the user opens a new thread and comes back
     Then the answer still reads "DuckDB" on the same question
+
+  # Upstream #30744: on iOS a written answer kept typos the composer would have corrected.
+  @backlog @mobile
+  Scenario: The phone's keyboard corrects words in a written answer
+    Given the agent asks "Which database?" with three options
+    When the user writes "hellp definately" with the keyboard's corrections on
+    Then the answer reads "Hello definitely"
+    When the user picks an option and then writes again
+    Then the option is unchecked and the written answer is corrected the same way
 
   @backlog @shared
   Scenario: A link in the agent's question opens the way a chat link does

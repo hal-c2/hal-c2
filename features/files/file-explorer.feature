@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/17132
 #   https://github.com/pingdotgg/t3code/pull/17378
 #   https://github.com/pingdotgg/t3code/pull/11500
+#   https://github.com/pingdotgg/t3code/pull/26579
 #   apps/server-ex/lib/hal_c2/workspace.ex (index, list_entries)
 #   apps/web/src/components/files/FileBrowserPanel.tsx
 #   apps/web/src/components/files/useDirectoryEntries.ts
@@ -20,6 +21,10 @@
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp, FileTreeModel.cpp
 #   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   https://github.com/pingdotgg/t3code/pull/21920
+#   https://github.com/pingdotgg/t3code/pull/23398
+#   https://github.com/pingdotgg/t3code/pull/28521
+#   https://github.com/pingdotgg/t3code/pull/29650
 
 Feature: Exploring project files
   The user can walk a project's files from any client without leaving the thread.
@@ -90,12 +95,36 @@ Feature: Exploring project files
     And nothing from the linked folder is returned
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: only files and folders)
+  # Upstream #21920: links inside the project are now listed as what they point to.
   @mc @backlog @priority-high
-  Scenario: Links and special files are not listed as entries
-    Given "shop" holds a link to a file and a named pipe next to "README.md"
+  Scenario: Special files are not listed as entries
+    Given "shop" holds a named pipe next to "README.md"
     When a client lists the folder "" of "shop"
     Then "README.md" is returned
-    And the link and the named pipe are not
+    And the named pipe is not
+
+  # Upstream #21920: the Files tree never showed links to files or folders in the project.
+  @mc @backlog
+  Scenario: A link to a file or folder in the project is listed as what it points to
+    Given "shop" holds "link.txt", a link to "real.txt", and "linkdir", a link to the folder "realdir"
+    When a client lists the folder "" of "shop"
+    Then "link.txt" is returned as a file
+    And "linkdir" is returned as a folder
+
+  # Upstream #21920: links the MC would refuse to open, or that loop, stay out of the tree.
+  @mc @backlog
+  Scenario Outline: A link that cannot be followed safely is not listed
+    Given "shop" holds a link "<link>" that <points>
+    When a client lists the folder "" of "shop"
+    Then "<link>" is not returned
+
+    Examples:
+      | link    | points                                      |
+      | gone    | points to nothing                           |
+      | outside | points to a folder elsewhere on the machine |
+      | git     | points into ".git"                          |
+      | self    | points to the folder it is in               |
+      | up      | points to the folder above it               |
 
   # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (list: check-ignore in batches, optional)
   @mc @backlog @priority-low
@@ -110,6 +139,15 @@ Feature: Exploring project files
     Given "shop" is not a git repository or git is not installed
     When a client lists the folder "" of "shop"
     Then its entries are returned with none marked as ignored
+
+  # Upstream #29650: git refuses paths inside a submodule from the outer repository, so nothing
+  # inside a submodule was marked ignored and Expand all walked into its "node_modules".
+  @mc @backlog
+  Scenario: Folders a submodule ignores are marked as ignored
+    Given "shop" has the submodule "vendor/ui", which ignores its "node_modules" folder
+    When a client lists the folder "vendor/ui" of "shop"
+    Then "vendor/ui/node_modules" is marked as ignored
+    And a plain clone inside "shop" is still judged by the ignore rules of "shop"
 
   # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (withDirectoryAncestors)
   @mc @backlog
@@ -242,6 +280,15 @@ Feature: Exploring project files
     And the open file shows its new contents
     And an active filter is applied to the new listing
 
+  # Upstream #28521: clicking a file in the tree moved keyboard focus to the row that last had it
+  # in that file's tab, so the selection and the focus sat on different rows.
+  @backlog @desktop
+  Scenario: Clicking a file in the tree keeps the keyboard on that row
+    Given the user had focused "src/lib/tax.ts" in the tree and then opened another file
+    When the user clicks "src/lib/cart.ts" in the tree
+    Then "src/lib/cart.ts" opens and is the focused and selected row
+    And the arrow keys move from "src/lib/cart.ts"
+
   @backlog @desktop @priority-low
   Scenario: Choosing a file in the tree does not clear the user's filter
     Given the user filtered the tree by "cart"
@@ -249,6 +296,7 @@ Feature: Exploring project files
     Then the file opens and the filter stays as typed
     But opening the same file from a message clears the filter and reveals it
 
+  # Upstream #26579: Copy mention and Add to chat in a file's menu did nothing when clicked with the pointer.
   @desktop
   Scenario Outline: File actions available from a file entry
     When the user chooses to <action> "src/app.ts"
@@ -293,3 +341,16 @@ Feature: Exploring project files
     Given the project's folder is too large to scan within the initial scan budget
     When the user searches file contents
     Then the search fails with a timeout instead of showing partial content results
+
+  # Upstream #23398: on Linux and macOS a backslash in a folder's name was read as a separator,
+  # so the folder opened empty or failed to list.
+  @backlog @mc @shared
+  Scenario Outline: A folder with a backslash in its name lists its files on Linux and macOS
+    Given "shop" on a Linux or macOS environment has the folder "<folder>" holding "q3-notes.md"
+    When the user expands "<folder>" in the file explorer
+    Then "q3-notes.md" is listed inside "<folder>"
+
+    Examples:
+      | folder       |
+      | exports\2026 |
+      | ..\archive   |
