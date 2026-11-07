@@ -9,11 +9,16 @@
 //! one again (`pullRequests.invalidate`) and the project's list
 //! (`pullRequests.list`).
 //!
+//! Rows read bottom to top within a stack (the host's own, or links chained
+//! by base branch), stacks ordered by their latest activity. A stack layer the
+//! user dismissed is no row but stays in `dismissed`, to link again.
+//!
 //! [`PullRequests`] is the core: it takes the thread's row and the MC's
 //! replies and says what to ask of the MC as [`Effect`]s.
 //! [`ThreadPullRequests`] is the object QML binds; the right panel points it
 //! at the thread shown, and it runs those effects on the shell's MC.
 
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -24,6 +29,7 @@ use regex::Regex;
 use serde_json::{Map, json};
 
 use super::rows::{ListRows, RowChange, RowSource, int};
+use super::time::{Clock, parse_iso, relative_time};
 use crate::json::Json;
 use crate::mc::{Mc, McError};
 use crate::store;
@@ -50,6 +56,10 @@ pub const ROLES: &[&str] = &[
     "sourceLabel",
     "unlinkLabel",
     "stackLabel",
+    "linkedNote",
+    "depth",
+    "stackSize",
+    "stackNote",
 ];
 
 fn text<'a>(object: &'a Json, key: &str) -> &'a str {
@@ -109,16 +119,22 @@ fn azure_host(host: &str) -> bool {
 }
 
 /// A repository's pull request page, as the MC builds it
-/// (mcp/tools/pull_requests.ex url/4) from the host alone.
+/// (mcp/tools/pull_requests.ex url/4) from the host alone; empty on a host it
+/// does not know.
 pub fn page_of(host: &str, repository: &str, number: i64) -> String {
-    if host_of(host, "gitlab.com", "gitlab") {
+    let named = |label: &str| host.split('.').any(|part| part == label);
+    if host == "codeberg.org" || named("forgejo") || named("gitea") {
+        format!("https://{host}/{repository}/pulls/{number}")
+    } else if host_of(host, "github.com", "github") {
+        format!("https://{host}/{repository}/pull/{number}")
+    } else if host_of(host, "gitlab.com", "gitlab") {
         format!("https://{host}/{repository}/-/merge_requests/{number}")
     } else if host_of(host, "bitbucket.org", "bitbucket") {
         format!("https://{host}/{repository}/pull-requests/{number}")
     } else if azure_host(host) {
         format!("https://{host}/{repository}/pullrequest/{number}")
     } else {
-        format!("https://{host}/{repository}/pull/{number}")
+        String::new()
     }
 }
 
@@ -235,7 +251,7 @@ pub fn resolve(input: &str, repositories: &Repositories) -> Result<Target, Strin
     }
     if let Some(target) = parse_url(trimmed) {
         let host = target.host.split(':').next().unwrap_or("");
-        let wanted = canonical_key(&format!("{}/{}", target.host, target.repository));
+        let wanted = canonical_key(&format!("{host}/{}", target.repository));
         let azure = wanted.starts_with("dev.azure.com/");
         let readable = repositories.readable.iter().any(|(h, r)| {
             if azure {
@@ -262,12 +278,182 @@ pub fn resolve(input: &str, repositories: &Repositories) -> Result<Target, Strin
         return Err("Paste a full URL to link a pull request from another repository.".into());
     }
     let number = i64::from(number);
+    let url = page_of(host, repository, number);
+    if url.is_empty() {
+        return Err("Paste a full URL; this project's host has no known pull request URL.".into());
+    }
     Ok(Target {
         host: host.clone(),
         repository: repository.clone(),
         number,
-        url: page_of(host, repository, number),
+        url,
     })
+}
+
+// ThreadPullRequestsPanel's SOURCE_LABELS.
+fn source_label(source: &str) -> &'static str {
+    match source {
+        "manual" => "Linked by you",
+        "created" => "Created from this thread",
+        "agent" => "Linked by the agent",
+        "stack" => "Found in the stack",
+        "stack-dismissed" => "Dismissed",
+        _ => "",
+    }
+}
+
+/// Where a row sits in its stack.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Line {
+    /// From the bottom of the stack.
+    depth: usize,
+    /// The stack's size on its bottom row, else 0 (a single, or not the
+    /// bottom).
+    stack_size: usize,
+    /// The host's own stack, rather than links chained by base branch.
+    native: bool,
+}
+
+/// A stack of a thread's links, bottom to top.
+struct Chain {
+    native: bool,
+    layers: Vec<Json>,
+}
+
+fn repository_key(link: &Json) -> String {
+    format!(
+        "{}/{}",
+        text(link, "host").to_lowercase(),
+        text(link, "repository").to_lowercase()
+    )
+}
+
+fn synced(link: &Json) -> bool {
+    link.get("snapshot").is_some_and(Json::is_object)
+}
+
+/// packages/shared threadPullRequests.ts resolveThreadPullRequestChains: the
+/// host's stacks win; the rest chain by matching one link's base branch to
+/// another's head in the same repository. A head several links share names
+/// no parent, and links in a cycle stand alone.
+fn chains_of(links: &[Json]) -> Vec<Chain> {
+    let mut chains = Vec::new();
+    let mut placed = HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut stacks: HashMap<String, Vec<Json>> = HashMap::new();
+    for link in links {
+        let Some(stack) = link
+            .get("stack")
+            .and_then(Json::as_object)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let id = match stack.get("id") {
+            Some(Json::String(id)) => id.clone(),
+            Some(Json::Number(id)) => id.to_string(),
+            Some(Json::Bool(id)) => id.to_string(),
+            _ => String::new(),
+        };
+        let key = format!("{}#stack:{id}", repository_key(link));
+        if !stacks.contains_key(&key) {
+            order.push(key.clone());
+        }
+        stacks.entry(key).or_default().push(link.clone());
+    }
+    for key in order {
+        let mut members = stacks.remove(&key).unwrap_or_default();
+        let position: HashMap<i64, usize> = members[0]
+            .get("stack")
+            .and_then(|s| s.get("layers"))
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(at, layer)| (int_of(layer, "number", 0), at))
+            .collect();
+        members.sort_by_key(|m| position.get(&int_of(m, "number", 0)).copied().unwrap_or(0));
+        placed.extend(members.iter().map(key_of));
+        chains.push(Chain {
+            native: true,
+            layers: members,
+        });
+    }
+    let remaining: Vec<&Json> = links
+        .iter()
+        .filter(|link| !placed.contains(&key_of(link)))
+        .collect();
+    let branch_key = |link: &Json, field: &str| {
+        format!(
+            "{}:{}",
+            repository_key(link),
+            text(snapshot_of(link), field)
+        )
+    };
+    // The link whose head each branch is, or None when several are.
+    let mut by_head: HashMap<String, Option<usize>> = HashMap::new();
+    for (at, link) in remaining.iter().enumerate() {
+        if synced(link) {
+            let key = branch_key(link, "headBranch");
+            let head = if by_head.contains_key(&key) {
+                None
+            } else {
+                Some(at)
+            };
+            by_head.insert(key, head);
+        }
+    }
+    let parent_of = |at: usize| {
+        let link = remaining[at];
+        if !synced(link) {
+            return None;
+        }
+        by_head
+            .get(&branch_key(link, "baseBranch"))
+            .copied()
+            .flatten()
+    };
+    let has_child: HashSet<usize> = (0..remaining.len())
+        .filter_map(|at| parent_of(at).filter(|parent| *parent != at))
+        .collect();
+    // Walk from each top (a link nothing builds on) down its base chain.
+    for top in (0..remaining.len()).filter(|top| !has_child.contains(top)) {
+        let mut layers = Vec::new();
+        let mut cursor = Some(top);
+        while let Some(at) = cursor {
+            if !placed.insert(key_of(remaining[at])) {
+                break;
+            }
+            layers.insert(0, remaining[at].clone());
+            cursor = parent_of(at);
+        }
+        if !layers.is_empty() {
+            chains.push(Chain {
+                native: false,
+                layers,
+            });
+        }
+    }
+    for link in remaining {
+        if !placed.contains(&key_of(link)) {
+            chains.push(Chain {
+                native: false,
+                layers: vec![link.clone()],
+            });
+        }
+    }
+    chains
+}
+
+/// When `link` last moved: its host's update, else its linking; 0 unknown.
+fn activity_at(link: &Json, clock: &Clock) -> i64 {
+    let updated = text(snapshot_of(link), "updatedAt");
+    let at = if updated.is_empty() {
+        text(link, "linkedAt")
+    } else {
+        updated
+    };
+    parse_iso(at, clock.zone).map_or(0, |at| at.timestamp_millis())
 }
 
 /// What a row of `link` shows as `role`.
@@ -324,14 +510,7 @@ pub fn shown(link: &Json, role: &str) -> Value {
                 Value::from(format!("{head} → {base}").as_str())
             }
         }
-        // ThreadPullRequestsPanel's SOURCE_LABELS.
-        "sourceLabel" => label(match text(link, "source") {
-            "manual" => "Linked by you",
-            "created" => "Created from this thread",
-            "agent" => "Linked by the agent",
-            "stack" => "Found in the stack",
-            _ => "",
-        }),
+        "sourceLabel" => label(source_label(text(link, "source"))),
         "stackLabel" => {
             let layers = link
                 .get("stack")
@@ -405,9 +584,10 @@ pub enum Effect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Note {
     Count,
-    /// The rows' content: openCount.
+    /// The rows' content: openCount, dismissed, syncedLabel.
     Rows,
-    /// online, problem, notice, linking, refreshing, linkOpen.
+    /// online, available, problem, reference, canLink, preview, notice,
+    /// linking, refreshing, linkOpen.
     State,
     /// projectOpen, projectProblem.
     Project,
@@ -419,6 +599,8 @@ pub struct Shown {
     /// The thread row's `pullRequests`.
     pub links: Vec<Json>,
     pub online: bool,
+    /// Whether the environment keeps branch pull requests (or is not known).
+    pub available: bool,
     pub notice: String,
     pub project_id: String,
 }
@@ -430,9 +612,19 @@ pub struct PullRequests {
     thread: String,
     project_id: String,
     links: Vec<Json>,
+    lines: Vec<Line>,
+    /// The stack layers the user dismissed.
+    dismissed: Vec<Json>,
     online: bool,
+    available: bool,
     notice: String,
     problem: String,
+    /// What the link field holds; once the user typed (`dirty`), what it
+    /// names or why it names nothing.
+    reference: String,
+    dirty: bool,
+    repositories: Repositories,
+    clock: Clock,
     link_open: bool,
     linking: bool,
     refreshing: usize,
@@ -450,7 +642,10 @@ pub struct PullRequests {
 
 impl PullRequests {
     pub fn new() -> PullRequests {
-        PullRequests::default()
+        PullRequests {
+            available: true,
+            ..PullRequests::default()
+        }
     }
 
     pub fn environment(&self) -> &str {
@@ -477,6 +672,8 @@ impl PullRequests {
             self.project_problem.clear();
             self.notes.push(Note::Project);
             self.problem.clear();
+            self.reference.clear();
+            self.dirty = false;
             self.link_open = false;
             // desktop-qt kept these for the thread left, so a link or a
             // refresh in flight then stayed in flight on the next thread.
@@ -485,17 +682,46 @@ impl PullRequests {
             self.notes.push(Note::State);
         }
         self.project_id = shown.project_id;
-        if shown.online != self.online || shown.notice != self.notice {
+        if shown.online != self.online
+            || shown.notice != self.notice
+            || shown.available != self.available
+        {
             self.online = shown.online;
             self.notice = shown.notice;
+            self.available = shown.available;
             self.notes.push(Note::State);
         }
-        let links: Vec<Json> = shown
+        let (dismissed, visible): (Vec<Json>, Vec<Json>) = shown
             .links
             .into_iter()
-            .filter(|link| text(link, "source") != "stack-dismissed")
-            .collect();
+            .partition(|link| text(link, "source") == "stack-dismissed");
+        // pullRequestListLines: a stack sorts by its most recent layer and
+        // reads bottom to top beneath that slot.
+        let mut chains = chains_of(&visible);
+        let clock = &self.clock;
+        chains.sort_by_cached_key(|chain| {
+            let latest = chain.layers.iter().map(|l| activity_at(l, clock)).max();
+            std::cmp::Reverse(latest.unwrap_or(0))
+        });
+        let mut links = Vec::with_capacity(visible.len());
+        let mut lines = Vec::with_capacity(visible.len());
+        for chain in chains {
+            let size = chain.layers.len();
+            for (depth, layer) in chain.layers.into_iter().enumerate() {
+                links.push(layer);
+                lines.push(Line {
+                    depth,
+                    stack_size: if depth == 0 && size > 1 { size } else { 0 },
+                    native: chain.native,
+                });
+            }
+        }
+        if links == self.links && dismissed == self.dismissed {
+            return;
+        }
+        self.dismissed = dismissed;
         if links == self.links {
+            self.notes.push(Note::Rows);
             return;
         }
         let same_rows = links.len() == self.links.len()
@@ -504,6 +730,7 @@ impl PullRequests {
                 .zip(&self.links)
                 .all(|(a, b)| key_of(a) == key_of(b));
         self.links = links;
+        self.lines = lines;
         if same_rows {
             // The same pull requests, newly synced: rows change in place.
             self.changes.push(RowChange::Changed {
@@ -565,8 +792,112 @@ impl PullRequests {
         &self.notice
     }
 
-    pub fn problem(&self) -> &str {
-        &self.problem
+    /// LinkPullRequestDialog: what the reference says once the user typed,
+    /// ahead of why the last link failed.
+    pub fn problem(&self) -> String {
+        if self.dirty
+            && let Err(problem) = resolve(&self.reference, &self.repositories)
+        {
+            return problem;
+        }
+        self.problem.clone()
+    }
+
+    pub fn available(&self) -> bool {
+        self.available
+    }
+
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    /// The link field holds what the user typed.
+    pub fn set_reference(&mut self, reference: &str) {
+        if reference == self.reference && self.dirty {
+            return;
+        }
+        self.reference = reference.to_owned();
+        self.dirty = true;
+        self.notes.push(Note::State);
+    }
+
+    /// The repositories the thread's environment reads, for what the link
+    /// field names.
+    pub fn set_repositories(&mut self, repositories: Repositories) {
+        if repositories != self.repositories {
+            self.repositories = repositories;
+            self.notes.push(Note::State);
+        }
+    }
+
+    /// Whether Link would link what the field holds.
+    pub fn can_link(&self) -> bool {
+        !self.thread.is_empty()
+            && self.online
+            && !self.linking
+            && resolve(&self.reference, &self.repositories).is_ok()
+    }
+
+    /// `host/repository #number` of what the field names, else empty.
+    pub fn preview(&self) -> String {
+        resolve(&self.reference, &self.repositories).map_or_else(
+            |_| String::new(),
+            |t| format!("{}/{} #{}", t.host, t.repository, t.number),
+        )
+    }
+
+    /// The dismissed stack layers:
+    /// `[{key, number, repository, title, url, sourceLabel}]`.
+    pub fn dismissed(&self) -> Vec<Json> {
+        self.dismissed
+            .iter()
+            .map(|link| {
+                json!({
+                    "key": key_of(link),
+                    "number": int_of(link, "number", 0),
+                    "repository": text(link, "repository"),
+                    "title": text(snapshot_of(link), "title"),
+                    "url": text(link, "url"),
+                    "sourceLabel": source_label(text(link, "source")),
+                })
+            })
+            .collect()
+    }
+
+    /// "synced 5m ago": when the host was last read for any of them.
+    pub fn synced_label(&self) -> String {
+        let latest = self
+            .links
+            .iter()
+            .map(|link| text(snapshot_of(link), "syncedAt"))
+            .max()
+            .unwrap_or("");
+        if latest.is_empty() {
+            String::new()
+        } else {
+            format!("synced {}", self.ago(latest))
+        }
+    }
+
+    /// Reads times on `clock`.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
+        if !self.links.is_empty() {
+            self.changes.push(RowChange::Changed {
+                first: 0,
+                count: self.links.len(),
+                roles: &[],
+            });
+        }
+        self.notes.push(Note::Rows);
+    }
+
+    /// formatRelativeTimeLabel: "just now", then minutes, hours and days
+    /// ago; a time ahead of the clock (its skew) still reads "just now".
+    fn ago(&self, iso: &str) -> String {
+        parse_iso(iso, self.clock.zone).map_or_else(String::new, |at| {
+            relative_time(Some(at.min(self.clock.now())), &self.clock)
+        })
     }
 
     pub fn linking(&self) -> bool {
@@ -587,19 +918,14 @@ impl PullRequests {
 
     /// Opens or closes the link field; either way an old problem goes.
     pub fn set_link_open(&mut self, open: bool) {
-        if open == self.link_open && (open || self.problem.is_empty()) {
+        if open == self.link_open && (open || (self.problem.is_empty() && !self.dirty)) {
             return;
         }
         self.link_open = open;
         self.problem.clear();
+        self.reference.clear();
+        self.dirty = false;
         self.notes.push(Note::State);
-    }
-
-    fn set_problem(&mut self, problem: String) {
-        if problem != self.problem {
-            self.problem = problem;
-            self.notes.push(Note::State);
-        }
     }
 
     /// The project's open pull requests that are not linked:
@@ -629,12 +955,15 @@ impl PullRequests {
 
     /// Links what `input` names to the thread.
     pub fn link(&mut self, input: &str, repositories: &Repositories) {
+        self.set_repositories(repositories.clone());
         if self.thread.is_empty() || self.linking || !self.online {
             return;
         }
+        self.reference = input.to_owned();
+        self.dirty = true;
         let target = match resolve(input, repositories) {
             Ok(target) => target,
-            Err(problem) => return self.set_problem(problem),
+            Err(_) => return self.notes.push(Note::State),
         };
         self.linking = true;
         self.problem.clear();
@@ -749,14 +1078,18 @@ impl PullRequests {
                 self.linking = false;
                 match result {
                     Err(e) => self.problem = format!("Could not link the pull request: {e}"),
-                    Ok(_) => self.link_open = false,
+                    Ok(_) => {
+                        self.link_open = false;
+                        self.reference.clear();
+                        self.dirty = false;
+                    }
                 }
                 self.notes.push(Note::State);
             }
-            Then::Unlink { number } => {
+            Then::Unlink { .. } => {
                 if let Err(e) = result {
                     self.effects.push(Effect::Notify {
-                        title: format!("Could not unlink pull request #{number}"),
+                        title: "Could not unlink the pull request".into(),
                         description: e,
                     });
                 }
@@ -831,9 +1164,34 @@ impl RowSource for PullRequests {
     }
 
     fn data(&self, row: usize, role: &str) -> Value {
-        self.links
-            .get(row)
-            .map_or(Value::Undefined, |link| shown(link, role))
+        let Some(link) = self.links.get(row) else {
+            return Value::Undefined;
+        };
+        let line = self.lines.get(row).copied().unwrap_or_default();
+        match role {
+            "linkedNote" => {
+                let how = source_label(text(link, "source"));
+                let when = self.ago(text(link, "linkedAt"));
+                if when.is_empty() {
+                    Value::from(how)
+                } else {
+                    Value::from(format!("{how} · {when}").as_str())
+                }
+            }
+            "depth" => Value::Int(int(line.depth)),
+            "stackSize" => Value::Int(int(line.stack_size)),
+            "stackNote" => match (line.stack_size, line.native) {
+                (0, _) => Value::from(""),
+                (size, true) => Value::from(
+                    format!("GitHub stack of {size}: merging a layer lands the ones below it.")
+                        .as_str(),
+                ),
+                (size, false) => {
+                    Value::from(format!("{size} pull requests chained by base branch.").as_str())
+                }
+            },
+            _ => shown(link, role),
+        }
     }
 
     fn take_changes(&mut self) -> Vec<RowChange> {
@@ -875,9 +1233,30 @@ pub struct ThreadPullRequests {
     /// otherwise.
     #[qml(readonly, notify)]
     online: bool,
-    /// Why the last link failed.
+    /// Whether the environment keeps branch pull requests (or is not known
+    /// yet): the tab says to update its server otherwise.
+    #[qml(readonly, notify)]
+    available: bool,
+    /// Why what the link field holds names nothing, or why the last link
+    /// failed.
     #[qml(readonly, notify)]
     problem: Atom,
+    /// What the link field holds; QML writes it as the user types.
+    #[qml(notify)]
+    reference: Atom,
+    /// Whether Link would link `reference`.
+    #[qml(readonly, notify)]
+    can_link: bool,
+    /// `host/repository #number` of what `reference` names, else empty.
+    #[qml(readonly, notify)]
+    preview: Atom,
+    /// The stack layers the user dismissed:
+    /// [{key, number, repository, title, url, sourceLabel}].
+    #[qml(readonly, notify)]
+    dismissed: Value,
+    /// "synced 5m ago", or empty before any is synced.
+    #[qml(readonly, notify)]
+    synced_label: Atom,
     /// Why the list may be short: an MC that keeps no branch pull requests.
     #[qml(readonly, notify)]
     notice: Atom,
@@ -928,7 +1307,13 @@ impl ThreadPullRequests {
             count: 0,
             open_count: 0,
             online: false,
+            available: true,
             problem: Atom::new(""),
+            reference: Atom::new(""),
+            can_link: false,
+            preview: Atom::new(""),
+            dismissed: Value::Undefined,
+            synced_label: Atom::new(""),
             notice: Atom::new(""),
             linking: false,
             refreshing: false,
@@ -945,7 +1330,23 @@ impl ThreadPullRequests {
                 ThreadPullRequests::update(engine, obj, |p| p.set_link_open(open));
             }
         })?;
-        tell(engine, obj, &rows, &[Note::Project]);
+        // And it writes the field's text; what the core holds itself (told
+        // back to QML below) is no typing.
+        engine.connect_by_name(obj, "referenceChanged", move |engine, _| {
+            let Ok(reference) = engine.get(obj, ThreadPullRequests::REFERENCE) else {
+                return;
+            };
+            let typed = ThreadPullRequests::read(engine, obj, |p| p.reference() != &*reference);
+            if typed == Some(true) {
+                ThreadPullRequests::update(engine, obj, |p| p.set_reference(&reference));
+            }
+        })?;
+        tell(
+            engine,
+            obj,
+            &rows,
+            &[Note::Project, Note::Rows, Note::State],
+        );
         Ok(obj)
     }
 
@@ -954,17 +1355,22 @@ impl ThreadPullRequests {
     /// changes.
     pub fn set_thread(engine: &Engine, obj: ObjectId, thread_key: &str) {
         let environment = thread_key.split_once(':').map_or("", |(e, _)| e);
-        let shown = store::with(engine, |s| {
+        let (shown, repositories) = store::with(engine, |s| {
             let row = s.thread_row(thread_key);
             // Only a known environment that keeps no branch pull requests
             // is told to update.
             let known = !thread_key.is_empty() && !s.environment(environment).is_empty();
-            let notice = if known && !s.supports(environment, "threadPullRequests") {
-                "Update this environment's server to see branch pull requests."
-            } else {
+            let available = !known || s.supports(environment, "threadPullRequests");
+            let notice = if available {
                 ""
+            } else {
+                "Update this environment's server to see branch pull requests."
             };
-            Shown {
+            let project_id = row
+                .and_then(|r| r.get("projectId"))
+                .and_then(Json::as_str)
+                .unwrap_or("");
+            let shown = Shown {
                 links: row
                     .and_then(|r| r.get("pullRequests"))
                     .and_then(Json::as_array)
@@ -974,15 +1380,16 @@ impl ThreadPullRequests {
                     .filter(Json::is_object)
                     .collect(),
                 online: s.environment_online(environment),
+                available,
                 notice: notice.to_owned(),
-                project_id: row
-                    .and_then(|r| r.get("projectId"))
-                    .and_then(Json::as_str)
-                    .unwrap_or("")
-                    .to_owned(),
-            }
+                project_id: project_id.to_owned(),
+            };
+            (shown, repositories_of(s, environment, project_id))
         });
-        ThreadPullRequests::update(engine, obj, |p| p.set_thread(thread_key, shown));
+        ThreadPullRequests::update(engine, obj, |p| {
+            p.set_thread(thread_key, shown);
+            p.set_repositories(repositories);
+        });
     }
 
     /// Links what `input` names to the thread shown.
@@ -992,17 +1399,7 @@ impl ThreadPullRequests {
         }) else {
             return;
         };
-        let repositories = store::with(engine, |s| Repositories {
-            readable: s
-                .project_rows(&environment)
-                .into_iter()
-                .map(repository_of)
-                .collect(),
-            own: s
-                .project_row(&environment, &project_id)
-                .map(repository_of)
-                .unwrap_or_default(),
-        });
+        let repositories = store::with(engine, |s| repositories_of(s, &environment, &project_id));
         ThreadPullRequests::update(engine, obj, |p| p.link(input, &repositories));
     }
 
@@ -1036,6 +1433,20 @@ impl ThreadPullRequests {
     }
 }
 
+fn repositories_of(store: &store::ShellStore, environment: &str, project_id: &str) -> Repositories {
+    Repositories {
+        readable: store
+            .project_rows(environment)
+            .into_iter()
+            .map(repository_of)
+            .collect(),
+        own: store
+            .project_row(environment, project_id)
+            .map(repository_of)
+            .unwrap_or_default(),
+    }
+}
+
 fn tell(engine: &Engine, obj: ObjectId, rows: &ListRows<PullRequests>, notes: &[Note]) {
     let mut result = Ok(());
     let mut told = Vec::new();
@@ -1050,23 +1461,52 @@ fn tell(engine: &Engine, obj: ObjectId, rows: &ListRows<PullRequests>, notes: &[
                 engine.set_internal(obj, ThreadPullRequests::COUNT, count)
             }
             Note::Rows => {
-                let open = rows.read(|p| int(p.open_count()));
-                engine.set_internal(obj, ThreadPullRequests::OPEN_COUNT, open)
+                let (open, dismissed, synced) = rows.read(|p| {
+                    (
+                        int(p.open_count()),
+                        Json::Array(p.dismissed()).to_value(),
+                        Atom::new(&p.synced_label()),
+                    )
+                });
+                engine
+                    .set_internal(obj, ThreadPullRequests::OPEN_COUNT, open)
+                    .and_then(|()| {
+                        engine.set_internal(obj, ThreadPullRequests::DISMISSED, dismissed)
+                    })
+                    .and_then(|()| {
+                        engine.set_internal(obj, ThreadPullRequests::SYNCED_LABEL, synced)
+                    })
             }
             Note::State => {
                 let (online, problem, notice, linking, refreshing, open) = rows.read(|p| {
                     (
                         p.online(),
-                        Atom::new(p.problem()),
+                        Atom::new(&p.problem()),
                         Atom::new(p.notice()),
                         p.linking(),
                         p.refreshing(),
                         p.link_open(),
                     )
                 });
+                let (available, reference, can_link, preview) = rows.read(|p| {
+                    (
+                        p.available(),
+                        Atom::new(p.reference()),
+                        p.can_link(),
+                        Atom::new(&p.preview()),
+                    )
+                });
                 engine
                     .set_internal(obj, ThreadPullRequests::ONLINE, online)
+                    .and_then(|()| {
+                        engine.set_internal(obj, ThreadPullRequests::AVAILABLE, available)
+                    })
                     .and_then(|()| engine.set_internal(obj, ThreadPullRequests::PROBLEM, problem))
+                    .and_then(|()| {
+                        engine.set_internal(obj, ThreadPullRequests::REFERENCE, reference)
+                    })
+                    .and_then(|()| engine.set_internal(obj, ThreadPullRequests::CAN_LINK, can_link))
+                    .and_then(|()| engine.set_internal(obj, ThreadPullRequests::PREVIEW, preview))
                     .and_then(|()| engine.set_internal(obj, ThreadPullRequests::NOTICE, notice))
                     .and_then(|()| engine.set_internal(obj, ThreadPullRequests::LINKING, linking))
                     .and_then(|()| {

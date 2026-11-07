@@ -19,6 +19,7 @@ use hal_c2_shell::thread_view::diff::DiffModel;
 use hal_c2_shell::thread_view::pull_request_review::{PullRequestReview, Review};
 use hal_c2_shell::thread_view::pull_requests::{PullRequests, ThreadPullRequests};
 use hal_c2_shell::thread_view::rows::RowSource;
+use hal_c2_shell::thread_view::time::Clock;
 use ljos::prelude::ObjectId;
 use serde_json::{Value, json};
 
@@ -38,6 +39,8 @@ pub struct FakePullRequests {
     /// The host's stack: its base and its layers' numbers, bottom first.
     pub stack_base: String,
     pub stack: Vec<i64>,
+    /// The pull request whose row's menu is open.
+    pub actions_of: i64,
 }
 
 impl Default for FakePullRequests {
@@ -64,6 +67,7 @@ impl Default for FakePullRequests {
             invalidated: Vec::new(),
             stack_base: String::new(),
             stack: Vec::new(),
+            actions_of: 0,
         }
     }
 }
@@ -249,6 +253,7 @@ pub fn look_at(world: &mut World, title: &str) -> Outcome {
         return Ok(());
     }
     world.mc.part::<FakePullRequests>().thread = THREAD.into();
+    tell_link_problem(world);
     let row = json!({"id": THREAD, "title": title, "projectId": PROJECT,
                      "pullRequests": [],
                      "createdAt": "2026-09-23T09:00:00Z", "updatedAt": "2026-09-23T09:00:00Z"});
@@ -262,6 +267,9 @@ pub fn look_at(world: &mut World, title: &str) -> Outcome {
     look(world, &format!("{environment}:{THREAD}"), true)?;
     world.dispatch("rightPanel.add", json!({"kind": "pull-requests"}))?;
     world.sync()?;
+    // "Linked by you · 1h ago" is read on the scenario's clock, not the wall's.
+    let now = world.now();
+    update_tab(world, |tab| tab.set_clock(Clock::fixed(now)))?;
     let panel = world.state("panel");
     expect!(
         at(&panel, "activeId") == "pull-requests",
@@ -669,10 +677,7 @@ fn asked(world: &World, method: &str) -> Vec<Value> {
 }
 
 fn link_row(number: i64, source: &str) -> Value {
-    json!({"host": "github.com", "repository": "acme/shop", "number": number,
-           "url": format!("https://github.com/acme/shop/pull/{number}"),
-           "source": source, "linkedAt": "2026-09-23T09:05:00Z",
-           "snapshot": null, "stack": null})
+    link_of("acme/shop", number, source, LINKED_AT)
 }
 
 /// Puts `link` on the thread's row, as the MC's sync reads it from the host.
@@ -681,6 +686,225 @@ fn put_link(world: &mut World, number: i64) -> Outcome {
     row["pullRequests"] = json!([link_row(number, "manual")]);
     world.mc.threads.insert(THREAD.into(), row);
     sync_links(&mut world.mc, THREAD);
+    world.sync()
+}
+
+const LINKED_AT: &str = "2026-09-23T09:05:00Z";
+
+/// A link of `repository`'s pull request `number` as the thread's row holds it.
+fn link_of(repository: &str, number: i64, source: &str, linked_at: &str) -> Value {
+    json!({"host": "github.com", "repository": repository, "number": number,
+           "url": format!("https://github.com/{repository}/pull/{number}"),
+           "source": source, "linkedAt": linked_at,
+           "snapshot": null, "stack": null})
+}
+
+/// The thread links `links` and nothing else, as the MC's sync sends them.
+fn set_links(world: &mut World, links: Vec<Value>) -> Outcome {
+    let mut row = world.mc.threads.get(THREAD).cloned().unwrap_or(Value::Null);
+    row["pullRequests"] = Value::Array(links);
+    world.mc.threads.insert(THREAD.into(), row);
+    sync_links(&mut world.mc, THREAD);
+    world.sync()
+}
+
+/// Opens the menu of pull request `number`'s row.
+fn open_actions(world: &mut World, number: i64) -> Outcome {
+    let brick = open_panel(world)?;
+    let name = format!("pullRequestRow-{number}");
+    world.wait_for_with(
+        {
+            let name = name.clone();
+            move |w| brick.find(w, &name).ok().flatten().is_some()
+        },
+        describe,
+    )?;
+    let row = brick.item(world, &name)?;
+    let Some(button) = brick.visible_in(world, row, "pullRequestMenu")? else {
+        fail!("the row of #{number} has no menu button");
+    };
+    let (x, y) = brick.at(world, button, 0.5, 0.5)?;
+    world.click_at(x, y)?;
+    world.sync()
+}
+
+/// The visible menu entry `name` (each row has its own menu).
+fn menu_item(world: &mut World, name: &str) -> Outcome<(Brick, ObjectId)> {
+    let brick = open_panel(world)?;
+    let wanted = name.to_owned();
+    world.wait_for_with(
+        move |w| brick.find_visible(w, &wanted).ok().flatten().is_some(),
+        |_| "the menu entry to be shown".to_owned(),
+    )?;
+    match brick.find_visible(world, name)? {
+        Some(item) => Ok((brick, item)),
+        None => fail!("no {name} is shown"),
+    }
+}
+
+/// What the tab's link field says of what was typed, for "the user is told".
+/// What the tab says in place: why a reference does not link, and what each stack is.
+fn tell_link_problem(world: &mut World) {
+    world.told_in_place = Some(Rc::new(|w: &World| {
+        read_tab(w, |tab| {
+            let stacks = (0..tab.row_count())
+                .filter(|&row| matches!(tab.data(row, "stackSize"), ljos::prelude::Value::Int(n) if n > 1))
+                .map(|row| role_text(tab, row, "stackNote"));
+            std::iter::once(tab.problem()).chain(stacks).collect()
+        })
+        .unwrap_or_default()
+    }));
+}
+
+/// The `thread.pull-request.*` commands the MC was sent.
+fn link_commands(world: &World) -> usize {
+    world
+        .mc
+        .commands
+        .iter()
+        .filter(|command| text(&command["type"]).starts_with("thread.pull-request."))
+        .count()
+}
+
+/// The tab drawn as PullRequestsPanel, once.
+fn open_panel(world: &mut World) -> Outcome<Brick> {
+    if let Ok(brick) = shown(world) {
+        return Ok(brick);
+    }
+    Brick::show(
+        world,
+        "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestsPanel { width: 420; height: 600; source: Panel.pullRequests }\n",
+        420.0,
+        600.0,
+    )?;
+    world.sync()?;
+    shown(world)
+}
+
+/// What the host and the MC do with the pull requests the dialog names:
+/// numbers the host does not know, with what it says of them, and a
+/// checkout held or refused.
+#[derive(Default)]
+struct FakePullRequestThread {
+    missing: HashMap<String, String>,
+    hold_prepare: bool,
+    prepare_refusal: Option<String>,
+}
+
+/// The number at the end of what was named: "7", ".../pull/7", ".../pullrequest/7".
+fn resolved_pull_request(reference: &str) -> Value {
+    let trimmed = reference.trim_end_matches('/');
+    let digits = trimmed.len() - trimmed.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+    let number: i64 = trimmed[trimmed.len() - digits..].parse().unwrap_or(0);
+    let url = if reference.starts_with("http") {
+        reference.to_owned()
+    } else {
+        format!("https://github.com/acme/shop/pull/{number}")
+    };
+    json!({"number": number, "title": "Add tax to the cart", "url": url,
+           "baseBranch": "main", "headBranch": "feature/tax", "state": "open"})
+}
+
+/// Whether both of the dialog's choices can be pressed.
+fn choosable(world: &mut World) -> Outcome<bool> {
+    let brick = shown(world)?;
+    Ok(choosable_in(brick, world))
+}
+
+fn choosable_in(brick: Brick, world: &World) -> bool {
+    ["pullRequestThreadLocal", "pullRequestThreadWorktree"]
+        .iter()
+        .all(|name| {
+            brick
+                .item(world, name)
+                .is_ok_and(|item| brick.flag(world, item, "enabled"))
+        })
+}
+
+/// A wait's failure, with what the dialog is.
+fn dialog_is(what: &str) -> impl Fn(&World) -> String + 'static {
+    let what = what.to_owned();
+    move |w| {
+        format!(
+            "{what}; the dialog is {}",
+            show(&w.state("pullRequestThread"))
+        )
+    }
+}
+
+/// The dialog, opened from the command palette's entry on "Tax work"'s
+/// project; its field. The MC resolves what is named without checking
+/// anything out (git.resolvePullRequest), and prepares the checkout when
+/// asked (git.preparePullRequestThread).
+fn open_pull_request_thread(world: &mut World) -> Outcome<(Brick, ObjectId)> {
+    world.mc.on_rpc("git.resolvePullRequest", |mc, rpc| {
+        let reference = text(&rpc.payload["reference"]);
+        match mc
+            .part::<FakePullRequestThread>()
+            .missing
+            .get(&reference)
+            .cloned()
+        {
+            Some(reason) => mc.refuse(rpc, &reason),
+            None => mc.reply(
+                rpc,
+                json!({"pullRequest": resolved_pull_request(&reference)}),
+            ),
+        }
+        Ok(())
+    });
+    world.mc.on_rpc("git.preparePullRequestThread", |mc, rpc| {
+        let fake = mc.part::<FakePullRequestThread>();
+        if fake.hold_prepare {
+            return Ok(());
+        }
+        if let Some(reason) = fake.prepare_refusal.clone() {
+            mc.refuse(rpc, &reason);
+            return Ok(());
+        }
+        let worktree = rpc.payload["mode"] == "worktree";
+        let reference = text(&rpc.payload["reference"]);
+        mc.reply(
+            rpc,
+            json!({"pullRequest": resolved_pull_request(&reference), "branch": "feature/tax",
+                   "worktreePath": if worktree { json!("/work/worktrees/pr-42") } else { Value::Null },
+                   "isOnPullRequestHead": true}),
+        );
+        Ok(())
+    });
+    look_at(world, "Tax work")?;
+    // What the dialog says of what was typed.
+    world.told_in_place = Some(Rc::new(|w: &World| {
+        vec![text(&w.state("pullRequestThread")["error"])]
+    }));
+    Brick::show(
+        world,
+        "import QtQuick\nimport HalC2.Bricks\nItem { PullRequestThreadDialog {} }\n",
+        640.0,
+        480.0,
+    )?;
+    let commands = Commands::of(world.engine());
+    expect!(
+        commands.contains(world.engine(), "pullRequestThread.open"),
+        "no command starts a pull request thread"
+    );
+    commands.run(world.engine(), "pullRequestThread.open");
+    let brick = shown(world)?;
+    let field = brick.item(world, "pullRequestThreadReference")?;
+    world.wait_for("the dialog to ask for a pull request", move |w| {
+        brick.flag(w, field, "visible")
+    })?;
+    Ok((brick, field))
+}
+
+fn start_in_worktree(world: &mut World, number: &str) -> Outcome {
+    let (brick, field) = open_pull_request_thread(world)?;
+    brick.write(world, field, "text", ljos::prelude::Value::from(number))?;
+    world.wait_for_with(
+        move |w| choosable_in(brick, w),
+        dialog_is("the pull request to resolve"),
+    )?;
+    brick.click(world, "pullRequestThreadWorktree")?;
     world.sync()
 }
 
@@ -1033,53 +1257,675 @@ pub fn register(steps: &mut Steps) {
             wait_for_row(world, number, true)
         },
     );
+    // The link field.
+    steps.step(
+        &format!("the user is linking a pull request to {Q}"),
+        |world, c, _| {
+            look_at(world, &c[0])?;
+            tell_link_problem(world);
+            world.with::<RightPanel, _>(|p, engine| p.link_pull_request(engine))?;
+            world.sync()?;
+            expect!(
+                read_tab(world, PullRequests::link_open)?,
+                "the link field is closed"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user types {Q} as the pull request to link"),
+        |world, c, _| {
+            update_tab(world, |tab| tab.set_reference(&c[0]))?;
+            world.sync()
+        },
+    );
+    steps.step("the user clears the pull request to link", |world, _, _| {
+        update_tab(world, |tab| tab.set_reference(""))?;
+        world.sync()
+    });
+    steps.step(&format!("{Q} is not in a project"), |world, c, _| {
+        look_at(world, &c[0])?;
+        let mut row = world.mc.threads.get(THREAD).cloned().unwrap_or(Value::Null);
+        row["projectId"] = Value::Null;
+        world.mc.threads.insert(THREAD.into(), row.clone());
+        world.mc.send_row(THREAD, &row);
+        world.sync()
+    });
+    steps.step(
+        &format!("the project of {Q} is on a host whose pull request addresses are not known"),
+        |world, c, _| {
+            let mut project = world.mc.projects.get(PROJECT).cloned().unwrap_or(json!({}));
+            project["repositoryIdentity"] = json!({"canonicalKey": "git.example.com/acme/shop",
+                                                   "displayName": "acme/shop"});
+            world.mc.projects.insert(PROJECT.into(), project.clone());
+            world.mc.send_row_of(PROJECT, &project, "project");
+            world.sync()?;
+            look_at(world, &c[0])
+        },
+    );
+    steps.step(&format!("the user links {Q} to {Q}"), |world, c, _| {
+        look_at(world, &c[1])?;
+        tell_link_problem(world);
+        link(world, &c[0])
+    });
+    steps.step("the pull request cannot be linked", |world, _, _| {
+        expect!(
+            !read_tab(world, PullRequests::can_link)? && link_commands(world) == 0,
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the MC takes a while to link pull requests to {Q}"),
+        |world, c, _| {
+            look_at(world, &c[0])?;
+            world.mc.hold("answers");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the link dialog shows \"Linking...\" and cannot be submitted again",
+        |world, _, _| {
+            let brick = open_panel(world)?;
+            expect!(
+                read_tab(world, |t| t.linking() && !t.can_link())?,
+                "{}",
+                describe(world)
+            );
+            world.wait_for_with(
+                move |w| brick.shows(w, "Linking...").unwrap_or(false),
+                describe,
+            )?;
+            let submit = brick.item(world, "pullRequestsLinkSubmit")?;
+            expect!(
+                !brick.flag(world, submit, "enabled"),
+                "Linking... can be pressed"
+            );
+            let sent = link_commands(world);
+            let obj = tab_object(world)?;
+            ThreadPullRequests::link(world.engine(), obj, "42");
+            world.sync()?;
+            expect!(link_commands(world) == sent, "a second link was sent");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user links pull request (\\d+) to {Q} again"),
+        |world, c, _| {
+            world.mc.answer_held();
+            world.sync()?;
+            world.wait_for_with(
+                |w| read_tab(w, PullRequests::linking).is_ok_and(|l| !l),
+                describe,
+            )?;
+            link(world, &c[0])
+        },
+    );
+    steps.step(
+        "the link dialog says the pull request could not be linked and stays open",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| read_tab(w, PullRequests::linking).is_ok_and(|l| !l),
+                describe,
+            )?;
+            let (problem, open) = read_tab(world, |t| (t.problem(), t.link_open()))?;
+            expect!(
+                problem.starts_with("Could not link the pull request") && open,
+                "{}",
+                describe(world)
+            );
+            let brick = open_panel(world)?;
+            world.wait_for_with(move |w| brick.shows(w, &problem).unwrap_or(false), describe)
+        },
+    );
+
+    // How each link came to be, and what its row offers.
+    steps.step(
+        &format!("pull request (\\d+) was (linked by the user|created from the thread|linked by the agent|found in the stack of another layer|dismissed from the stack) to {Q}"),
+        |world, c, _| {
+            let source = match c[1].as_str() {
+                "linked by the user" => "manual",
+                "created from the thread" => "created",
+                "linked by the agent" => "agent",
+                "found in the stack of another layer" => "stack",
+                _ => "stack-dismissed",
+            };
+            look_at(world, &c[2])?;
+            let number = c[0].parse().unwrap_or(0);
+            set_links(world, vec![link_of("acme/shop", number, source, LINKED_AT)])
+        },
+    );
+    steps.step(
+        &format!("the user opens the pull requests of {Q}"),
+        |world, c, _| {
+            look_at(world, &c[0])?;
+            open_panel(world).map(drop)
+        },
+    );
+    steps.step(&format!("pull request (\\d+) says {Q}"), |world, c, _| {
+        let number: i64 = c[0].parse().unwrap_or(0);
+        let label = c[1].clone();
+        let brick = open_panel(world)?;
+        // A dismissed one is listed below the rest, its label after its title.
+        let says = move |w: &World| -> (String, String) {
+            if row_of(w, number).is_some() {
+                return (row_role(w, number, "sourceLabel"), String::new());
+            }
+            read_tab(w, |t| {
+                t.dismissed()
+                    .into_iter()
+                    .find(|entry| entry["number"].as_i64() == Some(number))
+                    .map(|entry| {
+                        let title = if text(&entry["title"]).is_empty() {
+                            text(&entry["repository"])
+                        } else {
+                            text(&entry["title"])
+                        };
+                        let label = text(&entry["sourceLabel"]);
+                        let line = format!("#{number} · {title} · {label}");
+                        (label, line)
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+        };
+        let wanted = label.clone();
+        world.wait_for_with(
+            move |w| {
+                let (said, line) = says(w);
+                said == wanted
+                    && (brick.shows(w, &wanted).unwrap_or(false)
+                        || (!line.is_empty() && brick.shows(w, &line).unwrap_or(false)))
+            },
+            move |w| format!("{}, it says {}", describe(w), says(w).0),
+        )
+    });
+    steps.step(
+        &format!("pull request (\\d+) is a layer found in the stack of {Q}"),
+        |world, c, _| {
+            look_at(world, &c[1])?;
+            let number = c[0].parse().unwrap_or(0);
+            set_links(
+                world,
+                vec![
+                    link_of("acme/shop", 42, "manual", LINKED_AT),
+                    link_of("acme/shop", number, "stack", LINKED_AT),
+                ],
+            )
+        },
+    );
+    steps.step(
+        &format!("the user opens the actions of pull request (\\d+) in {Q}"),
+        |world, c, _| {
+            look_at(world, &c[1])?;
+            let number = c[0].parse().unwrap_or(0);
+            wait_for_row(world, number, true)?;
+            open_actions(world, number)?;
+            world.mc.part::<FakePullRequests>().actions_of = number;
+            Ok(())
+        },
+    );
+    steps.step(&format!("the action is {Q}"), |world, c, _| {
+        let number = world.mc.part::<FakePullRequests>().actions_of;
+        expect!(
+            row_role(world, number, "unlinkLabel") == c[0],
+            "{}",
+            describe(world)
+        );
+        let (brick, unlink) = menu_item(world, "pullRequestUnlink")?;
+        let said = brick.text_of(world, unlink, "text");
+        expect!(said == c[0], "the menu offers {said}, not {}", c[0]);
+        Ok(())
+    });
+    steps.step(
+        &format!("a pull request the user linked is offered {Q} instead"),
+        |world, c, _| {
+            expect!(
+                row_role(world, 42, "source") == "manual"
+                    && row_role(world, 42, "unlinkLabel") == c[0],
+                "{}",
+                describe(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "pull request (\\d+) is a layer of a GitHub stack of 3",
+        |world, c, _| {
+            look_at(world, "Tax work")?;
+            let first: i64 = c[0].parse().unwrap_or(0);
+            let fake = world.mc.part::<FakePullRequests>();
+            fake.stack_base = "main".into();
+            fake.stack = vec![first, first + 1, first + 2];
+            let links = fake
+                .stack
+                .clone()
+                .into_iter()
+                .map(|number| {
+                    let source = if number == first { "manual" } else { "stack" };
+                    link_of("acme/shop", number, source, LINKED_AT)
+                })
+                .collect();
+            set_links(world, links)
+        },
+    );
+    steps.step(
+        "pull requests (\\d+), (\\d+) and (\\d+) are chained by their base branches on a host with no stacks of its own",
+        |world, c, _| {
+            look_at(world, "Tax work")?;
+            let fake = world.mc.part::<FakePullRequests>();
+            let mut links = Vec::new();
+            let mut base = "main".to_owned();
+            for (at, number) in c.iter().take(3).enumerate() {
+                let mut snapshot = fake.host.get("acme/shop#42").cloned().unwrap_or(json!({}));
+                let head = format!("tax/{at}");
+                snapshot["headBranch"] = json!(head);
+                snapshot["baseBranch"] = json!(base);
+                base = head;
+                fake.host.insert(format!("acme/shop#{number}"), snapshot);
+                links.push(link_of("acme/shop", number.parse().unwrap_or(0), "manual", LINKED_AT));
+            }
+            set_links(world, links)
+        },
+    );
+    steps.step(
+        &format!("pull request (\\d+) was just linked to {Q} and the host has not answered"),
+        |world, c, _| {
+            look_at(world, &c[1])?;
+            world
+                .mc
+                .part::<FakePullRequests>()
+                .host
+                .remove(&format!("acme/shop#{}", c[0]));
+            let number = c[0].parse().unwrap_or(0);
+            set_links(
+                world,
+                vec![link_of("acme/shop", number, "manual", LINKED_AT)],
+            )
+        },
+    );
+    steps.step(
+        &format!("pull request (\\d+) is listed with its repository and {Q}"),
+        |world, c, _| {
+            let brick = open_panel(world)?;
+            let row = format!("pullRequestRow-{}", c[0]);
+            let wanted = c[1].clone();
+            world.wait_for_with(
+                move |w| {
+                    let named = brick
+                        .find(w, &row)
+                        .ok()
+                        .flatten()
+                        .and_then(|item| {
+                            brick
+                                .visible_in(w, item, "pullRequestRepository")
+                                .ok()
+                                .flatten()
+                        })
+                        .is_some_and(|item| brick.text_of(w, item, "text").contains("acme/shop"));
+                    named && brick.shows(w, &wanted).unwrap_or(false)
+                },
+                describe,
+            )
+        },
+    );
+    steps.step(
+        &format!("pull request (\\d+) was linked to {Q} by the user an hour ago"),
+        |world, c, _| {
+            look_at(world, &c[1])?;
+            let at = (world.now() - chrono::Duration::hours(1))
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let number = c[0].parse().unwrap_or(0);
+            set_links(world, vec![link_of("acme/shop", number, "manual", &at)])
+        },
+    );
+    steps.step(
+        "the user rests the pointer on the number of pull request (\\d+)",
+        |world, c, _| {
+            let brick = open_panel(world)?;
+            let row = format!("pullRequestRow-{}", c[0]);
+            world.wait_for_with(
+                {
+                    let row = row.clone();
+                    move |w| brick.find(w, &row).ok().flatten().is_some()
+                },
+                describe,
+            )?;
+            let row = brick.item(world, &row)?;
+            let Some(number) = brick.visible_in(world, row, "pullRequestNumber")? else {
+                fail!("the row has no number");
+            };
+            let (x, y) = brick.at(world, number, 0.5, 0.5)?;
+            world.hover_at(x, y)?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user is told {Q} and how long ago"),
+        |world, c, _| {
+            let brick = open_panel(world)?;
+            let note = format!("{} · 1h ago", c[0]);
+            world.wait_for_with(
+                {
+                    let note = note.clone();
+                    move |w| {
+                        read_tab(w, |t| role_text(t, 0, "linkedNote")).is_ok_and(|n| n == note)
+                            && brick.shows(w, &note).unwrap_or(false)
+                    }
+                },
+                move |w| {
+                    format!(
+                        "{}, the note is {}",
+                        describe(w),
+                        read_tab(w, |t| role_text(t, 0, "linkedNote")).unwrap_or_default()
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the user can copy its link", |world, _, _| {
+        let (brick, copy) = menu_item(world, "pullRequestCopyLink")?;
+        let (x, y) = brick.at(world, copy, 0.5, 0.5)?;
+        world.click_at(x, y)?;
+        world.sync()?;
+        let copied = world.clipboard();
+        expect!(
+            copied == "https://github.com/acme/shop/pull/42",
+            "the clipboard holds \"{copied}\""
+        );
+        Ok(())
+    });
+    steps.step("the user can open it", |world, _, _| {
+        open_actions(world, 42)?;
+        let (brick, open) = menu_item(world, "pullRequestOpen")?;
+        let (x, y) = brick.at(world, open, 0.5, 0.5)?;
+        world.click_at(x, y)?;
+        world.sync()?;
+        let opened = world.opened_urls();
+        expect!(
+            opened
+                .iter()
+                .any(|url| url == "https://github.com/acme/shop/pull/42"),
+            "the browser opened {}",
+            show(&json!(opened))
+        );
+        Ok(())
+    });
+
+    // What the tab says with nothing to list.
+    steps.step(
+        "the environment does not support several linked pull requests per thread",
+        |world, _, _| {
+            world.mc.capabilities["threadPullRequests"] = json!(false);
+            world.mc.send_snapshot();
+            world.sync()
+        },
+    );
+    steps.step(&format!("{Q} has no linked pull request"), |world, c, _| {
+        look_at(world, &c[0])?;
+        expect!(
+            read_tab(world, PullRequests::count)? == 0,
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step("the user can link one", |world, _, _| {
+        // The empty state's "Link pull request".
+        open_panel(world)?.click(world, "emptyStateAction")?;
+        world.sync()?;
+        expect!(
+            read_tab(world, PullRequests::link_open)?,
+            "the link field is closed"
+        );
+        Ok(())
+    });
+
     // A thread started on a pull request the user names (PullRequestThreadController).
     steps.step(
         &format!("the user pastes {Q} to start a pull request thread"),
         |world, c, _| {
-            // The MC resolves the link without checking anything out (git.resolvePullRequest),
-            // and prepares the checkout when asked (git.preparePullRequestThread).
-            let pull_request = json!({"number": 42, "title": "Add tax to the cart", "url": c[0],
-                                      "baseBranch": "main", "headBranch": "feature/tax",
-                                      "state": "open"});
-            let resolved = pull_request.clone();
-            world.mc.on_rpc("git.resolvePullRequest", move |mc, rpc| {
-                mc.reply(rpc, json!({"pullRequest": resolved}));
-                Ok(())
-            });
-            world.mc.on_rpc("git.preparePullRequestThread", move |mc, rpc| {
-                let worktree = rpc.payload["mode"] == "worktree";
-                mc.reply(
-                    rpc,
-                    json!({"pullRequest": pull_request, "branch": "feature/tax",
-                           "worktreePath": if worktree { json!("/work/worktrees/pr-42") } else { Value::Null },
-                           "isOnPullRequestHead": true}),
-                );
-                Ok(())
-            });
-            look_at(world, "Tax work")?;
-            Brick::show(
-                world,
-                "import QtQuick\nimport HalC2.Bricks\nItem { PullRequestThreadDialog {} }\n",
-                640.0,
-                480.0,
-            )?;
-            // From the command palette's entry.
-            let commands = Commands::of(world.engine());
-            expect!(
-                commands.contains(world.engine(), "pullRequestThread.open"),
-                "no command starts a pull request thread"
-            );
-            commands.run(world.engine(), "pullRequestThread.open");
-            let brick = shown(world)?;
-            let field = brick.item(world, "pullRequestThreadReference")?;
-            world.wait_for("the dialog to ask for a pull request", move |w| {
-                brick.flag(w, field, "visible")
-            })?;
+            let (brick, field) = open_pull_request_thread(world)?;
             brick.click(world, "pullRequestThreadReference")?;
-            brick.write(world, field, "text", ljos::prelude::Value::from(c[0].as_str()))?;
+            brick.write(
+                world,
+                field,
+                "text",
+                ljos::prelude::Value::from(c[0].as_str()),
+            )?;
             brick.press(world, "enter")?;
             world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user (?:types|typed) {Q} to start a pull request thread"),
+        |world, c, _| {
+            let (brick, field) = open_pull_request_thread(world)?;
+            brick.write(
+                world,
+                field,
+                "text",
+                ljos::prelude::Value::from(c[0].as_str()),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step("the user clears the reference", |world, _, _| {
+        let brick = shown(world)?;
+        let field = brick.item(world, "pullRequestThreadReference")?;
+        brick.write(world, field, "text", ljos::prelude::Value::from(""))?;
+        world.sync()
+    });
+    steps.step(
+        "the pull request number is read as (\\d+)",
+        |world, c, _| {
+            let brick = shown(world)?;
+            let wanted = format!("#{} · feature/tax to main", c[0]);
+            world.wait_for_with(
+                move |w| brick.shows(w, &wanted).unwrap_or(false),
+                dialog_is("the pull request to be shown"),
+            )?;
+            expect!(
+                choosable(world)?,
+                "local and worktree cannot be chosen; the dialog is {}",
+                show(&world.state("pullRequestThread"))
+            );
+            Ok(())
+        },
+    );
+    steps.step("neither local nor worktree can be chosen", |world, _, _| {
+        expect!(
+            !choosable(world)?,
+            "local or worktree can be chosen; the dialog is {}",
+            show(&world.state("pullRequestThread"))
+        );
+        // Return does not start one either.
+        shown(world)?.press(world, "enter")?;
+        world.sync()?;
+        expect!(
+            asked(world, "git.preparePullRequestThread").is_empty(),
+            "a checkout was prepared"
+        );
+        Ok(())
+    });
+    // The dialog resolves once the typing pauses, so it is resolving straight after.
+    steps.step(
+        "the user is told \"Resolving pull request...\" until its title and branches arrive",
+        |world, _, _| {
+            let brick = shown(world)?;
+            expect!(
+                brick.shows(world, "Resolving pull request...")?
+                    && !brick.shows(world, "Add tax to the cart")?,
+                "the dialog does not say it is resolving; it is {}",
+                show(&world.state("pullRequestThread"))
+            );
+            expect!(
+                !choosable(world)?,
+                "local or worktree can be chosen while resolving"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "neither local nor worktree can be chosen until then",
+        |world, _, _| {
+            let brick = shown(world)?;
+            world.wait_for_with(
+                move |w| brick.shows(w, "Add tax to the cart").unwrap_or(false),
+                dialog_is("the pull request to resolve"),
+            )?;
+            expect!(
+                choosable(world)? && !brick.shows(world, "Resolving pull request...")?,
+                "the resolved pull request cannot be chosen; the dialog is {}",
+                show(&world.state("pullRequestThread"))
+            );
+            expect!(
+                asked(world, "git.resolvePullRequest").len() == 1,
+                "the pull request was asked for {} times",
+                asked(world, "git.resolvePullRequest").len()
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the host answers that pull request (\\d+) does not exist",
+        |world, c, _| {
+            let reason = format!("GitHub has no pull request #{} in acme/shop.", c[0]);
+            world
+                .mc
+                .part::<FakePullRequestThread>()
+                .missing
+                .insert(c[0].clone(), reason);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user is told the host's reason in the dialog",
+        |world, _, _| {
+            let reason = world
+                .mc
+                .part::<FakePullRequestThread>()
+                .missing
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_default();
+            let brick = shown(world)?;
+            world.wait_for_with(
+                move |w| brick.shows(w, &reason).unwrap_or(false),
+                dialog_is("the host's reason to be shown"),
+            )
+        },
+    );
+    // Choosing a worktree, with the MC still preparing it or failing to.
+    steps.step(
+        "the user chose to start a thread on pull request (\\d+) in a new worktree",
+        |world, c, _| {
+            world.mc.part::<FakePullRequestThread>().hold_prepare = true;
+            start_in_worktree(world, &c[0])
+        },
+    );
+    steps.step(
+        "the user starts a thread on pull request (\\d+) in a new worktree",
+        |world, c, _| start_in_worktree(world, &c[0]),
+    );
+    steps.step(
+        &format!("the MC fails to prepare pull request (\\d+) saying {Q}"),
+        |world, c, _| {
+            world.mc.part::<FakePullRequestThread>().prepare_refusal = Some(c[1].clone());
+            Ok(())
+        },
+    );
+    steps.step(
+        "the MC fails to prepare pull request (\\d+) without saying why",
+        |world, _, _| {
+            world.mc.part::<FakePullRequestThread>().prepare_refusal = Some(String::new());
+            Ok(())
+        },
+    );
+    steps.step("the checkout is still being prepared", |world, _, _| {
+        world.wait_for("the checkout to be asked of the MC", |w| {
+            !asked(w, "git.preparePullRequestThread").is_empty()
+        })?;
+        let state = world.state("pullRequestThread");
+        expect!(
+            state["step"] == "starting",
+            "the dialog is {}",
+            show(&state)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the dialog says {Q} and cannot be cancelled"),
+        |world, c, _| {
+            let brick = shown(world)?;
+            expect!(
+                brick.shows(world, &c[0])?,
+                "the dialog does not say {}; it is {}",
+                c[0],
+                show(&world.state("pullRequestThread"))
+            );
+            let cancel = brick.item(world, "pullRequestThreadCancel")?;
+            expect!(
+                !brick.flag(world, cancel, "enabled"),
+                "Cancel can be pressed"
+            );
+            brick.press(world, "escape")?;
+            world.dispatch("pullRequestThread.cancel", json!({}))?;
+            world.sync()?;
+            let field = brick.item(world, "pullRequestThreadReference")?;
+            expect!(
+                !world.state("pullRequestThread").is_null() && brick.flag(world, field, "visible"),
+                "the dialog was closed while preparing"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "local and worktree cannot be chosen again",
+        |world, _, _| {
+            expect!(
+                !choosable(world)?,
+                "local or worktree can be chosen while preparing"
+            );
+            // Nor does the controller start a second one if asked.
+            world.dispatch("pullRequestThread.start", json!({"mode": "local"}))?;
+            world.sync()?;
+            expect!(
+                asked(world, "git.preparePullRequestThread").len() == 1,
+                "a second checkout was asked for"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the dialog stays open and says {Q}"),
+        |world, c, _| {
+            let brick = shown(world)?;
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                move |w| brick.shows(w, &wanted).unwrap_or(false),
+                dialog_is(&format!("\"{}\" to be shown", c[0])),
+            )?;
+            let field = brick.item(world, "pullRequestThreadReference")?;
+            expect!(
+                brick.flag(world, field, "visible")
+                    && asked(world, "orchestration.launchThread").is_empty(),
+                "the dialog closed or a thread was started"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user can choose local or worktree again",
+        |world, _, _| {
+            expect!(
+                choosable(world)?,
+                "local and worktree cannot be chosen; the dialog is {}",
+                show(&world.state("pullRequestThread"))
+            );
+            Ok(())
         },
     );
     steps.step(
@@ -1088,8 +1934,8 @@ pub fn register(steps: &mut Steps) {
             let brick = shown(world)?;
             world.wait_for_with(
                 move |w| {
-                    brick.shows(w, "#42 Add tax to the cart").unwrap_or(false)
-                        && brick.shows(w, "feature/tax → main").unwrap_or(false)
+                    brick.shows(w, "Add tax to the cart").unwrap_or(false)
+                        && brick.shows(w, "#42 · feature/tax to main").unwrap_or(false)
                 },
                 |w| {
                     format!(
@@ -1396,7 +2242,7 @@ pub fn register(steps: &mut Steps) {
                 500.0,
             )?;
             let brick = shown(world)?;
-            let line = format!("acme/shop #42 · feature/tax → main · {wanted}");
+            let line = format!("acme/shop · feature/tax → main · {wanted}");
             world.wait_for("the tab to draw the layer", move |w| {
                 brick.shows(w, &line).unwrap_or(false)
             })

@@ -4813,6 +4813,18 @@
               "notify": "onlineChanged"
             },
             {
+              "name": "available",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "availableChanged"
+            },
+            {
               "name": "problem",
               "type": "string",
               "kind": "value",
@@ -4823,6 +4835,66 @@
               "constant": false,
               "group": false,
               "notify": "problemChanged"
+            },
+            {
+              "name": "reference",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "referenceChanged"
+            },
+            {
+              "name": "canLink",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "canLinkChanged"
+            },
+            {
+              "name": "preview",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "previewChanged"
+            },
+            {
+              "name": "dismissed",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "dismissedChanged"
+            },
+            {
+              "name": "syncedLabel",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "syncedLabelChanged"
             },
             {
               "name": "notice",

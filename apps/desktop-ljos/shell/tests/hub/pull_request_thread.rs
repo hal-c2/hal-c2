@@ -187,3 +187,90 @@ fn the_pull_requests_page_names_one_to_resolve_at_once() {
             .any(|(t, _)| t == "That pull request's project is not open on this device.")
     );
 }
+
+#[test]
+fn typing_resolves_once_the_typing_pauses() {
+    let hub = on_thread("main", None);
+    assert!(Commands::of(&hub.engine).run(&hub.engine, "pullRequestThread.open"));
+    hub.dispatch(
+        "pullRequestThread.edit",
+        json!({"reference": "gh pr checkout 4"}),
+    );
+    hub.dispatch(
+        "pullRequestThread.edit",
+        json!({"reference": "gh pr checkout 42"}),
+    );
+    let shown = dialog(&hub);
+    assert_eq!(shown["step"], "resolving");
+    assert_eq!(shown["text"], "gh pr checkout 42");
+    assert_eq!(shown["reference"], "42");
+    // Nothing is asked while the user types.
+    assert_eq!(count(&hub, RESOLVE), 0);
+    hub.advance(450);
+    assert_eq!(count(&hub, RESOLVE), 1);
+    assert_eq!(last(&hub, "env-1", RESOLVE)["reference"], "42");
+    answer(&hub, "env-1", RESOLVE, Ok(resolved()));
+    let shown = dialog(&hub);
+    assert_eq!(shown["step"], "choose");
+    assert_eq!(shown["pullRequest"]["headBranch"], "feature/tax");
+    assert_eq!(shown["pullRequest"]["baseBranch"], "main");
+    // Text naming the same pull request keeps what was resolved.
+    hub.dispatch("pullRequestThread.edit", json!({"reference": "#42"}));
+    assert_eq!(dialog(&hub)["step"], "choose");
+    hub.advance(450);
+    assert_eq!(count(&hub, RESOLVE), 1);
+}
+
+#[test]
+fn text_naming_no_pull_request_says_why_at_once() {
+    let hub = on_thread("main", None);
+    assert!(Commands::of(&hub.engine).run(&hub.engine, "pullRequestThread.open"));
+    hub.dispatch(
+        "pullRequestThread.edit",
+        json!({"reference": "the tax one"}),
+    );
+    let shown = dialog(&hub);
+    assert_eq!(shown["step"], "ask");
+    assert_eq!(
+        shown["error"],
+        "Use a pull request URL, checkout command, 123, or #123."
+    );
+    hub.dispatch("pullRequestThread.edit", json!({"reference": " "}));
+    assert_eq!(
+        dialog(&hub)["error"],
+        "Paste a pull request URL, checkout command, or enter 123 / #123."
+    );
+    hub.advance(450);
+    assert_eq!(count(&hub, RESOLVE), 0);
+}
+
+#[test]
+fn a_reference_is_a_link_a_checkout_command_or_a_number() {
+    use hal_c2_shell::controllers::pull_request_thread::parse_reference;
+    let named = |text: &str| parse_reference(text);
+    assert_eq!(
+        named(" https://github.com/acme/shop/pull/42/files "),
+        Some("https://github.com/acme/shop/pull/42/files".into())
+    );
+    assert_eq!(
+        named("https://gitlab.com/acme/shop/-/merge_requests/7").as_deref(),
+        Some("https://gitlab.com/acme/shop/-/merge_requests/7")
+    );
+    assert_eq!(
+        named("https://codeberg.org/acme/shop/pulls/7").as_deref(),
+        Some("https://codeberg.org/acme/shop/pulls/7")
+    );
+    assert_eq!(named("#7").as_deref(), Some("7"));
+    assert_eq!(named("GH PR checkout #7").as_deref(), Some("7"));
+    assert_eq!(named("glab mr checkout 7").as_deref(), Some("7"));
+    assert_eq!(named("tea pulls checkout 7").as_deref(), Some("7"));
+    assert_eq!(named("az repos pr checkout --id 7").as_deref(), Some("7"));
+    assert_eq!(named("az repos pr checkout --id=7").as_deref(), Some("7"));
+    assert_eq!(
+        named("az repos pr checkout 7 --remote").as_deref(),
+        Some("7")
+    );
+    assert_eq!(named("https://example.com/acme/shop/issues/7"), None);
+    assert_eq!(named("gh pr checkout"), None);
+    assert_eq!(named(""), None);
+}

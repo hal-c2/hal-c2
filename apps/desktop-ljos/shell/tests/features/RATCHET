@@ -1674,18 +1674,51 @@ source-control/pull-request-review.feature: The review page
 source-control/pull-request-review.feature: The review page refuses what cannot be sent
 source-control/pull-request-review.feature: The review page while the environment is unreachable
 source-control/pull-request-review.feature: Unmarking a viewed file on the review page
+source-control/pull-request-threads.feature: A bare number needs the thread's own project to be understood
+source-control/pull-request-threads.feature: A bare number on a host with no pull request address
+source-control/pull-request-threads.feature: A link the host has not been asked about yet shows what is known
+source-control/pull-request-threads.feature: A linked pull request says how and when it was linked
+source-control/pull-request-threads.feature: A linked pull request says how it came to be linked [created from the thread, Created from this thread]
+source-control/pull-request-threads.feature: A linked pull request says how it came to be linked [dismissed from the stack, Dismissed]
+source-control/pull-request-threads.feature: A linked pull request says how it came to be linked [found in the stack of another layer, Found in the stack]
+source-control/pull-request-threads.feature: A linked pull request says how it came to be linked [linked by the agent, Linked by the agent]
+source-control/pull-request-threads.feature: A linked pull request says how it came to be linked [linked by the user, Linked by you]
+source-control/pull-request-threads.feature: A linked pull request's link can be copied or opened from its row
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [az repos pr checkout --id 7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [gh pr checkout 7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [glab mr checkout 7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [https://acme.visualstudio.com/shop/_git/web/pullrequest/7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [https://codeberg.org/acme/shop/pulls/7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [https://dev.azure.com/acme/shop/_git/web/pullrequest/7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [https://gitlab.com/acme/shop/-/merge_requests/7, 7]
+source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [tea pr checkout 7, 7]
 source-control/pull-request-threads.feature: A pull request from another repository on a host a project reads
 source-control/pull-request-threads.feature: A pull request on a host no project can read
+source-control/pull-request-threads.feature: A pull request reference nobody can read is refused
+source-control/pull-request-threads.feature: A pull request that cannot be resolved says why
 source-control/pull-request-threads.feature: A pull request the MC does not link says why
+source-control/pull-request-threads.feature: A pull request thread is not abandoned while it is prepared
+source-control/pull-request-threads.feature: A pull request thread that could not be prepared stays open with the reason [saying "Worktree already used.", Worktree already used.]
+source-control/pull-request-threads.feature: A pull request thread that could not be prepared stays open with the reason [without saying why, Failed to prepare pull request thread.]
+source-control/pull-request-threads.feature: A stack layer is dismissed from the thread rather than unlinked
+source-control/pull-request-threads.feature: A stack the thread's pull request belongs to says what merging does
 source-control/pull-request-threads.feature: A thread links several pull requests across repositories
+source-control/pull-request-threads.feature: A thread without pull requests says so
 source-control/pull-request-threads.feature: An Azure DevOps pull request needs a project of its own repository
+source-control/pull-request-threads.feature: An environment without several links per thread says so
+source-control/pull-request-threads.feature: Choosing waits until the pull request is resolved
+source-control/pull-request-threads.feature: Clearing the reference asks for one
 source-control/pull-request-threads.feature: Linked pull requests of an unreachable environment stay as last synced
 source-control/pull-request-threads.feature: Linked pull requests stay current
 source-control/pull-request-threads.feature: Linking a pull request to a thread
+source-control/pull-request-threads.feature: Linking from a pull request link in the conversation
+source-control/pull-request-threads.feature: Linking shows it is working and says why it failed
 source-control/pull-request-threads.feature: Opening a linked pull request in the browser
 source-control/pull-request-threads.feature: Opening the thread's pull request from the composer
+source-control/pull-request-threads.feature: Pull requests chained only by their base branches say so
 source-control/pull-request-threads.feature: Refreshing the linked pull requests reads them from the host again
 source-control/pull-request-threads.feature: Starting a pull request thread from a pasted link
+source-control/pull-request-threads.feature: The link dialog asks for a reference before it links
 source-control/pull-request-threads.feature: Unlinking a pull request from a thread
 source-control/push-pull-and-default-branch.feature: A finished action's result goes away by itself
 source-control/push-pull-and-default-branch.feature: A refused pull is reported

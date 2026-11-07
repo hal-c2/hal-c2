@@ -217,6 +217,7 @@ fn online(links: Vec<Json>) -> Shown {
     Shown {
         links,
         online: true,
+        available: true,
         notice: String::new(),
         project_id: "p1".into(),
     }
@@ -415,7 +416,7 @@ fn unlinking_a_stack_layer_or_a_link_dispatches_the_unlink() {
     assert_eq!(
         prs.take_effects(),
         vec![Effect::Notify {
-            title: "Could not unlink pull request #5".into(),
+            title: "Could not unlink the pull request".into(),
             description: "gone".into(),
         }]
     );
@@ -649,6 +650,7 @@ impl Sim {
         let shown = Shown {
             links: self.links[self.thread].clone(),
             online: self.online,
+            available: true,
             notice: String::new(),
             project_id: "p1".into(),
         };
