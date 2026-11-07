@@ -729,6 +729,10 @@ QString TimelineModel::timeTitle(const QString& rowId, const QString& entryId) c
 
 // --- The fold ------------------------------------------------------------------------
 
+bool TimelineModel::sentByScheduledTask(const QJsonObject& item) {
+  return !text(item, QLatin1String("scheduledTaskId")).isEmpty() || legacyAutomationPrefix(item) > 0;
+}
+
 QJsonObject TimelineModel::streamKinds() {
   QJsonObject kinds;
   for (const QString& kind : kKinds) kinds.insert(kind, QJsonObject());
@@ -2256,7 +2260,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       // Only a user message mentions a pull request. Nor is what the agent was sent
       // for itself anyone's message (noticeOf).
       if (type != QLatin1String("user_message") || row.kind != QLatin1String("message")) return QString();
-      if (!text(item, QLatin1String("scheduledTaskId")).isEmpty() || legacyAutomationPrefix(item) > 0) return QStringLiteral("Sent by automation");
+      if (sentByScheduledTask(item)) return QStringLiteral("Sent by automation");
       if (text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
         const QString sender = text(item, QLatin1String("senderThreadId"));
         const QString title = sender.isEmpty() || !m_threadTitle ? QString() : m_threadTitle(sender);

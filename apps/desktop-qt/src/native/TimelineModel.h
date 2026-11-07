@@ -237,6 +237,10 @@ public:
   // The `kinds` a subscription to a thread's stream names: the entities the
   // model folds, so the MC sends no others.
   static QJsonObject streamKinds();
+  // Whether a scheduled task sent the user message: by its task id, or by the
+  // id and text prefix an older MC or a T3 import left. The row's attribution
+  // and the composer's prompt recall both ask this.
+  static bool sentByScheduledTask(const QJsonObject& item);
   // What a `sub` frame for the thread carries besides its shape: where the
   // copy stands (`offset`, `handle`) and the window it holds, or the window
   // to open with. Asked as each is sent, which starts the subscription over:

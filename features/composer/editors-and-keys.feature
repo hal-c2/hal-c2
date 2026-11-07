@@ -395,6 +395,7 @@ Feature: Editing the draft
       | message                                   |
       | an image with no text                     |
       | the request to implement a proposed plan  |
+      | a scheduled task's message an older MC marked by its id |
 
   @desktop @priority-high
   Scenario Outline: Enter does not send while it is doing something else
@@ -479,7 +480,7 @@ Feature: Editing the draft
   @desktop
   Scenario: A reference in a list item is never split
     Given a list item holds a file reference
-    When the user adds a new line with the caret beside the reference
+    When the user adds a new line with the caret inside the reference label
     Then the file reference is whole on one of the two lines
 
   @desktop

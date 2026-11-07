@@ -522,7 +522,7 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
   for (const QJsonObject& item : itemsOf(m_timeline->entities(QStringLiteral("turn-item")), QStringLiteral("user_message"))) {
     // Only what the user typed: not a scheduled task's, another agent's or the app's message.
     const QString by = str(item, QLatin1String("createdBy"));
-    if ((!by.isEmpty() && by != QLatin1String("user")) || !str(item, QLatin1String("scheduledTaskId")).isEmpty() ||
+    if ((!by.isEmpty() && by != QLatin1String("user")) || TimelineModel::sentByScheduledTask(item) ||
         !str(item, QLatin1String("senderThreadId")).isEmpty()) {
       continue;
     }

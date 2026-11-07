@@ -504,6 +504,18 @@ const Steps steps([] {
        [sent](World& world, const Captures& c, const Table&) {
          sent(world, {c[0], c[1].startsWith(QLatin1String("an image")) ? QString() : QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n# Tax line\n\nAdd it.")});
        });
+  // An older MC or a T3 import: the task is in the item's id and the text's prefix, and the sender is "user".
+  step(QStringLiteral("the user sent %1 and then a scheduled task's message an older MC marked by its id").arg(q),
+       [sent](World& world, const Captures& c, const Table&) {
+         sent(world, {c[0]});
+         const QString run = startRun(world, 60, QStringLiteral("completed"));
+         set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run, {{QStringLiteral("text"), QString()}});
+         set(world, QStringLiteral("turn-item"), QStringLiteral("scheduled-task-message:task-nightly:1:scheduled"),
+             {{QStringLiteral("type"), QStringLiteral("user_message")},
+              {QStringLiteral("runId"), run},
+              {QStringLiteral("createdBy"), QStringLiteral("user")},
+              {QStringLiteral("text"), QStringLiteral("[Triggered by schedule task: Nightly]\n\nRun the nightly check")}});
+       });
   step(QStringLiteral("the user recalls the previous prompt"), [](World& world, const Captures&, const Table&) {
     composerBrick(world);
     pressInComposer(world, QStringLiteral("Up"));
@@ -625,8 +637,9 @@ const Steps steps([] {
   step(QStringLiteral("the user (?:adds|starts) a new line"), [](World& world, const Captures&, const Table&) {
     expect(pressInComposer(world, QStringLiteral("Shift+Enter")), QStringLiteral("the composer did not take Shift+Enter"));
   });
-  step(QStringLiteral("the user adds a new line with the caret beside the reference"), [](World& world, const Captures&, const Table&) {
-    composerEditor(world)->setProperty("cursorPosition", int(editorText(world).indexOf(QLatin1Char(')')) + 1));
+  step(QStringLiteral("the user adds a new line with the caret inside the reference label"), [](World& world, const Captures&, const Table&) {
+    // After "[cart", inside the label.
+    composerEditor(world)->setProperty("cursorPosition", int(editorText(world).indexOf(QLatin1String("[cart")) + 5));
     expect(pressInComposer(world, QStringLiteral("Shift+Enter")), QStringLiteral("the composer did not take Shift+Enter"));
   });
   const auto lines = [](World& world) {
