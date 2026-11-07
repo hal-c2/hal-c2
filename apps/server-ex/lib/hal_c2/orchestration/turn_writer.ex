@@ -699,9 +699,11 @@ defmodule HalC2.Orchestration.TurnWriter do
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
     # The run keeps its own failure text: the provider session's `lastError` outlives it.
+    text = status == "failed" && failure_message(failure)
+
     run_done =
-      if status == "failed" and failure != nil,
-        do: Map.put(run_done, "failure", failure_message(failure)),
+      if is_binary(text) and text != "",
+        do: Map.put(run_done, "failure", text),
         else: run_done
 
     # A turn that failed while starting has not created all of these yet.
