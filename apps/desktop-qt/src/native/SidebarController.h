@@ -101,6 +101,9 @@ public:
   // one). A drop within the pinned or the active rows reorders them; into
   // another section it pins (at the drop position), unpins, settles,
   // un-settles or wakes the thread, and into the snoozed shelf does nothing.
+  // While the Working section is on (sidebarWorkingShelfEnabled) the inbox
+  // keeps the order threads came back in, so a drop within it or a move does
+  // nothing, and the Working rows are neither dragged nor dropped on.
   // The order is the environment's (sidebar::planReorder), which has to
   // support it (threadPinReorder, threadActiveReorder).
   // While the thread jump modifier is held (KeybindingController), the first
@@ -200,6 +203,10 @@ private:
   // their threads last the session, as the web's did.
   std::optional<sidebar::Tree> m_tree;
   QSet<QString> m_showingAll;
+  bool m_workingShelf = true;
+  sidebar::WorkingTracker m_working;
+  // Refreshes when a thread's grace in the Working section runs out.
+  QTimer m_workingGrace;
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   bool m_scopeRestored = false;

@@ -38,6 +38,8 @@ var general = [
       daysDescription: "Any new activity un-settles a thread automatically.", min: 1, max: 90 },
     { key: "sidebarShowSettledPluginThreads", kind: "switch", title: "Show plugin threads in Settled",
       description: "List settled threads a plugin started, such as code reviews. Search and the plugin's page find them either way." },
+    { key: "sidebarWorkingShelfEnabled", kind: "switch", title: "Working section",
+      description: "Fold threads that are working into their own section. The list above it then keeps the order threads came back to you in, so it cannot be rearranged." },
 
     { section: "Behavior" },
     { key: "notificationMode", kind: "select", title: "Thread notifications",

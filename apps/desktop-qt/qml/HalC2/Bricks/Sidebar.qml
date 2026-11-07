@@ -173,7 +173,8 @@ Rectangle {
 
     function toggleSection(key) {
         const next = Object.assign({}, collapsed);
-        next[key] = !next[key];
+        // The Working section starts folded, the shelves open.
+        next[key] = key === "working" ? !(next[key] ?? true) : !next[key];
         collapsed = next;
     }
 
@@ -214,11 +215,11 @@ Rectangle {
                 item: item
             });
         }
-        const section = (key, label, items) => {
+        // `cards` keeps the rows full size, as the Working section's are.
+        const section = (key, label, items, open, cards) => {
             if (items.length === 0) {
                 return;
             }
-            const open = !folded[key];
             out.push({
                 kind: "header",
                 key: key,
@@ -233,15 +234,17 @@ Rectangle {
                     continue;
                 }
                 out.push({
-                    kind: "slim",
+                    kind: cards ? "thread" : "slim",
                     section: key,
                     rowKey: item.key,
                     item: item
                 });
             }
         };
-        section("snoozed", qsTr("Snoozed"), state.snoozed);
-        section("settled", qsTr("Settled"), state.settled);
+        // Busy threads, folded away until opened.
+        section("working", qsTr("Working"), state.working ?? [], folded.working === false, true);
+        section("snoozed", qsTr("Snoozed"), state.snoozed, !folded.snoozed, false);
+        section("settled", qsTr("Settled"), state.settled, !folded.settled, false);
         // The settled shelf lists a page at a time; this row lists the next.
         const hidden = state.settledTotal - state.settled.length;
         if (!folded.settled && hidden > 0) {
@@ -764,6 +767,20 @@ Rectangle {
                     dropBeforeKey = upper ? row.item.key : (keys[at + 1] ?? null);
                     dropLineY = upper ? top : top + item.height;
                 }
+                if (!dropLands()) {
+                    dropSection = "";
+                    dropBeforeKey = null;
+                    dropLineY = -1;
+                }
+            }
+
+            // Nothing lands in the Working section, and while it is on the
+            // inbox keeps the order threads came back in.
+            function dropLands() {
+                if (dropSection === "working") {
+                    return false;
+                }
+                return !(dropSection === "active" && sidebar.model?.workingShelf && sectionKeys("active").includes(dragKey));
             }
 
             // A project of the tree being dragged, and the one it would land on.

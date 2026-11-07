@@ -50,6 +50,7 @@ const QList<Row>& rows() {
       {"sidebarAutoSettleOnMerge", false, true},
       {"sidebarAutoSettleAfterDays", false, 3},
       {"sidebarShowSettledPluginThreads", false, false},
+      {"sidebarWorkingShelfEnabled", true, true},
       {"notificationMode", true, QStringLiteral("off")},
       {"inAppNotificationsEnabled", true, false},
       {"timestampFormat", true, QStringLiteral("locale")},

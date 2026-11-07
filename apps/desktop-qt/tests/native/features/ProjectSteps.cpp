@@ -182,7 +182,7 @@ QStringList projectNames(World& world) {
 
 QStringList threadTitles(World& world) {
   QStringList titles;
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
     for (const QVariant& row : at(world.state(QStringLiteral("sidebar")), section).toList()) {
       titles.append(row.toMap().value(QStringLiteral("title")).toString());
     }
