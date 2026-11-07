@@ -160,7 +160,7 @@ defmodule HalC2.Mcp.Tools do
     title = args["titleContains"] && String.downcase(args["titleContains"])
 
     threads =
-      project_threads(me["projectId"])
+      if(args["allProjects"] == true, do: all_threads(), else: project_threads(me["projectId"]))
       |> Enum.filter(
         &(statuses in [nil, []] or (&1["activityRunStatus"] || &1["status"]) in statuses)
       )
@@ -172,13 +172,14 @@ defmodule HalC2.Mcp.Tools do
             get_in(&1, ["lineage", "relationshipToParent"]) != "subagent")
       )
       |> Enum.filter(&(not is_boolean(args["settled"]) or settled?(&1) == args["settled"]))
+      |> Enum.filter(&(not is_boolean(args["snoozed"]) or snoozed?(&1) == args["snoozed"]))
 
     cursor = args["cursor"] || 0
     page = Enum.slice(threads, cursor, args["limit"] || 50)
 
     {:ok,
      %{
-       "projectId" => me["projectId"],
+       "projectId" => if(args["allProjects"] != true, do: me["projectId"]),
        "currentThreadId" => me["id"],
        "threads" => Enum.map(page, &list_item/1),
        "nextCursor" => if(cursor + length(page) < length(threads), do: cursor + length(page)),
@@ -187,12 +188,14 @@ defmodule HalC2.Mcp.Tools do
   end
 
   def run("hal_c2_thread_read", args, %{row: me} = caller) do
-    with {:ok, row} <- readable_thread(me, args["threadId"]),
+    with {:ok, args} <- clamp_read(args),
+         {:ok, row} <- mc_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
       view = args["view"] || "messages"
       after_position = args["afterPosition"] || -1
       limit = args["limit"] || 50
       max_chars = args["maxCharsPerItem"] || 20_000
+      run_limit = args["runLimit"] || 10
 
       shown? =
         &((view == "activity" or &1["type"] in ["user_message", "assistant_message"]) and
@@ -281,9 +284,12 @@ defmodule HalC2.Mcp.Tools do
            state
            |> StreamState.list("run")
            |> Enum.sort_by(&(&1["ordinal"] || 0), :desc)
-           |> Enum.take(args["runLimit"] || 10)
+           |> Enum.take(run_limit)
            |> Enum.map(&run_summary/1),
          "items" => read,
+         "limit" => limit,
+         "runLimit" => run_limit,
+         "maxCharsPerItem" => max_chars,
          "nextPosition" =>
            case List.last(page) do
              {_, position} -> position
@@ -578,44 +584,20 @@ defmodule HalC2.Mcp.Tools do
   defp foreign_credential,
     do: {:error, "capability_denied", "This credential belongs to another environment."}
 
-  # A thread `hal_c2_thread_read` may show the caller: one of its project, or one
-  # the user attached to the caller's conversation as context, of any project.
-  # A deleted one the caller could otherwise read says it is gone, not missing.
-  defp readable_thread(me, nil), do: {:ok, me}
+  @doc """
+  A thread of this MC that is not deleted (the caller itself for nil), of any
+  project, as its sidebar row: what `hal_c2_thread_list` with `allProjects`
+  finds, `hal_c2_thread_read` and `hal_c2_thread_organize` reach. The caller's
+  project is only the default the list starts from, as upstream (#26442).
+  """
+  def mc_thread(me, nil), do: {:ok, me}
 
-  defp readable_thread(%{"projectId" => project} = me, id) do
+  def mc_thread(_me, id) do
     case HalC2.Shell.row(node(), id) do
-      {"thread", row} ->
-        cond do
-          row["projectId"] != project and not user_attached?(me, id) ->
-            {:error, "thread_not_found", "The thread was not found in the calling project."}
-
-          row["deletedAt"] != nil ->
-            {:error, "thread_not_found", "Thread #{id} is no longer available."}
-
-          true ->
-            {:ok, row}
-        end
-
-      _ ->
-        {:error, "thread_not_found", "The thread was not found in the calling project."}
+      {"thread", %{"deletedAt" => nil} = row} -> {:ok, row}
+      {"thread", _} -> {:error, "thread_not_found", "Thread #{id} is no longer available."}
+      _ -> {:error, "thread_not_found", "The thread was not found."}
     end
-  end
-
-  # Only records on messages the user wrote count: an agent cannot widen its own
-  # reach by writing a `thread` context record naming a thread elsewhere.
-  defp user_attached?(me, thread_id) do
-    HalC2.Streams.read(me["id"], fn state ->
-      state
-      |> StreamState.all("message")
-      |> Enum.any?(fn message ->
-        message["role"] == "user" and message["createdBy"] == "user" and
-          Enum.any?(
-            get_in(message, ["context", "records"]) || [],
-            &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
-          )
-      end)
-    end)
   end
 
   @doc """
@@ -728,6 +710,32 @@ defmodule HalC2.Mcp.Tools do
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
   end
 
+  @read_maximums %{"limit" => 100, "runLimit" => 50, "maxCharsPerItem" => 50_000}
+
+  # A read's size arguments are capped at their maximum rather than failing the read
+  # (upstream #22901); one under 1 is refused.
+  defp clamp_read(args) do
+    Enum.reduce_while(@read_maximums, {:ok, args}, fn {key, maximum}, {:ok, args} ->
+      case args[key] do
+        nil -> {:cont, {:ok, args}}
+        n when is_integer(n) and n >= 1 -> {:cont, {:ok, Map.put(args, key, min(n, maximum))}}
+        _ -> {:halt, {:error, "invalid_request", "#{key} must be a whole number of at least 1."}}
+      end
+    end)
+  end
+
+  @doc "Every thread on this MC that is not deleted, most recently updated first."
+  def all_threads do
+    for(
+      {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+      mc == node() and row["deletedAt"] == nil,
+      do: row
+    )
+    |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
+  end
+
+  defp snoozed?(row), do: row["snoozedUntil"] != nil
+
   # Whether the thread is settled: moved out of the active list by the user or
   # by automatic settlement (`thread.settle` records the override either way).
   defp settled?(row), do: row["settledOverride"] == "settled"
@@ -752,6 +760,7 @@ defmodule HalC2.Mcp.Tools do
     Map.merge(
       %{
         "threadId" => row["id"],
+        "projectId" => row["projectId"],
         "title" => row["title"],
         "status" => row["activityRunStatus"] || row["status"],
         "providerInstanceId" => row["providerInstanceId"],
@@ -763,6 +772,19 @@ defmodule HalC2.Mcp.Tools do
         "activeRunId" => row["activeRunId"],
         "latestRunId" => row["latestRunId"],
         "archived" => row["archivedAt"] != nil,
+        "snoozed" => snoozed?(row),
+        "snoozedUntil" => row["snoozedUntil"],
+        "pullRequests" =>
+          for(
+            link <- HalC2.Projection.PullRequests.visible(row["pullRequests"] || []),
+            do:
+              link
+              |> HalC2.Projection.PullRequests.normalize()
+              |> Map.merge(%{
+                "url" => link["url"],
+                "state" => get_in(link, ["snapshot", "state"])
+              })
+          ),
         "parentThreadId" => get_in(row, ["lineage", "parentThreadId"]),
         "updatedAt" => row["updatedAt"]
       },
@@ -793,6 +815,8 @@ defmodule HalC2.Mcp.Tools do
       "type" => item["type"],
       "runId" => item["runId"],
       "status" => item["status"],
+      "sentByThreadId" =>
+        item["messageId"] && get_in(messages, [item["messageId"], "senderThreadId"]),
       "text" => String.slice(rest, 0, max_chars),
       "truncated" => String.length(rest) > max_chars
     }

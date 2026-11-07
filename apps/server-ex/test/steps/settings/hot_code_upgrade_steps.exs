@@ -75,6 +75,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
+    # Its first boot removes old versions off the server; the scenario starts after.
+    :ok = HalC2.Upgrade.await_pruned()
     Map.put(context, :release, %{root: root, version: version})
   end
 
@@ -155,7 +157,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     mc = Mc.restart(context.mc)
     Mc.ensure(HalC2.Upgrade)
     # The outcome is settled once the updater has started.
-    :sys.get_state(HalC2.Upgrade)
+    :ok = HalC2.Upgrade.await_pruned()
     %{context | mc: mc, clients: %{}}
   end
 
@@ -302,6 +304,8 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   end
 
   step "{string} is asked to continue where it left off", %{args: [title]} = context do
+    # Dispatched off the boot (`Recovery.continue/0`): the message is the receipt.
+    World.await_state(context, title, fn _ -> continuations(context, title) != [] end)
     assert [%{"createdBy" => "agent"}] = continuations(context, title)
     context
   end

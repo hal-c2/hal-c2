@@ -1806,8 +1806,14 @@ defmodule HalC2.Claude.ThreadRuntime do
       result["is_error"] == true or result["subtype"] != "success" or
         Map.has_key?(@terminal_errors, reason) or result["api_error_status"] in [429, 529]
 
+    limit = if failed?, do: failure(result, state.turn)
+
     status =
       cond do
+        # A limit that lands as the user stops the run still leaves the thread limited,
+        # for the user to resume; `TurnWriter` keeps it from resuming on its own. A stop
+        # that cut the run short is only a stop, whatever limit came before it.
+        state.interrupted and limit["class"] == "usage_limit" -> "failed"
         state.interrupted or aborted -> "interrupted"
         failed? -> "failed"
         true -> "completed"
@@ -1828,7 +1834,7 @@ defmodule HalC2.Claude.ThreadRuntime do
           auth_failure(state.turn[:auth_failure], result)
 
         true ->
-          failure(result, state.turn)
+          limit
       end
 
     end_turn(state, status, failure)

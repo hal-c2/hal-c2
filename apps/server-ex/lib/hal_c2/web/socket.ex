@@ -83,9 +83,12 @@ defmodule HalC2.Web.Socket do
   def rpc_timeout("scheduledTasks.runNow"),
     do: max(rpc_timeout(), HalC2.ScheduledTasks.run_timeout_ms() + 10_000)
 
-  # A desktop app update has its own deadline (`HalC2.DesktopUpdate`).
+  # A desktop app update has its own deadline (`HalC2.DesktopUpdate`); the MC's own
+  # has one per stage (`HalC2.Upgrade`), so a long download that keeps going is
+  # waited for.
   def rpc_timeout("server.updateServer") do
-    case HalC2.DesktopUpdate.update_timeout() do
+    case HalC2.DesktopUpdate.available?() && HalC2.DesktopUpdate.update_timeout() do
+      false -> :infinity
       :infinity -> :infinity
       ms -> max(rpc_timeout(), ms + 10_000)
     end
