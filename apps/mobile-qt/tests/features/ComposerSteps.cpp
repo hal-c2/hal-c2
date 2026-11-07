@@ -137,7 +137,9 @@ const FakeMc::Extension streams([](FakeMc& mc) {
     const QJsonObject sub = mc.subscriptions.last();
     FakeStreams& fake = mc.part<FakeStreams>();
     if (fake.slow) {
-      fake.waiting.append([&mc, id, shape, sub] { answer(mc, id, shape, sub); });
+      fake.waiting.append([&mc, id, shape, sub] {
+        if (mc.subscribers(QStringLiteral("stream")).contains(id)) answer(mc, id, shape, sub);
+      });
       return;
     }
     if (const int ms = fake.loadMs; ms > 0) {
