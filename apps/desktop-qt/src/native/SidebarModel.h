@@ -156,11 +156,14 @@ QString physicalKey(const Project& project);
 // The client settings grouping and ordering read: sidebarProjectGroupingMode
 // ("repository", "repository_path" or "separate"), its per-folder overrides
 // keyed by physical key, and sidebarProjectSortOrder ("updated_at",
-// "created_at" or "manual").
+// "created_at" or "manual"). `manualOrder` is the order the user arranged
+// the folders in by hand (`sidebarProjectOrder`, physical keys), which
+// "manual" lists first; folders it does not name follow in the order given.
 struct GroupingSettings {
   QString mode = QStringLiteral("repository");
   QHash<QString, QString> overrides;
   QString sortOrder = QStringLiteral("updated_at");
+  QStringList manualOrder;
 };
 
 // A logical project: the folders grouped as one, across environments.
@@ -186,6 +189,34 @@ std::optional<Project> mostRecentProject(const QList<Project>& projects, const Q
 // "created_at"), leaving out the
 // archived and subagent rows the sidebar does not list either.
 std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder);
+
+// The legacy sidebar (legacySidebarEnabled): one tree of threads per project
+// instead of the sections. A project lists its threads in `threadSortOrder`
+// ("updated_at" is the last message the user sent, or "created_at"), the
+// first `previewCount` of them unless the user asked for all; a folded one
+// lists only the open thread, when it is one of its own.
+struct Tree {
+  int previewCount = 6;
+  QString threadSortOrder = QStringLiteral("updated_at");
+  // Logical project keys.
+  QSet<QString> folded;
+  QSet<QString> showingAll;
+  // Projects are sorted by hand, so their headers can be dragged.
+  bool manual = false;
+};
+
+// sidebarThreadPreviewCount as the tree reads it: 1 to 15, 6 when unset
+// (packages/contracts settings.ts).
+inline constexpr int kMinThreadPreviewCount = 1;
+inline constexpr int kMaxThreadPreviewCount = 15;
+inline constexpr int kDefaultThreadPreviewCount = 6;
+int clampThreadPreviewCount(int count);
+
+// The folder order after the user dropped the folders `dragged` on the
+// project of the folders `target` (physical keys): dragged up it lands above
+// the target, dragged down below it. `order` unchanged when the drop moves
+// nothing.
+QStringList reorderProjects(const QStringList& order, const QStringList& dragged, const QStringList& target);
 
 // The settled rows the shelf lists at a time.
 inline constexpr qsizetype kSettledPage = 50;
@@ -224,13 +255,17 @@ struct Input {
   // Whether Settled lists the settled threads a plugin started, such as code
   // reviews (`sidebarShowSettledPluginThreads`); the open one is listed either way.
   bool showSettledPluginThreads = false;
+  // Set, the view is the legacy tree: `mode` "tree" and `tree` in place of
+  // the sections, which are empty.
+  std::optional<Tree> tree;
 
   const ProjectGroup* group(const QString& key) const;
 };
 
 struct View {
   QVariantMap state;
-  // Rows in the order they render (pinned, active, snoozed, settled), and
+  // Rows in the order they render (pinned, active, snoozed, settled; the
+  // tree's shown rows, project by project), and
   // which of them are parked (snoozed or settled).
   QStringList orderedKeys;
   QSet<QString> parkedKeys;

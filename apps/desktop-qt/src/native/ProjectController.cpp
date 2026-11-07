@@ -102,6 +102,7 @@ void ProjectController::activate() {
   commands->setTerms(kAdd, {QStringLiteral("add project"), QStringLiteral("folder"), QStringLiteral("directory"),
                             QStringLiteral("browse"), QStringLiteral("environment")});
   publish();
+  publishRename();
 }
 
 QString ProjectController::browseStart(const QString& environmentId) const {
@@ -138,6 +139,22 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
       }
     }
     askToRemove(key);
+    return true;
+  }
+  if (action == QLatin1String("project.rename")) {
+    const QString key = map.value(QStringLiteral("projectKey")).toString();
+    if (!m_store->project(key)) return true;
+    m_renaming = key;
+    publishRename();
+    return true;
+  }
+  if (action == QLatin1String("project.rename.submit")) {
+    submitRename(map.value(QStringLiteral("title")).toString().trimmed());
+    return true;
+  }
+  if (action == QLatin1String("project.rename.cancel")) {
+    m_renaming.clear();
+    publishRename();
     return true;
   }
   if (action == QLatin1String("project.remove.confirm")) {
@@ -257,6 +274,55 @@ void ProjectController::askToRemove(const QStringList& keys, const QString& kind
   if (keys.isEmpty()) return;
   m_removal = Removal{keys, kind, title};
   publish();
+}
+
+void ProjectController::submitRename(const QString& title) {
+  const auto project = m_store->project(m_renaming);
+  if (!project) {
+    m_renaming.clear();
+    publishRename();
+    return;
+  }
+  auto* toasts = NativeShell::of(this)->controller<ToastController>();
+  if (title.isEmpty()) {
+    toasts->show(QStringLiteral("warning"), QStringLiteral("Project title cannot be empty"));
+    return;
+  }
+  if (title == project->title) {
+    m_renaming.clear();
+    publishRename();
+    return;
+  }
+  const QJsonObject command{
+      {QStringLiteral("type"), QStringLiteral("project.update")},
+      {QStringLiteral("projectId"), project->id},
+      {QStringLiteral("title"), title},
+  };
+  m_client->call(this, project->environmentId, QStringLiteral("projects.mutate"), command,
+                 [this, key = m_renaming](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) {
+                     NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Failed to rename project"), *error);
+                     return;
+                   }
+                   if (m_renaming != key) return;
+                   m_renaming.clear();
+                   publishRename();
+                 });
+}
+
+void ProjectController::publishRename() {
+  if (!m_active) return;
+  const auto project = m_renaming.isEmpty() ? std::nullopt : m_store->project(m_renaming);
+  if (!project) {
+    m_bridge->publish(QStringLiteral("projectRename"), QVariant::fromValue(nullptr));
+    return;
+  }
+  m_bridge->publish(QStringLiteral("projectRename"),
+                    QVariantMap{
+                        {QStringLiteral("projectKey"), project->key()},
+                        {QStringLiteral("title"), project->title},
+                        {QStringLiteral("environment"), m_store->environment(project->environmentId).value(QLatin1String("label")).toString()},
+                    });
 }
 
 void ProjectController::confirmRemoval() {

@@ -127,6 +127,8 @@ Window {
 
     ProjectRemovalDialog {}
 
+    ProjectRenameDialog {}
+
     ConfirmDialog {}
 
     CustomSnoozeDialog {}

@@ -190,6 +190,9 @@ Rectangle {
                 item: draft
             });
         }
+        if (state.mode === "tree") {
+            return out.concat(buildTreeRows(state.tree));
+        }
         for (const item of state.pinned) {
             out.push({
                 kind: "thread",
@@ -247,6 +250,39 @@ Rectangle {
                 rowKey: "more:settled",
                 label: qsTr("Show %1 more").arg(Math.min(hidden, state.settledPage ?? hidden))
             });
+        }
+        return out;
+    }
+
+    // The legacy tree (`sidebar.tree`): each project, then the threads it
+    // shows, then "Show more" or "Show less" when it has more than it shows.
+    function buildTreeRows(projects) {
+        const out = [];
+        for (const project of projects) {
+            out.push({
+                kind: "project",
+                rowKey: "project:" + project.key,
+                item: project
+            });
+            for (const item of project.threads) {
+                out.push({
+                    kind: "thread",
+                    section: item.section,
+                    rowKey: item.key,
+                    item: item
+                });
+            }
+            if (project.more !== null) {
+                out.push({
+                    kind: "more",
+                    rowKey: "more:" + project.key,
+                    label: project.more === "more" ? qsTr("Show more") : qsTr("Show less"),
+                    action: project.more === "more" ? "sidebar.project.more" : "sidebar.project.less",
+                    payload: {
+                        projectKey: project.key
+                    }
+                });
+            }
         }
         return out;
     }
@@ -511,6 +547,27 @@ Rectangle {
                     }
                 }
 
+                // The tree's sort orders (SidebarController's options menu).
+                ShellButton {
+                    id: sidebarOptions
+
+                    visible: sidebar.model?.mode === "tree"
+                    subtle: true
+                    implicitHeight: Theme.control.lg
+                    iconName: "arrow-up-down"
+                    iconSize: Theme.icon.md
+                    iconTint: sidebar.iconColor
+                    objectName: "sidebarOptions"
+                    Accessible.name: qsTr("Sidebar options")
+                    onClicked: {
+                        const p = sidebarOptions.mapToItem(null, 0, sidebarOptions.height);
+                        Shell.dispatch("sidebar.options", {
+                            x: p.x,
+                            y: p.y
+                        });
+                    }
+                }
+
                 ShellButton {
                     subtle: true
                     implicitHeight: Theme.control.lg
@@ -638,8 +695,13 @@ Rectangle {
                 case "header":
                     sidebar.toggleSection(row.key);
                     break;
+                case "project":
+                    Shell.dispatch("sidebar.project.fold", {
+                        projectKey: row.item.key
+                    });
+                    break;
                 case "more":
-                    Shell.dispatch("sidebar.more", {});
+                    Shell.dispatch(row.action ?? "sidebar.more", row.payload ?? {});
                     break;
                 case "draft":
                     Shell.dispatch("draft.open", {
@@ -665,6 +727,10 @@ Rectangle {
             }
 
             function trackDrop(key, windowY) {
+                // The tree orders threads itself; only its projects move (trackProjectDrop).
+                if (sidebar.model?.mode === "tree") {
+                    return;
+                }
                 dragKey = key;
                 const y = mapFromItem(null, 0, windowY).y;
                 const index = indexAt(width / 2, y + contentY);
@@ -698,6 +764,45 @@ Rectangle {
                     dropBeforeKey = upper ? row.item.key : (keys[at + 1] ?? null);
                     dropLineY = upper ? top : top + item.height;
                 }
+            }
+
+            // A project of the tree being dragged, and the one it would land on.
+            property string dragProjectKey: ""
+            property string dropProjectKey: ""
+
+            function trackProjectDrop(key, windowY) {
+                dragProjectKey = key;
+                const y = mapFromItem(null, 0, windowY).y;
+                const index = indexAt(width / 2, y + contentY);
+                const row = index >= 0 ? sidebar.rows[index] : undefined;
+                const item = index >= 0 ? itemAtIndex(index) : null;
+                dropProjectKey = "";
+                dropLineY = -1;
+                if (!row || !item || row.item === undefined) {
+                    return;
+                }
+                const target = row.kind === "project" ? row.item.key : row.item.projectKey;
+                if (target === undefined || target === key) {
+                    return;
+                }
+                const at = sidebar.rows.findIndex(r => r.kind === "project" && r.item.key === target);
+                const from = sidebar.rows.findIndex(r => r.kind === "project" && r.item.key === key);
+                const head = itemAtIndex(at);
+                dropProjectKey = target;
+                // Dragged up it lands above the target, down below it (sidebar::reorderProjects).
+                dropLineY = head === null ? -1 : from > at ? head.y - contentY : item.y - contentY + item.height;
+            }
+
+            function finishProjectDrop(dropped) {
+                if (dropped && dragProjectKey.length > 0 && dropProjectKey.length > 0) {
+                    Shell.dispatch("sidebar.project.drop", {
+                        projectKey: dragProjectKey,
+                        targetKey: dropProjectKey
+                    });
+                }
+                dragProjectKey = "";
+                dropProjectKey = "";
+                dropLineY = -1;
             }
 
             function finishDrop(dropped) {
@@ -760,6 +865,14 @@ Rectangle {
                     return;
                 }
                 const p = item.mapToItem(null, item.width / 2, item.height / 2);
+                if (row.kind === "project") {
+                    Shell.dispatch("sidebar.project.menu", {
+                        projectKey: row.item.key,
+                        x: p.x,
+                        y: p.y
+                    });
+                    return;
+                }
                 if (row.kind === "draft") {
                     Shell.dispatch("draft.menu", {
                         draftId: row.item.draftId,
@@ -847,7 +960,7 @@ Rectangle {
                 width: ListView.view.width
                 // Pooled by `reuseItems`: hidden, but still a child of the list.
                 Accessible.ignored: !visible
-                implicitHeight: kind === "header" ? Theme.control.lg + Theme.space.xs : kind === "divider" ? Theme.space.md : kind === "more" ? Theme.control.lg : rowLoader.item ? rowLoader.item.implicitHeight : 0
+                implicitHeight: kind === "header" ? Theme.control.lg + Theme.space.xs : kind === "divider" ? Theme.space.md : kind === "more" ? Theme.control.lg : kind === "project" ? (projectLoader.item ? projectLoader.item.implicitHeight : 0) : rowLoader.item ? rowLoader.item.implicitHeight : 0
 
                 // Collapsible section header: "Snoozed 1 ›", the chevron
                 // turning down while the shelf is open.
@@ -936,7 +1049,7 @@ Rectangle {
 
                 // Lists the next page of the settled shelf.
                 Item {
-                    objectName: entry.kind === "more" ? "settledMore" : ""
+                    objectName: entry.kind !== "more" ? "" : entry.modelData.action ? "projectMore:" + entry.modelData.payload.projectKey : "settledMore"
                     anchors.fill: parent
                     visible: entry.kind === "more"
                     Accessible.role: Accessible.Button
@@ -960,7 +1073,7 @@ Rectangle {
                     TapHandler {
                         onTapped: {
                             list.cursorKey = entry.modelData.rowKey;
-                            Shell.dispatch("sidebar.more", {});
+                            Shell.dispatch(entry.modelData.action ?? "sidebar.more", entry.modelData.payload ?? {});
                         }
                     }
 
@@ -974,15 +1087,45 @@ Rectangle {
                 }
 
                 Loader {
+                    id: projectLoader
+
+                    anchors.fill: parent
+                    active: entry.kind === "project"
+
+                    sourceComponent: SidebarProjectHeader {
+                        objectName: "projectHeader:" + entry.thread.key
+                        project: entry.thread
+                        projectIcon: sidebar.projectIcons[entry.thread.key] ?? null
+                        focused: entry.focused
+                        touch: sidebar.touchRows
+                        onToggled: {
+                            list.cursorKey = entry.modelData.rowKey;
+                            Shell.dispatch("sidebar.project.fold", {
+                                projectKey: entry.thread.key
+                            });
+                        }
+                        onMenuRequested: (windowX, windowY) => Shell.dispatch("sidebar.project.menu", {
+                            projectKey: entry.thread.key,
+                            x: windowX,
+                            y: windowY
+                        })
+                        onDragMoved: windowY => list.trackProjectDrop(entry.thread.key, windowY)
+                        onDragEnded: dropped => list.finishProjectDrop(dropped)
+                    }
+                }
+
+                Loader {
                     id: rowLoader
 
                     anchors.fill: parent
+                    // The tree's threads sit under their project.
+                    anchors.leftMargin: sidebar.model?.mode === "tree" && entry.kind === "thread" ? Theme.space.md : 0
                     active: entry.kind === "thread" || entry.kind === "slim" || entry.kind === "draft"
 
                     sourceComponent: SidebarThreadRow {
                         objectName: "threadRow:" + entry.modelData.rowKey
                         // Shelves and drafts are one line, and every row in a narrow window.
-                        slim: entry.kind !== "thread" || sidebar.density !== "full"
+                        slim: entry.kind !== "thread" || sidebar.density !== "full" || sidebar.model?.mode === "tree"
                         section: entry.modelData.section
                         focused: entry.focused
                         touch: sidebar.touchRows
@@ -996,7 +1139,9 @@ Rectangle {
                         } : entry.thread
                         projectName: sidebar.projectNames[entry.thread.projectKey] ?? ""
                         // A list scoped to one project does not repeat it on every row.
-                        projectInDetail: sidebar.model === null || sidebar.model.scopeProjectKey === null
+                        projectInDetail: sidebar.model === null || (sidebar.model.scopeProjectKey === null && sidebar.model.mode !== "tree")
+                        // Under its project in the tree, a row does not repeat its mark.
+                        markShown: sidebar.model === null || sidebar.model.mode !== "tree"
                         projectIcon: sidebar.projectIcons[entry.thread.projectKey] ?? null
                         active: sidebar.model !== null && (entry.kind === "draft" ? entry.thread.draftId === sidebar.model.activeDraftId : entry.thread.key === sidebar.model.activeThreadKey)
                         onActivated: {

@@ -1,5 +1,9 @@
 #include "SidebarController.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QJsonArray>
+
 #include <utility>
 
 #include "ComposerController.h"
@@ -160,6 +164,7 @@ void SidebarController::refresh() {
   input.showSettledPluginThreads = m_showSettledPluginThreads;
   input.jumpLabels = m_jumpLabels;
   input.showJumpHints = m_showJumpHints;
+  input.tree = m_tree;
   input.describeWake = [this, now](const QString& snoozedUntil) {
     return sidebar::wakeDescription(snoozedUntil, now, m_timestampFormat, m_locale);
   };
@@ -283,6 +288,36 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
   if (action == QLatin1String("sidebar.more")) {
     m_settledShown += m_settledPage;
     refresh();
+    return true;
+  }
+  if (action == QLatin1String("sidebar.project.fold") || action == QLatin1String("sidebar.project.more") ||
+      action == QLatin1String("sidebar.project.less") || action == QLatin1String("sidebar.project.drop") ||
+      action == QLatin1String("sidebar.project.menu")) {
+    const QString key = map.value(QStringLiteral("projectKey")).toString();
+    if (!group(key)) return true;
+    if (action == QLatin1String("sidebar.project.fold")) {
+      QSet<QString> folded = m_tree ? m_tree->folded : QSet<QString>();
+      if (!folded.remove(key)) folded.insert(key);
+      QStringList keys(folded.cbegin(), folded.cend());
+      keys.sort();
+      auto* settings = NativeShell::of(this)->controller<SettingsController>();
+      if (settings) settings->writeDevice(kFoldedProjects, keys.isEmpty() ? QVariant() : QVariant(keys));
+    } else if (action == QLatin1String("sidebar.project.drop")) {
+      dropProject(key, map.value(QStringLiteral("targetKey")).toString());
+    } else if (action == QLatin1String("sidebar.project.menu")) {
+      openProjectMenu(key, map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble());
+    } else {
+      if (action == QLatin1String("sidebar.project.more")) {
+        m_showingAll.insert(key);
+      } else {
+        m_showingAll.remove(key);
+      }
+      refresh();
+    }
+    return true;
+  }
+  if (action == QLatin1String("sidebar.options")) {
+    openSortMenu(map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble());
     return true;
   }
   if (action == QLatin1String("sidebar.scope")) {
@@ -688,6 +723,164 @@ void SidebarController::drop(const QString& key, const QString& section, const Q
   }
 }
 
+void SidebarController::dropProject(const QString& key, const QString& targetKey) {
+  // Only an order the user keeps by hand takes a drag.
+  if (m_grouping.sortOrder != QLatin1String("manual") || key == targetKey) return;
+  const sidebar::ProjectGroup* dragged = group(key);
+  const sidebar::ProjectGroup* target = group(targetKey);
+  if (!dragged || !target) return;
+  const auto folders = [](const sidebar::ProjectGroup& group) {
+    QStringList keys;
+    for (const sidebar::Project& member : group.members) {
+      const QString physical = sidebar::physicalKey(member);
+      if (!keys.contains(physical)) keys.append(physical);
+    }
+    return keys;
+  };
+  QStringList order;
+  for (const sidebar::ProjectGroup& group : std::as_const(m_groups)) {
+    for (const QString& physical : folders(group)) {
+      if (!order.contains(physical)) order.append(physical);
+    }
+  }
+  const QStringList next = sidebar::reorderProjects(order, folders(*dragged), folders(*target));
+  if (next == order) return;
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(kProjectOrder, next);
+}
+
+void SidebarController::openProjectMenu(const QString& key, double x, double y) {
+  const sidebar::ProjectGroup* project = group(key);
+  if (!project || project->members.isEmpty()) return;
+  auto* shell = NativeShell::of(this);
+  auto* settings = shell->controller<SettingsController>();
+  const QList<sidebar::Project> members = project->members;
+  const bool grouped = members.size() > 1;
+  // A grouped project's entries name the folder each acts on.
+  const auto memberLabel = [this](const sidebar::Project& member) {
+    const QString environment = m_store->environment(member.environmentId).value(QLatin1String("label")).toString();
+    return environment.isEmpty() ? member.workspaceRoot : member.workspaceRoot + QStringLiteral(" (") + environment + QLatin1Char(')');
+  };
+  QHash<QString, std::function<void()>> run;
+  const auto leaf = [&run](const QString& id, const QString& label, std::function<void()> action) {
+    run.insert(id, std::move(action));
+    return MenuController::Item{id, label};
+  };
+  const auto targeted = [&](const QString& action, const QString& label,
+                            const std::function<MenuController::Item(const sidebar::Project&, const QString& id, const QString& label)>& make) {
+    if (!grouped) return make(members.first(), action + QStringLiteral(":0"), label);
+    MenuController::Item item{action, label};
+    for (qsizetype i = 0; i < members.size(); ++i) {
+      item.children.append(make(members.at(i), action + QLatin1Char(':') + QString::number(i), memberLabel(members.at(i))));
+    }
+    return item;
+  };
+  QList<MenuController::Item> items;
+  items.append(targeted(QStringLiteral("rename"), QStringLiteral("Rename"), [&](const sidebar::Project& member, const QString& id, const QString& label) {
+    return leaf(id, label, [this, memberKey = member.key()] {
+      m_bridge->dispatch(QStringLiteral("project.rename"), QVariantMap{{QStringLiteral("projectKey"), memberKey}});
+    });
+  }));
+  // The device's default, else the folder's own choice (sidebarProjectGroupingOverrides).
+  static const QList<std::pair<QString, QString>> kGroupings{
+      {QStringLiteral("inherit"), QStringLiteral("Use global default")},
+      {QStringLiteral("repository"), QStringLiteral("Group by repository")},
+      {QStringLiteral("repository_path"), QStringLiteral("Group by repository path")},
+      {QStringLiteral("separate"), QStringLiteral("Keep separate")},
+  };
+  items.append(targeted(QStringLiteral("grouping"), QStringLiteral("Group into..."), [&](const sidebar::Project& member, const QString& id, const QString& label) {
+    const QString folder = sidebar::physicalKey(member);
+    const QString current = m_grouping.overrides.value(folder, QStringLiteral("inherit"));
+    MenuController::Item choices{id, label};
+    for (const auto& [choice, choiceLabel] : kGroupings) {
+      MenuController::Item item = leaf(id + QLatin1Char(':') + choice, choiceLabel, [settings, folder, choice] {
+        if (!settings) return;
+        QJsonObject overrides = settings->deviceSettings().value(QLatin1String("sidebarProjectGroupingOverrides")).toObject();
+        if (choice == QLatin1String("inherit")) {
+          overrides.remove(folder);
+        } else {
+          overrides.insert(folder, choice);
+        }
+        settings->writeDevice(QStringLiteral("sidebarProjectGroupingOverrides"),
+                              overrides.isEmpty() ? QVariant() : QVariant(overrides.toVariantMap()));
+      });
+      item.checked = choice == current;
+      choices.children.append(item);
+    }
+    return choices;
+  }));
+  items.append(targeted(QStringLiteral("copy-path"), QStringLiteral("Copy Path"), [&](const sidebar::Project& member, const QString& id, const QString& label) {
+    return leaf(id, label, [this, path = member.workspaceRoot] {
+      QClipboard* clipboard = QGuiApplication::clipboard();
+      if (!clipboard) {
+        toasts()->error(QStringLiteral("Failed to copy path"), QStringLiteral("The clipboard could not be written."));
+        return;
+      }
+      clipboard->setText(path);
+      toasts()->show(QStringLiteral("success"), QStringLiteral("Path copied"), path);
+    });
+  }));
+  items.append(leaf(QStringLiteral("project-settings"), QStringLiteral("Project settings"), [shell, key] {
+    NavigationController::Route route = NavigationController::Route::settings(QStringLiteral("/settings/projects"));
+    route.projectKey = key;
+    shell->controller<NavigationController>()->open(route);
+  }));
+  items.last().icon = QStringLiteral("settings");
+  MenuController::Item remove = targeted(QStringLiteral("delete"), QStringLiteral("Remove"), [&](const sidebar::Project& member, const QString& id, const QString& label) {
+    MenuController::Item item = leaf(id, label, [this, memberKey = member.key()] {
+      // A project with threads says so first; deleting it anyway still asks (ProjectController).
+      const auto ask = [this, memberKey] {
+        m_bridge->dispatch(QStringLiteral("project.remove"), QVariantMap{{QStringLiteral("projectKey"), memberKey}});
+      };
+      const auto project = m_store->project(memberKey);
+      if (!project) return;
+      qsizetype threads = 0;
+      for (const sidebar::Thread& thread : m_store->threads()) {
+        if (thread.environmentId == project->environmentId && thread.projectId == project->id && !thread.archivedAt) ++threads;
+      }
+      if (threads == 0) return ask();
+      toasts()->show(QStringLiteral("warning"), QStringLiteral("Project is not empty"),
+                     QStringLiteral("Delete all threads in this project before removing it."),
+                     ToastController::Action{QStringLiteral("Delete anyway"), ask});
+    });
+    item.destructive = true;
+    return item;
+  });
+  remove.icon = QStringLiteral("trash");
+  remove.destructive = true;
+  items.append(remove);
+  shell->controller<MenuController>()->open(x, y, items, [run = std::move(run)](const QString& id) {
+    if (const auto action = run.constFind(id); action != run.cend()) (*action)();
+  });
+}
+
+void SidebarController::openSortMenu(double x, double y) {
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  if (!settings) return;
+  static const QList<std::pair<QString, QString>> kProjectOrders{
+      {QStringLiteral("updated_at"), QStringLiteral("Last user message")},
+      {QStringLiteral("created_at"), QStringLiteral("Created at")},
+      {QStringLiteral("manual"), QStringLiteral("Manual")},
+  };
+  const auto choices = [](const QString& prefix, const QString& label, qsizetype count, const QString& current) {
+    MenuController::Item item{prefix, label};
+    for (qsizetype i = 0; i < count; ++i) {
+      MenuController::Item choice{prefix + QLatin1Char(':') + kProjectOrders.at(i).first, kProjectOrders.at(i).second};
+      choice.checked = kProjectOrders.at(i).first == current;
+      item.children.append(choice);
+    }
+    return item;
+  };
+  const QList<MenuController::Item> items{
+      choices(QStringLiteral("sidebarProjectSortOrder"), QStringLiteral("Sort projects"), 3, m_grouping.sortOrder),
+      // Threads have no order of the user's own.
+      choices(QStringLiteral("sidebarThreadSortOrder"), QStringLiteral("Sort threads"), 2, m_threadSortOrder),
+  };
+  NativeShell::of(this)->controller<MenuController>()->open(x, y, items, [settings](const QString& id) {
+    const qsizetype colon = id.indexOf(QLatin1Char(':'));
+    if (colon > 0) settings->writeDevice(id.left(colon), id.mid(colon + 1));
+  });
+}
+
 void SidebarController::setJumpHints(const QStringList& labels, bool shown) {
   if (m_jumpLabels == labels && m_showJumpHints == shown) return;
   m_jumpLabels = labels;
@@ -741,6 +934,7 @@ void SidebarController::rememberScope() {
 
 void SidebarController::readSettings() {
   m_grouping = {};
+  m_tree.reset();
   m_timestampFormat = QStringLiteral("locale");
   m_threadSortOrder = QStringLiteral("updated_at");
   m_showSettledPluginThreads = false;
@@ -761,4 +955,23 @@ void SidebarController::readSettings() {
   for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
     if (it.value().isString()) m_grouping.overrides.insert(it.key(), it.value().toString());
   }
+  const auto strings = [&device](const QString& key) {
+    QStringList values;
+    for (const QJsonValue& value : device.value(key).toArray()) {
+      if (value.isString()) values.append(value.toString());
+    }
+    return values;
+  };
+  m_grouping.manualOrder = strings(kProjectOrder);
+  m_tree.reset();
+  if (!device.value(QLatin1String("legacySidebarEnabled")).toBool(false)) return;
+  sidebar::Tree tree;
+  const QJsonValue count = device.value(QLatin1String("sidebarThreadPreviewCount"));
+  tree.previewCount = sidebar::clampThreadPreviewCount(count.isDouble() ? count.toInt() : sidebar::kDefaultThreadPreviewCount);
+  tree.threadSortOrder = m_threadSortOrder;
+  const QStringList folded = strings(kFoldedProjects);
+  tree.folded = QSet<QString>(folded.cbegin(), folded.cend());
+  tree.showingAll = m_showingAll;
+  tree.manual = m_grouping.sortOrder == QLatin1String("manual");
+  m_tree = tree;
 }

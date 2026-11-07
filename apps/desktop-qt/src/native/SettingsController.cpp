@@ -78,6 +78,10 @@ const QList<Row>& rows() {
       {"planModeEnabled", true, false},
       {"contextWindowMeterEnabled", true, false},
       {"legacySidebarEnabled", true, false},
+      // The legacy sidebar's (SidebarController's tree): its options menu sorts, Settings counts.
+      {"sidebarProjectSortOrder", true, QStringLiteral("updated_at")},
+      {"sidebarThreadSortOrder", true, QStringLiteral("updated_at")},
+      {"sidebarThreadPreviewCount", true, 6},
       // Appearance.
       {"appearanceContrast", true, 100},
       {"glassOpacity", true, 96},
