@@ -75,6 +75,44 @@ Item {
             compare(input.text, "\n");
             compare(Shell.dispatchCount, 0);
         }
+        function test_escapeCollapsesExpandedNotices() {
+            Shell.state = { composer: Shell.defaultComposer(), workspace: null, noticeStack: {
+                front: "error", behind: 1, expanded: true, order: ["error", "usageLimits"]
+            } };
+            let composer = createTemporaryObject(component, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchCount, 1);
+            compare(Shell.dispatchedActions[0].action, "noticeStack.collapse");
+        }
+        function test_escapeLeavesCollapsedNoticesAlone() {
+            Shell.state = { composer: Shell.defaultComposer(), workspace: null, noticeStack: {
+                front: "error", behind: 1, expanded: false, order: ["error", "usageLimits"]
+            } };
+            let composer = createTemporaryObject(component, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchCount, 0);
+        }
+        function test_escapeDismissesSuggestionsBeforeNotices() {
+            Shell.state = Object.assign({}, Shell.state, { noticeStack: {
+                front: "error", behind: 1, expanded: true, order: ["error", "usageLimits"]
+            } });
+            let composer = createTemporaryObject(component, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(Shell.dispatchCount, 1);
+            compare(Shell.dispatchedActions[0].action, "composer.suggest.dismiss");
+        }
         function test_stashListKeys() {
             Shell.state = { composer: Shell.defaultComposer(), workspace: null, composerStash: {
                 open: true, shortcut: "Ctrl+S",

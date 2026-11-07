@@ -13,9 +13,13 @@ Rectangle {
     id: card
 
     readonly property var limits: Shell.state.composer ? Shell.state.composer.usageLimits ?? null : null
+    // One notice at a time above the composer (Shell.state.noticeStack,
+    // NoticeStackController); no stack published means drawn on its own.
+    readonly property var stack: Shell.state.noticeStack ?? null
+    readonly property bool inFront: stack === null || stack.expanded === true || stack.front === "usageLimits"
 
     objectName: "composerUsageLimits"
-    visible: limits !== null
+    visible: limits !== null && inFront
     implicitHeight: visible ? column.implicitHeight + 16 : 0
     radius: Theme.radiusMd
     color: Theme.palette.color("surfaceOverlay", "#18181b")

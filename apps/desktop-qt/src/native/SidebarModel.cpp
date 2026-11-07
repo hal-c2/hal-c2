@@ -262,11 +262,14 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   }
   if (thread.latestRunId || present(row, "activeProviderThreadId")) {
     RuntimeSummary runtime;
-    // Background tasks still open after the run park the runtime at idle ("Waiting").
-    runtime.status = thread.pendingBackgroundTasks > 0 ? QStringLiteral("idle")
-                                                       : thread.activityRunStatus.value_or(status);
-    runtime.activeRunId = thread.activeRunId;
     runtime.lastErrorClass = stringField(row, "lastErrorClass");
+    // Background tasks still open after the run park the runtime at idle
+    // ("Waiting"), unless the run stopped on a usage limit: the limit is
+    // what needs the user (its recovery actions), the tasks are not.
+    const bool limited = status == QLatin1String("failed") && runtime.lastErrorClass.value_or(QString()) == QLatin1String("usage_limit");
+    runtime.status = thread.pendingBackgroundTasks > 0 && !limited ? QStringLiteral("idle")
+                                                                    : thread.activityRunStatus.value_or(status);
+    runtime.activeRunId = thread.activeRunId;
     runtime.updatedAt = thread.updatedAt;
     thread.runtime = runtime;
   }
