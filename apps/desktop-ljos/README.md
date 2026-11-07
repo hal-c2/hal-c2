@@ -52,8 +52,8 @@ the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 w
 shell's keymap, not the focused control.
 
 `check` compiles every file. The native item types the bricks use are `LocalFolderModel`, `ComposerHighlighter`,
-`DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, on the `vt100`
-crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed in `shell/src/terminal/mod.rs`).
+`DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, libghostty-vt through
+Ljós Hof's `hof_vt`). Building the terminal needs Zig (`mise.toml` pins it) and fetches Ghostty's source once.
 
 ## Inspect
 
