@@ -20,6 +20,7 @@
 #include "NavigationController.h"
 #include "RunNotices.h"
 #include "Stream.h"
+#include "ThreadNoticeController.h"
 #include "ThreadList.h"
 #include "World.h"
 
@@ -103,6 +104,14 @@ qsizetype interrupts(World& world) {
   return std::count_if(world.mc.commands.cbegin(), world.mc.commands.cend(), [](const QJsonObject& command) {
     return command.value(QLatin1String("type")) == QLatin1String("run.interrupt");
   });
+}
+
+// Whether the MC's row of the thread lists `description` as running.
+bool runningTask(World& world, const QString& description) {
+  for (const QJsonValue& task : world.mc.threads.value(kThread).value(QLatin1String("pendingBackgroundTasks")).toArray()) {
+    if (task[QLatin1String("description")].toString() == description) return true;
+  }
+  return false;
 }
 
 // Presses the notice's Stop, and waits until the MC has the interrupt.
@@ -228,13 +237,27 @@ const Steps steps([] {
   step(QStringLiteral("the user can stop them from that notice"), [](World& world, const Captures&, const Table&) { stopFromNotice(world); });
   step(QStringLiteral("the user stops the background work and the environment accepts"), [](World& world, const Captures&, const Table&) {
     stopFromNotice(world);
-    // While the MC answers the notice says so, and once it has, Stop is back.
-    world.waitFor([&] { return notice(world).value(QStringLiteral("busy")) == false; }, [&] { return seen(world); });
+    // The MC's answer is in, and the work it stopped has not ended yet.
+    world.sync();
   });
   step(QStringLiteral("the user stops the background work"), [](World& world, const Captures&, const Table&) { stopFromNotice(world); });
+  step(QStringLiteral("the stop shows %1 and cannot be pressed while %1 is still running").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(runningTask(world, c[1]), c[1]);
+    Brick& view = threadView(world);
+    QQuickItem* action = view.find(QStringLiteral("threadNoticeAction"));
+    expect(action && text(action) == c[0] && !action->property("enabled").toBool(), seen(world));
+    const qsizetype before = interrupts(world);
+    view.click(QStringLiteral("threadNoticeAction"));
+    world.sync();
+    expect(interrupts(world) == before, QStringLiteral("a pending stop was sent again; %1").arg(seen(world)));
+    shoot(world, QStringLiteral("background-stopping"));
+  });
+  step(QStringLiteral("%1 is still running 10 seconds later").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(runningTask(world, c[0]), c[0]);
+    world.setTime(world.now().addMSecs(ThreadNoticeController::kStopWaitMs));
+  });
   step(QStringLiteral("%1 is still running").arg(q), [](World& world, const Captures& c, const Table&) {
-    // The MC's row still has it: an interrupt does not wait for the work to end.
-    expect(world.mc.threads.value(kThread).value(QLatin1String("pendingBackgroundTasks")).toArray().size() == 1, c[0]);
+    expect(runningTask(world, c[0]), c[0]);
     world.sync();
     expect(notice(world).value(QStringLiteral("description")) == c[0], seen(world));
   });
@@ -242,6 +265,35 @@ const Steps steps([] {
     const qsizetype before = interrupts(world);
     stopFromNotice(world);
     expect(interrupts(world) == before + 1, seen(world));
+  });
+  step(QStringLiteral("the task %1 starts in the background").arg(q), [](World& world, const Captures& c, const Table&) {
+    updateThreadRow(world, kThread, [&](QJsonObject& row) {
+      QJsonArray pending = row.value(QLatin1String("pendingBackgroundTasks")).toArray();
+      pending.append(QJsonObject{{QStringLiteral("taskId"), QStringLiteral("task-%1").arg(pending.size() + 1)}, {QStringLiteral("description"), c[0]}});
+      row.insert(QStringLiteral("pendingBackgroundTasks"), pending);
+    });
+    world.sync();
+    // The stop still waits on the work it was asked for.
+    expect(notice(world).value(QStringLiteral("busy")) == true, seen(world));
+  });
+  step(QStringLiteral("%1 ends").arg(q), [](World& world, const Captures& c, const Table&) {
+    updateThreadRow(world, kThread, [&](QJsonObject& row) {
+      QJsonArray pending;
+      for (const QJsonValue& task : row.value(QLatin1String("pendingBackgroundTasks")).toArray()) {
+        if (task[QLatin1String("description")].toString() != c[0]) pending.append(task);
+      }
+      row.insert(QStringLiteral("pendingBackgroundTasks"), pending);
+    });
+  });
+  step(QStringLiteral("the notice offers Stop for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& view = threadView(world);
+    world.waitFor(
+        [&] {
+          QQuickItem* action = view.find(QStringLiteral("threadNoticeAction"));
+          return action && text(action) == QLatin1String("Stop") && action->property("enabled").toBool() &&
+                 text(view.find(QStringLiteral("threadNoticeDescription"))) == c[0];
+        },
+        [&] { return QStringLiteral("Stop for %1; %2").arg(c[0], seen(world)); });
   });
   step(QStringLiteral("the environment rejects the stop"), [](World& world, const Captures&, const Table&) {
     world.mc.refusals.insert(QStringLiteral("run.interrupt"), QStringLiteral("The provider session has already exited."));

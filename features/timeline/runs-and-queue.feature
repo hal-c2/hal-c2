@@ -421,14 +421,22 @@ Feature: Runs, interruptions and the queue
 
   # Upstream #25002: Stop came back as soon as the environment accepted, while the work still ran,
   # so it looked as if the stop had failed. It now waits for the stopped work, for up to 10 seconds.
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Stopping background work stays pending until that work ends
     Given the turn has finished and left the task "watch tests" running
     When the user stops the background work and the environment accepts
     Then the stop shows "Stopping..." and cannot be pressed while "watch tests" is still running
-    And work that started after the stop does not keep it pending
     When "watch tests" is still running 10 seconds later
     Then the user can ask to stop it again
+
+  # Upstream #25002: only the work the stop was asked for keeps it pending.
+  @desktop @mobile @backlog-mobile @priority-high
+  Scenario: Work started after a stop does not keep it pending
+    Given the turn has finished and left the task "watch tests" running
+    When the user stops the background work and the environment accepts
+    And the task "lint" starts in the background
+    And "watch tests" ends
+    Then the notice offers Stop for "lint"
 
   # Upstream #22052: a thread can be stopped without knowing which run is active.
   @desktop @priority-high

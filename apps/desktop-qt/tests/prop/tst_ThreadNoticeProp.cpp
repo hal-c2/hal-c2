@@ -3,7 +3,9 @@
 // notice's Un-settle and Stop, and the MC's answers held, refused or late.
 // The notice speaks for the open thread only: background work a finished turn
 // left comes first (none while a turn runs) and reads "Stopping..." only
-// while that thread's own stop is unanswered; then a settled thread, reading
+// while that thread's own stop is unanswered or, once accepted, while a task
+// it stopped still runs, for up to 10 seconds (tasks started since do not
+// count); then a settled thread, reading
 // "Un-settling..." only while its own un-settle is unanswered. Each is sent
 // once per thread at a time; a refused un-settle leaves the thread settled
 // with one toast, a refused stop is the thread's error (ThreadErrorController)
@@ -18,8 +20,11 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ThreadNoticeController.h"
 
+#include <QDateTime>
 #include <QJsonArray>
+#include <QTimeZone>
 #include <QSet>
 #include <QTemporaryDir>
 
@@ -50,8 +55,15 @@ struct Model {
   QMap<QString, int> tasks;
   QSet<QString> running;
   bool refusingStop = false;
-  // Stops sent and not answered, by thread: whether the MC refuses it.
+  // Stops sent and not answered, by thread: whether the MC refuses it, and
+  // the tasks each stopped.
   QMap<QString, bool> stopping;
+  QMap<QString, int> stopped;
+  // Accepted stops waiting on the tasks they stopped (1..n), by thread, and
+  // until when.
+  QMap<QString, int> waiting;
+  QMap<QString, qint64> deadline;
+  qint64 now = 0;
   int interrupts = 0;
   // The threads a refused stop gave an error.
   QSet<QString> errors;
@@ -63,6 +75,7 @@ struct Shell {
   ShellBridge bridge;
   NativeShell native{&bridge};
   QSet<QString> failures;  // the failure toasts shown, by id
+  qint64 now = 0;  // the controller's clock, in ms since the epoch
 
   Shell() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
@@ -92,6 +105,7 @@ struct Shell {
     native.client()->setRetryDelays({20});
     native.setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")), home.filePath(QStringLiteral("cache")));
     native.controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("preferences.json")));
+    native.controller<ThreadNoticeController>()->setClock([this] { return QDateTime::fromMSecsSinceEpoch(now, QTimeZone::UTC); });
     native.restoreWindows();
     native.open(mc.origin(), QStringLiteral("mc-token"));
     if (!prop::until([this] {
@@ -149,12 +163,32 @@ bool hasBackground(const Model& model, const QString& thread) {
   return !thread.isEmpty() && model.tasks.value(thread) > 0 && !model.running.contains(thread);
 }
 
+bool busyStopping(const Model& model, const QString& thread) {
+  return model.stopping.contains(thread) || model.waiting.contains(thread);
+}
+
+// An accepted stop of `thread`'s tasks 1..n waits while one of them runs.
+void accept(Model& model, const QString& thread, int stopped) {
+  model.waiting.insert(thread, stopped);
+  model.deadline.insert(thread, model.now + ThreadNoticeController::kStopWaitMs);
+}
+
+// Accepted stops end once their tasks have, or their wait is over.
+void settle(Model& model) {
+  for (const QString& thread : model.waiting.keys()) {
+    if (model.tasks.value(thread) == 0 || model.deadline.value(thread) <= model.now) {
+      model.waiting.remove(thread);
+      model.deadline.remove(thread);
+    }
+  }
+}
+
 QVariant expectedNotice(const Model& model) {
   if (hasBackground(model, model.open)) {
     const int tasks = model.tasks.value(model.open);
     QStringList names;
     for (int i = 1; i <= tasks; ++i) names.append(QStringLiteral("Task %1").arg(i));
-    const bool busy = model.stopping.contains(model.open);
+    const bool busy = busyStopping(model, model.open);
     return QVariantMap{{QStringLiteral("threadKey"), keyOf(model.open)},
                        {QStringLiteral("kind"), QStringLiteral("background")},
                        {QStringLiteral("title"), tasks == 1 ? QStringLiteral("Waiting on background task") : QStringLiteral("Waiting on %1 background tasks").arg(tasks)},
@@ -246,6 +280,7 @@ struct McBackground : Command {
     model.tasks.insert(thread, tasks);
     if (running) model.running.insert(thread);
     else model.running.remove(thread);
+    settle(model);
   }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
@@ -261,12 +296,15 @@ struct McBackground : Command {
 // The notice's Stop, clicked twice before the MC answers.
 struct Stop : Command {
   void apply(Model& model) const override {
-    if (!hasBackground(model, model.open) || model.stopping.contains(model.open)) return;
+    if (!hasBackground(model, model.open) || busyStopping(model, model.open)) return;
     ++model.interrupts;
     if (model.holding) {
       model.stopping.insert(model.open, model.refusingStop);
+      model.stopped.insert(model.open, model.tasks.value(model.open));
     } else if (model.refusingStop) {
       model.errors.insert(model.open);
+    } else {
+      accept(model, model.open, model.tasks.value(model.open));
     }
   }
   void run(const Model& model, Shell& shell) const override {
@@ -354,8 +392,11 @@ struct Answer : Command {
     model.pending.clear();
     for (auto it = model.stopping.cbegin(); it != model.stopping.cend(); ++it) {
       if (it.value()) model.errors.insert(it.key());
+      else accept(model, it.key(), model.stopped.value(it.key()));
     }
     model.stopping.clear();
+    model.stopped.clear();
+    settle(model);
     model.holding = false;
   }
   void run(const Model& model, Shell& shell) const override {
@@ -365,6 +406,23 @@ struct Answer : Command {
     check(expected, shell);
   }
   void show(std::ostream& os) const override { os << "Answer"; }
+};
+
+// Time passes: a stop waiting longer than its wait gives up.
+struct Tick : Command {
+  qint64 ms = *rc::gen::elementOf(std::vector<qint64>{1'000, 4'000, ThreadNoticeController::kStopWaitMs});
+  void apply(Model& model) const override {
+    model.now += ms;
+    settle(model);
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.now = expected.now;
+    shell.native.controller<ThreadNoticeController>()->expire();
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override { os << "Tick(" << ms << "ms)"; }
 };
 
 }  // namespace
@@ -377,7 +435,7 @@ private slots:
     QVERIFY(rc::check("background work comes first, one stop at a time, a refused stop is the thread's error", [] {
       Shell shell;
       rc::state::check(Model{}, shell,
-                       rc::state::gen::execOneOfWithArgs<Open, McSets, McBackground, McBackground, Unsettle, Stop, Stop, Refusing, RefusingStop, Hold, Answer>());
+                       rc::state::gen::execOneOfWithArgs<Open, McSets, McBackground, McBackground, Unsettle, Stop, Stop, Refusing, RefusingStop, Hold, Answer, Tick>());
     }));
   }
 
