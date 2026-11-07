@@ -17,11 +17,14 @@ defmodule HalC2.Projects do
 
   @spec mutate(map) :: {:ok, map} | {:error, String.t()}
   def mutate(%{"type" => "project.create", "projectId" => id} = m) do
-    root = expand(m["workspaceRoot"] || "")
+    root = workspace_root(m["workspaceRoot"] || "")
 
     cond do
       root == "" ->
         {:error, "a workspace folder is required"}
+
+      relative?(root) ->
+        {:error, relative_error(root)}
 
       not File.dir?(root) and m["createWorkspaceRootIfMissing"] != true ->
         {:error, "#{root} does not exist on this machine"}
@@ -63,12 +66,15 @@ defmodule HalC2.Projects do
       )
       |> then(
         &if(m["workspaceRoot"],
-          do: Map.put(&1, "workspaceRoot", expand(m["workspaceRoot"])),
+          do: Map.put(&1, "workspaceRoot", workspace_root(m["workspaceRoot"])),
           else: &1
         )
       )
 
-    case fields["workspaceRoot"] && owner(fields["workspaceRoot"], id) do
+    case relative_root(fields) || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
+      {:relative, error} ->
+        {:error, error}
+
       nil ->
         # A moved project belongs to the repository of its new folder, if any.
         identify =
@@ -371,6 +377,24 @@ defmodule HalC2.Projects do
 
   @doc "A folder as a user typed it, with a leading `~` as `$HOME`."
   def expand_home(path), do: expand(path)
+
+  # A project's folder as stored: `~` is this MC's home and `.`/`..` are resolved. A
+  # relative path stays as typed, for `relative?/1` to refuse: it has no meaning here.
+  defp workspace_root(path) do
+    path = expand(path)
+    if relative?(path), do: path, else: Path.expand(path)
+  end
+
+  defp relative_root(%{"workspaceRoot" => root}) when is_binary(root) do
+    if relative?(root), do: {:relative, relative_error(root)}
+  end
+
+  defp relative_root(_), do: nil
+
+  defp relative?(path), do: path != "" and Path.type(path) != :absolute
+
+  defp relative_error(path),
+    do: "Workspace #{path} is not an absolute path. Use a full path or one starting with ~/."
 
   defp expand("~"), do: home()
   defp expand("~/" <> rest), do: Path.join(home(), rest)

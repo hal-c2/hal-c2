@@ -66,4 +66,47 @@ defmodule HalC2.ProjectsTest do
     assert {:ok, %{"entries" => all}} = Projects.browse(%{"partialPath" => dir <> "/"})
     assert ".hidden" in Enum.map(all, & &1["name"])
   end
+
+  test "a project folder is expanded and canonical, and a relative one is refused", %{tmp_dir: dir} do
+    home = System.get_env("HOME")
+    messy = Path.join([dir, "a", "..", "b", "."])
+
+    assert {:ok, %{"workspaceRoot" => root}} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => messy,
+               "createWorkspaceRootIfMissing" => true
+             })
+
+    assert root == Path.join(dir, "b")
+
+    for relative <- ["shop", "./shop", "../shop", "~sam/shop"] do
+      assert {:error, "Workspace " <> _ = error} =
+               Projects.mutate(%{
+                 "type" => "project.create",
+                 "projectId" => "r",
+                 "workspaceRoot" => relative,
+                 "createWorkspaceRootIfMissing" => true
+               })
+
+      assert error =~ "is not an absolute path"
+
+      assert {:error, ^error} =
+               Projects.mutate(%{
+                 "type" => "project.update",
+                 "projectId" => "p1",
+                 "workspaceRoot" => relative
+               })
+    end
+
+    assert {:ok, %{"workspaceRoot" => expanded}} =
+             Projects.mutate(%{
+               "type" => "project.update",
+               "projectId" => "p1",
+               "workspaceRoot" => "~/../" <> Path.basename(home)
+             })
+
+    assert expanded == home
+  end
 end

@@ -27,7 +27,10 @@ defmodule HalC2.Steps.Files.AddingProjects do
   # --- local folders ---------------------------------------------------------------
 
   step "a client creates a project at {string} without a title", %{args: [path]} = context do
-    File.mkdir_p!(Host.path(context, path))
+    if Path.type(Host.path(context, path)) == :absolute do
+      File.mkdir_p!(Path.expand(Host.path(context, path)))
+    end
+
     create(context, path, %{})
   end
 
@@ -75,6 +78,12 @@ defmodule HalC2.Steps.Files.AddingProjects do
        %{args: [path]} = context do
     assert {:error, error, _} = context.reply
     assert error =~ "#{Host.path(context, path)} does not exist on this machine"
+    context
+  end
+
+  step "the MC answers that {string} is not an absolute path", %{args: [path]} = context do
+    assert {:error, error, _} = context.reply
+    assert error =~ "Workspace #{path} is not an absolute path"
     context
   end
 

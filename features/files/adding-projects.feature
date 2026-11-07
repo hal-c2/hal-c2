@@ -89,6 +89,25 @@ Feature: Adding projects
       Then the project is titled "shop"
       And its workspace folder is the expanded home path ending in "code/shop"
 
+    @mc @shared
+    Scenario: A typed path with dot segments is stored in its canonical form
+      When a client creates a project at "~/code/old/../shop/." without a title
+      Then the project is titled "shop"
+      And its workspace folder is the expanded home path ending in "code/shop"
+
+    @mc @shared
+    Scenario Outline: A relative path is refused as a project folder
+      When a client creates a project at "<path>" without a title
+      Then the MC answers that "<path>" is not an absolute path
+      And no project is created
+
+      Examples:
+        | path     |
+        | shop     |
+        | ./shop   |
+        | ../shop  |
+        | ~sam/shop |
+
     @tui
     Scenario: Browsing for a folder lists only the folders under the typed path
       Given "/home/sam" holds the folders "shop" and "Shared" and the file "notes.txt"
