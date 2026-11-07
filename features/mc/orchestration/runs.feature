@@ -313,7 +313,7 @@ Feature: Runs and turns
       | the MC cannot tell whether handed-over history arrived  | HAL-C2 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.       |
       | of an internal error the provider did not explain       | Provider turn failed.                                                                                                    |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A failure message never shows credentials
     When the provider fails a turn of "t1" with a message holding <secret>
     Then the failure the thread records shows <shown>
@@ -375,7 +375,7 @@ Feature: Runs and turns
     Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
     And nothing is sent to the provider
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A workspace that is missing or is not a folder fails the turn before the provider starts
     Given the workspace of "t1" is not a worktree and its folder is gone
     When the user sends "Hi" to "t1"
@@ -443,14 +443,14 @@ Feature: Runs and turns
     When the user uploads feedback for "t1"
     Then it fails with "Provider 'claudeAgent' does not support feedback uploads."
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: An interrupt is recorded as a request and then as its outcome
     Given "t1" has a running turn
     When the user interrupts the run giving the reason "wrong branch"
     Then the run records an item titled "Interrupt requested" saying "wrong branch"
     And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: An interrupt without a reason says only that it was requested
     Given "t1" has a running turn
     When the user interrupts the run without a reason
@@ -507,7 +507,7 @@ Feature: Runs and turns
     Then nothing is recorded on the run of "t1"
     And the output is recorded on the run of "t2"
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Stop settles a run whose provider disappeared before it finished
     Given a run is still active because its provider vanished before reporting an end
     When the user stops the thread

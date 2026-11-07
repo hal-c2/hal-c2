@@ -31,6 +31,52 @@ defmodule HalC2.Orchestration.UserFacingErrors do
     strong_terminal_status: "cannot confirm when its runs finish reliably enough for this."
   }
 
+  @max_failure 4_096
+
+  @doc """
+  A provider's failure text as a thread may record it: credentials in URLs, authorization
+  values and secret-looking assignments are replaced, and the text is cut to
+  #{@max_failure} characters ending with "…". A structured failure is cleaned in its
+  `"message"`.
+  """
+  @spec sanitize_failure(String.t() | map | nil) :: String.t() | map | nil
+  def sanitize_failure(%{"message" => message} = failure) when is_binary(message),
+    do: %{failure | "message" => sanitize_failure(message)}
+
+  def sanitize_failure(message) when is_binary(message) do
+    message
+    |> then(
+      &Regex.replace(~r{[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s"'<>]+}, &1, fn url -> redact_url(url) end)
+    )
+    |> then(&Regex.replace(~r/\b(bearer|basic)\s+[^\s"',\}]+/i, &1, "\\1 [REDACTED]"))
+    |> then(
+      &Regex.replace(
+        ~r/\b((?:api[-_ ]?key|api[-_ ]?token|access[-_ ]?token|token|password|passwd|secret)["']?\s*[:=]\s*["']?)[^\s"',\}&]+/i,
+        &1,
+        "\\1[REDACTED]"
+      )
+    )
+    |> truncate_failure()
+  end
+
+  def sanitize_failure(failure), do: failure
+
+  defp redact_url(url) do
+    case URI.new(url) do
+      {:ok, %URI{host: host} = uri} when is_binary(host) and host != "" ->
+        URI.to_string(%URI{uri | userinfo: nil, query: nil, fragment: nil})
+
+      _ ->
+        "[REDACTED_URL]"
+    end
+  end
+
+  defp truncate_failure(message) do
+    if String.length(message) > @max_failure,
+      do: String.slice(message, 0, @max_failure - 1) <> "…",
+      else: message
+  end
+
   @doc "The refusal for `capability`, in the provider instance's name."
   @spec capability_message(String.t(), atom) :: String.t()
   def capability_message(instance, capability),

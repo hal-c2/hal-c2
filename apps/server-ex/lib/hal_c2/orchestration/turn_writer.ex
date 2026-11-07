@@ -597,6 +597,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp finish_active(state, status, failure, at) do
+    failure = HalC2.Orchestration.UserFacingErrors.sanitize_failure(failure)
+
     checkpoint =
       if status == "completed",
         do:
@@ -753,16 +755,21 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
   def abandon(thread_id, run_id, status, failure) do
     at = Entities.now()
+    {scope_id, checkpoint} = stopped_checkpoint(thread_id, run_id, status, at)
 
     abandoned =
       HalC2.Streams.transact(thread_id, :thread, fn stream ->
         case StreamState.get(stream, "run")[run_id] do
           %{"status" => active} = run when active in @active_runs ->
             state = abandoned_turn(stream, thread_id, run)
+            turn = Map.put(state.turn, :scope_id, scope_id)
+            baselines = if checkpoint, do: baselines(turn, at), else: []
 
             changes =
-              left_open(stream, run, status, at) ++
-                ended(stream, state.turn.ids, status, failure, nil, at)
+              baseline_changes(stream, baselines) ++
+                checkpoint_changes(stream, turn, checkpoint, at) ++
+                left_open(stream, run, status, at) ++
+                ended(stream, state.turn.ids, status, failure, checkpoint, at)
 
             {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
 
@@ -817,6 +824,26 @@ defmodule HalC2.Orchestration.TurnWriter do
       nil -> :ok
     end
   end
+
+  # A run the user stopped that nothing drove keeps what it changed: its checkpoint is
+  # captured from the folder it worked in, as a completed run's is.
+  defp stopped_checkpoint(thread_id, run_id, "interrupted", at) do
+    stream = HalC2.Streams.state(thread_id)
+    scope_id = HalC2.Checkpoint.scope_id(thread_id)
+
+    case StreamState.get(stream, "run")[run_id] do
+      %{"status" => active} = run when active in @active_runs ->
+        turn = Map.put(abandoned_turn(stream, thread_id, run).turn, :scope_id, scope_id)
+        checkpoint = if turn.cwd && File.dir?(turn.cwd), do: capture_checkpoint(turn, at)
+        {scope_id, checkpoint}
+
+      _ ->
+        {scope_id, nil}
+    end
+  end
+
+  defp stopped_checkpoint(thread_id, _run_id, _status, _at),
+    do: {HalC2.Checkpoint.scope_id(thread_id), nil}
 
   # The runtime state `finish/3` needs, rebuilt from the run.
   defp abandoned_turn(stream, thread_id, run) do
