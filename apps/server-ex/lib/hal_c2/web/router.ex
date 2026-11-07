@@ -456,9 +456,15 @@ defmodule HalC2.Web.Router do
       {:incompatible, side} ->
         version = HalC2.Web.Protocol.version()
 
+        message =
+          if side == "MC",
+            do: "Update this MC: it speaks protocol #{version}, older than this client's.",
+            else:
+              "Update this client to one that supports protocol #{version}, which this MC speaks."
+
         json(conn, 426, %{
           "code" => "protocol_incompatible",
-          "message" => "Update this #{side}: the MC speaks protocol #{version}.",
+          "message" => message,
           "protocolVersion" => version
         })
 
@@ -480,9 +486,11 @@ defmodule HalC2.Web.Router do
     end
   end
 
-  # A client may name the protocol it speaks (`?protocol=`); the side with the older
-  # one is the side to update.
-  defp compatible_protocol(nil), do: :ok
+  # A client names the protocol it speaks (`?protocol=`); the side with the older one is
+  # the side to update. One that names none is from before this protocol, as is one
+  # whose name is not a number. Checked before the credential: a client that cannot
+  # speak to this MC is told to update, not that it is unauthorized.
+  defp compatible_protocol(nil), do: {:incompatible, "client"}
 
   defp compatible_protocol(protocol) do
     ours = HalC2.Web.Protocol.version()
@@ -490,7 +498,8 @@ defmodule HalC2.Web.Router do
     case Integer.parse(protocol) do
       {theirs, ""} when theirs > ours -> {:incompatible, "MC"}
       {theirs, ""} when theirs < ours -> {:incompatible, "client"}
-      _ -> :ok
+      {_ours, ""} -> :ok
+      _ -> {:incompatible, "client"}
     end
   end
 

@@ -989,6 +989,41 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     context
   end
 
+  step ~r/^a client opens a socket (?<naming>without any protocol version|naming an older protocol)$/,
+       %{args: [naming]} = context do
+    # No credential either: the protocol is checked first.
+    path =
+      if naming == "naming an older protocol",
+        do: "/ws?protocol=#{HalC2.Web.Protocol.version() - 1}",
+        else: "/ws"
+
+    Map.merge(context, %{
+      upgrade: WsClient.upgrade(context.mc.port, path),
+      response: Mc.request(context.mc, :get, path)
+    })
+  end
+
+  step "the MC refuses the upgrade as incompatible before checking its credential", context do
+    assert context.upgrade == {:error, 426}
+    assert {426, _headers, %{"code" => "protocol_incompatible"}} = context.response
+    context
+  end
+
+  step "the message says to update the client to one that supports the MC's protocol",
+       context do
+    {426, _, %{"message" => message}} = context.response
+    assert message =~ "Update this client to one that supports protocol"
+    context
+  end
+
+  step "it names the protocol version the MC speaks", context do
+    version = HalC2.Web.Protocol.version()
+    {426, _, %{"message" => message} = body} = context.response
+    assert body["protocolVersion"] == version
+    assert message =~ "protocol #{version}"
+    context
+  end
+
   step "a client session has an open socket", context do
     {:ok, %{id: session}} = HalC2.Auth.session(context.access_token)
     Map.put(context, :session, session)
@@ -1007,7 +1042,8 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   step "the client cannot reconnect with that session", context do
     assert HalC2.Auth.issue_ticket(context.access_token) == :error
 
-    assert {401, _, _} = Mc.request(context.mc, :get, "/ws?token=#{context.access_token}")
+    path = "/ws?protocol=3&token=#{context.access_token}"
+    assert {401, _, _} = Mc.request(context.mc, :get, path)
 
     context
   end

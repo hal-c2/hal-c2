@@ -330,7 +330,7 @@ Feature: The protocol 3 WebSocket
     When it opens a socket
     Then the MC refuses with a message naming the MC to update
 
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A client that does not name a compatible protocol is refused with an update message
     When a client opens a socket <naming>
     Then the MC refuses the upgrade as incompatible before checking its credential

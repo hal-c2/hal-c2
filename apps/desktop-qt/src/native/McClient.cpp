@@ -83,6 +83,7 @@ void McClient::open(const QUrl& origin, const QString& token, const QString& env
   url.setPath(QStringLiteral("/ws"));
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("token"), token);
+  query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
   url.setQuery(query);
   m_origin = origin;
   m_url = url;
@@ -536,6 +537,7 @@ void McClient::openSocket(const QString& ticket) {
   if (!ticket.isEmpty()) {
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("wsTicket"), ticket);
+    query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
     url.setQuery(query);
   }
   QNetworkRequest handshake(url);

@@ -13,6 +13,16 @@
  * its offset, once the MC says on the shell that that MC is back (`shell.mc`).
  */
 
+/**
+ * The socket URL naming the protocol this client speaks: an MC refuses an upgrade
+ * that names none, or another, with the side to update.
+ */
+export function withShapeProtocol(socketUrl: string): string {
+  const url = new URL(socketUrl);
+  url.searchParams.set("protocol", "3");
+  return url.toString();
+}
+
 export type ShellShape = { readonly type: "shell" };
 export type StreamShape = {
   readonly type: "stream";
@@ -325,7 +335,7 @@ export class ClusterSocket {
 
   private connect(): void {
     const create = this.options.createSocket ?? ((url: string) => new WebSocket(url) as SocketLike);
-    const socket = create(this.options.url);
+    const socket = create(withShapeProtocol(this.options.url));
     this.socket = socket;
     socket.onmessage = (event) => this.onMessage(String(event.data));
     socket.onclose = () => this.onClose(socket);
