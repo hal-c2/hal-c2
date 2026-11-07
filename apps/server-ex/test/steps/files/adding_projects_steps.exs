@@ -228,6 +228,121 @@ defmodule HalC2.Steps.Files.AddingProjects do
     context
   end
 
+  # --- clones that must not start, and what happens to their folders -------------------
+
+  step "a clone of {string} is still running", %{args: [repository]} = context do
+    running_clone(context, repository)
+  end
+
+  step "a clone of {string} is failed or cancelled", %{args: [repository]} = context do
+    failed_clone(context, repository, "Repository not found.")
+  end
+
+  step "a client starts a thread in the project {string}", %{args: [title]} = context do
+    {reply, context} =
+      World.call(context, "orchestration.dispatchCommand", %{
+        "type" => "thread.create",
+        "commandId" => "cmd-thread-#{System.unique_integer([:positive])}",
+        "threadId" => "thread-#{System.unique_integer([:positive])}",
+        "projectId" => World.project(context, title).id,
+        "title" => "Work"
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "no thread is created", context do
+    refute Enum.any?(HalC2.Shell.rows(), &match?({{_, _}, {"thread", _}}, &1))
+    context
+  end
+
+  step "the folder {string} already holds files", %{args: [path]} = context do
+    real = Host.path(context, path)
+    File.mkdir_p!(real)
+    File.write!(Path.join(real, "notes.txt"), "mine")
+    context
+  end
+
+  step "the user has since put files of their own in {string}", %{args: [_path]} = context do
+    File.write!(Path.join(context.clone.dest, "mine.txt"), "mine")
+    context
+  end
+
+  step "the retry fails with {string}", %{args: [message]} = context do
+    assert {:error, error, _} = context.reply
+    assert error =~ message
+    context
+  end
+
+  step "the user's files are untouched", context do
+    assert File.read!(Path.join(context.clone.dest, "mine.txt")) == "mine"
+    context
+  end
+
+  step "git is given the address as pasted", context do
+    assert_receive {:git_connected, _}, 5_000
+    assert :sys.get_state(HalC2.ProjectClones).urls[context.clone.id] == context.clone.url
+    context
+  end
+
+  step "the clone reported to every client carries {string}", %{args: [url]} = context do
+    assert current_clone(context)["remoteUrl"] == url
+    context
+  end
+
+  step "a failure's message has the credentials removed", context do
+    send(
+      HalC2.ProjectClones,
+      {:clone_finished, context.clone.id,
+       {:error, "fatal: unable to access 'https://sam:s3cret@example.com/acme/shop.git/'"}}
+    )
+
+    context = await_clone(context, &(&1["phase"] == "failed"))
+    refute context.clone_snapshot["error"] =~ "s3cret"
+    assert context.clone_snapshot["error"] =~ "https://example.com/acme/shop.git"
+    context
+  end
+
+  step "a clone of {string} is running for the project {string}",
+       %{args: [repository, _title]} = context do
+    context = running_clone(context, repository)
+    # What git has written so far.
+    File.mkdir_p!(Path.join(context.clone.dest, ".git"))
+    File.write!(Path.join(context.clone.dest, "partial.txt"), "half")
+    context
+  end
+
+  step "the clone is stopped and no longer reported", context do
+    assert_receive {:git_closed, _}, 5_000
+    client = Mc.sub(Mc.connect(context.mc), 1, clones_shape())
+    {%{"clones" => clones}, _client} = Mc.await(client, &(&1["t"] == "projectClones"))
+    refute Enum.any?(clones, &(&1["projectId"] == context.clone.id))
+    context
+  end
+
+  step "the partial files are removed", context do
+    assert File.ls!(context.clone.dest) == []
+    context
+  end
+
+  step "a clone that had already finished keeps its files", context do
+    origin = World.git_repo(context, "origin")
+
+    done =
+      context
+      |> start_clone(origin, "/home/sam/finished")
+      |> await_clone(&(&1["phase"] == "done"), 15_000)
+
+    {{:ok, _}, done} =
+      call(done, "projects.mutate", %{
+        "type" => "project.delete",
+        "projectId" => done.clone.id
+      })
+
+    assert File.exists?(Path.join(done.clone.dest, "README.md"))
+    context
+  end
+
   # --- looking up repositories -------------------------------------------------------
 
   step ~r/^the user is signed in to (?<host>Forgejo \/ Gitea|Bitbucket|Azure DevOps) on "[^"]+"$/,
@@ -335,7 +450,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
     {_, client} = Mc.await(client, &(&1["t"] == "projectClones"))
     context = World.put_client(context, client)
 
-    {{:ok, _}, context} =
+    {reply, context} =
       call(context, "projectClone.start", %{
         "projectId" => id,
         "title" => Path.basename(dest),
@@ -344,9 +459,15 @@ defmodule HalC2.Steps.Files.AddingProjects do
         "destinationPath" => real
       })
 
-    context
-    |> Map.put(:clone, %{id: id, dest: real, url: url})
-    |> put_in([:projects, Path.basename(dest)], %{id: id, root: real})
+    context = Map.put(context, :reply, reply)
+
+    if match?({:ok, _}, reply) do
+      context
+      |> Map.put(:clone, %{id: id, dest: real, url: url})
+      |> put_in([:projects, Path.basename(dest)], %{id: id, root: real})
+    else
+      context
+    end
   end
 
   defp running_clone(context, repository) do

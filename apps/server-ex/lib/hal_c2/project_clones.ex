@@ -19,9 +19,9 @@ defmodule HalC2.ProjectClones do
 
   @doc "`projectClone.start`: adds the project, then clones into it in the background."
   def start(input) do
-    dest = Path.expand(input["destinationPath"])
-
-    with {:ok, url, repository} <- HalC2.SourceControl.remote(input),
+    with {:ok, dest} <- destination(input["destinationPath"]),
+         :ok <- empty_folder(dest, "Destination path already exists and is not empty."),
+         {:ok, url, repository} <- HalC2.SourceControl.remote(input),
          {:ok, _} <-
            HalC2.Projects.mutate(%{
              "type" => "project.create",
@@ -37,9 +37,56 @@ defmodule HalC2.ProjectClones do
        %{
          "projectId" => input["projectId"],
          "cwd" => dest,
-         "remoteUrl" => url,
+         "remoteUrl" => redact(url),
          "repository" => repository
        }}
+    end
+  end
+
+  @doc """
+  Why a thread cannot start in project `id` yet, or `:ok`: its clone is still
+  running, or failed or was cancelled and has to be retried first.
+  """
+  def thread_block(id) do
+    case Process.whereis(__MODULE__) && GenServer.call(__MODULE__, {:phase, id}) do
+      "running" ->
+        {:error, "The repository is still being cloned."}
+
+      phase when phase in ["failed", "cancelled"] ->
+        {:error, "The repository was not cloned. Retry the clone first."}
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc "Stops the clone of project `id` and removes its partial checkout; a finished one keeps its files."
+  def discard(id) do
+    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, {:discard, id}), else: :ok
+  end
+
+  @doc "A clone address without the credentials pasted into it."
+  def redact(url) when is_binary(url),
+    do: Regex.replace(~r{^([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]*@}, url, "\\1")
+
+  def redact(url), do: url
+
+  # Credentials anywhere in a message, such as git's "fatal: ... 'https://u:p@host/x'".
+  defp redact_all(text), do: Regex.replace(~r{(://)[^/@\s'"]*@}, text, "\\1")
+
+  defp destination(path) when is_binary(path) do
+    case String.trim(path) do
+      "" -> {:error, "Choose a destination path before cloning."}
+      path -> {:ok, Path.expand(path)}
+    end
+  end
+
+  defp destination(_), do: {:error, "Choose a destination path before cloning."}
+
+  defp empty_folder(dir, message) do
+    case File.ls(dir) do
+      {:ok, [_ | _]} -> {:error, message}
+      _ -> :ok
     end
   end
 
@@ -54,7 +101,7 @@ defmodule HalC2.ProjectClones do
   def init(nil) do
     # A cancelled clone's worker is killed; its exit must not take this down.
     Process.flag(:trap_exit, true)
-    {:ok, %{clones: %{}, workers: %{}, watchers: %{}, sequence: 0}}
+    {:ok, %{clones: %{}, urls: %{}, workers: %{}, watchers: %{}, sequence: 0}}
   end
 
   @impl true
@@ -62,17 +109,43 @@ defmodule HalC2.ProjectClones do
     {:reply, :ok, state |> run(clone) |> changed()}
   end
 
+  def handle_call({:phase, id}, _from, state),
+    do: {:reply, state.clones[id] && state.clones[id]["phase"], state}
+
+  def handle_call({:discard, id}, _from, state) do
+    case state.clones[id] do
+      %{"phase" => "running", "destinationPath" => dest} ->
+        {pid, workers} = Map.pop(state.workers, id)
+        if pid, do: Process.exit(pid, :kill)
+        wipe(dest)
+        {:reply, :ok, changed(%{state | workers: workers, clones: Map.delete(state.clones, id)})}
+
+      %{"phase" => phase} when phase in ["failed", "cancelled"] ->
+        {:reply, :ok, changed(%{state | clones: Map.delete(state.clones, id)})}
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
   def handle_call({:retry, id}, _from, state) do
     case state.clones[id] do
       %{"phase" => phase} = snapshot when phase in ["failed", "cancelled"] ->
         clone = %{
           project_id: id,
-          url: snapshot["remoteUrl"],
+          url: state.urls[id],
           dest: snapshot["destinationPath"],
           repository: snapshot["repository"]
         }
 
-        {:reply, {:ok, %{"applied" => true}}, state |> run(clone) |> changed()}
+        # Git leaves nothing behind; files here are the user's, never deleted.
+        case empty_folder(
+               clone.dest,
+               "Destination path contains files that are not from the clone."
+             ) do
+          :ok -> {:reply, {:ok, %{"applied" => true}}, state |> run(clone) |> changed()}
+          error -> {:reply, error, state}
+        end
 
       _ ->
         {:reply, {:ok, %{"applied" => false}}, state}
@@ -86,6 +159,7 @@ defmodule HalC2.ProjectClones do
 
       {pid, workers} ->
         Process.exit(pid, :kill)
+        wipe(state.clones[id]["destinationPath"])
 
         state =
           update(%{state | workers: workers}, id, %{"phase" => "cancelled", "endedAt" => now()})
@@ -129,7 +203,7 @@ defmodule HalC2.ProjectClones do
         {:error, message} ->
           %{
             "phase" => "failed",
-            "error" => String.slice(message, 0, @error_max),
+            "error" => message |> redact_all() |> String.slice(0, @error_max),
             "endedAt" => now()
           }
       end
@@ -162,7 +236,7 @@ defmodule HalC2.ProjectClones do
 
     snapshot = %{
       "projectId" => id,
-      "remoteUrl" => clone.url,
+      "remoteUrl" => redact(clone.url),
       "destinationPath" => clone.dest,
       "repository" => clone.repository,
       "phase" => "running",
@@ -178,6 +252,7 @@ defmodule HalC2.ProjectClones do
     %{
       state
       | clones: Map.put(state.clones, id, snapshot),
+        urls: Map.put(state.urls, id, clone.url),
         workers: Map.put(state.workers, id, pid)
     }
   end
@@ -207,6 +282,13 @@ defmodule HalC2.ProjectClones do
     if status == {:status, 0}, do: :ok, else: {:error, String.trim(last) |> fallback()}
   rescue
     error -> {:error, Exception.message(error)}
+  end
+
+  # What a killed git left in the (initially empty) folder; the folder stays.
+  defp wipe(dest) do
+    with {:ok, names} <- File.ls(dest),
+         true <- ".git" in names,
+         do: Enum.each(names, &File.rm_rf(Path.join(dest, &1)))
   end
 
   defp fallback(""), do: "git clone failed."

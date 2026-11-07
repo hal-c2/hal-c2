@@ -96,6 +96,7 @@ defmodule HalC2.Projects do
 
       {threads, _} ->
         with :ok <- delete_threads(threads, m["commandId"] || "project.delete:#{id}"),
+             :ok <- HalC2.ProjectClones.discard(id),
              do:
                update(
                  id,

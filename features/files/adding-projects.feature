@@ -543,7 +543,7 @@ Feature: Adding projects
       And the project "shop" is still listed with its folder
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (rejectCommandsDuringClone)
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario Outline: A thread cannot start in a project whose clone has not landed
       Given a clone of "acme/shop" is <state>
       When a client starts a thread in the project "shop"
@@ -564,7 +564,7 @@ Feature: Adding projects
       And no second project is created
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (prepareDestination)
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: A clone is refused before anything is created when its folder has files
       Given the folder "/home/sam/shop" already holds files
       When a client starts cloning "https://example.com/acme/shop.git" into "/home/sam/shop"
@@ -585,7 +585,7 @@ Feature: Adding projects
       Then the clone goes into "/home/sam/work/shop"
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (redactRemoteUrl, redactUrlCredentials)
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: Credentials in a pasted clone address never reach clients
       When a client starts cloning "https://sam:s3cret@example.com/acme/shop.git" into "/home/sam/shop"
       Then git is given the address as pasted
@@ -623,7 +623,7 @@ Feature: Adding projects
       And the checkout is kept
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (discardClone)
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: Cleaning up a clone never deletes files that did not come from it
       Given a clone of "acme/shop" failed
       And the user has since put files of their own in "/home/sam/shop"
@@ -632,7 +632,7 @@ Feature: Adding projects
       And the user's files are untouched
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (discard)
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: Deleting a project stops its clone and removes the partial checkout
       Given a clone of "acme/shop" is running for the project "shop"
       When a client deletes the project "shop"
