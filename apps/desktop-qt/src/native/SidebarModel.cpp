@@ -811,6 +811,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
                                                                         : QStringLiteral("Active ") + ago(thread.updatedAt)}}},
           {QStringLiteral("wokeAt"), nullable(visibleWokeAt(thread, nowMs))},
           {QStringLiteral("offline"), offline},
+          {QStringLiteral("unsentDraft"), input.unsentDraftKeys.contains(thread.key()) &&
+                                              thread.key() != input.activeThreadKey.value_or(QString())},
           {QStringLiteral("movingTo"), nullable(thread.movingTo)},
           {QStringLiteral("canSettle"), !offline && capabilities.settlement},
           {QStringLiteral("canSnooze"), !offline && capabilities.snooze && canSnooze(thread, nowMs)},
@@ -964,6 +966,32 @@ QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<Q
   QList<OrderAssignment> assignments;
   for (qsizetype index = 0; index < orderedKeys.size(); ++index) {
     if (orderKeys.value(orderedKeys.at(index)) != fresh.at(index)) assignments.append({orderedKeys.at(index), fresh.at(index)});
+  }
+  return assignments;
+}
+
+std::optional<QList<OrderAssignment>> planWritableReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                                          const QString& movedKey, const QSet<QString>& writable, bool keylessFirst) {
+  if (!writable.contains(movedKey)) return std::nullopt;
+  const auto frozenKeyless = [&](const QString& key) { return !writable.contains(key) && !orderKeys.value(key); };
+  QStringList planned = orderedKeys;
+  planned.removeIf(frozenKeyless);
+  const QList<OrderAssignment> assignments = planReorder(planned, orderKeys, movedKey);
+  QSet<QString> assigned;
+  for (const OrderAssignment& assignment : assignments) {
+    if (!writable.contains(assignment.key)) return std::nullopt;
+    assigned.insert(assignment.key);
+  }
+  // Keyless rows sort before keyed ones in Active and after them in Pinned, so
+  // a key written on the wrong side of a frozen keyless row cannot hold.
+  bool frozenBefore = false;
+  bool assignedBefore = false;
+  for (const QString& key : orderedKeys) {
+    const bool frozen = frozenKeyless(key);
+    const bool written = assigned.contains(key);
+    if (keylessFirst ? frozen && assignedBefore : written && frozenBefore) return std::nullopt;
+    frozenBefore = frozenBefore || frozen;
+    assignedBefore = assignedBefore || written;
   }
   return assignments;
 }

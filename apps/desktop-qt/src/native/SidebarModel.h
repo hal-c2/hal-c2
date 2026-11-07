@@ -205,6 +205,9 @@ struct Input {
   QVariantList drafts;
   Nullable activeThreadKey;
   QVariant activeDraftId;
+  // The threads whose composer holds something unsent; their rows, but the
+  // open one's, are marked `unsentDraft`.
+  QSet<QString> unsentDraftKeys;
   // The shortcut labels of the first rows' jump commands (thread.jump.1..9),
   // in order; each row carries its own while `showJumpHints`.
   QStringList jumpLabels;
@@ -255,6 +258,13 @@ struct OrderAssignment {
 // holds every thread of the section, the ones not shown too, whose keys stay.
 QList<OrderAssignment> planReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
                                    const QString& movedKey);
+// planReorder for a section with rows that cannot store an order (their
+// environment is offline): only `writable` rows are written, a frozen row's
+// key is a bound, and a frozen keyless row (first in Active, last in Pinned,
+// `keylessFirst`) is left out. Nothing when the drop cannot be stored so that
+// it reads as dropped.
+std::optional<QList<OrderAssignment>> planWritableReorder(const QStringList& orderedKeys, const QHash<QString, Nullable>& orderKeys,
+                                                          const QString& movedKey, const QSet<QString>& writable, bool keylessFirst);
 
 struct SnoozePreset {
   QString id;

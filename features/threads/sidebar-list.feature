@@ -296,7 +296,7 @@ Feature: The thread list
       | state                                 | message              |
       | the environment has not published yet | Waiting for the app… |
       | the environment has no projects       | No projects yet      |
-      | the scoped project has no threads     | No threads yet       |
+      | no project has threads                | No threads yet       |
 
   @desktop @mobile @backlog-mobile
   Scenario: Projects are ordered by recent use unless arranged by hand
@@ -443,13 +443,13 @@ Feature: The thread list
     Then the filter closes
     And the settings for "docs" open
 
-  @backlog @desktop
+  @desktop
   Scenario: The project filter is remembered across restarts
     Given the user scoped the list to "docs"
     When the user restarts the app
     Then the list is scoped to "docs"
 
-  @backlog @desktop
+  @desktop
   Scenario: A remembered project filter waits until every environment has reported
     Given the user scoped the list to "docs" before closing the app
     When the app starts and the environment "work" has not reported its projects yet
@@ -457,7 +457,7 @@ Feature: The thread list
     When every environment has reported and "docs" is gone
     Then the list shows every project
 
-  @backlog @desktop
+  @desktop
   Scenario: Leaving the thread list for settings keeps the project filter
     Given the user scoped the list to "docs"
     When the user opens settings and then returns to the threads
@@ -469,14 +469,16 @@ Feature: The thread list
     When the user looks at the project filter
     Then it names "docs" and shows the project's icon
 
-  @backlog @desktop
+  # Proved by tst_Sidebar.qml (test_emptyListMessage).
+  @desktop @backlog-desktop
   Scenario: An empty project is named in the empty list
     Given the user scoped the list to "docs"
     And "docs" has no threads
     When the user looks at the thread list
     Then the list says "No threads in docs yet"
 
-  @backlog @desktop
+  # Proved by tst_Sidebar.qml (test_emptyListAddsAProject).
+  @desktop @backlog-desktop
   Scenario: Adding a project from an empty list
     Given the environment has no projects
     When the user looks at the thread list
@@ -581,7 +583,7 @@ Feature: The thread list
     When the checkout switches to another branch
     Then the row for "Beta" no longer shows pull request 12
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A thread with unsent text in its composer is marked on its row
     Given the user typed a message in the composer of "Beta" and did not send it
     And "Alpha" is the open thread
@@ -946,7 +948,7 @@ Feature: The thread list
     When a screen reader reaches a thread's status marker
     Then it announces Working, Awaiting input or Pending approval
 
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A drop in the sidebar sticks when another machine is offline
     Given the sidebar shows rows from a machine that is offline or asleep
     When the user drops a thread among rows that have no order yet

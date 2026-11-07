@@ -146,6 +146,11 @@ private:
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
   void readSettings();
+  // Whether every environment has said what projects it has: none is held
+  // from the cache or unreachable.
+  bool projectsReported() const;
+  // Keeps the scope in this device's preferences for the next start.
+  void rememberScope();
   // Reading a thread is a visit: while the window shows one, the MC is told
   // the thread was seen up to its newest change (`thread.visit`, visitedAt
   // its updatedAt), which clears "Done" on every device. Once per change, an unseen completion at once and other
@@ -176,6 +181,7 @@ private:
   bool m_showSettledPluginThreads = false;
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
+  bool m_scopeRestored = false;
   sidebar::View m_view;
   qsizetype m_settledPage = sidebar::kSettledPage;
   qsizetype m_settledShown = sidebar::kSettledPage;
@@ -193,6 +199,8 @@ private:
   // The listed drafts' labels, and the open draft's row as it was when the
   // window opened it (nothing when it was empty).
   QHash<QString, QString> m_draftLabels;
+  // The threads whose rows the last refresh marked unsent (`unsentDraft`).
+  QSet<QString> m_unsentThreads;
   QString m_openDraftId;
   std::optional<QString> m_openDraftLabel;
 };

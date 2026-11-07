@@ -97,6 +97,15 @@ Rectangle {
         dynamicRoles: true
     }
 
+    // A local folder is picked here; without local folders the command palette asks.
+    function addProject() {
+        if (Shell.localFolderImportEnabled && (model?.localFolders ?? false)) {
+            addProjectDialog.open();
+        } else {
+            Shell.dispatch("project.add");
+        }
+    }
+
     function syncRows() {
         for (let index = 0; index < rows.length; ++index) {
             const data = rows[index];
@@ -501,8 +510,7 @@ Rectangle {
                     iconTint: sidebar.iconColor
                     objectName: "addProject"
                     Accessible.name: qsTr("Add project")
-                    // A local folder is picked here; without local folders the command palette asks.
-                    onClicked: Shell.localFolderImportEnabled && (sidebar.model?.localFolders ?? false) ? addProjectDialog.open() : Shell.dispatch("project.add")
+                    onClicked: sidebar.addProject()
                 }
 
                 FolderDialog {
@@ -1035,6 +1043,9 @@ Rectangle {
                         onUnpinRequested: Shell.dispatch("thread.unpin", {
                             key: entry.thread.key
                         })
+                        onDiscardDraftRequested: Shell.dispatch("thread.draft.discard", {
+                            key: entry.thread.key
+                        })
                         onUnsnoozeRequested: Shell.dispatch("thread.unsnooze", {
                             key: entry.thread.key
                         })
@@ -1050,14 +1061,30 @@ Rectangle {
                 }
             }
 
-            Text {
-                objectName: "emptyText"
+            Column {
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: Theme.space.xl
+                spacing: Theme.space.sm
                 visible: list.count === 0
-                text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
-                color: sidebar.muted
-                font.pixelSize: Theme.type.meta.size
+
+                Text {
+                    objectName: "emptyText"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : sidebar.projectNames[sidebar.model.scopeProjectKey ?? ""] !== undefined ? qsTr("No threads in %1 yet").arg(sidebar.scopeLabel) : qsTr("No threads yet")
+                    color: sidebar.muted
+                    font.pixelSize: Theme.type.meta.size
+                }
+
+                ShellButton {
+                    objectName: "emptyAddProject"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: sidebar.model !== null && sidebar.projects.length === 0
+                    subtle: true
+                    iconName: "plus"
+                    iconSize: Theme.icon.sm
+                    text: qsTr("Add project")
+                    onClicked: sidebar.addProject()
+                }
             }
         }
 

@@ -48,6 +48,7 @@ Item {
     signal snoozeRequested(real windowX, real windowY)
     signal unsnoozeRequested
     signal unpinRequested
+    signal discardDraftRequested
     signal wokeDismissed
 
     readonly property color textColor: Theme.palette.color("ink", "#e4e4e7")
@@ -73,7 +74,10 @@ Item {
     readonly property bool canSettle: !draft && !parked && item.canSettle === true
     readonly property bool canSnooze: !draft && !parked && item.canSnooze === true
     readonly property bool pinned: !draft && item.pinned === true
-    readonly property bool hasActions: !offline && (parked || pinned || canSettle || canSnooze)
+    // The thread's composer holds something unsent (not the open thread's):
+    // the row is marked and can discard it, offline too, as the draft is local.
+    readonly property bool unsentDraft: !draft && item.unsentDraft === true
+    readonly property bool hasActions: unsentDraft || !offline && (parked || pinned || canSettle || canSnooze)
     // The key that opens the row, shown in the status slot while the jump
     // modifier is held.
     readonly property string jumpLabel: item.jumpLabel ?? ""
@@ -225,7 +229,7 @@ Item {
     implicitHeight: slim ? Theme.control.lg : Theme.space.sm * 2 + Theme.type.body.lineHeight + Theme.space.xxs + Theme.type.meta.lineHeight
     Accessible.role: Accessible.ListItem
     Accessible.name: item.title
-    Accessible.description: [statusWord, projectName, branchName].filter(part => part.length > 0).join(", ")
+    Accessible.description: [statusWord, unsentDraft ? qsTr("Unsent draft") : "", projectName, branchName].filter(part => part.length > 0).join(", ")
     // The keyboard opens a row from the Sidebar's list (Enter at its cursor).
     Accessible.onPressAction: row.activated()
     // A pooled delegate (the list reuses them) is hidden but stays a child of
@@ -469,13 +473,26 @@ Item {
 
         PluginMark {}
 
+        ShellIcon {
+            objectName: "unsentDraftMark"
+            Layout.alignment: Qt.AlignVCenter
+            visible: row.unsentDraft
+            name: "pencil"
+            size: Theme.icon.sm
+            color: row.secondaryColor
+            Accessible.role: Accessible.Graphic
+            Accessible.name: qsTr("Unsent draft")
+        }
+
         // The status slot: one thing at a time. It holds DIRECTION's 44px
         // only while something occupies it (the actions, the jump key, a
         // status); a row at rest with just its age keeps 28px or the age's
         // width, whichever is less, and gives the title the rest.
         Item {
             objectName: "statusSlot"
-            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.restingSlotWidth) : row.slotWidth
+            // The discard action takes a third place beside the two.
+            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.restingSlotWidth)
+                : row.slot === "actions" && row.unsentDraft ? row.slotWidth + Theme.icon.lg + Theme.space.xs : row.slotWidth
             Layout.fillHeight: true
 
             // Over the actions their own tooltips speak, not the preview.
@@ -489,9 +506,18 @@ Item {
                 spacing: Theme.space.xs
                 visible: row.slot === "actions"
 
+                RowAction {
+                    visible: row.unsentDraft
+                    iconName: "x"
+                    objectName: "discardDraftAction"
+                    Accessible.name: qsTr("Discard draft")
+                    toolTip: qsTr("Discard draft")
+                    onClicked: row.discardDraftRequested()
+                }
+
                 // Built only for pinned rows, so the hundreds of others pay nothing.
                 Loader {
-                    active: row.pinned && row.showActions
+                    active: row.pinned && !row.offline && row.showActions
                     visible: active
                     sourceComponent: RowAction {
                         objectName: "unpinAction"
@@ -520,7 +546,7 @@ Item {
                 }
 
                 RowAction {
-                    visible: row.section === "snoozed"
+                    visible: row.section === "snoozed" && !row.offline
                     iconName: "alarm-clock-off"
                     objectName: "wakeAction"
                     Accessible.name: qsTr("Wake")
@@ -529,7 +555,7 @@ Item {
                 }
 
                 RowAction {
-                    visible: row.section === "settled"
+                    visible: row.section === "settled" && !row.offline
                     iconName: "undo-2"
                     objectName: "unsettleAction"
                     Accessible.name: qsTr("Un-settle")

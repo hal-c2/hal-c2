@@ -436,10 +436,12 @@ std::string sectionOf(const Model& model, const std::string& key) {
 }
 
 // What the shell redoes on every refresh: a scope whose project went shows
-// everything, and only listed rows stay selected.
+// everything once every environment is online to say it went, and only
+// listed rows stay selected.
 void normalize(Model& model) {
   if (!model.connected) return;
-  if (model.scope && !groupExists(model.environments, *model.scope)) model.scope.reset();
+  const bool reported = std::all_of(model.environments.begin(), model.environments.end(), [](const auto& entry) { return entry.second.online; });
+  if (model.scope && reported && !groupExists(model.environments, *model.scope)) model.scope.reset();
   const std::vector<std::string> listed = orderedKeys(model);
   std::erase_if(model.selected, [&listed](const std::string& key) { return std::find(listed.begin(), listed.end(), key) == listed.end(); });
 }
@@ -474,8 +476,16 @@ void arrange(Model& model, const std::string& section, const std::vector<std::st
   }
   if (pinning) orderKeys.insert(q(key), std::nullopt);
   QStringList keys;
-  for (const std::string& each : ordered) keys.append(q(each));
-  for (const sidebar::OrderAssignment& assignment : sidebar::planReorder(keys, orderKeys, q(key))) {
+  QSet<QString> writable;
+  for (const std::string& each : ordered) {
+    keys.append(q(each));
+    if (online(model, split(each).first)) writable.insert(q(each));
+  }
+  // Rows on an offline environment are not written; a drop they make
+  // impossible to store is not made.
+  const auto planned = sidebar::planWritableReorder(keys, orderKeys, q(key), writable, !pinned);
+  if (!planned) return;
+  for (const sidebar::OrderAssignment& assignment : *planned) {
     const std::string assigned = assignment.key.toStdString();
     const std::string type = pinning && assigned == key ? "thread.pin" : pinned ? "thread.pin.reorder" : "thread.active.reorder";
     dispatch(model, assigned, Cmd{type, std::nullopt, assignment.orderKey.toStdString()});
@@ -1814,6 +1824,62 @@ private slots:
         if (l.has_value() != r.has_value()) return pinned ? l.has_value() : !l.has_value();
         if (l) return *l < *r;
         return section.shown.indexOf(left) < section.shown.indexOf(right);
+      });
+      if (sorted != ordered) {
+        RC_FAIL("ordered " + ordered.join(QLatin1Char(',')).toStdString() + ", sorts as " + sorted.join(QLatin1Char(',')).toStdString());
+      }
+    }));
+  }
+
+  void reorderBesideOfflineRowsWritesOnlyWritableRows() {
+    QVERIFY(rc::check("planWritableReorder writes only the writable rows, and what it writes sorts as dropped", [] {
+      const bool pinned = *rc::gen::arbitrary<bool>();
+      const int count = *rc::gen::inRange(1, 7);
+      const int keyed = *rc::gen::inRange(0, count + 1);
+      const QStringList spread = sidebar::spreadOrderKeys(keyed);
+      QStringList shown;
+      QHash<QString, sidebar::Nullable> orderKeys;
+      QSet<QString> writable;
+      for (int i = 0; i < count; ++i) {
+        const QString key = QStringLiteral("e:r%1").arg(i);
+        shown.append(key);
+        const int slot = pinned ? i : i - (count - keyed);
+        orderKeys.insert(key, slot >= 0 && slot < keyed ? sidebar::Nullable(spread.at(slot)) : std::nullopt);
+        if (*rc::gen::arbitrary<bool>()) writable.insert(key);
+      }
+      const bool everyRow = *rc::gen::arbitrary<bool>();
+      if (everyRow) writable = QSet<QString>(shown.begin(), shown.end());
+      const int from = *rc::gen::inRange(0, count);
+      const int to = *rc::gen::inRange(0, count);
+      QStringList ordered = shown;
+      ordered.move(from, to);
+      const QString moved = shown.at(from);
+      RC_TAG(pinned ? "pinned" : "active");
+
+      const auto planned = sidebar::planWritableReorder(ordered, orderKeys, moved, writable, !pinned);
+      RC_TAG(planned ? "stored" : "refused");
+      if (everyRow) {
+        // With every row writable it is planReorder.
+        RC_ASSERT(bool(planned));
+        const QList<sidebar::OrderAssignment> plain = sidebar::planReorder(ordered, orderKeys, moved);
+        RC_ASSERT(planned->size() == plain.size());
+        for (qsizetype i = 0; i < plain.size(); ++i) {
+          RC_ASSERT(planned->at(i).key == plain.at(i).key && planned->at(i).orderKey == plain.at(i).orderKey);
+        }
+      }
+      if (!planned) return;
+      QHash<QString, sidebar::Nullable> after = orderKeys;
+      for (const sidebar::OrderAssignment& assignment : *planned) {
+        RC_ASSERT(writable.contains(assignment.key));
+        after.insert(assignment.key, assignment.orderKey);
+      }
+      QStringList sorted = shown;
+      std::stable_sort(sorted.begin(), sorted.end(), [&](const QString& left, const QString& right) {
+        const sidebar::Nullable& l = after.value(left);
+        const sidebar::Nullable& r = after.value(right);
+        if (l.has_value() != r.has_value()) return pinned ? l.has_value() : !l.has_value();
+        if (l) return *l < *r;
+        return shown.indexOf(left) < shown.indexOf(right);
       });
       if (sorted != ordered) {
         RC_FAIL("ordered " + ordered.join(QLatin1Char(',')).toStdString() + ", sorts as " + sorted.join(QLatin1Char(',')).toStdString());

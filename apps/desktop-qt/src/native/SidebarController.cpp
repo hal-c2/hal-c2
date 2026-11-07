@@ -17,6 +17,9 @@
 
 namespace {
 
+// The device preference that remembers the project the list is scoped to.
+const QString kScopeKey = QStringLiteral("sidebarProjectScopeKey");
+
 QString keyOf(const QVariantMap& payload) {
   return payload.value(QStringLiteral("key")).toString();
 }
@@ -89,8 +92,20 @@ void SidebarController::refresh() {
   const QStringList before = shape();
   m_groups = sidebar::groupProjects(m_store->projects(), m_grouping, ownEnvironment, threads);
   const bool regrouped = shape() != before;
-  // A scope whose project went away (removed, regrouped) shows everything again.
-  if (m_scope && group(*m_scope) == nullptr) m_scope.reset();
+  // The scope this device chose last time, once per run, as soon as its
+  // preferences are read (a preview can refresh before they are).
+  if (const auto* settings = NativeShell::of(this)->controller<SettingsController>(); !m_scopeRestored && settings && !settings->devicePath().isEmpty()) {
+    m_scopeRestored = true;
+    const QJsonValue kept = settings->deviceSettings().value(kScopeKey);
+    if (kept.isString() && !kept.toString().isEmpty()) m_scope = kept.toString();
+  }
+  // A scope whose project went away (removed, regrouped) shows everything
+  // again, but only once every environment has said what projects it has: a
+  // cached or unreachable one cannot tell that the project is gone.
+  if (m_scope && group(*m_scope) == nullptr && projectsReported()) {
+    m_scope.reset();
+    rememberScope();
+  }
   const QDateTime now = m_now();
   sidebar::Input input;
   input.projects = m_groups;
@@ -135,6 +150,8 @@ void SidebarController::refresh() {
       });
     }
   }
+  m_unsentThreads = composer ? composer->unsentThreads() : QSet<QString>();
+  input.unsentDraftKeys = m_unsentThreads;
   input.selectedKeys = m_selected;
   input.settledLimit = m_settledShown;
   input.settledPage = m_settledPage;
@@ -223,6 +240,11 @@ void SidebarController::draftEdited(const QString& id) {
   if (!m_active || id == m_openDraftId) return;
   const auto* composer = NativeShell::of(this)->controller<ComposerController>();
   const auto label = composer ? composer->draftPreview(id) : std::nullopt;
+  // A thread's row is marked while its composer holds something unsent.
+  if (m_store->thread(id)) {
+    if (label.has_value() != m_unsentThreads.contains(id)) refresh();
+    return;
+  }
   const auto listed = m_draftLabels.constFind(id);
   if (listed == m_draftLabels.cend() ? label.has_value() : label != *listed) refresh();
 }
@@ -267,6 +289,7 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     const QVariant projectKey = map.value(QStringLiteral("projectKey"));
     m_scope = projectKey.typeId() == QMetaType::QString ? sidebar::Nullable(projectKey.toString())
                                                         : std::nullopt;
+    rememberScope();
     refresh();
     return true;
   }
@@ -286,6 +309,10 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
       }
     }
     return false;
+  }
+  if (action == QLatin1String("thread.draft.discard")) {
+    if (auto* composer = NativeShell::of(this)->controller<ComposerController>()) composer->discardDraft(keyOf(map));
+    return true;
   }
   if (action == QLatin1String("thread.attachFiles")) {
     const QString key = keyOf(map);
@@ -600,10 +627,22 @@ void SidebarController::arrange(const QString& section, const QStringList& order
     orderKeys.insert(thread.key(), pinned ? thread.pinOrderKey : thread.activeOrderKey);
   }
   if (pinning) orderKeys.insert(key, std::nullopt);
+  // A row whose environment is offline keeps its order; its capabilities are
+  // only the ones cached for drawing it.
+  QSet<QString> writable;
+  for (const QString& listed : ordered) {
+    const auto thread = m_store->thread(listed);
+    if (thread && m_store->environmentOnline(thread->environmentId) && m_store->supports(thread->environmentId, capability)) {
+      writable.insert(listed);
+    }
+  }
+  const auto planned = sidebar::planWritableReorder(ordered, orderKeys, key, writable, !pinned);
+  // A drop that cannot be stored beside the offline rows snaps back, as it would on reload.
+  if (!planned) return;
   const QString failure = pinned ? QStringLiteral("Failed to reorder pinned threads") : QStringLiteral("Failed to reorder active threads");
-  for (const sidebar::OrderAssignment& assignment : sidebar::planReorder(ordered, orderKeys, key)) {
+  for (const sidebar::OrderAssignment& assignment : *planned) {
     const auto thread = m_store->thread(assignment.key);
-    if (!thread || !m_store->supports(thread->environmentId, capability)) continue;
+    if (!thread) continue;
     const bool pin = pinning && assignment.key == key;
     command(thread->environmentId,
             {{QStringLiteral("type"), pin ? QStringLiteral("thread.pin") : pinned ? QStringLiteral("thread.pin.reorder") : QStringLiteral("thread.active.reorder")},
@@ -678,6 +717,22 @@ QString SidebarController::activeThreadKey() const {
 
 ToastController* SidebarController::toasts() const {
   return NativeShell::of(this)->controller<ToastController>();
+}
+
+bool SidebarController::projectsReported() const {
+  if (m_store->previewing() || !m_store->synchronized()) return false;
+  for (const QString& environment : m_store->environments()) {
+    if (!m_store->environmentOnline(environment)) return false;
+  }
+  return true;
+}
+
+void SidebarController::rememberScope() {
+  if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    if (settings->deviceSettings().value(kScopeKey).toString() != m_scope.value_or(QString())) {
+      settings->writeDevice(kScopeKey, m_scope ? QVariant(*m_scope) : QVariant());
+    }
+  }
 }
 
 void SidebarController::readSettings() {
