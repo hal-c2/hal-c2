@@ -6,6 +6,7 @@
 //! desktop-qt's ThreadSelectionSteps.cpp.
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use hal_c2_shell::controllers::drafts;
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
@@ -518,6 +519,11 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step("opening another thread fails", |world, _, _| {
         // Nothing else to show, and the desktop cannot keep the new thread it would start.
+        // A draft the window landed on while it opened would be reopened instead of
+        // started, so none is kept.
+        for draft in drafts::all(world.engine()) {
+            drafts::remove(world.engine(), &draft.id);
+        }
         let drafts = world.home_dir().join("data/shell-drafts.json");
         let _ = std::fs::remove_file(&drafts);
         expect!(

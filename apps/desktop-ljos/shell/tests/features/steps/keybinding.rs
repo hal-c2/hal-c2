@@ -1170,11 +1170,18 @@ pub fn register(steps: &mut Steps) {
         "only bindings whose (command|label|key|condition|source) matches are listed",
         |world, c, _| {
             let query = keys(world).borrow().query.to_lowercase();
-            let field = if c[0] == "condition" { "when" } else { &c[0] };
+            // A condition is searched as typed and as the words the page shows.
+            let fields: &[&str] = if c[0] == "condition" {
+                &["when", "whenLabel"]
+            } else {
+                &[c[0].as_str()]
+            };
             // KeybindingsSettings lists the rows whose `search` holds the query.
             for row in rows(world) {
                 let listed = text(&row["search"]).contains(&query);
-                let matches = text(&row[field]).to_lowercase().contains(&query);
+                let matches = fields
+                    .iter()
+                    .any(|field| text(&row[*field]).to_lowercase().contains(&query));
                 expect!(
                     listed == matches,
                     "{} {} listed",

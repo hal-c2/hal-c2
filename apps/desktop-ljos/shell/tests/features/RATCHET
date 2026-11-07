@@ -234,7 +234,6 @@ connections/connection-health.feature: The connection's state is an icon with a 
 connections/connection-health.feature: The connection's state is an icon with a word [refused its credential, lock, Needs pairing]
 connections/connection-health.feature: The connection's state is an icon with a word [retrying after a drop, refresh-cw, Reconnecting]
 connections/connection-health.feature: The connection's state is an icon with a word [waiting for the network, cloud, Offline]
-connections/connection-health.feature: The environment's status names why it is reconnecting
 connections/connection-health.feature: The environment's status says it is reconnecting, in plain words
 connections/connection-health.feature: The user copies a connection's trace id for a bug report
 connections/environments.feature: A preference saved by an older build snaps to the nearest choice
@@ -665,6 +664,7 @@ navigation/keybinding-settings.feature: Save failures are reported [saves, Unabl
 navigation/keybinding-settings.feature: Searching filters bindings [Custom, source]
 navigation/keybinding-settings.feature: Searching filters bindings [Start in Back, label]
 navigation/keybinding-settings.feature: Searching filters bindings [mod+shift+e, key]
+navigation/keybinding-settings.feature: Searching filters bindings [outside the te, condition]
 navigation/keybinding-settings.feature: Searching filters bindings [terminal.split, command]
 navigation/keybinding-settings.feature: Searching filters bindings [terminalFocus, condition]
 navigation/keybinding-settings.feature: The file cannot be opened
@@ -1493,6 +1493,12 @@ settings/scopes-and-inheritance.feature: The environment view lists and clears p
 settings/scopes-and-inheritance.feature: The inheritance chain shows which layer wins
 settings/scopes-and-inheritance.feature: The page states the project and environment being edited
 settings/search-and-navigation.feature: A search result inside a folded section opens the fold
+settings/search-and-navigation.feature: A setting is found by the words people use for it [battery saver, Background activity]
+settings/search-and-navigation.feature: A setting is found by the words people use for it [binary path, Providers]
+settings/search-and-navigation.feature: A setting is found by the words people use for it [long lines, Word wrap]
+settings/search-and-navigation.feature: A setting is found by the words people use for it [multiline, Send shortcut]
+settings/search-and-navigation.feature: A setting is found by the words people use for it [new line, Send shortcut]
+settings/search-and-navigation.feature: A setting is found by the words people use for it [pull request template, Follow change request templates]
 settings/search-and-navigation.feature: A theme that cannot be restored rolls back
 settings/search-and-navigation.feature: Back with nowhere to return to lands on a new thread
 settings/search-and-navigation.feature: Cancelling the restore changes nothing
