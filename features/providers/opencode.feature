@@ -425,7 +425,7 @@ Feature: OpenCode
 
   # Upstream #29762: OpenCode 1.x rewrites a tool it stopped as an error, so every running command,
   # edit or subagent read as failed, and a stopped edit showed "Tool execution aborted" as its diff.
-  @backlog @priority-high
+  @priority-high
   Scenario Outline: A <tool> running when an OpenCode turn is stopped shows as interrupted
     Given an OpenCode 1 turn is running <tool>
     When the user stops the turn
@@ -941,7 +941,6 @@ Feature: OpenCode
     When the request to OpenCode times out with an error that carries no message
     Then the turn fails with a readable error instead of the MC failing to describe it
 
-  @backlog
   Scenario: A stopped OpenCode turn shows as stopped, not failed
     Given an OpenCode turn is running
     When the user stops the turn and OpenCode reports it aborted

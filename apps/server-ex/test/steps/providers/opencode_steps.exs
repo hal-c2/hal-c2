@@ -1207,6 +1207,149 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # A tool of each kind as OpenCode 1 runs it, and the item type the thread shows it as.
+  @stopped_tools %{
+    "a command" =>
+      {"command_execution",
+       %{
+         "toolCallId" => "stop-1",
+         "title" => "bash",
+         "kind" => "execute",
+         "rawInput" => %{"command" => "npm test"},
+         "content" => [
+           %{"type" => "content", "content" => %{"type" => "text", "text" => "running 3 tests"}}
+         ]
+       }},
+    "a file edit" =>
+      {"file_change",
+       %{
+         "toolCallId" => "stop-1",
+         "title" => "edit",
+         "kind" => "edit",
+         "rawInput" => %{"filePath" => "src/app.ts"},
+         "locations" => [%{"path" => "src/app.ts"}]
+       }},
+    "a subagent task" =>
+      {"subagent",
+       %{
+         "toolCallId" => "stop-1",
+         "title" => "task",
+         "kind" => "other",
+         "rawInput" => %{
+           "description" => "Look around",
+           "prompt" => "find the bug",
+           "subagent_type" => "general"
+         }
+       }}
+  }
+
+  step ~r/^an OpenCode 1 turn is running (?<tool>a command|a file edit|a subagent task)$/,
+       %{args: [tool]} = context do
+    {type, call} = @stopped_tools[tool]
+    aborted = "Tool execution aborted"
+
+    turn = %{
+      "match" => "run the tool",
+      "steps" => [
+        %{
+          "update" =>
+            call
+            |> Map.delete("content")
+            |> Map.merge(%{"sessionUpdate" => "tool_call", "status" => "in_progress"})
+        },
+        %{
+          "update" =>
+            Map.merge(call, %{"sessionUpdate" => "tool_call_update", "status" => "in_progress"})
+        },
+        %{
+          "waitCancel" => true,
+          # OpenCode 1 rewrites the tool it stopped as an error.
+          "after" => [
+            %{
+              "sessionUpdate" => "tool_call_update",
+              "toolCallId" => call["toolCallId"],
+              "status" => "failed",
+              "content" => [
+                %{"type" => "content", "content" => %{"type" => "text", "text" => aborted}}
+              ],
+              "rawOutput" => %{"error" => aborted}
+            }
+          ]
+        }
+      ]
+    }
+
+    context =
+      context
+      |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("run the tool")
+
+    # Running, with its output so far.
+    World.await_stream(World.thread_id(context, @thread), fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["type"] == type and (type != "command_execution" or &1["output"] != ""))
+      )
+    end)
+
+    Map.put(context, :stopped_tool, type)
+  end
+
+  step ~r/^(?:a command|a file edit|a subagent task) shows as interrupted, not failed$/,
+       context do
+    FakeAcp.await_run(context, "interrupted")
+    assert [%{"status" => "interrupted"}] = tool_items(context, context.stopped_tool)
+
+    for subagent <- subagents(context),
+        do: assert(subagent["status"] == "interrupted")
+
+    context
+  end
+
+  step "no error text is shown as its output or diff", context do
+    [item] = tool_items(context, context.stopped_tool)
+    shown = Enum.map(subagents(context), &JSON.encode!/1)
+    refute JSON.encode!([item | shown]) =~ "aborted"
+
+    if context.stopped_tool == "command_execution",
+      do: assert(item["output"] =~ "running 3 tests")
+
+    context
+  end
+
+  defp subagents(context) do
+    World.thread_id(context, @thread)
+    |> HalC2.Streams.state()
+    |> StreamState.list("subagent")
+  end
+
+  # OpenCode's ACP mode reports the abort as the prompt's `cancelled` end.
+  step "the user stops the turn and OpenCode reports it aborted", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    context
+  end
+
+  step "the turn is shown as interrupted", context do
+    World.await_runs(context, @thread, ["interrupted"])
+
+    refute Enum.any?(
+             StreamState.list(
+               HalC2.Streams.state(World.thread_id(context, @thread)),
+               "turn-item"
+             ),
+             &(&1["type"] == "error")
+           )
+
+    context
+  end
+
   # --- the server's owner ---------------------------------------------------------------
 
   # The thread's `opencode acp --port` process serves its HTTP API; the thread's runtime

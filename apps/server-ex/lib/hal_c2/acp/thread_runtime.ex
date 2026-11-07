@@ -2114,6 +2114,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       call["status"] in ["completed", "failed"] and spawn_ack?(output) ->
         %{state | subagents: Map.put(state.subagents, id, Map.put(entry, :background, true))}
 
+      # A task the user's stop cut off was stopped, though OpenCode 1 reports it failed
+      # with the stop as its error.
+      call["status"] in ["completed", "failed"] and not entry.done and stopped?(state, call) ->
+        sub = NativeSubagent.finish(entry.sub, "interrupted", nil)
+        %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+
       call["status"] in ["completed", "failed"] and not entry.done ->
         status = if call["status"] == "failed", do: "failed", else: "completed"
         sub = NativeSubagent.finish(entry.sub, status, subagent_result(output))
@@ -2711,15 +2717,19 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     status =
       cond do
+        # A tool the user's stop cut off was stopped: OpenCode 1 rewrites it as an
+        # error, and agents report a stopped command done like any other.
+        stopped?(state, call) -> "interrupted"
         call["status"] == "failed" -> "failed"
-        # A command the user's stop cut off was stopped, though its agent reports it
-        # done like any other.
         kind == :command and state.interrupted -> "interrupted"
         is_integer(exit_code) and exit_code != 0 -> "failed"
         true -> "completed"
       end
 
-    output = content_text(call["content"]) || raw_output(call["rawOutput"])
+    # The stop's error ("Tool execution aborted") is no output: what ran so far stays.
+    output =
+      unless stopped?(state, call),
+        do: content_text(call["content"]) || raw_output(call["rawOutput"])
 
     # Antigravity's native command fields and local image previews, under
     # whichever names the call used.
@@ -2732,7 +2742,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       case kind do
         :command ->
           entity
-          |> Map.put("output", native[:output] || output || "")
+          |> Map.put("output", native[:output] || output || entity["output"] || "")
           |> then(fn entity ->
             cond do
               native[:command] ->
@@ -2754,11 +2764,11 @@ defmodule HalC2.Acp.ThreadRuntime do
           end)
 
         :file ->
-          Map.put(entity, "diffStr", output || "")
+          Map.put(entity, "diffStr", output || entity["diffStr"] || "")
 
         :tool ->
           entity
-          |> Map.put("output", native[:output] || output || "")
+          |> Map.put("output", native[:output] || output || entity["output"] || "")
           |> then(&if(call["rawInput"], do: Map.put(&1, "input", call["rawInput"]), else: &1))
           |> then(
             &if(native[:image_path], do: Map.put(&1, "imagePath", native.image_path), else: &1)
@@ -2801,6 +2811,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp content_text(_), do: nil
+
+  defp stopped?(state, call), do: state.interrupted and call["status"] == "failed"
 
   defp reported_exit(%{"metadata" => %{"exit" => code}}) when is_integer(code), do: code
   defp reported_exit(_), do: nil
