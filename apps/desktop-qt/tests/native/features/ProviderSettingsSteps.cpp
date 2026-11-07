@@ -21,6 +21,7 @@
 #include <QTest>
 #include "Brick.h"
 #include <QQuickItem>
+#include "RunNotices.h"
 #include "World.h"
 
 namespace {
@@ -2384,8 +2385,11 @@ const Steps providerUpdateSteps([] {
     world.setTime(world.now().addSecs(3));
   });
   step(QStringLiteral("(?:the (?:sidebar )?notice is gone|the sidebar shows no provider update notice)"),
-       [](World& world, const Captures&, const Table&) { expectNoNotice(world); });
+       [](World& world, const Captures&, const Table&) {
+         if (!providerNoticeGone(world)) expectNoNotice(world);
+       });
   step(QStringLiteral("the user dismisses the notice"), [](World& world, const Captures&, const Table&) {
+    if (dismissProviderNotice(world)) return;
     world.bridge().dispatch(QStringLiteral("providerUpdates.dismissNotice"), QVariantMap{});
   });
   step(QStringLiteral("the user chooses the notice"), [](World& world, const Captures&, const Table&) {

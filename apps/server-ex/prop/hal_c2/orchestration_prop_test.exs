@@ -75,6 +75,8 @@ defmodule HalC2.OrchestrationPropTest do
   @plugin "prop-plugin"
   @threads ~w(t1 t2)
   @instances ~w(codex codex-work)
+  # An instance switched to but turned off in settings, which refuses the switch.
+  @disabled "codex-off"
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
@@ -148,7 +150,8 @@ defmodule HalC2.OrchestrationPropTest do
                   "driver" => "codex",
                   "enabled" => true,
                   "environment" => named.("codex-work")
-                }
+                },
+                @disabled => %{"driver" => "codex", "enabled" => false}
               }
             },
             0
@@ -205,6 +208,7 @@ defmodule HalC2.OrchestrationPropTest do
         [tid, msg, oneof(@instances), oneof([:taken, :taken, :refused])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {2, {:call, __MODULE__, :switch, [tid, oneof(@instances)]}},
+      {1, {:call, __MODULE__, :switch, [tid, @disabled]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
       {1, {:call, __MODULE__, :archive, [tid]}},
@@ -931,9 +935,14 @@ defmodule HalC2.OrchestrationPropTest do
       if mode != :notice, do: off_refusal(state.threads[tid], instance)
   end
 
-  # A switch to the instance the thread is on changes nothing.
-  defp switch_refusal(thread, instance),
-    do: if(instance != thread.instance, do: off_refusal(thread, instance))
+  # A switch to the instance the thread is on changes nothing; a disabled instance is
+  # refused before the project's own switches are asked.
+  defp switch_refusal(%{instance: instance}, instance), do: nil
+
+  defp switch_refusal(_thread, @disabled),
+    do: {:error, "The target provider instance is unavailable."}
+
+  defp switch_refusal(thread, instance), do: off_refusal(thread, instance)
 
   defp instance_of(thread, msg), do: Enum.find(thread.runs, &(&1.msg == msg)).instance
 

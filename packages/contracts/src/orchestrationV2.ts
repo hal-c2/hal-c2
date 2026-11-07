@@ -2599,6 +2599,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+    // The user's Stop: also stops the subagents still working on what the thread delegated.
+    stopDelegated: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),

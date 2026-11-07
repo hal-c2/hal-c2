@@ -211,6 +211,9 @@ defmodule HalC2.Muse.ThreadRuntime do
     }
 
     with {:ok, state} <- ensure_session(state, turn),
+         # A session Muse no longer had starts afresh with the whole thread.
+         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
+         state = %{state | turn: turn},
          {:ok, state} <- select_model(state, turn.model) do
       # A run that ended while the session opened never reaches Muse.
       case started(state) do
@@ -517,7 +520,8 @@ defmodule HalC2.Muse.ThreadRuntime do
         {:error, "Muse resumed another session", close_host(state)}
 
       {:error, %{"data" => %{"kind" => kind}}} when kind in ["sessionNotFound", "notFound"] ->
-        start_session(state, turn)
+        with {:ok, state} <- start_session(state, turn),
+             do: {:ok, Map.put(state, :fresh_start, true)}
 
       {:error, reason} ->
         {:error, reason, state}

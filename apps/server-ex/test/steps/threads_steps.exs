@@ -2067,8 +2067,10 @@ defmodule HalC2.Steps.Threads do
   step "the first request and the newest messages are kept whole", context do
     assert context.where =~ "history True"
 
-    assert [%{"summaryText" => "[earlier messages omitted]\n\n" <> kept}] =
+    assert [%{"summaryText" => summary}] =
              HalC2.StreamState.list(context.fork_state, "context-handoff")
+
+    assert ["[earlier messages omitted" <> _, kept] = String.split(summary, "\n\n", parts: 2)
 
     assert kept =~ ~r/\AUser: hello\n\n/
 
@@ -3690,7 +3692,7 @@ defmodule HalC2.Steps.Threads do
   step "Claude receives the whole conversation ahead of the message", context do
     prompt = List.last(World.claude_prompts(context))
     assert prompt =~ ~r/^<conversation_history>\n/
-    refute prompt =~ "[earlier messages omitted]"
+    refute prompt =~ "[earlier messages omitted"
 
     for line <- ["User: sum the cart totals", "User: now add the discount", "Assistant: "],
         do: assert(prompt =~ line)
@@ -3780,7 +3782,9 @@ defmodule HalC2.Steps.Threads do
   # The fake Codex names its answer and its command the same in every turn, so only the
   # newest turn has them.
   step "Claude receives the original request, the recent turns and command outcomes", context do
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert ["[earlier messages omitted" <> _, kept] =
+             String.split(handed_history(context), "\n\n", parts: 2)
+
     assert String.length(kept) <= 60_000
 
     assert ["User: the original request", "User: part 2 " <> _, "User: part 3 " <> _ | newest] =
@@ -3811,7 +3815,9 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the agent receives at most 60,000 characters of history", context do
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert ["[earlier messages omitted" <> _, kept] =
+             String.split(handed_history(context), "\n\n", parts: 2)
+
     assert String.length(kept) in 50_000..60_000
 
     assert kept =~
@@ -3843,7 +3849,9 @@ defmodule HalC2.Steps.Threads do
       |> switch_and_ask("Alpha")
 
     # The first request and the newest two fit; the one between them does not.
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert ["[earlier messages omitted" <> _, kept] =
+             String.split(handed_history(context), "\n\n", parts: 2)
+
     assert kept =~ "part 1 "
     refute kept =~ "part 2 "
     Map.put(context, :left_out, Enum.at(texts, 1))
@@ -3957,7 +3965,7 @@ defmodule HalC2.Steps.Threads do
 
     assert [_, history] =
              Regex.run(
-               ~r/\A<conversation_history>\nThis conversation started in another agent session\. Continue from it\.\n\n(.*)\n<\/conversation_history>\n\nwhere are we\z/s,
+               ~r/\A<conversation_history>\nThis conversation started in another agent session\. Continue from it\.[^\n]*\n\n(.*)\n<\/conversation_history>\n\nwhere are we\z/s,
                prompt
              )
 

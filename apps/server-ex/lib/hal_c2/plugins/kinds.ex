@@ -82,6 +82,10 @@ defmodule HalC2.Plugins.ProviderAdapter do
       new session from the copy; when it cannot open it, it starts a new one with
       `HalC2.Orchestration.Handoff.prompt(fallback, turn.text)`.
 
+  A turn that names a `native_thread_id` the provider no longer has, and so goes on
+  in a new native conversation, is handed the whole thread first
+  (`HalC2.Orchestration.Handoff.fresh_start/2`).
+
   Without them, or when either fails, the thread moves and its next run there gets
   a summary of the conversation.
 

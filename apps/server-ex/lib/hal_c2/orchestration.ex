@@ -394,14 +394,23 @@ defmodule HalC2.Orchestration do
 
   # The user's stop shows in the transcript as a request, paired with the run's
   # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`).
+  # `stopDelegated` marks the user's Stop, which the clients' Stop button sends: it also
+  # stops the subagents still working on what the thread delegated, from any turn, even
+  # when nothing on the thread itself is left to stop. Any other interrupt (an agent's
+  # `hal_c2_thread_interrupt`, a scheduled prompt's clean-up, a move) leaves them working.
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
     with :ok <- interrupt_policy(thread_id, command["runId"]) do
       HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
       # Stopping a turn also stops its delegated tasks from waking it later.
       HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
 
-      with :ok <- interrupt_any(thread_id, command["runId"]),
-           do: {:ok, %{"sequence" => sequence(thread_id)}}
+      if command["stopDelegated"] == true,
+        do: HalC2.Orchestration.Delegation.stop_delegated(thread_id)
+
+      interrupted = interrupt_any(thread_id, command["runId"])
+      HalC2.Orchestration.Delegation.child_stopped(thread_id)
+
+      with :ok <- interrupted, do: {:ok, %{"sequence" => sequence(thread_id)}}
     end
   end
 
@@ -1147,6 +1156,23 @@ defmodule HalC2.Orchestration do
   defp question_item(request),
     do: String.replace_prefix(request["nodeId"] || "", "node:", "turn-item:")
 
+  @doc """
+  Dismisses the questions of `thread_id` still open for a message (asked without
+  stopping the turn); the questions a turn waits on end with the turn.
+  """
+  def dismiss_questions(thread_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      changes =
+        for request <- StreamState.list(state, "runtime-request"),
+            request["status"] == "pending",
+            HalC2.Orchestration.TurnWriter.message_request?(request),
+            change <- resolve_message_request(state, request, "cancelled", nil),
+            do: change
+
+      {changes, :ok}
+    end)
+  end
+
   defp resolve_message_request(state, request, status, answer) do
     at = Entities.now()
     item_status = if status == "resolved", do: "completed", else: "cancelled"
@@ -1604,7 +1630,8 @@ defmodule HalC2.Orchestration do
         {_, ref} =
           spawn_monitor(fn ->
             # Refused for a task that already ended, whose thread may still have tasks.
-            HalC2.Orchestration.Delegation.cancel(thread_id, id)
+            # The child's tasks are this tree's to stop, so its interrupt leaves them.
+            HalC2.Orchestration.Delegation.cancel(thread_id, id, stop_delegated: false)
             stop_thread_tree(child, deadline)
           end)
 
@@ -3620,8 +3647,14 @@ defmodule HalC2.Orchestration do
         StreamState.get(state, "provider-thread") != %{}
 
     cond do
-      not is_binary(target) or target == current ->
+      not is_binary(target) ->
         nil
+
+      target == current ->
+        model_switch_refusal(state, thread, command, target)
+
+      not HalC2.Settings.instance_enabled?(target, driver_for(target)) ->
+        {:error, "The target provider instance is unavailable."}
 
       # No turn of the thread's could run on a provider its project turned off.
       reason = HalC2.Settings.provider_off(thread["projectId"], target) ->
@@ -3639,6 +3672,31 @@ defmodule HalC2.Orchestration do
   end
 
   defp refusal(_type, _command, _thread, _state), do: nil
+
+  # An ACP agent's session switches models only when it offers a way to (a `model`
+  # config option or a model list); its runtime records whether it did on the provider
+  # thread (`canSwitchModel`), so the answer holds while the session is stopped.
+  defp model_switch_refusal(state, thread, command, instance) do
+    model = get_in(command, ["modelSelection", "model"])
+
+    provider_thread =
+      StreamState.get(state, "provider-thread")[
+        Entities.provider_thread_id(instance, thread["id"])
+      ]
+
+    if is_binary(model) and model != get_in(thread, ["modelSelection", "model"]) and
+         provider_thread["canSwitchModel"] == false,
+       do: {:error, "The active ACP session does not expose a model-switch capability."}
+  end
+
+  # A message naming another model for the thread's own ACP session, which cannot take it.
+  defp message_model_refusal(state, thread, command) do
+    current = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+
+    if get_in(command, ["modelSelection", "instanceId"]) in [nil, current] do
+      with {:error, reason} <- model_switch_refusal(state, thread, command, current), do: reason
+    end
+  end
 
   defp future?(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
@@ -4038,6 +4096,9 @@ defmodule HalC2.Orchestration do
         {[], {:error, reason}}
 
       reason = model_locked(thread, command) ->
+        {[], {:error, reason}}
+
+      reason = message_model_refusal(state, thread, command) ->
         {[], {:error, reason}}
 
       reason = handoff_refusal(state, thread, command) ->
@@ -4617,12 +4678,14 @@ defmodule HalC2.Orchestration do
       end
 
     # Its earlier runs' native turns are in the native thread it no longer has
-    # (`HalC2.Orchestration.Fork`).
+    # (`HalC2.Orchestration.Fork`), and what that thread's session could do is not
+    # known of the new one until it opens.
     taken_over =
       if foreign,
         do: %{
           "providerInstanceId" => instance,
           "nativeThreadRef" => nil,
+          "canSwitchModel" => nil,
           "nativeSinceRunOrdinal" => ordinal
         },
         else: %{}
@@ -4767,17 +4830,18 @@ defmodule HalC2.Orchestration do
     handoff =
       HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
 
+    provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
+
     turn = %{
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
-      text:
-        HalC2.Orchestration.Handoff.prompt(
-          handoff.context,
-          HalC2.ComposerContext.for_provider(text, command["context"])
-        ),
+      text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      # What a new provider conversation gets when the one to resume is gone
+      # (`HalC2.Orchestration.Handoff.opened/2`).
+      fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),
       # A fork's first run continues the source's native thread from the fork point.
       fork: handoff.fork,
       cwd: cwd,

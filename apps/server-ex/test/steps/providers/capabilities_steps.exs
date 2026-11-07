@@ -203,7 +203,7 @@ defmodule HalC2.Steps.Providers.Capabilities do
 
   step "the transcript keeps the newest history and drops the oldest", context do
     text = claude_prompt(context, "where are we")
-    assert text =~ "[earlier messages omitted]"
+    assert text =~ "[earlier messages omitted"
     assert text =~ "new-marker"
     refute text =~ "old-marker"
     context
