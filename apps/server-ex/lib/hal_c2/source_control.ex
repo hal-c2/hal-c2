@@ -350,15 +350,24 @@ defmodule HalC2.SourceControl do
     end
   end
 
+  # A clone that waits for its answer gives up after this; a tracked clone
+  # (`HalC2.ProjectClones`) has no deadline, as a user cancels it instead.
+  @clone_timeout 120_000
+
   @doc "`sourceControl.cloneRepository`: clones and waits for it."
   def clone(%{"destinationPath" => dest} = input) do
     dest = Path.expand(dest)
+    timeout = Application.get_env(:hal_c2, :clone_timeout, @clone_timeout)
 
     with {:ok, url, repository} <- remote(input),
-         {:ok, _} <- HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest]) do
+         {:ok, _} <-
+           HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest], timeout: timeout) do
       {:ok, %{"cwd" => dest, "remoteUrl" => url, "repository" => repository}}
     else
       {:error, {_status, detail}} ->
+        repository_error(input["provider"] || "unknown", "cloneRepository", {:error, detail})
+
+      {:error, detail} when is_binary(detail) ->
         repository_error(input["provider"] || "unknown", "cloneRepository", {:error, detail})
 
       error ->
