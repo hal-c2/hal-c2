@@ -418,9 +418,7 @@ Item {
                     const project = view.workspace ? view.workspace.projectTitle : "";
                     return project ? qsTr("What should we build in %1?").arg(project) : qsTr("Add a project to start");
                 }
-                if (view.loading)
-                    return view.connectionReported ? qsTr("This thread will load when the connection returns.") : qsTr("Loading…");
-                return view.emptyText;
+                return view.loading ? qsTr("Loading…") : view.emptyText;
             }
 
             // A draft's opening line picks its project: a click, or Enter or

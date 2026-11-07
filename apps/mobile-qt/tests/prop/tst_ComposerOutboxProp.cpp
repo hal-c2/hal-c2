@@ -7,14 +7,17 @@
 // provider has not taken yet under such a drop (answering the repeat "still
 // being sent" until it has), and the app is closed and opened again, online
 // or not; a restart offline shows the cached thread and takes sends before the
-// MC has answered. No message is lost, none reaches the MC twice, none comes
-// back to the draft to be sent again, and none is sent while it is away.
+// MC has answered. The connection also drops under a send's mode change, which
+// the MC took or never got. No message is lost, none reaches the MC twice,
+// none comes back to the draft to be sent again, none runs under a mode the
+// user had left, and none is sent while it is away.
 
 #include "ComposerController.h"
 #include "FakeMc.h"
 #include "McClient.h"
 #include "NativeShell.h"
 #include "Prop.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ToastController.h"
@@ -36,6 +39,8 @@ struct Model {
   // What each thread's MC holds from the user, and what waits on the phone.
   QMap<QString, QStringList> sent;
   QMap<QString, QStringList> waiting;
+  // The messages sent in Plan mode.
+  QSet<QString> planned;
   int written = 0;
 };
 
@@ -54,6 +59,12 @@ struct Sut {
   // but not in the thread yet, and its repeats are still being sent.
   bool pendNext = false;
   std::optional<QJsonObject> pending;
+  // The next mode change the MC is sent, it drops the connection under,
+  // having carried it out or not.
+  std::optional<bool> dropUnderMode;
+  // Each thread's mode at the MC, and the mode each message ran under.
+  QMap<QString, QString> modes;
+  QMap<QString, QString> ranUnder;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -88,6 +99,12 @@ struct Sut {
     mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) { sendThread(id, shape); });
     // The MC keeps a message once, by its id, as the real one does.
     mc.effects.append([this](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) == QLatin1String("thread.interaction-mode.set")) {
+        const bool took = dropUnderMode.value_or(true);
+        if (took) modes[command.value(QLatin1String("threadId")).toString()] = command.value(QLatin1String("interactionMode")).toString();
+        if (std::exchange(dropUnderMode, std::nullopt)) mc.drop();
+        return;
+      }
       if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
       if (std::exchange(pendNext, false)) {
         pending = command;
@@ -119,6 +136,9 @@ struct Sut {
     native->setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")),
                          home.filePath(QStringLiteral("cache")));
     native->controller<ToastController>()->setClock(fixedClock);
+    auto* settings = native->controller<SettingsController>();
+    settings->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
+    RC_ASSERT(settings->writeDevice(QStringLiteral("planModeEnabled"), true));
     composer()->setWaitsOffline(true);
     composer()->setOutboxRetryDelays({10});
     native->restoreWindows();
@@ -193,6 +213,7 @@ struct Sut {
     const bool known = std::any_of(messages[thread].cbegin(), messages[thread].cend(),
                                    [&](const QJsonObject& message) { return message.value(QLatin1String("id")) == id; });
     if (known) return;
+    ranUnder.insert(command.value(QLatin1String("text")).toString(), modes.value(thread));
     const QJsonObject message{{QStringLiteral("id"), id},
                               {QStringLiteral("role"), QStringLiteral("user")},
                               {QStringLiteral("createdBy"), QStringLiteral("user")},
@@ -208,6 +229,15 @@ struct Sut {
     const QJsonObject command = *std::exchange(pending, std::nullopt);
     mc.refusals.remove(QStringLiteral("message.dispatch:") + command.value(QLatin1String("threadId")).toString());
     keep(command);
+  }
+
+  QVariantMap composerState() const { return bridge->state()->value(QStringLiteral("composer")).toMap(); }
+
+  void planMode(const QString& thread) {
+    open(thread);
+    RC_ASSERT(prop::until([&] { return composerState().value(QStringLiteral("showInteractionModeToggle")).toBool(); }));
+    bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
+    RC_ASSERT(prop::until([&] { return composerState().value(QStringLiteral("interactionMode")) == QLatin1String("plan"); }));
   }
 
   QString draft() const { return bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("text")).toString(); }
@@ -254,6 +284,12 @@ void verify(const Model& m, Sut& sut) {
   RC_ASSERT(sut.outbox() == m.waiting.value(m.open));
   // Nothing the phone sent comes back to be sent again.
   RC_ASSERT(sut.draft().isEmpty());
+  // A message sent in Plan mode ran in Plan mode.
+  for (const QString& text : m.planned) {
+    if (!sut.ranUnder.contains(text)) continue;
+    RC_LOG() << text.toStdString() << " ran under " << sut.ranUnder.value(text).toStdString() << std::endl;
+    RC_ASSERT(sut.ranUnder.value(text) == QLatin1String("plan"));
+  }
 }
 
 using Command = rc::state::Command<Model, Sut>;
@@ -322,6 +358,34 @@ struct SendStillSending : Command {
   void show(std::ostream& os) const override { os << "SendStillSending(" << thread.toStdString() << ", " << text.toStdString() << ")"; }
 };
 
+// The user switches a thread to Plan mode and sends; the connection drops
+// under the mode change, which the MC carried out or never got. The message
+// runs in Plan mode all the same.
+struct SendPlanDropped : Command {
+  QString thread = pick(kThreads);
+  QString text;
+  bool took = *rc::gen::arbitrary<bool>();
+  explicit SendPlanDropped(const Model& m) : text(QStringLiteral("message %1").arg(m.written + 1)) {}
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.up); }
+  void apply(Model& m) const override {
+    ++m.written;
+    m.open = thread;
+    m.sent[thread].append(text);
+    m.planned.insert(text);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.planMode(thread);
+    const qsizetype connections = sut.mc.connections.size();
+    sut.dropUnderMode = took;
+    sut.send(thread, text);
+    RC_ASSERT(prop::until([&] { return sut.mc.connections.size() > connections; }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override {
+    os << "SendPlanDropped(" << thread.toStdString() << ", " << text.toStdString() << (took ? ", took" : ", lost") << ")";
+  }
+};
+
 struct GoDown : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(m.up); }
   void apply(Model& m) const override { m.up = false; }
@@ -370,7 +434,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, GoDown, ComeBack, Restart>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, SendPlanDropped, GoDown, ComeBack, Restart>()));
       rc::state::runAll(commands, model, sut);
       // Every message the MC was sent twice was sent again after a drop.
       const QStringList ids = sut.dispatched();

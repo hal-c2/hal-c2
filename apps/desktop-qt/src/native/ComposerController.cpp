@@ -1374,13 +1374,13 @@ void ComposerController::launchedInBackground(const QString& draftId, const QStr
 // command, then the next send.
 void ComposerController::sendNext(const QString& target) {
   const Send send = m_queues.value(target).constFirst();
-  const auto finish = [this, target](const std::optional<QString>& error, const QJsonValue& detail, qsizetype at) {
+  const auto finish = [this, target](const std::optional<QString>& error, const QJsonValue& detail) {
     if (error) {
       // The sends queued behind it would reach the MC out of order, so they
       // stop too and come back with it.
       const QList<Send> unsent = m_queues.take(target);
       if (m_waitsOffline && (undelivered(error) || stillSending(detail))) {
-        waitAgain(target, unsent, undelivered(error) && !unanswered(error) ? at : -1);
+        waitAgain(target, unsent);
         return;
       }
       if (m_waitsOffline) {
@@ -1474,7 +1474,7 @@ void ComposerController::sendNext(const QString& target) {
                              {QStringLiteral("attachments"), images}},
                  [this, send, message, finish, files](const QJsonValue& result, const std::optional<QString>& error) mutable {
                    if (error) {
-                     finish(error, QJsonValue(), 0);
+                     finish(error, QJsonValue());
                      return;
                    }
                    QJsonArray carried = result.toObject().value(QLatin1String("attachments")).toArray();
@@ -1532,7 +1532,7 @@ void ComposerController::drainOutbox() {
   publish();
 }
 
-void ComposerController::waitAgain(const QString& target, const QList<Send>& sends, qsizetype notSentFrom) {
+void ComposerController::waitAgain(const QString& target, const QList<Send>& sends) {
   for (const Send& send : sends) {
     const auto kept = std::find_if(m_kept.unsent.begin(), m_kept.unsent.end(),
                                    [&](const Unsent& unsent) { return unsent.messageId == send.messageId; });
@@ -1540,8 +1540,6 @@ void ComposerController::waitAgain(const QString& target, const QList<Send>& sen
       keepUnanswered(send.messageId);
       continue;
     }
-    // What never left goes again as written (dispatchAll kept only the message).
-    if (notSentFrom >= 0 && send.messageId == sends.constFirst().messageId) kept->commands = send.commands.mid(notSentFrom);
     kept->waiting = true;
     kept->waited = true;
   }
@@ -1834,24 +1832,26 @@ ComposerController::Excerpt ComposerController::excerptOf(const QJsonObject& kep
 }
 
 void ComposerController::dispatchAll(const Send& send, qsizetype index, Dispatched done) {
-  if (index == 0 && m_waitsOffline) {
-    // Once it may reach the MC, the outbox sends it again as the message alone,
-    // which the MC takes once by its id: a mode change resent under a fresh
-    // command id could undo one made since on another device.
-    for (Unsent& unsent : m_kept.unsent) {
-      if (unsent.messageId != send.messageId || unsent.commands.size() < 2) continue;
-      unsent.commands = {unsent.commands.constLast()};
-      save();
-    }
-  }
   m_client->dispatchCommand(this, send.environmentId, send.commands.at(index),
                             [this, send, index, done](const QJsonValue& detail, const std::optional<QString>& error) {
                               if (!error && index + 1 < send.commands.size()) {
+                                if (m_waitsOffline) forgetAnswered(send.messageId, send.commands.at(index));
                                 dispatchAll(send, index + 1, done);
                                 return;
                               }
-                              done(error, error ? detail : QJsonValue(), index);
+                              done(error, error ? detail : QJsonValue());
                             });
+}
+
+// A mode change the MC answered leaves the outbox's record of its send: sent
+// again under a fresh command id, it could undo one made since on another
+// device. One it did not answer stays, and goes again with the message (the
+// MC takes the message once, by its id), as the mode it sets is absolute.
+void ComposerController::forgetAnswered(const QString& messageId, const QJsonObject& command) {
+  for (Unsent& unsent : m_kept.unsent) {
+    if (unsent.messageId != messageId || unsent.commands.size() < 2) continue;
+    if (unsent.commands.removeOne(command)) save();
+  }
 }
 
 // What the composer shows of a draft image, its middle square scaled down, as

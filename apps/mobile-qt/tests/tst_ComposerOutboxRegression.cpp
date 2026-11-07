@@ -100,14 +100,30 @@ struct Phone {
     }
     return texts;
   }
-  // The next message the MC takes, it takes and then drops the connection
-  // under, so the phone sends it again.
-  void dropUnderNextMessage(std::function<void()> then = {}) {
-    mc.effects.append([this, then, armed = std::make_shared<bool>(true)](const QJsonObject& command) {
-      if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch") || !std::exchange(*armed, false)) return;
+  // The next command of `type` the MC takes, it takes and then drops the
+  // connection under, so the phone never hears the answer.
+  void dropUnderNext(const QString& type, std::function<void()> then = {}) {
+    mc.effects.append([this, type, then, armed = std::make_shared<bool>(true)](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != type || !std::exchange(*armed, false)) return;
       if (then) then();
       mc.drop();
     });
+  }
+  void dropUnderNextMessage(std::function<void()> then = {}) { dropUnderNext(QStringLiteral("message.dispatch"), std::move(then)); }
+  // The open thread's composer in Plan mode.
+  void planMode() {
+    auto* settings = native->controller<SettingsController>();
+    settings->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
+    QVERIFY(settings->writeDevice(QStringLiteral("planModeEnabled"), true));
+    QTRY_VERIFY(composer().value(QStringLiteral("showInteractionModeToggle")).toBool());
+    bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
+    QTRY_COMPARE(composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+  }
+  // The command types the MC was sent, in order.
+  QStringList types() const {
+    QStringList all;
+    for (const QJsonObject& command : mc.commands) all.append(command.value(QLatin1String("type")).toString());
+    return all;
   }
 };
 
@@ -180,17 +196,31 @@ private slots:
     QTRY_VERIFY(phone.native->isActive());
     phone.open(QStringLiteral("t1"));
     QTRY_COMPARE(phone.composerTarget(), keyOf(QStringLiteral("t1")));
-    auto* settings = phone.native->controller<SettingsController>();
-    settings->setDevicePath(phone.home.filePath(QStringLiteral("config/preferences.json")));
-    QVERIFY(settings->writeDevice(QStringLiteral("planModeEnabled"), true));
-    QTRY_VERIFY(phone.composer().value(QStringLiteral("showInteractionModeToggle")).toBool());
-    phone.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
-    QTRY_COMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+    phone.planMode();
     phone.dropUnderNextMessage();
     phone.send(QStringLiteral("plan the fix"));
     QTRY_COMPARE(phone.sent(), (QStringList{QStringLiteral("plan the fix"), QStringLiteral("plan the fix")}));
     QTRY_VERIFY(phone.outbox().isEmpty());
     QCOMPARE(phone.sent(QStringLiteral("thread.interaction-mode.set")).size(), 1);
+  }
+
+  // Review of #1159: a mode change whose answer the connection took is not
+  // known to have reached the MC, so it goes again ahead of the message. Sent
+  // alone, the message would run under the mode the user had left (full
+  // access rather than approval, say).
+  void aModeChangeTheConnectionDroppedGoesAgainBeforeTheMessage() {
+    Phone phone;
+    phone.start();
+    QTRY_VERIFY(phone.native->isActive());
+    phone.open(QStringLiteral("t1"));
+    QTRY_COMPARE(phone.composerTarget(), keyOf(QStringLiteral("t1")));
+    phone.planMode();
+    phone.dropUnderNext(QStringLiteral("thread.interaction-mode.set"));
+    phone.send(QStringLiteral("plan the fix"));
+    const QStringList expected{QStringLiteral("thread.interaction-mode.set"), QStringLiteral("thread.interaction-mode.set"),
+                               QStringLiteral("message.dispatch")};
+    QTRY_COMPARE(phone.types(), expected);
+    QTRY_VERIFY(phone.outbox().isEmpty());
   }
 };
 
