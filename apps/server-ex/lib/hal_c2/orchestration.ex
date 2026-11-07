@@ -205,6 +205,11 @@ defmodule HalC2.Orchestration do
   def dispatch_once(command), do: dispatch(command)
 
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
+  # Only a launch defers a message's start, for the worktree it makes (`in_worktree`):
+  # sent on its own, the run would wait for a preparation nothing runs.
+  def dispatch(%{"type" => "message.dispatch", "dispatchMode" => %{"type" => "defer_start"}}),
+    do: {:error, "Only a thread launch can defer a message's start."}
+
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
     # Uploads join the thread before the message names them.
     case HalC2.Attachments.claim(thread_id, command["attachments"] || []) do

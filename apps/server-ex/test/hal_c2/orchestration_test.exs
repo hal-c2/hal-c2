@@ -1694,6 +1694,26 @@ defmodule HalC2.OrchestrationTest do
                StreamState.get(current(thread_id), "run")[run_id]
     end
 
+    test "a message sent on its own cannot defer its start" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      assert {:error, _} =
+               Orchestration.dispatch(%{
+                 "type" => "message.dispatch",
+                 "threadId" => thread_id,
+                 "messageId" => "deferred",
+                 "text" => "later",
+                 "attachments" => [],
+                 "dispatchMode" => %{"type" => "defer_start"}
+               })
+
+      refute Enum.any?(
+               StreamState.list(current(thread_id), "run"),
+               &(&1["userMessageId"] == "deferred")
+             )
+    end
+
     test "a message sent during a run waits in the queue and starts when the run ends" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")
