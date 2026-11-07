@@ -539,22 +539,27 @@ defmodule HalC2.WorktreeSetup do
     status = fn id, status, extra -> set.(&set_stage(&1, id, status, extra)) end
     Orchestration.progress_prepared(thread_id, run_id, "worktree")
 
-    # Fetch first when asked and the remote has the base branch.
+    # Fetch first when asked, from the remote the base tracks, and start from what
+    # came: a remote that lacks the branch leaves its stale tracking ref unused.
     start_ref =
-      if strategy["startFromOrigin"] == true and origin?(root) do
-        status.("fetch", "running", %{})
-        _ = HalC2.Git.run(root, ["fetch", "origin", strategy["baseRef"]])
-        status.("fetch", "done", %{})
+      case strategy["startFromOrigin"] == true && fetch_source(root, strategy["baseRef"]) do
+        {remote, branch} ->
+          status.("fetch", "running", %{})
+          fetched = fetch(root, remote, branch)
+          status.("fetch", "done", %{})
+          ref = "#{remote}/#{branch}"
 
-        if match?(
-             {:ok, _},
-             HalC2.Git.ok(root, ["rev-parse", "--verify", "origin/#{strategy["baseRef"]}"])
-           ),
-           do: "origin/#{strategy["baseRef"]}",
-           else: strategy["baseRef"]
-      else
-        status.("fetch", "skipped", %{})
-        strategy["baseRef"]
+          if fetched == :ok and
+               match?(
+                 {:ok, _},
+                 HalC2.Git.ok(root, ["rev-parse", "--verify", "refs/remotes/#{ref}"])
+               ),
+             do: ref,
+             else: strategy["baseRef"]
+
+        _ ->
+          status.("fetch", "skipped", %{})
+          strategy["baseRef"]
       end
 
     status.("checkout", "running", %{})
@@ -681,6 +686,46 @@ defmodule HalC2.WorktreeSetup do
 
   defp origin?(root), do: match?({:ok, _}, HalC2.Git.ok(root, ~w(remote get-url origin)))
 
+  # The remote and branch `base` tracks, else origin's branch of its name; nil without either.
+  defp fetch_source(root, base) do
+    config = &HalC2.Git.ok(root, ["config", "--get", "branch.#{base}.#{&1}"])
+
+    with {:ok, remote} <- config.("remote"),
+         remote when remote not in ["", "."] <- String.trim(remote),
+         {:ok, merge} <- config.("merge") do
+      {remote, String.replace_prefix(String.trim(merge), "refs/heads/", "")}
+    else
+      _ -> if origin?(root), do: {"origin", base}
+    end
+  end
+
+  # A fetch that lost a ref's lock to another fetch (a background `git fetch` of the
+  # editor's, say) is tried once more; one that still cannot update the ref fails the
+  # setup, as starting from the old ref would quietly start from the wrong commit.
+  defp fetch(root, remote, branch, tries \\ 2) do
+    case HalC2.Git.ok(root, ["fetch", remote, branch]) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {_, err}} when is_binary(err) ->
+        cond do
+          not (err =~ "cannot lock ref") ->
+            :error
+
+          tries > 1 ->
+            fetch(root, remote, branch, tries - 1)
+
+          true ->
+            fail(
+              "Could not fetch \"#{branch}\" from \"#{remote}\": a local reference could not be updated. Another git command may be running; try again."
+            )
+        end
+
+      _ ->
+        :error
+    end
+  end
+
   # `hal-c2/<8 hex>`, or `hal-c2-<8 hex>` in a repository with a branch named `hal-c2`,
   # where git cannot put a branch under `hal-c2/`. Clients generate `hal-c2/<uuid>` too.
   @temporary ~r/^hal-c2[\/-](?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
@@ -803,12 +848,13 @@ defmodule HalC2.WorktreeSetup do
     "( #{start}; eval '#{quoted}' ); printf '\\n#{sentinel}%s\\n' \"$?\""
   end
 
-  # What follows the script in its terminal: the user's shell, for whoever opens it.
+  # What follows the script in its terminal: the shell again, for whoever opens it.
   defp then_shell(shell) do
+    program = "'" <> String.replace(shell || "/bin/sh", "'", "'\\''") <> "'"
+
     case Path.basename(shell || "") do
-      "fish" -> "exec $SHELL"
-      "zsh" -> "exec $SHELL -o nopromptsp"
-      _ -> "exec ${SHELL:-/bin/sh}"
+      "zsh" -> "exec #{program} -o nopromptsp"
+      _ -> "exec #{program}"
     end
   end
 
@@ -841,7 +887,9 @@ defmodule HalC2.WorktreeSetup do
   # read by whatever its startup runs. A retry's script gets a shell of its own too.
   defp start_script(thread_id, root, path, script, set) do
     sentinel = "__hal_c2_setup_#{Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)}_"
-    shell = System.get_env("SHELL")
+    # Written for the shell that starts, which is not `SHELL` when that is not there or
+    # names its options too ("/usr/bin/fish --login").
+    shell = with [program | _] <- HalC2.Terminal.shell(), do: program
     command = wrap_script(script["command"], shell, sentinel) <> "\n" <> then_shell(shell)
     terminal = %{"threadId" => thread_id, "terminalId" => "setup"}
 

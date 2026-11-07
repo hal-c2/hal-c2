@@ -788,6 +788,7 @@ defmodule HalC2.Vcs do
   # writes it and refuses to write while another holds it. Writes from this MC take
   # turns per repository; one that finds another program holding the lock tries again
   # a few times.
+  @folder_max 40
   @config_tries 5
   defp write_config(cwd, args) do
     in_turn(cwd, fn -> retry_locked(fn -> Git.ok(cwd, args, stop_children: cwd) end) end)
@@ -855,14 +856,17 @@ defmodule HalC2.Vcs do
   @doc """
   Renames the branch `old` of the checkout `cwd` to `new`, or to `new-1` through
   `new-100` when that is taken: `{:ok, name}`, or `{:error, message}` leaving it as it was.
+  A `new` under a branch's path (`hal-c2/fix` with a branch `hal-c2`), which git cannot
+  make, is flattened first (`hal-c2-fix`).
   `on_name` hears the name before git takes it; `Git.stop_children(cwd)` stops the rename.
   """
   def rename_branch(cwd, old, new, on_name \\ fn _name -> :ok end) do
-    candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
-
     # Picking the free name and taking it is one turn, so two renames at once in one
     # repository do not pick the same name.
     in_turn(cwd, fn ->
+      new = if under_branch?(cwd, new), do: String.replace(new, "/", "-"), else: new
+      candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
+
       case Enum.find(candidates, &branch_free?(cwd, &1)) do
         nil ->
           {:error, "Could not find an available branch name for '#{new}'."}
@@ -888,17 +892,34 @@ defmodule HalC2.Vcs do
     end)
   end
 
+  # Whether a branch sits at one of the folders `name` would be made in.
+  defp under_branch?(cwd, name) do
+    parents = name |> String.split("/") |> Enum.drop(-1) |> Enum.scan(&"#{&2}/#{&1}")
+    Enum.any?(parents, &ref?(cwd, "refs/heads/#{&1}"))
+  end
+
   defp branch_free?(cwd, name),
     do: not ref?(cwd, "refs/heads/#{name}") and not Git.branch_path_taken?(cwd, name)
 
-  @doc "Where a new worktree of `cwd` on `branch` goes when no path is given."
+  @doc """
+  Where a new worktree of `cwd` on `branch` goes when no path is given: a folder named
+  for the branch, slashes and all in one name. A name past #{@folder_max} characters
+  keeps its start and ends in a hash of the whole branch, so it stays short of the
+  filesystem's limit and two long branches alike at the start still differ.
+  """
   def worktree_path(cwd, branch) do
-    Path.join([
-      HalC2.Paths.data_dir(),
-      "worktrees",
-      Path.basename(cwd),
-      String.replace(branch, "/", "-")
-    ])
+    Path.join([HalC2.Paths.data_dir(), "worktrees", Path.basename(cwd), folder_name(branch)])
+  end
+
+  defp folder_name(branch) do
+    name = String.replace(branch, "/", "-")
+
+    if String.length(name) > @folder_max do
+      hash = :crypto.hash(:sha256, branch) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+      String.slice(name, 0, @folder_max - 9) <> "-" <> hash
+    else
+      name
+    end
   end
 
   @doc """

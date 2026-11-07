@@ -80,7 +80,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #21032: a new worktree fetched origin even when its base branch tracks another
   # remote; it now fetches the base's own upstream, and a base that tracks nothing still uses origin.
-  @backlog @mc
+  @mc
   Scenario: A new worktree starts from the remote its base branch tracks
     Given the project starts worktrees from origin and "shop" has the remotes "origin" and "upstream"
     And the base branch "main" tracks "upstream/main"
@@ -88,7 +88,7 @@ Feature: Worktrees and setup scripts
     Then "upstream/main" is fetched and the worktree starts from it
 
   # Upstream #21032: a base whose remote branch was deleted starts from the local branch.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A base whose remote branch is gone starts from the local branch
     Given the project starts worktrees from origin
     And the base branch "feature/tax" tracks a remote branch that was deleted
@@ -96,7 +96,7 @@ Feature: Worktrees and setup scripts
     Then the worktree starts from the local "feature/tax"
     And no stale remote-tracking ref is used
 
-  @backlog @mc
+  @mc
   Scenario: A fetch that loses a ref race with another fetch is tried again
     Given the project starts worktrees from origin
     And a background fetch of "origin" holds "origin/main" while the worktree's fetch runs
@@ -137,7 +137,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #27815: with a branch named like the prefix, git refused every nested generated name
   # and the thread stayed on its temporary branch with only a logged warning.
-  @mc @backlog
+  @mc
   Scenario Outline: A generated name blocked by a branch at its parent path is flattened
     Given the branch "<existing>" already exists
     When the temporary branch of a new worktree is renamed to "hal-c2/fix-login"
@@ -267,7 +267,7 @@ Feature: Worktrees and setup scripts
     When a worktree is created for the branch "feature/tax/rates" with no path given
     Then its folder under the repository's name is "feature-tax-rates"
   # Upstream #25212: a long branch name made a folder past the filesystem's limit, so checkout failed.
-  @backlog @mc
+  @mc
   Scenario: A long branch gets a short folder name of its own
     Given two branches of 280 characters that share their first 200
     When a worktree is created for each with no path given
@@ -276,7 +276,7 @@ Feature: Worktrees and setup scripts
     And each branch keeps its full name
 
   # Upstream #25212: names cut short never split a character.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A long branch name is never cut through a character
     When a worktree is created with no path given for a long branch whose 40th character is an emoji
     Then its folder name holds whole characters only
@@ -346,7 +346,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #23576: the script's end was written for the configured shell, not the one that
   # started, so a fish fallback never saw its end and setup kept waiting.
-  @backlog @mc
+  @mc
   Scenario Outline: The end of a setup script is noticed in the shell that actually started
     Given the environment's shell setting is <configured>
     And the shell that starts is <started>
@@ -355,8 +355,13 @@ Feature: Worktrees and setup scripts
 
     Examples:
       | configured                  | started                     |
-      | "/usr/bin/fish --login"     | fish                        |
       | a shell that is not there   | the system's fallback shell |
+
+    # The runners have neither fish nor PowerShell.
+    @backlog
+    Examples:
+      | configured                  | started                     |
+      | "/usr/bin/fish --login"     | fish                        |
       | PowerShell by its full path | PowerShell                  |
 
   # Upstream #23576: cmd.exe cannot report a script's end.
@@ -756,13 +761,13 @@ Feature: Worktrees and setup scripts
     When the user opens a new thread in "shop"
     Then that thread's worktree starts from origin
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A new worktree honors the submodule setting
     Given the submodule setting is "skip" and the project has no worktree script of its own
     When a worktree is created
     Then submodules are not initialized
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A temporary worktree branch gets its name from the prefix
     Given <state>
     When a worktree thread is provisioned

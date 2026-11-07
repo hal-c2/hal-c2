@@ -2338,13 +2338,19 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # Also the source-control scenarios', which follow their setup with `World.await_setup/3`.
   step "the worktree starts from the local {string}", %{args: [branch]} = context do
-    {final, context} = await_setup(context, &(&1["phase"] != "running"))
+    settled = &(&1["phase"] != "running")
+
+    {final, context} =
+      if Map.has_key?(context, :snapshots),
+        do: await_setup(context, settled),
+        else: World.await_setup(context, settled)
+
     assert %{"phase" => "done", "worktreePath" => path} = final
     assert statuses(final)["fetch"] == "done"
     root = World.project(context).root
-    World.git!(root, ~w(commit -q --allow-empty -m local-only))
-    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", "#{branch}~1"])
+    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", branch])
     context
   end
 

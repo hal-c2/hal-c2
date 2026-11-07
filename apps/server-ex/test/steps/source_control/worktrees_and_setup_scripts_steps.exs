@@ -35,6 +35,69 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     create_worktree(context, branch)
   end
 
+  # Every 50th character is a slash, so no part of the ref passes the filesystem's limit.
+  step "two branches of {int} characters that share their first {int}",
+       %{args: [length, shared]} = context do
+    branch = fn letter ->
+      for i <- 0..(length - 1), into: "" do
+        cond do
+          rem(i, 50) == 49 and i < length - 1 -> "/"
+          i < shared -> "a"
+          true -> letter
+        end
+      end
+    end
+
+    Map.put(context, :long_branches, [branch.("b"), branch.("c")])
+  end
+
+  step "a worktree is created for each with no path given", context do
+    {worktrees, context} =
+      Enum.map_reduce(context.long_branches, context, fn branch, context ->
+        context = create_worktree(context, branch)
+        {context.worktree, context}
+      end)
+
+    Map.put(context, :worktrees, worktrees)
+  end
+
+  step "each folder name is {int} characters: the start of the branch and a hash of the whole name",
+       %{args: [length]} = context do
+    for %{path: path, branch: branch} <- context.worktrees do
+      assert_short_folder(path, branch, length)
+    end
+
+    context
+  end
+
+  step "the two folders differ", context do
+    [first, second] = Enum.map(context.worktrees, &Path.basename(&1.path))
+    refute first == second
+    context
+  end
+
+  step "each branch keeps its full name", context do
+    for %{path: path, branch: branch} <- context.worktrees,
+        do: assert(World.git!(path, ~w(branch --show-current)) == branch)
+
+    context
+  end
+
+  # Every character but the first is a four-byte emoji, so the cut falls among them.
+  step "a worktree is created with no path given for a long branch whose 40th character is an emoji",
+       context do
+    branch = "a" <> String.duplicate("😀", 60)
+    assert String.at(branch, 39) == "😀"
+    create_worktree(context, branch)
+  end
+
+  step "its folder name holds whole characters only", context do
+    %{path: path, branch: branch} = context.worktree
+    assert String.valid?(Path.basename(path))
+    assert_short_folder(path, branch, 40)
+    context
+  end
+
   step "it is made in the HAL-C2 home's worktrees folder under the repository and branch names",
        context do
     %{path: path, root: root, branch: branch} = context.worktree
@@ -60,6 +123,64 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
   step "a worktree is created", context do
     create_worktree(context, "feature/modules")
+  end
+
+  # The project's own setting, with no hal-c2.json to fall back on.
+  step "the submodule setting is {string} and the project has no worktree script of its own",
+       %{args: ["skip"]} = context do
+    context = with_submodules(context, "shop", nested: false)
+    project = World.project(context, "shop")
+    refute File.exists?(Path.join(project.root, "hal-c2.json"))
+    refute File.exists?(Path.join(project.root, "t3.json"))
+
+    World.put_settings(context, %{
+      "projectSettingsOverrides" => %{project.id => %{"worktreeSubmodules" => "none"}}
+    })
+  end
+
+  step "submodules are not initialized", context do
+    path = context.worktree.path
+    assert File.exists?(Path.join(path, ".gitmodules"))
+    refute File.exists?(Path.join(path, "tools/README.md"))
+    context
+  end
+
+  # --- the temporary branch's prefix (`WorktreeSetup.temporary_branch/2`) -------------
+
+  step "no branch named after the prefix", context do
+    root = World.project(context).root
+    assert {_, 1} = System.cmd("git", ~w(show-ref --verify --quiet refs/heads/hal-c2), cd: root)
+    context
+  end
+
+  step "a local branch named exactly <prefix>", context do
+    World.git!(World.project(context).root, ~w(branch hal-c2))
+    context
+  end
+
+  step "a worktree thread is provisioned", context do
+    context = context |> Shared.answering_writer() |> launch("Add tax to the cart")
+    {snapshot, context} = World.await_setup(context, & &1["worktreePath"])
+    Map.put(context, :worktree, %{path: snapshot["worktreePath"], branch: snapshot["branch"]})
+  end
+
+  step "its temporary branch is {string}", %{args: [form]} = context do
+    pattern =
+      form
+      |> Regex.escape()
+      |> String.replace("<prefix>", "hal-c2")
+      |> String.replace("<hex>", "[0-9a-f]{8}")
+
+    assert context.worktree.branch =~ Regex.compile!("^#{pattern}$")
+    context
+  end
+
+  step "the background rename to a generated name still runs for it", context do
+    %{path: path, branch: temporary} = context.worktree
+    thread = await_thread(context.setup_thread, &(&1["branch"] not in [nil, temporary]))
+    assert thread["branch"] =~ "claude-branch"
+    assert World.git!(path, ~w(branch --show-current)) == thread["branch"]
+    context
   end
 
   step "every submodule is initialized, nested ones included", context do
@@ -188,8 +309,11 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
-  step "the branch {string} already exists", %{args: [branch]} = context do
-    World.git!(World.project(context).root, ["branch", branch])
+  # Or several: "hal-c2 and hal-c2-fix-login".
+  step "the branch {string} already exists", %{args: [branches]} = context do
+    for branch <- String.split(branches, " and "),
+        do: World.git!(World.project(context).root, ["branch", branch])
+
     context
   end
 
@@ -571,7 +695,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     assert %{"phase" => "done", "worktreePath" => path} = snapshot
     assert %{"terminalId" => ^terminal} = snapshot["setupScript"]
     assert World.setup_stage(snapshot, "setup-script") == "done"
-    assert [_] = Registry.lookup(HalC2.Terminal.Registry, {context.setup_thread, terminal})
+    # The script succeeded, so its idle terminal is closed by now (upstream #13673).
     assert String.trim(File.read!(context.setup_log)) == path
     context
   end
@@ -679,6 +803,21 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   step "{string} has a setup script that has a syntax error on its last line",
        %{args: [title]} = context do
     ending_script(context, title, "echo a\nif true; then echo b; fi; fi", 2)
+  end
+
+  # --- the shell that starts ------------------------------------------------------------
+
+  # The setup script is one whose end the wrong shell's wrapper would miss or misread.
+  step "the environment's shell setting is a shell that is not there", context do
+    Shared.put_env("SHELL", Path.join(Mc.tmp_dir(context.mc, "no-shell"), "fish"))
+    ending_script(context, nil, "echo ran; (exit 3)", 3)
+  end
+
+  step "the shell that starts is the system's fallback shell", context do
+    assert [program | _] = HalC2.Terminal.shell()
+    refute program == System.get_env("SHELL")
+    assert File.exists?(program)
+    context
   end
 
   step "the setup script stage ends with the script's own exit status", context do
@@ -1333,11 +1472,139 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
 
   step "the project starts worktrees from origin", context do
     project = World.project(context)
-    World.git_remote(context, project.root)
+    origin = World.git_remote(context, project.root)
 
-    World.put_settings(context, %{
+    context
+    |> World.put_settings(%{
       "projectSettingsOverrides" => %{project.id => %{"newWorktreesStartFromOrigin" => true}}
     })
+    |> Map.put(:remotes, %{"origin" => origin})
+  end
+
+  # --- the remote a base tracks -----------------------------------------------------
+
+  step "the project starts worktrees from origin and {string} has the remotes {string} and {string}",
+       %{args: [title, first, second]} = context do
+    project = World.project(context, title)
+    remotes = Map.new([first, second], &{&1, World.git_remote(context, project.root, &1)})
+
+    context
+    |> World.put_settings(%{
+      "projectSettingsOverrides" => %{project.id => %{"newWorktreesStartFromOrigin" => true}}
+    })
+    |> Map.put(:remotes, remotes)
+  end
+
+  # The tracked remote moves ahead, so the worktree shows it was fetched from there.
+  step "the base branch {string} tracks {string}", %{args: [branch, tracked]} = context do
+    [remote, _] = String.split(tracked, "/", parts: 2)
+    World.git!(World.project(context).root, ["branch", "--set-upstream-to=#{tracked}", branch])
+    Map.put(context, :ahead, ahead(context, context.remotes[remote], branch))
+  end
+
+  step "the user sends the first message of a thread in a new worktree from {string}",
+       %{args: [base]} = context do
+    context
+    |> Map.update(:strategy, %{"baseRef" => base}, &Map.put(&1, "baseRef", base))
+    |> launch("list the files")
+  end
+
+  step "{string} is fetched and the worktree starts from it", %{args: [ref]} = context do
+    {done, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert done["phase"] == "done"
+    assert World.setup_stage(done, "fetch") == "done"
+    assert World.git!(World.project(context).root, ["rev-parse", ref]) == context.ahead
+    assert World.git!(done["worktreePath"], ~w(rev-parse HEAD)) == context.ahead
+    context
+  end
+
+  # Its remote-tracking ref stays behind, at an older commit than the local branch.
+  step "the base branch {string} tracks a remote branch that was deleted",
+       %{args: [branch]} = context do
+    root = World.project(context).root
+    World.git!(root, ["branch", branch, "main"])
+    World.git!(root, ["push", "-q", "-u", "origin", branch])
+    World.git!(context.remotes["origin"], ["branch", "-D", branch])
+    tree = World.git!(root, ["rev-parse", "#{branch}^{tree}"])
+
+    commit =
+      World.git!(root, [
+        "-c",
+        "user.email=hal-c2@example.com",
+        "-c",
+        "user.name=HAL-C2",
+        "commit-tree",
+        "-p",
+        branch,
+        "-m",
+        "local",
+        tree
+      ])
+
+    World.git!(root, ["update-ref", "refs/heads/#{branch}", commit])
+    Map.put(context, :stale, World.git!(root, ["rev-parse", "origin/#{branch}"]))
+  end
+
+  step "no stale remote-tracking ref is used", context do
+    {done, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    refute World.git!(done["worktreePath"], ~w(rev-parse HEAD)) == context.stale
+    context
+  end
+
+  # --- a fetch that loses a ref's lock ----------------------------------------------
+
+  # Origin moves ahead so the fetch must update the ref, whose lock is held as another
+  # fetch would hold it. Origin's upload-pack lets go of it as the second fetch starts.
+  step "a background fetch of {string} holds {string} while the worktree's fetch runs",
+       %{args: [remote, ref]} = context do
+    root = World.project(context).root
+    [_, branch] = String.split(ref, "/", parts: 2)
+    ahead = ahead(context, context.remotes[remote], branch)
+    lock = hold_ref(root, "refs/remotes/#{ref}")
+    dir = Mc.tmp_dir(context.mc, "upload-pack")
+    count = Path.join(dir, "fetches")
+    script = Path.join(dir, "upload-pack.sh")
+
+    File.write!(script, """
+    #!/bin/sh
+    echo fetch >> '#{count}'
+    [ "$(wc -l < '#{count}')" -ge 2 ] && rm -f '#{lock}'
+    exec git-upload-pack "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.git!(root, ["config", "remote.#{remote}.uploadpack", script])
+    Map.merge(context, %{ahead: ahead, fetches: count, locked: {remote, ref}})
+  end
+
+  step "git reports it could not update {string}", %{args: [ref]} = context do
+    {_, locked} = context.locked
+    assert ref == "refs/remotes/#{locked}"
+    launch(context, "list the files")
+  end
+
+  step "the worktree's fetch is tried once more and the worktree is made", context do
+    {done, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert done["phase"] == "done"
+    assert File.read!(context.fetches) == "fetch\nfetch\n"
+    assert World.git!(done["worktreePath"], ~w(rev-parse HEAD)) == context.ahead
+    context
+  end
+
+  step "a lock failure that persists tells the user a local reference could not be updated",
+       context do
+    root = World.project(context).root
+    {remote, ref} = context.locked
+    [_, branch] = String.split(ref, "/", parts: 2)
+    World.git!(root, ["config", "--unset", "remote.#{remote}.uploadpack"])
+    ahead(context, context.remotes[remote], branch)
+    hold_ref(root, "refs/remotes/#{ref}")
+    context = launch(context, "list the files again")
+    {failed, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert failed["phase"] == "failed"
+    assert failed["error"] =~ "a local reference could not be updated", inspect(failed)
+    assert failed["worktreePath"] == nil
+    context
   end
 
   # Every launch is accepted before any setup has gone far, so the checkouts, the base
@@ -1667,6 +1934,39 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
       item ->
         item
     end
+  end
+
+  # A worktree folder `length` characters long: the start of `branch`, then a hash.
+  defp assert_short_folder(path, branch, length) do
+    name = Path.basename(path)
+    assert String.length(name) == length
+    assert [_, start, _hash] = Regex.run(~r/^(.+)-([0-9a-f]{8})$/u, name)
+    assert String.starts_with?(String.replace(branch, "/", "-"), start)
+    assert File.dir?(path)
+  end
+
+  # Pushes a new commit to `branch` of the bare repository `remote`; returns it.
+  defp ahead(context, remote, branch) do
+    clone = Path.join(Mc.tmp_dir(context.mc, "ahead"), "clone")
+    World.git!(Path.dirname(clone), ["clone", "-q", "-b", branch, remote, clone])
+
+    World.git!(
+      clone,
+      ~w(-c user.email=hal-c2@example.com -c user.name=HAL-C2 commit -q --allow-empty -m ahead)
+    )
+
+    World.git!(clone, ["push", "-q", "origin", branch])
+    World.git!(clone, ~w(rev-parse HEAD))
+  end
+
+  # Takes `ref`'s lock in the repository at `root`, as a git command updating it does.
+  defp hold_ref(root, ref) do
+    git_dir = World.git!(root, ~w(rev-parse --path-format=absolute --git-common-dir))
+    lock = Path.join(git_dir, ref <> ".lock")
+    File.mkdir_p!(Path.dirname(lock))
+    File.write!(lock, "")
+    ExUnit.Callbacks.on_exit(fn -> File.rm(lock) end)
+    lock
   end
 
   defp launch(context, text) do
