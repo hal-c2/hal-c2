@@ -1017,6 +1017,7 @@ export function createHost(options: HostOptions): Host {
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,
+    addProject: () => void addProject.dispatch("project.add", {}),
     popover: () => popoverViewport(),
     question: () => threadView.question(),
     inlineImages: (options.inlineImages ?? null) !== null,
