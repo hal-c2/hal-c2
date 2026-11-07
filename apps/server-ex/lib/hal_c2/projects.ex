@@ -94,7 +94,7 @@ defmodule HalC2.Projects do
       )
 
     case relative_root(fields) || (fields["workspaceRoot"] && owner(fields["workspaceRoot"], id)) do
-      {:relative, error} ->
+      {:refused, error} ->
         {:error, error}
 
       nil ->
@@ -412,7 +412,11 @@ defmodule HalC2.Projects do
   end
 
   defp relative_root(%{"workspaceRoot" => root}) when is_binary(root) do
-    if relative?(root), do: {:relative, relative_error(root)}
+    cond do
+      root == "" -> {:refused, "a workspace folder is required"}
+      relative?(root) -> {:refused, relative_error(root)}
+      true -> nil
+    end
   end
 
   defp relative_root(_), do: nil

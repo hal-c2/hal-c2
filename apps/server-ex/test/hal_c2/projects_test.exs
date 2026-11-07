@@ -82,7 +82,7 @@ defmodule HalC2.ProjectsTest do
                "workspaceRoot" => dir
              })
 
-    assert {:ok, %{"workspaceRoot" => ""}} =
+    assert {:error, "a workspace folder is required"} =
              Projects.mutate(%{
                "type" => "project.update",
                "projectId" => "p1",
