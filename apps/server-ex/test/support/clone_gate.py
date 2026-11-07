@@ -16,7 +16,8 @@
 # "hold" first instead has a held gate outlive the git it holds, as a helper git
 # started that has not exited yet: once git is gone the gate says "gone" and waits
 # for the test to close the connection. It keeps the descriptors 3 and 4 it got from
-# git (Exile's, as it runs git), so until then git's exit is not reported.
+# git (Exile's, as it runs git), so until then git's exit is not reported, and it
+# leaves git's process group, so killing that does not end it.
 import os
 import select
 import shutil
@@ -65,6 +66,9 @@ while True:
     verdict = line()
     if verdict != "hold":
         break
+    # Out of git's process group, which a stopped clone is killed with, as a
+    # helper that went off on its own.
+    os.setsid()
     hold = True
 
 if verdict != "ok":

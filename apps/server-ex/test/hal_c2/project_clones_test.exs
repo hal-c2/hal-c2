@@ -86,34 +86,8 @@ defmodule HalC2.ProjectClonesTest do
 
   test "a clone from a relative local path is cancelled and its files taken away",
        %{origin: origin, dir: dir} do
-    # The checkout waits at a gate (a smudge filter) until the cancel is in.
-    File.write!(Path.join(origin, ".gitattributes"), "README.md filter=gate\n")
-    {_, 0} = System.cmd("git", ~w(add .gitattributes), cd: origin)
-    {_, 0} = System.cmd("git", ~w(-c user.name=t -c user.email=t@t commit -q -m gate), cd: origin)
-    port = HalC2.Test.CloneGate.listen()
-
-    on_exit(
-      HalC2.Test.CloneGate.git_config(%{
-        "filter.gate.smudge" => HalC2.Test.CloneGate.smudge(port, "@cwd"),
-        "filter.gate.required" => "true"
-      })
-    )
-
     dest = Path.join(dir, "shop")
-    File.mkdir_p!(dest)
-    {:ok, []} = HalC2.ProjectClones.subscribe(self())
-
-    assert {:ok, _} =
-             HalC2.ProjectClones.start(%{
-               "projectId" => "project-11",
-               "title" => "Relative",
-               "createdAt" => "2026-09-23T00:00:00.000Z",
-               "remoteUrl" => "./origin/",
-               "destinationPath" => dest
-             })
-
-    gate = HalC2.Test.CloneGate.await("shop")
-    assert File.exists?(Path.join(dest, ".git/config"))
+    gate = gated_clone(origin, "project-11", "./origin/", dest)
 
     assert {:ok, %{"applied" => true}} =
              HalC2.ProjectClones.cancel(%{"projectId" => "project-11"})
@@ -123,6 +97,97 @@ defmodule HalC2.ProjectClonesTest do
     :gen_tcp.close(gate)
 
     assert {:ok, %{"applied" => true}} = HalC2.ProjectClones.retry(%{"projectId" => "project-11"})
+  end
+
+  test "a cancel leaves the files the user added while the clone ran",
+       %{origin: origin, dir: dir} do
+    dest = Path.join(dir, "shop")
+    gate = gated_clone(origin, "project-12", origin, dest)
+    File.write!(Path.join(dest, "mine.txt"), "the user's")
+    File.mkdir_p!(Path.join(dest, "notes"))
+    File.write!(Path.join(dest, "notes/todo.txt"), "the user's")
+
+    assert {:ok, %{"applied" => true}} =
+             HalC2.ProjectClones.cancel(%{"projectId" => "project-12"})
+
+    assert File.ls!(dest) |> Enum.sort() == ["mine.txt", "notes"]
+    assert File.read!(Path.join(dest, "notes/todo.txt")) == "the user's"
+    :gen_tcp.close(gate)
+
+    # Not the clone's, so a retry is refused rather than cloned over them.
+    assert {:error, "Destination path contains files that are not from the clone."} =
+             HalC2.ProjectClones.retry(%{"projectId" => "project-12"})
+  end
+
+  test "a project being added is already blocked for threads", %{origin: origin, dir: dir} do
+    # Its stream holds the project's creation, as when the MC is busy.
+    stream = HalC2.Streams.ensure("project-13")
+    :sys.suspend(stream)
+    :erlang.trace(stream, true, [:receive])
+
+    start =
+      Task.async(fn ->
+        HalC2.ProjectClones.start(%{
+          "projectId" => "project-13",
+          "title" => "Busy",
+          "createdAt" => "2026-09-23T00:00:00.000Z",
+          "remoteUrl" => origin,
+          "destinationPath" => Path.join(dir, "busy")
+        })
+      end)
+
+    assert_receive {:trace, ^stream, :receive, {:"$gen_call", _, _}}, 5_000
+
+    assert {:error, "The repository is still being cloned."} =
+             HalC2.ProjectClones.thread_block("project-13")
+
+    :erlang.trace(stream, false, [:receive])
+    :sys.resume(stream)
+    assert {:ok, _} = Task.await(start)
+  end
+
+  test "a cancel kills what git started along with git", %{origin: origin, dir: dir} do
+    # The filter leaves a process behind that holds git's pipes and never notices
+    # git going, as a stuck helper would.
+    dest = Path.join(dir, "shop")
+    gate = gated_clone(origin, "project-14", origin, dest, &"#{&1} & exec sleep 120")
+
+    assert {:ok, %{"applied" => true}} =
+             HalC2.ProjectClones.cancel(%{"projectId" => "project-14"})
+
+    assert File.ls!(dest) == []
+    :gen_tcp.close(gate)
+  end
+
+  # Starts cloning `url` into `dest` as project `id`, held at the checkout of
+  # README.md (a smudge filter gate, run as `filter.(gate)`); returns the gate.
+  defp gated_clone(origin, id, url, dest, filter \\ & &1) do
+    File.write!(Path.join(origin, ".gitattributes"), "README.md filter=gate\n")
+    {_, 0} = System.cmd("git", ~w(add .gitattributes), cd: origin)
+    {_, 0} = System.cmd("git", ~w(-c user.name=t -c user.email=t@t commit -q -m gate), cd: origin)
+    port = HalC2.Test.CloneGate.listen()
+
+    on_exit(
+      HalC2.Test.CloneGate.git_config(%{
+        "filter.gate.smudge" => filter.(HalC2.Test.CloneGate.smudge(port, "@cwd")),
+        "filter.gate.required" => "true"
+      })
+    )
+
+    File.mkdir_p!(dest)
+
+    assert {:ok, _} =
+             HalC2.ProjectClones.start(%{
+               "projectId" => id,
+               "title" => "Gated",
+               "createdAt" => "2026-09-23T00:00:00.000Z",
+               "remoteUrl" => url,
+               "destinationPath" => dest
+             })
+
+    gate = HalC2.Test.CloneGate.await(Path.basename(dest))
+    assert File.exists?(Path.join(dest, ".git/config"))
+    gate
   end
 
   describe "taking a clone's files away" do

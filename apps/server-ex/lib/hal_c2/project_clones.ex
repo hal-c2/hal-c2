@@ -36,9 +36,12 @@ defmodule HalC2.ProjectClones do
   ]
   # How long a killed git may take to report before its worker is killed too.
   @stop_timeout 15_000
+  # How long removing a stopped clone's files may take before it is given up, with
+  # nothing more removed (a stuck filesystem).
+  @remove_timeout 45_000
   # How long a cancel, delete or retry waits for its clone to settle: the stop,
   # then the removal of its files.
-  @settle_timeout @stop_timeout + 60_000
+  @settle_timeout @stop_timeout + @remove_timeout + 15_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -189,23 +192,30 @@ defmodule HalC2.ProjectClones do
   def handle_call({:start, clone, title}, _from, state) do
     # Checked and claimed in one step, so two gits never race into one folder.
     with :ok <- unclaimed(state, clone),
-         :ok <- empty_folder(clone.dest, "Destination path already exists and is not empty."),
-         {:ok, _} <-
-           HalC2.Projects.mutate(%{
+         :ok <- empty_folder(clone.dest, "Destination path already exists and is not empty.") do
+      # Running before the project exists, so no thread.create slips in between.
+      :ets.insert(__MODULE__, {clone.project_id, "running"})
+
+      case HalC2.Projects.mutate(%{
              "type" => "project.create",
              "projectId" => clone.project_id,
              "title" => title,
              "workspaceRoot" => clone.dest,
              "createWorkspaceRootIfMissing" => true
            }) do
-      reply = %{
-        "projectId" => clone.project_id,
-        "cwd" => clone.dest,
-        "remoteUrl" => redact(clone.url),
-        "repository" => clone.repository
-      }
+        {:ok, _} ->
+          reply = %{
+            "projectId" => clone.project_id,
+            "cwd" => clone.dest,
+            "remoteUrl" => redact(clone.url),
+            "repository" => clone.repository
+          }
 
-      {:reply, {:ok, reply}, state |> run(clone) |> changed()}
+          {:reply, {:ok, reply}, state |> run(clone) |> changed()}
+
+        error ->
+          {:reply, error, phases(state)}
+      end
     else
       error -> {:reply, error, state}
     end
@@ -276,6 +286,12 @@ defmodule HalC2.ProjectClones do
   # worker goes and nothing is removed.
   def handle_info({:stop_timeout, id, pid}, state) do
     if worker?(state, id, pid), do: Process.exit(pid, :kill)
+    {:noreply, state}
+  end
+
+  # A removal that hangs is killed; its `:EXIT` settles the clone.
+  def handle_info({:remove_timeout, id, pid}, state) do
+    if state.runs[id][:removing] == pid, do: Process.exit(pid, :kill)
     {:noreply, state}
   end
 
@@ -413,6 +429,7 @@ defmodule HalC2.ProjectClones do
     server = self()
     run = state.runs[id]
     pid = spawn_link(fn -> send(server, {:removed, id, self(), remove_checkout(run)}) end)
+    Process.send_after(self(), {:remove_timeout, id, pid}, @remove_timeout)
     put_in(state.runs[id].removing, pid)
   end
 
@@ -482,9 +499,18 @@ defmodule HalC2.ProjectClones do
   defp forget(state, id),
     do: %{state | clones: Map.delete(state.clones, id), runs: Map.delete(state.runs, id)}
 
+  # Kills git and what it started. As a port's child git leads a process group of
+  # its own (erl_child_setup starts it under setsid), which the helpers it runs (a
+  # transport, ssh, a filter) share and which outlives git while one of them runs:
+  # killing git alone would leave them holding the pipes git's exit is reported on.
   # A git that already exited has nothing left to kill.
   defp kill(git) do
-    Exile.Process.kill(git, :sigkill)
+    with {:ok, os_pid} <- Exile.Process.os_pid(git),
+         {_, status} when status != 0 <-
+           System.cmd("kill", ["-s", "KILL", "--", "-#{os_pid}"], stderr_to_stdout: true) do
+      # Not a group of its own after all: git alone.
+      Exile.Process.kill(git, :sigkill)
+    end
   catch
     :exit, _ -> :ok
   end
@@ -791,7 +817,13 @@ defmodule HalC2.ProjectClones do
 
   # Every change is published here: to the watchers, and to the phases table.
   defp changed(state) do
-    list = snapshots(state)
+    state = phases(state)
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_project_clones, node(), snapshots(state)})
+    state
+  end
+
+  # The phases table (`thread_block/1`) as of `state`.
+  defp phases(state) do
     phases = Map.new(state.clones, fn {id, snapshot} -> {id, snapshot["phase"]} end)
     :ets.insert(__MODULE__, Map.to_list(phases))
 
@@ -799,7 +831,6 @@ defmodule HalC2.ProjectClones do
         not Map.has_key?(phases, id),
         do: :ets.delete(__MODULE__, id)
 
-    HalC2.Watchers.notify(state.watchers, {:hal_c2_project_clones, node(), list})
     state
   end
 
