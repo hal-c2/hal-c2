@@ -4,6 +4,9 @@
 #   https://github.com/pingdotgg/t3code/pull/23999
 #   https://github.com/pingdotgg/t3code/pull/15625
 #   https://github.com/pingdotgg/t3code/pull/18862
+#   https://github.com/pingdotgg/t3code/pull/22119
+#   https://github.com/pingdotgg/t3code/pull/23242
+#   https://github.com/pingdotgg/t3code/pull/28494
 #   docs/user/source-control.md
 #   docs/internals/consistency-action-names.md
 #   apps/web/src/components/GitActionsControl.logic.ts (buildMenuItems, resolveQuickAction)
@@ -85,6 +88,16 @@ Feature: Recommended git action and the git menu
     Then the recommended action is "Publish repository"
     And the git menu offers only committing and publishing
 
+  # Upstream #22119: a branch in a repository whose only remote is "github" was offered
+  # "Publish repository" and no Push or Create PR.
+  @backlog @shared
+  Scenario: A repository whose only remote is not called origin can push and open pull requests
+    Given the checkout's only remote is "github"
+    And the checkout is on a branch with commits that were never pushed
+    When the user looks at the thread's git actions
+    Then the git menu offers pushing and creating a pull request
+    And "Publish repository" is not recommended
+
   @tui
   Scenario: Publishing a repository from the terminal client
     Given the checkout has commits and no remote
@@ -120,6 +133,21 @@ Feature: Recommended git action and the git menu
     When the user creates a pull request
     Then the pull request holds the branch's commits, and its title and description are written from them
     And the staged, unstaged and untracked files are left as they were
+
+  # Upstream #28494: squash and rebase merges land new commits, so a merged branch still counted
+  # its own commit as unpushed and offered "Push & create PR", which then failed.
+  @backlog @mc @priority-high
+  Scenario Outline: A branch whose pull request was <merged> offers nothing to ship
+    Given the branch's pull request was <merged> into the default branch
+    And the branch has no commits since the pull request's head and no changed files
+    When a client reads the branch's remote status
+    Then the branch has nothing to push and nothing to include in a pull request
+    But a commit added after the merge is counted again
+
+    Examples:
+      | merged         |
+      | squash-merged  |
+      | rebase-merged  |
 
   # The shell's git bridge words these itself (apps/web/src/hooks/useGitActions.ts).
   @backlog @desktop @priority-high
@@ -199,6 +227,16 @@ Feature: Recommended git action and the git menu
     When the user runs the recommended action
     And the user chooses "View PR" on the toast "Created PR #42"
     Then the browser opens "https://github.com/acme/shop/pull/42"
+
+  # Upstream #23242: a pull request whose lookup failed right after it was opened was reported as
+  # a failed action; it is now reported as created, without its link.
+  @backlog @mc @shared
+  Scenario: A pull request whose lookup fails after it opens is reported as created
+    Given the checkout has commits on a feature branch with a remote
+    And the host fails to list pull requests once the new one is opened
+    When the user creates a pull request
+    Then the action is reported as having created a pull request for "feature/tax"
+    And no link to it is offered
 
   @desktop
   Scenario: An action with nothing to do says why

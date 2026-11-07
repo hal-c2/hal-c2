@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/27100
+#   https://github.com/pingdotgg/t3code/pull/32395
 #   https://github.com/pingdotgg/t3code/pull/23635
 #   https://github.com/pingdotgg/t3code/pull/25219
 #   https://github.com/pingdotgg/t3code/pull/26079
@@ -69,6 +70,9 @@
 #   https://github.com/pingdotgg/t3code/pull/24772
 #   https://github.com/pingdotgg/t3code/pull/26877
 #   https://github.com/pingdotgg/t3code/pull/23464
+#   https://github.com/pingdotgg/t3code/pull/30433
+#   https://github.com/pingdotgg/t3code/pull/30686
+#   https://github.com/pingdotgg/t3code/pull/23588
 
 Feature: Browsing pull requests
   The pull requests page gathers pull requests from every project in the workspace, with
@@ -174,6 +178,15 @@ Feature: Browsing pull requests
     When the user opens the author picker on the pull requests page
     Then it offers the authors of the loaded pull requests
 
+  # Upstream #30686: Forgejo answers its assignee list in one piece; reading it as pages asked 34
+  # times for three people, listed them repeatedly and called the list cut short.
+  @backlog @mc @priority-low
+  Scenario: Forgejo's author picker lists each person once and complete
+    Given a Forgejo repository with the assignees "hubot", "mona" and "octo"
+    When the user opens the author picker without typing
+    Then "hubot", "mona" and "octo" are each offered once, read with one request
+    And the picker does not say the list is cut short
+
   @mc
   Scenario: Searching every host
     When the user searches pull requests for "tax label:bug"
@@ -213,12 +226,55 @@ Feature: Browsing pull requests
       | Enterprise Edition   | meets the project's approval rules        | approved                 |
       | Enterprise Edition   | still needs approvals by the rules        | waiting for a review     |
 
+  # Upstream #32395: one approving review marked a GitHub row approved while GitHub still required
+  # more approvals or a code owner's review.
+  @backlog @mc
+  Scenario Outline: A GitHub pull request shows approved only when GitHub says so
+    Given pull request 42 on GitHub has an approving review
+    And GitHub reports its review decision as <decision>
+    When the user lists pull requests
+    Then its row shows it as <shown>
+
+    Examples:
+      | decision        | shown                |
+      | review required | waiting for a review |
+      | approved        | approved             |
+      | nothing         | approved             |
+
   # Upstream #26877
   @backlog @mc @priority-low
   Scenario: A GitLab list whose approvals cannot be read still loads
     Given GitLab refuses to say which merge requests are approved
     When the user lists merge requests
     Then the merge requests are listed without an approval
+
+  # Upstream #30433: GitLab rows carried no checks state, so the checks filter did nothing.
+  @backlog @mc @priority-low
+  Scenario Outline: A GitLab merge request is listed by the state of its pipeline
+    Given a GitLab merge request whose latest pipeline <pipeline>
+    When the user lists merge requests with <filter>
+    Then it is listed
+
+    Examples:
+      | pipeline              | filter         |
+      | passed                | passing checks |
+      | failed                | failing checks |
+      | was canceled          | failing checks |
+      | is running            | pending checks |
+
+  # Upstream #30433: the review filter ran after GitLab answered, so a page of "Approved" or
+  # "Changes requested" could come back short or empty though matches existed.
+  @backlog @mc @priority-low
+  Scenario Outline: GitLab is asked for only the merge requests a review filter keeps
+    Given "acme/shop" is on GitLab and has 100 open merge requests, 30 of them <review>
+    When the user lists open merge requests filtered to "<filter>"
+    Then GitLab is asked only for merge requests <review>
+    And the 30 of them are listed
+
+    Examples:
+      | review                         | filter            |
+      | approved                       | Approved          |
+      | with changes requested         | Changes requested |
 
   @backlog @desktop
   Scenario: A newer read that omits review or check status keeps what was known
@@ -1009,6 +1065,19 @@ Feature: Browsing pull requests
     Given #4 and #5 change the same number of lines and #5 was updated more recently
     When the user sorts pull requests by "Smallest shown"
     Then #5 is listed before #4
+
+  # Upstream #23588: pull requests were ranked by the text of their times, so a time with a UTC
+  # offset or more fractional digits sorted out of time order.
+  @backlog @desktop
+  Scenario Outline: Pull requests are ranked by when they were updated, however the host wrote the time
+    Given #4 was updated at "<older>" and #5 at "<newer>"
+    When the user sorts pull requests by "Recently updated"
+    Then #5 is listed before #4
+
+    Examples:
+      | older                     | newer                  |
+      | 2026-07-05T01:00:00+02:00 | 2026-07-05T00:30:00Z   |
+      | 2026-07-05T00:30:00Z      | 2026-07-05T00:30:00.5Z |
 
   @backlog @desktop
   Scenario: Merge readiness is the sort the page starts with

@@ -9,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/8513
 #   https://github.com/pingdotgg/t3code/pull/10158
 #   https://github.com/pingdotgg/t3code/pull/25315
+#   https://github.com/pingdotgg/t3code/pull/29891
 #   docs/user/keyboard-focus.md
 #   docs/user/appearance.md (Change theme, Change appearance)
 #   apps/web/src/components/CommandPalette.tsx
@@ -321,6 +322,15 @@ Feature: Command palette
     @desktop
     Scenario: Choosing a project opens its latest thread
       Given the project "docs-site" has the threads "Write intro" and "Fix links"
+      When the user searches the palette for "docs-site"
+      And the user moves the highlight to "docs-site" and presses Enter
+      Then the thread "Fix links" opens
+
+    # Upstream #29891: the latest-thread pick skips subagent and side-chat threads.
+    @backlog @desktop @mobile @priority-high
+    Scenario: Choosing a project opens its latest main thread, not a subagent or side chat
+      Given the project "docs-site" has the thread "Fix links"
+      And a subagent of "Fix links" and a side chat on it were updated after its last message
       When the user searches the palette for "docs-site"
       And the user moves the highlight to "docs-site" and presses Enter
       Then the thread "Fix links" opens

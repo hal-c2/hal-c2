@@ -10,6 +10,7 @@
 #   https://github.com/pingdotgg/t3code/pull/22937
 #   https://github.com/pingdotgg/t3code/pull/22399
 #   https://github.com/pingdotgg/t3code/pull/24813
+#   https://github.com/pingdotgg/t3code/pull/30563
 #   docs/user/thread-sidebar.md (Link a pull request, agent-managed metadata)
 #   apps/web/src/hooks/usePullRequestLinking.ts
 #   apps/web/src/hooks/useSupportsMultiplePullRequests.ts
@@ -49,6 +50,15 @@ Feature: Linking pull requests to threads
     When the environment looks for branch pull requests at startup or each minute
     Then it asks the host only about "Cart totals"
     But a subagent thread whose turn ends still looks for its own pull request
+
+  # Upstream #30563: a branch made with "--track develop" read develop as its published head, so the
+  # thread was linked to develop's release pull request and settled when it merged.
+  @backlog @mc @priority-high
+  Scenario: A branch that tracks another local branch is not given that branch's pull request
+    Given "feature/cart" was created to track the local branch "develop"
+    And "develop" has an open pull request into "main"
+    When the environment looks for pull requests
+    Then "Cart totals" is not linked to the pull request of "develop"
 
 
   # Upstream #22634: a GitCafe pull request linked as "/pull/<n>" was stored apart from "/pulls/<n>".

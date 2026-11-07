@@ -1,8 +1,12 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/23753
+#   https://github.com/pingdotgg/t3code/pull/29285
 #   https://github.com/pingdotgg/t3code/pull/18603
 #   https://github.com/pingdotgg/t3code/pull/22075
 #   https://github.com/pingdotgg/t3code/pull/20747
+#   https://github.com/pingdotgg/t3code/pull/29000
+#   https://github.com/pingdotgg/t3code/pull/28378
+#   https://github.com/pingdotgg/t3code/pull/28326
 #   docs/orchestration-v2/thread-lineage-and-context-transfer.md
 #   docs/orchestration-v2/feature-lifecycles.md (fork, merge back, provider switch)
 #   docs/internals/context-handoffs.md
@@ -51,6 +55,16 @@ Feature: Forking threads and merging work back
     When a client forks "Plan billing"
     Then no agent session is started for the fork
     And the fork's context is carried over when its first message is sent
+
+  # Upstream #28378: a fork copied its source's pin, its place in Active, its auto-settle opt-out,
+  # its last snooze wake and the thread that delegated it.
+  @backlog @mc @shared
+  Scenario: A fork starts like a new thread, whatever its source's place and settings
+    Given "Plan billing" is pinned, never auto-settles and was started as another thread's subagent
+    When a client forks "Plan billing"
+    Then the fork is not pinned and is at the top of Active
+    And the fork settles on its own like any new thread
+    And the fork is not listed as a subagent of any thread
 
   @mc
   Scenario: A fork on the same agent continues the agent's own conversation
@@ -209,12 +223,21 @@ Feature: Forking threads and merging work back
     When a relative receives a message or changes status
     Then the relatives stay in the order they were in
 
-  @backlog @desktop @priority-low
-  Scenario: A relative that is no longer available is listed last
-    Given "Try Stripe" has the fork "Webhooks" and a fork that was deleted
+  # Upstream #29000: a deleted fork stayed in its parent's lineage as a bare id marked Queued. The
+  # row now goes once the MC confirms the thread is gone; this replaces listing it last as unavailable.
+  @backlog @mc @desktop @mobile
+  Scenario: A deleted fork leaves its parent's relatives
+    Given "Try Stripe" has the forks "Webhooks" and "Refunds"
+    When the user deletes "Refunds" while "Try Stripe" is open
+    Then "Refunds" is no longer among the relatives of "Try Stripe", then or after a restart
+    And "Webhooks", archived forks and finished subagents are still listed
+
+  # Upstream #29000: a relative the client has not loaded is not taken for deleted.
+  @backlog @mc @desktop @mobile
+  Scenario: A relative the client has not loaded yet keeps its row
+    Given a fork of "Try Stripe" has not reached this client yet
     When the user looks at the relatives of "Try Stripe"
-    Then the deleted fork is listed after "Webhooks"
-    And it says "This related thread is unavailable"
+    Then the fork is listed by its title once the MC confirms it exists
 
   # Upstream #20747: opening a deleted thread from the timeline stays on the current thread.
   @backlog @shared
@@ -240,6 +263,17 @@ Feature: Forking threads and merging work back
     When the user opens the "Previous agents" heading
     Then "Docs" and "Lint" are listed
 
+  # Upstream #29285: subagents running on another machine sat in a list of their own below
+  # Previous agents, whether they were running or finished.
+  @backlog @desktop
+  Scenario: Subagents on another machine of the cluster are grouped with the local ones
+    Given "Plan billing" has the subagent "Tax tests" working on the cluster machine "beast"
+    And its subagent "Docs" finished on "beast"
+    When the user looks at the relatives of "Plan billing"
+    Then "Tax tests" is listed with the working relatives, marked as on "beast"
+    And "Docs" is under "Previous agents"
+    And the relatives are shown even when "Tax tests" is the only one working
+
   # Upstream #18603: a supervisor whose own turn ended while its worker ran moved under Previous agents.
   @backlog @desktop
   Scenario: A subagent waiting on its own worker is still listed as working
@@ -248,6 +282,14 @@ Feature: Forking threads and merging work back
     When the user looks at the relatives of "Plan billing"
     Then "Tax tests" is listed as working, with its task's progress and time
     And it moves under "Previous agents" only once its task has finished
+
+  # Upstream #28326: a relative or side chat whose title was cut short only hinted what the row
+  # does on hover, so its full title could not be read without opening it.
+  @backlog @desktop
+  Scenario: A relative's full title shows on hover
+    Given "Plan billing" has a fork whose title is too long for its row
+    When the user holds the pointer over the fork in the relatives of "Plan billing"
+    Then the tip shows the fork's full title and what opening it does
 
   @backlog @desktop
   Scenario: A long list of relatives is shown a part at a time

@@ -20,6 +20,8 @@
 #   https://github.com/pingdotgg/t3code/pull/27983
 #   https://github.com/pingdotgg/t3code/pull/28104
 #   https://github.com/pingdotgg/t3code/pull/28474
+#   https://github.com/pingdotgg/t3code/pull/29889
+#   https://github.com/pingdotgg/t3code/pull/29620
 Feature: Scheduled tasks
   A scheduled task sends a prompt on a schedule, either into a thread it is bound
   to or as the first message of a new thread each time.
@@ -151,6 +153,15 @@ Feature: Scheduled tasks
     When task "a" runs
     Then task "a" last failed with the reason and its run count grows by 1
 
+  # Upstream #29889: a run that failed to start recorded the error with a stack trace and the
+  # server's file paths, shown in Settings and to agents listing tasks.
+  @backlog @mc
+  Scenario: A failed run records only the error's message
+    Given task "a" is bound to a thread that no longer exists
+    When task "a" runs
+    Then its last error reads "Thread not found."
+    And the error has no stack trace or server file paths
+
   @mc
   Scenario: Running now answers with the finished task
     When a client runs task "a" now
@@ -163,6 +174,19 @@ Feature: Scheduled tasks
     Given task "a" runs when its webhook URL receives a request
     When an agent runs task "a" now
     Then the agent is told "Webhook tasks run when their URL receives a request."
+
+  # Upstream #29620: Run now replaced the reason a run was refused with "Could not run schedule task."
+  @backlog @mc @desktop @mobile
+  Scenario Outline: Running a task now that is <state> says so
+    Given task "a" is <state>
+    When the user runs task "a" now
+    Then the run is refused with "<reason>"
+    And an agent running it now with run_scheduled_task_now is told the same
+
+    Examples:
+      | state                         | reason                            |
+      | still dispatching its run     | Schedule task is already running. |
+      | deleted just before it starts | Schedule task not found.          |
 
   # Upstream #17458: run_scheduled_task_now answered with the task's binding, so a run that
   # started a new thread answered with none.

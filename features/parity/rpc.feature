@@ -181,6 +181,7 @@ Feature: RPC parity with the TypeScript server
       | orchestration.dispatchCommand            | orchestration     | rpc                                                                       |
       | orchestration.getTurnDiff                | orchestration     | rpc                                                                       |
       | orchestration.getFullThreadDiff          | orchestration     | rpc                                                                       |
+      | orchestration.getCommandOutput         | orchestration     | rpc                                                                       |
       | orchestration.searchThreads              | orchestration     | rpc                                                                       |
       | orchestration.getArchivedShellSnapshot   | orchestration     | rpc                                                                       |
       | orchestration.getThreadProjection        | orchestration     | rpc as hal-c2.threadRows                                                      |

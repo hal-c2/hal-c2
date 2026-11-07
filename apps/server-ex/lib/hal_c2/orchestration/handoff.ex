@@ -67,6 +67,7 @@ defmodule HalC2.Orchestration.Handoff do
       provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
 
     {moved, moved_changes} = moved(state)
+    {restart, restart_changes} = restart_note(state, ids)
 
     {fork, fork_changes} =
       case carried(provider_thread, driver, fresh) do
@@ -77,7 +78,7 @@ defmodule HalC2.Orchestration.Handoff do
           {fork, fork_changes}
 
         carried ->
-          fallback = wrap(transcript(state, ordinal), "", moved, nil)
+          fallback = wrap(transcript(state, ordinal), "", moved, nil, restart)
 
           {Map.put(carried, :fallback, fallback),
            fork_changes ++ [consumed(state, provider_thread)]}
@@ -98,10 +99,11 @@ defmodule HalC2.Orchestration.Handoff do
 
     %{
       fork: fork,
-      context: wrap(history, merged, moved, legacy),
+      context: wrap(history, merged, moved, legacy, restart),
       changes:
         Enum.reject(
-          fork_changes ++ delta_changes ++ merge_changes ++ moved_changes ++ legacy_changes,
+          fork_changes ++
+            delta_changes ++ merge_changes ++ moved_changes ++ restart_changes ++ legacy_changes,
           &is_nil/1
         )
     }
@@ -123,6 +125,27 @@ defmodule HalC2.Orchestration.Handoff do
         {nil, []}
     end
   end
+
+  # The first run after a restart ended background work the thread's last turn left
+  # running hears which (the thread's `restartNote`, from `HalC2.Orchestration.Recovery`,
+  # which the run consumes). The restart's own continuation says so in its message, so
+  # its run consumes the note without repeating it; one never sent leaves the note to
+  # the user's next turn.
+  defp restart_note(state, ids) do
+    case state |> StreamState.get("thread") |> Map.values() |> List.first() do
+      %{"restartNote" => note} = thread when is_binary(note) ->
+        said = if not continuation?(ids[:message]), do: note
+
+        {said,
+         [Orchestration.upsert(state, "thread", thread["id"], &Map.delete(&1, "restartNote"))]}
+
+      _ ->
+        {nil, []}
+    end
+  end
+
+  defp continuation?(message_id),
+    do: is_binary(message_id) and String.starts_with?(message_id, "message:restart-continuation:")
 
   # A session carried from another machine (`HalC2.PortableSessions`): the run
   # branches a new session from the copy. Claude and Pi find the copy by its path,
@@ -574,11 +597,12 @@ defmodule HalC2.Orchestration.Handoff do
     end
   end
 
-  defp wrap(nil, "", nil, nil), do: nil
+  defp wrap(nil, "", nil, nil, nil), do: nil
 
-  defp wrap(history, merged, moved, legacy) do
+  defp wrap(history, merged, moved, legacy, restart) do
     [
       moved && "<moved>\n#{moved}\n</moved>",
+      restart && "<server_restart>\n#{restart}\n</server_restart>",
       legacy && "<imported_history>\n#{legacy}\n</imported_history>",
       history &&
         "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n#{history}\n</conversation_history>",

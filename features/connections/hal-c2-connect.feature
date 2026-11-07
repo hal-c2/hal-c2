@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27660 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/30324 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/27442 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/27354
 #   https://github.com/pingdotgg/t3code/pull/24679 (dropped)
@@ -81,6 +83,9 @@
 #   https://github.com/pingdotgg/t3code/pull/21706
 #   https://github.com/pingdotgg/t3code/pull/22747
 #   https://github.com/pingdotgg/t3code/pull/23738
+#   https://github.com/pingdotgg/t3code/pull/29794
+#   https://github.com/pingdotgg/t3code/pull/24485
+#   https://github.com/pingdotgg/t3code/pull/24946
 
 # HAL-C2 Connect was removed: the MC is reached over the LAN or a tailnet, and
 # machines share one sidebar through the cluster (connections/cluster.feature).
@@ -235,6 +240,15 @@ Feature: HAL-C2 Connect
     When the user switches it on
     Then the MC is relinked with its tunnel
 
+  # Upstream #24485: the MC that hosts Connect keeps a rotating log of what its tunnel connector
+  # reports, so an outage leaves a record. Dropped with Connect.
+  @dropped @mc
+  Scenario: The tunnel connector keeps a log of its own
+    Given a linked MC with its tunnel up
+    When the tunnel connector registers, warns, exits or backs off
+    Then the MC writes it to the connector's log in its logs folder
+    And the log rolls over at 1 MiB, keeping two older copies
+
   @dropped @mc
   Scenario: The connector's token never reaches the logs
     Given a linked MC with its tunnel up
@@ -375,6 +389,8 @@ Feature: HAL-C2 Connect
     Then it prints the saved authorization and link settings
     And does not test reachability
 
+  # Upstream #30324: unlinking after the server died uncleanly warned about, and tried to reach,
+  # a server that was gone. Dropped with the rest of Connect.
   @dropped @mc
   Scenario: Unlinking from the command line keeps the sign-in
     Given a linked MC
@@ -1199,6 +1215,15 @@ Feature: HAL-C2 Connect
     When the guest's page asks for "/home/me/shot.png" and for "/etc/passwd"
     Then the guest gets the image and is refused the other file
 
+  # Upstream #29794: a guest of a forked thread could not open files on the messages it inherited
+  # from its source. Dropped with guest links.
+  @dropped @mc
+  Scenario: A guest of a forked thread opens the files on the messages it inherited
+    Given the user shared "Fix login (fork)", a fork of "Fix login", with a guest link
+    And a message the fork shows from "Fix login" has the image "shot.png" attached
+    When the guest opens "shot.png"
+    Then the guest sees the image
+
   # Upstream #27354: a guest saw only the last 20 turns of a shared thread and could load nothing
   # older. Dropped with guest links.
   @dropped @mc @shared
@@ -1240,3 +1265,22 @@ Feature: HAL-C2 Connect
     Given the Connect command runs with no terminal attached
     When it connects the environment
     Then it does not ask whether to install a background service
+
+  # Upstream #27660: an unlinked server's fix told desktop users to restart a background service
+  # they do not run, and Settings kept showing "not linked" after the tunnel came up.
+  # Dropped: HAL-C2 Connect is not supported yet.
+  @dropped @mc
+  Scenario: The fix for an unlinked environment fits how its server runs
+    Given the environment's server is not linked to Connect
+    When the user checks whether it is reachable
+    Then the fix says to connect it and restart the server the way it runs
+    And once linked, the stale "not linked" result is no longer shown
+
+  # Upstream #24946: after a host's IPv6 prefix changed, cloudflared still reported ready
+  # connections while the edge refused them, and the connector was never replaced. Dropped:
+  # HAL-C2 Connect is not supported yet, and the relay is upstream's hosted service.
+  @dropped @mc
+  Scenario: A tunnel client the edge no longer reaches is replaced
+    Given the environment's tunnel client reports ready connections
+    And the relay has answered that the environment is unreachable for two minutes
+    Then the tunnel client is replaced

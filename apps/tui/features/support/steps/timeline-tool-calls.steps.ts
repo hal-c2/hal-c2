@@ -30,12 +30,15 @@ interface ToolWorld extends TurnWorld {
 
 /** The newest tool call's row: the last line of the last work group that is not its toggle. */
 function lastCall(ctx: TurnWorld) {
-  const row = lastOf(ctx, "work").lines.findLast((line) => line.action === null);
+  const row = lastOf(ctx, "work").lines.findLast(isCallRow);
   if (!row) throw new Error("the work group shows no tool call");
   return row;
 }
 
-const callRows = (group: ShownItem) => group.lines.filter((line) => line.action === null);
+// A command's row opens its output; its output lines below it are not calls.
+const isCallRow = (line: ShownItem["lines"][number]) =>
+  line.action === null || line.action === "command.toggle";
+const callRows = (group: ShownItem) => group.lines.filter(isCallRow);
 
 // --- groups of calls -------------------------------------------------------------------
 
@@ -52,7 +55,7 @@ step("the latest tool call is shown", async (ctx: TurnWorld) => {
 step("the other four are behind {string}", async (ctx: TurnWorld, label: string) => {
   const group = lastOf(ctx, "work");
   expect(callRows(group)).toHaveLength(1);
-  expect(linesOf(group).at(-1)!.trim()).toBe(`⌄ ${label}`);
+  expect(plain(group.lines.at(-1)!.right!.text)).toBe(label);
   const screen = await snapshot(ctx);
   expect(screen).toContain(label);
   for (const hidden of [1, 2, 3, 4]) expect(screen).not.toContain(`bun test cart-${hidden}`);
@@ -71,6 +74,41 @@ step("all five tool calls are shown", async (ctx: TurnWorld) => {
 
 step("the user hides them again", async (ctx: TurnWorld) => {
   await clickText(ctx, "Show fewer tool calls");
+});
+
+// The running group is one row: the latest call, the count of the ones before it beside it.
+async function oneLiveRow(ctx: TurnWorld, call: string, label: string) {
+  const group = lastOf(ctx, "work");
+  expect(group.lines).toHaveLength(1);
+  const [row] = group.lines;
+  expect(plain(row!.text)).toContain(call);
+  expect(plain(row!.right!.text)).toBe(label);
+  const screen = (await snapshot(ctx)).split("\n").find((shown) => shown.includes(call));
+  expect(screen).toContain(label);
+}
+
+step(
+  "one row shows the latest tool call with {string} beside it",
+  async (ctx: TurnWorld, label: string) => oneLiveRow(ctx, "bun test cart-5", label),
+);
+
+step("the agent starts a sixth tool call", async (ctx: TurnWorld) => {
+  await addCommand(ctx, 6);
+});
+
+step(
+  "the row shows the sixth tool call with {string} beside it",
+  async (ctx: TurnWorld, label: string) => oneLiveRow(ctx, "bun test cart-6", label),
+);
+
+step("the user opens the row", async (ctx: TurnWorld) => {
+  await clickText(ctx, "previous tool calls");
+});
+
+step("all six tool calls are shown", async (ctx: TurnWorld) => {
+  expect(callRows(lastOf(ctx, "work"))).toHaveLength(6);
+  const screen = await snapshot(ctx);
+  for (const shown of [1, 2, 3, 4, 5, 6]) expect(screen).toContain(`bun test cart-${shown}`);
 });
 
 // --- how a call ended ------------------------------------------------------------------
@@ -741,3 +779,142 @@ step("the diff shows only {string}", async (ctx: ToolWorld, path: string) => {
     expect(screen).not.toContain(other);
   }
 });
+
+// --- a command's output --------------------------------------------------------------------
+
+interface CommandWorld extends TurnWorld {
+  /** What the MC would answer `orchestration.getCommandOutput` with. */
+  printed?: string;
+}
+
+/** The MC's answer to a command's output is whatever the scenario says it has printed. */
+function servesOutput(ctx: CommandWorld, running: boolean) {
+  ctx.fake!.override("getCommandOutput", async () => ({ output: ctx.printed ?? "", running }));
+}
+
+step("the agent's command is still running and printing", async (ctx: CommandWorld) => {
+  await startRun(ctx);
+  ctx.printed = "compiling\nlinking\n";
+  servesOutput(ctx, true);
+  await addCommand(ctx, 1, "running");
+  await setItem(ctx, "call-1", { outputSize: ctx.printed.length });
+});
+
+step("the agent ran a command that finished", async (ctx: CommandWorld) => {
+  await startRun(ctx);
+  ctx.printed = "3 passed\n";
+  servesOutput(ctx, false);
+  await addCommand(ctx, 1);
+});
+
+step("the user opens the command's details", async (ctx: CommandWorld) => {
+  await clickText(ctx, "bun test cart-1");
+});
+
+step("the MC cannot supply its output", async (ctx: CommandWorld) => {
+  ctx.fake!.override("getCommandOutput", async () => {
+    throw new Error("the MC is unreachable");
+  });
+});
+
+step("the details read {string} rather than loading", async (ctx: CommandWorld, text: string) => {
+  await settle();
+  const screen = await snapshot(ctx);
+  expect(screen).toContain(text);
+  expect(screen).not.toContain("Loading output");
+});
+
+step("the user has opened the command's details", async (ctx: CommandWorld) => {
+  await clickText(ctx, "bun test cart-1");
+});
+
+step(
+  "the output is fetched again and the second reply arrives before the first",
+  async (ctx: CommandWorld) => {
+    let answerFirst!: (reply: { output: string; running: boolean }) => void;
+    let calls = 0;
+    ctx.fake!.override("getCommandOutput", () => {
+      calls += 1;
+      if (calls > 1) return Promise.resolve({ output: "newer\n", running: true });
+      return new Promise((resolve) => {
+        answerFirst = resolve;
+      });
+    });
+    // Two fetches, a throttle window apart: the first is held back, the second answers at once.
+    await Bun.sleep(150);
+    await setItem(ctx, "call-1", { outputSize: 100 });
+    await Bun.sleep(150);
+    await setItem(ctx, "call-1", { outputSize: 200 });
+    await settle();
+    answerFirst({ output: "stale\n", running: true });
+    await settle();
+  },
+);
+
+step("the details show the second reply's output", async (ctx: CommandWorld) => {
+  const screen = await snapshot(ctx);
+  expect(screen).toContain("newer");
+  expect(screen).not.toContain("stale");
+});
+
+step("the output printed so far is shown", async (ctx: CommandWorld) => {
+  const screen = await snapshot(ctx);
+  expect(screen).toContain("compiling");
+  expect(screen).toContain("linking");
+});
+
+step("new output is added as it is printed, at most every 100 ms", async (ctx: CommandWorld) => {
+  const before = recorded(ctx, "getCommandOutput").length;
+  // Five bursts of output inside one window are one fetch, not five.
+  for (const word of ["a", "b", "c", "d", "e"]) {
+    ctx.printed = `${ctx.printed ?? ""}${word}\n`;
+    await setItem(ctx, "call-1", { outputSize: ctx.printed.length });
+  }
+  expect(recorded(ctx, "getCommandOutput").length - before).toBeLessThanOrEqual(2);
+  // The window is the one thing here that is time itself.
+  await Bun.sleep(150);
+  await settle();
+  const screen = await snapshot(ctx);
+  for (const word of ["a", "b", "c", "d", "e"]) expect(screen).toContain(`    ${word}`);
+});
+
+step(
+  "once the command ends the output is replaced by the output the thread kept",
+  async (ctx: CommandWorld) => {
+    ctx.printed = "the kept output\n";
+    servesOutput(ctx, false);
+    await setItem(ctx, "call-1", { status: "completed", output: "", exitCode: 0 });
+    await Bun.sleep(150);
+    await settle();
+    const screen = await snapshot(ctx);
+    expect(screen).toContain("the kept output");
+    expect(screen).not.toContain("compiling");
+  },
+);
+
+step("the command's final output is shown", async (ctx: CommandWorld) => {
+  expect(recorded(ctx, "getCommandOutput").map(([, item]) => item)).toEqual(["call-1"]);
+  expect(await snapshot(ctx)).toContain("3 passed");
+});
+
+step("the user expands a tool call", async (ctx: CommandWorld) => {
+  await startRun(ctx);
+  ctx.printed = "3 passed\n";
+  servesOutput(ctx, false);
+  await addCommand(ctx, 1);
+  await clickText(ctx, "bun test cart-1");
+  await settle();
+});
+
+step(
+  "the full call shows first and its result below it, muted, without cards or labels",
+  async (ctx: CommandWorld) => {
+    const [call, result, ...rest] = lastOf(ctx, "work").lines;
+    expect(plain(call!.text)).toContain("bun test cart-1");
+    // The result is its text alone: no label, no box, set apart by being dim.
+    expect(plain(result!.text).trim()).toBe("3 passed");
+    expect(rest).toHaveLength(0);
+    const colour = (text: NonNullable<typeof call>["text"], at: number) => text.chunks[at]!.fg;
+    expect(colour(result!.text, 0)).not.toEqual(colour(call!.text, 1));
+  },
+);

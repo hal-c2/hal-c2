@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29828
 #   apps/web/src/components/Sidebar.tsx (SidebarDraftBlock, SidebarDraftRow: which drafts are
 #   listed, the open draft's frozen row, newest first, the row's preview)
 #   apps/web/src/composerDraftStore.ts (composerDraftHasUserContent)
@@ -198,3 +199,13 @@ Feature: Drafts on the desktop
       Then the window shows the draft
       And the sidebar lists the draft reading "Fix the build"
       And the composer offers the new thread's text "Fix the build"
+
+    # Upstream #29828: drafts saved by an older version kept model picks in a form the loader
+    # could not read, so loading failed and the next edit wrote empty drafts over every draft.
+    @backlog @desktop @priority-high
+    Scenario: A draft whose saved model pick cannot be read keeps its text
+      Given the desktop saved the draft "Fix the build" in "proj-1" with a model pick in a form it no longer reads
+      When the desktop quits and starts again
+      Then the sidebar lists the draft reading "Fix the build"
+      And only the model pick it could not read is forgotten
+      And the user's other drafts are still there

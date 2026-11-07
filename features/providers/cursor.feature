@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27703
+#   https://github.com/pingdotgg/t3code/pull/23326
 #   https://github.com/pingdotgg/t3code/pull/24639
 #   https://github.com/pingdotgg/t3code/pull/24702
 #   https://github.com/pingdotgg/t3code/pull/26065
@@ -27,6 +29,9 @@
 #   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
 #   https://github.com/pingdotgg/t3code/pull/22897
 #   https://github.com/pingdotgg/t3code/pull/21074
+#   https://github.com/pingdotgg/t3code/pull/29398
+#   https://github.com/pingdotgg/t3code/pull/29419
+#   https://github.com/pingdotgg/t3code/pull/29748
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
@@ -162,6 +167,16 @@ Feature: Cursor
     When a new thread needs a title
     Then Cursor writes the title without using any tools
 
+  # Upstream #29748: a Cursor text generation stopped by a usage limit failed with only "Cursor SDK
+  # request finished with an error."
+  @backlog
+  Scenario: Cursor text generation stopped by a usage limit says so
+    Given Cursor is picked for text generation
+    And the user has reached a Cursor usage limit
+    When a commit message is generated
+    Then the failure says the Cursor usage limit was reached
+    And it says to try again later or choose another text-generation provider
+
   Scenario Outline: Cursor's access modes map to Cursor's own safety settings
     Given the thread runs Cursor in <mode>
     Then Cursor's review is <review> and its sandbox is <sandbox>
@@ -234,6 +249,16 @@ Feature: Cursor
     When the user opens the provider list
     Then Cursor is shown with a warning that no models were found
 
+  # Upstream #29398: "/compact" reached Cursor's model as plain text, which either did not know it or
+  # replied with a summary, and the context stayed the same size.
+  @backlog
+  Scenario: Sending /compact compacts the Cursor conversation
+    Given a Cursor thread with a long conversation
+    When the user sends "/compact" to the Cursor thread
+    Then the thread shows that its context was compacted
+    And Cursor's summary is not shown as a reply in the chat
+    And Cursor still knows what the conversation covered
+
   Scenario: Cursor's plan and task list are shown
     Given the thread is in plan mode on Cursor
     When Cursor finishes planning
@@ -243,6 +268,21 @@ Feature: Cursor
     Given Cursor is signed in with a file-based login
     When the user opens the limits view
     Then Cursor shows its monthly, Auto and API usage with the billing cycle end
+
+  # Upstream #29419: a Cursor sign-in from HAL-C2 or a CURSOR_API_KEY showed Cursor as signed in
+  # but no limits and no history; only a Cursor CLI login could be read.
+  @backlog
+  Scenario Outline: Cursor usage shows for an account signed in with <credential>
+    Given the user signed in to Cursor with <credential> and has no Cursor CLI login
+    When the user opens the limits view and the usage history
+    Then Cursor shows its monthly allowance
+    And Cursor's usage history lists its requests
+    And the user is not asked to allow access to a Cursor CLI login
+
+    Examples:
+      | credential                                  |
+      | Sign in with Cursor                         |
+      | a CURSOR_API_KEY in the instance's environment |
 
   Scenario: Cursor usage is unavailable with a keychain login
     Given Cursor is signed in through the system keychain
@@ -470,6 +510,16 @@ Feature: Cursor
     When the user lists Cursor's skills
     Then every skill is listed
     And nothing inside "node_modules" is searched for skills
+
+  # Upstream #23326: supporting files used up the skill search's shared budget, so 11,000 files
+  # under one skill hid its sibling and failed the provider check.
+  @backlog @priority-low
+  Scenario: A skill's supporting files do not hide the skills beside it
+    Given the project has the Cursor skills "review" and "deploy"
+    And "review" holds 11,000 files under its "artifacts" folder
+    When the user lists Cursor's skills
+    Then "review" and "deploy" are both listed
+    And Cursor's provider check passes
 
   @backlog @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short
@@ -746,5 +796,14 @@ Feature: Cursor
   Scenario: A Cursor stream closing under a write does not stop the MC
     Given a Cursor turn is running
     When the Cursor SDK rejects a write because its stream already closed
+    Then the MC keeps running
+    And other threads are unaffected
+
+  # Upstream #27703: when the Cursor SDK ended a run's request with a write still in flight, as after
+  # an account ran out of usage, the rejected write took the whole server down.
+  @backlog @priority-high
+  Scenario: A Cursor write left over after its request ended does not stop the MC
+    Given a Cursor turn is running
+    When the Cursor SDK ends the run's request while a write is still in flight
     Then the MC keeps running
     And other threads are unaffected
