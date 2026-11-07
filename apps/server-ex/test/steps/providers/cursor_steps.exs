@@ -744,9 +744,26 @@ defmodule HalC2.Steps.Providers.Cursor do
   end
 
   step "the command is shown as interrupted", context do
-    assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
-    assert [%{"input" => "npm test", "status" => "interrupted"}] = commands(context)
-    context
+    if get_in(context, [Access.key(:threads), "Cursor"]) do
+      assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
+      assert [%{"input" => "npm test", "status" => "interrupted"}] = commands(context)
+      context
+    else
+      # The same words on an MC thread of another provider (Codex): its command's
+      # turn item is the interrupted one.
+      title = World.current_thread(context)
+
+      item =
+        World.await_value(context, title, fn state ->
+          Enum.find(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["type"] == "command_execution" and &1["status"] == "interrupted")
+          )
+        end)
+
+      assert item["status"] == "interrupted"
+      Map.put(context, :interrupted_command, item)
+    end
   end
 
   # Cursor did report the stopped command as a finished tool call.
