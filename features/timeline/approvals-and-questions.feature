@@ -195,6 +195,15 @@ Feature: Approvals and agent questions
     Given the agent asked a question that has no options and allows no custom answer
     Then the user is not asked it
 
+  # hal-c2/hal-c2#1273 review: a request whose questions are all filtered
+  # out as unanswerable stays pending in the MC with nothing shown in any
+  # client, so its turn waits forever.
+  @backlog @mc @shared
+  Scenario: A turn does not stay waiting on a question no one is shown
+    Given the agent asked a question that has no options and allows no custom answer
+    Then the question is closed as unanswerable and the turn stops waiting
+    And the agent is not given an answer
+
   # Legacy: packages/client-runtime/src/pendingRequests.ts (requestKindFromRequestType)
   @desktop @mobile @backlog-desktop @priority-low
   Scenario Outline: An approval recorded by an older version is shown as the kind of request it was

@@ -24,14 +24,10 @@ const QString kTitle = QStringLiteral("Tax line");
 const QString kRun = QStringLiteral("run-approval");
 const QString kQuestionId = QStringLiteral("database");
 
-// The requests this scenario has asked, and the question it can ask again
-// with another choice allowed.
+// The requests this scenario has asked.
 struct Asked {
   int count = 0;
   QString lastRequest;
-  QString questionText;
-  QStringList labels;
-  bool multiSelect = false;
 };
 
 Asked& asked(World& world) { return world.mc.part<Asked>(); }
@@ -86,9 +82,6 @@ QString question(World& world, const QString& text, const QStringList& labels, b
                  const QString& capability = S("live")) {
   QJsonArray options;
   for (const QString& label : labels) options.append(QJsonObject{{S("label"), label}, {S("description"), QString()}});
-  asked(world).questionText = text;
-  asked(world).labels = labels;
-  asked(world).multiSelect = multiSelect;
   return request(world, S("user_input_request"), S("questions"),
                  {{S("questions"), QJsonArray{QJsonObject{{S("id"), kQuestionId},
                                                           {S("header"), S("Database")},
