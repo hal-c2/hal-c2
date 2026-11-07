@@ -15,6 +15,7 @@
 #   apps/desktop-qt/tests/tst_KeybindingsSettings.qml (runs what the page shows and how its fields take keys)
 #   https://github.com/pingdotgg/t3code/pull/14548
 #   https://github.com/pingdotgg/t3code/pull/22496
+#   https://github.com/pingdotgg/t3code/pull/24494
 
 Feature: Keybindings settings
   Settings → Keybindings lists every command with its shortcut and condition, and lets the
@@ -269,6 +270,16 @@ Feature: Keybindings settings
         | Shift+Cmd+R |                              | removes                | nothing           |
         | escape      | terminalFocus&&!previewFocus | removes                | nothing           |
         | Shift+Cmd+R |                              | rebinds to mod+shift+n | mod+shift+n alone |
+
+    # Upstream #24494: saving or removing any shortcut dropped every rule in the file this version
+    # could not read, such as a typo or a command only a newer version knows, and still said
+    # "Keybindings updated".
+    @backlog @desktop @mc @priority-high
+    Scenario: Changing a shortcut keeps the rules this version cannot read
+      Given the keybindings file holds a rule for a command this version does not know
+      When the user rebinds "diff.toggle" to mod+shift+y in Settings
+      Then the keybindings file still holds that rule, as it was written and where it was
+      And the user is still told the rule cannot be read
 
     @desktop
     Scenario: Adding a binding for a command

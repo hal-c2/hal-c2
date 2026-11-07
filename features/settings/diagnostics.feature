@@ -11,6 +11,8 @@
 #   apps/tui/src/features.backlog.test.ts (provider maintenance and server diagnostics)
 #   apps/tui/src/host/sections/diagnostics.ts (bounded lists, the force kill that asks first)
 #   https://github.com/pingdotgg/t3code/pull/23438
+#   https://github.com/pingdotgg/t3code/pull/28300
+#   https://github.com/pingdotgg/t3code/pull/30528
 
 @priority-low
 Feature: Diagnostics
@@ -147,6 +149,13 @@ Feature: Diagnostics
     And the MC's own process id
     And the totals leave out the desktop app and other parent processes
 
+  # Upstream #28300: memory just under 1 GiB read "1024.0 MB" on the diagnostics page.
+  @backlog @desktop @priority-low
+  Scenario: Memory just under a gigabyte reads as a gigabyte
+    Given a provider process uses 1,073,700,000 bytes of memory
+    When the user opens diagnostics
+    Then its memory reads "1.0 GB"
+
   @backlog @desktop
   Scenario Outline: The diagnostics process list labels a process by what it is
     Given the MC has started <process>
@@ -204,6 +213,15 @@ Feature: Diagnostics
     When the user opens diagnostics
     Then the resource history covers the last 15 minutes
     And the user can choose 5 minutes, 15 minutes, 30 minutes or 1 hour
+
+  # Upstream #30528: the history was read once, so on a fresh monitor it stayed empty while the live
+  # counters moved, until the user refreshed it.
+  @backlog @desktop
+  Scenario: Resource history keeps filling in while diagnostics is open
+    Given the MC has just started collecting resource samples
+    When the user opens diagnostics and waits
+    Then new samples appear in the resource history every five seconds without a refresh
+    And the history stops asking the MC once diagnostics is closed
 
   @backlog @desktop
   Scenario: Resource history totals and per-process figures

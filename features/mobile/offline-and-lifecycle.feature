@@ -17,6 +17,7 @@
 #   https://github.com/pingdotgg/t3code/pull/25824
 #   https://github.com/pingdotgg/t3code/pull/25632
 #   https://github.com/pingdotgg/t3code/pull/26643
+#   https://github.com/pingdotgg/t3code/pull/28625
 #   apps/mobile/src/connection/app-state-wakeups.ts (probe vs reconnect after 10 seconds)
 #   apps/mobile/src/connection/background-activity.ts
 #   apps/mobile/src/connection/background-activity-scopes.ts
@@ -64,6 +65,15 @@ Feature: Staying useful through backgrounding and bad connections
     When the user returns to the app
     Then the phone reconnects to "My MacBook"
     And "Fix checkout" catches up on what happened while the app was away
+
+  # Upstream #28625: Android 15 and later block a backgrounded app's network and lift the block just
+  # after it returns; a phone that looked before the lift stayed on "You are offline".
+  @backlog @mobile @priority-high
+  Scenario: The phone reconnects once Android lifts its network block
+    Given the user returns to the app on Android before the system lifts its network block
+    Then the phone shows that it is offline
+    When the system lifts the block
+    Then the phone reconnects to "My MacBook" without the user leaving the app
 
   # Upstream #25824: a return after 10 seconds or more always threw the connection away, so every
   # return showed "Reconnecting" and reloaded the thread list. The phone now checks it first.

@@ -1,5 +1,6 @@
 # Sources:
 #   docs/user/appearance.md (Environment themes, Publish a theme)
+#   https://github.com/pingdotgg/t3code/pull/32405
 #   apps/server-ex/lib/hal_c2/environment_themes.ex
 #   apps/server-ex/lib/hal_c2/settings.ex (notify_themes)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (config.themes)
@@ -20,6 +21,14 @@ Feature: Environment themes and the desktop shell theme
       Given the MC's themes folder is empty
       When "nightfall.json" with a dark palette is written into the themes folder
       Then within a few seconds the MC publishes a theme with the id "nightfall"
+
+    # Upstream #32405: a theme file saved as "UTF-8 with BOM", as Windows PowerShell 5 writes it, was
+    # skipped by the watcher and refused by "theme set", though the MC's other JSON files read fine.
+    @backlog @mc @priority-low
+    Scenario: A theme file that starts with a byte-order mark is published
+      When "notepad.json", a valid theme saved with a UTF-8 byte-order mark, is written into the themes folder
+      Then within a few seconds the MC publishes a theme with the id "notepad"
+      And "hal-c2 theme set" publishes the same file
 
     @mc
     Scenario: Clients watching the MC receive the new set

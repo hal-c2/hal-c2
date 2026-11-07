@@ -715,6 +715,14 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** Fetch the cumulative diff of all changes in the thread up to `toTurnCount`. */
   readonly getFullThreadDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
+  /**
+   * A command's output, which the thread does not carry: what it has printed so far
+   * while it runs (at most the last 64 KiB), what the thread kept once it ended.
+   */
+  readonly getCommandOutput: (
+    threadId: ThreadId,
+    itemId: string,
+  ) => Promise<{ readonly output: string; readonly running: boolean }>;
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
   /**
@@ -1339,6 +1347,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
           threadId,
           toTurnCount: NonNegativeInt.make(toTurnCount),
         }).pipe(Effect.map((result) => result.diff)),
+      ),
+
+    getCommandOutput: (threadId, itemId) =>
+      runtime.runPromise(
+        request(ORCHESTRATION_V2_WS_METHODS.getCommandOutput, {
+          threadId,
+          itemId: itemId as never,
+        }),
       ),
 
     listModels: () =>

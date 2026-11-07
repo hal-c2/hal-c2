@@ -9,6 +9,10 @@
 #   https://github.com/pingdotgg/t3code/pull/27746
 #   https://github.com/pingdotgg/t3code/pull/22778
 #   https://github.com/pingdotgg/t3code/pull/26245
+#   https://github.com/pingdotgg/t3code/pull/29554
+#   https://github.com/pingdotgg/t3code/pull/27840
+#   https://github.com/pingdotgg/t3code/pull/31646
+#   https://github.com/pingdotgg/t3code/pull/27756
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
@@ -168,6 +172,16 @@ Feature: Source Control settings
       | is installed but its sign-in could not be checked        | Could not verify GitLab, with the reason or the install hint               |
       | is not on this server                                    | Not available on this server, with its install hint                         |
 
+  # Upstream #27840: glab checks only its default host, so a signed-out default hid another
+  # signed-in host and turned off GitLab publish and add project.
+  @backlog @mc
+  Scenario: GitLab signed in on another host counts as signed in
+    Given glab's default host is signed out
+    And another host glab knows is signed in
+    When the panel loads
+    Then GitLab is authenticated
+    And GitLab publish and add project are available
+
   # Upstream #21606: on an Apple Silicon Mac without Rosetta, an Intel-only gh read as not
   # installed and the user was told to install what they had.
   @backlog @mc @desktop @priority-low
@@ -270,13 +284,58 @@ Feature: Source Control settings
       | Bitbucket | API token    |
       | GitCafe   | token        |
 
-  # Upstream #27746
-  @backlog @mc
-  Scenario: A secret reference that cannot be read counts as no credential
-    Given the Bitbucket access token is a reference the secret provider cannot read
-    When the MC starts or talks to Bitbucket
-    Then Bitbucket falls back as if no token were set
+  # Upstream #27746: an unreadable saved reference quietly used GH_TOKEN, gh, cafe or the
+  # Bitbucket environment login instead, so pull request actions ran as another account.
+  # Upstream #31646: replaced that fallback with a failure.
+  @backlog @mc @priority-high
+  Scenario Outline: A <host> credential that cannot be read fails instead of using another login
+    Given the <host> token is a reference to "Work", which cannot be read
+    And a <host> login is available from the environment or the host's command-line tool
+    When the MC talks to <host>
+    Then it fails with an error naming the secret provider "Work"
+    And the other login is not used
+    And the <host> status in Settings shows that error
     And startup and the other hosts are unaffected
+
+    Examples:
+      | host      |
+      | GitHub    |
+      | GitCafe   |
+      | Bitbucket |
+
+  # Upstream #31646: only a field left empty uses the environment or command-line login.
+  @backlog @mc
+  Scenario: An empty source control credential uses the environment's login
+    Given no GitHub token is saved in Settings
+    And "GH_TOKEN" is set for the MC
+    When the MC talks to GitHub
+    Then it uses "GH_TOKEN"
+
+  # Upstream #29554: a client sending the whole token map replaced it, so saving one host's token
+  # wiped every other host's token and secret reference.
+  @backlog @mc @priority-high
+  Scenario: Saving one host's token keeps the other hosts' saved tokens
+    Given tokens are saved for "github.com" and "github.example.com"
+    When a client saves a new token for "github.com" alone
+    Then the token for "github.example.com" is still saved
+    And removing the token for "github.com" leaves "github.example.com" saved too
+
+  # Upstream #27756: a host's token had to be pasted in; teams keeping it in 1Password could not
+  # read it from there.
+  @backlog @mc @shared
+  Scenario: A host's token can come from a secret provider
+    Given the 1Password secret provider "Work" is set up
+    When the user points the token for "github.com" at "op://vault/github/token" in "Work"
+    Then the MC reads the token from "Work" when it talks to GitHub
+    And the settings show the reference as written
+    And the token for "github.example.com" is still saved as it was
+
+  @backlog @mc @priority-low
+  Scenario: A host token reference that cannot be read counts as no token
+    Given the token for "github.com" points at a secret "Work" cannot read
+    And "GH_TOKEN" is set for the MC
+    When the MC talks to GitHub
+    Then it uses "GH_TOKEN"
 
   # Upstream #16322: choose the GitHub account per host
   @backlog @shared

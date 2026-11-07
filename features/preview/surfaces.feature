@@ -1,6 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/28236 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/19456 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/26633
+#   https://github.com/pingdotgg/t3code/pull/31489
 #   https://github.com/pingdotgg/t3code/pull/27224
 #   https://github.com/pingdotgg/t3code/pull/23771
 #   https://github.com/pingdotgg/t3code/pull/22328
@@ -100,6 +102,13 @@
 #   https://github.com/pingdotgg/t3code/pull/23646
 #   https://github.com/pingdotgg/t3code/pull/22639
 #   https://github.com/pingdotgg/t3code/pull/23338
+#   https://github.com/pingdotgg/t3code/pull/29687
+#   https://github.com/pingdotgg/t3code/pull/28684
+#   https://github.com/pingdotgg/t3code/pull/29893
+#   https://github.com/pingdotgg/t3code/pull/30306
+#   https://github.com/pingdotgg/t3code/pull/27537
+#   https://github.com/pingdotgg/t3code/pull/29655
+#   https://github.com/pingdotgg/t3code/pull/29646 (dropped)
 
 Feature: In-app preview browser
   A thread can keep browser tabs beside it for the app it is building. The MC remembers each
@@ -200,6 +209,15 @@ Feature: In-app preview browser
       Given a browser tab loading "http://localhost:9999"
       When the desktop reports the load failed with "ERR_CONNECTION_REFUSED"
       Then every watching client is told the tab failed with that error
+
+    # Upstream #27537: a load report for the page being left, still reading that page's title, could
+    # land after a navigation failed and report success, hiding the failure from every client.
+    @backlog @mc
+    Scenario: A late report for the page being left does not hide a failed navigation
+      Given a browser tab showing "Dashboard" whose load report is still on its way
+      When a navigation to "http://localhost:9999" starts and fails with "ERR_CONNECTION_REFUSED"
+      And the report for "Dashboard" then arrives
+      Then every watching client is still told the tab failed with that error
 
     @mc
     Scenario: A tab remembers whether it can go back and forward
@@ -437,6 +455,26 @@ Feature: In-app preview browser
       Given the agent of "Fix checkout" left a server on port 5173 running
       When the MC restarts
       Then the details of "Fix checkout" still list the server on port 5173
+
+    # Upstream #29687: a server a Codex agent started was never attributed to its thread; only
+    # Claude agents were watched for new listeners.
+    @backlog @mc @plugin-codex
+    Scenario: A server a Codex agent starts is listed under its thread
+      Given "Fix checkout" runs on Codex
+      And the agent of "Fix checkout" started a server on port 5173 in the background
+      When the agent's turn ends
+      Then the details of "Fix checkout" list the server on port 5173
+
+    # Upstream #28684: a long servers list pushed the rest of the thread details down.
+    @backlog @shared @priority-low
+    Scenario: A long servers list in the thread details shows four at a time
+      Given the agent of "Fix checkout" started 10 servers
+      When the user opens the details of "Fix checkout"
+      Then 4 servers are listed with a row to show 4 more
+      When the user shows more twice
+      Then all 10 servers are listed with a row to show less
+      When the user shows less
+      Then 4 servers are listed again
 
     @backlog @mc @priority-low
     Scenario: Closing the terminal that started a dev server drops its suggestion
@@ -1082,6 +1120,19 @@ Feature: In-app preview browser
       Then the User-Agent header names the app as product tokens with no spaces or brackets
       And the app still shows its own name everywhere else
 
+    # Upstream #31489: Teams web refused the preview's browser name before sign-in and ended on an
+    # error page; only those two Teams addresses now get the name without the app's token.
+    @backlog @desktop @priority-low
+    Scenario Outline: Teams web opens in a browser tab
+      When the user opens "<address>" in a browser tab
+      Then the Microsoft sign-in page is shown
+      And other sites, and the Microsoft sign-in pages themselves, still see the app's usual browser name
+
+      Examples:
+        | address                        |
+        | https://teams.cloud.microsoft/ |
+        | https://teams.microsoft.com/v2/ |
+
     # Upstream #16939: automation paused every new cross-site frame and never resumed it, so
     # sign-in checks and captchas that run in such frames never loaded.
     @backlog @desktop
@@ -1201,6 +1252,7 @@ Feature: In-app preview browser
         | data       |
         | blob       |
 
+    # Upstream #29893: on macOS only Command+R reloads; Ctrl+R reaches the page, as in a browser.
     @backlog @desktop @priority-low
     Scenario Outline: Reload and editing shortcuts work inside the page
       Given a browser tab showing a page and the focus is in the page
@@ -1209,7 +1261,9 @@ Feature: In-app preview browser
 
       Examples:
         | keys                           | result                                              |
-        | Ctrl or Command+R              | the page reloads                                    |
+        | Command+R on macOS             | the page reloads                                    |
+        | Ctrl+R on Windows and Linux    | the page reloads                                    |
+        | Ctrl+R on macOS                | the page handles the key itself and is not reloaded |
         | Ctrl or Command+Shift+R        | the page handles the key itself and is not reloaded |
         | Ctrl or Command+C, X, V or A   | the page's selection is copied, cut, pasted or selected |
         | Ctrl or Command+Z              | the page's last edit is undone                      |
@@ -2405,6 +2459,15 @@ Feature: In-app preview browser
       When the user taps, types and scrolls in it
       Then the page on the desktop receives them where the phone shows them
 
+    # Upstream #29655: a streamed tab whose connection dropped kept a page's file request that had
+    # closed meanwhile. Dropped: the phone does not stream or control browser tabs here; its pages
+    # go to the system's browser.
+    @dropped @mobile
+    Scenario: A streamed tab that reconnects no longer asks for a file its page stopped asking for
+      Given the user controls a browser tab on the phone and the page asks for a file
+      When the stream drops and the page stops asking before it reconnects
+      Then the phone no longer offers to choose a file for that page
+
     @tui
     Scenario: The terminal client lists preview addresses without an embedded browser
       Given a project with configured and discovered preview addresses
@@ -2433,8 +2496,18 @@ Feature: In-app preview browser
       When the user clicks in the page
       Then the click reaches the page without waiting for the hover moves before it
 
+    # Upstream #28236: a click on a streamed page waited behind a burst of scroll moves, each sent
+    # to the page on its own. Dropped: the MC streams no pages, the desktop draws them.
+    @dropped @mc
+    Scenario: A click on a streamed page does not wait behind a burst of scrolling
+      Given a page is streamed to a client
+      When the user scrolls quickly and then clicks in the page
+      Then the click reaches the page without waiting for each scroll step before it
+
     # Upstream #22639: the suggested setup command named whichever t3 was on the PATH rather
     # than this install's. Dropped with the setup command itself.
+    # Upstream #29646: the server browser's errors suggested "sudo t3 browser setup" without the
+    # server's home. Dropped with the setup command itself.
     # Upstream #22892: an MC running as root could not start its own browser's
     # sandbox, so the browser error and "t3 browser setup" explained the server-side opt-out.
     # Dropped: the MC runs no browser of its own, the desktop draws every page.
@@ -2468,6 +2541,14 @@ Feature: In-app preview browser
       Given the user controls a browser tab streamed from the server
       When the user chooses Copy or Cut from the Edit menu
       Then the page's selection reaches the user's clipboard, and Cut removes it from the page
+
+    # Upstream #30306: the server's shared browser for agent tabs stayed up after the last tab
+    # closed, holding about 517 MiB. Dropped: the MC runs no browser of its own, the desktop draws every page.
+    @dropped @mc
+    Scenario: The browser for agent tabs quits after five idle minutes
+      Given an agent closed its last browser tab
+      When five minutes pass with no tab open
+      Then the browser behind agent tabs quits, and the next tab starts a fresh one
 
 
     # Upstream #19579: the phone closes a thread's browser tabs; the last one closed returns to the thread,
