@@ -82,6 +82,15 @@ const FakeMc::Extension projects([](FakeMc& mc) {
       mc.sendRow(id, row, QStringLiteral("project"));
     } else if (type == QLatin1String("project.create")) {
       const QString root = rpc.payload.value(QLatin1String("workspaceRoot")).toString();
+      // Like the MC, a folder is the project's however it is written; the refusal names the owner.
+      for (const QJsonObject& owner : std::as_const(mc.projects)) {
+        if (QDir::cleanPath(owner.value(QLatin1String("workspaceRoot")).toString()) == QDir::cleanPath(root)) {
+          const QString ownerId = owner.value(QLatin1String("id")).toString();
+          mc.refuse(rpc, QStringLiteral("Workspace %1 already belongs to project %2.").arg(root, ownerId),
+                    {{QStringLiteral("_tag"), QStringLiteral("WorkspaceInUse")}, {QStringLiteral("projectId"), ownerId}});
+          return;
+        }
+      }
       const QJsonObject row{
           {QStringLiteral("id"), id},
           {QStringLiteral("title"), QFileInfo(root).fileName()},
@@ -182,7 +191,7 @@ QStringList projectNames(World& world) {
 
 QStringList threadTitles(World& world) {
   QStringList titles;
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
     for (const QVariant& row : at(world.state(QStringLiteral("sidebar")), section).toList()) {
       titles.append(row.toMap().value(QStringLiteral("title")).toString());
     }
@@ -357,6 +366,10 @@ const Steps steps([] {
   step(QStringLiteral("the user adds the local folder of %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString root = world.mc.projects.value(c[0]).value(QLatin1String("workspaceRoot")).toString();
     world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap{{QStringLiteral("path"), root}});
+  });
+  step(QStringLiteral("the user adds the local folder of %1 again written with a detour").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString root = world.mc.projects.value(c[0]).value(QLatin1String("workspaceRoot")).toString();
+    world.bridge().dispatch(QStringLiteral("project.add"), QVariantMap{{QStringLiteral("path"), root + QStringLiteral("/../") + QFileInfo(root).fileName()}});
   });
   step(QStringLiteral("the user asks to remove %1").arg(q), [](World& world, const Captures& c, const Table&) {
     askToRemove(world, c[0]);

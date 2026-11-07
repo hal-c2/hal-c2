@@ -108,6 +108,13 @@ def save_providers(value):
     json.dump(value, open(PROVIDERS_FILE, "w"))
 
 sessions = 0
+# With `loseSessions`, a launch that finds DIR/NAME.lost (which it removes) cannot
+# resume or load a session an earlier launch made.
+LOST_FILE = os.path.join(DIR, NAME + ".lost")
+lost = bool(CONTROL.get("loseSessions")) and os.path.exists(LOST_FILE)
+if lost:
+    os.remove(LOST_FILE)
+mine = set()
 held = None          # a prompt held until session/cancel: (id, session)
 asked = {}           # our request id -> (kind, prompt id, session)
 answers = {}         # replies collected for a "read file" turn
@@ -188,7 +195,9 @@ def prompt(pid, sid, text):
             f.write(text + "\n")
         return finish(pid, sid, "wrote " + m.group(1))
     if "which model" in text:
-        return finish(pid, sid, "model: %s" % model)
+        # A session handed the thread so far says how many turns it was given.
+        handed = text.count("User: which model") if "<conversation_history>" in text else 0
+        return finish(pid, sid, "model: %s" % model + (" with %d earlier turns" % handed if handed else ""))
     if "report" in text:
         return finish(pid, sid, json.dumps({"argv0": ARGV0, "args": ARGS, "session": sid, "model": model,
                       "env": {k: os.environ[k] for k in LOG_ENV if k in os.environ}}))
@@ -255,9 +264,12 @@ for line in sys.stdin:
                   "url": "https://acme.test/login", "elicitationId": "login-1", "message": "Sign in to Acme"}})
     elif method in ("session/new", "session/resume", "session/load") and not signed_in():
         send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
+    elif method in ("session/resume", "session/load") and lost and params.get("sessionId") not in mine:
+        send({"id": mid, "error": {"code": -32002, "message": "Session not found"}})
     elif method in ("session/new", "session/resume", "session/load"):
         sessions += 1
         sid = params.get("sessionId") or "%s-%d-%d" % (NAME, os.getpid(), sessions)
+        mine.add(sid)
         result = {"configOptions": config_options()}
         if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,

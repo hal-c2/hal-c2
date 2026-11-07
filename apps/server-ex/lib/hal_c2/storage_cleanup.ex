@@ -160,7 +160,7 @@ defmodule HalC2.StorageCleanup do
         mc == node(),
         thread["deletedAt"] == nil do
       running? =
-        thread["activeRunId"] != nil or (thread["pendingBackgroundTasks"] || []) != [] or
+        thread["activeRunId"] != nil or running_background?(thread) or
           session?(id)
 
       {id, activity_at(thread), running?}
@@ -357,8 +357,12 @@ defmodule HalC2.StorageCleanup do
   # Idle with nothing pending; a live session is checked separately (`busy/1`).
   defp idle?(thread) do
     thread["activeRunId"] == nil and thread["status"] in @idle and
-      (thread["pendingBackgroundTasks"] || []) == [] and thread["pendingRuntimeRequest"] == nil
+      not running_background?(thread) and thread["pendingRuntimeRequest"] == nil
   end
+
+  # A row stored before `runningBackgroundTasks` listed all of it as pending.
+  defp running_background?(thread),
+    do: (thread["runningBackgroundTasks"] || thread["pendingBackgroundTasks"] || []) != []
 
   defp settled_moments_ago?(group, now) do
     Enum.any?(group, fn thread ->

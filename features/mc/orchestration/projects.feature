@@ -260,6 +260,13 @@ Feature: Projects on an MC
     When a client creates or moves another project to "~/code/app"
     Then it fails because the folder already belongs to a project
 
+  @mc
+  Scenario: The refusal names the project that owns the folder
+    Given project "p1" has the folder "~/code/app"
+    When a client creates or moves another project to "~/code/app"
+    Then it fails because the folder already belongs to a project
+    And the refusal names project "p1"
+
   # Legacy: packages/shared/src/path.ts (normalizeProjectPathForComparison), apps/server/src/orchestration/commandInvariants.ts (workspace already in use)
   @mc @backlog
   Scenario Outline: The same folder written another way still belongs to its project

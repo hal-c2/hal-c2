@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -443,7 +444,13 @@ void LocalCache::post(Job job) {
 }
 
 void LocalCache::wait() {
-  if (m_worker) QMetaObject::invokeMethod(m_worker, [] {}, Qt::BlockingQueuedConnection);
+  if (!m_worker) return;
+  QElapsedTimer clock;
+  clock.start();
+  QMetaObject::invokeMethod(m_worker, [] {}, Qt::BlockingQueuedConnection);
+  // The caller's thread, the GUI's, stood still meanwhile: a disk that slow
+  // is worth saying.
+  if (clock.elapsed() > 500) qWarning("[cache] waited %lld ms for the disk", static_cast<long long>(clock.elapsed()));
 }
 
 void LocalCache::drain() {

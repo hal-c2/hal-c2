@@ -178,6 +178,20 @@ class ComposerRegression : public QObject {
   Q_OBJECT
 
 private slots:
+  // Prompt recall skipped only a message with a scheduledTaskId, so an older
+  // MC's or a T3 import's scheduled-task message (the task in the item's id and
+  // a "[Triggered by schedule task: ...]" prefix, sent by "user") was recalled.
+  void anOlderMcsScheduledTaskMessageIsSentByAutomation() {
+    const QJsonObject legacy{{QStringLiteral("id"), QStringLiteral("scheduled-task-message:task-1:2:scheduled")},
+                             {QStringLiteral("createdBy"), QStringLiteral("user")},
+                             {QStringLiteral("text"), QStringLiteral("[Triggered by schedule task: Nightly]\n\nRun it")}};
+    QVERIFY(TimelineModel::sentByScheduledTask(legacy));
+    QVERIFY(TimelineModel::sentByScheduledTask(QJsonObject{{QStringLiteral("scheduledTaskId"), QStringLiteral("task-1")}}));
+    // A user who typed the prefix themselves wrote it.
+    QVERIFY(!TimelineModel::sentByScheduledTask(
+        QJsonObject{{QStringLiteral("id"), QStringLiteral("message:run-1")}, {QStringLiteral("text"), legacy.value(QStringLiteral("text"))}}));
+  }
+
   // With the caret at the very start of a draft whose first line is empty and
   // whose second starts with "/", the slash menu opened for a command that
   // started after the caret: start 1, end 0.

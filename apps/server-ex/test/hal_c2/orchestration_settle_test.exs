@@ -151,6 +151,82 @@ defmodule HalC2.OrchestrationSettleTest do
     end
   end
 
+  # Upstream #24610: only Claude implements `await_background/3`
+  # (`hal_c2_background_wait`). On the other adapters (Codex here; the ACP
+  # adapter behind Grok, Cursor, OpenCode and Antigravity is the same) the
+  # mark is refused as unsupported, so a running command or monitor can never
+  # hold the thread: settlement must not answer "has background work" for it,
+  # and the thread may auto-settle while it runs. The work still counts as
+  # running (`runningBackgroundTasks`), which is what the idle-session pin
+  # and recovery read, so its process and files stay alive. A subagent holds
+  # on every provider.
+  test "a non-Claude provider's running background command does not block settlement", %{
+    thread_id: thread_id
+  } do
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.unsnooze", "threadId" => thread_id})
+
+    item = fn id, type ->
+      {"turn-item", id,
+       %{
+         "s" => %{
+           "id" => id,
+           "threadId" => thread_id,
+           "runId" => "run-1",
+           "type" => type,
+           "status" => "running"
+         }
+       }}
+    end
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", "run-1", %{"s" => %{"id" => "run-1", "ordinal" => 1, "status" => "completed"}}},
+        item.("cmd-1", "command_execution"),
+        item.("mon-1", "dynamic_tool")
+      ])
+
+    row = HalC2.Projection.Shell.thread_shell(stream(thread_id))
+
+    assert Enum.map(row["runningBackgroundTasks"], & &1["taskId"]) |> Enum.sort() ==
+             ["cmd-1", "mon-1"]
+
+    assert row["pendingBackgroundTasks"] == []
+    assert HalC2.Orchestration.Settlement.blocker(row, System.system_time(:millisecond)) == nil
+    assert {:ok, _} = auto_settle(thread_id)
+    assert thread(thread_id)["settledOverride"] == "settled"
+
+    # The running work is still listed after the settle, for idle release and recovery.
+    row = HalC2.Projection.Shell.thread_shell(stream(thread_id))
+    assert length(row["runningBackgroundTasks"]) == 2
+  end
+
+  test "a non-Claude provider's running subagent still blocks settlement", %{
+    thread_id: thread_id
+  } do
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.unsnooze", "threadId" => thread_id})
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", "run-1", %{"s" => %{"id" => "run-1", "ordinal" => 1, "status" => "completed"}}},
+        {"turn-item", "sub-1",
+         %{
+           "s" => %{
+             "id" => "sub-1",
+             "threadId" => thread_id,
+             "runId" => "run-1",
+             "type" => "subagent",
+             "status" => "running"
+           }
+         }}
+      ])
+
+    row = HalC2.Projection.Shell.thread_shell(stream(thread_id))
+    assert [%{"taskId" => "sub-1"}] = row["pendingBackgroundTasks"]
+
+    assert HalC2.Orchestration.Settlement.blocker(row, System.system_time(:millisecond)) ==
+             "has background work"
+  end
+
   # A question the agent asked in the background is answered with a message, so it does
   # not block settling; settling dismisses it unanswered.
   test "settling dismisses questions the agent asked in the background", %{thread_id: thread_id} do

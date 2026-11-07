@@ -262,6 +262,7 @@ Feature: Reviewing working tree and branch changes
     Then the diff shows only the changes that commit made
     And the commit's hash is shown in the diff's header
 
+  # Upstream #19941: a code-host commit link in the thread opens that commit in the Diff pane, using that host's URL rules.
   @backlog @shared @mc
   Scenario Outline: A <host> commit link in the thread opens that commit in the diff
     Given the thread's checkout has the commit "a1b2c3d" and its remote is on <host>
@@ -279,6 +280,7 @@ Feature: Reviewing working tree and branch changes
       | Bitbucket Cloud  |
       | Azure DevOps     |
 
+  # Upstream #19941: a commit link the checkout cannot show follows the browser setting.
   @backlog @shared @mc
   Scenario: A commit link the checkout cannot show follows the link setting
     Given the thread's checkout does not have the commit a link points at
@@ -286,6 +288,7 @@ Feature: Reviewing working tree and branch changes
     Then it opens the way links are set to open
     And a pull request's commit opens in that pull request's review instead
 
+  # Upstream #19941: a shallow clone's boundary commit, whose parents are missing, is not opened as a diff.
   @backlog @mc
   Scenario: A commit at the edge of a shallow clone is not shown as a diff
     Given the checkout is a shallow clone and "a1b2c3d" is its oldest commit

@@ -426,6 +426,12 @@ const Steps steps([] {
   step(QStringLiteral("the user types %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // Feedback on a plan the composer offers (TurnSteps).
     if (planFeedbackTypes(world, c[0])) return;
+    // Into the composer on screen, while no palette is open.
+    if (composerBrickShown(world) && !palette(world).isOpen()) {
+      typeInComposer(world, c[0]);
+      settleComposer(world);
+      return;
+    }
     open(world);
     palette(world).setQuery(palette(world).query() + c[0]);
   });

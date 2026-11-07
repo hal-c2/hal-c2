@@ -867,7 +867,6 @@ Feature: Codex
     Then Codex receives HAL-C2's orchestration instructions with the second message only
 
   # Upstream #18415: Codex threads get the whole orchestration instructions
-  @backlog @priority-high
   Scenario: Codex receives the whole orchestration instructions
     Given a Codex thread in default mode
     When the turn starts
@@ -876,7 +875,6 @@ Feature: Codex
 
   # Upstream #13547: a model catalog's own default-mode text replaced the instructions sent
   # inside the collaboration mode, so HAL-C2's details went missing on newer models.
-  @mc @plugin-codex @backlog @priority-high
   Scenario: A model whose catalog replaces default mode still gets HAL-C2's runtime details
     Given the "hal-c2" server is attached to a Codex thread on a model whose catalog replaces default mode
     When the user sends a message in default mode
@@ -884,21 +882,20 @@ Feature: Codex
 
   # Upstream #24737: copies of Codex's own Plan and Default prompts drifted from the installed
   # Codex, and a Default turn without the HAL-C2 server never left an earlier Plan mode.
-  @mc @plugin-codex @backlog
   Scenario: Codex brings its own plan and default mode instructions
     When the user sends a message in plan mode on a Codex thread
     Then the turn names Codex's plan collaboration mode
     And HAL-C2 sends no copy of Codex's mode instructions of its own
 
   # Upstream #24737: a Default turn without the HAL-C2 server never left an earlier Plan mode.
-  @mc @plugin-codex @backlog @priority-high
   Scenario: A default-mode turn leaves plan mode even without the HAL-C2 server
     Given a Codex thread without the "hal-c2" server whose last turn was in plan mode
     When the user sends a message in default mode
     Then the turn names Codex's default collaboration mode
     And Codex may edit files again
 
-  @mc @plugin-codex @backlog @priority-high
+  # Upstream #13547: Codex drops additionalContext when it compacts, and resends an entry
+  # only once its value changes.
   Scenario: Codex gets HAL-C2's runtime and tool instructions again after compacting the thread
     Given the "hal-c2" server is attached to a Codex thread
     When Codex compacts the thread's context
@@ -1598,7 +1595,6 @@ Feature: Codex
   # The floor follows T3 Code's Codex policy (its #13481). Below 0.149 Codex does not send
   # Thread.projectId, so no session can start and the version is broken. 0.149 to 0.155 are
   # outside the supported range.
-  @mc @backlog @plugin-codex
   Scenario Outline: The Codex version sets its support level for this HAL-C2 release
     Given Codex version "<version>" is installed
     When the MC checks Codex

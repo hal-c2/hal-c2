@@ -245,7 +245,7 @@ Feature: Snoozing threads
 
   # A queued message the user wrote still blocks the snooze (above); automatic wakes do not.
   # Upstream #19099: snoozed threads allow queued automatic wakes
-  @mc @backlog
+  @mc
   Scenario Outline: A thread with an automatic wake queued can be snoozed
     Given "Refactor cart" has <wake> queued
     When the user snoozes "Refactor cart" until tomorrow
@@ -272,7 +272,7 @@ Feature: Snoozing threads
       | the MC shuts down                          |
 
   # Upstream #2829: the new orchestrator
-  @mc @desktop @mobile @backlog @priority-high
+  @mc @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario: A late failure from an earlier run does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When a run that started before the snooze reports a failure
@@ -290,7 +290,7 @@ Feature: Snoozing threads
 
   # Upstream #16517: pull request sync, links, renames and reordering woke snoozed threads; only
   # new activity does now.
-  @mc @desktop @mobile @backlog @priority-high
+  @mc @desktop @mobile @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: A background update does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
     When <update>
@@ -344,7 +344,7 @@ Feature: Snoozing threads
 
   # Upstream #22202: every automatic message cleared the snooze, so a self-waking thread came
   # back within minutes. A message the user sends still wakes it.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: An automatic wake keeps a thread snoozed
     Given "Refactor cart" is snoozed until tomorrow
     When <wake> sends "Refactor cart" a message and its run finishes

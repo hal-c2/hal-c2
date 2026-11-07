@@ -246,7 +246,7 @@ defmodule HalC2.Steps.Common do
       )
     end)
 
-    World.await_row(id, &(&1["pendingBackgroundTasks"] == [] and &1["activeRunId"] == nil))
+    World.await_row(id, &(&1["runningBackgroundTasks"] == [] and &1["activeRunId"] == nil))
     context
   end
 

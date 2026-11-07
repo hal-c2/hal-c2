@@ -192,6 +192,12 @@ public:
   // What the sidebar shows for a draft with something in it: the text's first
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
+  // The threads (keys) whose composer holds something unsent, the rows the
+  // sidebar marks "Unsent draft".
+  QSet<QString> unsentThreads() const;
+  // Empties the thread's composer of its text, attachments and excerpts, in
+  // every window (the sidebar's `thread.draft.discard`); its model and modes stay.
+  void discardDraft(const QString& target);
   // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
   // `source` rides with it to the MC when set (ChatImageAttachment.source).
   void attachImage(const QString& target, const QString& name, const QString& mimeType, const QByteArray& bytes,
@@ -549,7 +555,8 @@ private:
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
-  void save() const;
+  // False when the drafts and stash could not be written.
+  bool save() const;
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;

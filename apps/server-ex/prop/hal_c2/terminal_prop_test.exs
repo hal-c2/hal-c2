@@ -677,7 +677,98 @@ defmodule HalC2.TerminalPropTest do
   defp lookup_error?(result),
     do: match?({:error, %{"_tag" => "TerminalSessionLookupError"}}, result)
 
+  # What a poll finds under the shell, as `ps` lists it: `{group, name}` of each child.
+  # A child in the shell's own process group while the shell holds the terminal is a
+  # subshell of the prompt (command substitution, a theme's helper), whatever its name;
+  # a child in a group of its own is a command, also when it is a copy of the shell
+  # (`bash ./deploy.sh`, a nested `zsh`). With the terminal in another group, any child is.
+  @groups [:shell, :own]
+  @names ["cat", "-cat", "vim", "zsh"]
+
+  property "a terminal is busy exactly while its shell has a command of its own",
+    numtests: HalC2.Prop.numtests(30),
+    max_size: 12 do
+    forall polls <-
+             non_empty(
+               list({
+                 resize(4, list({elements(@groups), elements(@names)})),
+                 elements([:shell, :other])
+               })
+             ) do
+      trap_exit do
+        home = HalC2.Prop.scratch_home("terminal")
+        shell = System.get_env("SHELL")
+        System.put_env("SHELL", System.find_executable("cat"))
+        table = Path.join(home, "ps-table")
+        ps = Path.join(home, "ps")
+        File.write!(ps, "#!/bin/sh\nexec cat '#{table}'\n")
+        File.chmod!(ps, 0o755)
+        File.write!(table, "")
+        Application.put_env(:hal_c2, :terminal_ps, ps)
+        # The test asks the hub to look; its own timer stays out of the way.
+        Application.put_env(:hal_c2, :terminal_poll_ms, 3_600_000)
+
+        HalC2.Prop.start_services([
+          {Registry, keys: :unique, name: @registry},
+          {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
+          Hub
+        ])
+
+        key = {"th-busy", "busy"}
+        {:ok, _} = Terminal.open(launch(key))
+        # The terminal's report to the hub is a cast; the call is answered after it.
+        _ = Hub.summaries()
+        {:ok, _} = Terminal.open(launch(key))
+
+        bad =
+          Enum.find_value(polls, fn {children, foreground} ->
+            observed = poll_children(key, table, children, foreground)
+
+            expected =
+              case Enum.find(children, fn {group, _} -> group == :own or foreground == :other end) do
+                nil -> {false, nil}
+                {_, name} -> {true, name}
+              end
+
+            if observed != expected, do: {children, foreground, observed}
+          end)
+
+        HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :terminal_ps)
+        Application.delete_env(:hal_c2, :terminal_poll_ms)
+        if shell, do: System.put_env("SHELL", shell), else: System.delete_env("SHELL")
+
+        (bad == nil)
+        |> when_fail(IO.inspect(bad, label: "children, foreground, then busy and its command"))
+      end
+    end
+  end
+
   # --- wrappers ----------------------------------------
+
+  # Lists `children` (`{group, command}`) under the shell for the next look, with the terminal
+  # held by `foreground`'s group, and returns `{busy, command}` as the terminal holds them
+  # once the hub has looked.
+  defp poll_children(key, table, children, foreground) do
+    shell = term_state(key).os_pid
+    shell_group = shell
+    own_group = shell + 1
+
+    rows =
+      children
+      |> Enum.with_index(1)
+      |> Enum.map(fn {{group, name}, n} ->
+        pgid = if group == :own, do: own_group + n, else: shell_group
+
+        "#{shell + n * 100_000} #{shell} #{pgid} #{if foreground == :shell, do: shell_group, else: own_group} #{name}"
+      end)
+
+    tpgid = if foreground == :shell, do: shell_group, else: own_group
+    File.write!(table, Enum.join(["#{shell} 1 #{shell_group} #{tpgid} cat" | rows], "\n") <> "\n")
+    :ok = Hub.refresh()
+    state = :sys.get_state(pid_of(key))
+    {state.subprocess, state.child_label}
+  end
 
   defp input(key, extra \\ %{}) do
     {thread_id, terminal_id} = key

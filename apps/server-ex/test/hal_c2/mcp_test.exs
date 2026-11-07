@@ -267,6 +267,21 @@ defmodule HalC2.McpTest do
     assert {:ok, %{"pullRequests" => []}} = tool.("list_thread_pull_requests", %{})
   end
 
+  test "a preference update while settings.json cannot be read is refused and changes nothing" do
+    start_supervised!(HalC2.Settings)
+    {_caller, tool} = caller("wait for it")
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "{ not json")
+
+    assert {:error, text} =
+             tool.("hal_c2_environment_preferences_update", %{"defaultThreadEnvMode" => "local"})
+
+    assert text =~ "orchestration_error"
+    assert text =~ "Could not read"
+    assert File.read!(path) == "{ not json"
+  end
+
   test "the new tools are advertised, and an idle caller cannot use them to change things" do
     thread_id = launch("hello")
     await_statuses(thread_id, ["completed"])

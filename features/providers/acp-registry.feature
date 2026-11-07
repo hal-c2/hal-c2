@@ -588,6 +588,7 @@ Feature: ACP registry agents
       | session not found                                                           |
       | session lock unavailable during is_session_generation_current: acquisition timed out |
 
+  # Upstream #26651: a lost or locked Copilot session restarts on the next message; other Copilot prompt errors keep their process.
   @backlog
   Scenario: Copilot's other prompt errors keep its process
     Given Copilot CLI runs over ACP in a thread

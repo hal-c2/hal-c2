@@ -117,6 +117,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.fail_queued/4" =>
         "the model sends no restart, and has no failure of one queued run: it only shortens the queue",
       "HalC2.Orchestration.warn_prepared/4" => @items,
+      # Cancels a thread's open message questions (a delegated task's end): request items only.
+      "HalC2.Orchestration.dismiss_questions/1" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,

@@ -43,6 +43,7 @@ defmodule HalC2.Orchestration.Delegation do
          :new <- repeated(parent, thread, instance, input),
          {:ok, selection} <- target(thread, input["target"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
+         {:ok, runtime} <- offered(runtime, input["runtimeMode"], selection),
          {:ok, interaction} <-
            mode(thread["interactionMode"], input["interactionMode"], :interaction),
          {:ok, workspace} <- resolve_workspace(thread, input["workspace"]) do
@@ -225,24 +226,35 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  @doc "`task_cancel`: cancels what the child has queued, a user's messages too, and interrupts a running task; its result, if any, stays."
-  def cancel(thread_id, task_id) do
+  @doc """
+  `task_cancel`: cancels a task that has not ended, what its child has queued, a user's
+  messages too, and interrupts the child; its result, if any, stays. A task whose child
+  has nothing left to interrupt is cancelled too: nothing would ever end it otherwise.
+
+  The child's interrupt stops what the child delegated in turn, as the user's Stop does,
+  unless `stop_delegated: false`: a caller that stops the child's tasks itself
+  (`Orchestration.stop_plugin_thread/3`) asks for one cascade, not two.
+  """
+  def cancel(thread_id, task_id, opts \\ []) do
     with %{} = task <-
            subagent(thread_id, task_id) ||
              {:error, "task_not_found", "The task was not found for this thread."},
          # Settled before the child is interrupted, so the report of the interrupted run
          # finds the task ended and wakes nobody; a task that ended meanwhile is not
          # cancelled.
-         :ok <- cancellable(task),
          {:settled, _, _} <-
            settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
       # Before the interrupt, or the end of the interrupted run starts it for a task that
-      # is over; after `cancellable/1`, which counts it as work there is to cancel.
+      # is over.
       Orchestration.cancel_queued(task["childThreadId"])
       hook(:cancelling, task_id)
 
       _ =
-        Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => task["childThreadId"]})
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => task["childThreadId"],
+          "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
+        })
 
       {:ok, status(thread_id, task_id)}
     else
@@ -259,8 +271,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   Settles the task `thread_id` works on, once the child is quiet: no run active or
-  queued, and no background work it still owes (`BackgroundWork.derive/1`, the
-  sidebar's Waiting pill). Until then the task works on, however many turns the
+  queued, and no background work still running (`BackgroundWork.derive/1`: all of
+  it, not only what holds the sidebar's Working, since a child's answer may wait on
+  a command it never marked). Until then the task works on, however many turns the
   child takes. It ends as the child's last run that was not rolled back did, with
   the child's last answer in such a run, and wakes the caller once.
 
@@ -765,6 +778,45 @@ defmodule HalC2.Orchestration.Delegation do
         do: task
   end
 
+  @doc """
+  Stops what `thread_id` delegated, from whichever turn, as the user's Stop on the thread
+  does: each task that has not ended is cancelled (`cancel/3`), which stops its child and,
+  in turn, what the child delegated. Each is cancelled in a process of its own, so a
+  child slow to stop holds up neither the Stop nor the others.
+  """
+  def stop_delegated(thread_id) do
+    for task <- StreamState.list(stream(thread_id), "subagent"),
+        task["origin"] == "app_owned" and is_binary(task["childThreadId"]) and
+          task["status"] not in @terminal do
+      Task.start(fn -> cancel(thread_id, task["id"]) end)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Called when the user stops `thread_id`: when it is the child of a task that has not
+  ended and has not started a run for it, nothing would end that task, so it is
+  cancelled (`cancel/3`), and its caller is not woken for it. A child that ran ends its
+  task from how that run ended, as it always does.
+  """
+  def child_stopped(thread_id) do
+    child = stream(thread_id)
+
+    with %{"lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => parent_id}} <-
+           StreamState.get(child, "thread")[thread_id],
+         true <- Enum.all?(StreamState.list(child, "run"), &(&1["status"] == "queued")),
+         %{"status" => status} = task when status not in @terminal <-
+           Enum.find(
+             StreamState.list(stream(parent_id), "subagent"),
+             &(&1["childThreadId"] == thread_id and &1["origin"] == "app_owned")
+           ) do
+      cancel(parent_id, task["id"])
+    end
+
+    :ok
+  end
+
   defp dispose_wakes(_thread_id, []), do: :ok
 
   defp dispose_wakes(thread_id, cohorts) do
@@ -954,7 +1006,8 @@ defmodule HalC2.Orchestration.Delegation do
     status = if status in @terminal, do: status, else: "completed"
     item_id = "turn-item:subagent:#{task["id"]}"
 
-    HalC2.Streams.transact(parent_id, :thread, fn state ->
+    parent_id
+    |> HalC2.Streams.transact(:thread, fn state ->
       finish = &Map.merge(&1, %{"status" => status, "completedAt" => at})
       current = StreamState.get(state, "subagent")[task["id"]] || %{}
 
@@ -995,7 +1048,16 @@ defmodule HalC2.Orchestration.Delegation do
         do: {[], :already},
         else: {changes, {:settled, delivery, sent}}
     end)
+    |> tap(&close_questions(&1, status, task["childThreadId"]))
   end
+
+  # A task stopped short leaves no question of its subagent's open for an answer
+  # nobody will act on; a finished one keeps them for the user.
+  defp close_questions({:settled, _, _}, status, child)
+       when status in ~w(cancelled interrupted) and is_binary(child),
+       do: Orchestration.dismiss_questions(child)
+
+  defp close_questions(_settled, _status, _child), do: :ok
 
   # Whether and how a finished task's result reaches the caller, decided with its
   # end inside the caller's transaction. Returns the delivery state, the wake's
@@ -1383,6 +1445,8 @@ defmodule HalC2.Orchestration.Delegation do
           true -> "working"
         end
 
+      blocked = blocked_on(child)
+
       %{
         "taskId" => task["id"],
         "childThreadId" => task["childThreadId"],
@@ -1400,24 +1464,92 @@ defmodule HalC2.Orchestration.Delegation do
         "worktreePath" => thread["worktreePath"],
         "branch" => thread["branch"]
       }
+      |> put_blocked(blocked)
+      |> put_next(task, blocked)
+      |> put_latest(answer(child))
     end
+  end
+
+  # The child's last answer, only when it is not the summary already: said after the
+  # task ended (a later turn of the child), or so far in a task still working.
+  defp put_latest(status, latest) when latest in [nil, ""], do: status
+  defp put_latest(%{"summary" => latest} = status, latest), do: status
+  defp put_latest(status, latest), do: Map.put(status, "latestAnswer", latest)
+
+  @running_next "Completion wakes this thread, so end your turn. Do not wait on it or poll it."
+
+  @doc "The hint a result of a task still working carries: its completion wakes the caller."
+  def running_next, do: @running_next
+
+  @doc "Whether `child_id` works on a task of `thread_id`'s that has not ended."
+  def working_task?(thread_id, child_id) do
+    thread_id
+    |> stream()
+    |> StreamState.list("subagent")
+    |> Enum.any?(
+      &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and
+          &1["status"] not in @terminal)
+    )
+  end
+
+  # The request the child's turn stopped on until someone answers it; a question the
+  # child asked while it keeps working does not block it.
+  defp blocked_on(child) do
+    child
+    |> StreamState.list("runtime-request")
+    |> Enum.find(
+      &(&1["status"] == "pending" and get_in(&1, ["responseCapability", "type"]) != "message")
+    )
+  end
+
+  defp put_blocked(status, nil), do: status
+
+  defp put_blocked(status, request) do
+    child = status["childThreadId"]
+
+    Map.put(status, "pendingRequest", %{
+      "requestId" => request["id"],
+      "kind" => request["kind"],
+      "runId" => request_run(child, request),
+      "next" =>
+        "The subagent waits on this. Read it with hal_c2_pending_request_read and answer it " <>
+          "with hal_c2_pending_request_respond (threadId #{child}, requestId #{request["id"]}), " <>
+          "or ask the user to; its result still wakes this thread."
+    })
+  end
+
+  defp request_run(child_id, request) do
+    get_in(StreamState.get(stream(child_id), "node"), [request["nodeId"], "runId"])
+  end
+
+  # Only while the task works on and will wake the caller when it ends: not once it
+  # ended, while it waits on someone's answer, or when its wake was given up.
+  defp put_next(status, task, blocked) do
+    if task["status"] not in @terminal and blocked == nil and
+         task["completionWake"] != "settled_only" and
+         get_in(task, ["completionDelivery", "state"]) != "disposed",
+       do: Map.put(status, "next", @running_next),
+       else: status
   end
 
   defp subagent(thread_id, task_id), do: StreamState.get(stream(thread_id), "subagent")[task_id]
 
   @doc "Waits for the task to end; a timeout leaves it running and returns its state."
   def wait(thread_id, task_id, timeout) do
-    :ok = HalC2.Streams.watch(thread_id, self())
+    # The child's stream too: a request it stops on ends the wait.
+    child = (subagent(thread_id, task_id) || %{})["childThreadId"] || thread_id
+    watched = Enum.uniq([thread_id, child])
+    for id <- watched, do: :ok = HalC2.Streams.watch(id, self())
     deadline = System.monotonic_time(:millisecond) + timeout
 
     try do
-      wait_loop(thread_id, task_id, deadline)
+      wait_loop(thread_id, task_id, deadline, child)
     after
-      HalC2.Streams.Server.unsubscribe(thread_id, self())
+      for id <- watched, do: HalC2.Streams.Server.unsubscribe(id, self())
     end
   end
 
-  defp wait_loop(thread_id, task_id, deadline) do
+  defp wait_loop(thread_id, task_id, deadline, child) do
     task = status(thread_id, task_id)
     left = deadline - System.monotonic_time(:millisecond)
 
@@ -1425,19 +1557,27 @@ defmodule HalC2.Orchestration.Delegation do
       task["status"] in @terminal ->
         {:ok, task}
 
+      # The child waits on an answer, which may never come while the caller waits too:
+      # the wait returns with the request, and the task's end wakes the caller.
+      task["pendingRequest"] != nil ->
+        hook(:expiring, task_id)
+        expire(thread_id, task_id)
+        {:ok, status(thread_id, task_id)}
+
       left <= 0 ->
         hook(:expiring, task_id)
 
         case expire(thread_id, task_id) do
-          :expired -> {:ok, Map.put(task, "waitTimedOut", true)}
+          :expired -> {:ok, Map.put(status(thread_id, task_id), "waitTimedOut", true)}
           :ended -> {:ok, status(thread_id, task_id)}
         end
 
       true ->
         receive do
-          {:hal_c2_stream, ^thread_id, _} -> wait_loop(thread_id, task_id, deadline)
+          {:hal_c2_stream, ^thread_id, _} -> wait_loop(thread_id, task_id, deadline, child)
+          {:hal_c2_stream, ^child, _} -> wait_loop(thread_id, task_id, deadline, child)
         after
-          min(left, 5_000) -> wait_loop(thread_id, task_id, deadline)
+          min(left, 5_000) -> wait_loop(thread_id, task_id, deadline, child)
         end
     end
   end
@@ -1536,19 +1676,6 @@ defmodule HalC2.Orchestration.Delegation do
   defp no_answer_text("interrupted"), do: "Child task ended with status interrupted."
   defp no_answer_text(_status), do: nil
 
-  # A task can be cancelled only while its child has work to interrupt: a run
-  # going, or background work it still owes.
-  defp cancellable(task) do
-    child = stream(task["childThreadId"])
-
-    if working?(StreamState.list(child, "run")) or owed(child) != [] do
-      :ok
-    else
-      {:error, "task_not_cancellable",
-       "Delegated task #{task["id"]} has no interruptible child run."}
-    end
-  end
-
   defp idle?(state), do: not Enum.any?(StreamState.list(state, "run"), &(&1["status"] in @active))
 
   # A role frames the child's prompt; "general" and no role leave the task as given.
@@ -1601,6 +1728,11 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
+  defp target(%{"modelSelection" => %{"options" => [_ | _]} = selection}, nil),
+    do:
+      {:ok,
+       Map.put(selection, "options", model_options(HalC2.Environment.providers(), selection))}
+
   defp target(thread, nil), do: {:ok, thread["modelSelection"]}
 
   defp target(thread, target) do
@@ -1633,6 +1765,11 @@ defmodule HalC2.Orchestration.Delegation do
 
       with :ok <- model_advertised(models, instance, target["model"]),
            :ok <- options_valid(models, instance, model, options) do
+        options =
+          if instance == inherited["instanceId"] and model == inherited["model"],
+            do: merge_options(model_options(providers, inherited), options),
+            else: options
+
         {:ok,
          %{"instanceId" => instance, "model" => model}
          |> then(&if(options, do: Map.put(&1, "options", options), else: &1))}
@@ -1712,6 +1849,46 @@ defmodule HalC2.Orchestration.Delegation do
   # The requested options against the model's descriptors (upstream
   # `invalidOptionSelections`): duplicates always fail; without descriptors the
   # rest is the provider's to judge.
+  @doc """
+  The options of `selection` its model has, by the model's option descriptors among
+  `providers`: an option stored for an earlier model, or off by default, is not the
+  caller's to pass on. All of them when the model lists no descriptors; nil for none.
+  """
+  def model_options(providers, %{"options" => [_ | _] = options} = selection) do
+    descriptors =
+      Enum.find_value(providers, fn provider ->
+        provider["instanceId"] == selection["instanceId"] &&
+          Enum.find_value(
+            provider["models"] || [],
+            &(&1["slug"] == selection["model"] &&
+                get_in(&1, ["capabilities", "optionDescriptors"]))
+          )
+      end)
+
+    case descriptors do
+      [_ | _] ->
+        ids = MapSet.new(descriptors, & &1["id"])
+        Enum.filter(options, &MapSet.member?(ids, &1["id"]))
+
+      _ ->
+        options
+    end
+  end
+
+  def model_options(_providers, _selection), do: nil
+
+  # On the caller's own model the task's options go over the caller's, so naming the
+  # effort keeps fast mode; an empty list clears them.
+  defp merge_options(inherited, options) when inherited in [nil, []] or options == [],
+    do: options
+
+  defp merge_options(inherited, nil), do: inherited
+
+  defp merge_options(inherited, options) do
+    named = MapSet.new(options, & &1["id"])
+    Enum.reject(inherited, &MapSet.member?(named, &1["id"])) ++ options
+  end
+
   defp options_valid(_models, _instance, _model, nil), do: :ok
 
   defp options_valid(models, instance, model, options) do
@@ -1768,6 +1945,39 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
+  # The access mode on the child's provider: one asked for that it does not offer is
+  # refused with those it does; an inherited one it lacks becomes the broadest it offers
+  # that is no broader (`mode` is already no broader than the caller's).
+  defp offered(mode, requested, selection) do
+    instance = (selection || %{})["instanceId"]
+
+    modes =
+      Enum.find_value(HalC2.Environment.providers(), &(&1["instanceId"] == instance && &1))
+      |> case do
+        %{"supportedRuntimeModes" => [_ | _] = modes} -> modes
+        _ -> nil
+      end
+
+    rank = &Map.get(@runtime_ranks, &1, 3)
+
+    cond do
+      modes == nil or mode in modes or mode == nil ->
+        {:ok, mode}
+
+      requested not in [nil, "inherit"] ->
+        {:error, "runtime_mode_unsupported",
+         "Provider #{instance} does not offer runtime mode #{mode}; it offers #{Enum.join(modes, ", ")}."}
+
+      narrower =
+          modes |> Enum.filter(&(rank.(&1) <= rank.(mode))) |> Enum.max_by(rank, fn -> nil end) ->
+        {:ok, narrower}
+
+      true ->
+        {:error, "runtime_mode_unsupported",
+         "Provider #{instance} offers no runtime mode as narrow as #{mode}; it offers #{Enum.join(modes, ", ")}."}
+    end
+  end
+
   # Inheriting never escalates, and a parent without a mode leaves the child its default.
   defp mode(parent, requested, _kind) when requested in [nil, "inherit"], do: {:ok, parent}
 
@@ -1815,6 +2025,12 @@ defmodule HalC2.Orchestration.Delegation do
 
       type == "root" ->
         {:ok, {"root", %{"type" => "root"}}}
+
+      type == "worktree" and outside?(thread["worktreePath"], root) ->
+        {:error, "workspace_outside_project",
+         "This thread works in #{thread["worktreePath"]}, which is not a checkout of the " <>
+           "project's repository, so no worktree can be made from it. Leave workspace out " <>
+           "to share the caller's checkout."}
 
       type == "worktree" ->
         new_worktree(thread, root, asked)
@@ -1908,6 +2124,10 @@ defmodule HalC2.Orchestration.Delegation do
     do: match?({:ok, _}, HalC2.Git.ok(root, ["check-ref-format", "--branch", branch]))
 
   # Two checkouts of one repository share a common git dir.
+  # A caller's checkout that is there and is not of the project's repository.
+  defp outside?(cwd, root),
+    do: is_binary(cwd) and File.dir?(cwd) and common_dir(cwd) != common_dir(root)
+
   defp common_dir(cwd) do
     case HalC2.Git.ok(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) do
       {:ok, dir} -> String.trim(dir)
