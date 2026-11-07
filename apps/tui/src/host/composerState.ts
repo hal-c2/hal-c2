@@ -1103,7 +1103,11 @@ export function createComposer(options: ComposerOptions): Composer {
       ...picker,
       query,
       options: matches,
-      index: 0,
+      // Searching starts at the top; an emptied search goes back to where the menu opened.
+      index:
+        needle === "" && spec.index !== undefined
+          ? Math.min(Math.max(0, spec.index), Math.max(0, matches.length - 1))
+          : 0,
       status: matches.length > 0 ? "ready" : "empty",
     };
     publish();
@@ -1392,7 +1396,7 @@ export function createComposer(options: ComposerOptions): Composer {
         workspaceChosen: false,
       };
       client.viewProject(projectId);
-      void loadRefs(draft.draftId, project.workspaceRoot);
+      void loadRefs(draft.draftId, projectId, project.workspaceRoot);
     }
     store.setStatus(`Project → ${project.title}`, "success");
     publish();
@@ -1776,11 +1780,13 @@ export function createComposer(options: ComposerOptions): Composer {
 
   // ── New-thread drafts ────────────────────────────────────────────────────
 
-  const loadRefs = (draftId: string, cwd: string) =>
+  // A draft can move to another project (draftId stays), so a load belongs to a draft
+  // only while the draft is still in the project it asked for.
+  const loadRefs = (draftId: string, projectId: string, cwd: string) =>
     track(
       client.listRefs(cwd).then(
         (result) => {
-          if (newDraft?.draftId !== draftId) return;
+          if (newDraft?.draftId !== draftId || newDraft.projectId !== projectId) return;
           newDraft = {
             ...newDraft,
             refs: result.refs,
@@ -1790,7 +1796,7 @@ export function createComposer(options: ComposerOptions): Composer {
           publish();
         },
         () => {
-          if (newDraft?.draftId !== draftId) return;
+          if (newDraft?.draftId !== draftId || newDraft.projectId !== projectId) return;
           newDraft = { ...newDraft, refsStatus: "error" };
           publish();
         },
@@ -1867,13 +1873,16 @@ export function createComposer(options: ComposerOptions): Composer {
     options.onDraftChange?.();
     // Its branches and files are this project's machine's, whatever thread was open before.
     client.viewProject(project?.id ?? null);
-    if (project) void loadRefs(newDraft.draftId, project.workspaceRoot);
+    if (project) void loadRefs(newDraft.draftId, project.id, project.workspaceRoot);
     if (project && savedMode === null) {
       const draftId = newDraft.draftId;
+      const projectId = project.id;
       void track(
         readProjectFile(client.readFile, project.workspaceRoot).then((file) => {
           const mode = envMode(file?.defaultThreadEnvMode);
           if (mode === null || newDraft?.draftId !== draftId || newDraft.workspaceChosen) return;
+          // The draft moved to another project: this file is not its hal-c2.json.
+          if (newDraft.projectId !== projectId) return;
           const next = contextFor(mode);
           newDraft = {
             ...newDraft,
