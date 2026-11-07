@@ -19,7 +19,7 @@ defmodule HalC2.PullRequests do
   require Logger
 
   alias HalC2.GitHub.Limits
-  alias HalC2.PullRequests.{Branches, GitHub, Held, Refreshes}
+  alias HalC2.PullRequests.{Branches, GitHub, Held, Hosts, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
 
   @default_limit 99
@@ -119,6 +119,7 @@ defmodule HalC2.PullRequests do
     with {:ok, cursors} <- decode_cursors(input["cursors"]) do
       {github, others} = input |> workspace() |> Enum.split_with(&(&1.kind == "github"))
       {hosted, others} = Enum.split_with(others, &HalC2.Plugins.git_host(&1.host))
+      {driven, others} = Enum.split_with(others, &Hosts.kind?(&1.kind))
       plugged = if cursors, do: plugin_listing([]), else: plugin_listing(hosted)
 
       identities =
@@ -127,12 +128,25 @@ defmodule HalC2.PullRequests do
         |> Task.async_stream(&{&1.host, identity(&1)}, timeout: :infinity)
         |> Map.new(fn {:ok, pair} -> pair end)
 
-      viewers = for {host, {:ok, %{"login" => login}}} <- identities, into: %{}, do: {host, login}
+      # Who is signed in on each other host a driver here can read.
+      driven_viewers =
+        driven
+        |> Enum.uniq_by(& &1.host)
+        |> Task.async_stream(&{&1.host, Hosts.viewer(&1)}, timeout: :infinity)
+        |> Map.new(fn {:ok, pair} -> pair end)
+
+      viewers =
+        Map.merge(
+          for({host, {:ok, login}} <- driven_viewers, into: %{}, do: {host, login}),
+          for({host, {:ok, %{"login" => login}}} <- identities, into: %{}, do: {host, login})
+        )
+
       counts = Enum.frequencies_by(github, & &1.host)
 
       providers =
         for({host, identity} <- identities, do: provider(host, counts[host], identity)) ++
           plugged.providers ++
+          driven_providers(driven, driven_viewers) ++
           for {host, [first | _] = on_host} <- Enum.group_by(others, & &1.host) do
             %{
               "host" => host,
@@ -150,19 +164,37 @@ defmodule HalC2.PullRequests do
       {readable, unreadable} = Enum.split_with(selected, &Map.has_key?(viewers, &1.host))
       result = %{"viewers" => viewers, "providers" => providers}
 
+      driven_selected =
+        if cursors, do: Enum.filter(driven, &Map.has_key?(cursors, key(&1))), else: driven
+
+      driven_batches =
+        driven_selected
+        |> Task.async_stream(
+          &read_driven(&1, driven_viewers[&1.host], input, cursors && cursors[key(&1)]),
+          max_concurrency: 12,
+          timeout: :infinity
+        )
+        |> Enum.map(fn {:ok, batch} -> batch end)
+
       if readable == [] do
         failures =
           for p <- Enum.uniq_by(selected, & &1.host), {:error, e} <- [identities[p.host]], do: e
 
         case Enum.find(failures, &(elem(&1, 0) in [:missing, :unauthenticated])) ||
                List.first(failures) do
-          failure when failure == nil or hosted != [] ->
+          failure when failure == nil or hosted != [] or driven_batches != [] ->
+            batches = driven_batches
+
             {:ok,
              Map.merge(result, %{
-               "entries" => plugged.entries,
-               "errors" => plugged.errors,
-               "truncated" => false,
-               "nextCursors" => %{}
+               "entries" =>
+                 (Enum.flat_map(batches, & &1.entries) ++ plugged.entries)
+                 |> Enum.sort_by(& &1["updatedAt"], :desc),
+               "errors" =>
+                 Enum.map(unreadable, &unreadable(&1, identities[&1.host])) ++
+                   Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
+               "truncated" => Enum.any?(batches, & &1.truncated),
+               "nextCursors" => for(b <- batches, b.next, into: %{}, do: {b.key, b.next})
              })}
 
           failure ->
@@ -177,6 +209,8 @@ defmodule HalC2.PullRequests do
             timeout: :infinity
           )
           |> Enum.map(fn {:ok, batch} -> batch end)
+
+        batches = batches ++ driven_batches
 
         {:ok,
          Map.merge(result, %{
@@ -228,6 +262,107 @@ defmodule HalC2.PullRequests do
       errors: for({project, _, {:error, _} = error} <- reads, do: unreadable(project, error))
     }
   end
+
+  # Hosts a driver here can read, once signed in; one that is not is listed as
+  # not configured, the way a host with no driver is.
+  defp driven_providers(driven, viewers) do
+    for {host, [first | _] = on_host} <- Enum.group_by(driven, & &1.host) do
+      configured = match?({:ok, _}, viewers[host])
+
+      %{
+        "host" => host,
+        "kind" => first.kind,
+        "searchesOnHost" => first.kind in ["gitlab", "bitbucket"],
+        "projectCount" => length(on_host),
+        "configured" => configured,
+        "detail" =>
+          if configured do
+            nil
+          else
+            case viewers[host] do
+              {:error, {reason, _detail}} when reason in [:missing, :unauthenticated] ->
+                "This host cannot be browsed here yet."
+
+              {:error, {_reason, detail}} ->
+                detail
+
+              _ ->
+                "This host cannot be browsed here yet."
+            end
+          end
+      }
+    end
+  end
+
+  # One driven host's repository: the host was asked for the state (and its own
+  # text search where it has one); involvement and the row filters are applied
+  # here, and the same boundary cursor as GitHub's carries the list on.
+  defp read_driven(project, {:ok, viewer}, input, cursor) do
+    state = input["state"] || "open"
+    limit = input["limit"] || @default_limit
+
+    case Hosts.list(project, %{state: state, query: input["query"]}) do
+      {:ok, %{items: items, more: more}} ->
+        kept =
+          for item <- items,
+              state == "all" or item["state"] == state,
+              involved?(item, input["involvement"] || "all", viewer),
+              GitHub.row_match?(item, input["filters"], viewer, true),
+              do: item
+
+        fetched =
+          if cursor, do: Enum.filter(kept, &(&1["updatedAt"] <= cursor.boundary)), else: kept
+
+        after_seen =
+          if cursor,
+            do:
+              Enum.reject(
+                fetched,
+                &(&1["updatedAt"] == cursor.boundary and &1["number"] in cursor.seen)
+              ),
+            else: fetched
+
+        slice = Enum.take(after_seen, limit)
+        truncated = more or length(after_seen) > limit
+        at = System.system_time(:millisecond)
+
+        %{
+          key: key(project),
+          entries: for(item <- slice, do: entry(project, item, viewer, at)),
+          errors: [],
+          truncated: truncated,
+          next: if(truncated and slice != [], do: next_cursor(cursor, slice, length(slice)))
+        }
+
+      {:error, _} = error ->
+        failed(project, unreadable(project, error))
+    end
+  end
+
+  defp read_driven(project, {:error, {reason, _detail}}, _input, _cursor)
+       when reason in [:missing, :unauthenticated] do
+    %{key: key(project), entries: [], errors: [], truncated: false, next: nil}
+  end
+
+  defp read_driven(project, {:error, _} = error, _input, _cursor),
+    do: failed(project, unreadable(project, error))
+
+  defp read_driven(project, _viewer, _input, _cursor),
+    do: %{key: key(project), entries: [], errors: [], truncated: false, next: nil}
+
+  defp involved?(item, "authored", viewer),
+    do:
+      item["author"] != nil and
+        String.downcase(item["author"]["login"]) == String.downcase(viewer)
+
+  defp involved?(item, "reviewing", viewer),
+    do:
+      Enum.any?(
+        item["reviewRequestLogins"] || [],
+        &(String.downcase(&1) == String.downcase(viewer))
+      )
+
+  defp involved?(_item, _involvement, _viewer), do: true
 
   defp provider(host, count, identity) do
     %{
@@ -418,12 +553,16 @@ defmodule HalC2.PullRequests do
       ~w(number title url headBranch baseBranch state isDraft mergeability additions deletions createdAt updatedAt labels)
     )
     |> Map.merge(%{
-      "provider" => "github",
+      "provider" => project.kind,
       "host" => project.host,
       "projectId" => project.id,
       "projectTitle" => project.title,
       "repository" => project.repository,
-      "author" => GitHub.with_avatar(item["author"], project.host),
+      "author" =>
+        if(project.kind == "github",
+          do: GitHub.with_avatar(item["author"], project.host),
+          else: item["author"]
+        ),
       "observedAt" => at,
       "viewerReviewRequested" =>
         author != me and Enum.any?(item["reviewRequestLogins"], &(String.downcase(&1) == me))

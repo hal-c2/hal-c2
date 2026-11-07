@@ -479,10 +479,28 @@ defmodule HalC2.PullRequests.GitHub do
   defp list_read(ctx, opts, true) do
     variables = %{"q" => Enum.join(search_terms(ctx, opts), " ")}
 
-    with {:ok, raw, _more, page} <-
-           list_pages(ctx, opts, @list_search_query, variables, ["search"], opts.limit + 1) do
-      items = Enum.flat_map(raw, &list_node/1)
-      truncated = length(raw) > opts.limit
+    # A continuation asks for the boundary instant inclusively, so the rows
+    # already sent at it come back first: read past them, or a page that shares
+    # one update time would hand back only what was already listed.
+    seen = if opts.cursor, do: opts.cursor.seen || [], else: []
+
+    with {:ok, raw, more, page} <-
+           list_pages(
+             ctx,
+             opts,
+             @list_search_query,
+             variables,
+             ["search"],
+             opts.limit + 1 + length(seen)
+           ) do
+      items =
+        raw
+        |> Enum.flat_map(&list_node/1)
+        |> Enum.reject(
+          &(opts.cursor && &1["updatedAt"] == opts.cursor.boundary && &1["number"] in seen)
+        )
+
+      truncated = length(items) > opts.limit or more
 
       {:ok,
        %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true, page: page}}
@@ -2297,8 +2315,10 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  # GitHub's own decision counts only reviews that satisfy branch rules; when it has
-  # none, the latest review per reviewer decides, changes requested first.
+  # GitHub's own decision counts only reviews that satisfy branch rules, so where
+  # it has one it wins: an approving review does not approve a pull request GitHub
+  # still marks review-required. When it has none, the latest review per reviewer
+  # decides, changes requested first.
   defp review_decision(value, latest) do
     summarized =
       case up(value) do
@@ -2312,10 +2332,10 @@ defmodule HalC2.PullRequests.GitHub do
     states = MapSet.new(reviews, &up(&1 && &1["state"]))
 
     cond do
-      summarized in ["approved", "changes-requested"] -> summarized
+      summarized != nil -> summarized
       "CHANGES_REQUESTED" in states -> "changes-requested"
       "APPROVED" in states -> "approved"
-      true -> summarized
+      true -> nil
     end
   end
 

@@ -228,7 +228,7 @@ Feature: Browsing pull requests
 
   # Upstream #32395: one approving review marked a GitHub row approved while GitHub still required
   # more approvals or a code owner's review.
-  @backlog @mc
+  @mc
   Scenario Outline: A GitHub pull request shows approved only when GitHub says so
     Given pull request 42 on GitHub has an approving review
     And GitHub reports its review decision as <decision>
@@ -1856,19 +1856,19 @@ Feature: Browsing pull requests
     And the stack reads from #20 at the base to #22, each layer stepped in once more
     And the base layer says the stack has three layers
 
-  @backlog @mc
+  @mc
   Scenario: Typed search words are matched as plain text
     When the user searches pull requests for "is:merged"
     Then the words "is:merged" are looked for in titles and bodies
     And the search is not narrowed to merged pull requests
 
-  @backlog @mc
+  @mc
   Scenario: The closed list leaves out merged pull requests
     Given "acme/shop" has one closed pull request and one merged pull request
     When the user lists closed pull requests
     Then only the closed pull request is listed
 
-  @backlog @mc
+  @mc
   Scenario: A repository the host's search does not index is still listed
     Given GitHub's search answers nothing at all for "acme/shop"
     When the user lists open pull requests
@@ -1882,33 +1882,33 @@ Feature: Browsing pull requests
     Then a larger page of up to 1000 pull requests is read
     And the list is not carried on from a cursor
 
-  @backlog @mc
+  @mc
   Scenario: A text search that finds nothing stays empty
     Given no pull request in "acme/shop" matches the words "tax"
     When the user searches pull requests for "tax"
     Then no pull requests are listed for "acme/shop"
     And the repository is not read the long way
 
-  @backlog @mc
+  @mc
   Scenario: A cursor the MC did not hand out refuses the whole list
     When a client lists pull requests carrying on from a cursor it made up
     Then the user is told "The list could not be carried on from where it left off."
     And no pull requests are listed
 
-  @backlog @mc
+  @mc
   Scenario: Carrying on reads only the repositories the cursor names
     Given the first page of the list carried on for "acme/shop" only
     When the user loads more pull requests
     Then only "acme/shop" is read
     And "acme/api" is not asked again
 
-  @backlog @mc
+  @mc
   Scenario: Worktrees of one repository are listed once
     Given "acme/shop" is open as the project and as two worktrees
     When the user lists pull requests
     Then each pull request of "acme/shop" is listed once
 
-  @backlog @mc
+  @mc
   Scenario: The same repository name on two hosts stays two repositories
     Given "acme/shop" exists on github.com and on a self-hosted GitHub
     When the user lists pull requests
@@ -1972,7 +1972,7 @@ Feature: Browsing pull requests
       | Azure DevOps |
       | Bitbucket    |
 
-  @backlog @mc
+  @mc
   Scenario: A row that cannot be read does not end the list early
     Given the host returns one unreadable row in the middle of a page
     When the user lists open pull requests
@@ -1980,7 +1980,7 @@ Feature: Browsing pull requests
     And more can still be loaded
 
   # Upstream #18813: on Bitbucket a full page sharing one update time made Load more return the same page; the pull requests already delivered are left out of the next request.
-  @backlog @mc
+  @mc
   Scenario: Pull requests with the same update time are not lost between pages
     Given several pull requests were updated at the same instant across a page boundary
     When the user loads more pull requests
@@ -2019,7 +2019,7 @@ Feature: Browsing pull requests
       | GitLab    | "tax&state=all"        |
       | Bitbucket | `a" OR state="MERGED`  |
 
-  @backlog @mc
+  @mc
   Scenario: A search of only spaces is no search
     When the user searches pull requests for "   "
     Then the list is not narrowed
@@ -2120,7 +2120,7 @@ Feature: Browsing pull requests
     And pull request 42 is reported as not found
     And pull requests 41 and 43 are not read again
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A malformed row in a listing is skipped
     Given GitHub answers a listing of open pull requests with one row that cannot be read
     When the user lists open pull requests
@@ -2297,7 +2297,7 @@ Feature: Browsing pull requests
     Then that host is reported as one the MC cannot read yet
     And the other hosts are listed as usual
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A review request is flagged for the user, spelled any way, but not on their own pull request
     Given the user is "bilal" and a review of pull request 1 is requested of "Bilal"
     And pull request 2 was written by "bilal" and lists "bilal" among its requested reviewers
@@ -2325,7 +2325,7 @@ Feature: Browsing pull requests
     Then it is answered as merged without asking the host
 
   # Legacy: apps/server/src/pullRequest/GitHubPullRequestCli.ts (matchesInvolvement), gitHubPullRequestJson.ts (hasTeamReviewRequest)
-  @backlog @mc @priority-low
+  @mc
   Scenario: On GitHub a review asked of a team is listed among those awaiting the user's review
     Given pull request 1 on GitHub has a review requested of the team "acme/core" and of no person
     When the user lists pull requests where their review is requested

@@ -81,7 +81,9 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       {~s(label:"bug"), &labelled?(&1, "bug")},
       {~s(author:"octocat"), &author?(&1, "octocat")},
       {~s(author:"#{@me}"), &author?(&1, @me)},
-      {"tax label:bug", &(&1["title"] =~ ~r/tax/i)}
+      {"tax label:bug", &(&1["title"] =~ ~r/tax/i)},
+      {~s("tax"), &(&1["title"] =~ ~r/tax/i)},
+      {~s("is:merged"), fn _ -> false end}
     ]
   end
 
@@ -1127,5 +1129,334 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
        context do
     assert paused_until(context) == at(context.until)
     still_paused(context, context.until)
+  end
+
+  # --- GitHub's own review decision, search text and continuations ----------------
+
+  defp shop_rule(context, pulls, extra \\ %{}) do
+    World.cli_rules(
+      context,
+      Map.merge(
+        %{"args" => ["api graphql"], "repository" => "acme/shop", "pulls" => pulls},
+        extra
+      )
+    )
+  end
+
+  step "pull request 42 on GitHub has an approving review", context do
+    Map.put(context, :approving, [%{"state" => "APPROVED", "author" => %{"login" => "hubot"}}])
+  end
+
+  step ~r/^GitHub reports its review decision as (?<decision>review required|approved|nothing)$/,
+       %{args: [decision]} = context do
+    reported =
+      %{"review required" => "REVIEW_REQUIRED", "approved" => "APPROVED", "nothing" => nil}[
+        decision
+      ]
+
+    pr =
+      Shared.gh_pr("acme/shop", 42, %{
+        "reviewDecision" => reported,
+        "latestReviews" => context.approving
+      })
+
+    shop_rule(context, [pr], %{"stdin" => ["PullRequestListSearch", "is:open "]})
+  end
+
+  step ~r/^its row shows it as (?<shown>waiting for a review|approved)$/,
+       %{args: [shown]} = context do
+    row = Enum.find(entries(context), &(&1["number"] == 42))
+    assert row, "pull request 42 is not listed: #{inspect(context.reply)}"
+
+    assert row["reviewDecision"] ==
+             if(shown == "approved", do: "approved", else: "review-required")
+
+    context
+  end
+
+  step "the words {string} are looked for in titles and bodies", %{args: [words]} = context do
+    searches =
+      Enum.filter(World.pull_listings(context), &(&1["query"] =~ "PullRequestListSearch"))
+
+    assert searches != []
+    assert Enum.all?(searches, &(&1["variables"]["q"] =~ ~s("#{words}")))
+    Map.put(context, :searches, searches)
+  end
+
+  step "the search is not narrowed to merged pull requests", context do
+    for search <- context.searches do
+      q = search["variables"]["q"]
+      assert q =~ "is:open"
+      refute q =~ ~r/(^| )is:merged( |$)/
+    end
+
+    context
+  end
+
+  step "{string} has one closed pull request and one merged pull request", context do
+    # The fixture's acme/shop: #3 closed, #4 merged.
+    context
+  end
+
+  step "only the closed pull request is listed", context do
+    assert listed(context) == MapSet.new([{"acme/shop", 3}])
+    context
+  end
+
+  step "GitHub's search answers nothing at all for {string}", %{args: [repository]} = context do
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => ["PullRequestListSearch"],
+        "pulls" => []
+      },
+      %{
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => ["PullRequestListIndexed"],
+        "pulls" => []
+      }
+    ])
+    |> Map.put(:unindexed, repository)
+  end
+
+  step "the open pull requests of {string} are listed the long way",
+       %{args: [repository]} = context do
+    numbers = for e <- entries(context), e["repository"] == repository, do: e["number"]
+    assert Enum.sort(numbers) == [1, 2]
+
+    assert Enum.any?(
+             World.pull_listings(context),
+             &(&1["query"] =~ "PullRequestListRepository")
+           ),
+           "the repository's own list was not read"
+
+    context
+  end
+
+  step "no pull request in {string} matches the words {string}",
+       %{args: [repository, _words]} = context do
+    World.cli_rules(context, %{
+      "args" => ["api graphql"],
+      "repository" => repository,
+      "stdin" => ["PullRequestListSearch"],
+      "pulls" => []
+    })
+  end
+
+  step "no pull requests are listed for {string}", %{args: [repository]} = context do
+    assert {:ok, _} = context.reply
+    refute Enum.any?(entries(context), &(&1["repository"] == repository))
+    context
+  end
+
+  step "the repository is not read the long way", context do
+    refute Enum.any?(
+             World.pull_listings(context),
+             &(&1["query"] =~ "PullRequestListRepository")
+           )
+
+    context
+  end
+
+  step "a client lists pull requests carrying on from a cursor it made up", context do
+    list(context, %{"cursors" => %{"github.com acme/shop" => "made-up"}})
+  end
+
+  step "no pull requests are listed", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
+  step "the first page of the list carried on for {string} only",
+       %{args: [repository]} = context do
+    prs =
+      for number <- 200..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        Shared.gh_pr(repository, number, %{"updatedAt" => at})
+      end
+
+    context
+    |> World.cli_rules(%{
+      "args" => ["api graphql"],
+      "repository" => repository,
+      "stdin" => ["is:open "],
+      "pulls" => prs
+    })
+    |> Map.merge(%{many: {repository, prs}})
+  end
+
+  step "only {string} is read", %{args: [repository]} = context do
+    assert Enum.map(entries(context), & &1["repository"]) |> Enum.uniq() == [repository]
+    context
+  end
+
+  step "{string} is not asked again", %{args: [repository]} = context do
+    # Asked once, for the first page the load-more step read before carrying on.
+    assert length(listings_of(context, repository)) == 1
+    context
+  end
+
+  step "{string} is open as the project and as two worktrees",
+       %{args: [repository]} = context do
+    Enum.reduce(["shop worktree one", "shop worktree two"], context, fn title, context ->
+      context = World.create_project(context, title)
+      World.github_remote(context, World.project(context, title).root, repository)
+      context
+    end)
+  end
+
+  step "each pull request of {string} is listed once", %{args: [repository]} = context do
+    numbers = for e <- entries(context), e["repository"] == repository, do: e["number"]
+    assert Enum.sort(numbers) == [1, 2]
+    context
+  end
+
+  step "{string} exists on github.com and on a self-hosted GitHub",
+       %{args: [repository]} = context do
+    context = World.create_project(context, "shop enterprise")
+    root = World.project(context, "shop enterprise").root
+    World.git!(root, ["remote", "add", "origin", "git@github.example.com:#{repository}.git"])
+    context
+  end
+
+  step "the pull requests of both are listed under their own host", context do
+    for host <- ["github.com", "github.example.com"] do
+      numbers =
+        for e <- entries(context),
+            e["host"] == host and e["repository"] == "acme/shop",
+            do: e["number"]
+
+      assert Enum.sort(numbers) == [1, 2], "nothing listed under #{host}"
+    end
+
+    context
+  end
+
+  step "the host returns one unreadable row in the middle of a page", context do
+    prs =
+      for number <- 150..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        Shared.gh_pr("acme/shop", number, %{"updatedAt" => at})
+      end
+
+    shop_rule(context, List.insert_at(prs, 50, %{"number" => "unreadable"}), %{
+      "stdin" => ["is:open "]
+    })
+  end
+
+  step "the readable rows are listed", context do
+    numbers = for e <- entries(context), e["repository"] == "acme/shop", do: e["number"]
+    assert length(numbers) == 99
+    assert numbers == Enum.to_list(150..52//-1)
+    context
+  end
+
+  step "more can still be loaded", context do
+    assert {:ok, %{"nextCursors" => cursors, "truncated" => true}} = context.reply
+    assert Map.has_key?(cursors, "github.com acme/shop")
+    context
+  end
+
+  step "several pull requests were updated at the same instant across a page boundary",
+       context do
+    prs =
+      for number <- 150..1//-1,
+          do: Shared.gh_pr("acme/shop", number, %{"updatedAt" => "2026-09-20T00:00:00Z"})
+
+    context
+    |> shop_rule(prs, %{"stdin" => ["is:open "]})
+    |> Map.merge(%{many: {"acme/shop", prs}})
+  end
+
+  step "every one of them is listed exactly once", context do
+    numbers = &for(e <- &1, e["repository"] == "acme/shop", do: e["number"])
+    all = numbers.(context.first_page) ++ numbers.(entries(context))
+    assert Enum.sort(all) == Enum.to_list(1..150)
+    context
+  end
+
+  step "the list is not narrowed", context do
+    assert listed(context) == expected(fn _ -> true end)
+    context
+  end
+
+  step "GitHub answers a listing of open pull requests with one row that cannot be read",
+       context do
+    pulls =
+      fixture()["acme/shop"]
+      |> Enum.filter(&(&1["state"] == "OPEN"))
+      |> List.insert_at(1, %{"number" => "unreadable", "title" => 7})
+
+    shop_rule(context, pulls, %{"stdin" => ["is:open "]})
+  end
+
+  step "the other pull requests are listed", context do
+    numbers = for e <- entries(context), e["repository"] == "acme/shop", do: e["number"]
+    assert Enum.sort(numbers) == [1, 2]
+    context
+  end
+
+  step "the listing does not fail", context do
+    assert {:ok, %{"errors" => []}} = context.reply
+    context
+  end
+
+  step "the user is {string} and a review of pull request 1 is requested of {string}",
+       %{args: [viewer, requested]} = context do
+    pulls = [
+      Shared.gh_pr("acme/shop", 1, %{"reviewRequests" => [%{"login" => requested}]}),
+      Shared.gh_pr("acme/shop", 2, %{
+        "author" => %{"login" => viewer},
+        "reviewRequests" => [%{"login" => viewer}]
+      })
+    ]
+
+    context =
+      context
+      |> World.cli_rules(%{
+        "args" => ["api user"],
+        "stdout" => %{"id" => 9, "login" => viewer}
+      })
+      |> shop_rule(pulls, %{"stdin" => ["PullRequestListSearch", "is:open "]})
+
+    HalC2.PullRequests.invalidate(%{})
+    context
+  end
+
+  step "pull request 2 was written by {string} and lists {string} among its requested reviewers",
+       context do
+    context
+  end
+
+  step "pull request 1 is flagged as awaiting the user's review", context do
+    assert %{"viewerReviewRequested" => true} = Enum.find(entries(context), &(&1["number"] == 1))
+    context
+  end
+
+  step "pull request 2 is not", context do
+    assert %{"viewerReviewRequested" => false} = Enum.find(entries(context), &(&1["number"] == 2))
+    context
+  end
+
+  step "pull request 1 on GitHub has a review requested of the team {string} and of no person",
+       %{args: [_team]} = context do
+    pr =
+      Shared.gh_pr("acme/shop", 1, %{
+        "reviewRequests" => [%{"slug" => "core", "name" => "Core"}]
+      })
+
+    shop_rule(context, [pr], %{"stdin" => ["review-requested:#{@me}"]})
+  end
+
+  step "the user lists pull requests where their review is requested", context do
+    list(context, %{"involvement" => "reviewing"})
+  end
+
+  step "pull request 1 is listed", context do
+    assert Enum.any?(entries(context), &(&1["number"] == 1))
+    context
   end
 end
