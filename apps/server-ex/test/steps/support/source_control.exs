@@ -488,12 +488,17 @@ defmodule HalC2.Steps.SourceControl.FakeBitbucket do
   @behaviour Plug
 
   @token "bitbucket-token"
+  @email "octocat@example.com"
+  @api_token "bitbucket-api-token"
   def token, do: @token
+  def email, do: @email
+  def api_token, do: @api_token
 
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    authorized? = Plug.Conn.get_req_header(conn, "authorization") == ["Bearer " <> @token]
+    accepted = ["Bearer " <> @token, "Basic " <> Base.encode64("#{@email}:#{@api_token}")]
+    authorized? = Plug.Conn.get_req_header(conn, "authorization") |> Enum.any?(&(&1 in accepted))
 
     case {authorized?, String.split(conn.request_path, "/", trim: true)} do
       {false, _} ->
