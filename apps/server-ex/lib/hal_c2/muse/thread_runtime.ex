@@ -823,9 +823,7 @@ defmodule HalC2.Muse.ThreadRuntime do
         _ -> "failed"
       end
 
-    failure =
-      if status == "failed",
-        do: get_in(params, ["error", "message"]) || params["reason"] || "Muse Code turn failed"
+    failure = if status == "failed", do: failure(params)
 
     end_turn(state, status, failure)
   end
@@ -1339,6 +1337,46 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp decode_args(_args), do: %{}
 
   # --- usage and retries -------------------------------------------------------------
+
+  # A failed turn's structured provider failure. A quota error (Muse's `error.quota`, or a
+  # 429 / rate_limit_error) is a `usage_limit`, as Codex's and Claude's: the thread reads
+  # its error class and reset from it, and its queue waits (`TurnWriter.finish/3`).
+  defp failure(params) do
+    error = if is_map(params["error"]), do: params["error"], else: %{}
+    message = error["message"] || params["reason"] || "Muse Code turn failed"
+    quota = if is_map(error["quota"]), do: error["quota"]
+
+    if quota != nil or limit_message?(message) do
+      %{
+        "class" => "usage_limit",
+        "message" => message,
+        "code" => (quota && quota["limitKind"]) || "usage_limit",
+        "retryable" => nil,
+        "resetAt" => quota && reset_at(quota["resetsAtMs"])
+      }
+    else
+      %{
+        "class" => "provider_error",
+        "message" => message,
+        "code" => error["kind"] || "provider_error",
+        "retryable" => nil
+      }
+    end
+  end
+
+  defp limit_message?(message) when is_binary(message),
+    do: String.contains?(message, ["rate_limit_error", "API error 429"])
+
+  defp limit_message?(_message), do: false
+
+  defp reset_at(ms) when is_integer(ms) do
+    case DateTime.from_unix(ms, :millisecond) do
+      {:ok, at} -> DateTime.to_iso8601(at)
+      _ -> nil
+    end
+  end
+
+  defp reset_at(_ms), do: nil
 
   defp completed_usage(state, usage) when is_map(usage) do
     token_usage(state, %{

@@ -26,7 +26,8 @@
 # "progress" as its fallbackText (in status "progressStatus", default inProgress), and completed
 # with "answer" as its result text, "summary" as its result summary and "status" (default
 # completed); no "answer" leaves it running), {"waitInterrupt": true} (until turn/interrupt, or a
-# turn/steer, which it answers with "steered: <text>"). With "interruptFails" turn/interrupt
+# turn/steer, which it answers with "steered: <text>"), {"fail": error} (the turn ends
+# failed with that `error`, e.g. a quota refusal: {"message", "quota": {"limitKind", "resetsAtMs"}}). With "interruptFails" turn/interrupt
 # answers an error, and with "interruptHangs" it is never answered. Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
@@ -165,8 +166,13 @@ def run_turn(sid, turn, text, params):
     if steps is None:
         steps = [{"text": "Reply to %s after [%s]" % (text, " | ".join(history))}]
     terminal = "completed"
+    error = None
     after = []
     for step in steps:
+        if "fail" in step:
+            terminal = "failed"
+            error = step["fail"]
+            break
         if "text" in step:
             say(sid, turn, step["text"])
         elif "shell" in step:
@@ -261,7 +267,8 @@ def run_turn(sid, turn, text, params):
             say(sid, turn, "steered: " + event[1])
     # Cleared first: the MC may start the next turn as soon as it sees this one end.
     state["turn"] = None
-    notify("turn/completed", {"sessionId": sid, "turnId": turn, "terminal": terminal})
+    notify("turn/completed", {"sessionId": sid, "turnId": turn, "terminal": terminal,
+                                  **({"error": error} if error else {})})
     for usage in after:
         notify("session/contextUsage", dict(usage, sessionId=sid))
 

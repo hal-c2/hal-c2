@@ -1651,7 +1651,27 @@ defmodule HalC2.Orchestration.Delegation do
   # answer it gave before failing (upstream `subagentResultForRun`).
   defp failure_text(_child, _run, status) when status != "failed", do: nil
 
-  defp failure_text(child, %{"id" => run_id}, "failed") do
+  defp failure_text(child, %{"id" => run_id} = run, "failed") do
+    error_item_text(child, run_id) || session_error(child, run)
+  end
+
+  defp failure_text(_child, _run, _status), do: nil
+
+  # What the provider session recorded when the run ended without an error item: an
+  # adapter that ends a run with a plain-text failure leaves it as the session's `lastError`.
+  defp session_error(child, run) do
+    session_id =
+      (StreamState.get(child, "provider-thread")[run["providerThreadId"]] || %{})[
+        "providerSessionId"
+      ]
+
+    case (StreamState.get(child, "provider-session")[session_id] || %{})["lastError"] do
+      message when is_binary(message) and message != "" -> message
+      _ -> nil
+    end
+  end
+
+  defp error_item_text(child, run_id) do
     child
     |> StreamState.run_rows([run_id])
     |> Enum.flat_map(fn
@@ -1667,8 +1687,6 @@ defmodule HalC2.Orchestration.Delegation do
       _ -> nil
     end
   end
-
-  defp failure_text(_child, _run, _status), do: nil
 
   # What the result says when the child left no answer and no failure of its own.
   # A failed or cancelled child keeps no result: its wake says "(no answer)".

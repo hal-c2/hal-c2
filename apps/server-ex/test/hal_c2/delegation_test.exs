@@ -268,6 +268,37 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task whose child failed with a plain-text failure" do
+    # An adapter that ends a run with a string failure leaves no error item, only the
+    # provider session's `lastError`: the result still says why.
+    test "carries the message the provider session recorded" do
+      :ok = delegate("failed")
+
+      :ok =
+        HalC2.Streams.transact("c", :thread, fn state ->
+          {[
+             HalC2.Orchestration.upsert(
+               state,
+               "run",
+               "cr",
+               &Map.put(&1, "providerThreadId", "pt")
+             ),
+             {"provider-thread", "pt", %{"s" => %{"id" => "pt", "providerSessionId" => "ps"}}},
+             {"provider-session", "ps", %{"s" => %{"id" => "ps", "lastError" => "Out of quota"}}}
+           ], :ok}
+        end)
+
+      assert Delegation.reconcile("p") == 1
+      assert %{"status" => "failed", "result" => "Out of quota"} = task()
+    end
+
+    test "says no answer only when nothing recorded a failure" do
+      :ok = delegate("failed")
+      assert Delegation.reconcile("p") == 1
+      assert task()["result"] == nil
+    end
+  end
+
   describe "a task's child that links a pull request" do
     @heard %{"state" => "open", "checksFailed" => false}
 
