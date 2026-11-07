@@ -19,6 +19,7 @@
 #include "Harness.h"
 #include "McClient.h"
 #include "NativeShell.h"
+#include "RunNotices.h"
 #include "ShellStore.h"
 #include "ShellWindows.h"
 #include "SlowRequestController.h"
@@ -496,8 +497,9 @@ const Steps steps([] {
                 QStringLiteral("a second in: %1").arg(describeThread(world, shell)));
          pass(world, 2);
        });
-  step(QStringLiteral("the thread says %1").arg(q),
-       [](World& world, const Captures& c, const Table&) { computerNotice(world, c[0]); });
+  step(QStringLiteral("the thread says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (!backgroundNoticeSays(world, c[0])) computerNotice(world, c[0]);
+  });
   step(QStringLiteral("reconnecting by hand is not offered while it is already trying"),
        [](World& world, const Captures&, const Table&) {
          QQuickWindow* shell = window(world);

@@ -307,13 +307,17 @@ defmodule HalC2.Mcp.Tools do
       timeout = wait_limit(args["timeoutMs"], caller)
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
-      {:ok,
-       %{
-         "threadId" => row["id"],
-         "runId" => run && run["id"],
-         "status" => (run && run["status"]) || "idle",
-         "timedOut" => timed_out
-       }}
+      result = %{
+        "threadId" => row["id"],
+        "runId" => run && run["id"],
+        "status" => (run && run["status"]) || "idle",
+        "timedOut" => timed_out
+      }
+
+      # Waiting on a task of the caller's that works on: its completion wakes the caller.
+      if timed_out and HalC2.Orchestration.Delegation.working_task?(me["id"], row["id"]),
+        do: {:ok, Map.put(result, "next", HalC2.Orchestration.Delegation.running_next())},
+        else: {:ok, result}
     end
   end
 
@@ -373,7 +377,7 @@ defmodule HalC2.Mcp.Tools do
           ~w(defaultThreadEnvMode newWorktreesStartFromOrigin enableProviderUpdateChecks backgroundActivity sourceControlWritingStyle)
         )
 
-      {:ok, preferences(update_settings(patch))}
+      with {:ok, settings} <- update_settings(patch), do: {:ok, preferences(settings)}
     end
   end
 
@@ -794,12 +798,23 @@ defmodule HalC2.Mcp.Tools do
 
       {"thread", row} ->
         # The stream's modes: the sidebar row trails a change.
+        # So is its running turn: a send just after a turn starts steers it.
         with :ok <- no_escalation(sender, thread(id) || row),
-             do: dispatch_message(row, sender["id"], args)
+             do: dispatch_message(Map.put(row, "activeRunId", active_run(id)), sender["id"], args)
 
       nil ->
         {:error, "thread_not_found", "The thread was not found."}
     end
+  end
+
+  # The thread's newest turn that can still be steered or interrupted, as the sidebar
+  # row's `activeRunId` names it once the projection catches up.
+  defp active_run(id) do
+    stream(id)
+    |> StreamState.list("run")
+    |> Enum.filter(&(&1["status"] in ~w(preparing starting running)))
+    |> Enum.max_by(&(&1["ordinal"] || 0), fn -> %{} end)
+    |> Map.get("id")
   end
 
   defp dispatch_message(row, sender, args) do
@@ -1106,8 +1121,10 @@ defmodule HalC2.Mcp.Tools do
       end
 
     case HalC2.Settings.put(next, version) do
-      {:ok, _} -> next
+      {:ok, _} -> {:ok, next}
       {:error, :stale} -> update_settings(patch)
+      # A settings.json the MC cannot read refuses the save.
+      {:error, error} -> orchestration({:error, error})
     end
   end
 

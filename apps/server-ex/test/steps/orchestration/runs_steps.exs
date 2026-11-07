@@ -1506,7 +1506,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     |> notify("item/commandExecution/outputDelta", delta("cmd-t", "a.txt\n"))
     |> tap(fn context ->
       World.await_state(context, context.thread, fn state ->
-        state.entities["turn-item"]["turn-item:codex:cmd-t"]["output"] == "a.txt\n"
+        state.entities["turn-item"]["turn-item:codex:cmd-t"]["outputSize"] == 6
       end)
     end)
   end
@@ -1534,10 +1534,20 @@ defmodule HalC2.Steps.Orchestration.Runs do
     end)
   end
 
+  # Output stays off the thread's stream: the item carries its size, the text is the
+  # running command's tail.
   defp await_output(context, output) do
-    World.await_state(context, context.thread, fn state ->
-      state.entities["turn-item"]["turn-item:codex:cmd-o"]["output"] == output
-    end).entities["turn-item"]["turn-item:codex:cmd-o"]
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["turn-item"]["turn-item:codex:cmd-o"]["outputSize"] == byte_size(output)
+      end)
+
+    assert HalC2.Orchestration.CommandTail.get(
+             World.thread_id(context, context.thread),
+             "turn-item:codex:cmd-o"
+           ) == output
+
+    state.entities["turn-item"]["turn-item:codex:cmd-o"]
   end
 
   defp await_status(context, run_id, status) do

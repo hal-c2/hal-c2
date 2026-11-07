@@ -35,6 +35,12 @@
 #   apps/web/src/components/chat/composerSubmission.ts (what a message without text sends)
 #   packages/client-runtime/src/textPaste.ts (when a paste is folded into a file, its name)
 #   https://github.com/pingdotgg/t3code/pull/28499
+#   https://github.com/pingdotgg/t3code/pull/28470
+#   https://github.com/pingdotgg/t3code/pull/27785
+#   https://github.com/pingdotgg/t3code/pull/29165
+#   https://github.com/pingdotgg/t3code/pull/30848
+#   https://github.com/pingdotgg/t3code/pull/29796
+#   https://github.com/pingdotgg/t3code/pull/29827
 
 Feature: Attaching images and files to a message
   The user adds images and files to a turn by choosing, dropping, pasting or
@@ -159,6 +165,17 @@ Feature: Attaching images and files to a message
       | image | 11 MB | 10    |
       | file  | 51 MB | 50    |
 
+  # Upstream #29165: a size of 1,047,553 to 1,048,575 bytes read "1024 KB".
+  @backlog @shared @priority-low
+  Scenario Outline: An attachment's size is shown in the unit it rounds to
+    Given an attachment of <bytes> bytes
+    Then its size reads "<size>"
+
+    Examples:
+      | bytes   | size    |
+      | 1046528 | 1022 KB |
+      | 1048575 | 1.0 MB  |
+
   @mc
   Scenario: An upload that is never sent is cleaned up after a day
     Given a client uploaded "notes.pdf" but never sent a message with it
@@ -225,6 +242,19 @@ Feature: Attaching images and files to a message
     When the user pastes into the composer
     Then the draft references "/work/shop/src"
     And nothing is uploaded
+
+  # Upstream #27785: a folder was refused when the desktop reached an MC on its own machine by
+  # its address rather than as its local environment.
+  @backlog @desktop
+  Scenario Outline: A folder <arrives> while connected to an MC on the same machine is referenced
+    Given the desktop is connected to an MC on this machine at "http://127.0.0.1:3773"
+    When the user <arrives_how> the folder "/work/shop/src"
+    Then the draft references "/work/shop/src"
+
+    Examples:
+      | arrives | arrives_how              |
+      | dropped | drops onto the composer  |
+      | pasted  | pastes into the composer |
 
   @desktop
   Scenario: Dropping a folder into a remote environment is refused
@@ -466,6 +496,21 @@ Feature: Attaching images and files to a message
     When the user pastes 40 KiB of log output
     Then the user is told the paste was attached, its size, and the shortcut that pastes it as text instead
 
+  # Upstream #28470: on a Cyrillic or Greek layout the paste-as-text shortcut did nothing, so the
+  # paste was still attached; it now falls back to the key's position, as other shortcuts do.
+  @backlog @desktop
+  Scenario Outline: The paste-as-text shortcut works on a <layout> keyboard layout
+    Given the keyboard layout is <layout>
+    When the user pastes 40 KiB of log output with the paste-as-text shortcut
+    Then the text is inserted into the draft where it can be edited
+    And nothing is attached
+
+    Examples:
+      | layout   |
+      | Cyrillic |
+      | Greek    |
+      | Dvorak   |
+
   @backlog @desktop
   Scenario: Something dropped while the composer cannot take it is refused
     Given the composer is busy
@@ -666,12 +711,43 @@ Feature: Attaching images and files to a message
       | handbook.epub   |
       | analysis.ipynb  |
 
+  # Upstream #30848: TextEdit ends each RTF paragraph with a backslash and a line break, which was
+  # skipped, so the agent read the whole document as one run-on paragraph.
+  @backlog @mc @priority-low
+  Scenario: An RTF paragraph ended by a backslash reaches the agent as its own line
+    When the user sends a message with a "letter.rtf" saved by TextEdit attached
+    Then the agent reads each of its paragraphs on its own line
+    And a file with Windows line endings gives one line break per paragraph, not two
+
+  # Upstream #29796: a document's text kept tracked deletions, field codes and tab stops it never
+  # shows, so "Fee ~~$500~~ $700" read "Fee $500$700".
+  @backlog @mc @priority-low
+  Scenario Outline: A document's text for the agent holds only what the document shows
+    When the user sends a message with a "plan.docx" holding <hidden> attached
+    Then the agent's text for "plan.docx" reads "<text>"
+
+    Examples:
+      | hidden                                                  | text     |
+      | the tracked change "Fee ~~$500~~ $700"                  | Fee $700 |
+      | a table of contents line "Intro" on page 3              | Intro 3  |
+      | a paragraph "Fee $700" set with a tab stop on the ruler | Fee $700 |
+
+  # Upstream #29827: Word keeps a text box's text twice, once for older readers, and the agent read
+  # every line of it twice.
+  @backlog @mc @priority-low
+  Scenario: A Word text box reaches the agent once
+    When the user sends a message with a "plan.docx" holding the text box "Deadline moved to Friday" attached
+    Then the agent's text for "plan.docx" holds "Deadline moved to Friday" once
+    And text a document keeps only for older readers still reaches the agent
+
+  # Upstream #21458: a document whose text could not be extracted was dropped; it is still passed on as a file.
   @backlog @mc @priority-low
   Scenario: A document whose text cannot be read is still attached as it is
     When the user sends a message with a damaged "plan.docx" attached
     Then the agent is told where "plan.docx" is
     And the agent is not given text for it
 
+  # Upstream #21458: document text is cut at a limit, with one notice that the rest was left out.
   @backlog @mc @priority-low
   Scenario: A document's text past the limits is cut with one notice
     When the user sends a message with a "budget.xlsx" whose sheets are larger than the agent is given

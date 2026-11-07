@@ -11,7 +11,7 @@
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
-import glob, json, os, re, signal, sys, threading, time, uuid
+import glob, json, os, re, signal, string, sys, threading, time, uuid
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -114,6 +114,22 @@ def stream_reply(ctx, text):
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-s", "command": "ls", "status": "completed", "aggregatedOutput": "a.txt\n", "exitCode": 0}}})
     send({"method": "item/completed", "params": {**ctx, "item": {**msg["item"], "text": "".join(parts)}}})
     send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+
+def print_output(ctx, turn_id, size):
+    item = {"type": "commandExecution", "id": "cmd-print", "command": "make", "status": "inProgress"}
+    send({"method": "item/started", "params": {**ctx, "item": item}})
+    sent = 0
+    while sent < size:
+        n = min(65536, size - sent)
+        start = sent % 26
+        chunk = (string.ascii_lowercase * 2524)[start:start + n]
+        send({"method": "item/commandExecution/outputDelta", "params": {**ctx, "itemId": "cmd-print", "delta": chunk}})
+        sent += n
+    gate("printed")
+    send({"method": "item/commandExecution/outputDelta", "params": {**ctx, "itemId": "cmd-print", "delta": "more\n"}})
+    gate("more")
+    send({"method": "item/completed", "params": {**ctx, "item": {**item, "status": "completed", "aggregatedOutput": "kept output\n", "exitCode": 0}}})
+    send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
 
 # "say A | B" answers with one assistant message per part and ends the turn.
 def say(ctx, text):
@@ -326,6 +342,12 @@ for line in sys.stdin:
         if "stream paragraphs" in text or "stream a reply" in text:
             stream_reply(ctx, text)
             continue
+        # "print output N" runs a command that prints N bytes (the letters a-z over and over,
+        # 64 KiB at a time), waits at the gate "printed", prints "more\n", waits at "more",
+        # and ends with the short output Codex reports for it.
+        if text.startswith("print output "):
+            print_output(ctx, turn_id, int(text.split()[2]))
+            continue
         if "answer from gate" in text:
             threading.Thread(target=answer_from_gate, args=(ctx, turn_id), daemon=True).start()
             continue
@@ -361,6 +383,14 @@ for line in sys.stdin:
             continue
         if text.startswith("say "):
             say(ctx, text)
+            continue
+        # "compact the context" has Codex compact the thread's context during the turn,
+        # as it does on its own when the context fills up.
+        if "compact the context" in text:
+            item = {"type": "contextCompaction", "id": f"compaction-{turn_id}"}
+            send({"method": "item/started", "params": {**ctx, "item": item}})
+            send({"method": "item/completed", "params": {**ctx, "item": item}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
         if "where are we" in text:
             where = f"on {thread_id} history {'<conversation_history>' in prompt} merged {'<merged_work>' in prompt}"
@@ -651,6 +681,8 @@ for line in sys.stdin:
     elif method == "thread/backgroundTerminals/list":
         stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
         send({"id": mid, "result": {"data": stays, "nextCursor": None}})
+    elif method == "thread/inject_items":
+        send({"id": mid, "result": {}})
     elif method == "turn/interrupt":
         # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
         # existing, acknowledges the stop and never ends the turn.

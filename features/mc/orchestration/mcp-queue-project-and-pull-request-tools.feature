@@ -20,6 +20,9 @@
 #     thread.pull-request.link, thread.pull-request.unlink
 #   apps/server/src/mcp/toolkits/orchestrator, project, worktree, pullRequests
 #   https://github.com/pingdotgg/t3code/pull/25561
+#   https://github.com/pingdotgg/t3code/pull/30564
+#   https://github.com/pingdotgg/t3code/pull/30375
+#   https://github.com/pingdotgg/t3code/pull/29810
 Feature: Agents managing queues, projects, worktrees and pull requests through MCP
   Beyond threads themselves, an agent can manage queued messages, answer
   questions, register projects, move its own thread into a worktree and link
@@ -135,6 +138,18 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     When the agent of "caller" renames project "demo" to "Demo app"
     Then the project is called "Demo app"
 
+  # Upstream #30564: a change the project's rules refused came back as "The operation could not be
+  # completed.", so agents retried the same input.
+  @backlog @mc
+  Scenario Outline: A project update the project's rules refuse says why
+    When the agent of "caller" updates project "demo" with <change>
+    Then it fails with code "invalid_request" and a reason naming <rule>
+
+    Examples:
+      | change                               | rule                                                  |
+      | a new script with the id "Run Tests" | script ids being lowercase letters, digits or hyphens |
+      | the monogram "ABC"                   | monograms holding at most two characters              |
+
   @mc
   Scenario: Deleting a project with threads needs force
     When the agent of "caller" deletes project "demo" without force
@@ -177,6 +192,21 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     When the agent of "caller" hands off to a worktree without a continuation prompt
     Then the continuation is skipped
     And the note says the conversation continues in the worktree on the next message
+
+  # Upstream #29810: the handoff and the worktree status read the environment's "start from origin",
+  # not the project's own setting.
+  @backlog @mc @priority-high
+  Scenario Outline: A handoff that does not say where to start follows the project's setting
+    Given new worktrees do not start from origin on the environment
+    And project "demo" sets new worktrees to start from origin
+    When the agent of "caller" <asks>
+    Then <outcome>
+
+    Examples:
+      | asks                                                            | outcome                                                               |
+      | hands off to a worktree on new branch "feature/x"                 | the worktree is created from origin's copy of the current branch      |
+      | asks for its worktree status                                     | it is told new worktrees start from origin                            |
+      | hands off on new branch "feature/x" and says not to start from origin | the worktree is created from the local copy of the current branch |
 
   @mc
   Scenario Outline: Handoffs that are refused
@@ -267,6 +297,21 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Then 10 and 11 are unlinked and 12 and 13 stay linked
     And the answer groups the unlinked pull requests by repository and state with their count
     And the work log of "caller" says 2 pull requests were unlinked
+
+  # Upstream #30375: the pull request tools looked the thread up on their own and gave no hint for
+  # a bare id, as #22452 gave the thread tools.
+  @backlog @mc @priority-low
+  Scenario Outline: A pull request tool given a bare thread id suggests the full id
+    Given thread "mcp:4f1c" exists
+    When the agent of "caller" <calls> for thread "4f1c"
+    Then the tool fails with code "thread_not_found" ending in "Did you mean `mcp:4f1c`?"
+
+    Examples:
+      | calls                                |
+      | links pull request 12                |
+      | unlinks pull request 12              |
+      | lists the linked pull requests       |
+      | watches pull request 12              |
 
   @mc
   Scenario Outline: Pull request references that cannot be used

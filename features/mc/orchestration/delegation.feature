@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23456
+#   https://github.com/pingdotgg/t3code/pull/29909
 #   https://github.com/pingdotgg/t3code/pull/22579
+#   https://github.com/pingdotgg/t3code/pull/30390
 #   https://github.com/pingdotgg/t3code/pull/22117
 #   https://github.com/pingdotgg/t3code/pull/20037
 #   https://github.com/pingdotgg/t3code/pull/16595
@@ -50,6 +53,11 @@
 #   https://github.com/pingdotgg/t3code/pull/22709
 #   https://github.com/pingdotgg/t3code/pull/28133
 #   https://github.com/pingdotgg/t3code/pull/26682
+#   https://github.com/pingdotgg/t3code/pull/25662
+#   https://github.com/pingdotgg/t3code/pull/28204
+#   https://github.com/pingdotgg/t3code/pull/29842
+#   https://github.com/pingdotgg/t3code/pull/27468
+#   https://github.com/pingdotgg/t3code/pull/29906
 Feature: Delegating tasks to subagents
   A running agent can hand a task to a subagent. The engine starts a child thread
   marked as a subagent of the caller, records the task in the caller's timeline,
@@ -141,7 +149,7 @@ Feature: Delegating tasks to subagents
     And "parent" has no subagent task
 
   # Upstream #20213: worktree delegation from a checkout outside the project is refused
-  @backlog @mc
+  @mc
   Scenario: A new worktree is refused for a caller working outside the project's repository
     Given a caller thread whose checkout is not part of its project's repository
     When it delegates a task in a new worktree
@@ -193,13 +201,13 @@ Feature: Delegating tasks to subagents
       | the task asks for full access while "parent" is approval-required | runtime_mode_escalation_denied     |
       | the task asks for default mode while "parent" is in plan mode     | interaction_mode_escalation_denied |
 
-  @backlog @mc
+  @mc
   Scenario: A task asking for an access mode its provider lacks is refused with the modes it has
     Given "parent" is in full access
     When the agent in "parent" delegates a task to Muse Code asking for auto-accept edits
     Then the tool fails and lists the access modes Muse Code offers
 
-  @backlog @mc
+  @mc
   Scenario: A task that inherits an access mode its provider lacks gets the broadest one it has
     Given "parent" is in auto-accept edits
     When the agent in "parent" delegates a task to Muse Code without naming an access mode
@@ -219,14 +227,22 @@ Feature: Delegating tasks to subagents
       | the agent in "parent" launches a thread                |
       | the agent in "parent" delegates a task to another MC   |
 
-  @backlog @mc
+  @mc
   Scenario: The orchestrator's capabilities list each provider's access modes
     When an agent asks for the orchestrator's capabilities
     Then each provider lists the access modes it offers
 
+  # Upstream #29842: capabilities offered providers turned off for the caller's project, which
+  # delegate_task then refused.
+  @backlog @mc
+  Scenario: The orchestrator's capabilities mark a provider turned off for the caller's project
+    Given "opencode" is turned off for the project of "parent" and on in another project
+    When the agent in "parent" asks for the orchestrator's capabilities
+    Then "opencode" is listed as unable to run a child task, saying it is off for this project
+
   # Upstream #14416: agents asked for a read-only reviewer picked a supervised mode, and the
   # child sat on its first approval with nobody to answer it.
-  @backlog @mc
+  @mc
   Scenario: The delegation tool says a supervised access mode pauses the subagent
     When an agent reads the description of delegate_task
     Then it says to leave the access mode inherited unless the user asks for a supervised subagent
@@ -269,7 +285,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #24782: a running task's result tells the agent its completion wakes it, so it ends its turn.
   # Upstream #24887: the hint says not to wait on the task or poll it.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A task result that is still running tells the agent to end its turn
     Given the agent in "parent" delegated a task that is <state>
     When the agent in "parent" <checks> the task
@@ -284,7 +300,7 @@ Feature: Delegating tasks to subagents
       | blocked on a question for the user       | asks for the status of     | does not say |
       | blocked on an approval                   | asks for the status of     | does not say |
 
-  @backlog @mc
+  @mc
   Scenario: A wait returns as soon as the subagent asks a question it is blocked on
     When the agent in "parent" delegates a task and waits
     And the subagent asks the user a question and stops until it is answered
@@ -294,7 +310,7 @@ Feature: Delegating tasks to subagents
     But a question the subagent asks while it keeps working does not end the wait
 
   # Upstream #20037: a child waiting for approval left both agents blocked inside the wait.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A wait returns when the subagent is blocked on an approval
     When the agent in "parent" delegates a task and waits
     And the subagent's run stops on an approval
@@ -302,7 +318,7 @@ Feature: Delegating tasks to subagents
     And the subagent keeps running once the approval is answered
     And the task's later result still wakes "parent"
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex wait is not cut short by Codex's own tool time limit
     Given thread "parent" runs on Codex
     When the agent in "parent" delegates a task and waits 30 minutes
@@ -329,6 +345,28 @@ Feature: Delegating tasks to subagents
       | the agent is waiting on the task  | the agent in "parent" is still waiting on it    |
       | the parent is archived            | "parent" is archived                            |
       | the user stopped the task         | the user stopped the task                       |
+
+  # Upstream #29909: a question notice queued behind the parent's running turn, and an orchestrator
+  # whose turn ran for hours never saw its subagents' questions.
+  @backlog @mc @priority-high
+  Scenario Outline: A subagent's question reaches a parent whose turn is still running
+    Given the agent in "parent" delegated a task and runs on <provider>
+    And the turn of "parent" is still running
+    When the subagent asks a question meant for "parent"
+    Then the question notice <arrives>
+    And the model the user picked for "parent" is left as it was
+
+    Examples:
+      | provider                                          | arrives                          |
+      | Codex                                             | is steered into the running turn |
+      | a provider that steers only by stopping its tools | is queued behind the running turn |
+
+  # Upstream #29909: a question notice whose steer missed the turn's end was lost on the retry.
+  @backlog @mc @priority-high
+  Scenario: A question notice that misses the end of the parent's turn is queued
+    Given a subagent's question notice is being steered into the turn of "parent"
+    When that turn ends before the notice lands
+    Then the notice is queued for "parent" on the model the user picked for it
 
   @mc
   Scenario: A wait gives up before the caller's MCP client would
@@ -359,7 +397,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #23542: a subagent that returned an interim result and later woke itself for its
   # background command delivered that later result to nobody.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A subagent's own later wake delivers its result to the caller too
     Given the agent in "parent" delegated a task without waiting
     And the subagent answered "WAITING" and left a command running in the background
@@ -489,7 +527,7 @@ Feature: Delegating tasks to subagents
     And the work state is "working" until the task ends and "result_available" after
 
   # Upstream #19759: a finished task's status no longer repeats its result
-  @backlog @mc
+  @mc
   Scenario: A finished task's status gives its result once
     Given the agent in "parent" delegated a task that finished with its answer
     When the agent asks for the task's status
@@ -566,7 +604,7 @@ Feature: Delegating tasks to subagents
     Then the task's run is removed from the queue
     And the other message stays queued
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task that ends <ending> <fate> its subagent's open questions
     Given the agent in "parent" delegated a task whose subagent asked a question and kept working
     When the task ends <ending>
@@ -600,7 +638,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #25672: an acknowledgement written from a stale read put a settled run back to running.
   # Upstream #25666: accepting a delivery from a stale read put a checkpointed run back to waiting.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: Acknowledging a task's delivery leaves a settled run settled
     Given a delegated task of "parent" finished with a delivered result
     And the caller's run <settled> just before the caller <command> the delivery
@@ -613,6 +651,23 @@ Feature: Delegating tasks to subagents
       | completed its checkpoint       | acknowledges    | completed |
       | completed its checkpoint       | disposes        | completed |
       | completed its checkpoint       | accepts         | completed |
+
+  # Upstream #25662: a wake-policy change planned from a stale read put a checkpointed run back to running.
+  @backlog @mc @priority-high
+  Scenario: Changing a task's wake policy leaves a settled run settled
+    Given the agent in "parent" delegated a task and is waiting
+    And the run of "parent" completed its checkpoint just before the wake policy is changed to always
+    Then the run stays completed
+    And the next run of "parent" can start
+
+  # Upstream #23456: settling a finished Codex parent unloaded a subagent a client had open, so
+  # the subagent's next reply never showed and its run never ended.
+  @backlog @mc @plugin-codex @priority-high
+  Scenario: A subagent open in a client keeps its replies after its parent settles
+    Given a delegated Codex subagent of "parent" is open in a client
+    When the user settles "parent"
+    And the user sends the subagent another message
+    Then the subagent's reply is shown and its run completes
 
   @mc
   Scenario: The provider confirms it accepted a mailbox delivery
@@ -700,7 +755,8 @@ Feature: Delegating tasks to subagents
     Then the wait reports only the status
     And the task's delivery is still pending
 
-  @mc
+  # Dropped: upstream #22581 replaced this with the scenario below, which the MC carries.
+  @mc @dropped
   Scenario: Cancelling a task whose subagent has nothing running or in the background is refused
     Given the agent in "parent" delegated a task that is not finished and whose subagent has nothing running or in the background
     When the agent cancels the task
@@ -708,8 +764,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #22581: a task left running with no run of its subagent bound to it can never
   # finish, so cancelling it clears it instead of being refused.
-  # Replaces the scenario above once the MC carries it.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Cancelling a task whose subagent has nothing running or in the background clears it
     Given the agent in "parent" delegated a task that is not finished and whose subagent has nothing running or in the background
     When the agent cancels the task
@@ -719,7 +774,7 @@ Feature: Delegating tasks to subagents
   # Upstream #22581: Stop on a subagent that was never given a run clears its task on
   # the caller even while the caller is idle, whatever else the subagent is doing.
   # Upstream #22653: same change as #22581.
-  @backlog @mc @shared @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: Stopping a stuck subagent clears its task even when the caller is idle
     Given "parent" is idle and lists a delegated task as running
     And no run of the subagent was ever bound to that task
@@ -747,7 +802,7 @@ Feature: Delegating tasks to subagents
     And later runs of that thread can start
 
   # Upstream #22653: a subagent whose run is bound to the task keeps its normal settlement.
-  @backlog @mc
+  @mc
   Scenario: Stopping a subagent whose run belongs to the task settles it the usual way
     Given the agent in "parent" delegated a task whose subagent is running its turn
     When the user stops the subagent
@@ -765,7 +820,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #22653: cancelling a task whose subagent's run already ended stops the subagent
   # first, so nothing else on it keeps running.
-  @backlog @mc
+  @mc
   Scenario: Cancelling a task whose subagent's run ended stops the subagent
     Given the agent in "parent" delegated a task whose subagent's run ended with other work still going
     When the agent cancels the task
@@ -900,6 +955,29 @@ Feature: Delegating tasks to subagents
     And task "three" of the same turn finishes
     Then a wake for task "three" is queued
 
+  # Upstream #28204: interrupting a completion wake disposed the undelivered results of sibling
+  # tasks it never carried, so they never woke the caller.
+  @mc @backlog @priority-high
+  Scenario Outline: Interrupting a completion wake keeps the sibling results it did not carry
+    Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
+    And "parent" is in the wake turn for the completion of "one"
+    And "two" <when>
+    When the user interrupts the wake turn
+    Then "parent" is woken again for "two"
+    And "one" is not delivered again
+
+    Examples:
+      | when                                  |
+      | finished before the interrupt         |
+      | finishes after the interrupt          |
+
+  # Upstream #28204: Stop, unlike an interrupt, still ends every task of the cohort.
+  @mc @backlog
+  Scenario: Stopping a completion wake still stops its sibling deliveries
+    Given "parent" is in the wake turn for the completion of "one" while "two" still works
+    When the user stops "parent"
+    Then "parent" is not woken for "two"
+
   @mc
   Scenario Outline: A task result is not delivered into a caller that is gone
     Given the agent in "parent" delegated a task without waiting
@@ -941,25 +1019,34 @@ Feature: Delegating tasks to subagents
     And the subagent of "one" has finished with nothing running, queued or waiting
     But "one" still shows as running on "parent"
     When the user stops "parent"
-    Then "one" is cancelled
+    Then the task "one" is cancelled
     And a task whose subagent is still working keeps running
 
   # Upstream #23886: the Stop button stopped the thread but left subagents delegated in
   # earlier turns running, with their completions muted, so the parent never heard back.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Stopping a thread stops the subagents it delegated in earlier turns
     Given the agent in "parent" delegated task "one" in an earlier turn
     And the subagent of "one" is still working
     When the user presses Stop on "parent"
     Then the subagent of "one" is stopped
-    And "one" is cancelled
+    And the task "one" is cancelled
 
   # Upstream #23886: a Stop that changes nothing on the thread still stops its subagents.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Pressing Stop again on a stopped thread stops subagents left running
     Given "parent" is stopped but the subagent of its task "one" is still working
     When the user presses Stop on "parent" again
     Then the subagent of "one" is stopped
+
+  # Only the user's Stop reaches the subagents: an agent interrupting a run (or a scheduled
+  # prompt's clean-up, or a move) stops that run and leaves the delegated work going.
+  @mc
+  Scenario: An agent interrupting a thread's run leaves its delegated tasks running
+    Given the agent in "parent" delegated task "one" in an earlier turn
+    And the subagent of "one" is still working
+    When an agent interrupts the run of "parent" with hal_c2_thread_interrupt
+    Then the subagent of "one" keeps working
 
   @mc
   Scenario Outline: Acknowledging tasks of a queued wake trims or cancels the wake
@@ -1054,7 +1141,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #22709: the task was only looked at again when a run of the subagent ended, so
   # work that settled later left it running until the MC restarted.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A task finishes when the work its subagent left behind settles
     Given the agent in "parent" delegated a task
     And the subagent answered "Done" while <owed>
@@ -1066,6 +1153,16 @@ Feature: Delegating tasks to subagents
       | owed                                               |
       | a command it started was running in the background |
       | a task it delegated itself was still running       |
+
+  # Upstream #27468: a monitor the subagent left running, though it said it was not waiting on it,
+  # kept the task from finishing until the user next spoke in the parent.
+  @backlog @mc @priority-high
+  Scenario: A task finishes while its subagent leaves running a monitor it does not wait on
+    Given the agent in "parent" delegated a task
+    And the subagent answered "Done" with a monitor running that it marked as not waited on
+    When the subagent's turn ends
+    Then the task finishes with "Done"
+    And "parent" is woken once with that result
 
   @mc
   Scenario: A turn that only handled a monitor update is not the task's result
@@ -1127,6 +1224,15 @@ Feature: Delegating tasks to subagents
     When the provider of "parent" starts a subagent with no title and a prompt of 100 characters
     Then the subagent's thread is titled with the prompt's first 69 characters followed by "..."
 
+  # Upstream #30390: an untitled subagent's title cut from its prompt could keep half of an
+  # emoji, shown where its workflow group has no name of its own.
+  # Upstream #29906: a subagent's title cut from a long task title or prompt kept half of an emoji.
+  @backlog @mc @shared @priority-low
+  Scenario: A subagent titled from its prompt does not end in a broken character
+    When the provider of "parent" starts a subagent with no title and a prompt with an emoji where the cut falls
+    Then the subagent's title is cut before the emoji, not through it, and followed by "..."
+    And the agents list shows that title without a replacement character
+
   @mc
   Scenario: A subagent starts awake whatever state its parent is in
     Given thread "parent" is snoozed
@@ -1140,7 +1246,7 @@ Feature: Delegating tasks to subagents
     Then the subagent's thread opens with the message "Check the tests" written by the agent
     And the message names "parent" as the thread that sent it
 
-  @backlog @mc
+  @mc
   Scenario: Each review round is a new delegated task
     Given a delegated review task has finished
     When the parent wants the child to review again
@@ -1149,7 +1255,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #25359: a "one child per named model" line in the instructions made agents turn a
   # request for 20 workers on one model into one worker. The MC's instructions never had it.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: An agent asked for several workers on the same model is not told to start just one
     When the user asks an agent for 20 workers on the same model
     Then nothing in the instructions given to the agent limits it to one delegated task per model
@@ -1172,7 +1278,7 @@ Feature: Delegating tasks to subagents
     And a follow-up continued after a restart stays the task it was
 
   # Upstream #19019: a message steered into a running subagent run opens no task.
-  @backlog @mc
+  @mc
   Scenario: A message steered into a running subagent does not leave a task waiting
     Given a subagent is running a turn that no task is waiting on
     When the parent sends it a message that steers the running turn
@@ -1189,7 +1295,7 @@ Feature: Delegating tasks to subagents
     Then the result delivered to "parent" names pull request 42, its head commit and that its checks are pending
 
   # Upstream #20025: a delegated completion no longer reverts a finished parent run or clears its checkpoint.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A subagent finishing while its caller checkpoints leaves the caller's run finished
     Given the run of "parent" is finishing and taking its checkpoint
     When the subagent of "parent" finishes at that moment
@@ -1198,14 +1304,14 @@ Feature: Delegating tasks to subagents
 
   # Upstream #16595: a subagent's options merge with the caller's when the model is inherited;
   # an empty list clears them and a new provider or model starts without them.
-  @backlog @mc
+  @mc
   Scenario: A subagent keeps fast mode when its task sets only the effort
     Given "parent" runs with fast mode on
     When "parent" delegates a task that sets the reasoning effort to "high"
     Then the subagent runs with effort "high" and fast mode on
 
   # Upstream #16595
-  @backlog @mc
+  @mc
   Scenario: A subagent on another model starts without the caller's options
     Given "parent" runs with fast mode on
     When "parent" delegates a task on another model
@@ -1213,7 +1319,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #28133: capabilities reported a stored option the model lacks as inherited, and
   # delegate_task then refused that same option when the agent passed it back.
-  @backlog @mc
+  @mc
   Scenario: Options the caller's model does not have are neither reported nor inherited
     Given "parent" was launched on a model without fast mode, with fast mode stored off
     When the agent in "parent" asks for the orchestrator's capabilities

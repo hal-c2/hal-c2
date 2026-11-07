@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29476
 #   https://github.com/pingdotgg/t3code/pull/24149
 #   https://github.com/pingdotgg/t3code/pull/23414
 #   https://github.com/pingdotgg/t3code/pull/25291
@@ -35,6 +36,9 @@
 #   https://github.com/pingdotgg/t3code/pull/28104
 #   https://github.com/pingdotgg/t3code/pull/26658
 #   https://github.com/pingdotgg/t3code/pull/22158
+#   https://github.com/pingdotgg/t3code/pull/31764
+#   https://github.com/pingdotgg/t3code/pull/30326
+#   https://github.com/pingdotgg/t3code/pull/28585
 
 Feature: Scheduled tasks
   A scheduled task sends a saved prompt to a project on a timer, either at
@@ -129,6 +133,35 @@ Feature: Scheduled tasks
         | target                          | result                          |
         | that names an existing thread   | is sent into that thread        |
         | with no thread                  | starts a new thread for the run |
+
+    # Upstream #30326: a task either started a new thread every run or grew one conversation
+    # forever, and Settings could not make a one-thread task at all.
+    @backlog @mc @shared
+    Scenario Outline: A task's destination decides where its later runs go
+      Given the user creates the task "Check Sentry" with the destination <destination>
+      When it has run twice
+      Then <result>
+
+      Examples:
+        | destination                          | result                                                                    |
+        | "New thread each run"                | each run started its own thread                                           |
+        | "One thread"                         | both runs went into the thread its first run started, in one conversation |
+        | "One thread, fresh session each run" | both runs went into that thread, the second starting a fresh session      |
+
+    # Upstream #30326: a form opened before the first run cannot unbind the thread it made.
+    @backlog @mc
+    Scenario: Saving a one-thread task keeps the thread its first run made
+      Given the user opened the task "Check Sentry", destination "One thread", before its first run
+      And the first run started the thread "Check Sentry"
+      When the user saves the form
+      Then the task still runs into "Check Sentry"
+      And only choosing "New thread each run" unbinds it
+
+    # Upstream #30326
+    @backlog @shared
+    Scenario: The task editor says deleting a one-thread task's thread deletes the task
+      When the user picks the destination "One thread" for the task "Check Sentry"
+      Then the editor says deleting its thread deletes the task too
 
     @mc
     Scenario: Tasks survive an MC restart
@@ -270,6 +303,26 @@ Feature: Scheduled tasks
       And the failed task shows its last error
       And the failed task is badged "Failed"
       And each task shows its prompt
+
+    # Upstream #31764: a task that posts into one thread gave no way to get to that thread.
+    @backlog @shared
+    Scenario Outline: A task that posts into one thread opens it from scheduled tasks
+      Given a task that runs in the thread "Nightly triage"
+      When the user opens scheduled tasks <on>
+      And the user <opens>
+      Then settings close and "Nightly triage" is open
+
+      Examples:
+        | on              | opens                                         |
+        | on the desktop  | chooses the task's "Nightly triage" link      |
+        | on the phone    | chooses "Open thread" from the task's menu    |
+
+    # Upstream #31764: a task that starts a new thread each run has no single thread to link to.
+    @backlog @shared @priority-low
+    Scenario: A task that starts a new thread each run links to no thread
+      Given a task that starts a new thread each run
+      When the user opens scheduled tasks
+      Then the task offers no thread to open
 
     # The web said "No environments available" with none paired. A QML client shows settings only
     # once its MC has synced, so its own environment is always there.
@@ -536,6 +589,14 @@ Feature: Scheduled tasks
       Then "Check Sentry" is listed under "Automations" with how its last run went and when it runs next
       And "Nightly build" is not listed
 
+    # Upstream #28585: about 25 bound tasks made the details too tall, and the denser layout they
+    # switched to left out the Automations section.
+    @backlog @desktop @priority-low
+    Scenario: A thread with many tasks bound to it still lists them in its details
+      Given 25 tasks send their prompts into the thread "Triage"
+      When the user opens the details of "Triage"
+      Then all 25 are listed under "Automations", scrolling within the section
+
     @backlog @desktop
     Scenario: A thread with no tasks bound to it shows no automations
       Given no task sends its prompt into the thread "Triage"
@@ -701,6 +762,7 @@ Feature: Scheduled tasks
       | an empty list of labels                | filters the delivery |
       | no labels field                        | filters the delivery |
 
+  # Upstream #23282: a webhook placeholder path ending in [] renders every element of a list.
   @backlog @mc @priority-low
   Scenario: A webhook prompt placeholder over a list renders every element
     Given a webhook task whose prompt is "Labels: {{body.issue.labels[].name}}"
@@ -787,6 +849,16 @@ Feature: Scheduled tasks
     When three deliveries for pull request 42 arrive 30 seconds apart
     Then one run starts 120 seconds after the first delivery, with the third delivery's payload
     And the later two are logged as coalesced
+
+  # Upstream #29476: a coalesced run rendered the prompt saved when its window opened, but took the
+  # model, thread and other settings from the task as it was at dispatch.
+  @backlog @mc
+  Scenario: A coalesced webhook run uses the prompt saved while its window was open
+    Given a webhook task with the prompt "Use the original instructions." and a 60 second coalesce window
+    And a delivery opened a window
+    When the user saves the prompt "Use the updated instructions." before the window closes
+    Then the run's message and its delivery log both say "Use the updated instructions."
+    And a retry of that run sends the same prompt again
 
   # Upstream #24046: coalesced deliveries whose filled-in prompt was too long escaped the 20-row limit for such failures.
   @backlog @mc @priority-low

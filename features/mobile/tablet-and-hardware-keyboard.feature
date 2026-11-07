@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/24985
+#   https://github.com/pingdotgg/t3code/pull/28825
 #   https://github.com/pingdotgg/t3code/pull/21071
 #   https://github.com/pingdotgg/t3code/pull/18574
 #   https://github.com/pingdotgg/t3code/pull/15083
@@ -10,6 +11,14 @@
 #   https://github.com/pingdotgg/t3code/pull/13085
 #   https://github.com/pingdotgg/t3code/pull/13310
 #   https://github.com/pingdotgg/t3code/pull/24298
+#   https://github.com/pingdotgg/t3code/pull/27086
+#   https://github.com/pingdotgg/t3code/pull/27088
+#   https://github.com/pingdotgg/t3code/pull/27090
+#   https://github.com/pingdotgg/t3code/pull/27205
+#   https://github.com/pingdotgg/t3code/pull/27218
+#   https://github.com/pingdotgg/t3code/pull/27229
+#   https://github.com/pingdotgg/t3code/pull/31251
+#   https://github.com/pingdotgg/t3code/pull/31665
 #   apps/mobile/src/lib/layout.ts (split view thresholds, pane widths)
 #   apps/mobile/src/features/layout/ (sidebar, inspector pane, maximize content)
 #   apps/mobile/src/lib/useHoverGesture.ts, components/RowPressable.tsx (hover highlight for mouse and stylus)
@@ -44,6 +53,17 @@ Feature: Tablet layout and hardware keyboards
       | 720   | 600    | one at a time   |
       | 844   | 390    | one at a time   |
       | 390   | 844    | one at a time   |
+
+  # Upstream #27088: windows between 600 and 720 points wide got the phone's one-at-a-time stack.
+  @backlog @mobile
+  Scenario: A window too narrow to split floats the thread list over the page
+    Given the app window is 700 wide and 600 tall
+    And the user is reading "Fix checkout"
+    When the user shows the thread list
+    Then it floats over the thread above a dimmed backdrop
+    When the user taps the backdrop, presses Back or chooses a thread in it
+    Then the thread list closes
+    And Back closes a sheet open over the thread list before it closes the list
 
   # The desktop's slim rows and its rail are for windows narrower than a tablet's: wherever the
   # tablet splits, its thread list keeps its full rows.
@@ -103,6 +123,20 @@ Feature: Tablet layout and hardware keyboards
     Then the thread stays open
     And the whole composer, including Send, is on the folded screen
 
+  # Upstream #31251: on iPad the composer stayed lifted at the docked keyboard's height after the
+  # keyboard floated or was minimised, leaving an empty band under it.
+  @backlog @mobile @priority-low
+  Scenario Outline: The composer follows the keyboard down when it <change>
+    Given the user is typing in a thread on a tablet with the docked keyboard
+    When the keyboard <change>
+    Then the composer sits just above what is left of the keyboard
+    And no empty band is left under it
+
+    Examples:
+      | change       |
+      | floats       |
+      | is minimised |
+
   # The desktop's layout has no empty detail pane: with no thread it lands on a new thread's draft.
   @backlog @mobile
   Scenario: An empty detail pane tells the user what to do
@@ -128,6 +162,21 @@ Feature: Tablet layout and hardware keyboards
     When the user shows the thread sidebar
     Then the thread sidebar is shown
 
+  # Upstream #27086: some pages beside the sidebar, such as Settings pages and new task, had no sidebar toggle.
+  @backlog @mobile @priority-low
+  Scenario Outline: Every page beside a movable sidebar offers the sidebar toggle in its bar
+    Given the layout is split
+    When the user opens <page>
+    Then its bar offers to hide and show the thread sidebar
+
+    Examples:
+      | page                    |
+      | a thread                |
+      | a Settings page         |
+      | the archived threads    |
+      | the thread's files      |
+      | a new task              |
+
   # Upstream #21071: one control switches the split sidebar between threads and pull
   # requests, in place of the rail.
   @backlog @mobile
@@ -137,6 +186,14 @@ Feature: Tablet layout and hardware keyboards
     Then the sidebar lists pull requests
     When the user switches the sidebar back
     Then the sidebar lists threads
+
+  # Upstream #27229: with the sidebar hidden, the page switcher stayed behind and covered the composer.
+  @backlog @mobile @priority-low
+  Scenario: Hiding the split sidebar takes its page switcher with it
+    Given the layout is split
+    When the thread sidebar is hidden, by the user or to make room for the inspector
+    Then the control switching the sidebar's pages is hidden with it
+    And nothing covers the composer
 
   # Upstream #21071: sidebar threads open while Settings or New task is open.
   @backlog @mobile
@@ -227,12 +284,15 @@ Feature: Tablet layout and hardware keyboards
       | device   | a device preview from "Fix checkout"     |
 
   # Upstream #24985
+  # Upstream #31665: on a narrow split screen 60% left the thread too little room, and the system
+  # dropped the inspector until the app restarted; the widest size now leaves the thread its minimum.
   @backlog @mobile @priority-low
   Scenario: The inspector opens at 40% of the screen and resizes between limits
     Given the layout is split
     When the inspector pane opens for the first time
     Then it takes 40% of the screen's width
     And dragging its divider sizes it between 260 points and 60% of the screen
+    And at its widest it still leaves the thread at least 320 points inside the safe area
 
   @backlog @mobile
   Scenario: A screen reader can widen and narrow the side pane
@@ -267,11 +327,41 @@ Feature: Tablet layout and hardware keyboards
     When the user opens the thread's files
     Then the files browser is shown beside the thread
 
+  # Upstream #27090: a window without room for the inspector opened its files and changes as
+  # screens of their own; they are a sheet over the thread instead.
   @backlog @mobile
-  Scenario: The files browser opens full screen on a narrower window
+  Scenario Outline: The thread's inspector is a sheet on a window without room for it
     Given the app window is 760 wide
-    When the user opens the thread's files
-    Then the files browser replaces the thread
+    When the user opens the thread's <pane>
+    Then the <pane> open in a sheet over the thread
+    When the user dismisses the sheet or chooses another page
+    Then the sheet closes
+
+    Examples:
+      | pane    |
+      | files   |
+      | changes |
+
+  # Upstream #27090: a git action started from the sheet showed its progress behind it.
+  @backlog @mobile @priority-low
+  Scenario: A git action started from the inspector sheet closes the sheet
+    Given the thread's changes are open in a sheet over the thread
+    When the user commits from the sheet
+    Then the sheet closes so the thread shows the commit's progress
+
+  # Upstream #27205: the inspector panes drew their own bars, and the Git sheet had no way to close it.
+  @backlog @mobile
+  Scenario Outline: The inspector's bar closes it
+    Given the thread's <pane> are shown <where>
+    When the user chooses Close in the pane's bar
+    Then the <pane> are no longer shown and the thread is
+
+    Examples:
+      | pane    | where                 |
+      | files   | beside the thread     |
+      | files   | in a sheet            |
+      | changes | beside the thread     |
+      | changes | in a sheet            |
 
   @mobile
   Scenario: Rotating the tablet keeps the selected thread
@@ -389,6 +479,14 @@ Feature: Tablet layout and hardware keyboards
       | an Android tablet       | follows the rotation     |
       | an iPhone               | stays in portrait        |
       | an Android phone        | stays in portrait        |
+
+  # Upstream #28825: an Android tablet held in landscape started in a portrait-width frame with black
+  # bars before turning.
+  @backlog @mobile @priority-low
+  Scenario: An Android tablet held in landscape starts in landscape
+    Given the user holds an Android tablet in landscape and the app is not running
+    When the user opens the app
+    Then it starts in landscape, with no portrait frame first
 
   @backlog @mobile
   Scenario: Unfolding a foldable unlocks rotation and folding it locks it again
@@ -625,6 +723,7 @@ Feature: Tablet layout and hardware keyboards
     When the user goes back
     Then the thread is shown
 
+  # Upstream #27218: with the sidebar stepped aside, the sidebar button closes the inspector and brings it back.
   @backlog @mobile
   Scenario: The sidebar steps aside when the inspector would leave the thread too narrow
     Given the app window is wide enough for the inspector but not for the list, the thread and the inspector together
@@ -633,6 +732,8 @@ Feature: Tablet layout and hardware keyboards
     And the thread and the inspector are shown
     When the user hides the inspector
     Then the thread list is shown again
+    When the user shows the inspector and then the thread sidebar
+    Then the inspector closes and the thread list and the thread are shown
 
   # Upstream #21071: on Android the thread, the composer and the full-width thread list stop at 640dp and stay centred.
   @backlog @mobile

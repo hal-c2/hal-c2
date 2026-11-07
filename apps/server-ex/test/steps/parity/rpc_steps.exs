@@ -598,6 +598,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "orchestration.getFullThreadDiff" ->
         {%{"threadId" => f.thread, "toTurnCount" => 0}, context}
 
+      "orchestration.getCommandOutput" ->
+        {%{"threadId" => f.thread, "itemId" => "turn-item:none"}, context}
+
       "orchestration.searchThreads" ->
         {%{"query" => "Work"}, context}
 

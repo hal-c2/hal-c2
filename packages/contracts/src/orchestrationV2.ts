@@ -501,6 +501,8 @@ export const OrchestrationV2Run = Schema.Struct({
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** A run a restart cut off: when it was last seen working, before the MC went down. */
+  lastActivityAt: Schema.optional(Schema.DateTimeUtc),
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
@@ -1185,6 +1187,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** Bytes printed so far; set while the output is held off the thread. */
+    outputSize: Schema.optional(Schema.Int),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
   }),
@@ -1561,6 +1565,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** True when the latest run was an automatic wake (the agent resuming on its own); omitted otherwise. */
+  latestRunAutomatic: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   /** Start of the activity-owning run; request time while it is preparing. */
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1919,6 +1925,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** Bytes printed so far; set while the output is held off the thread. */
+    outputSize: Schema.optional(Schema.Int),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
   }),
@@ -2598,6 +2606,8 @@ export const OrchestrationV2Command = Schema.Union([
     reason: Schema.optional(Schema.String),
     /** A user's Stop holds the queue behind the run (the default); cleanup sends false. */
     holdQueue: Schema.optional(Schema.Boolean),
+    // The user's Stop: also stops the subagents still working on what the thread delegated.
+    stopDelegated: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -2737,6 +2747,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getCommandOutput: "orchestration.getCommandOutput",
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -2966,6 +2977,25 @@ export const OrchestrationV2RpcError = Schema.Union([
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
+/**
+ * A command's output is not part of the thread a client holds: the item says how much
+ * it has printed (`outputSize`) and a client that shows the output asks for it. While
+ * the command runs that is its last 64K bytes; once it ends, what the thread kept,
+ * at most the last 256 KiB.
+ */
+export const OrchestrationV2GetCommandOutputInput = Schema.Struct({
+  threadId: ThreadId,
+  itemId: TurnItemId,
+});
+export type OrchestrationV2GetCommandOutputInput = typeof OrchestrationV2GetCommandOutputInput.Type;
+
+export const OrchestrationV2GetCommandOutputResult = Schema.Struct({
+  output: Schema.String,
+  running: Schema.Boolean,
+});
+export type OrchestrationV2GetCommandOutputResult =
+  typeof OrchestrationV2GetCommandOutputResult.Type;
+
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
@@ -3028,6 +3058,10 @@ export const OrchestrationV2RpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getCommandOutput: {
+    input: OrchestrationV2GetCommandOutputInput,
+    output: OrchestrationV2GetCommandOutputResult,
   },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),

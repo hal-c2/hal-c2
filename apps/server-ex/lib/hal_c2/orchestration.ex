@@ -146,6 +146,30 @@ defmodule HalC2.Orchestration do
   def handle("orchestration.getFullThreadDiff", %{"threadId" => thread_id} = input),
     do: turn_diff(thread_id, 0, input["toTurnCount"], input)
 
+  # A command's output, which the thread's clients do not hold: what it has printed so
+  # far while it runs, what the thread kept once it ended (`CommandTail`).
+  def handle("orchestration.getCommandOutput", %{"threadId" => thread_id, "itemId" => item_id}) do
+    # Fetched, not read from memory: the command may belong to a run gone cold.
+    case StreamState.fetch(HalC2.Streams.state(thread_id), "turn-item", item_id) do
+      %{"type" => "command_execution"} = item ->
+        running = item["status"] == "running"
+
+        output =
+          if running,
+            do: HalC2.Orchestration.CommandTail.get(thread_id, item_id) || item["output"] || "",
+            else: item["output"] || ""
+
+        {:ok, %{"output" => output, "running" => running}}
+
+      _ ->
+        {:error,
+         %{
+           "_tag" => "OrchestrationGetTurnDiffError",
+           "message" => "That command is not in this thread."
+         }}
+    end
+  end
+
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   defp turn_diff(thread_id, from, to, input) do
@@ -378,14 +402,23 @@ defmodule HalC2.Orchestration do
   # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`). It holds
   # the queue, as a restart does, until the user resumes it or sends a message;
   # the MC stopping a turn to clean up after itself passes `"holdQueue" => false`.
+  # `stopDelegated` marks the user's Stop, which the clients' Stop button sends: it also
+  # stops the subagents still working on what the thread delegated, from any turn, even
+  # when nothing on the thread itself is left to stop. Any other interrupt (an agent's
+  # `hal_c2_thread_interrupt`, a scheduled prompt's clean-up, a move) leaves them working.
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
     with :ok <- interrupt_policy(thread_id, command["runId"]) do
       HalC2.Streams.transact(thread_id, :thread, &{stop_request(&1, command), :ok})
       # Stopping a turn also stops its delegated tasks from waking it later.
       HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
 
-      with :ok <- interrupt_any(thread_id, command["runId"]),
-           do: {:ok, %{"sequence" => sequence(thread_id)}}
+      if command["stopDelegated"] == true,
+        do: HalC2.Orchestration.Delegation.stop_delegated(thread_id)
+
+      interrupted = interrupt_any(thread_id, command["runId"])
+      HalC2.Orchestration.Delegation.child_stopped(thread_id)
+
+      with :ok <- interrupted, do: {:ok, %{"sequence" => sequence(thread_id)}}
     end
   end
 
@@ -1111,6 +1144,23 @@ defmodule HalC2.Orchestration do
   defp question_item(request),
     do: String.replace_prefix(request["nodeId"] || "", "node:", "turn-item:")
 
+  @doc """
+  Dismisses the questions of `thread_id` still open for a message (asked without
+  stopping the turn); the questions a turn waits on end with the turn.
+  """
+  def dismiss_questions(thread_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      changes =
+        for request <- StreamState.list(state, "runtime-request"),
+            request["status"] == "pending",
+            HalC2.Orchestration.TurnWriter.message_request?(request),
+            change <- resolve_message_request(state, request, "cancelled", nil),
+            do: change
+
+      {changes, :ok}
+    end)
+  end
+
   defp resolve_message_request(state, request, status, answer) do
     at = Entities.now()
     item_status = if status == "resolved", do: "completed", else: "cancelled"
@@ -1547,7 +1597,8 @@ defmodule HalC2.Orchestration do
         {_, ref} =
           spawn_monitor(fn ->
             # Refused for a task that already ended, whose thread may still have tasks.
-            HalC2.Orchestration.Delegation.cancel(thread_id, id)
+            # The child's tasks are this tree's to stop, so its interrupt leaves them.
+            HalC2.Orchestration.Delegation.cancel(thread_id, id, stop_delegated: false)
             stop_thread_tree(child, deadline)
           end)
 
@@ -2514,15 +2565,24 @@ defmodule HalC2.Orchestration do
       # A page's agent keeps working for the continuation a restart promised it
       # (`HalC2.Space.PageAgent.reconcile/1`), so it hears when that cannot happen: on a
       # refusal, which is never retried, and on the last try of a crash.
+      # It is checked again when it runs (`Recovery.deliverable?/2`), which can be well
+      # after the restart asked for it; one no longer wanted is dropped.
       "provider-runtime.continue" ->
         try do
-          dispatch(args["command"])
+          if args["runId"] == nil or
+               HalC2.Orchestration.Recovery.deliverable?(thread_id, args["runId"]),
+             do: dispatch(args["command"]),
+             else: :refused
         catch
           kind, reason ->
             unless will_retry, do: HalC2.Space.PageAgent.report(thread_id)
             :erlang.raise(kind, reason, __STACKTRACE__)
         else
           {:ok, _} ->
+            :ok
+
+          :refused ->
+            HalC2.Space.PageAgent.report(thread_id)
             :ok
 
           {:error, message} ->
@@ -3555,7 +3615,10 @@ defmodule HalC2.Orchestration do
         {:error,
          "Thread #{id} has a pending approval or user-input request and cannot be snoozed."}
 
-      Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "queued")) ->
+      Enum.any?(
+        StreamState.list(state, "run"),
+        &(&1["status"] == "queued" and not agent_run?(state, &1))
+      ) ->
         {:error, "Thread #{id} has a queued run and cannot be snoozed."}
 
       true ->
@@ -3671,6 +3734,14 @@ defmodule HalC2.Orchestration do
   # messages carried a `notification`.
   defp agent_message?(message),
     do: message["notification"] != nil or message["delegatedCompletion"] != nil
+
+  # A run of a message the MC sent for the agent, a wake rather than the user's own message.
+  defp agent_run?(state, run) do
+    case StreamState.get(state, "message")[run["userMessageId"]] do
+      %{} = message -> agent_message?(message)
+      _ -> false
+    end
+  end
 
   # A queued message the MC sent for the agent is not the user's to rewrite, move or
   # steer with: it is what the agent is told, and when. `done` is what was refused

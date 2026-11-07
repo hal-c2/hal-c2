@@ -35,6 +35,10 @@
 #   https://github.com/pingdotgg/t3code/pull/22504
 #   https://github.com/pingdotgg/t3code/pull/27847
 #   https://github.com/pingdotgg/t3code/pull/22044
+#   https://github.com/pingdotgg/t3code/pull/27466
+#   https://github.com/pingdotgg/t3code/pull/28278
+#   https://github.com/pingdotgg/t3code/pull/24655
+#   https://github.com/pingdotgg/t3code/pull/27992
 
 @mc
 Feature: Provider setup, updates and sign-in
@@ -155,6 +159,28 @@ Feature: Provider setup, updates and sign-in
     When an update for Claude is available
     Then the update is offered through mise
     And the native updater is not run
+
+  # Upstream #27466: a claude on the path that is a mise command wrapper ran Claude's own updater,
+  # which declined to update a package-managed install and still reported success.
+  @backlog @priority-low
+  Scenario: A provider behind a mise command wrapper is not updated by its own updater
+    Given Claude's executable on the path is a mise command wrapper
+    When the user opens Claude's update details
+    Then no update command is offered for Claude
+
+  # Upstream #28278: OpenCode's own upgrade asked "Install anyways?" and waited forever, or failed,
+  # for installs it could not identify, so the update spun until it timed out.
+  @backlog @plugin-opencode
+  Scenario Outline: OpenCode's own upgrade is offered only where OpenCode's installer put it
+    Given OpenCode's executable is <location>
+    When the user opens OpenCode's update details
+    Then <offer>
+
+    Examples:
+      | location                                      | offer                                                |
+      | in OpenCode's own install folder              | the update command runs OpenCode's own upgrade       |
+      | a launcher script no installer claims         | no update command is offered for OpenCode            |
+      | a distribution package the MC cannot identify | no update command is offered for OpenCode            |
 
   @backlog @mc
   Scenario: A provider's own updater targets the home that instance uses
@@ -398,6 +424,15 @@ Feature: Provider setup, updates and sign-in
     Then the update finishes with "Already up to date."
     And Claude's installer is not run
 
+  # Upstream #27992: an older provider list could be published after the update's final state,
+  # and open clients stayed on "Updating Claude" until reloaded.
+  @backlog @mc @shared
+  Scenario: Open clients see an update's final state
+    Given a client is open on Settings while Claude updates
+    When the update finishes without changing Claude's version
+    Then the client stops showing Claude as updating
+    And it shows what a client opened afterwards shows
+
   Scenario: An update that leaves the provider outdated is reported as unchanged
     When an update finishes but the provider still reports the old version
     Then the user is told the provider is still outdated
@@ -515,6 +550,15 @@ Feature: Provider setup, updates and sign-in
     And a managed provider runtime is downloading
     When the user cancels the installation
     Then the download stops and the previous runtime is unchanged
+
+  # Upstream #24655: a second Install pressed before the first had started got the first one's
+  # answer, so it looked started while nothing installed, and showed the first one's error.
+  @backlog @shared @plugin-antigravity
+  Scenario: Installing two provider instances at once starts both
+    Given the Antigravity instances "work" and "personal" are not installed
+    When the user installs "work" and then "personal" before "work" has started
+    Then both installations start
+    And an error installing "work" shows only on "work"
 
   @plugin-antigravity
   Scenario: A managed runtime can be removed and installed again

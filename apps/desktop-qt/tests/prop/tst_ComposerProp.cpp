@@ -1,7 +1,8 @@
 // The composer as the user drives it across threads and a new thread's draft,
 // against a fake MC that accepts, refuses or holds each send
 // (ComposerController, DraftController): typing, images, the model and
-// permissions picked, sends and follow-ups while a turn runs, the stash, the
+// permissions picked, sends and follow-ups while a turn runs, the stash (and a
+// stash that cannot be written), the
 // connection dropping and the app restarting, with sends in flight that the MC
 // did or did not get: each reaches the thread once or comes back to its draft,
 // unless a newer user message is in the thread by then. A thread names no
@@ -84,6 +85,9 @@ struct Target {
   QString model;  // picked, else the default
   int pending = 0;  // of a page's images, the first ones, those its ask on its way carries
   QString interaction;  // the interaction mode picked, else the thread's
+  // The draft's model and interaction came with a new thread, not from a pick
+  // here, so the next new thread brings its own.
+  bool carried = false;
 };
 
 // A page's ask whose answer the MC holds; whether it will refuse it.
@@ -885,6 +889,9 @@ void verify(const Model& m, Sut& sut) {
     RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
     RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == m.interaction(m.open));
   }
+  if (m.open == kDraft) {
+    RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == (m.targets.value(kDraft).interaction.isEmpty() ? QStringLiteral("default") : m.targets.value(kDraft).interaction));
+  }
   QList<bool> toasts;
   for (const Toast& toast : m.toasts) toasts.append(toast.restore);
   RC_ASSERT(sut.toasts() == toasts);
@@ -963,7 +970,11 @@ struct RemoveImage : Command {
 
 struct PickModel : Command {
   QString model = pick(kModels);
-  void apply(Model& m) const override { m.targets[m.open].model = model; }
+  void apply(Model& m) const override {
+    Target& target = m.targets[m.open];
+    target.model = model;
+    target.carried = false;
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.model.select"),
                          QVariantMap{{QStringLiteral("instanceId"), instanceOf(model)}, {QStringLiteral("model"), model}});
@@ -972,19 +983,58 @@ struct PickModel : Command {
   void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
 };
 
-// Plan or default for the open thread's next sends: it goes to the MC with the
-// next message, before it.
+// Plan or default for the open thread's next sends (it goes to the MC with the
+// next message, before it), or the draft's first.
 struct PickInteraction : Command {
   QString mode = pick(kInteractionModes);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open) || m.open == kDraft); }
   void apply(Model& m) const override {
-    if (mode != m.interaction(m.open)) m.targets[m.open].interaction = mode;
+    if (mode == m.interaction(m.open)) return;
+    Target& target = m.targets[m.open];
+    target.interaction = mode;
+    target.carried = false;
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ")"; }
+};
+
+// New thread from an open thread: the project's draft opens again. A draft
+// with nothing of its own (just made after the user discarded the last one,
+// never written or picked in, or holding only what the last new thread
+// brought) takes the thread's interaction mode and model (the project names
+// no default here); one the user wrote in or picked in keeps its own.
+struct NewThread : Command {
+  bool fresh = *rc::gen::arbitrary<bool>();
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isThread(m.open) && m.loaded.contains(m.open));
+    RC_PRE(!m.lagging);
+  }
+  void apply(Model& m) const override {
+    const QString from = m.open;
+    m.open = kDraft;
+    const Target kept = m.targets.value(kDraft);
+    const bool own = !kept.carried && (!kept.model.isEmpty() || !kept.interaction.isEmpty());
+    if (!fresh && (!kept.text.isEmpty() || kept.images > 0 || own)) return;
+    Target draft;
+    draft.carried = true;
+    draft.interaction = m.interaction(from);
+    const QString picked = m.targets.value(from).model;
+    draft.model = picked.isEmpty() ? m.recorded.value(from) : picked;
+    m.targets[kDraft] = draft;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    auto* drafts = sut.native->controller<DraftController>();
+    if (fresh) drafts->remove(sut.draftId);
+    sut.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    const QString opened = sut.native->controller<NavigationController>()->route().draftId;
+    RC_ASSERT((opened != sut.draftId) == fresh);
+    sut.draftId = opened;
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "NewThread(" << (fresh ? "after the draft was discarded" : "the project's draft again") << ")"; }
 };
 
 // The MC records a model for a thread after its sends, as it does when a run
@@ -1155,6 +1205,29 @@ struct Stash : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "Stash"; }
+};
+
+// The stash cannot be written (its file is a folder for the moment): the
+// prompt stays in the composer, the stash and the file as they were, and an
+// error toast says so.
+struct StashUnwritable : Command {
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.open != kImages);
+    const Target& target = m.targets.value(m.open);
+    RC_PRE(!target.text.trimmed().isEmpty() || target.images > 0);
+  }
+  void apply(Model& m) const override { m.toasts.prepend({m.open, QString()}); }
+  void run(const Model& m0, Sut& sut) const override {
+    const QString path = sut.home.filePath(QStringLiteral("data/shell-composer.json"));
+    const QString aside = path + QStringLiteral(".aside");
+    const bool kept = QFile::rename(path, aside);
+    RC_ASSERT(QDir().mkpath(path));
+    sut.bridge->dispatch(QStringLiteral("composer.stash"));
+    RC_ASSERT(QDir(path).removeRecursively());
+    if (kept) RC_ASSERT(QFile::rename(aside, path));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "StashUnwritable"; }
 };
 
 // "Restore prompt" on the newest toast offering it: the prompt comes back
@@ -1553,9 +1626,9 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime,
-                                                   PickInteraction, Submit, Submit, Submit, Stash, RestorePrompt, SetRunning,
-                                                   SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow,
-                                                   Load, Recorded>()));
+                                                   PickInteraction, Submit, Submit, Submit, Stash, StashUnwritable, RestorePrompt,
+                                                   SetRunning, SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart,
+                                                   Slow, Load, Recorded, NewThread>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

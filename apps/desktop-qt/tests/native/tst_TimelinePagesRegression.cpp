@@ -172,6 +172,50 @@ private slots:
     QCOMPARE(model.entities(QStringLiteral("turn-item")).size(), 4);
   }
 
+  // What the review of hal-c2/hal-c2#1210 found: the fold of a reply a
+  // steer cut off named no item, so keepFrom() from it took the next run's
+  // row as the one read and let go of the turn above the reply.
+  void aReplyCutOffByASteerIsReadAsItsRun() {
+    const auto entity = [](const QString& id, const QString& type, const QString& run, int ordinal, const QString& status) {
+      return QJsonArray{QStringLiteral("turn-item"), id,
+                        QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("type"), type}, {QStringLiteral("runId"), run},
+                                    {QStringLiteral("ordinal"), ordinal}, {QStringLiteral("status"), status},
+                                    {QStringLiteral("text"), id}}};
+    };
+    const auto run = [](const QString& id, int ordinal, const QString& status, const QString& steeredBy = {}) {
+      QJsonObject value{{QStringLiteral("id"), id}, {QStringLiteral("ordinal"), ordinal}, {QStringLiteral("status"), status},
+                        {QStringLiteral("startedAt"), kAt}};
+      if (!steeredBy.isEmpty()) value.insert(QStringLiteral("steeredByRunId"), steeredBy);
+      return QJsonArray{QStringLiteral("run"), id, value};
+    };
+    const QString done = QStringLiteral("completed");
+    const QJsonArray rows{run(QStringLiteral("run-0"), 1, done),
+                          run(QStringLiteral("run-a"), 2, QStringLiteral("interrupted"), QStringLiteral("run-b")),
+                          run(QStringLiteral("run-b"), 3, done),
+                          entity(QStringLiteral("ask-0"), QStringLiteral("user_message"), QStringLiteral("run-0"), 1, done),
+                          entity(QStringLiteral("reply-0"), QStringLiteral("assistant_message"), QStringLiteral("run-0"), 2, done),
+                          entity(QStringLiteral("ask-a"), QStringLiteral("user_message"), QStringLiteral("run-a"), 3, done),
+                          entity(QStringLiteral("reply-a"), QStringLiteral("assistant_message"), QStringLiteral("run-a"), 4, QStringLiteral("interrupted")),
+                          entity(QStringLiteral("ask-b"), QStringLiteral("user_message"), QStringLiteral("run-b"), 5, done),
+                          entity(QStringLiteral("reply-b"), QStringLiteral("assistant_message"), QStringLiteral("run-b"), 6, done)};
+    TimelineModel model(kKey);
+    model.setKeep(1);
+    QSignalSpy raised(&model, &TimelineModel::windowRaised);
+    model.subscribing();
+    model.receive({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows},
+                   {QStringLiteral("done"), true}, {QStringLiteral("offset"), 1}, {QStringLiteral("handle"), QStringLiteral("log-1")},
+                   {QStringLiteral("floor"), QJsonValue::Null}});
+    model.receive({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("offset"), 1}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    int fold = -1;
+    for (int at = 0; at < model.rowCount(); ++at) {
+      if (model.data(model.index(at), TimelineModel::IdRole).toString() == QLatin1String("fold:cut-off:reply-a")) fold = at;
+    }
+    QVERIFY(fold > 0);
+    model.keepFrom(fold);
+    QCOMPARE(raised.size(), 0);
+    QCOMPARE(model.entities(QStringLiteral("turn-item")).size(), 6);
+  }
+
   // A thread read near its start keeps what is below the row read: the window
   // has a floor and no ceiling.
   void turnsBelowTheRowReadStay() {

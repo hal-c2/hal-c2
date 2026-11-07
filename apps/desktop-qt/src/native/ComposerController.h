@@ -179,6 +179,8 @@ public:
 
   bool handle(const QString& action, const QVariant& payload) override;
   void adopt(const QString& draftId, const QString& threadKey, const QString& text);
+  // The draft's first send is on its way: it becomes its thread once the MC answers.
+  bool launching(const QString& draftId) const { return m_launching.contains(draftId); }
 
   // Where the threads' drafts are kept; loads them from there.
   void setStorePath(const QString& path);
@@ -290,6 +292,9 @@ private:
     std::optional<QJsonObject> modelSelection;
     QString runtimeMode;
     QString interactionMode;
+    // The model and mode came with a new thread from the thread it was
+    // started on, not from a pick here; the next new thread replaces them.
+    bool carried = false;
     // A new thread's prompt goes to each of these instead: one thread per
     // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
@@ -389,6 +394,10 @@ private:
   QJsonObject baseSelection(const QString& key) const;
   // What a new thread in the project starts with.
   QJsonObject newThreadSelection(const QString& environmentId, const QString& projectId) const;
+  // The project's own default model: this device's override, else the project's. Empty when it has none.
+  QJsonObject projectSelection(const QString& environmentId, const QString& projectId) const;
+  // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
+  void carryInto(const QString& draftId, const QString& from);
   QString newThreadRuntimeMode(const QString& projectId) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;
@@ -540,7 +549,8 @@ private:
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
-  void save() const;
+  // False when the drafts and stash could not be written.
+  bool save() const;
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
