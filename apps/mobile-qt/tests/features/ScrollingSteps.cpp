@@ -644,12 +644,22 @@ const Steps steps([] {
     setEntity(world.mc, id, S("turn-item"), S("reply"), {{S("text"), text}});
     watch(world).reading = id;
   });
-  // A thread's name, not a terminal's (term-1 is TerminalSteps' step).
-  step(S("the user switches to \"(?!term-)([^\"]*)\""), [](World& world, const Captures& c, const Table&) {
-    world.thread = haveThread(world, c[0]);
+  // Only this outline's tall-reply thread: any other quoted name (an
+  // environment in the customisation scenarios, a terminal in
+  // TerminalSteps) must stay undefined there, not open a thread invented
+  // here. The seeded check keeps even this name to the thread the Given
+  // above seeded.
+  step(S("the user switches to \"Fix checkout\""), [](World& world, const Captures&, const Table&) {
+    const QString title = S("Fix checkout");
+    QString id;
+    for (auto it = world.mc.threads.cbegin(); it != world.mc.threads.cend(); ++it) {
+      if (it->value(QLatin1String("title")).toString() == title) id = it.key();
+    }
+    expect(watch(world).seeded.contains(id), S("\"%1\" is not a thread this scenario seeded").arg(title));
+    world.thread = id;
     world.back();
     world.item(S("homeScreen"));
-    openThread(world, c[0]);
+    openThread(world, title);
     waitLive(world);
   });
   step(S("the user presses %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
