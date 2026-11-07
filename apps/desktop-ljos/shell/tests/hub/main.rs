@@ -28,6 +28,7 @@ mod identity;
 mod keybindings;
 mod late_store;
 mod layout;
+mod layout_prop;
 mod limit_recovery;
 mod lineage;
 mod markdown_brick;

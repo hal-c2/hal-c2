@@ -107,12 +107,12 @@ fn an_action_reaches_the_controllers_of_the_window_it_came_from() {
     let (hub, _) = opening(Launch::default());
     open(&hub, "two");
 
-    // A narrow window lays its sidebar over the content; a wide one not.
+    // A narrow window draws its sidebar as a rail; a wide one in full.
     dispatch(&hub, MAIN, "layout.window", json!({"width": 1400}));
     dispatch(&hub, "two", "layout.window", json!({"width": 500}));
 
-    assert_eq!(published(&hub, MAIN, "layout")["sidebarOverlay"], false);
-    assert_eq!(published(&hub, "two", "layout")["sidebarOverlay"], true);
+    assert_eq!(published(&hub, MAIN, "layout")["sidebarMode"], "full");
+    assert_eq!(published(&hub, "two", "layout")["sidebarMode"], "rail");
 }
 
 #[test]

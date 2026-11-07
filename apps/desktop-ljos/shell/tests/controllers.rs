@@ -11,7 +11,7 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller::{self, Controller, Init, Registration, Scope};
 use hal_c2_shell::controllers::client_activity::REPORT_MS;
 use hal_c2_shell::controllers::layout::{
-    CONTENT_MIN_WIDTH, Layout, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH,
+    CONTENT_MIN_WIDTH, Layout, RAIL_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH,
 };
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
@@ -181,15 +181,25 @@ fn a_narrow_window_shows_the_sidebar_over_the_thread() {
         "layout.window",
         json!({"width": SIDEBAR_MIN_WIDTH + CONTENT_MIN_WIDTH - 1}),
     );
+    // The rail stays beside the thread; its toggle opens the list over it.
     let layout = published(&engine, "layout");
     assert_eq!(
-        (&layout["sidebarOverlay"], &layout["sidebarCollapsed"]),
-        (&json!(true), &json!(true))
+        (
+            &layout["sidebarMode"],
+            &layout["sidebarWidth"],
+            &layout["sidebarOverlay"]
+        ),
+        (&json!("rail"), &json!(RAIL_WIDTH), &json!(false))
     );
     dispatch(&engine, "sidebar.toggle", json!(null));
+    let layout = published(&engine, "layout");
     assert_eq!(
-        published(&engine, "layout")["sidebarCollapsed"],
-        json!(false)
+        (
+            &layout["sidebarOverlay"],
+            &layout["sidebarCollapsed"],
+            &layout["sidebarWidth"]
+        ),
+        (&json!(true), &json!(false), &json!(SIDEBAR_MIN_WIDTH))
     );
     // Widening forgets the overlay was open; the docked sidebar was never collapsed.
     dispatch(&engine, "layout.window", json!({"width": 1400}));

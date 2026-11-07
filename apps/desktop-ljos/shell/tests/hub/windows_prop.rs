@@ -272,7 +272,8 @@ impl World {
                 Some(section) => assert_eq!(route["section"], section, "{}", open.id),
             }
             if let Some(narrow) = open.narrow {
-                assert_eq!(published("layout")["sidebarOverlay"], narrow, "{}", open.id);
+                let mode = if narrow { "rail" } else { "full" };
+                assert_eq!(published("layout")["sidebarMode"], mode, "{}", open.id);
             }
             assert_eq!(published("backendError"), self.shared, "{}", open.id);
             assert_eq!(open.ticks.get(), open.expected_ticks, "{}", open.id);

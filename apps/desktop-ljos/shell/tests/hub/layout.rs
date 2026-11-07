@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::commands::Commands;
-use hal_c2_shell::controllers::layout::{CONTENT_MIN_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH};
+use hal_c2_shell::controllers::layout::{
+    CONTENT_MIN_WIDTH, RAIL_BELOW, SIDEBAR_MIN_WIDTH, SIDEBAR_WIDTH,
+};
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::json::Json;
 use serde_json::json;
@@ -210,24 +212,23 @@ fn the_sidebar_follows_the_window_as_it_is_resized_and_zoomed() {
     let hub = with_config(&config_dir("window"));
     let window = shell_window(&hub);
     hub.advance(0);
-    let overlay = |hub: &Hub| layout(hub)["sidebarOverlay"] == json!(true);
-    assert!(!overlay(&hub), "{}", layout(&hub));
+    let rail = |hub: &Hub| layout(hub)["sidebarMode"] == json!("rail");
+    assert!(!rail(&hub), "{}", layout(&hub));
 
     // Made as small as it goes, and back.
     resize(&hub, window, 640);
-    assert!(overlay(&hub), "{}", layout(&hub));
+    assert!(rail(&hub), "{}", layout(&hub));
     resize(&hub, window, 1280);
-    assert!(!overlay(&hub), "{}", layout(&hub));
+    assert!(!rail(&hub), "{}", layout(&hub));
 
-    // Room beside the thread until a zoom takes it.
-    let narrow = SIDEBAR_MIN_WIDTH + CONTENT_MIN_WIDTH + 40;
-    resize(&hub, window, narrow);
-    assert!(!overlay(&hub), "{}", layout(&hub));
+    // Room for the list beside the thread until a zoom takes it.
+    resize(&hub, window, RAIL_BELOW + 40);
+    assert!(!rail(&hub), "{}", layout(&hub));
     run(&hub, "view.zoomIn");
     run(&hub, "view.zoomIn");
     hub.advance(0);
-    assert!(overlay(&hub), "{}", layout(&hub));
+    assert!(rail(&hub), "{}", layout(&hub));
     run(&hub, "view.resetZoom");
     hub.advance(0);
-    assert!(!overlay(&hub), "{}", layout(&hub));
+    assert!(!rail(&hub), "{}", layout(&hub));
 }
