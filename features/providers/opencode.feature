@@ -1135,7 +1135,6 @@ Feature: OpenCode
       | option label       | the option reads "Option"                            |
       | option description | the option's label is shown as its description       |
 
-  @backlog
   Scenario: OpenCode's to-do list is shown and finishes with its last item
     When OpenCode updates its to-do list with one item in progress and one done
     Then the thread shows a "Todo list" with one step running and one done

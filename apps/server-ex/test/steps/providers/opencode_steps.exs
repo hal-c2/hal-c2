@@ -1021,15 +1021,18 @@ defmodule HalC2.Steps.Providers.Opencode do
       "rawOutput" => %{"output" => output, "metadata" => metadata}
     }
 
-  defp run_tools(context, updates) do
-    turn = %{
-      "match" => "use the tools",
-      "steps" => Enum.map(updates, &%{"update" => &1}) ++ [%{"text" => "Done."}]
-    }
+  # `later`: scripted turns of their own for messages sent afterwards, `%{match => updates}`.
+  defp run_tools(context, updates, later \\ %{}) do
+    turns =
+      for {match, updates} <- Map.put(later, "use the tools", updates),
+          do: %{
+            "match" => match,
+            "steps" => Enum.map(updates, &%{"update" => &1}) ++ [%{"text" => "Done."}]
+          }
 
     context =
       context
-      |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+      |> FakeAcp.install("opencode", %{"turns" => turns ++ FakeAcp.turns()}, enabled: true)
       |> FakeAcp.thread(@thread)
       |> FakeAcp.send_message("use the tools")
 
@@ -1042,6 +1045,56 @@ defmodule HalC2.Steps.Providers.Opencode do
     |> HalC2.Streams.state()
     |> StreamState.list("turn-item")
     |> Enum.filter(&(&1["type"] == type))
+  end
+
+  # --- to-do list ---
+
+  defp todos(entries) do
+    %{
+      "sessionUpdate" => "plan",
+      "entries" =>
+        for(
+          {text, status} <- entries,
+          do: %{"content" => text, "status" => status, "priority" => "medium"}
+        )
+    }
+  end
+
+  defp todo_lists(context) do
+    World.thread_id(context, @thread)
+    |> HalC2.Streams.state()
+    |> StreamState.list("plan")
+    |> Enum.filter(&(&1["kind"] == "todo_list"))
+  end
+
+  step "OpenCode updates its to-do list with one item in progress and one done", context do
+    done = [{"Write the test", "completed"}, {"Read the code", "completed"}]
+
+    run_tools(
+      context,
+      [todos([{"Write the test", "in_progress"}, {"Read the code", "completed"}])],
+      %{"finish the list" => [todos([{"Write the test", "pending"} | tl(done)]), todos(done)]}
+    )
+  end
+
+  # The thread's list, as clients title a `todo_list` item.
+  step "the thread shows a \"Todo list\" with one step running and one done", context do
+    assert [%{"steps" => steps}] = tool_items(context, "todo_list")
+
+    assert Enum.map(steps, &{&1["text"], &1["status"]}) ==
+             [{"Write the test", "running"}, {"Read the code", "completed"}]
+
+    assert [%{"status" => "active"}] = todo_lists(context)
+    context
+  end
+
+  step "the list is finished only once every item is done", context do
+    context = FakeAcp.send_message(context, "finish the list")
+    FakeAcp.await_runs(context, 2)
+    assert [first, second] = Enum.sort_by(todo_lists(context), & &1["createdAt"])
+    # The next turn's list replaces the unfinished one, and finishes once all is done.
+    assert first["status"] == "superseded" and second["status"] == "completed"
+    context
   end
 
   step "OpenCode runs a shell command", context do
