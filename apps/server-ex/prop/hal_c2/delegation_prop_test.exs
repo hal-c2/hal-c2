@@ -7,7 +7,8 @@ defmodule HalC2.DelegationPropTest do
   the periodic check), and the MC restarting (`Delegation.reconcile/2` at boot), also
   when the restart interrupts the child's working run and nothing continues it
   (`Recovery`), or ends the background command the child's finished turn waited on, or
-  asks the child to continue and that continuation is later sent or given up on.
+  asks the child to continue and that continuation is later sent (also while a check
+  reads the child) or given up on.
 
   The child's runs are written to its stream as the turn writer leaves them, with no
   provider behind them; the caller has a turn running, so the result message a report
@@ -114,6 +115,9 @@ defmodule HalC2.DelegationPropTest do
           do: [],
           else: [
             {3, {:call, __MODULE__, :send_continuation, [state.continuing, next(state)]}},
+            {2,
+             {:call, __MODULE__, :check_while_sent,
+              [state.continuing, next(state), oneof([:continuations, :continued])]}},
             {1, {:call, __MODULE__, :abandon_continuation, [state.continuing]}}
           ]
         ) ++
@@ -221,7 +225,7 @@ defmodule HalC2.DelegationPropTest do
       state.continuing == nil and Enum.any?(state.runs, &(&1.id == id and &1.status == "running"))
 
   def precondition(state, {:call, _, call, [id | _]})
-      when call in [:send_continuation, :abandon_continuation],
+      when call in [:send_continuation, :check_while_sent, :abandon_continuation],
       do: state.continuing == id
 
   def precondition(state, {:call, _, :end_background, [id, _]}),
@@ -310,6 +314,9 @@ defmodule HalC2.DelegationPropTest do
       | continuing: nil,
         runs: state.runs ++ [%{id: id, status: "running", ended_as: nil}]
     }
+
+  def next_state(state, _result, {:call, _, :check_while_sent, [interrupted, id, _]}),
+    do: next_state(state, nil, {:call, __MODULE__, :send_continuation, [interrupted, id]})
 
   def next_state(state, _result, {:call, _, :abandon_continuation, _}),
     do: %{state | continuing: nil}
@@ -439,6 +446,7 @@ defmodule HalC2.DelegationPropTest do
             :restart_unresumed,
             :restart_waiting,
             :restart_continued,
+            :check_while_sent,
             :abandon_continuation
           ]
       end
@@ -675,6 +683,19 @@ defmodule HalC2.DelegationPropTest do
     end
   end
 
+  # A check racing the continuation (`check_while_sent/3`): it is sent, and its effect
+  # gone, at the stage of the check that names it.
+  def hook(stage, @child) when stage in [:continuations, :continued] do
+    case Process.get(:sending) do
+      {^stage, interrupted, id} ->
+        Process.delete(:sending)
+        sent(interrupted, id)
+
+      _ ->
+        :ok
+    end
+  end
+
   def hook(_stage, _id), do: :ok
 
   # Run `run` starts a command that keeps running in the background.
@@ -756,18 +777,30 @@ defmodule HalC2.DelegationPropTest do
 
   # The continuation is sent: its message and the run it starts are in, then its
   # effect is done and gone, as the outbox leaves it.
-  def send_continuation(interrupted, id) do
+  def send_continuation(interrupted, id), do: observe(fn -> sent(interrupted, id) end)
+
+  # The periodic check runs as the continuation is sent: after its first read of the
+  # child, before it reads the child's continuations (`:continuations`) or between that
+  # and its newer read of the child (`:continued`).
+  def check_while_sent(interrupted, id, stage) do
     observe(fn ->
-      message = "message:restart-continuation:#{interrupted}"
-
-      commit(@child, [
-        {"message", message,
-         %{"id" => message, "runId" => id, "role" => "user", "text" => "Continue"}},
-        {"run", id, run(id, "running")}
-      ])
-
-      :ok = HalC2.Store.delete_meta(continuation_key(interrupted))
+      Process.put(:sending, {stage, interrupted, id})
+      Delegation.settle_if_quiet(@child)
+      # The check reaches that stage only when the child looked quiet first.
+      if Process.delete(:sending), do: sent(interrupted, id)
     end)
+  end
+
+  defp sent(interrupted, id) do
+    message = "message:restart-continuation:#{interrupted}"
+
+    commit(@child, [
+      {"message", message,
+       %{"id" => message, "runId" => id, "role" => "user", "text" => "Continue"}},
+      {"run", id, run(id, "running")}
+    ])
+
+    :ok = HalC2.Store.delete_meta(continuation_key(interrupted))
   end
 
   # Its tries run out: the effect is kept as failed and the periodic check settles.
