@@ -138,6 +138,24 @@ defmodule HalC2.ClusterServerTest do
     assert {:error, :not_a_member} = Cluster.switch("m1", false)
   end
 
+  test "a member removed for good, not one switched off, calls off the moves to it" do
+    # This test stands in for HalC2.ThreadMove, to hear what it is told.
+    Process.register(self(), HalC2.ThreadMove)
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    {:ok, _} = Cluster.admit(entry)
+    refute Cluster.removed?("m1")
+
+    :ok = Cluster.switch("m1", false)
+    refute Cluster.removed?("m1")
+    refute_received {:"$gen_cast", {:removed, _}}
+
+    :ok = Cluster.remove("m1")
+    assert Cluster.removed?("m1")
+    assert_received {:"$gen_cast", {:removed, "m1"}}
+    refute Cluster.removed?("stranger")
+  end
+
   defp flush_sent do
     receive do
       {:sent, _, _} -> flush_sent()

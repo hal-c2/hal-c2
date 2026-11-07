@@ -68,6 +68,7 @@ defmodule HalC2.SettingsSharedProofTest do
         "the file's hash, which the check compares; put stands for the check adopting an edit",
       "HalC2.Cluster handle_call :status" => @reads,
       "HalC2.Cluster handle_call :fingerprint" => @reads,
+      "HalC2.Cluster handle_call {:removed?, _}" => @reads,
       "HalC2.Cluster handle_call :entry" => @members,
       "HalC2.Cluster handle_call {:admit, _}" => @members,
       "HalC2.Cluster handle_call {:joined, _, _, _}" => @members,
