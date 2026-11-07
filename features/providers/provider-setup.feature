@@ -1,4 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20386
+#   https://github.com/pingdotgg/t3code/pull/18110
+#   https://github.com/pingdotgg/t3code/pull/20796
+#   https://github.com/pingdotgg/t3code/pull/14295
+#   https://github.com/pingdotgg/t3code/pull/19580
+#   https://github.com/pingdotgg/t3code/pull/21451
+#   https://github.com/pingdotgg/t3code/pull/21452
+#   https://github.com/pingdotgg/t3code/pull/19157
+#   https://github.com/pingdotgg/t3code/pull/19887
+#   https://github.com/pingdotgg/t3code/pull/18851
+#   https://github.com/pingdotgg/t3code/pull/18425
 #   docs/internals/providers.md (setup never as a health-check side effect, update ownership proven by real path)
 #   apps/server-ex/lib/hal_c2/provider_auth.ex (provider.auth.start, provider.auth.respond, provider.auth.complete, provider.auth.cancel, provider.auth.logout, provider.auth.subscribe)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, versionAdvisory)
@@ -32,6 +43,17 @@ Feature: Provider setup, updates and sign-in
     When the MC checks its providers in the background
     Then no sign-in or installation is started
 
+  # Upstream #18851: disabled providers skip periodic health checks; manual refresh and enabling still check them.
+  @backlog
+  Scenario: A disabled provider is not checked on a schedule
+    Given Grok is disabled and a client is watching provider status
+    When the periodic provider check runs
+    Then Grok is not checked and no status is sent for it
+    When the user refreshes providers
+    Then Grok is checked
+    When the user enables Grok
+    Then Grok is checked at once and on the schedule after that
+
   Scenario: An update is run by the installer that owns the provider
     Given Codex was installed with Homebrew and is outdated
     When the user updates Codex
@@ -50,8 +72,19 @@ Feature: Provider setup, updates and sign-in
     When the user opens Claude's update details
     Then no update command is offered for Claude
 
+  # Upstream #18110: a provider that is behind with no update command says which version is
+  # out and asks the user to update the executable it names with whatever installed it.
+  @backlog @desktop
+  Scenario: A provider behind with no update command says how to update it
+    Given Codex's executable is a package inside a project's node_modules
+    And a newer Codex is out
+    When the user looks at Codex's update details
+    Then the user is told the newer version is out
+    And the user is told to update the executable at that path with the app or tool that installed it
+
   # Ownership is proven from where the executable really lives, never from a name
   # (apps/server/src/provider/providerMaintenance.ts resolvePackageManagedProviderMaintenance).
+  # Upstream #19887: Vite+ provider installs get update prompts, Windows included.
   @backlog @mc
   Scenario Outline: A package manager that proves it owns the executable updates it
     Given Codex's executable lives in <location>
@@ -64,6 +97,24 @@ Feature: Provider setup, updates and sign-in
       | a Bun global install             | Bun against that global install           |
       | a pnpm global install            | pnpm against that global install          |
       | an npm global prefix             | npm against that same prefix              |
+
+  # Upstream #14295: pnpm global updates install the advertised version rather than "latest".
+  @backlog @priority-low
+  Scenario: A pnpm global update installs the version it advertised
+    Given Codex's executable lives in a pnpm global install
+    And Codex "0.2.0" is advertised as the latest version
+    When the user updates Codex
+    Then pnpm is asked to install Codex "0.2.0" and not "latest"
+    And the copyable update command names "0.2.0" too
+
+  # Upstream #20796: on pnpm 10.4 or newer a pnpm global update allows the provider package's
+  # install script, which pnpm otherwise skips silently.
+  @backlog @priority-low
+  Scenario: A pnpm global update lets the provider finish installing
+    Given OpenCode was installed as a pnpm global package with pnpm 10.4 or newer
+    When the user updates OpenCode
+    Then OpenCode's install script runs as part of the update
+    And OpenCode is usable afterwards
 
   @backlog @mc @priority-low
   Scenario: A package inside a project folder is not a global install
@@ -89,6 +140,14 @@ Feature: Provider setup, updates and sign-in
     When the user opens Codex's update details
     Then no update command is offered for Codex
 
+  # Upstream #19157: a provider launcher mise owns in a native install location gets mise's update, not the native updater.
+  @backlog
+  Scenario: A mise launcher in a native install location is updated through mise
+    Given Claude's launcher sits in its native install location but is owned by mise
+    When an update for Claude is available
+    Then the update is offered through mise
+    And the native updater is not run
+
   @backlog @mc
   Scenario: A provider's own updater targets the home that instance uses
     Given Codex was installed by its own installer
@@ -109,12 +168,38 @@ Feature: Provider setup, updates and sign-in
     When the MC checks provider versions
     Then Codex is compared against the version Homebrew would install
 
+  # Upstream #21451: refreshing a provider reused cached Homebrew metadata; an explicit refresh now
+  # rereads it, background checks keep the cache.
+  @backlog @priority-low
+  Scenario: Refreshing a provider rereads what its installer knows
+    Given Codex was installed with Homebrew and upgraded outside HAL-C2
+    When the user refreshes Codex's status
+    Then the installed and latest versions are read anew from Homebrew
+    And background checks keep using the cached answer
+
   @backlog @mc @priority-low
   Scenario: A Homebrew install whose latest version cannot be read shows no update
     Given Codex was installed with Homebrew
     And Homebrew does not answer within ten seconds
     When the MC checks provider versions
     Then Codex's update status is unknown
+
+  # Upstream #19580: a pnpm install was offered the registry's newest version even when pnpm
+  # would not install it; the offer now follows pnpm's own answer.
+  @backlog @priority-low
+  Scenario: A pnpm install is compared against the version pnpm will install
+    Given Codex was installed globally with pnpm
+    And the registry's newest Codex is one pnpm will not install yet
+    When the MC checks Codex for updates
+    Then only a version pnpm will install is offered
+
+  # Upstream #20386: a Homebrew cask without a version is not offered an update.
+  @backlog @priority-low
+  Scenario: A Homebrew cask with no version of its own shows no update
+    Given Pi was installed from a Homebrew cask whose version is "latest"
+    When the MC checks provider versions
+    Then Pi's update status is unknown
+    And no update to a version called "latest" is offered
 
   @backlog @mc @priority-low
   Scenario: Latest versions are looked up at most once an hour per package
@@ -144,6 +229,7 @@ Feature: Provider setup, updates and sign-in
 
   # Codex's ChatGPT sign-in from HAL-C2 is @backlog in codex.feature ("Codex connects a
   # ChatGPT account from HAL-C2"); this line describes today's behaviour and must be reconciled then.
+  # Upstream #18425: providers whose CLI owns setup declare they cannot be installed or signed in from the app.
   Scenario: Only providers that support it sign in from HAL-C2
     When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here
@@ -331,6 +417,16 @@ Feature: Provider setup, updates and sign-in
     And that latest release is known to be broken with this HAL-C2 release
     When the user opens the provider list
     Then Codex is not offered an update to that release
+
+  # Upstream #21452: Homebrew reporting the same incompatible release as installed and latest left
+  # no recovery; the provider now shows the Homebrew commands to run.
+  @backlog @priority-low
+  Scenario: A Homebrew install stuck on an incompatible release says how to get past it
+    Given Codex was installed with Homebrew
+    And Homebrew reports the installed Codex and its latest Codex as the same unsupported release
+    When the user opens the provider list
+    Then Codex shows the Homebrew commands to refresh and upgrade it on the environment's machine
+    And the hint goes once a compatible latest release is found
 
   # Antigravity is the one provider whose runtime the MC installs itself
   # (apps/server/src/provider/AntigravityInstallation.ts, installation.ex).

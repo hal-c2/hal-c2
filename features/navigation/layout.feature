@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18860
+#   https://github.com/pingdotgg/t3code/pull/18849
 #   https://github.com/pingdotgg/t3code/pull/17327
 #   https://github.com/pingdotgg/t3code/pull/17730
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
@@ -117,6 +119,17 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the sidebar opens over the thread at its minimum width
       When the window becomes wide again
       Then the sidebar is hidden
+
+    # Upstream #18849: Tab could focus and Enter activate controls of a collapsed sidebar; hiding
+    # it moves focus to the control that shows it again.
+    @backlog @desktop
+    Scenario: The keyboard does not reach a hidden sidebar
+      Given a control in the sidebar has the keyboard focus
+      When the user hides the sidebar
+      Then the focus moves to the control that shows the sidebar
+      And moving the focus with Tab never lands in the hidden sidebar
+      When the user shows the sidebar again
+      Then its controls can be reached with Tab
 
     # Two-line rows need the room; a narrower window keeps one line a thread, and one too narrow
     # for the list beside the thread keeps only the rail.
@@ -607,6 +620,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the right panel has "Diff" and "Files" tabs
       When the user middle-clicks the "Diff" tab
       Then only the "Files" tab remains
+
+    # Upstream #18860: middle-click closing a panel tab does not paste the primary selection.
+    @backlog @desktop
+    Scenario: Closing a tab with a middle click pastes nothing
+      Given the user selected some text and the composer has the focus
+      When the user middle-clicks a right panel tab
+      Then the tab closes
+      And nothing is pasted into the composer
 
     @backlog @desktop
     Scenario: A file tab's path can be copied from its menu

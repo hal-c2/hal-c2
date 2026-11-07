@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16473
+#   https://github.com/pingdotgg/t3code/pull/17910
+#   https://github.com/pingdotgg/t3code/pull/17909
+#   https://github.com/pingdotgg/t3code/pull/20211
+#   https://github.com/pingdotgg/t3code/pull/20368
 #   https://github.com/pingdotgg/t3code/pull/15834
 #   https://github.com/pingdotgg/t3code/pull/14847
 #   https://github.com/pingdotgg/t3code/pull/15150
@@ -107,6 +112,21 @@ Feature: Storage cleanup
       And the last run lists each worktree removed, kept or failed, with removed sizes, why each was kept, and each failure's reason
       And it shows how much space was recovered
 
+    # Upstream #17910: files hardlinked from a shared store were counted as recovered space; only
+    # space the removal really frees is counted.
+    @backlog @mc @priority-low
+    Scenario: Space still held by another link is not counted as recovered
+      Given a worktree about to be removed has dependencies hardlinked from a shared package store
+      When the rules remove it
+      Then the space recovered leaves out the hardlinked files
+
+    # Upstream #20211: cleanup results name the machine, the checkout, the full folder and the thread.
+    @backlog @mc @shared
+    Scenario: Each cleanup result says which machine and folder it was
+      Given two machines each kept a worktree named "feature-cart"
+      When the user chooses Delete now in Storage settings
+      Then each result names its machine, its checkout, its full folder and its thread
+
     @backlog @mc @priority-high
     Scenario: A worktree that gets busy while it is being measured is kept
       Given a worktree about to be removed is being measured
@@ -211,6 +231,22 @@ Feature: Storage cleanup
       Then the worktree is kept
       And its pull request was not read
 
+    # Upstream #17909: with no local record of the remote's default branch, cleanup asks the remote
+    # for it once per sweep and never guesses "main" or "master".
+    @backlog @mc @priority-high
+    Scenario Outline: A repository that does not know its remote's default branch asks the remote
+      Given the user turned on deleting merged worktrees
+      And the repository's remote was added by hand, so the checkout does not record its default branch
+      And <remote>
+      When the MC sweeps storage
+      Then the worktree <outcome>
+
+      Examples:
+        | remote                                                                               | outcome    |
+        | the remote says its default is "trunk" and the worktree's commits are on "trunk"     | is removed |
+        | the remote says its default is "trunk" and the worktree's commits are only on "main" | is kept    |
+        | the remote cannot be asked for its default branch                                    | is kept    |
+
     @backlog @mc @priority-high
     Scenario: An untracked file the repository's status settings hide still keeps the worktree
       Given the user turned on deleting worktrees of deleted threads
@@ -272,6 +308,15 @@ Feature: Storage cleanup
       And all three have been idle for 9 days with no pending work
       When the MC sweeps storage
       Then the worktree is removed
+
+    # Upstream #16473: cleanup read only active threads, missing archived threads' worktrees.
+    @backlog @mc
+    Scenario: Cleanup rules reach the worktrees of archived threads
+      Given the user turned on deleting worktrees idle for 8 days
+      And an archived thread's worktree has been idle for 9 days with nothing to lose
+      When the MC sweeps storage
+      Then the worktree is removed
+      But a worktree an archived thread shares with one that could lose work is kept
 
     @backlog @mc @priority-high
     Scenario Outline: A worktree shared with subagents is kept when one of them could lose work
@@ -338,6 +383,22 @@ Feature: Storage cleanup
       Then the folders it did not finish measuring are reported with an unknown size
       And they are measured again on the next sweep
       And a folder already measured is not walked again while it stays unused
+
+    # Upstream #20368: worktrees with initialized submodules are removed when nothing in them would be lost.
+    @backlog @mc
+    Scenario: A worktree with initialized submodules is removed when nothing would be lost
+      Given the user turned on deleting worktrees idle for 8 days
+      And an idle thread's worktree has initialized submodules with nothing to lose
+      When the MC sweeps storage
+      Then the worktree is removed
+
+    # Upstream #20368: a submodule commit that is not pushed anywhere still keeps the worktree.
+    @backlog @mc @priority-high
+    Scenario: A worktree whose submodule has unpublished work is kept
+      Given the user turned on deleting worktrees idle for 8 days
+      And an idle thread's worktree has a submodule with a commit not pushed anywhere
+      When the MC sweeps storage
+      Then the worktree is kept
 
   Rule: Storage settings
 

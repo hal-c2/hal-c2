@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16581
+#   https://github.com/pingdotgg/t3code/pull/18503
+#   https://github.com/pingdotgg/t3code/pull/18582
 #   https://github.com/pingdotgg/t3code/pull/17370
 #   https://github.com/pingdotgg/t3code/pull/18334
 #   https://github.com/pingdotgg/t3code/pull/17879
@@ -74,6 +77,14 @@ Feature: Settings scopes and inheritance
       When the MC resolves the settings for "hal-c2"
       Then the default model is the environment's default model
 
+    # Upstream #16581: a project's new model kept the previous model's options.
+    @backlog @mc @desktop
+    Scenario: A project's new model does not keep the old model's options
+      Given the project "hal-c2" overrides the default model with "gpt-6-astra" at extra high effort
+      When the user changes the project's default model to "gpt-6-luna"
+      Then the project's default model is "gpt-6-luna" with its own default options
+      And no effort is saved for it from "gpt-6-astra"
+
     # Upstream #17879. A project's provider switch overrides the environment's, and the MC
     # checks the project's value wherever a turn can start.
     @backlog @mc
@@ -146,6 +157,21 @@ Feature: Settings scopes and inheritance
       When the user saves a settings.json that is not valid JSON
       Then the MC keeps using the settings it had
       And connected clients are not sent broken settings
+
+    # Upstream #18582: a client's save no longer reverts a hand edit to settings.json the server had not read yet.
+    @backlog @mc
+    Scenario: A client's save keeps a hand edit the MC has not noticed yet
+      Given the user edited settings.json by hand a moment ago
+      When a client saves a different setting before the MC has read the edit
+      Then settings.json holds both the hand edit and the client's change
+
+    # Upstream #18582: a save over a settings.json that is not valid JSON is refused.
+    @backlog @mc
+    Scenario: A save over a settings file that is not valid JSON is refused and leaves it unchanged
+      Given settings.json holds a hand edit that is not valid JSON
+      When a client saves a setting
+      Then the save is refused
+      And settings.json still holds the user's text for them to fix
 
     @backlog @mc
     Scenario: A settings file that cannot be read at startup is kept for repair
@@ -252,6 +278,16 @@ Feature: Settings scopes and inheritance
       Given "Build box" is offline
       When the user chooses which environment settings apply to
       Then "Build box" is listed as offline
+
+    # Upstream #18503: with one environment chosen, the project picker lists only projects that
+    # have a checkout there; all environments still lists every project.
+    @backlog @desktop
+    Scenario: Choosing a project on one environment offers only projects checked out there
+      Given "notes" has a checkout only on "Build box"
+      And the user is editing settings on "Laptop"
+      When the user chooses which project settings apply to
+      Then "notes" is not offered
+      And with all environments chosen "notes" is offered again
 
     @backlog @desktop
     Scenario Outline: A scope that no longer exists explains why and saves nothing

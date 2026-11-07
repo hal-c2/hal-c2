@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19007
+#   https://github.com/pingdotgg/t3code/pull/18999
+#   https://github.com/pingdotgg/t3code/pull/20929
+#   https://github.com/pingdotgg/t3code/pull/18834
 #   docs/user/composer.md (follow-up behaviour, queued messages, editing a queued message)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (queued runs, steer, restart dispatch, queue hold)
 #   apps/web/src/components/chat/QueuedRunsControl.tsx
@@ -70,6 +74,22 @@ Feature: Follow-ups while the agent is working
       | queue   | sends the opposite way    | tweak   | steers the running turn     |
       | steer   | sends                     | tweak   | steers the running turn     |
       | steer   | sends the opposite way    | tweak   | is queued                   |
+
+  # Upstream #20929: when sending needs Mod+Enter, Mod+Enter follows the follow-up setting
+  # and Mod+Shift+Enter sends the opposite way.
+  @backlog @desktop
+  Scenario Outline: Sending with Mod+Enter during a turn follows the follow-up setting
+    Given the send shortcut setting is "Mod+Enter"
+    And the follow-up behaviour setting is "<setting>"
+    When the user presses <keys> with "tweak" typed during a turn
+    Then "tweak" <outcome>
+
+    Examples:
+      | setting | keys            | outcome                 |
+      | steer   | Mod+Enter       | steers the running turn |
+      | steer   | Mod+Shift+Enter | is queued               |
+      | queue   | Mod+Enter       | is queued               |
+      | queue   | Mod+Shift+Enter | steers the running turn |
 
   @backlog @mobile @priority-high
   Scenario: The phone sends a follow-up the other way than its setting
@@ -160,6 +180,14 @@ Feature: Follow-ups while the agent is working
   Scenario: Queued messages are listed in the order they run
     Given "check the logs" and "update the docs" are queued
     Then the composer lists the queued messages "check the logs" and "update the docs"
+
+  # Upstream #18999: queued follow-ups that quote the agent show the quoted text, not the citation link.
+  # Upstream #19007: the phone's queue sheet shows the quote as text too.
+  @backlog @desktop @mobile
+  Scenario: A queued message that quotes the agent shows the quoted words
+    Given the user queued a message quoting "the cart total is wrong" from the agent's reply
+    Then the queued message reads "the cart total is wrong", not a link
+    And editing it gives back the message with its quote
 
   @desktop
   Scenario Outline: What the MC queued for the agent itself waits under what it stands for
@@ -252,6 +280,14 @@ Feature: Follow-ups while the agent is working
     When the user removes the attachment "notes.md"
     And the user sends "fix typo" from the composer
     Then the MC is asked to change the queued run of "fix typo" to "fix typo" without attachments
+
+  # Upstream #18834: references picked while editing a queued message stay with that message
+  @backlog @desktop @mobile
+  Scenario: A reference picked while editing a queued message is saved with it
+    Given the user is editing a queued message
+    When the user adds a reference to pull request 42 and saves the edit
+    Then the queued message carries the reference to pull request 42
+    And the composer's own draft does not
 
   @desktop
   Scenario: Leaving the thread ends the edit

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21933
+#   https://github.com/pingdotgg/t3code/pull/19483
+#   https://github.com/pingdotgg/t3code/pull/22072
+#   https://github.com/pingdotgg/t3code/pull/20391
 #   https://github.com/pingdotgg/t3code/pull/17364
 #   https://github.com/pingdotgg/t3code/pull/15537
 #   https://github.com/pingdotgg/t3code/pull/18789
@@ -114,6 +118,14 @@ Feature: Answering the agent's questions from the composer
     Then the conversation can be read and the question stays pending
     When the user opens the question panel again
     Then the question and what the user already answered are shown
+
+  # Upstream #20391: pending questions no longer squash the composer on narrow windows
+  @backlog @desktop @mobile
+  Scenario: The composer stays open while a question waits on a narrow window
+    Given a narrow window
+    When the agent asks a question
+    Then the composer stays expanded while the question waits
+    And it collapses again once the question is answered
 
   @backlog @mobile @priority-high
   Scenario: A question that can no longer be answered disables its controls
@@ -303,3 +315,43 @@ Feature: Answering the agent's questions from the composer
     When the user types "$bro" in the answer to "Which database?" and picks the skill "bro"
     Then the answer shows the skill "bro" as a chip and the skill picker closes
     And what the user types next follows the chip
+
+  # Upstream #21933: Claude question options show their Markdown preview in the composer;
+  # options are identified by position, so two with the same value stay apart.
+  @backlog @shared
+  Scenario: An option's preview is shown while it is highlighted
+    Given the option "Postgres" carries a preview describing a hosted database
+    When the user highlights "Postgres"
+    Then the preview of "Postgres" is shown beside the options
+
+  # Upstream #21933: options with the same answer value are told apart by position.
+  @backlog @shared
+  Scenario: Two options with the same answer each show their own preview
+    Given the agent asked "Which database?" with two options that both answer "Postgres" and different previews
+    When the user highlights the second option
+    Then the second option's preview is shown, not the first one's
+
+  # Upstream #21933: a custom answer hides the preview and clearing it does not bring back an old one.
+  @backlog @shared
+  Scenario: Typing a custom answer hides the option preview
+    Given the user highlighted "Postgres" and its preview is shown
+    When the user types a custom answer
+    Then no option preview is shown
+    When the user clears the custom answer
+    Then no option preview is shown until the user highlights an option again
+
+  # Upstream #22072: folder references work in typed answers too, not in choice-only questions.
+  @backlog @desktop
+  Scenario: A folder dropped or pasted into a typed answer references its path
+    Given the agent asks a question that takes a typed answer
+    When the user pastes the folder "/work/shop/src" into the answer
+    Then the answer references "/work/shop/src"
+
+  # Upstream #19483: deleted chips returned after the answer moved back to the composer and a reload.
+  @backlog @desktop
+  Scenario: A chip deleted from a typed answer does not come back
+    Given the user typed an answer with the file references "cart.ts" and "auth.ts"
+    And deleted "auth.ts" from it
+    When the user picks an option, moving the typed answer back to the composer
+    And reloads the app
+    Then the composer references "cart.ts" and not "auth.ts"

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14884
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, runtime-request.updated,
 #     thread.user-input.dismiss, plan.updated, turn-item.updated, node.updated)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (runtime-request.respond, thread.user-input.dismiss,
@@ -83,6 +84,14 @@ Feature: Approvals, questions and plans
     When the user answers "Postgres"
     Then the provider receives the answer "Postgres"
     And the user input item is completed with the answer
+
+  # Upstream #14884: unusable answers are refused while the question stays open
+  @backlog @mc
+  Scenario: An answer the provider cannot use is refused and the question stays open
+    Given the provider asked the user "Which database?"
+    When a caller answers with a number instead of text
+    Then the answer is refused
+    And "Which database?" is still waiting for an answer
 
   @mc
   Scenario: Files attached to an answer are named with where they were saved

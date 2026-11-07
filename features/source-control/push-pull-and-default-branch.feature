@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22107
+#   https://github.com/pingdotgg/t3code/pull/18716
 #   https://github.com/pingdotgg/t3code/pull/17376
 #   docs/user/source-control.md
 #   packages/contracts/src/git.ts (GitRunStackedActionResult, GitActionToastCta)
@@ -129,6 +131,22 @@ Feature: Pushing, pulling and guarding the default branch
     When the user pulls
     Then the user sees an "error" toast "Pull failed" saying "Cannot fast-forward."
 
+  # Upstream #22107: a pull recovers from a stale lock on an unrelated remote-tracking ref.
+  @backlog @mc
+  Scenario: A stale lock on another branch's remote ref does not fail the pull
+    Given the remote-tracking ref of another branch is locked by a git process that is gone
+    When the user pulls "feature/tax"
+    Then "feature/tax" is brought up to date with its upstream
+    And the pull is not reported as failed
+
+  # Upstream #22107: status waits at most 5 seconds for a shared fetch that is still running.
+  @backlog @mc
+  Scenario: The branch status does not wait long on a background fetch
+    Given a background fetch of the checkout is still running
+    When a client asks for the branch status
+    Then the status is answered within 5 seconds
+    And the fetch goes on
+
   @mc
   Scenario: Pulling a diverged branch is refused
     Given "feature/tax" is 1 commit ahead and 1 behind its upstream
@@ -182,6 +200,14 @@ Feature: Pushing, pulling and guarding the default branch
     Given the user was asked to confirm committing and pushing to "main"
     When the user chooses to create a feature branch and continue
     Then the work is committed on a new branch and pushed there instead of "main"
+
+  # Upstream #18716: with nothing to commit, the default-branch confirmation offered a feature
+  # branch it could not create.
+  @backlog @desktop
+  Scenario: With nothing to commit the confirmation does not offer a new branch
+    Given the user was asked to confirm pushing to "main" with nothing to commit
+    Then moving the work onto a new branch is not offered
+    And the confirmation says there are no changes to move
 
   @tui @mobile @backlog-mobile @priority-high
   Scenario: The default-branch confirmation on the terminal client and phone

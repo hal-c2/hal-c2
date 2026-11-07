@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19627
+#   https://github.com/pingdotgg/t3code/pull/18423
+#   https://github.com/pingdotgg/t3code/pull/19663
+#   https://github.com/pingdotgg/t3code/pull/16015
+#   https://github.com/pingdotgg/t3code/pull/15818
+#   https://github.com/pingdotgg/t3code/pull/16014
+#   https://github.com/pingdotgg/t3code/pull/21505
+#   https://github.com/pingdotgg/t3code/pull/21560
 #   https://github.com/pingdotgg/t3code/pull/16748
 #   https://github.com/pingdotgg/t3code/pull/18238
 #   https://github.com/pingdotgg/t3code/pull/17713
@@ -72,6 +80,7 @@ Feature: Moving through a thread and following links
     Then the latest output is shown
     And the view follows new output again
 
+  # Upstream #19663: a long thread opened from an empty or loading pane stopped well above its end.
   @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled
     Given the user has scrolled away from the end of the thread
@@ -85,6 +94,13 @@ Feature: Moving through a thread and following links
     Given the user opens a thread whose agent is still working
     When the thread's messages arrive
     Then the view shows the latest output at the end, not the start of the thread
+
+  # Upstream #21560: switching threads never shows the previous thread's messages.
+  @shared @backlog @priority-high
+  Scenario: Switching threads shows only the chosen thread's messages
+    Given the user is reading "Tax fix"
+    When the user switches to "Docs" while its messages are still loading
+    Then no message of "Tax fix" is shown under "Docs"
 
   @desktop @backlog @priority-high
   Scenario: A thread opens where the user left it
@@ -190,6 +206,24 @@ Feature: Moving through a thread and following links
     Given the user has scrolled away from the end
     Then "Scroll to end" is a raised button the keyboard reaches
     And pressing it with the keyboard returns to the end
+
+  # Upstream #16015: on the phone, Scroll to end and the scroll after sending glided with Reduce
+  # Motion on; they now jump.
+  # Upstream #16014: on the desktop, Scroll to end, page keys, turn index jumps and the scroll after
+  # sending glided with reduced motion; they now jump.
+  @backlog @shared @priority-low
+  Scenario Outline: Jumps through the conversation do not glide with reduced motion
+    Given the operating system asks for reduced motion
+    And the user has scrolled away from the end
+    When the user <does>
+    Then the conversation jumps there without gliding
+
+    Examples:
+      | does                                |
+      | presses Scroll to end               |
+      | sends a message                     |
+      | presses Page Down from the composer |
+      | picks a turn from the turn index    |
 
   @desktop @backlog
   Scenario: The user jumps between turns
@@ -347,6 +381,14 @@ Feature: Moving through a thread and following links
       | open it in the editor  | "src/cart.ts" opens in the user's editor |
       | copy its full path     | the absolute path is on the clipboard    |
 
+  # Upstream #19627: home-relative file links match a Windows home folder in any case.
+  @backlog @shared @priority-low
+  Scenario: A home-relative file link resolves on Windows whatever the folder's case
+    Given the MC runs on Windows in "C:\users\ana\shop"
+    And the agent's reply links to "~/shop/notes.md:3"
+    When the user follows the link
+    Then "notes.md" opens at line 3
+
   @shared @backlog-mobile @backlog-tui
   Scenario: The user cites part of a reply in the next message
     When the user selects a sentence in the agent's reply and cites it
@@ -398,6 +440,14 @@ Feature: Moving through a thread and following links
     Given a reply links to thread "t2" with its id percent-encoded
     When the user follows the link
     Then thread "t2" opens
+
+  # Upstream #21505: thread links open threads on other connected environments.
+  @shared @backlog @priority-low
+  Scenario: A thread link opens a thread on another connected environment
+    Given the client is connected to "laptop" and "server"
+    And a reply on "laptop" links to thread "t9", which lives on "server"
+    When the user follows the link
+    Then thread "t9" on "server" opens
 
   @desktop @backlog @priority-low
   Scenario: A selection too long to cite says so
@@ -452,11 +502,28 @@ Feature: Moving through a thread and following links
 
     Examples:
       | does                       |
-      | scrolls the thread         |
       | right-clicks               |
       | resizes the window         |
       | switches to another window |
       | presses Escape             |
+
+  # Upstream #15818: Cite never came back after a scroll; it now goes away while the thread
+  # scrolls and returns beside the selection once scrolling stops, unless the selection is out of
+  # view or the user pressed Escape.
+  @backlog @desktop
+  Scenario Outline: The cite action comes back once scrolling stops
+    Given the cite action is shown for a selected sentence
+    And <beforehand>
+    When the user scrolls the thread
+    Then the cite action goes away
+    When the scrolling stops with the sentence <view>
+    Then the cite action <result>
+
+    Examples:
+      | beforehand                     | view        | result                      |
+      | the user has done nothing else | in view     | returns beside the sentence |
+      | the user has done nothing else | out of view | stays away                  |
+      | the user pressed Escape        | in view     | stays away                  |
 
   # Legacy: apps/web/src/lib/assistantTextSelection.ts (findAssistantCitationText)
   @backlog @desktop
@@ -536,6 +603,15 @@ Feature: Moving through a thread and following links
     When the user follows the citation
     Then earlier turns are loaded until the cited reply is found
     And the cited reply is shown with the sentence highlighted
+
+  # Upstream #18423: opening a citation unfolds the imported reply it quotes.
+  @desktop @backlog
+  Scenario: Following a citation to a folded reply of an imported thread unfolds it
+    Given the thread was imported from another agent and its earlier replies are folded
+    And the user's message cites a sentence from one of those replies
+    When the user follows the citation
+    Then the cited reply is unfolded
+    And it is shown with the sentence highlighted
 
   @desktop @backlog
   Scenario: Following a citation gives up after 20 pages of earlier turns

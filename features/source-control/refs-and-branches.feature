@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14157
+#   https://github.com/pingdotgg/t3code/pull/14883
+#   https://github.com/pingdotgg/t3code/pull/20440
 #   https://github.com/pingdotgg/t3code/pull/19315
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
 #   packages/contracts/src/rpc.ts (vcs.listRefs, vcs.switchRef, vcs.createRef)
@@ -117,6 +120,15 @@ Feature: Picking, switching and creating branches
     Then "feature/old" is marked with that worktree's path
     And an agent can still launch a thread in that worktree
 
+  # Upstream #14157: with a git folder kept outside the checkout, git listed that folder as the
+  # branch's worktree.
+  @backlog @mc @priority-low
+  Scenario: A repository whose git folder lives elsewhere is not listed as a worktree
+    Given "shop" keeps its git folder outside the project folder
+    When the user lists branches
+    Then the current branch is shown as checked out in the project folder
+    And the git folder is not listed as a worktree
+
   @mc @desktop
   Scenario: Switching to a local branch
     When the user switches the thread to "main"
@@ -134,6 +146,20 @@ Feature: Picking, switching and creating branches
     Given a file is named "feature/gone" and the branch "feature/gone" no longer exists
     When the user switches to "feature/gone"
     Then the switch fails and the file is left as it was
+
+  # Upstream #20440: remote, ref and path names reach git after "--end-of-options", and a
+  # branch name starting with "-" (other than a lone "-") is refused before a checkout or a
+  # worktree is made.
+  @backlog @mc @priority-high
+  Scenario Outline: A branch named like an option is refused before git sees it
+    When the user <action> the branch "--upload-pack=touch pwned"
+    Then the MC refuses it as a branch name
+    And nothing is checked out or created
+
+    Examples:
+      | action                 |
+      | switches to            |
+      | creates a worktree for |
 
   @mc @desktop
   Scenario: Creating a branch from the search text
@@ -298,6 +324,25 @@ Feature: Picking, switching and creating branches
     And the folder is now on "main"
     When the user looks at the thread list
     Then the thread's row says the folder is currently checked out on another branch
+
+  # Upstream #14883: worktree threads warn when their checkout's branch changes, without
+  # offering to put the branch back.
+  @backlog @desktop
+  Scenario: A worktree thread's checkout moved off its branch is called out
+    Given a thread in its own worktree last ran on "feature/tax"
+    And someone checked out "feature/other" in that worktree
+    When the user looks at the thread's branch
+    Then the thread says the worktree is on "feature/other" but the thread last ran on "feature/tax"
+    And putting "feature/tax" back is not offered
+
+  # Upstream #14883: sending from a worktree thread adopts the checkout's branch and keeps the worktree.
+  @backlog @desktop
+  Scenario: Sending from a worktree thread on another branch makes it the thread's branch
+    Given a thread in its own worktree last ran on "feature/tax" and the worktree is now on "feature/other"
+    And another thread of the project is on "feature/tax"
+    When the user sends a message in the worktree thread
+    Then that thread is recorded on "feature/other" and keeps its worktree
+    And the other thread stays on "feature/tax"
 
   @backlog @desktop @priority-low
   Scenario: A new thread's base ref is labelled as coming from origin when it starts from there

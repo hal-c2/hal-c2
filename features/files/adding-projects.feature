@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18265
 #   https://github.com/pingdotgg/t3code/pull/17379
 #   docs/user/project-settings.md
 #   apps/server-ex/lib/hal_c2/projects.ex (project.create, browse)
@@ -583,6 +584,14 @@ Feature: Adding projects
       Given "/home/sam/work" does not exist
       When a client starts cloning "https://example.com/acme/shop.git" into "~/work/shop"
       Then the clone goes into "/home/sam/work/shop"
+
+    # Upstream #18265: making the clone's parent tried to create the drive root itself and failed;
+    # the parent is made only when it is missing.
+    @mc @backlog @priority-low
+    Scenario: A clone into a new folder at the top of a Windows drive goes ahead
+      Given the MC runs on Windows
+      When a client starts cloning "https://example.com/acme/shop.git" into "D:\shop"
+      Then the clone goes into "D:\shop"
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (redactRemoteUrl, redactUrlCredentials)
     @mc @priority-high

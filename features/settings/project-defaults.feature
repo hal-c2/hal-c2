@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13479
 #   docs/user/project-settings.md (Defaults and inheritance, Submodules, automatic pull)
 #   apps/web/src/components/settings/ProjectDefaultsSettings.tsx
 #   apps/server-ex/lib/hal_c2/settings.ex (project-scoped keys, for_project)
@@ -58,6 +59,15 @@ Feature: Project defaults settings
     Given neither "shop" nor "laptop" sets a default model
     When the user looks at the project defaults of "shop"
     Then the default model shows as automatic
+
+  # Upstream #13479: settings shows the model a hidden default falls back to, with its own options.
+  @backlog @desktop @mobile
+  Scenario: A hidden default model shows the model new threads fall back to
+    Given "shop"'s default model is one the user has hidden
+    When the user looks at the project defaults of "shop"
+    Then the default model shows the model new threads of "shop" start on
+    And its options are that model's options
+    And changing an option saves it for that model
 
   # See "A model missing on one environment cannot be applied to all of them" in settings/scopes-and-inheritance.feature.
   @desktop

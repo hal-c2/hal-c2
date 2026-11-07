@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20446
+#   https://github.com/pingdotgg/t3code/pull/17676
+#   https://github.com/pingdotgg/t3code/pull/19145
 #   https://github.com/pingdotgg/t3code/pull/16958
 #   apps/web/src/components/settings/ProviderSettingsPanel.tsx
 #   apps/web/src/components/settings/ProviderSettingsPanel.logic.ts
@@ -250,6 +253,13 @@ Feature: Providers settings panel
     Scenario: Searching the ACP Registry lists compatible agents best first
       When the user searches the ACP Registry for "gemini"
       Then the compatible agents matching "gemini" are listed best first
+
+    # Upstream #19145: an empty search showed only 20 agents; typed searches still show 20.
+    @backlog @mc @plugin-acp-registry
+    Scenario: The ACP Registry lists every compatible agent before the user searches
+      Given the registry has 40 agents compatible with this machine
+      When the user opens the ACP Registry without searching
+      Then all 40 are listed
 
     @desktop
     Scenario: A search with no compatible agent suggests a broader search
@@ -566,6 +576,22 @@ Feature: Providers settings panel
       When the user renames the variable "API_KEY" to "OPENAI_KEY"
       Then "OPENAI_KEY" asks for a new value instead of showing a stored secret
       And the secret stored for "API_KEY" is forgotten
+
+    # Upstream #20446: any provider setting entered like a password is treated as a secret.
+    @backlog @mc @desktop @priority-high
+    Scenario: A provider setting entered like a password is stored as a secret
+      Given a provider offers a setting that is entered like a password
+      When the user saves a value for it
+      Then its value is stored as a secret
+      And the page shows it as a stored secret that a new value replaces
+
+    # Upstream #20446: a saved secret field can be cleared from the form.
+    @backlog @desktop
+    Scenario: A saved secret setting can be cleared
+      Given the OpenCode instance keeps a stored server password
+      When the user clears the server password
+      Then the secret stored for the server password is forgotten
+      And the field asks for a new value
 
     @desktop
     Scenario: A provider's own API key can be cleared for browser sign-in
@@ -1094,6 +1120,15 @@ Feature: Providers settings panel
         | "1.14.19" is the recommended version            | Use v1.14.19 for full support. |
         | the supported range is "1.14 to 1.16"           | Use 1.14 to 1.16 for full support. |
         | no version or range is recommended              | Update for full support.       |
+
+    # Upstream #17676: no update is offered that cannot clear a limited-support warning.
+    @backlog @desktop
+    Scenario: A limited-support warning on the latest release offers no update
+      Given "Codex" is on its latest release
+      And the installed "Codex" is of limited support for this HAL-C2 release
+      When the user opens the version details of "Codex"
+      Then the user is warned "Limited support"
+      And no update is offered
 
     # Legacy: apps/web/src/components/settings/providerStatus.ts (getProviderVersionAdvisoryPresentation)
     @backlog @desktop

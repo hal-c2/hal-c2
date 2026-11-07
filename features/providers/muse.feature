@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19100
+#   https://github.com/pingdotgg/t3code/pull/18266
 #   https://github.com/pingdotgg/t3code/pull/19558
 #   https://github.com/pingdotgg/t3code/pull/17082
 #   https://github.com/pingdotgg/t3code/pull/17163
@@ -53,6 +55,13 @@ Feature: Muse Code
     Given Muse Code is installed but not enabled
     When the user enables Muse Code
     Then Muse Code is listed with the models from Muse's catalog
+
+  # Upstream #19100: Muse model ids show as readable names
+  @backlog
+  Scenario: Muse Code models are listed by readable names
+    Given Muse Code offers the model "muse-wonder-full-1.0"
+    When the user opens the model picker
+    Then the model is listed as "Muse Wonder Full 1.0"
 
   Scenario: A Muse Code turn runs on the user's own installation
     Given Muse Code is installed and enabled
@@ -429,3 +438,11 @@ Feature: Muse Code
     Given a Muse Code thread saved with auto-accept edits
     When the user sends a message to it
     Then Muse Code asks first, as in supervised
+
+  # Upstream #18266: Muse turns stopped by the subscription quota are Limited with their reset time.
+  @backlog
+  Scenario: A Muse Code turn stopped by its subscription quota is Limited
+    Given Muse Code reported a usage window that resets at 10:45
+    When a turn is refused because the subscription quota is used up
+    Then the thread is Limited until 10:45, not failed
+    And a plain rate limit still fails the turn

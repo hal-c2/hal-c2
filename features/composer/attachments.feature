@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22072
+#   https://github.com/pingdotgg/t3code/pull/10429
+#   https://github.com/pingdotgg/t3code/pull/18393
+#   https://github.com/pingdotgg/t3code/pull/21101
+#   https://github.com/pingdotgg/t3code/pull/20737
 #   https://github.com/pingdotgg/t3code/pull/16480
 #   https://github.com/pingdotgg/t3code/pull/19364
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
@@ -161,6 +166,15 @@ Feature: Attaching images and files to a message
     When the user retries the upload and it succeeds
     Then the message can be sent
 
+  # Upstream #20737: Send retries a failed upload instead of being blocked.
+  # Replaces the scenario above once the desktop carries it; upstream left the phone as it was.
+  @backlog @desktop @priority-high
+  Scenario: Sending retries a failed upload
+    Given an attachment in the draft failed to upload
+    When the user sends the message
+    Then the upload is tried again and the message is sent with the attachment
+    And if the upload fails again the message is not sent and the user is told why
+
   @desktop
   Scenario: A very large paste becomes a text file attachment
     When the user pastes 40 KiB of log output
@@ -196,6 +210,14 @@ Feature: Attaching images and files to a message
     Given the environment is local
     When the user drops the folder "src/components" onto the composer
     Then the draft references the folder "src/components"
+
+  # Upstream #22072: pasting a copied folder tried to upload it and failed.
+  @backlog @desktop
+  Scenario: Pasting a folder references its path
+    Given the user copied the folder "/work/shop/src" in the file manager
+    When the user pastes into the composer
+    Then the draft references "/work/shop/src"
+    And nothing is uploaded
 
   @desktop
   Scenario: Dropping a folder into a remote environment is refused
@@ -294,6 +316,15 @@ Feature: Attaching images and files to a message
     Then nothing is attached
     And the user is told "'broken.heic' could not be read as an image."
 
+  # Upstream #10429: images already stored with a message fall back to a HEIC decoder when the
+  # client cannot draw them natively, in the thread and in the image viewer.
+  @backlog @desktop @priority-low
+  Scenario: A HEIC photo already in a message is shown, not a broken image
+    Given a sent message carries the photo "IMG_2041.heic" as it was stored
+    When the user looks at the message
+    Then the photo is shown
+    And it opens in the image viewer when the user clicks it
+
   @backlog @desktop @priority-low
   Scenario: A very large photo is scaled to a longest side of 2000 pixels before quality is given up
     When the user attaches a 6000 by 4000 pixel photo over the size limit
@@ -320,6 +351,16 @@ Feature: Attaching images and files to a message
     When the user sends the message
     Then nothing is sent
     And the user sees an "info" toast "Still compressing a pasted image." saying "Send again once its thumbnail appears."
+
+  # Upstream #18393: an image that finishes compressing after the user switched threads is
+  # added to the draft it was pasted in, leaving the visible draft alone.
+  @backlog @desktop
+  Scenario: An image finished after switching threads stays in its own draft
+    Given the user pasted a large image into the draft of "Alpha" with "see this" typed
+    And the user switched to "Beta" and typed "other notes" before the image was scaled down
+    When the image finishes scaling down
+    Then the draft of "Alpha" reads "see this" with the image
+    And the draft of "Beta" reads "other notes" with no image
 
   @backlog @desktop
   Scenario: A file that is empty or unreadable is refused
@@ -530,3 +571,11 @@ Feature: Attaching images and files to a message
     When the user looks at the draft
     Then "cart.png" is marked with "Draft attachment could not be saved locally and may be lost on navigation."
     And the image can still be sent
+
+  # Upstream #21101: a failed draft save does not stop an uploaded attachment from being sent.
+  @backlog @mobile
+  Scenario: An uploaded attachment is sent even when its draft copy could not be saved
+    Given the user attached an image on the phone and it has uploaded
+    And the phone could not keep a copy of the draft
+    When the user sends the message
+    Then the message is sent with the image

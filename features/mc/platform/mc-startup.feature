@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12199
+#   https://github.com/pingdotgg/t3code/pull/11275
+#   https://github.com/pingdotgg/t3code/pull/14263
+#   https://github.com/pingdotgg/t3code/pull/20336
+#   https://github.com/pingdotgg/t3code/pull/20446
 #   https://github.com/pingdotgg/t3code/pull/19604
 #   https://github.com/pingdotgg/t3code/pull/16102
 #   https://github.com/pingdotgg/t3code/pull/19340
@@ -43,6 +48,20 @@ Feature: Starting the MC
     Then it prints a WebSocket URL on loopback with the MC's own access token
     And it says how to pair a client, since that token is not a pairing code
     And a client can connect with that URL
+
+  # Upstream #20446: the startup URL carries a token, so it is printed, never logged or traced.
+  @backlog @mc @priority-high
+  Scenario: The URL the MC prints with its token never reaches its logs
+    When a developer starts the MC from a checkout
+    Then the URL with its token is printed to the terminal
+    And neither the MC's log files nor its traces hold the token
+
+  # Upstream #20446: the URL now prints at every log level, as it was dropped at warn and error.
+  @backlog @mc @priority-low
+  Scenario: The MC prints its client URL whatever the log level
+    Given the MC's log level is "error"
+    When a developer starts the MC from a checkout
+    Then it still prints its client URL
 
   @mc
   Scenario: An MC run from a checkout listens on port 3780 by default
@@ -191,11 +210,28 @@ Feature: Starting the MC
     Then the record says the service manages it
     And an MC started by hand is not marked as service-managed
 
+  # Upstream #14263: an MC started from a terminal of a service-run MC runs as one started by hand.
+  @backlog @mc @priority-low
+  Scenario: An MC started from a terminal of a service-run MC runs as one started by hand
+    Given the MC runs under the background service
+    When the user starts another MC from one of its terminals
+    Then the new MC starts as one started by hand
+    And it is not refused for the service's launch details
+
   @backlog @mc
   Scenario: A runtime record left by a process that is gone is ignored
     Given a runtime record whose process no longer exists
     When a local tool looks for a running MC
     Then it does not treat that MC as running
+
+  # Upstream #20336: a stale runtime record that names the starting MC's own process does not block it.
+  @backlog @mc
+  Scenario: A runtime record naming the MC's own process does not stop it starting
+    Given the MC stopped uncleanly and left its runtime record
+    And the MC starts again under the same process id
+    When it checks for a running MC
+    Then it starts and replaces the record
+    And a record naming another live process still stops the start
 
   @backlog @mc
   Scenario: A runtime record that cannot be read fails loudly instead of looking absent
@@ -273,6 +309,15 @@ Feature: Starting the MC
     When the MC starts
     Then the MC starts with the PATH it was given
     And the failure is written to the log
+
+  # Upstream #11275: the login shell probe stopped on job control and held up startup past its timeout.
+  @backlog @mc @priority-low
+  Scenario: A login shell that wants the terminal does not hold up the MC
+    Given the MC was started from a terminal another program is in the foreground of
+    And the user's shell reads its PATH only when it runs interactively
+    When the MC starts
+    Then the MC starts with the PATH from the user's interactive login shell
+    And the shell's question for input or the terminal is answered as end of input
 
   @backlog @mc @priority-low
   Scenario: On macOS a user's PATH is read from the login session when the shell gives none
@@ -382,6 +427,15 @@ Feature: Starting the MC
     Then the MC is registered with the system's service manager
     And it starts on login
     And the user can see its status and remove it again
+
+  # Upstream #12199: a service install whose start failed looked current to the next install; it
+  # now stays marked as needing repair until a start succeeds.
+  @mc @backlog @priority-low
+  Scenario: A service install that failed to start is not taken as current
+    Given installing the background service wrote the new version but the service manager could not start it
+    When a user asks to install the background service again
+    Then the service status says it needs repair
+    And the install starts it again
 
   @mc
   Scenario: A user starts the MC from one downloaded file without installing Elixir

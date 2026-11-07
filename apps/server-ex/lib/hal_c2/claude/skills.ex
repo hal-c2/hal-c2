@@ -30,6 +30,70 @@ defmodule HalC2.Claude.Skills do
     |> Enum.sort_by(& &1["name"])
   end
 
+  @doc """
+  The project's own slash commands, the Markdown files under `cwd`'s `.claude/commands`
+  (in subfolders too), as the slash menu lists them: a command is known by its file's
+  name, described by its header's `description` (else its first line), with the
+  header's `argument-hint` as its input hint. A file that cannot be read is left out.
+  """
+  @spec commands(String.t()) :: [map]
+  def commands(cwd) do
+    [cwd, ".claude", "commands"]
+    |> Path.join()
+    |> command_files(3)
+    |> Enum.flat_map(&read_command/1)
+    |> Enum.uniq_by(& &1["name"])
+    |> Enum.sort_by(& &1["name"])
+  end
+
+  defp command_files(dir, depth) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        Enum.flat_map(entries, fn entry ->
+          path = Path.join(dir, entry)
+
+          cond do
+            Path.extname(entry) == ".md" -> [path]
+            depth > 0 and File.dir?(path) -> command_files(path, depth - 1)
+            true -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  # Only Markdown files listed under the project's own `.claude/commands` are read, as
+  # Claude Code reads them; nothing here comes from a client.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp read_command(path) do
+    name = Path.basename(path, ".md")
+
+    with true <- name =~ ~r/^[A-Za-z0-9_.:-]+$/,
+         {:ok, content} <- File.read(path),
+         {:ok, frontmatter} <- frontmatter(content) do
+      first_line =
+        content
+        |> String.replace(~r/\A---\r?\n.*?\r?\n---(?:\r?\n|\z)/s, "")
+        |> String.split(~r/\r?\n/)
+        |> Enum.map(&String.trim/1)
+        |> Enum.find(&(&1 != ""))
+
+      %{"name" => name}
+      |> put_present("description", description(frontmatter) || first_line)
+      |> then(fn command ->
+        case frontmatter["argument-hint"] do
+          hint when is_binary(hint) and hint != "" -> Map.put(command, "input", %{"hint" => hint})
+          _ -> command
+        end
+      end)
+      |> List.wrap()
+    else
+      _ -> []
+    end
+  end
+
   @doc "The names a `$mention` may run: offered, on, and not kept from the user."
   @spec user_invocable_names(String.t(), String.t() | nil) :: MapSet.t()
   def user_invocable_names(instance \\ "claudeAgent", cwd \\ nil) do

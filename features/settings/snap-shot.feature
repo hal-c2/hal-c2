@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17436
+#   https://github.com/pingdotgg/t3code/pull/10658
+#   https://github.com/pingdotgg/t3code/pull/18857
+#   https://github.com/pingdotgg/t3code/pull/15638
 #   https://github.com/pingdotgg/t3code/pull/13286
 #   docs/user/snap-shot.md
 #   docs/internals/linux-snap-shot.md
@@ -58,6 +62,15 @@ Feature: Snap Shot settings
     Given Snap Shot is on with a shortcut
     When the user turns off snapshots
     Then the shortcut is released and nothing that was installed is removed
+
+  # Upstream #15638: disabled Snap Shots retried pending captures on focus, with sounds and toasts.
+  @backlog
+  Scenario: Captures waiting while Snap Shot is off stay quiet
+    Given a capture was waiting when the user turned Snap Shot off
+    When the app's window is focused again
+    Then no capture sound plays and no capture error is shown
+    When the user turns Snap Shot on
+    Then the waiting capture goes ahead
 
   Scenario: The default shortcut presses both Shift keys
     Given the desktop app runs on macOS
@@ -216,6 +229,17 @@ Feature: Snap Shot settings
     When the user allows capture in setup and the test capture fails
     Then capture stays off, the user is told "Couldn't verify capture access" with the reason
     And the user can try again
+
+  # Upstream #18857: a failed macOS test capture says which step failed and how, and names
+  # the app the Screen Recording and Accessibility grants must belong to.
+  @backlog
+  Scenario: A failed macOS test capture says which step failed and for which app
+    Given the desktop app runs on macOS
+    And the test capture times out while capturing the window in front
+    When the user allows capture in setup
+    Then the user is told "Could not capture a test snapshot." with the step that timed out
+    And the message names this app as the one that needs Screen Recording and Accessibility
+    And it does not mention GNOME
 
   @desktop
   Scenario: Setup continues after macOS restarts the app for a permission
@@ -460,6 +484,7 @@ Feature: Snap Shot settings
     Given setup is checking access or saving
     Then the user cannot close setup or move between its steps until it has finished
 
+  # Upstream #17436: an extension installed by an older release is offered as an update on GNOME 51 too.
   @desktop
   Scenario Outline: The access step walks through the GNOME extension
     Given a GNOME session where the extension is <state>
@@ -483,6 +508,13 @@ Feature: Snap Shot settings
     Then setup says "Automatic capture isn't available"
     And it points to Take snapshot in the command palette to choose a window
     And the user can still finish setup
+
+  # Upstream #17436: the SnapShot GNOME extension loads on GNOME 51.
+  @backlog
+  Scenario: The GNOME extension works on GNOME 51
+    Given a GNOME Shell 51 session where the extension is not installed
+    When the user installs the extension in setup
+    Then the extension loads and setup says "Capture is ready"
 
   @desktop
   Scenario: The user can turn the GNOME extension off and on again from setup
@@ -718,6 +750,14 @@ Feature: Snap Shot settings
     And the chosen keys are already bound in the config, in a file it includes, or by Hyprland itself
     When the user chooses Review changes
     Then nothing is changed and the user is told the keys are already used and to choose another shortcut
+
+  # Upstream #10658: setup accepts the Lua shortcut it already wrote on Hyprland.
+  @backlog
+  Scenario: Reopening setup on Hyprland accepts Snap Shot's own shortcut
+    Given a Hyprland session whose Lua config already holds HAL-C2's shortcut
+    When the user opens setup again and reviews changes without changing the shortcut
+    Then the keys are not refused as already used
+    And the config is neither rewritten nor reloaded
 
   @desktop
   Scenario: A Hyprland that cannot list its shortcuts blocks the change

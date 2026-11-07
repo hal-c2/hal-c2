@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14605
+#   https://github.com/pingdotgg/t3code/pull/18836
+#   https://github.com/pingdotgg/t3code/pull/20196
+#   https://github.com/pingdotgg/t3code/pull/19431
+#   https://github.com/pingdotgg/t3code/pull/19240
 #   apps/mobile/src/features/review/ (diff source selector, viewed files, comments, notices)
 #   apps/mobile/src/features/diffs/
 #   apps/mobile/modules/hal-c2-review-diff
@@ -109,6 +114,15 @@ Feature: Reviewing changes on a phone
     Then the rows that arrived are shown
     And the file is marked as a partial preview
     And its added and removed counts still cover the whole file
+
+  # Upstream #18836: a pull request file the host withheld keeps the host's line counts on the phone.
+  @backlog @mobile
+  Scenario: A pull request file the host withheld keeps its line counts on the phone
+    Given the host withheld the changes of a large file in a pull request
+    And reported it as 400 lines added and 20 removed
+    When the user reviews the pull request on the phone
+    Then the file shows 400 added and 20 removed
+    And the pull request's totals include them
 
   @backlog @mobile @priority-high
   Scenario: The user comments on a range of lines
@@ -273,6 +287,14 @@ Feature: Reviewing changes on a phone
     When the user pulls down on the diff
     Then the phone asks "My MacBook" for the working tree changes again
 
+  # Upstream #20196: pulling down on a pull request's activity refreshes it in place.
+  @backlog @mobile @priority-low
+  Scenario: Pulling down on a pull request's activity refreshes it in place
+    Given the user is reading a pull request's activity on the phone
+    When the user pulls down to refresh it
+    Then one refresh indicator is shown
+    And the activity rows stay where they were
+
   @backlog @mobile @priority-low
   Scenario: Android offers to refresh the current diff from the menu
     Given the user is on an Android phone
@@ -321,6 +343,14 @@ Feature: Reviewing changes on a phone
     Then the large diff is shown while it is open
     And the three earlier diffs are still kept
 
+  # Upstream #19240: huge diffs are cut to 2,000 rows a file, with a notice.
+  @backlog @mobile
+  Scenario: A file's very large diff shows its start and says it was cut
+    Given "data.json" has a diff of 50,000 added lines
+    When the user reviews the changes and loads the diff of "data.json"
+    Then the first 2,000 rows of "data.json" are shown with a notice that the rest is left out
+    And "data.json" still counts 50,000 added lines
+
   @backlog @mobile @priority-low
   Scenario: Nearby diffs are prepared before the user opens them
     Given the user is reviewing the latest turn
@@ -359,6 +389,19 @@ Feature: Reviewing changes on a phone
     Given the diff shows "src/cart.ts" and "src/price.ts" with very long lines
     When the user scrolls the lines of "src/cart.ts" sideways
     Then the lines of "src/price.ts" stay where they were
+
+  # Upstream #19431: on Android a diff without word wrap stopped scrolling before the end of its long lines.
+  # Upstream #14605: a line indented with tabs was cut short when word wrap was off.
+  @backlog @mobile @priority-low
+  Scenario Outline: A diff without word wrap scrolls to the end of its longest line
+    Given word wrap is off in a diff with <line> wider than the screen
+    When the user scrolls the file sideways as far as it goes
+    Then that line can be read to its last character
+
+    Examples:
+      | line                      |
+      | a line                    |
+      | a line indented with tabs |
 
   @backlog @mobile @priority-low
   Scenario: The header of the file being read stays at the top of the diff

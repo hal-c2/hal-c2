@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17569
+#   https://github.com/pingdotgg/t3code/pull/17688
+#   https://github.com/pingdotgg/t3code/pull/22048
 #   apps/web/src/components/settings/IntegrationsSettings.tsx
 #   apps/web/src/components/settings/IntegrationsSettings.logic.test.ts
 #   apps/web/src/components/device/DeviceToolVersions.tsx (version label and details)
@@ -26,8 +29,8 @@ Feature: Integrations settings
 
   @priority-low
   Rule: Browser defaults belong to this device
-    # The Qt desktop embeds no browser (previews open in the user's own), so
-    # these wait for one there.
+    # The Qt desktop draws pages in its own browser (preview/surfaces.feature), but its
+    # Integrations page does not hold these defaults yet, so they wait for it there.
 
     @backlog @desktop
     Scenario Outline: A browser default applies to new browser tabs
@@ -59,6 +62,59 @@ Feature: Integrations settings
       Then links in the chat and terminal open in HAL-C2's browser
       When the user chooses the default browser
       Then links open in the default browser
+
+    # Upstream #22048: external pull request links went to the browser panel; at startup they now
+    # wait for the projects to be known.
+    @backlog @desktop
+    Scenario: A pull request link opened from another app opens the pull request view
+      Given "shop" is a project for "github.com/acme/shop" and pull requests open in HAL-C2
+      When the user opens "https://github.com/acme/shop/pull/42" from another app as the app starts
+      Then pull request 42 opens in the pull request view
+      And it does not open in a browser tab
+
+    # Upstream #17688: the address bar always searched DuckDuckGo; Integrations now picks the engine.
+    @backlog @desktop
+    Scenario Outline: The address bar searches with the chosen search engine
+      Given the user chose <engine> as the search engine
+      When the user types "how to center a div" in a browser tab's address bar
+      Then the tab loads <engine>'s results for "how to center a div"
+
+      Examples:
+        | engine       |
+        | DuckDuckGo   |
+        | Google       |
+        | Bing         |
+        | Brave Search |
+        | Kagi         |
+        | Ecosia       |
+
+    # Upstream #17688: DuckDuckGo is the search engine until the user picks another.
+    @backlog @desktop
+    Scenario: The address bar searches DuckDuckGo by default
+      Given the user has not chosen a search engine
+      When the user types "react" in a browser tab's address bar
+      Then the tab loads DuckDuckGo's results for "react"
+
+    # Upstream #17688: a custom engine is a web address with %s where the query goes.
+    @backlog @desktop
+    Scenario: A custom search engine puts the query where its address says
+      Given the user chose a custom search engine "https://search.example/?q=%s&lang=en"
+      When the user types "react hooks" in a browser tab's address bar
+      Then the tab loads "https://search.example/?q=react%20hooks&lang=en"
+
+    # Upstream #17688: an unusable custom template is flagged and searches fall back.
+    @backlog @desktop
+    Scenario Outline: An unusable custom search engine says so and searches DuckDuckGo
+      Given the user chose a custom search engine <template>
+      Then the setting says the address cannot be used for searches
+      And text typed in the address bar is searched on DuckDuckGo
+
+      Examples:
+        | template                     |
+        | ""                           |
+        | "https://search.example/?q=" |
+        | "https://%s.example/"        |
+        | "ftp://search.example/?q=%s" |
 
     @backlog @desktop
     Scenario: The floating preview can stay hidden when an agent opens a browser
@@ -468,6 +524,15 @@ Feature: Integrations settings
       Given the device hub tool update fails
       When the user updates the device hub tool
       Then the user is told to check this host's network connection and try again
+
+    # Upstream #17569: a failed device tool update says what failed, not to check the network.
+    # Replaces the scenario above once the MC and the desktop carry it.
+    @backlog @mc @desktop @priority-low
+    Scenario: A failed device tool update says the command failed and how
+      Given updating a device tool runs a command that exits with code 1
+      When the user updates the device tool
+      Then the user is told the update command failed with exit code 1
+      And they are not told to check their network
 
     @desktop
     Scenario: Several environments show one environment's device status at a time
