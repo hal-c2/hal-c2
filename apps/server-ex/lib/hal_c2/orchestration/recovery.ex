@@ -267,28 +267,47 @@ defmodule HalC2.Orchestration.Recovery do
   and passed over), `{:background, run, work}` when the thread's
   turn had finished and only the work it left running in the background was
   ended (`run` is that turn's), or nil.
+
+  The own threads of the provider's subagents it ends (`HalC2.Orchestration.NativeSubagent`)
+  are settled with it: they have no run of their own, so no sidebar row shows them
+  active for `run/0` to find.
   """
   def settle(thread_id, trigger \\ :restart) do
     capturing = capturing(thread_id)
 
-    HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = changes(state, Entities.now(), trigger, capturing) ++ note(state, thread_id)
+    {count, what, children} =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        changes = changes(state, Entities.now(), trigger, capturing) ++ note(state, thread_id)
 
-      requeued? =
-        Enum.any?(
-          StreamState.list(state, "run"),
-          &(unstarted?(state, &1) and not lost_wake?(state, &1))
-        )
+        requeued? =
+          Enum.any?(
+            StreamState.list(state, "run"),
+            &(unstarted?(state, &1) and not lost_wake?(state, &1))
+          )
 
-      what =
-        cond do
-          requeued? -> :requeued
-          (latest_run(state) || %{})["id"] in capturing -> nil
-          true -> continuable(state) || ended_background(state)
-        end
+        what =
+          cond do
+            requeued? -> :requeued
+            (latest_run(state) || %{})["id"] in capturing -> nil
+            true -> continuable(state) || ended_background(state)
+          end
 
-      {changes, {length(changes), what}}
-    end)
+        children =
+          for %{"origin" => "provider_native", "childThreadId" => child} = subagent <-
+                StreamState.list(state, "subagent"),
+              subagent["status"] in @active and is_binary(child),
+              do: child
+
+        {changes, {length(changes), what, children}}
+      end)
+
+    settled =
+      for child <- children, {count, _} = settle(child, trigger), count > 0 do
+        HalC2.Streams.flush_shell(child)
+        count
+      end
+
+    {count + Enum.sum(settled), what}
   end
 
   # The background work of the thread's finished latest run that is still marked active

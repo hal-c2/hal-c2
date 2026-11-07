@@ -399,14 +399,14 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC checks for idle sessions
     Then the provider process of "t1" stops
 
-  @backlog @mc
+  @mc
   Scenario: Stopping a thread settles its native subagents' own threads
     Given thread "t1" has a provider-native subagent running with its own thread
     When the user stops "t1"
     Then the subagent reads as stopped, not running, and its timer stops
     And the subagent's thread no longer shows a working turn
 
-  @backlog @mc
+  @mc
   Scenario: A restart settles a native subagent the stop left running
     Given thread "t1" was stopped while its native subagent's record still read as running
     When the MC restarts

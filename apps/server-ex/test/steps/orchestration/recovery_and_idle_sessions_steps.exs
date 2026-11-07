@@ -1878,6 +1878,153 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     |> Map.merge(%{thread: thread, native_subagent: id})
   end
 
+  # A Claude turn of "thread" kept running, in which Claude started a subagent of its own
+  # (its Agent tool), whose tool call shows in the subagent's own thread.
+  step(
+    "thread {string} has a provider-native subagent running with its own thread",
+    %{args: [thread]} = context,
+    do: native_running(context, thread)
+  )
+
+  # The stop ended the turn, but its subagent's records still read as running, in the
+  # parent and in the subagent's own thread, as an MC before stops settled them left
+  # them.
+  step "thread {string} was stopped while its native subagent's record still read as running",
+       %{args: [thread]} = context do
+    context = native_running(context, thread)
+    id = context.native_subagent
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    assert {:ok, _} = reply
+    World.await_latest_run(context, thread, "interrupted")
+    running = %{"s" => %{"status" => "running", "completedAt" => nil}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        World.thread_id(context, thread),
+        :thread,
+        for(kind <- ~w(subagent node), do: {kind, id, running}) ++
+          [{"turn-item", "turn-item:subagent:#{id}", running}]
+      )
+
+    child = World.thread_id(context, "subagent")
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        child,
+        :thread,
+        for(
+          item <- World.entities(context, "subagent", "turn-item"),
+          item["type"] != "user_message",
+          do: {"turn-item", item["id"], running}
+        )
+      )
+
+    context
+  end
+
+  defp native_running(context, thread) do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "wait for it", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_latest_run(context, thread, "running")
+
+    for message <- [
+          claude_tool_use(nil, "agent-own", "Agent", %{"prompt" => "Survey the repo"}),
+          %{
+            "type" => "system",
+            "subtype" => "task_started",
+            "task_id" => "task-agent-own",
+            "tool_use_id" => "agent-own",
+            "task_type" => "local_agent",
+            "prompt" => "Survey the repo"
+          },
+          claude_tool_use("agent-own", "bash-own", "Bash", %{"command" => "ls"})
+        ],
+        do: claude_says(context, thread, message)
+
+    state =
+      World.await_state(context, thread, fn state ->
+        Enum.any?(
+          HalC2.StreamState.list(state, "subagent"),
+          &(&1["origin"] == "provider_native" and &1["status"] == "running")
+        )
+      end)
+
+    %{"id" => id, "childThreadId" => child} =
+      Enum.find(HalC2.StreamState.list(state, "subagent"), &(&1["origin"] == "provider_native"))
+
+    context =
+      context
+      |> put_in([:threads, "subagent"], child)
+      |> Map.merge(%{thread: thread, native_subagent: id})
+
+    World.await_state(context, "subagent", fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["status"] == "running"))
+    end)
+
+    context
+  end
+
+  step(
+    "the subagent reads as stopped, not running, and its timer stops",
+    context,
+    do: stopped_subagent(context)
+  )
+
+  step(
+    "the subagent's thread no longer shows a working turn",
+    context,
+    do: idle_subagent_thread(context)
+  )
+
+  step "the subagent and its thread read as stopped", context do
+    context |> stopped_subagent() |> idle_subagent_thread()
+  end
+
+  # The stop ended the turn, but its subagent's records still read as running, in the
+  # parent and in the subagent's own thread, as an MC before stops settled them left
+  # them; then the MC stops.
+  defp stopped_subagent(context) do
+    id = context.native_subagent
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["subagent"][id]["status"] not in ~w(pending running)
+      end)
+
+    assert %{"status" => "interrupted", "completedAt" => at} = state.entities["subagent"][id]
+    assert is_binary(at)
+    assert %{"status" => "interrupted"} = state.entities["node"][id]
+
+    assert %{"status" => "interrupted", "completedAt" => ^at} =
+             state.entities["turn-item"]["turn-item:subagent:#{id}"]
+
+    context
+  end
+
+  defp idle_subagent_thread(context) do
+    child = World.thread_id(context, "subagent")
+    active = ~w(preparing queued starting running waiting pending)
+    row = World.await_row(child, &(&1["pendingBackgroundTasks"] in [nil, []]))
+    refute row["status"] in active
+    refute row["activityRunStatus"] in active
+    state = World.state(context, "subagent")
+
+    for kind <- ~w(run node turn-item), entity <- HalC2.StreamState.list(state, kind) do
+      refute entity["status"] in active, "#{kind} #{entity["id"]} is #{entity["status"]}"
+    end
+
+    refute Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["streaming"] == true))
+    context
+  end
+
   step "the subagent thread is settled or interrupted", context do
     state = World.state(context, context.thread)
     id = context.native_subagent
@@ -2404,6 +2551,18 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     )
 
     context
+  end
+
+  # A tool call of Claude's (`parent` nil) or of its subagent under the tool call `parent`.
+  defp claude_tool_use(parent, id, name, input) do
+    %{
+      "type" => "assistant",
+      "parent_tool_use_id" => parent,
+      "message" => %{
+        "id" => "m-#{id}",
+        "content" => [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+      }
+    }
   end
 
   defp claude_says(context, thread, message) do
