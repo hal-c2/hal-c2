@@ -961,6 +961,8 @@ Feature: OpenCode
     Then the subagents are stopped eight at a time
     And the stop gives up after 15 seconds and reports the first one that could not be stopped
 
+  # Upstream #2829: the new orchestrator's OpenCode rollback refuses while a turn is active, or
+  # when its rewind boundary is no longer available or was not preserved.
   Scenario Outline: OpenCode refuses a revert it cannot carry out
     Given <situation>
     When the user <action>
@@ -974,6 +976,8 @@ Feature: OpenCode
 
   # The MC forks a running thread from its last finished turn, and a fork names an MC
   # run, not an OpenCode turn: both rows contradict how it forks.
+  # Upstream #2829: the new orchestrator's OpenCode fork refuses while a turn is active, or
+  # when the fork boundary turn was not found.
   @backlog
   Scenario Outline: OpenCode refuses a fork it cannot carry out
     Given <situation>

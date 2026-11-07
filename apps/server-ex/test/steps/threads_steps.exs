@@ -1744,7 +1744,8 @@ defmodule HalC2.Steps.Threads do
   end
 
   # The message is queued while a turn works; stopping that turn starts the limited
-  # message, and the stop holds the queue behind it.
+  # message, and the limit holds the queue behind it. The stop lets the queue run, as
+  # the MC's own stops do: a user's Stop would hold the limited message too.
   step ~r/^"(?<thread>[^"]+)" stopped on a usage limit that resets at (?<time>\d{1,2}:\d{2}) with "(?<text>[^"]+)" queued behind it$/,
        %{args: [thread, time, text]} = context do
     reset = next_clock(time)
@@ -1766,7 +1767,8 @@ defmodule HalC2.Steps.Threads do
       World.dispatch(context, %{
         "type" => "run.interrupt",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => id
+        "threadId" => id,
+        "holdQueue" => false
       })
 
     World.await_runs(context, thread, ["interrupted", "failed", "queued"])

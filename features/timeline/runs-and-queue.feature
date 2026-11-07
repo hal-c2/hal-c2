@@ -840,6 +840,8 @@ Feature: Runs, interruptions and the queue
   # Split from the outline above: HAL-C2 has no goal activity notice yet (the
   # goal's banner is the "pursuing a goal" row of the end-of-timeline rule
   # below), so there is no goal notice to put behind the limit.
+  # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
+  # actions; errors, warnings and urgent notices now come first, activity behind them.
   @backlog @desktop
   Scenario: A usage limit stays in front of a thread working toward a goal
     Given the thread is working toward a goal

@@ -457,7 +457,14 @@ defmodule HalC2.CodeReviewTest do
 
     await_stream(thread_id, &running?/1)
     queue_message(thread_id, "behind")
-    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    # The turn ends without holding the queue, as a user's Stop would.
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => thread_id,
+        "holdQueue" => false
+      })
 
     await_stream(thread_id, &(run_of(&1, "behind")["startedAt"] != nil))
 
