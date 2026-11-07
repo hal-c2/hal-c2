@@ -235,7 +235,7 @@ Feature: Staying useful through backgrounding and bad connections
   @backlog @mobile
   Scenario: A working agent's status offers to reconnect when the connection drops
     Given an agent is working in "Fix checkout"
-    When the connection to "My MacBook" drops
+    When the connection to "My MacBook" is lost
     Then the working status shows the connection is lost
     When the user taps the working status
     Then the phone reconnects to "My MacBook"

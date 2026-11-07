@@ -142,4 +142,155 @@ defmodule HalC2.StorageCleanupTest do
     :ok = HalC2.StorageCleanup.sweep()
     assert File.exists?(path)
   end
+
+  test "an unknown local-changes choice keeps the most", %{repo: repo} do
+    for choice <- ["uncommited", nil, 3] do
+      settings = %{"storageCleanup" => %{"worktreeKeepWhen" => choice}}
+      assert HalC2.StorageCleanup.rules(settings, "p1")["worktreeKeepWhen"] == "any-local-files"
+    end
+
+    settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => "uncommited"})
+    path = thread(repo, "th-6", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    ignore(path, ".env")
+
+    :ok = HalC2.StorageCleanup.sweep()
+    assert File.read!(Path.join(path, ".env")) == "SECRET=1\n"
+    assert kept(path) == "Has ignored files (.env)"
+  end
+
+  test "a failed effect does not hold a deleted thread's worktree", %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true})
+    path = thread(repo, "th-7", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+
+    # A title that failed to generate, kept a week for diagnosis, one that waits, and
+    # a cleanup that failed for good: none of them is the deletion still running.
+    for {id, type, status} <- [
+          {"e1", "thread-title.generate", "failed"},
+          {"e2", "thread-title.generate", "pending"},
+          {"e3", "attachment.cleanup", "failed"}
+        ] do
+      record = %{"id" => id, "threadId" => "th-7", "type" => type, "status" => status}
+      :ok = HalC2.Store.put_meta("effect:th-7:#{id}", JSON.encode!(record))
+    end
+
+    :ok = HalC2.StorageCleanup.sweep()
+    refute File.exists?(path)
+  end
+
+  test "a tracked edit made just before removal keeps everything in the worktree",
+       %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => "tracked-changes"})
+    path = thread(repo, "th-8", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    ignore(path, ".env")
+    File.write!(Path.join(path, "notes.txt"), "mine\n")
+    hook({__MODULE__, :edit_at_removing, []})
+
+    :ok = HalC2.StorageCleanup.sweep()
+    assert kept(path) == "Has uncommitted changes (1 file)"
+    assert File.read!(Path.join(path, ".env")) == "SECRET=1\n"
+    assert File.read!(Path.join(path, "notes.txt")) == "mine\n"
+  end
+
+  test "an ignored file written just before removal keeps the worktree", %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true})
+    path = thread(repo, "th-10", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    ignore(path, ".env")
+    File.rm!(Path.join(path, ".env"))
+    hook({__MODULE__, :write_env_at_removing, []})
+
+    # Git deletes ignored files with the worktree; only the last look sees this one.
+    :ok = HalC2.StorageCleanup.sweep()
+    assert kept(path) == "Has ignored files (.env)"
+    assert File.read!(Path.join(path, ".env")) == "SECRET=1\n"
+  end
+
+  for choice <- ["uncommitted-changes", "tracked-changes"] do
+    test "a repository nested in the worktree keeps it under #{choice}, cleaned of nothing",
+         %{repo: repo} do
+      settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => unquote(choice)})
+      path = thread(repo, "th-9", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+      ignore(path, ".env")
+
+      # An ignored folder holding a repository with a commit nowhere else.
+      nested = Path.join([path, "deps", "lib"])
+      File.mkdir_p!(nested)
+      File.write!(Path.join(path, ".gitignore"), ".env\ndeps/\n")
+      git(path, ~w(-c user.name=t -c user.email=t@t commit -q -am deps))
+      git(nested, ~w(init -q))
+      File.write!(Path.join(nested, "work.txt"), "unpushed\n")
+      git(nested, ~w(add .))
+      git(nested, ~w(-c user.name=t -c user.email=t@t commit -q -m work))
+
+      :ok = HalC2.StorageCleanup.sweep()
+      assert kept(path) == "Has a nested repository (deps/)"
+      assert File.read!(Path.join(path, ".env")) == "SECRET=1\n"
+      assert File.read!(Path.join(nested, "work.txt")) == "unpushed\n"
+    end
+  end
+
+  test "a tracked edit made between the clean and the removal keeps the worktree",
+       %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => "tracked-changes"})
+    path = thread(repo, "th-11", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    File.write!(Path.join(path, "notes.txt"), "draft\n")
+    hook({__MODULE__, :edit_at_cleaned, []})
+
+    # Without the look after the clean, Git refuses the removal and the sweep fails.
+    :ok = HalC2.StorageCleanup.sweep()
+    assert kept(path) == "Has uncommitted changes (1 file)"
+    assert File.read!(Path.join(path, "a.txt")) == "edit\n"
+  end
+
+  test "too many untracked entries to look through keep the worktree", %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => "uncommitted-changes"})
+    path = thread(repo, "th-12", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    ignore(path, "*.log")
+
+    # Ignored files don't count under this choice, but the look for nested
+    # repositories reads them all, past its 64 KB limit.
+    for n <- 1..1200,
+        do:
+          File.write!(
+            Path.join(path, "build-output-#{String.pad_leading("#{n}", 40, "0")}.log"),
+            ""
+          )
+
+    :ok = HalC2.StorageCleanup.sweep()
+    assert kept(path) == "Untracked files exceed the inspection limit"
+  end
+
+  @doc false
+  def edit_at_cleaned(:cleaned, path), do: File.write!(Path.join(path, "a.txt"), "edit\n")
+  def edit_at_cleaned(_stage, _path), do: :ok
+
+  @doc false
+  # The sweep's `:removing` stage, inside the lease: the agent edits a tracked file.
+  def edit_at_removing(:removing, path), do: File.write!(Path.join(path, "a.txt"), "edit\n")
+  def edit_at_removing(_stage, _path), do: :ok
+
+  @doc false
+  def write_env_at_removing(:removing, path),
+    do: File.write!(Path.join(path, ".env"), "SECRET=1\n")
+
+  def write_env_at_removing(_stage, _path), do: :ok
+
+  defp hook(mfa) do
+    Application.put_env(:hal_c2, :storage_cleanup_hook, mfa)
+    on_exit(fn -> Application.delete_env(:hal_c2, :storage_cleanup_hook) end)
+  end
+
+  # An ignored `.env` with a secret in it, its ignore rule committed.
+  defp ignore(path, name) do
+    File.write!(Path.join(path, ".gitignore"), name <> "\n")
+    git(path, ~w(add .gitignore))
+    git(path, ~w(-c user.name=t -c user.email=t@t commit -q -m ignore))
+    File.write!(Path.join(path, name), "SECRET=1\n")
+  end
+
+  defp kept(path) do
+    path = Path.expand(path)
+    entry = Enum.find(HalC2.StorageCleanup.report() || [], &(&1["path"] == path))
+    assert %{"outcome" => "kept", "reason" => reason} = entry
+    reason
+  end
 end

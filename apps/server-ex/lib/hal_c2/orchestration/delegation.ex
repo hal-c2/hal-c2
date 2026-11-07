@@ -1737,7 +1737,7 @@ defmodule HalC2.Orchestration.Delegation do
   defp target(thread, nil), do: {:ok, thread["modelSelection"]}
 
   defp target(thread, target) do
-    providers = HalC2.Environment.providers()
+    providers = HalC2.Settings.providers_for(thread["projectId"])
     inherited = thread["modelSelection"] || %{}
     driver = target["driverKind"]
 

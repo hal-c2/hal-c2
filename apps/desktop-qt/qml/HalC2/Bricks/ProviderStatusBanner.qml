@@ -13,9 +13,13 @@ Rectangle {
 
     readonly property var current: Shell.state.providerNotice ?? null
     readonly property color tone: current?.warning === true ? Theme.palette.color("warning", "#f59e0b") : Theme.palette.color("error", "#ef4444")
+    // One notice at a time above the composer (Shell.state.noticeStack,
+    // NoticeStackController); no stack published means drawn on its own.
+    readonly property var stack: Shell.state.noticeStack ?? null
+    readonly property bool inFront: stack === null || stack.expanded === true || stack.front === "provider"
 
     objectName: "providerNotice"
-    visible: current !== null
+    visible: current !== null && inFront
     implicitHeight: visible ? row.implicitHeight + 16 : 0
     // Opaque: it lies over the conversation.
     color: Qt.tint(Theme.palette.color("surface", "#0f0f11"), Qt.alpha(tone, 0.12))

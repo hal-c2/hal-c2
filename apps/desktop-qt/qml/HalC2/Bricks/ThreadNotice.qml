@@ -12,9 +12,13 @@ Rectangle {
     readonly property var current: Shell.state.threadNotice ?? null
     readonly property bool background: current?.kind === "background"
     readonly property color info: Theme.palette.color("info", "#3b82f6")
+    // One notice at a time above the composer (Shell.state.noticeStack,
+    // NoticeStackController); no stack published means drawn on its own.
+    readonly property var stack: Shell.state.noticeStack ?? null
+    readonly property bool inFront: stack === null || stack.expanded === true || stack.front === (background ? "activity" : "settled")
 
     objectName: "threadNotice"
-    visible: current !== null
+    visible: current !== null && inFront
     implicitHeight: visible ? row.implicitHeight + 16 : 0
     color: Qt.alpha(info, 0.1)
 

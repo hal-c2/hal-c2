@@ -251,9 +251,15 @@ private:
     QString error;
     QString remoteId;
     QString environmentId;
+    // How much of an uploading file has gone, 0 to 1; negative while unknown.
+    double progress = -1;
   };
-  // The attachment `id` of any draft or answer; null when it is gone.
+  // The attachment `id` of any draft, answer, waiting send or send in flight;
+  // null when it is gone.
   Attachment* findAttachment(const QString& id);
+  // Runs `change` on every held copy of the attachment `id` (a draft's, an
+  // answer's, a waiting send's, a send in flight's); how many there were.
+  int updateAttachmentCopies(const QString& id, const std::function<void(Attachment&)>& change);
   // Sends a file's bytes to the environment `target` runs on.
   void uploadFile(const QString& id, const QString& environmentId);
   // The environment a thread's or a new thread's files go to.
@@ -286,6 +292,9 @@ private:
     // {filePath, sectionId, sectionTitle, startIndex, endIndex, rangeLabel,
     // diff}; `text` is then the note and the lines are the file's.
     QJsonObject review;
+    // Set for another thread carried as context instead (a `thread`
+    // record): {environmentId, threadId, title}; its link is in the text.
+    QJsonObject thread;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -462,6 +471,8 @@ private:
   QVariantList outboxState(const QString& target) const;
   // Pulls a waiting message back into the composer.
   bool editWaiting(const QString& target, const QString& messageId);
+  // Drops a waiting send and what it had already uploaded for it.
+  bool deleteWaiting(const QString& target, const QString& messageId);
   // A refused outbox send: its prompt ahead of what was typed since, with the
   // model and modes it was written with.
   void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error);
@@ -493,6 +504,9 @@ private:
   void stepHistory(const QString& target, bool backward);
   // Why the prompt cannot be sent as it is, or nothing: its length.
   static QString promptProblem(const QString& text);
+  // Why a draft carrying this much cannot be sent (the contracts' attachment
+  // and context limits), or empty when it can.
+  static QString carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);
@@ -560,6 +574,10 @@ private:
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
+  // Whether the shown thread's provider can take a message into its running
+  // turn (its session's `turns.supportsActiveSteering`); a provider that
+  // cannot is only offered the queue. No session known reads as able.
+  bool canSteerActive() const;
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();

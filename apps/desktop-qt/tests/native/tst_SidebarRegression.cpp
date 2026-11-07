@@ -196,6 +196,42 @@ private slots:
     QVERIFY(shell.native->sidebar()->selection().isEmpty());
   }
 
+  // A run stopped on a usage limit reads Limited and leaves the Working
+  // section, however much background work it left it waits on: the limit is
+  // what needs the user. Any other finished run with work it waits on still
+  // parks at Waiting in Working.
+  void aUsageLimitBeatsTheBackgroundWorkItLeft() {
+    const auto finished = [](const QString& runStatus, const QString& errorClass) {
+      QJsonObject row = threadRow(QStringLiteral("t1"));
+      row.insert(QStringLiteral("latestRunId"), QStringLiteral("r1"));
+      row.insert(QStringLiteral("latestRunRequestedAt"), kAt);
+      row.insert(QStringLiteral("latestRunStartedAt"), kAt);
+      row.insert(QStringLiteral("latestRunCompletedAt"), kAt);
+      row.insert(QStringLiteral("status"), runStatus);
+      if (!errorClass.isEmpty()) row.insert(QStringLiteral("lastErrorClass"), errorClass);
+      row.insert(QStringLiteral("pendingBackgroundTasks"),
+                 QJsonArray{QJsonObject{{QStringLiteral("taskId"), QStringLiteral("held") }}});
+      return sidebar::threadFromRow(QStringLiteral("env-a"), row);
+    };
+
+    const sidebar::Thread limited = finished(QStringLiteral("failed"), QStringLiteral("usage_limit"));
+    QVERIFY(limited.runtime.has_value());
+    QCOMPARE(limited.runtime->status, QStringLiteral("failed"));
+    QCOMPARE(sidebar::status(limited), QStringLiteral("limited"));
+    QVERIFY(sidebar::statusLabel(limited) != sidebar::Nullable(QStringLiteral("Waiting")));
+    QVERIFY(!sidebar::working(limited));
+
+    for (const sidebar::Thread& waiting :
+         {finished(QStringLiteral("failed"), QStringLiteral("provider_error")),
+          finished(QStringLiteral("completed"), QString())}) {
+      QVERIFY(waiting.runtime.has_value());
+      QCOMPARE(waiting.runtime->status, QStringLiteral("idle"));
+      QCOMPARE(sidebar::status(waiting), QStringLiteral("waiting"));
+      QCOMPARE(sidebar::statusLabel(waiting), sidebar::Nullable(QStringLiteral("Waiting")));
+      QVERIFY(sidebar::working(waiting));
+    }
+  }
+
   // Back does not open a thread deleted since the window left it.
   void backSkipsADeletedThread() {
     QTemporaryDir home;

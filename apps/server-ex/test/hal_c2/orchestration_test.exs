@@ -653,6 +653,73 @@ defmodule HalC2.OrchestrationTest do
              StreamState.get(state, "message")["m1"]
   end
 
+  test "a message sent again under its id keeps its first copies and leaves no others" do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+
+    upload = fn ->
+      {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+        HalC2.Attachments.create_upload_url(%{
+          "name" => "a.png",
+          "mimeType" => "image/png",
+          "sizeBytes" => byte_size(png)
+        })
+
+      :ok = HalC2.Attachments.store(token, png)
+
+      %{
+        "type" => "image",
+        "id" => id,
+        "name" => "a.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => byte_size(png)
+      }
+    end
+
+    thread_id = "thread-#{System.unique_integer([:positive])}"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => "c",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Twice",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"},
+        "initialMessage" => %{
+          "messageId" => "m1",
+          "text" => "first",
+          "attachments" => [upload.()]
+        }
+      })
+
+    state = await_run(thread_id, "completed")
+    %{"attachments" => [%{"id" => first}]} = StreamState.get(state, "message")["m1"]
+    again = upload.()
+    on_disk = fn -> HalC2.Attachments.dir() |> Path.join("*") |> Path.wildcard() end
+    before = length(on_disk.())
+
+    assert {:ok, %{"sequence" => _}} =
+             Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "threadId" => thread_id,
+               "messageId" => "m1",
+               "text" => "first",
+               "attachments" => [again]
+             })
+
+    # The resend's copy is gone; the pending upload it came from stays, as does the
+    # message's own copy.
+    assert length(on_disk.()) == before
+    assert HalC2.Attachments.path(%{"id" => first})
+    assert HalC2.Attachments.path(again)
+
+    assert %{"attachments" => [%{"id" => ^first}]} =
+             StreamState.get(current(thread_id), "message")["m1"]
+  end
+
   test "inline context reaches the agent as markers and an envelope, and stays on the message" do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
@@ -1863,6 +1930,45 @@ defmodule HalC2.OrchestrationTest do
       assert %{"status" => "cancelled", "queuePosition" => nil} = by_id[second["id"]]
       assert %{"status" => "queued", "queuePosition" => 1} = by_id[third["id"]]
       assert %{"text" => "third, edited"} = StreamState.get(state, "message")["m3"]
+    end
+
+    test "an edit of a queued run keeps the copies it made" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "second")
+      [_, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+      upload = pending_upload()
+      before = length(attachment_files())
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, queued["id"], %{
+          "text" => "second",
+          "attachments" => [upload]
+        })
+
+      assert %{"attachments" => [%{"id" => claimed}]} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert HalC2.Attachments.path(%{"id" => claimed})
+      assert length(attachment_files()) == before + 1
+    end
+
+    test "an edit of a run that is no longer queued gives its copies back" do
+      thread_id = launch("hello")
+      state = await_run(thread_id, "completed")
+      [%{"id" => run_id, "userMessageId" => message_id}] = runs(state)
+      upload = pending_upload()
+      before = length(attachment_files())
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, run_id, %{
+          "text" => "too late",
+          "attachments" => [upload]
+        })
+
+      assert length(attachment_files()) == before
+      assert HalC2.Attachments.path(upload)
+      assert %{"text" => "hello"} = StreamState.get(current(thread_id), "message")[message_id]
     end
 
     test "an agent that cannot be steered is interrupted, and the steered message goes next" do
@@ -3523,6 +3629,26 @@ defmodule HalC2.OrchestrationTest do
              )
     end
 
+    test "an answer to a request the agent no longer has gives its copies back" do
+      thread_id = launch("ask me")
+      _ = await_request(thread_id)
+      upload = pending_upload()
+      before = length(attachment_files())
+
+      assert {:error, _} =
+               Orchestration.dispatch(%{
+                 "type" => "runtime-request.respond",
+                 "threadId" => thread_id,
+                 "requestId" => "request-gone",
+                 "answers" => %{"color" => "Red"},
+                 "attachmentsByQuestionId" => %{"color" => [upload]}
+               })
+
+      # The copy the answer made is gone; the pending upload stays for a retry.
+      assert length(attachment_files()) == before
+      assert HalC2.Attachments.path(upload)
+    end
+
     test "dismissing a question tells Claude no and cancels the request" do
       thread_id = launch("ask me", "claudeAgent")
       request = await_request(thread_id)
@@ -4438,6 +4564,30 @@ defmodule HalC2.OrchestrationTest do
         extra
       )
     )
+  end
+
+  defp attachment_files, do: HalC2.Attachments.dir() |> Path.join("*") |> Path.wildcard()
+
+  # An uploaded, not yet sent, file.
+  defp pending_upload do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "name" => "a.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => byte_size(png)
+      })
+
+    :ok = HalC2.Attachments.store(token, png)
+
+    %{
+      "type" => "image",
+      "id" => id,
+      "name" => "a.png",
+      "mimeType" => "image/png",
+      "sizeBytes" => byte_size(png)
+    }
   end
 
   defp queue_command(type, thread_id, run_id, extra \\ %{}),

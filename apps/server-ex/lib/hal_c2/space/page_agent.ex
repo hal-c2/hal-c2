@@ -614,8 +614,8 @@ defmodule HalC2.Space.PageAgent do
 
   # A model the prompt chose is the user's word: one that cannot run is refused, not
   # swapped for another behind their back.
-  defp model(%{"instanceId" => instance} = chosen, _settings, _project, _last) do
-    if runs?(chosen, HalC2.Environment.providers()),
+  defp model(%{"instanceId" => instance} = chosen, _settings, project, _last) do
+    if runs?(chosen, HalC2.Settings.providers_for(project["id"])),
       do: {:ok, chosen},
       else:
         {:error, :invalid,
@@ -625,7 +625,7 @@ defmodule HalC2.Space.PageAgent do
   # The clients' order for a new thread, then the model last used, then the first
   # provider that can run at all. A model on a provider that can't run gives way.
   defp model(_none, settings, project, last) do
-    providers = HalC2.Environment.providers()
+    providers = HalC2.Settings.providers_for(project["id"])
 
     candidates = project_models(settings, project) ++ [last && last["modelSelection"]]
 

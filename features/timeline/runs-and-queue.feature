@@ -799,7 +799,7 @@ Feature: Runs, interruptions and the queue
       | Antigravity reports an error and the thread's model is missing from its catalog    |
       | the thread uses Antigravity's default model and the catalog does not list it       |
 
-  @backlog @desktop
+  @desktop
   Scenario: Several notices above the composer show one at a time, the most pressing first
     Given the thread shows the error "Rate limited" and the answer to "/usage-limits"
     Then the error is the notice shown and the composer says there are other notices behind it
@@ -808,7 +808,7 @@ Feature: Runs, interruptions and the queue
     When the user presses Escape
     Then only the error is shown again
 
-  @backlog @desktop
+  @desktop
   Scenario: Dismissing the notice in front brings the next one forward
     Given the thread shows the error "Rate limited" and the answer to "/usage-limits"
     When the user dismisses the error
@@ -816,7 +816,7 @@ Feature: Runs, interruptions and the queue
     And the composer no longer says there are other notices
 
   # Upstream #25238: switching threads while a dismissed notice was still going away brought it back.
-  @backlog @desktop @priority-low
+  @desktop
   Scenario: A notice dismissed just before switching threads stays dismissed
     Given the thread shows the error "Rate limited"
     When the user dismisses the error and at once opens another thread
@@ -825,7 +825,7 @@ Feature: Runs, interruptions and the queue
 
   # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
   # actions; errors, warnings and urgent notices now come first, activity behind them.
-  @backlog @desktop
+  @desktop
   Scenario Outline: Errors and warnings stay in front of what the agent is doing
     Given the thread <activity>
     And the thread shows <notice>
@@ -835,7 +835,17 @@ Feature: Runs, interruptions and the queue
     Examples:
       | activity                                                | notice                                  |
       | says it is waiting on the background work "watch tests" | the error "Rate limited"                |
-      | is working toward a goal                                | a usage limit with its recovery actions |
+      | says it is waiting on the background work "watch tests" | a usage limit with its recovery actions |
+
+  # Split from the outline above: HAL-C2 has no goal activity notice yet (the
+  # goal's banner is the "pursuing a goal" row of the end-of-timeline rule
+  # below), so there is no goal notice to put behind the limit.
+  @backlog @desktop
+  Scenario: A usage limit stays in front of a thread working toward a goal
+    Given the thread is working toward a goal
+    And the thread shows a usage limit with its recovery actions
+    Then a usage limit with its recovery actions is the notice shown
+    And the notice about what the agent is doing waits behind it
 
   # Upstream #20299: a time that rounds up to a minute reads as a minute.
   @backlog @shared @priority-low

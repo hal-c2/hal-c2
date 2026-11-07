@@ -85,7 +85,7 @@ Row {
         objectName: "attachment:" + chip.attachment.name
         implicitHeight: Theme.control.sm
         iconName: chip.attachment.kind === "file" ? "file-text" : "image"
-        text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? qsTr("%1 (uploading…)").arg(chip.label) : chip.label
+        text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? (chip.attachment.progress ?? -1) >= 0 ? qsTr("%1 (uploading %2%)").arg(chip.label).arg(Math.round(chip.attachment.progress * 100)) : qsTr("%1 (uploading…)").arg(chip.label) : chip.label
         tint: chip.failed ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("text", "#e4e4e7")
         font.pixelSize: Theme.type.meta.size
         Accessible.name: chip.removable ? qsTr("Remove %1").arg(chip.label) : chip.label
