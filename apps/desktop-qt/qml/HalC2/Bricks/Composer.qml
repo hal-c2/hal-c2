@@ -456,6 +456,11 @@ Rectangle {
         if (text.length === 0) return false;
         const selected = input.selectionEnd - input.selectionStart;
         if (!asText && Shell.pasteAttaches(text, input.length - selected)) {
+            // A paste the controller cannot file is spliced into its draft:
+            // hand it the editor's words and caret first, debounce or not,
+            // or it splices at a caret the user has already moved from and
+            // its echo drops the typing it never saw.
+            composer.flushText();
             Shell.dispatch("composer.attach", {
                 files: [{ name: "pasted-text.txt", text: text }]
             });

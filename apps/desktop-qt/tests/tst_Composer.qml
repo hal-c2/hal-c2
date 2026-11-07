@@ -549,6 +549,31 @@ Item {
             compare(sent.payload.id, "th-1");
         }
 
+        // A large paste the controller cannot file is spliced into its
+        // draft, so paste hands it the editor's live words and caret first:
+        // typing still in the debounce and a caret moved without typing.
+        function test_aLargePasteFlushesTheEditorsTextAndCaretFirst() {
+            Shell.clipboard = "a very long paste";
+            Shell.pasteBecomesFile = true;
+            const composer = createTemporaryObject(composerComponent, root);
+            const input = findChild(composer, "input");
+            input.focus = true;
+            const before = Shell.dispatchedActions.length;
+            // Typed just now (still in the 120 ms debounce), caret mid-draft.
+            input.text = "before after";
+            input.cursorPosition = 6;
+            verify(Shell.dispatchedActions.slice(before).every(entry => entry.action !== "composer.text.set"), "the typing is unflushed");
+            verify(composer.paste(false));
+            const sent = Shell.dispatchedActions.slice(before);
+            compare(sent.length, 2);
+            compare(sent[0].action, "composer.text.set");
+            compare(sent[0].payload.text, "before after");
+            compare(sent[0].payload.cursor, 6);
+            compare(sent[1].action, "composer.attach");
+            compare(sent[1].payload.files[0].name, "pasted-text.txt");
+            compare(sent[1].payload.files[0].text, "a very long paste");
+        }
+
         function test_quotedReplyChipTakesACommentAndRemoves() {
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, {
