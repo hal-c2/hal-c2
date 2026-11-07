@@ -331,15 +331,8 @@ defmodule HalC2.Space.PageAgent do
     for %{"id" => run_id, "status" => status} <- Enum.sort_by(runs, &(&1["status"] != "queued")),
         status == "queued" or status in @run_active do
       type = if status == "queued", do: "queued-run.cancel", else: "run.interrupt"
-
-      # The page agent's own stop, not a Stop on the thread: its interrupt outcome
-      # names the agent.
-      command = %{"type" => type, "threadId" => thread_id, "runId" => run_id}
-
-      command =
-        if type == "run.interrupt", do: Map.put(command, "requestedBy", "agent"), else: command
-
-      _ = Orchestration.dispatch(command)
+      # Every caller replays the user's Stop on the page, so the outcome names the user.
+      _ = Orchestration.dispatch(%{"type" => type, "threadId" => thread_id, "runId" => run_id})
 
       # A run still only starting with nothing driving it never reaches `begin_turn`
       # (`HalC2.ScheduledTasks` has the same case), so nothing else would end it.

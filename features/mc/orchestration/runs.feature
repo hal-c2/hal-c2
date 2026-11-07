@@ -688,7 +688,9 @@ Feature: Runs and turns
 
   # Upstream #27252: killing processes stays a user decision.
   @mc
-  Scenario: Agents cannot force stop a thread
+  # Deleting a project with force=true also ends its threads' processes, as part of
+  # deleting them; that is the delete's own decision, not a force stop.
+  Scenario: HAL-C2's tools offer agents no force stop
     When an agent looks for a way to force stop a thread through HAL-C2's tools
     Then none is offered
 

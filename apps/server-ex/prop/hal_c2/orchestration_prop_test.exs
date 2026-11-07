@@ -2032,7 +2032,11 @@ defmodule HalC2.OrchestrationPropTest do
       request_id = "turn-item:run:#{run_id}:signal:interrupt-request"
       request = Enum.find(items, &(&1["id"] == request_id))
 
-      if request != nil and not MapSet.member?(asked, request_id) do
+      # `reply/2` waited for `ending` to settle, so an interrupted run this stop ended
+      # must say who stopped it; only a request an earlier stop made is skipped.
+      if request == nil, do: raise("an agent's stop of #{tid} left #{run_id} with no request")
+
+      unless MapSet.member?(asked, request_id) do
         unless request["stoppedBy"] == "agent" and request["message"] == "wrong branch",
           do: raise("an agent's stop of #{tid} was recorded as #{inspect(request)}")
 
