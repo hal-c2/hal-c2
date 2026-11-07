@@ -233,6 +233,7 @@ Feature: Answering the agent's questions from the composer
     When the user answers both questions
     Then the user can go back to the previous question to change its answer
     And submitting sends both answers to the agent together
+
   # Upstream #23626: Enter moved past an unanswered question, and the last question could then
   # never be submitted.
   @backlog @shared @priority-high
@@ -243,7 +244,6 @@ Feature: Answering the agent's questions from the composer
     Then "Which database?" is still shown and Next stays unavailable
     When the user picks "Postgres" and then "Redis"
     Then both answers are sent to the agent
-
 
   @desktop @priority-high
   Scenario: The first question still unanswered is the one shown

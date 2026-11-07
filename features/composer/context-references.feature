@@ -771,6 +771,7 @@ Feature: Referencing files, skills, commands and context
     Then the skill "deploy" is still offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (formatProviderSkillDisplayName)
+  # Passes today; upstream #27741 shows the id as written instead, see the backlog scenario below.
   @desktop
   Scenario Outline: A skill without a display name is named from its id
     Given the provider offers the skill "<id>" with no display name
