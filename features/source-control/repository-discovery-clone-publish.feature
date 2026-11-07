@@ -186,7 +186,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
 
     Examples:
       | cli      | answer                      | message                                                                             |
-      | any tool | "not found"                 | Forgejo repository or pull request was not found.                                   |
+      | fj      | "not found"                 | Forgejo repository or pull request was not found.                                   |
       | tea      | "unauthorized" or "forbidden" | Forgejo denied access. Check this server's `tea login` credentials and permissions. |
       | tea      | "too many requests"         | Forgejo API rate limit exceeded.                                                    |
 

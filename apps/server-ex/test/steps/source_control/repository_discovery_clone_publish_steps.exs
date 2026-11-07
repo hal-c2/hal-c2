@@ -446,8 +446,18 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     context
   end
 
-  step ~r/^the repository is read through (?<cli>any tool|tea)$/, context do
-    no_fj(context)
+  # fj is installed with a token for codeberg.org, so its own HTTP path serves the read.
+  step ~r/^the repository is read through (?<cli>fj|tea)$/, %{args: [cli]} = context do
+    case cli do
+      "fj" ->
+        context
+        |> fj_storage_file(JSON.encode!(keys_map(%{"codeberg.org" => fj_host("ada-token")})))
+        |> fj_installed()
+        |> Map.put(:cli, :fj)
+
+      "tea" ->
+        no_fj(context)
+    end
   end
 
   step ~r/^the Forgejo server answers with (?<answer>"[^"]+"(?: or "[^"]+")?)$/,
@@ -459,13 +469,29 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
         "\"too many requests\"" -> "429 Too Many Requests"
       end
 
-    tea_logins(context, [tea_login("codeberg", "https://codeberg.org", "true")], [
-      tea_api_rule("codeberg", "https://codeberg.org", "acme/notes", "codeberg.org", status)
-    ])
+    if Map.get(context, :cli) == :fj do
+      {code, _} = Integer.parse(status)
+      with_forgejo_api(context, %{"/api/v1/repos/acme/notes" => {code, %{"message" => status}}})
+    else
+      tea_logins(context, [tea_login("codeberg", "https://codeberg.org", "true")], [
+        tea_api_rule("codeberg", "https://codeberg.org", "acme/notes", "codeberg.org", status)
+      ])
+    end
   end
 
   step "the MC reads a Forgejo repository", context do
     {reply, context} = lookup_forgejo(context, "acme/notes")
+
+    # Only fj's own HTTP path leaves a request in the Forgejo API log.
+    if Map.get(context, :cli) == :fj,
+      do:
+        assert(
+          Enum.any?(
+            FakeHttp.requests(context.forgejo),
+            &(&1["path"] == "/api/v1/repos/acme/notes")
+          )
+        )
+
     Map.put(context, :reply, reply)
   end
 
