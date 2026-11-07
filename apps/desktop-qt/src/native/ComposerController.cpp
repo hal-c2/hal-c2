@@ -3377,6 +3377,9 @@ std::optional<composer::Trigger> ComposerController::triggerOf(const QString& ta
   if (trigger && trigger->kind == QLatin1String("skill") && !composer::opensSkillMenu(instanceOf(selection(target)), trigger->query)) {
     return std::nullopt;
   }
+  // A slash word in a sentence that starts no name is prose: no menu, so
+  // Enter sends it.
+  if (trigger && trigger->midLine && suggestions(target, trigger).isEmpty()) return std::nullopt;
   if (!trigger || !target.startsWith(pageKey({}))) return trigger;
   if (trigger->kind == QLatin1String("slash-command")) return std::nullopt;
   const bool first = text.left(trigger->start).trimmed().isEmpty();

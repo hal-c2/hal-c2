@@ -101,12 +101,14 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
 QVariant pickerKey(const QList<keybindings::Binding>& bindings, bool mac, const QString& command);
 
 // What the text before the caret asks for: "path" (@), "skill" ($),
-// "slash-command" (/ at a line start) or "pull-request" (#).
+// "slash-command" (/) or "pull-request" (#). A slash after other text on its
+// line is `midLine`: it offers only what its word is the start of a name of.
 struct Trigger {
   QString kind;
   QString query;
   int start = 0;
   int end = 0;
+  bool midLine = false;
 };
 std::optional<Trigger> trigger(const QString& text, int cursor);
 

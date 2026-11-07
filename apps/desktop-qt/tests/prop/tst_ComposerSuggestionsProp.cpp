@@ -9,7 +9,8 @@
 // Scope: the caret is at the end of the text, on one thread, with a workspace
 // present. Not modelled: a route with no workspace and switching target between
 // issuing a search and its answer; the claim above is proven only inside this
-// envelope.
+// envelope. A second property covers the slash menu for a word typed after
+// other text.
 
 #include "Prop.h"
 
@@ -108,6 +109,16 @@ struct Sut {
           {QStringLiteral("enabled"), true},
           {QStringLiteral("status"), QStringLiteral("ready")},
           {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-a")}}}},
+          // For the slash menu: names that "/tmp" and "/thread" match fuzzily or
+          // by description but do not start.
+          {QStringLiteral("slashCommands"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("compact")},
+                                                                   {QStringLiteral("description"), QStringLiteral("Compact this thread")}}}},
+          {QStringLiteral("skills"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("template")},
+                                                            {QStringLiteral("enabled"), true},
+                                                            {QStringLiteral("description"), QStringLiteral("Fill this thread's template")}},
+                                                QJsonObject{{QStringLiteral("name"), QStringLiteral("review")},
+                                                            {QStringLiteral("enabled"), true},
+                                                            {QStringLiteral("description"), QStringLiteral("Review the thread")}}}},
       };
       mc.send({{QStringLiteral("t"), QStringLiteral("config")},
                {QStringLiteral("id"), id},
@@ -302,6 +313,29 @@ struct MoveCheckout : Command {
   void show(std::ostream& os) const override { os << "MoveCheckout"; }
 };
 
+// What a slash menu item names: a built-in's word, or a skill's or command's name.
+QString nameOf(const QVariant& item) {
+  const QString id = item.toMap().value(QStringLiteral("id")).toString();
+  return id.startsWith(QLatin1String("slash:")) ? id.mid(6) : id.section(u':', 2);
+}
+
+QStringList namesShown(const Sut& sut) {
+  QStringList names;
+  for (const QVariant& item : sut.shown().value(QStringLiteral("suggestions")).toList()) names.append(nameOf(item));
+  names.sort();
+  return names;
+}
+
+// A slash word after other text: one the names start with, or prose that
+// some of them match fuzzily or by description.
+rc::Gen<QString> slashWord() {
+  return rc::gen::map(
+      rc::gen::oneOf(rc::gen::elementOf(std::vector<std::string>{"", "thread", "this", "tmp", "src", "mo", "Mo", "pl", "de", "rev",
+                                                                 "tem", "t", "compact", "skill", "skill:", "skill:re", "skill:x"}),
+                     rc::gen::container<std::string>(rc::gen::elementOf(std::vector<char>{'m', 'o', 'p', 'l', 'd', 'e', 't', 'r', 'v', 'h', 'a'}))),
+      [](const std::string& word) { return QString::fromStdString(word); });
+}
+
 }  // namespace
 
 class ComposerSuggestionsProp : public QObject {
@@ -315,6 +349,37 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.6, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, Type, Hold, AnswerHeld, GoOffline, GoOnline, MoveCheckout>()));
       rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // Enter takes the highlighted suggestion whenever the menu has one, so a
+  // word in a sentence that the user did not mean as a command must leave it
+  // empty and closed. The names on offer are what a bare "/" there lists.
+  void aSlashWordInASentenceOffersOnlyTheNamesItStarts() {
+    QVERIFY(rc::check("mid-sentence, a slash word offers exactly the names it starts and opens no menu when it starts none", [] {
+      Sut sut;
+      sut.type(QStringLiteral("fix /"));
+      RC_ASSERT(prop::until([&] { return namesShown(sut).contains(QStringLiteral("review")); }));
+      const QStringList all = namesShown(sut);
+      RC_ASSERT(!all.contains(QStringLiteral("compact")));
+      const auto lead = *rc::gen::elementOf(std::vector<std::string>{"fix", "summarise this", "first line\nthen"});
+      const auto words = *rc::gen::container<std::vector<QString>>(slashWord());
+      for (const QString& word : words) {
+        const QString text = QString::fromStdString(lead) + QStringLiteral(" /") + word;
+        sut.type(text);
+        RC_ASSERT(prop::until([&] { return sut.shown().value(QStringLiteral("text")).toString() == text; }));
+        const QString query = word.toLower();
+        QStringList expected;
+        for (const QString& name : all) {
+          const bool skill = name == QLatin1String("template") || name == QLatin1String("review");
+          const QString wanted = skill && query.startsWith(QLatin1String("skill:")) ? query.mid(6) : query;
+          if (name.startsWith(wanted)) expected.append(name);
+        }
+        RC_LOG() << text.toStdString() << " offers " << namesShown(sut).join(u',').toStdString() << "\n";
+        RC_ASSERT(namesShown(sut) == expected);
+        const QString kind = sut.shown().value(QStringLiteral("triggerKind")).toString();
+        RC_ASSERT(kind == (expected.isEmpty() ? QString() : QStringLiteral("slash-command")));
+      }
     }));
   }
 };

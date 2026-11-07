@@ -113,6 +113,28 @@ Feature: Referencing files, skills, commands and context
     When the user chooses it
     Then the draft reads "Please use " followed by the skill "review"
 
+  # Differs from the web on purpose: its composer opens the menu for "/thread" too, matching
+  # descriptions and fuzzily, so Enter takes /model or /plan there and the message is not sent.
+  @shared @backlog-mobile @backlog-tui
+  Scenario Outline: A slash typed after other text that starts no name is sent as typed
+    Given the Build and Plan toggle setting is on
+    And the provider offers the skill "template"
+    When the user types "<typed>" into the composer
+    Then no slash command or skill suggestions are offered
+    And pressing Enter sends the draft with "<typed>" as typed
+
+    Examples:
+      | typed              |
+      | summarise /thread  |
+      | fix /this          |
+      | look in /tmp       |
+
+  @desktop @priority-high
+  Scenario: A slash after leading spaces is still the start of the message
+    Given the provider offers the command "compact"
+    When the user types "  /compact" into the composer
+    Then the provider command "compact" is offered
+
   # Upstream #19671: a path typed in the composer offers no slash suggestions.
   @shared @backlog-mobile
   Scenario: A path typed in the composer does not open the slash menu

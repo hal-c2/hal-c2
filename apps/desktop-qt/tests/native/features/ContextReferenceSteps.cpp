@@ -349,8 +349,8 @@ const Steps steps([] {
                    QStringLiteral("the provider command \"%1\" to be offered").arg(c[0]));
   });
   step(QStringLiteral("no provider command is offered"), [](World& world, const Captures&, const Table&) {
+    // Mid-sentence the menu may not open at all: nothing there starts with the word.
     waitForAnswer(world);
-    expect(composerState(world).value(QStringLiteral("triggerKind")) == QLatin1String("slash-command"), QStringLiteral("no slash menu: %1").arg(describeMenu(world)));
     for (const QVariant& item : offered(world)) {
       expect(kindOf(item) != QLatin1String("provider-slash-command"), QStringLiteral("a provider command is offered: %1").arg(describeMenu(world)));
     }

@@ -126,6 +126,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/context-references.feature:Dismissing suggestions*"),
     QStringLiteral("composer/context-references.feature:Provider commands only apply*"),
     QStringLiteral("composer/context-references.feature:A slash typed after other text*"),
+    QStringLiteral("composer/context-references.feature:A slash after leading spaces*"),
     QStringLiteral("composer/context-references.feature:A path typed in the composer*"),
     QStringLiteral("composer/context-references.feature:Choosing a built-in command*"),
     QStringLiteral("composer/context-references.feature:A suggestion list with nothing*"),

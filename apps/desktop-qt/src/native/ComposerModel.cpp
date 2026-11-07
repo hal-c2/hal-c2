@@ -694,10 +694,11 @@ std::optional<Trigger> trigger(const QString& text, int cursor) {
   cursor = std::clamp(cursor, 0, int(text.size()));
   const int lineStart = cursor > 0 ? int(text.lastIndexOf(u'\n', cursor - 1)) + 1 : 0;
   const QString linePrefix = text.mid(lineStart, cursor - lineStart);
-  if (linePrefix.startsWith(u'/')) {
-    static const QRegularExpression command(QStringLiteral("^/(\\S*)$"));
-    const QRegularExpressionMatch match = command.match(linePrefix);
-    if (match.hasMatch()) return Trigger{QStringLiteral("slash-command"), match.captured(1), lineStart, cursor};
+  // Spaces before a line's slash still make it the line's command, and
+  // choosing one replaces them too.
+  static const QRegularExpression command(QStringLiteral("^\\s*/(\\S*)$"));
+  if (const QRegularExpressionMatch match = command.match(linePrefix); match.hasMatch()) {
+    return Trigger{QStringLiteral("slash-command"), match.captured(1), lineStart, cursor};
   }
   int tokenStart = cursor;
   while (tokenStart > 0 && !isSpace(text.at(tokenStart - 1))) --tokenStart;
@@ -712,10 +713,11 @@ std::optional<Trigger> trigger(const QString& text, int cursor) {
   }
   if (token.startsWith(u'@')) return Trigger{QStringLiteral("path"), token.mid(1), tokenStart, cursor};
   // A slash after other text searches the composer's commands and skills
-  // (slashItems leaves the provider's out there); a path has a second slash.
+  // (slashItems leaves the provider's out there, and matches names by prefix
+  // only); a path has a second slash.
   static const QRegularExpression midCommand(QStringLiteral("^/([^\\s/]*)$"));
   if (const QRegularExpressionMatch match = midCommand.match(token); match.hasMatch()) {
-    return Trigger{QStringLiteral("slash-command"), match.captured(1), tokenStart, cursor};
+    return Trigger{QStringLiteral("slash-command"), match.captured(1), tokenStart, cursor, true};
   }
   return std::nullopt;
 }
@@ -778,6 +780,15 @@ QList<Suggestion> slashItems(const Instance* instance, const Trigger& trigger, b
   QList<Ranked> scored;
   const QString provider = instance ? instance->driver : QString();
   for (const Item& item : items) {
+    // Mid-sentence, "/thread" or "/tmp" is prose until it starts a name: a
+    // fuzzy or description match would let Enter take a command the user
+    // never picked instead of sending.
+    if (trigger.midLine) {
+      const QString wanted = item.group == 2 && query.startsWith(QLatin1String("skill:")) ? query.mid(6) : query;
+      const bool named = item.name.toLower().startsWith(wanted) ||
+                         (item.group == 2 && skillLabel(item.skill).toLower().startsWith(wanted));
+      if (!named) continue;
+    }
     std::optional<int> score;
     if (item.group == 2) {
       if (query == QLatin1String("skill")) {
