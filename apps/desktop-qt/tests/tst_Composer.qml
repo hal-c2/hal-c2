@@ -543,10 +543,21 @@ Item {
             const chip = findChild(composer, "threadContext-th-1");
             verify(!!chip);
             compare(chip.text, "Fix the login");
+            // Typed just now (still in the 120 ms debounce): the controller,
+            // which strips the link from its draft, gets these words first.
+            const input = findChild(composer, "input");
+            const typed = "see [@Fix the login](hal-c2-context://v1/thread/thread_th-1) please thanks";
+            input.text = typed;
+            input.cursorPosition = typed.length;
+            const before = Shell.dispatchedActions.length;
             mouseClick(chip);
-            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
-            compare(sent.action, "composer.terminalContext.remove");
-            compare(sent.payload.id, "th-1");
+            const sent = Shell.dispatchedActions.slice(before);
+            compare(sent.length, 2);
+            compare(sent[0].action, "composer.text.set");
+            compare(sent[0].payload.text, typed);
+            compare(sent[0].payload.cursor, typed.length);
+            compare(sent[1].action, "composer.terminalContext.remove");
+            compare(sent[1].payload.id, "th-1");
         }
 
         // A large paste the controller cannot file is spliced into its

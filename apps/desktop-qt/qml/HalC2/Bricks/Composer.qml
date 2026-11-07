@@ -1029,9 +1029,14 @@ Rectangle {
                                 text: modelData.label
                                 font.pixelSize: Theme.type.meta.size
                                 Accessible.name: qsTr("Remove the thread %1").arg(text)
-                                onClicked: Shell.dispatch("composer.terminalContext.remove", {
-                                    id: modelData.id
-                                })
+                                // Removing it strips its link from the draft, so the
+                                // controller needs the editor's live words and caret first.
+                                onClicked: {
+                                    composer.flushText();
+                                    Shell.dispatch("composer.terminalContext.remove", {
+                                        id: modelData.id
+                                    });
+                                }
                             }
                         }
 
