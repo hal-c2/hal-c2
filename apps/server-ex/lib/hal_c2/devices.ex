@@ -30,7 +30,7 @@ defmodule HalC2.Devices do
     "agent" => %{name: "agent-device", version: "0.21.12", entry: ~w(bin agent-device.mjs)}
   }
   @hub_ready_timeout 30_000
-  @hub_exited "The device hub exited while starting."
+  @off_while_starting "Device support was turned off while it was starting."
   @daemon_ready_timeout 30_000
   @screenshot_timeout 20_000
   @install_timeout 600_000
@@ -1433,8 +1433,18 @@ defmodule HalC2.Devices do
         {state, result} =
           case {kind, result, state.settings.enabled} do
             {_, {:ok, _}, false} ->
-              {shut_down(state),
-               host_unavailable(@local, "Device support was turned off while it was starting.")}
+              {shut_down(state), host_unavailable(@local, @off_while_starting)}
+
+            # Turning support off stops the hub the job waits for.
+            {:hub, {:error, :exited}, false} ->
+              {state, host_unavailable(@local, @off_while_starting)}
+
+            # The hub can exit after it answered and before its job's result is handled.
+            {:hub, {:ok, _}, _} when state.hub_process == nil ->
+              hub_exited(state)
+
+            {:hub, {:error, :exited}, _} ->
+              hub_exited(state)
 
             {:hub, {:ok, hub}, _} ->
               state = %{state | hub: hub}
@@ -1443,10 +1453,6 @@ defmodule HalC2.Devices do
             {:agent, {:ok, agent}, _} ->
               state = %{state | agent: agent}
               {publish(state, &(&1 |> with_hosts(state) |> put_status("ready", nil))), result}
-
-            {:hub, {:error, :exited}, _} ->
-              {state, detail} = restart_later(state)
-              {state, host_unavailable(@local, detail || @hub_exited)}
 
             {:hub, {:error, error}, _} ->
               stop_hub(state)
@@ -1505,6 +1511,12 @@ defmodule HalC2.Devices do
     stop_hub(state)
     if state.restart_timer, do: Process.cancel_timer(state.restart_timer)
     %{stop_agent(state) | hub: nil, hub_process: nil, hub_exited: false, restart_timer: nil}
+  end
+
+  # A hub that exited while its job ran: the job's waiters hear when it restarts.
+  defp hub_exited(state) do
+    {state, detail} = restart_later(state)
+    {state, host_unavailable(@local, detail)}
   end
 
   # Schedules the restart of a hub that exited, with what clients are told; nothing while

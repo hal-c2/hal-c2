@@ -7,7 +7,9 @@
 //
 // FAKE_HUB_SIMULATORS and FAKE_HUB_EMULATORS (JSON arrays) seed the device lists; a
 // simulator whose `startError` is "hang" never answers serve-sim's grid start. With
-// FAKE_HUB_EXIT_AT_START set the hub exits before it listens, as a broken install would.
+// FAKE_HUB_EXIT_AT_START set to "listen" the hub exits before it listens, as a broken
+// install would; set to "ready" it exits once it has answered /readyz. FAKE_HUB_NEVER_READY
+// leaves /readyz unanswered.
 // A simulator's MJPEG stream sends frames until the client goes away, and
 // `/fake/streams-closed` answers once no stream is open. `?fake=drop` drops the
 // connection and `?fake=hang` never answers.
@@ -20,14 +22,15 @@
 //   GET  /fake/captures        serve-sim's capture per simulator: a number that grows
 //                              with each new capture; a shutdown releases it and ends
 //                              its streams
-//   GET  /fake/env             the PATH and XDG_RUNTIME_DIR the hub runs with
+//   GET  /fake/env             the PATH, XDG_RUNTIME_DIR and FAKE_HUB_EXIT_AT_START the
+//                              hub runs with
 //   GET  /fake/sockets-closed  answers once no socket is open
 //   POST /fake/exit            the hub exits, as a crashed one would
 // A socket closes from the hub's side when it gets the text frame {"fake":"close"}.
 import * as Crypto from "node:crypto";
 import * as Http from "node:http";
 
-if (process.env.FAKE_HUB_EXIT_AT_START) process.exit(1);
+if (process.env.FAKE_HUB_EXIT_AT_START === "listen") process.exit(1);
 
 const args = process.argv.slice(2);
 const port = Number(args[args.indexOf("--port") + 1]);
@@ -79,11 +82,19 @@ const server = Http.createServer(async (request, response) => {
 
   if (url.searchParams.get("fake") === "drop") return request.socket.destroy();
   if (url.searchParams.get("fake") === "hang") return;
-  if (url.pathname === "/readyz") return response.end("ok");
+  if (url.pathname === "/readyz" && process.env.FAKE_HUB_NEVER_READY) return;
+  if (url.pathname === "/readyz")
+    return response.end("ok", () => {
+      if (process.env.FAKE_HUB_EXIT_AT_START === "ready") process.exit(1);
+    });
   if (url.pathname === "/fake/requests") return json(requests);
   if (url.pathname === "/fake/captures") return json(captures);
   if (url.pathname === "/fake/env")
-    return json({ PATH: process.env.PATH, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? null });
+    return json({
+      PATH: process.env.PATH,
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? null,
+      FAKE_HUB_EXIT_AT_START: process.env.FAKE_HUB_EXIT_AT_START ?? null,
+    });
   if (url.pathname === "/fake/exit") {
     response.end("bye");
     return process.exit(0);

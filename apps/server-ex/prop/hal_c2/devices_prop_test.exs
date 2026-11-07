@@ -3,7 +3,7 @@ defmodule HalC2.DevicesPropTest do
   `HalC2.Devices`, the device hub's lifecycle, against a model of whether support is on,
   whether a hub runs, and how long the last restart waited. Commands turn support on and
   off, refresh devices (which starts the hub), make the hub exit as a crash would, make it
-  keep exiting before it is ready for a while, refresh while a restart waits, and turn
+  keep exiting as it starts (before or just after it answers that it is ready) for a while, refresh while a restart waits, and turn
   support off under an open whose boot never answers. The
   hub is `test/support/fake_device_hub.mjs` behind a fake npm, with an Android SDK whose
   only AVD's boot hangs.
@@ -161,7 +161,7 @@ defmodule HalC2.DevicesPropTest do
         if state.hub do
           [
             {8, {:call, __MODULE__, :crash, []}},
-            {3, {:call, __MODULE__, :crash_while_starting, []}},
+            {3, {:call, __MODULE__, :crash_while_starting, [oneof(["listen", "ready"])]}},
             {4, {:call, __MODULE__, :crash_then_refresh, []}},
             {2, {:call, __MODULE__, :disable_while_opening, []}}
           ]
@@ -274,10 +274,10 @@ defmodule HalC2.DevicesPropTest do
     {delay, Devices.hub_origin()}
   end
 
-  # The hub exits, and its restarts exit before they are ready until one has; then the
-  # hub comes back.
-  def crash_while_starting do
-    System.put_env("FAKE_HUB_EXIT_AT_START", "1")
+  # The hub exits, and its restarts exit as they start (before they listen, or once they
+  # answered /readyz) until one does not; then the hub comes back.
+  def crash_while_starting(moment) do
+    System.put_env("FAKE_HUB_EXIT_AT_START", moment)
     first = exit_hub()
     second = next_wait()
     System.delete_env("FAKE_HUB_EXIT_AT_START")
@@ -321,10 +321,27 @@ defmodule HalC2.DevicesPropTest do
     wait(view) || raise "the hub failed without a restart: #{inspect(view["hostStatuses"])}"
   end
 
-  # The waits of restarts that still exited, until a hub is ready.
+  # The waits of restarts that still exited, until a hub is ready that stays up: one that
+  # answered /readyz before exiting is ready for a moment.
   defp waits_until_ready do
     view = await(&(&1["hostStatus"] in ["failed", "ready"]))
-    if view["hostStatus"] == "ready", do: [], else: [wait(view) | waits_until_ready()]
+
+    cond do
+      view["hostStatus"] == "failed" -> [wait(view) | waits_until_ready()]
+      stays_up?(Devices.hub_origin()) -> []
+      true -> waits_until_ready()
+    end
+  end
+
+  defp stays_up?(nil), do: false
+
+  defp stays_up?(origin) do
+    request = {String.to_charlist(origin <> "/fake/env"), []}
+
+    case :httpc.request(:get, request, [timeout: 5_000], body_format: :binary) do
+      {:ok, {{_, 200, _}, _, body}} -> JSON.decode!(body)["FAKE_HUB_EXIT_AT_START"] == nil
+      _ -> false
+    end
   end
 
   defp wait(view) do

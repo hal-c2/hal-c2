@@ -157,11 +157,67 @@ defmodule HalC2.DevicesTest do
     refute_received {:DOWN, ^down, :process, _, _}
   end
 
+  # A hub can answer /readyz and exit before the server handles its job's result. The job
+  # here is stood in for, its ready hub handed back once the hub's output has ended.
+  test "a hub that exits before its job's result is handled is restarted, not ready" do
+    {:ok, %{"hostStatus" => "ready"}} = HalC2.Devices.configure(%{"enabled" => true})
+    %{hub: hub, hub_process: %{reader: reader}} = :sys.get_state(HalC2.Devices)
+    server = Process.whereis(HalC2.Devices)
+    ref = make_ref()
+
+    :sys.replace_state(
+      HalC2.Devices,
+      &%{&1 | hub: nil, jobs: Map.put(&1.jobs, :hub, {ref, []})}
+    )
+
+    :erlang.trace(server, true, [:receive])
+    exit = {String.to_charlist(hub["origin"] <> "/fake/exit"), [], ~c"text/plain", ""}
+    {:ok, {{_, 200, _}, _, _}} = :httpc.request(:post, exit, [timeout: 5_000], [])
+    assert_receive {:trace, ^server, :receive, {:subprocess_eof, ^reader}}, 5_000
+    :erlang.trace(server, false, [:receive])
+    flush_states()
+
+    send(server, {ref, {:ok, hub}})
+    failed = next_state(&(&1["hostStatus"] in ["failed", "ready"]))
+    assert failed["hostStatusDetail"] == "The device hub stopped. Restarting it in 1 second."
+    next_state(&(&1["hostStatus"] == "ready"))
+    assert HalC2.Devices.hub_origin() not in [nil, hub["origin"]]
+  end
+
+  # The hub job waits on a hub that never answers; turning support off stops that hub.
+  test "turning support off while the hub starts says so and restarts nothing" do
+    System.put_env("FAKE_HUB_NEVER_READY", "1")
+    on_exit(fn -> System.delete_env("FAKE_HUB_NEVER_READY") end)
+    server = Process.whereis(HalC2.Devices)
+    support(true)
+    :erlang.trace(server, true, [:receive])
+
+    # An open waits for the hub job, and hears what ended it.
+    opening =
+      Task.async(fn ->
+        HalC2.Devices.open(%{
+          "threadId" => "t1",
+          "deviceId" => "Pixel_9",
+          "platform" => "android"
+        })
+      end)
+
+    assert_receive {:trace, ^server, :receive, {:"$gen_call", _, {:spawn_hub, _, _}}}, 30_000
+    :erlang.trace(server, false, [:receive])
+    _ = HalC2.Devices.state()
+    support(false)
+
+    assert {:error, %{"reason" => "Device support was turned off while it was starting."}} =
+             Task.await(opening, 30_000)
+
+    assert %{restart_timer: nil, hub_process: nil} = :sys.get_state(HalC2.Devices)
+  end
+
   # A hub that exits before it is ready is restarted too, each wait longer than the last,
   # and the first that comes up is the hub.
   test "a hub that keeps exiting while it starts is restarted with longer waits" do
     Application.put_env(:hal_c2, :device_hub_restart_base, 20)
-    System.put_env("FAKE_HUB_EXIT_AT_START", "1")
+    System.put_env("FAKE_HUB_EXIT_AT_START", "listen")
 
     on_exit(fn ->
       Application.delete_env(:hal_c2, :device_hub_restart_base)
@@ -375,6 +431,13 @@ defmodule HalC2.DevicesTest do
 
     {200, %{"result" => result}} = HalC2.Mcp.handle(auth, body)
     result
+  end
+
+  defp support(enabled) do
+    {settings, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "enableDeviceSupport", enabled), version)
+    # The settings reach the server as a message; a call after it orders the two.
+    _ = HalC2.Devices.state()
   end
 
   # Receives device states until one matches.
