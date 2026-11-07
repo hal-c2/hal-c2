@@ -14,7 +14,7 @@ defmodule HalC2.Projection.Shell do
   import HalC2.Projection.JS, only: [get: 2, json: 1, epoch_ms: 1, iso: 1]
 
   alias HalC2.Projection.{BackgroundWork, PullRequests, ThreadError, Timeline}
-  alias HalC2.StreamState
+  alias HalC2.{Search, StreamState}
 
   @interruptible ~w(preparing starting running)
 
@@ -44,11 +44,17 @@ defmodule HalC2.Projection.Shell do
       |> Enum.filter(&(get(&1, "status") == "pending"))
       |> latest_by(&epoch_ms(get(&1, "createdAt")))
 
-    latest_user_message =
-      state
-      |> StreamState.list("message")
-      |> Enum.filter(&(get(&1, "role") == "user"))
-      |> latest_by(&epoch_ms(get(&1, "updatedAt")))
+    user_messages =
+      state |> StreamState.list("message") |> Enum.filter(&(get(&1, "role") == "user"))
+
+    latest_user_message = latest_by(user_messages, &epoch_ms(get(&1, "updatedAt")))
+
+    # What the user typed, not what an agent, a schedule or a wake sent as the user (the
+    # Working section orders by it, so a wake does not move a row).
+    latest_typed_message =
+      user_messages
+      |> Enum.filter(&Search.typed?(&1, thread))
+      |> latest_by(&epoch_ms(get(&1, "createdAt")))
 
     # The session of the latest run's provider: after a switch the run's failure stands
     # (a usage limit keeps its resume) instead of taking the new provider's session error.
@@ -113,6 +119,7 @@ defmodule HalC2.Projection.Shell do
       # Thread detail owns message bodies; shell rows stay independent of transcript size.
       "latestVisibleMessage" => nil,
       "latestUserMessageAt" => get(latest_user_message, "updatedAt"),
+      "latestUserAuthoredMessageAt" => get(latest_typed_message, "createdAt"),
       "hasActionableProposedPlan" =>
         state
         |> StreamState.list("plan")

@@ -128,15 +128,19 @@ defmodule HalC2.Search do
 
   defp entry(_id, _message, _thread), do: nil
 
-  # What an agent, a schedule or the MC sent has the role of a user's message too, and so
-  # does what a fork copied from its source, which keeps the time it was first sent.
-  defp typed?(%{"role" => "user"} = message, thread) do
-    not Enum.any?(@not_typed, &(message[&1] != nil)) and
+  @doc """
+  Whether the user typed `message` in `thread`. What an agent, a schedule or the MC sent has
+  the role of a user's message too, and so does what a fork copied from its source, which
+  keeps the time it was first sent.
+  """
+  @spec typed?(map, map) :: boolean
+  def typed?(%{"role" => "user"} = message, thread) do
+    not Enum.any?(@not_typed, &(message[&1] not in [nil, :null])) and
       not (get_in(thread, ["lineage", "relationshipToParent"]) == "fork" and
              message["createdAt"] < thread["createdAt"])
   end
 
-  defp typed?(_message, _thread), do: false
+  def typed?(_message, _thread), do: false
 
   @doc """
   Searches with `query` (trimmed, 2 to 200 characters) for up to `limit` (1 to 50,
