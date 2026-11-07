@@ -105,6 +105,15 @@ set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;
 # runner first: one on PATH can be Qt 5's, which exits 1 saying nothing.
 # NO_DEFAULT_PATH: with CMAKE_PREFIX_PATH=/usr (Arch) the prefix's bin/ would
 # come before the HINTS, and hold Qt 5's runner.
+# An older build dir may have cached Qt 5's runner: drop a cached path that is
+# not under Qt 6's bin/.
+if(HAL_C2_QMLTESTRUNNER)
+  set(QT6_BINDIR "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
+  cmake_path(IS_PREFIX QT6_BINDIR "${HAL_C2_QMLTESTRUNNER}" NORMALIZE _qmltest_in_qt6)
+  if(NOT _qmltest_in_qt6)
+    unset(HAL_C2_QMLTESTRUNNER CACHE)
+  endif()
+endif()
 find_program(HAL_C2_QMLTESTRUNNER NAMES qmltestrunner6 qmltestrunner
   PATHS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}" NO_DEFAULT_PATH)
 if(NOT HAL_C2_QMLTESTRUNNER)

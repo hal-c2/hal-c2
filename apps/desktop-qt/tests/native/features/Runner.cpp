@@ -186,7 +186,8 @@ Match match(const Step& step) {
   return {found, captures};
 }
 
-QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& defaultGlobs, const QString& surface) {
+QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& defaultGlobs, const QString& surface,
+                                 qsizetype* filesMatched) {
   const QDir root(featuresDir);
   QStringList globs = defaultGlobs;
   if (const QString requested = qEnvironmentVariable("HAL_C2_FEATURES"); !requested.isEmpty()) {
@@ -209,6 +210,7 @@ QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& 
       names.append(wildcard(glob.mid(colon + 1)));
     }
   }
+  if (filesMatched != nullptr) *filesMatched = files.size();
   QList<Scenario> scenarios;
   for (auto file = files.cbegin(); file != files.cend(); ++file) {
     for (const Scenario& scenario : parseFeature(file.key())) {

@@ -121,8 +121,11 @@ class tst_Features : public QObject {
 private slots:
   void initTestCase() {
     runner::defineSteps();
-    m_scenarios = runner::collectScenarios(kFeaturesDir, kDefaultGlobs, QStringLiteral("mobile"));
-    // A file whose scenarios all wait on the backlog has nothing to run yet.
+    qsizetype files = 0;
+    m_scenarios = runner::collectScenarios(kFeaturesDir, kDefaultGlobs, QStringLiteral("mobile"), &files);
+    // A mistyped glob, a renamed file or a wrong features dir matches nothing: that fails.
+    QVERIFY2(files > 0, "no feature files matched");
+    // Files whose scenarios all wait on the backlog have nothing to run yet.
     if (m_scenarios.isEmpty()) QSKIP("no runnable scenarios matched");
   }
 

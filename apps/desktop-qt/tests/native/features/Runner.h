@@ -42,8 +42,10 @@ Match match(const Step& step);
 // (space separated; a glob may name scenarios after a colon), that carry
 // `@<surface>` or `@shared`, less `@dropped` and `@blocked`. `@backlog` and
 // `@backlog-<surface>` ones are left out, or with HAL_C2_BACKLOG set are the
-// only ones kept.
-QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& defaultGlobs, const QString& surface);
+// only ones kept. `filesMatched`, when given, receives how many files the globs
+// matched, so a caller can tell a mistyped glob from files with nothing to run.
+QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& defaultGlobs, const QString& surface,
+                                 qsizetype* filesMatched = nullptr);
 
 // One QTest row per scenario, "<file under featuresDir>: <name>", with its
 // index in `scenarios` as the column `index`.

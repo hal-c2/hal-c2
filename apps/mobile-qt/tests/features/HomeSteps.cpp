@@ -412,13 +412,15 @@ const Steps steps([] {
     expect(button != nullptr, S("%1 has no way back").arg(c[0]));
     world.tap(button);
     // The MC accepts the command and the thread's row loses its archive time.
+    const QString id = haveThread(world, c[0]);
     world.waitFor(
         [&] {
-          return std::any_of(world.mc.commands.cbegin(), world.mc.commands.cend(),
-                             [](const QJsonObject& command) { return command.value(QLatin1String("type")) == QLatin1String("thread.unarchive"); });
+          return std::any_of(world.mc.commands.cbegin(), world.mc.commands.cend(), [&](const QJsonObject& command) {
+            return command.value(QLatin1String("type")) == QLatin1String("thread.unarchive") &&
+                   command.value(QLatin1String("threadId")).toString() == id;
+          });
         },
-        S("the phone to ask the MC to unarchive"));
-    const QString id = haveThread(world, c[0]);
+        S("the phone to ask the MC to unarchive %1").arg(c[0]));
     QJsonObject restored = world.mc.threads.value(id);
     restored.remove(S("archivedAt"));
     world.mc.threads.insert(id, restored);
