@@ -1,0 +1,4 @@
+[env]
+# A test that makes the whole shell at once nests deeper than a test
+# thread's 2 MiB in a debug build; the app's main thread has 8.
+RUST_MIN_STACK = "8388608"

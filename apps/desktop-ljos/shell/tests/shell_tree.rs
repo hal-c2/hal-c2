@@ -37,17 +37,6 @@ fn native_and_qml_singletons_share_the_module() {
 
 #[test]
 fn the_desktop_shell_loads_from_the_checkout() {
-    // The whole shell made at once nests deeper than a test thread's 2 MiB
-    // in a debug build; the app's main thread has 8.
-    std::thread::Builder::new()
-        .stack_size(8 << 20)
-        .spawn(load_the_desktop_shell)
-        .expect("a thread")
-        .join()
-        .unwrap_or_else(|e| std::panic::resume_unwind(e));
-}
-
-fn load_the_desktop_shell() {
     let compiled = qml::compile(&Roots::checkout()).expect("the roots are there");
     let errors: Vec<String> = compiled
         .diagnostics
