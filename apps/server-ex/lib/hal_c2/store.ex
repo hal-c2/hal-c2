@@ -525,8 +525,8 @@ defmodule HalC2.Store do
   connection.
 
   Options: `:limit` caps how many events are read; `:kinds` reads only those entity
-  kinds (`["thread", "project"]` is indexed for building the shell); `:through` stops
-  after that `seq`.
+  kinds (`["thread", "project"]` is indexed for building the shell); `:entities` only
+  the entities with those ids; `:through` stops after that `seq`.
   """
   @spec reduce_stream(String.t(), String.t(), non_neg_integer, acc, (event, acc -> acc), keyword) ::
           acc
@@ -539,18 +539,25 @@ defmodule HalC2.Store do
         do: "AND e.kind IN (#{Enum.map_join(kinds, ", ", &"'#{safe_kind!(&1)}'")})",
         else: ""
 
+    entities = Keyword.get(opts, :entities)
+
+    entity_filter =
+      if entities, do: "AND e.entity IN (SELECT value FROM json_each(?5))", else: ""
+
     sql = """
     SELECT e.seq, e.kind, e.entity, e.patch, e.at FROM events e
     JOIN streams s ON s.key = e.stream
-    WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} ORDER BY e.seq LIMIT ?3
+    WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} #{entity_filter}
+    ORDER BY e.seq LIMIT ?3
     """
 
-    args = [
-      stream_id,
-      after_seq,
-      Keyword.get(opts, :limit, -1),
-      Keyword.get(opts, :through, @no_seq_limit)
-    ]
+    args =
+      [
+        stream_id,
+        after_seq,
+        Keyword.get(opts, :limit, -1),
+        Keyword.get(opts, :through, @no_seq_limit)
+      ] ++ if(entities, do: [JSON.encode!(Enum.to_list(entities))], else: [])
 
     with_query(path, sql, args, fn db, stmt ->
       step_reduce(db, stmt, acc, fn [seq, kind, entity, patch, at], acc ->

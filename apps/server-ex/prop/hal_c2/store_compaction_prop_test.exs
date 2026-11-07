@@ -7,7 +7,9 @@ defmodule HalC2.StoreCompactionPropTest do
   offset. Whatever compaction removed, a client that had the log up to any offset
   and reads the store after it folds to the state the whole log folds to: the same
   entities, the seqs they were created, changed and deleted at, the stream's last
-  seq and its `updated_at`. A second compaction straight after one removes nothing.
+  seq and its `updated_at`. A compaction runs over every thread or, as the MC's
+  background one does, over what changed since the last; either way a compaction of
+  every thread straight after it removes nothing.
   `HalC2.StoreCompactionParallelPropTest` runs compaction alongside appends and
   resumes.
   """
@@ -56,7 +58,7 @@ defmodule HalC2.StoreCompactionPropTest do
         # An append lands at the time the seq before it names, so times move.
         {6, {:call, __MODULE__, :append, [oneof(@streams), changes(mode), state.seq]}},
         {3, {:call, __MODULE__, :resume, [oneof(@streams), offset(state)]}},
-        {2, {:call, __MODULE__, :compact, [mode]}}
+        {2, {:call, __MODULE__, :compact, [mode, boolean()]}}
       ] ++ if(mode == :sequential, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
     )
   end
@@ -96,7 +98,7 @@ defmodule HalC2.StoreCompactionPropTest do
   def postcondition(state, {:call, _, :resume, [stream, offset]}, read),
     do: resumes?(Map.get(state.events, stream, []), offset, read)
 
-  def postcondition(state, {:call, _, :compact, [:sequential]}, {report, again, logs}) do
+  def postcondition(state, {:call, _, :compact, [:sequential, _all]}, {report, again, logs}) do
     again.events == 0 and report.events >= 0 and
       Enum.all?(@streams, fn stream ->
         written = Map.get(state.events, stream, [])
@@ -109,7 +111,9 @@ defmodule HalC2.StoreCompactionPropTest do
       end)
   end
 
-  def postcondition(_state, {:call, _, :compact, [:parallel]}, result), do: match?(%{}, result)
+  def postcondition(_state, {:call, _, :compact, [:parallel, _all]}, result),
+    do: match?(%{}, result)
+
   def postcondition(_state, {:call, _, :restart, []}, result), do: result == :ok
 
   # The event a raw change makes against the stream's events so far: valid against the
@@ -150,10 +154,10 @@ defmodule HalC2.StoreCompactionPropTest do
   def resume(stream, offset),
     do: Store.reduce_stream(Store.path(), stream, offset, [], &[&1 | &2]) |> Enum.reverse()
 
-  def compact(:parallel), do: Compaction.run(Store, all: true)
+  def compact(:parallel, all), do: Compaction.run(Store, all: all)
 
-  def compact(:sequential) do
-    report = Compaction.run(Store, all: true)
+  def compact(:sequential, all) do
+    report = Compaction.run(Store, all: all)
     again = Compaction.run(Store, all: true)
     logs = Map.new(@streams, &{&1, resume(&1, 0)})
     {report, again, logs}

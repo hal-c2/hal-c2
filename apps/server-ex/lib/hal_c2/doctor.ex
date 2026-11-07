@@ -20,6 +20,9 @@ defmodule HalC2.Doctor do
   alias HalC2.Projection.Check
   alias HalC2.Store.Compaction
 
+  # The least free space worth shrinking a store that gives space back as it runs.
+  @free_bytes 1_000_000
+
   @type repair :: %{
           id: :rebuild | :compact | :shrink,
           text: String.t(),
@@ -168,7 +171,9 @@ defmodule HalC2.Doctor do
             }
           ]
 
-        space.free > 0 ->
+        # A running MC gives free pages back a few at a time itself, and every store
+        # has a few; worth a VACUUM only when a good part of the store is free.
+        space.free >= max(@free_bytes, div(space.size, 4)) ->
           [
             %{
               id: :shrink,

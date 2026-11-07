@@ -53,13 +53,12 @@ defmodule HalC2.Store.Compaction do
     through = if opts[:all], do: 0, else: String.to_integer(Store.meta(path, @through) || "0")
     importing = HalC2.Import.PreviousInstall.unfinished(path)
     ends = Store.stream_ends(path, "thread", through)
-    log_end = ends |> Enum.map(&elem(&1, 1)) |> Enum.max(fn -> through end)
+    {skipped, ends} = Enum.split_with(ends, fn {id, _} -> MapSet.member?(importing, id) end)
 
     report =
       ends
-      |> Enum.reject(fn {id, _} -> MapSet.member?(importing, id) end)
       |> Enum.reduce(%{streams: 0, events: 0, rewritten: 0}, fn {id, last}, report ->
-        case plan(path, id, last) do
+        case plan(path, id, last, since: through) do
           [] ->
             report
 
@@ -76,8 +75,22 @@ defmodule HalC2.Store.Compaction do
         end
       end)
 
-    :ok = Store.put_meta(store, @through, Integer.to_string(log_end))
+    :ok =
+      Store.put_meta(store, @through, Integer.to_string(log_end(path, through, ends, skipped)))
+
     Map.put(report, :reclaimable, Store.space(path).free)
+  end
+
+  # How far the next run may start: the log's end, or short of the first event since
+  # `through` of a thread skipped while its import ran, so the next run plans it all.
+  defp log_end(path, through, ends, skipped) do
+    last = (ends ++ skipped) |> Enum.map(&elem(&1, 1)) |> Enum.max(fn -> through end)
+
+    firsts =
+      for {id, _} <- skipped,
+          do: Store.reduce_stream(path, id, through, nil, fn e, _ -> e.seq - 1 end, limit: 1)
+
+    Enum.min([last | firsts])
   end
 
   @doc """
@@ -98,15 +111,39 @@ defmodule HalC2.Store.Compaction do
   @doc """
   What compacting the stream `stream_id`, through `through`, would do: the ops
   `HalC2.Store.compact/2` applies, each rewrite ahead of the deletes it absorbs.
-  """
-  @spec plan(String.t() | reference, String.t(), pos_integer | :infinity) :: [op]
-  def plan(path, stream_id, through \\ :infinity) do
-    opts = [kinds: @kinds] ++ if(through == :infinity, do: [], else: [through: through])
 
-    path
-    |> Store.reduce_stream(stream_id, 0, %{}, &step/2, opts)
-    |> Enum.flat_map(fn {_key, entity} -> close(entity).ops end)
-    |> Enum.sort_by(&order/1)
+  With `since: seq`, only the entities with events after `seq`: a run before compacted
+  the rest, and those it left as they were have nothing more to remove. Each is
+  folded from its creation, and no other entity is read or held.
+  """
+  @spec plan(String.t() | reference, String.t(), pos_integer | :infinity, keyword) :: [op]
+  def plan(path, stream_id, through \\ :infinity, opts \\ []) do
+    since = Keyword.get(opts, :since, 0)
+    read = [kinds: @kinds] ++ if(through == :infinity, do: [], else: [through: through])
+
+    entities =
+      if since > 0,
+        do:
+          Store.reduce_stream(
+            path,
+            stream_id,
+            since,
+            MapSet.new(),
+            &MapSet.put(&2, &1.entity),
+            read
+          ),
+        else: nil
+
+    if entities == MapSet.new() do
+      []
+    else
+      read = if entities, do: [{:entities, entities} | read], else: read
+
+      path
+      |> Store.reduce_stream(stream_id, 0, %{}, &step/2, read)
+      |> Enum.flat_map(fn {_key, entity} -> close(entity).ops end)
+      |> Enum.sort_by(&order/1)
+    end
   end
 
   # Rewrites first, by seq, so a batch never deletes what a rewrite in a later batch

@@ -27,6 +27,18 @@ defmodule HalC2.DoctorTest do
     assert Doctor.command(["--fix"], path: store(dir)) == {:ok, "Nothing to repair"}
   end
 
+  test "the few pages a running store frees are not worth a repair", %{tmp_dir: dir} do
+    path = Path.join(dir, "hal-c2.sqlite")
+    {:ok, pid} = Store.start_link(path: path, name: nil)
+    :ok = Store.put_meta(pid, "scratch", String.duplicate("x", 200_000))
+    :ok = Store.delete_meta(pid, "scratch")
+    {:ok, _} = Store.checkpoint(pid)
+    GenServer.stop(pid)
+
+    assert Store.space(path).free > 0
+    assert Doctor.command(["--fix"], path: path) == {:ok, "Nothing to repair"}
+  end
+
   test "it changes nothing while another process holds the home", %{tmp_dir: dir} do
     path = store(dir)
     lock = Path.join(dir, "mc.lock")

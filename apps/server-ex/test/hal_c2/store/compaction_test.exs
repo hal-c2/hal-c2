@@ -99,4 +99,39 @@ defmodule HalC2.Store.CompactionTest do
     assert %{events: 0} = Compaction.run(Store, all: true)
     assert length(events(path)) == 3
   end
+
+  test "a thread skipped while it was imported is compacted once its import finishes",
+       %{path: path} do
+    for title <- ~w(a b c), do: append([{"thread", "t1", %{"s" => %{"title" => title}}}])
+    :ok = Store.put_meta("import.thread.t1", "{}")
+    assert %{events: 0} = Compaction.run(Store)
+
+    :ok = Store.delete_meta("import.thread.t1")
+    before = events(path)
+    assert %{streams: 1, events: 1} = Compaction.run(Store)
+    same_from_every_offset(before, path)
+  end
+
+  test "a later run reads only the entities changed since the last", %{path: path} do
+    message = fn id -> %{"id" => id, "role" => "assistant", "text" => ""} end
+    append([{"thread", "t1", %{"s" => %{"title" => "t"}}}])
+    append([{"message", "m1", %{"s" => message.("m1")}}])
+    for chunk <- ~w(a b c), do: append([{"message", "m1", %{"a" => %{"text" => chunk}}}])
+    assert %{events: 2} = Compaction.run(Store)
+
+    append([{"message", "m2", %{"s" => message.("m2")}}])
+    for chunk <- ~w(d e f), do: append([{"message", "m2", %{"a" => %{"text" => chunk}}}])
+    through = String.to_integer(Store.meta(path, "compaction.through"))
+    planned = Compaction.plan(path, "t1", :infinity, since: through)
+    assert length(planned) == 3
+
+    entities =
+      for op <- planned, do: Enum.find(events(path), &(&1.seq == elem(op, 1))).entity
+
+    assert Enum.uniq(entities) == ["m2"]
+
+    before = events(path)
+    assert %{events: 2} = Compaction.run(Store)
+    same_from_every_offset(before, path)
+  end
 end
