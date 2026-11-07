@@ -404,7 +404,11 @@ Nullable statusLabel(const Thread& thread) {
       runtime == QLatin1String("queued")) {
     return QStringLiteral("Connecting");
   }
-  if (thread.pendingBackgroundTasks > 0) return QStringLiteral("Waiting");
+  // A run stopped on a usage limit needs the user, not its background work:
+  // as in threadFromRow, the limit wins over the work it still waits on.
+  if (thread.pendingBackgroundTasks > 0 && status(thread) != QLatin1String("limited")) {
+    return QStringLiteral("Waiting");
+  }
   if (thread.interactionMode == QLatin1String("plan") && latestRunSettled(thread) &&
       thread.hasActionableProposedPlan) {
     return QStringLiteral("Plan Ready");
@@ -427,6 +431,9 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs) {
 
 bool working(const Thread& thread) {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  // A thread returns to the inbox when its run fails on a usage limit, even
+  // with background work it waits on still open.
+  if (status(thread) == QLatin1String("limited")) return false;
   const bool busy = (thread.runtime && activeRunStatus(thread.runtime->status)) || thread.pendingBackgroundTasks > 0;
   if (!busy) return false;
   return !(thread.interactionMode == QLatin1String("plan") && thread.hasActionableProposedPlan && latestRunSettled(thread));
