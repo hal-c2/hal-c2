@@ -4,11 +4,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QUuid>
+
+#include <algorithm>
 
 #include "ComposerController.h"
 #include "KeybindingController.h"
@@ -118,6 +121,9 @@ void DraftController::activate() {
   commands->setTerms(QStringLiteral("thread.newIn"), {QStringLiteral("new thread"), QStringLiteral("project"), QStringLiteral("pick"),
                                     QStringLiteral("choose"), QStringLiteral("select")});
   connect(shell->controller<NavigationController>(), &NavigationController::changed, this, [this] {
+    const NavigationController::Route& route = NativeShell::of(this)->controller<NavigationController>()->route();
+    if (route.kind == QLatin1String("thread")) m_lastShown = route.threadKey;
+    if (route.kind == QLatin1String("draft")) m_lastShown = route.draftId;
     present();
     land();
   });
@@ -194,6 +200,8 @@ bool DraftController::handle(const QString& action, const QVariant& payload) {
 // The project to start in: the one asked for, else the scoped one, else the
 // one the window shows, else the first. A logical project that spans
 // environments starts on the member the window shows, else its representative.
+// `ask` (the thread list's button) asks which project whenever there are
+// several, unless Shift is held: then it starts in the current one.
 bool DraftController::startNew(const QVariantMap& payload) {
   const sidebar::ProjectGroup* group = nullptr;
   const QVariant requested = payload.value(QStringLiteral("projectKey"));
@@ -205,7 +213,8 @@ bool DraftController::startNew(const QVariantMap& payload) {
   } else {
     // With several projects, none of them showing or in scope, it asks which one.
     SidebarController* sidebar = NativeShell::of(this)->sidebar();
-    if (!shownProject() && !sidebar->scope() && sidebar->groups().size() > 1) {
+    const bool ask = payload.value(QStringLiteral("ask")).toBool() && !(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier);
+    if ((ask || (!shownProject() && !sidebar->scope())) && sidebar->groups().size() > 1) {
       NativeShell::of(this)->controller<KeybindingController>()->commands()->run(QStringLiteral("thread.newIn"));
       return true;
     }
@@ -242,9 +251,11 @@ void DraftController::startIn(const sidebar::ProjectGroup& group) {
 }
 
 QString DraftController::start(const QString& environmentId, const QString& projectId) {
+  // The project's draft, unless it is being sent: a new thread then is a new
+  // draft, and the sent one still becomes its thread.
   QString id;
   for (const Draft& draft : std::as_const(m_drafts)) {
-    if (draft.environmentId == environmentId && draft.projectId == projectId) id = draft.id;
+    if (draft.environmentId == environmentId && draft.projectId == projectId && !launching(draft.id)) id = draft.id;
   }
   if (id.isEmpty()) {
     id = newId();
@@ -256,8 +267,15 @@ QString DraftController::start(const QString& environmentId, const QString& proj
     }
     changedEverywhere();
   }
-  NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::draft(id));
-  emit started(id);
+  auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+  // What the new thread carries from: the thread or draft the window shows, else
+  // the last one it showed (the phone starts threads from its home screen).
+  const NavigationController::Route& shown = navigation->route();
+  const QString from = shown.kind == QLatin1String("thread") ? shown.threadKey
+                       : shown.kind == QLatin1String("draft") ? shown.draftId
+                                                              : m_lastShown;
+  navigation->open(NavigationController::Route::draft(id));
+  emit started(id, from);
   return id;
 }
 
@@ -396,6 +414,14 @@ QList<DraftController*> DraftController::everyWindow() const {
     if (auto* drafts = window->controller<DraftController>()) all.append(drafts);
   }
   return all;
+}
+
+bool DraftController::launching(const QString& id) const {
+  const QList<DraftController*> all = everyWindow();
+  return std::any_of(all.cbegin(), all.cend(), [&id](DraftController* drafts) {
+    const auto* composer = NativeShell::of(drafts)->controller<ComposerController>();
+    return composer && composer->launching(id);
+  });
 }
 
 void DraftController::changedEverywhere() {

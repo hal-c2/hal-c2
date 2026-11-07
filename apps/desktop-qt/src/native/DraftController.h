@@ -95,8 +95,10 @@ public:
 signals:
   void changed();
   // A new thread was asked for and `draftId` shows: a new draft, or the
-  // project's one again.
-  void started(const QString& draftId);
+  // project's one again. `from` is the composer target the window showed
+  // before (a thread's key or a draft's id), empty when it showed neither: the
+  // new thread carries its model and mode.
+  void started(const QString& draftId, const QString& from);
 
 private:
   bool startNew(const QVariantMap& payload);
@@ -113,6 +115,8 @@ private:
   void setLandingFailed(bool failed);
   // Every window's controller, this one's included.
   QList<DraftController*> everyWindow() const;
+  // A window is sending the draft's first message: it is the thread's now.
+  bool launching(const QString& id) const;
   void changedEverywhere();
 
   // What every window's controller keeps.
@@ -128,4 +132,6 @@ private:
   bool m_active = false;
   bool m_landingFailed = false;
   bool m_landsOnDraft = true;
+  // The thread key or draft id the window last showed.
+  QString m_lastShown;
 };

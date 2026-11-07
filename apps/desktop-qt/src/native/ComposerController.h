@@ -164,6 +164,8 @@ public:
 
   bool handle(const QString& action, const QVariant& payload) override;
   void adopt(const QString& draftId, const QString& threadKey, const QString& text);
+  // The draft's first send is on its way: it becomes its thread once the MC answers.
+  bool launching(const QString& draftId) const { return m_launching.contains(draftId); }
 
   // Where the threads' drafts are kept; loads them from there.
   void setStorePath(const QString& path);
@@ -360,6 +362,10 @@ private:
   QJsonObject baseSelection(const QString& key) const;
   // What a new thread in the project starts with.
   QJsonObject newThreadSelection(const QString& environmentId, const QString& projectId) const;
+  // The project's own default model: this device's override, else the project's. Empty when it has none.
+  QJsonObject projectSelection(const QString& environmentId, const QString& projectId) const;
+  // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
+  void carryInto(const QString& draftId, const QString& from);
   QString newThreadRuntimeMode(const QString& projectId) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;

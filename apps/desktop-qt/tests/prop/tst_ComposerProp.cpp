@@ -885,6 +885,9 @@ void verify(const Model& m, Sut& sut) {
     RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
     RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == m.interaction(m.open));
   }
+  if (m.open == kDraft) {
+    RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == (m.targets.value(kDraft).interaction.isEmpty() ? QStringLiteral("default") : m.targets.value(kDraft).interaction));
+  }
   QList<bool> toasts;
   for (const Toast& toast : m.toasts) toasts.append(toast.restore);
   RC_ASSERT(sut.toasts() == toasts);
@@ -985,6 +988,30 @@ struct PickInteraction : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ")"; }
+};
+
+// New thread from an open thread: the project's draft opens with the thread's
+// interaction mode, and with its model unless the draft picked one (the
+// project names no default here).
+struct NewThread : Command {
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isThread(m.open) && m.loaded.contains(m.open));
+    RC_PRE(!m.lagging);
+  }
+  void apply(Model& m) const override {
+    const QString from = m.open;
+    m.open = kDraft;
+    Target& draft = m.targets[kDraft];
+    draft.interaction = m.interaction(from);
+    if (!draft.model.isEmpty()) return;
+    const QString picked = m.targets.value(from).model;
+    draft.model = picked.isEmpty() ? m.recorded.value(from) : picked;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "NewThread"; }
 };
 
 // The MC records a model for a thread after its sends, as it does when a run
@@ -1555,7 +1582,7 @@ private slots:
                                                    Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime,
                                                    PickInteraction, Submit, Submit, Submit, Stash, RestorePrompt, SetRunning,
                                                    SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow,
-                                                   Load, Recorded>()));
+                                                   Load, Recorded, NewThread>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

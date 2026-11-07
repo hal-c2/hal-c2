@@ -1321,7 +1321,7 @@ Feature: Viewing and editing files
 
       Examples:
         | state                                         | message                                  |
-        | the environment is unreachable                | Reconnect to the environment and try again. |
+        | the attachment's environment is unreachable   | Reconnect to the environment and try again. |
         | the environment no longer has the attachment  | The attachment is unavailable.           |
 
     @desktop

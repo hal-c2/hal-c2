@@ -219,6 +219,7 @@ void ComposerController::activate() {
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
   // A draft opened, renewed or promoted in any window.
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
+  connect(shell->controller<DraftController>(), &DraftController::started, this, &ComposerController::carryInto);
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
@@ -903,6 +904,13 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   if (m_launching.contains(draftId)) return true;
 
   const WorkspaceController::Launch where = shell->controller<WorkspaceController>()->launch(draftId);
+  // A draft whose project is gone (its machine left, or the project went
+  // before the draft heard) keeps its prompt for another project.
+  if (where.problem.isEmpty() && !m_store->project(where.environmentId + QLatin1Char(':') + where.projectId)) {
+    shell->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Choose a project first"),
+                                               QStringLiteral("This draft no longer points to an available project."));
+    return true;
+  }
   if (!where.problem.isEmpty()) {
     toast(QStringLiteral("Could not create thread"), where.problem);
     return true;
@@ -2458,13 +2466,7 @@ QJsonObject ComposerController::newThreadSelection(const QString& environmentId,
   const auto setting = [settings](const QString& path) {
     return settings ? QJsonValue::fromVariant(settings->value(path)).toObject() : QJsonObject();
   };
-  QJsonObject selection;
-  if (!projectId.isEmpty()) {
-    selection = setting(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(projectId));
-    if (selection.isEmpty()) {
-      selection = m_store->projectRow(environmentId, projectId).value(QLatin1String("defaultModelSelection")).toObject();
-    }
-  }
+  QJsonObject selection = projectSelection(environmentId, projectId);
   if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
   // A page's ask then takes the model of the user's latest thread in its project,
   // from the threads the MC counts (page_agent.ex): not those a plugin or an agent
@@ -2492,6 +2494,46 @@ QJsonObject ComposerController::newThreadSelection(const QString& environmentId,
     }
   }
   return selection;
+}
+
+QJsonObject ComposerController::projectSelection(const QString& environmentId, const QString& projectId) const {
+  if (projectId.isEmpty()) return {};
+  if (const auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    const QJsonObject own =
+        QJsonValue::fromVariant(settings->value(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(projectId))).toObject();
+    if (!own.isEmpty()) return own;
+  }
+  return m_store->projectRow(environmentId, projectId).value(QLatin1String("defaultModelSelection")).toObject();
+}
+
+// The mode as picked there or as the thread has it, and the model the same
+// way unless the project has a default model of its own or the draft a model
+// picked in it. Opening a draft any other way carries nothing.
+void ComposerController::carryInto(const QString& draftId, const QString& from) {
+  if (from.isEmpty() || from == draftId) return;
+  const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(draftId);
+  if (!kept) return;
+  const auto thread = m_store->thread(from);
+  const Draft source = m_drafts.value(from);
+  Draft draft = m_drafts.value(draftId);
+  bool changed = false;
+  // The mode the composer showed there.
+  const QString mode = interactionModeOf(from);
+  if (draft.interactionMode != mode) {
+    draft.interactionMode = mode;
+    changed = true;
+  }
+  if (!draft.modelSelection && projectSelection(kept->environmentId, kept->projectId).isEmpty()) {
+    const QJsonObject model = source.modelSelection.value_or(thread ? thread->modelSelection : QJsonObject());
+    if (!model.isEmpty()) {
+      draft.modelSelection = model;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  m_drafts.insert(draftId, draft);
+  save();
+  publish();
 }
 
 QString ComposerController::openPage() const {
