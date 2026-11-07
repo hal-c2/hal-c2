@@ -60,7 +60,7 @@ Feature: Subscription limits
 
   # Upstream #15116: a window reported mid-turn cleared the failed-check marker; the failure now
   # stays until a full check succeeds.
-  @mc @backlog
+  @mc
   Scenario: A reading from a running turn does not hide a failed check
     Given the last check of Codex's limits failed
     When a running Codex turn reports one rate-limit window
@@ -74,7 +74,7 @@ Feature: Subscription limits
     Then Codex's limits are reported as not supported for this account
 
   # Upstream #18624: a Claude account with limits but no data is a failed check, not unsupported
-  @mc @backlog @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude account whose limits come back empty is checked again
     Given a Claude subscription account whose check says it has limits but returns none
     When the MC checks Claude's limits
@@ -109,10 +109,10 @@ Feature: Subscription limits
     Then Codex and Claude are not checked
 
   # Upstream #10310: switching background checks off also stops reading the usage hubs
-  @mc @backlog
+  @mc
   Scenario: Background checks switched off do not read the usage hubs either
     Given the health check interval is set to never
-    When a minute passes
+    When a minute passes and the MC runs its periodic checks
     Then no usage hub is read
     And refreshing by hand still reads them
 

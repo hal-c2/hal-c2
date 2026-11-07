@@ -793,6 +793,120 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
+  # --- failed checks ---------------------------------------------------------------
+
+  # The turn starts on a working Codex; the checks of its limits then fail from the start.
+  step "the last check of Codex's limits failed", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on("Codex work", "codex", "wait for me")
+
+    World.await_running(context, "Codex work")
+
+    context = Map.put(context, :codex_command, Application.get_env(:hal_c2, :codex_command))
+    World.put_app_env(:codex_command, [script(context, "codex-fails", "exit 1")])
+    context = limits(context)
+    {limits, context} = usage_limits(context, "codex")
+    assert %{"windows" => [], "unavailable" => %{"reason" => "probeFailed"}} = limits
+    context
+  end
+
+  step "a running Codex turn reports one rate-limit window", context do
+    context = World.post_message(context, "Codex work", "rate limit", %{"dispatchMode" => nil})
+    World.await_runs(context, "Codex work", ["completed"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "that window is shown", context do
+    {limits, context} = usage_limits(context, "codex")
+    assert %{"usedPercent" => 77} = window(limits, "primary")
+    context
+  end
+
+  step "Codex's limits still say the last check failed until a check succeeds", context do
+    {limits, context} = usage_limits(context, "codex")
+    assert %{"reason" => "probeFailed"} = limits["unavailable"]
+
+    World.put_app_env(:codex_command, context.codex_command)
+    {_, context} = World.call!(context, "server.refreshProviders", %{"instanceId" => "codex"})
+    {limits, context} = usage_limits(context, "codex")
+    refute Map.has_key?(limits, "unavailable")
+    assert %{"usedPercent" => 42} = window(limits, "primary")
+    context
+  end
+
+  step "a Claude subscription account whose check says it has limits but returns none", context do
+    context = World.fake_providers(context)
+    flag = Path.join(context.fakes.dir, "claude-usage-empty")
+    File.write!(flag, "")
+    System.put_env("FAKE_CLAUDE_USAGE_EMPTY", flag)
+    Map.put(context, :empty_flag, flag)
+  end
+
+  step "the MC checks Claude's limits", context do
+    context = limits(context)
+
+    {_, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    context
+  end
+
+  step "the check is reported as failed, not as not supported", context do
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert %{"windows" => [], "unavailable" => %{"reason" => "probeFailed"}} = limits
+    context
+  end
+
+  step "the next check that returns limits shows them", context do
+    File.rm!(context.empty_flag)
+
+    {_, context} =
+      World.call!(context, "server.refreshProviders", %{"instanceId" => "claudeAgent"})
+
+    {limits, context} = usage_limits(context, "claudeAgent")
+    assert [_ | _] = limits["windows"]
+    refute Map.has_key?(limits, "unavailable")
+    context
+  end
+
+  # --- background checks off -------------------------------------------------------
+
+  step "the health check interval is set to never", context do
+    context = context |> limits() |> add_hub()
+    assert [%{"id" => "hub", "accounts" => [_, _]}] = read_hubs()
+    World.merge_settings(%{"backgroundActivity" => %{"profile" => "balanced"}})
+    report_activity(context, true)
+
+    World.merge_settings(%{
+      "backgroundActivity" => %{
+        "profile" => "custom",
+        "baseProfile" => "balanced",
+        "overrides" => %{"providerHealthRefreshInterval" => 0}
+      }
+    })
+
+    assert HalC2.ProviderUsageLimits.interval() == :off
+    drain_hub()
+    context
+  end
+
+  step "a minute passes and the MC runs its periodic checks", context do
+    World.run_periodic_checks()
+    context
+  end
+
+  step "no usage hub is read", context do
+    refute_received {:hub, "/v0/management/auth-files", _}
+    context
+  end
+
+  step "refreshing by hand still reads them", context do
+    {_, context} = World.call!(context, "server.refreshProviders", %{})
+    assert_received {:hub, "/v0/management/auth-files", _}
+    context
+  end
+
   # --- enabling and disabling ------------------------------------------------------
 
   step "Codex and Claude reported their limits", context do

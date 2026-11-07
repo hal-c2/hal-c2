@@ -139,7 +139,9 @@ for line in sys.stdin:
         sub = msg["request"]["subtype"]
         # Plan usage; FAKE_CLAUDE_USAGE=unsupported is an account without plan limits.
         if sub == "get_usage":
-            usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {
+            # FAKE_CLAUDE_USAGE=empty has limits but returns none, until the file it names is gone.
+            empty = os.environ.get("FAKE_CLAUDE_USAGE_EMPTY")
+            usage = {"rate_limits_available": False, "rate_limits": None} if os.environ.get("FAKE_CLAUDE_USAGE") == "unsupported" else {"rate_limits_available": True, "rate_limits": {}} if empty and os.path.exists(empty) else {
                 "rate_limits_available": True,
                 "rate_limits": {
                     "five_hour": {"utilization": 30, "resets_at": "2026-09-24T15:00:00.123456+00:00"},

@@ -320,8 +320,14 @@ defmodule HalC2.ProviderUsageLimits do
       checked_at
       |> limits(Map.values(merged))
       |> put_present("resetCredits", (previous || %{})["resetCredits"])
+      |> put_present("unavailable", failed_marker(previous))
     end
   end
+
+  # A reading from a running turn is not a check: a failed check stays marked until a
+  # full check succeeds.
+  defp failed_marker(%{"unavailable" => %{"reason" => "probeFailed"} = marker}), do: marker
+  defp failed_marker(_), do: nil
 
   @doc "What to publish after a probe: a failed probe keeps the last good windows."
   def after_probe(%{} = published, %{"unavailable" => %{"reason" => "probeFailed"}})

@@ -57,6 +57,45 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
     "claude-work" => "claudeAgent"
   }
 
+  # The failed-check marker over any run of turn readings and checks, through the pure
+  # `merge/3` and `after_probe/2` the service publishes with: a failed check with no
+  # earlier reading is marked, a turn's reading shows its window yet leaves the mark, and
+  # only a check that succeeds clears it. A failed check after a good one keeps that one.
+  property "a failed check stays marked through turn readings until a check succeeds" do
+    forall steps <-
+             list(
+               oneof([
+                 {:reading, oneof(~w(primary secondary)), integer(0, 100)},
+                 :check_fails,
+                 {:check_ok, integer(0, 100)}
+               ])
+             ) do
+      {published, marked?} =
+        Enum.reduce(steps, {nil, false}, fn
+          {:reading, id, used}, {published, marked?} ->
+            window = %{"id" => id, "kind" => "session", "usedPercent" => used}
+            {Limits.merge(published, [window], "t"), marked?}
+
+          :check_fails, {published, marked?} ->
+            failed = Limits.unavailable("t", "probeFailed")
+
+            if published == nil or Map.has_key?(published, "unavailable"),
+              do: {Limits.after_probe(published, failed), true},
+              else: {Limits.after_probe(published, failed), marked?}
+
+          {:check_ok, used}, {published, _marked?} ->
+            ok =
+              Limits.limits("t", [
+                %{"id" => "primary", "kind" => "session", "usedPercent" => used}
+              ])
+
+            {Limits.after_probe(published, ok), false}
+        end)
+
+      published == nil or Map.has_key?(published, "unavailable") == marked?
+    end
+  end
+
   property "each instance keeps its own windows across updates, probes and upgrades",
     numtests: HalC2.Prop.numtests(50),
     max_size: 30 do
