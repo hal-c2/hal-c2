@@ -2612,6 +2612,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
   }),
+  /** Send a queued message now on a thread with no turn running, ahead of the rest of the queue. */
+  Schema.Struct({
+    type: Schema.Literal("queued-run.start"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
   Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),
     commandId: CommandId,
