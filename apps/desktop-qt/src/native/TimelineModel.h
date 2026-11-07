@@ -283,7 +283,7 @@ public:
   // workspaceChanged means the files may differ.
   QString workspaceMutation() const;
 
-  // Opens or closes a fold ("fold:<runId>"), a work group ("work:<itemId>")
+  // Opens or closes a fold ("fold:<runId>", or "fold:cut-off:<itemId>"), a work group ("work:<itemId>")
   // or a group of subagents ("subagents:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
   // The user stopped this run here: once it settles its work stays open, fold
@@ -442,7 +442,7 @@ private:
   // The turn items of the events being applied that changed in more than
   // streamed text.
   QSet<QString> m_reshaped;
-  QSet<QString> m_expandedFolds;   // run ids
+  QSet<QString> m_expandedFolds;   // run ids, and "cut-off:<item id>"
   // Work groups the user toggled, by row id: open ones, or closed ones of a
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;

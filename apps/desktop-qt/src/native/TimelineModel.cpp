@@ -1225,6 +1225,8 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   QStringList fields = patch.value(QLatin1String("s")).toObject().keys();
   for (const QJsonValue& field : patch.value(QLatin1String("u")).toArray()) fields.append(field.toString());
   for (const QString& field : std::as_const(fields)) structural = structural || kStructural.contains(field);
+  // A reply that stops as interrupted may be one a steer cut off, which folds.
+  if (type == QLatin1String("assistant_message") && fields.contains(QStringLiteral("status"))) structural = true;
   // On the phone, how a call ends decides whether it is listed and whether the live row thinks.
   static const QSet<QString> ending{QStringLiteral("status"), QStringLiteral("exitCode"), QStringLiteral("outputIndicatesFailure"),
                                     QStringLiteral("output"), QStringLiteral("input")};
@@ -1427,6 +1429,14 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     bool streaming = false;
     QDateTime boundary;
   };
+  // A reply a steer cut off mid-way: it stopped as interrupted though nobody
+  // asked to stop its run (a stop leaves an interrupt request behind). It is
+  // never the turn's answer; it folds on its own under "Cut off by a steer".
+  const auto cutOff = [&](const QJsonObject& item) {
+    return text(item, QLatin1String("type")) == QLatin1String("assistant_message") &&
+           text(item, QLatin1String("status")) == QLatin1String("interrupted") &&
+           !interruptRequested.contains(text(item, QLatin1String("runId")));
+  };
   QList<QJsonObject> shown;
   QHash<QString, Turn> turns;
   QList<QString> turnOrder;
@@ -1447,7 +1457,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       if (!boundary.isValid()) boundary = timeOf(item.value(QLatin1String("updatedAt")));
       continue;
     }
-    if (runId.isEmpty()) continue;
+    if (runId.isEmpty() || cutOff(item)) continue;
     if (!turns.contains(runId)) {
       turns[runId].boundary = std::exchange(boundary, QDateTime());
       turnOrder.append(runId);
@@ -1555,6 +1565,16 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     if (const auto fold = foldAt.constFind(id); fold != foldAt.cend()) {
       rows.append({QStringLiteral("fold:") + fold->runId, QStringLiteral("fold"), {}, {}, fold->label, fold->hidden,
                    fold->open, fold->at});
+    }
+    if (cutOff(item)) {
+      const QString fold = QStringLiteral("cut-off:") + id;
+      const bool open = m_expandedFolds.contains(fold);
+      rows.append({QStringLiteral("fold:") + fold, QStringLiteral("fold"), {}, {}, QStringLiteral("Cut off by a steer"), 1, open,
+                   itemTime(item)});
+      if (!open) {
+        ++i;
+        continue;
+      }
     }
     const Kind kind = classify(item);
     if (folded.contains(id) || kind == Kind::Checkpoint) {

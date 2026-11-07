@@ -111,14 +111,14 @@ Feature: Runs, interruptions and the queue
     Then the message is marked "From queue"
     And the marker explains "Queued while the agent was busy"
 
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A reply that finished before a steer stays the turn's answer
     Given the agent finished its reply
     When the user's steer restarts the run before the turn closed
     Then the finished reply stays visible as the turn's answer
     And it is not folded away as partial output
 
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A reply cut off by a steer is folded as cut off
     Given the agent is in the middle of its reply
     When the user's steer restarts the run

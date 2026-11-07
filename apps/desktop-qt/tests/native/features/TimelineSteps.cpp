@@ -695,6 +695,58 @@ const Steps steps([] {
     expect(marker == c[0], QStringLiteral("the message is marked \"%1\"").arg(marker));
   });
 
+  // A steer restarts the run: the interrupted run ends without a request to
+  // stop, its reply stopping where it was; the steer starts the next run.
+  step(QStringLiteral("the agent finished its reply"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("id"), QStringLiteral("reply-1")}, {QStringLiteral("text"), QStringLiteral("The cart total is done.")}});
+  });
+  step(QStringLiteral("the agent is in the middle of its reply"), [](World& world, const Captures&, const Table&) {
+    startRun(world, 30);
+    addItem(world, QStringLiteral("assistant_message"),
+            {{QStringLiteral("id"), QStringLiteral("reply-1")}, {QStringLiteral("text"), QStringLiteral("The cart total is half wri")},
+             {QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("streaming"), true}});
+  });
+  step(QStringLiteral("the user's steer restarts the run(?: before the turn closed)?"), [](World& world, const Captures&, const Table&) {
+    settleRun(world, QStringLiteral("interrupted"), 5);
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    const QJsonObject reply = fake.threads.value(fake.thread).value(QStringLiteral("turn-item\nreply-1"));
+    if (reply.value(QLatin1String("status")).toString() == QLatin1String("running")) {
+      set(world, QStringLiteral("turn-item"), QStringLiteral("reply-1"), {{QStringLiteral("status"), QStringLiteral("interrupted")}, {QStringLiteral("streaming"), false}});
+    }
+    const QString run = startRun(world);
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run,
+        {{QStringLiteral("text"), QStringLiteral("Add tax to the cart")}, {QStringLiteral("inputIntent"), QStringLiteral("steer")}});
+    addItem(world, QStringLiteral("assistant_message"),
+            {{QStringLiteral("id"), QStringLiteral("reply-2")}, {QStringLiteral("text"), QStringLiteral("Tax added.")},
+             {QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("streaming"), true}});
+  });
+  step(QStringLiteral("the finished reply stays visible as the turn's answer"),
+       [](World& world, const Captures&, const Table&) { expectAnswer(world, QStringLiteral("The cart total is done.")); });
+  step(QStringLiteral("it is not folded away as partial output"), [](World& world, const Captures&, const Table&) {
+    TimelineModel& model = timeline(world);
+    for (const int row : rowsOf(model, QStringLiteral("fold"))) {
+      expect(role(model, row, TimelineModel::TitleRole).toString() != QLatin1String("Cut off by a steer"), QStringLiteral("the reply is folded; %1").arg(describe(model)));
+    }
+    expect(role(model, rowShowing(world, QStringLiteral("reply-1")), TimelineModel::KindRole) == QStringLiteral("message"),
+           QStringLiteral("the reply is not its own message; %1").arg(describe(model)));
+  });
+  step(QStringLiteral("what the agent had written is folded under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    TimelineModel& model = timeline(world);
+    int fold = -1;
+    for (const int row : rowsOf(model, QStringLiteral("fold"))) {
+      if (role(model, row, TimelineModel::TitleRole).toString() == c[0]) fold = row;
+    }
+    expect(fold >= 0, QStringLiteral("no fold reads \"%1\"; %2").arg(c[0], describe(model)));
+    for (int row = 0; row < model.rowCount(); ++row) {
+      expect(role(model, row, TimelineModel::IdRole).toString() != QLatin1String("reply-1"), QStringLiteral("the cut off reply is in view; %1").arg(describe(model)));
+    }
+    model.toggle(role(model, fold, TimelineModel::IdRole).toString());
+    const int reply = rowShowing(world, QStringLiteral("reply-1"));
+    expect(role(model, reply, TimelineModel::TextRole).toString() == QLatin1String("The cart total is half wri"),
+           QStringLiteral("opening the fold shows %1").arg(describe(model)));
+  });
+
   // Timestamps, read on the scenarios' clock (2026-09-23 10:00, UTC).
   step(QStringLiteral("the user sent a message (today|yesterday|on .+) at 9:05 in the morning"), [](World& world, const Captures& c, const Table&) {
     world.setTime(now());
