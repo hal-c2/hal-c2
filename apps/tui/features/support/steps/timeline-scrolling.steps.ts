@@ -329,3 +329,65 @@ step("web addresses inside code are left as text", (ctx: ScrollWorld) => {
   expect(chunksOf(ctx).some((part) => part.link?.url === "https://example.com/x")).toBe(false);
   expect(plain({ chunks: chunksOf(ctx) })).toContain("https://example.com/x");
 });
+
+// --- long threads ----------------------------------------------------------------------
+
+const PLAIN_ROW = /Long (\d+)\b/;
+
+step("the user is reading a row in a thread of more than 80 rows", async (ctx: ScrollWorld) => {
+  await updateThread(ctx, () => ({ messages: replies(90, "Long") }));
+  await render(ctx);
+  expect(hostState(ctx, "timeline").windowEnd).toBeGreaterThan(80);
+  await scrollUp(ctx, 3);
+  const screen = (await snapshot(ctx)).split("\n");
+  const row = screen.findIndex((line) => PLAIN_ROW.test(line));
+  expect(row).toBeGreaterThanOrEqual(0);
+  ctx.anchor = { text: PLAIN_ROW.exec(screen[row]!)![0], row };
+});
+
+step("the agent streams more rows into the thread", async (ctx: ScrollWorld) => {
+  for (const batch of [2, 4, 6]) {
+    await updateThread(ctx, (detail) => ({
+      // Taller than the rows they push out of the window, so the content grows.
+      messages: [
+        ...detail.messages,
+        ...replies(batch, `Streamed${batch}`).map((entry) => ({
+          ...entry,
+          text: `${entry.text}\n\nA third paragraph.\n\nA fourth paragraph.\n\nA fifth paragraph.\n\nA sixth paragraph.`,
+        })),
+      ],
+    }));
+    await render(ctx);
+  }
+});
+
+step("the row being read stays where it was", async (ctx: ScrollWorld) => {
+  const screen = (await snapshot(ctx)).split("\n");
+  expect(screen.findIndex((line) => line.includes(ctx.anchor!.text))).toBe(ctx.anchor!.row);
+});
+
+step("the user has paged back to an older window of a long thread", async (ctx: ScrollWorld) => {
+  await updateThread(ctx, () => ({ messages: replies(120, "Long") }));
+  await render(ctx);
+  ctx.host!.dispatch("timeline.showOlder");
+  await settle();
+  await render(ctx);
+  const older = hostState(ctx, "timeline");
+  expect(older.windowEnd).toBeLessThan(older.rowCount);
+});
+
+step("the user presses Ctrl+End", async (ctx: ScrollWorld) => {
+  await pressKey(ctx, "Ctrl+End");
+  await render(ctx);
+});
+
+step("the newest rows are shown at the end", async (ctx: ScrollWorld) => {
+  const latest = hostState(ctx, "timeline");
+  expect(latest.windowEnd).toBe(latest.rowCount);
+  expect(await snapshot(ctx)).toContain("Long 119");
+  expect(atEnd(ctx)).toBe(true);
+});
+
+step('"Scroll to end" is no longer offered', async (ctx: ScrollWorld) => {
+  expect(await snapshot(ctx)).not.toContain("Scroll to end");
+});

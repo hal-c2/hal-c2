@@ -373,6 +373,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
           },
         ]
       : []),
+    ...(viewedThreadId !== null
+      ? [
+          {
+            id: "scroll-to-end",
+            title: "Scroll to end",
+            keywords: "bottom latest newest jump",
+            action: "timeline.showEnd",
+          },
+        ]
+      : []),
     ...(latestReply()
       ? [
           {

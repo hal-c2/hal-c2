@@ -30,7 +30,8 @@ ScrollView {
     onPageKeyChanged: opening = true
     onTimelineChanged: if (opening && timeline.items.length > 0) settleOpening()
 
-    // Rows mount over a few frames: keep going to the bottom until they settle.
+    // Rows mount over a few frames: every height change while opening goes to the
+    // bottom again, and the opening ends one loop turn after the last of them.
     function settleOpening() {
         heightBefore = -1
         scrollToBottom()
@@ -49,9 +50,15 @@ ScrollView {
         return ""
     }
     onHeadKeyChanged: {
+        // Earlier rows arrived only if the old head is still in the list: when the
+        // window slides along a growing thread the old head has left it.
+        heightBefore = -1 // a pending offset belongs to the previous head
         const prepended = firstKey !== "" && headKey !== "" && headKey !== firstKey && !opening
+            && timeline.items.some(item => item.key === firstKey)
         firstKey = headKey
-        if (prepended && contentHeight - layoutHeight - contentY > 1) heightBefore = contentHeight
+        if (prepended && contentHeight - layoutHeight - contentY > 1) {
+            heightBefore = contentHeight
+        }
     }
 
     onContentHeightChanged: {

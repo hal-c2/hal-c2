@@ -80,6 +80,20 @@ Feature: Moving through a thread and following links
     Then the latest output is shown
     And the view follows new output again
 
+  # The terminal windows a long thread to its newest 80 rows; the window slides as rows stream in.
+  @tui @priority-high
+  Scenario: A long thread streaming new rows does not move the row being read
+    Given the user is reading a row in a thread of more than 80 rows
+    When the agent streams more rows into the thread
+    Then the row being read stays where it was
+
+  @tui @priority-high
+  Scenario: Scroll to end returns from an older window of a long thread
+    Given the user has paged back to an older window of a long thread
+    When the user presses Ctrl+End
+    Then the newest rows are shown at the end
+    And "Scroll to end" is no longer offered
+
   # Upstream #19663: a long thread opened from an empty or loading pane stopped well above its end.
   @shared @backlog-mobile @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled
