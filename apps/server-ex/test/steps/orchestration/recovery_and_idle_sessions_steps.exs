@@ -12,6 +12,8 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   @continuation "Continue where you left off."
   @started ~w(starting running waiting completed)
+  # A message the step waits on, as the MC answers it under a loaded test run.
+  @receive_ms 5_000
 
   # --- turns cut off by a restart ------------------------------------------------------
 
@@ -644,7 +646,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     |> backdate(thread, 60)
     |> tap(
       &World.await_row(World.thread_id(&1, thread), fn row ->
-        row["pendingBackgroundTasks"] != []
+        row["runningBackgroundTasks"] != []
       end)
     )
   end
@@ -663,7 +665,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     # Killed outright, as the MC's stop leaves no time to end the work.
     Process.exit(context.runtime, :kill)
     assert_receive {:DOWN, _, :process, _, :killed}
-    assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 2
+    assert length(World.row(context, thread)["runningBackgroundTasks"]) == 2
     context
   end
 
@@ -727,7 +729,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   step "{string} lists the subagent {string} as background work",
        %{args: [thread, title]} = context do
     assert [%{"taskType" => "subagent", "description" => ^title}] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+             World.row(context, thread)["runningBackgroundTasks"]
 
     context
   end
@@ -759,13 +761,13 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
                "taskType" => "command_execution",
                "description" => "npm run build"
              }
-           ] = Enum.sort_by(World.row(context, thread)["pendingBackgroundTasks"], & &1["taskId"])
+           ] = Enum.sort_by(World.row(context, thread)["runningBackgroundTasks"], & &1["taskId"])
 
     context
   end
 
   step "{string} lists no background work", %{args: [thread]} = context do
-    World.await_row(World.thread_id(context, thread), &(&1["pendingBackgroundTasks"] == []))
+    World.await_row(World.thread_id(context, thread), &(&1["runningBackgroundTasks"] == []))
     context
   end
 
@@ -785,7 +787,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(&1["pendingBackgroundTasks"] == [])
+      &(&1["runningBackgroundTasks"] == [])
     )
 
     context
@@ -868,8 +870,14 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   step "{string} lists the command {string} as background work",
        %{args: [thread, command]} = context do
-    assert [%{"taskType" => "command_execution", "description" => ^command}] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+    # The row follows the stream a moment after the run's end.
+    World.await_row(
+      World.thread_id(context, thread),
+      &match?(
+        [%{"taskType" => "command_execution", "description" => ^command}],
+        &1["runningBackgroundTasks"]
+      )
+    )
 
     context
   end
@@ -890,7 +898,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(&1["pendingBackgroundTasks"] == [])
+      &(&1["runningBackgroundTasks"] == [])
     )
 
     # The exit wakes the thread with a turn of its own; steps go on once it has run.
@@ -941,7 +949,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     World.await_run(context, thread, &(&1["ordinal"] == 2 and &1["status"] == "completed"))
     context = await_background(context)
 
-    assert [%{"description" => ^command}] = World.row(context, thread)["pendingBackgroundTasks"]
+    assert [%{"description" => ^command}] = World.row(context, thread)["runningBackgroundTasks"]
     context
   end
 
@@ -1217,7 +1225,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     # The command goes on, listed as it was.
     assert [%{"description" => "npm run dev"}] =
-             World.row(context, context.thread)["pendingBackgroundTasks"]
+             World.row(context, context.thread)["runningBackgroundTasks"]
 
     assert %{"status" => "running"} =
              World.state(context, context.thread).entities["turn-item"]["turn-item:codex:cmd-bg"]
@@ -1347,7 +1355,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context = await_background(context)
     Process.exit(context.runtime, :kill)
     assert_receive {:DOWN, _, :process, _, :killed}
-    assert length(World.row(context, thread)["pendingBackgroundTasks"]) == 1
+    assert length(World.row(context, thread)["runningBackgroundTasks"]) == 1
     Map.put(context, :settled_run, run)
   end
 
@@ -1439,7 +1447,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     # Neither the child thread nor its parent shows work in progress to a client.
     for id <- [child, World.thread_id(context, context.thread)] do
-      row = World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+      row = World.await_row(id, &(&1["runningBackgroundTasks"] == []))
       assert row["activeRunId"] == nil
       refute row["status"] in active
       refute row["activityRunStatus"] in active
@@ -1587,16 +1595,16 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     :ok = :sys.suspend(pid)
     :erlang.trace(pid, true, [:receive])
     spawn(fn -> send(test, {:released, IdleSessions.check()}) end)
-    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, :release}}
+    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, :release}}, @receive_ms
     message = World.message_command(context, thread, text)
     spawn(fn -> send(test, {:sent, World.command(%{}, message).reply}) end)
-    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}}
+    assert_receive {:trace, ^pid, :receive, {:"$gen_call", _, {:start_turn, _}}}, @receive_ms
     :erlang.trace(pid, false, [:receive])
     :ok = :sys.resume(pid)
-    assert_receive {:released, released}
+    assert_receive {:released, released}, @receive_ms
     assert World.thread_id(context, thread) in released
-    assert_receive {:DOWN, _, :process, ^pid, {:shutdown, :released}}
-    assert_receive {:sent, reply}
+    assert_receive {:DOWN, _, :process, ^pid, {:shutdown, :released}}, @receive_ms
+    assert_receive {:sent, reply}, @receive_ms
     Map.merge(context, %{released: released, reply: reply})
   end
 
@@ -1757,7 +1765,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(&1["pendingBackgroundTasks"] == [])
+      &(&1["runningBackgroundTasks"] == [])
     )
 
     World.await_run(
@@ -1861,7 +1869,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     World.await_row(
       World.thread_id(context, thread),
-      &(length(&1["pendingBackgroundTasks"] || []) == 2)
+      &(length(&1["runningBackgroundTasks"] || []) == 2)
     )
 
     pid = runtime(context, thread)
@@ -1872,7 +1880,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   defp await_background(context) do
     World.await_row(
       World.thread_id(context, context.thread),
-      &(length(&1["pendingBackgroundTasks"] || []) == 1)
+      &(length(&1["runningBackgroundTasks"] || []) == 1)
     )
 
     context

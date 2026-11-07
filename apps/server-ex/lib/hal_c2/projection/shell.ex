@@ -44,6 +44,15 @@ defmodule HalC2.Projection.Shell do
       |> Enum.filter(&(get(&1, "status") == "pending"))
       |> latest_by(&epoch_ms(get(&1, "createdAt")))
 
+    background =
+      BackgroundWork.derive(
+        latest_run: latest_run,
+        provider_threads: provider_threads,
+        turn_items: turn_items,
+        active_provider_thread_id: get(thread, "activeProviderThreadId"),
+        runs: runs
+      )
+
     latest_user_message =
       state
       |> StreamState.list("message")
@@ -117,14 +126,9 @@ defmodule HalC2.Projection.Shell do
         state
         |> StreamState.list("plan")
         |> Enum.any?(&(get(&1, "kind") == "proposed_plan" and get(&1, "status") == "active")),
-      "pendingBackgroundTasks" =>
-        BackgroundWork.derive(
-          latest_run: latest_run,
-          provider_threads: provider_threads,
-          turn_items: turn_items,
-          active_provider_thread_id: get(thread, "activeProviderThreadId"),
-          runs: runs
-        ),
+      # What holds the thread Working; `runningBackgroundTasks` is all of it still running.
+      "pendingBackgroundTasks" => BackgroundWork.holding(background),
+      "runningBackgroundTasks" => background,
       "providerInstanceHistory" => provider_instance_history(get(thread, "id"), provider_threads),
       "itemCount" => local_count,
       "visibleItemCount" => visible_count,

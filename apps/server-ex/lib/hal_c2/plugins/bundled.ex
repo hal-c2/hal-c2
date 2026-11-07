@@ -92,6 +92,8 @@ defmodule HalC2.Plugins.Bundled.Claude do
   defdelegate respond(thread_id, request_id, response), to: ThreadRuntime
   @impl true
   defdelegate rollback(thread_id, plan), to: ThreadRuntime
+  @impl true
+  defdelegate await_background(thread_id, task_ids, awaited), to: ThreadRuntime
 
   @impl true
   def providers(_settings),

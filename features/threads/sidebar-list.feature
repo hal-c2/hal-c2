@@ -875,7 +875,7 @@ Feature: The thread list
 
   # Upstream #24610: background shells never held a thread in Working and monitors always did,
   # but either can be a wait or a process left running, and only the agent knows which.
-  @backlog @mc @shared @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: Only background work the agent waits on keeps a finished thread Working
     Given the Working section is on
     And "Fix login" ended its turn leaving <work> running
@@ -886,22 +886,29 @@ Feature: The thread list
       | a background command the agent waits on      | stays in the Working section  |
       | a monitor the agent waits on                 | stays in the Working section  |
       | a subagent                                   | stays in the Working section  |
-      | a pull request watch                         | stays in the Working section  |
       | a background command the agent did not mark  | moves to the inbox            |
       | a monitor the agent did not mark             | moves to the inbox            |
 
+    # The MC watches every link of an unsettled thread and has no explicit watch to
+    # hold on yet (source-control/pull-request-threads.feature, watch_pull_request).
+    @backlog
+    Examples:
+      | work                                         | outcome                       |
+      | a pull request watch                         | stays in the Working section  |
+
   # Upstream #24610: Claude implements the mark on its background-task roster; other providers return unsupported.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude agent marks the background work it waits on and can clear the mark
     Given Claude left the background commands "tests" and "dev server" running in "Fix login"
     When Claude marks "tests" as work it waits on
     Then "Fix login" stays Working until "tests" ends
-    When Claude clears the mark on "tests"
-    Then "tests" no longer holds "Fix login"
     And marking a command that is not running reports it as unmatched and changes nothing
+    When Claude marks "dev server" as work it waits on
+    And Claude clears the mark on "dev server"
+    Then "dev server" no longer holds "Fix login"
 
   # Upstream #24610: other providers return "unsupported" for the wait mark and keep today's behaviour.
-  @backlog @mc
+  @mc
   Scenario: Agents that cannot mark their waits keep holding only for subagents
     Given a Codex thread asks to mark a background command as work it waits on
     Then the mark is refused as unsupported

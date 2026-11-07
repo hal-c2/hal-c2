@@ -94,6 +94,7 @@ defmodule HalC2.Projection.ShellTest do
              "settledOverride" => nil,
              "pullRequests" => [],
              "pendingBackgroundTasks" => [],
+             "runningBackgroundTasks" => [],
              "providerInstanceHistory" => [],
              "itemCount" => 0,
              "modelSelection" => %{"instanceId" => "claude", "model" => "opus"},
