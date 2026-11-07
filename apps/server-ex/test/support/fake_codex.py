@@ -276,7 +276,9 @@ for line in sys.stdin:
             continue
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "model/list":
-        # FAKE_CODEX_MODELS replaces the default catalogue.
+        # FAKE_CODEX_MODELS_HANG never answers; FAKE_CODEX_MODELS replaces the catalogue.
+        if os.environ.get("FAKE_CODEX_MODELS_HANG"):
+            continue
         send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
             {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
             {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
@@ -291,6 +293,15 @@ for line in sys.stdin:
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
     elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
         send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
+    # While the file FAKE_CODEX_ARCHIVED_FILE names exists, the native thread is
+    # archived: resuming or forking it fails until thread/unarchive removes the file.
+    elif method in ("thread/resume", "thread/fork") and os.environ.get("FAKE_CODEX_ARCHIVED_FILE") and os.path.exists(os.environ["FAKE_CODEX_ARCHIVED_FILE"]):
+        send({"id": mid, "error": {"code": -32600, "message": f"thread {params.get('threadId')} is archived"}})
+    elif method == "thread/unarchive":
+        flag = os.environ.get("FAKE_CODEX_ARCHIVED_FILE")
+        if flag and os.path.exists(flag):
+            os.remove(flag)
+        send({"id": mid, "result": {"thread": {"id": params.get("threadId") or thread_id}}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
@@ -321,7 +332,8 @@ for line in sys.stdin:
             with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as f:
                 f.write(json.dumps(params["input"]) + "\n")
         turns += 1
-        turn_id = f"{INSTANCE or 'native'}-turn-{turns}"
+        # FAKE_CODEX_REPEAT_TURN_ID answers every turn/start with the first turn's id.
+        turn_id = f"{INSTANCE or 'native'}-turn-{1 if os.environ.get('FAKE_CODEX_REPEAT_TURN_ID') else turns}"
         prompt = params["input"][0]["text"]
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
@@ -638,7 +650,8 @@ for line in sys.stdin:
     # fails once while the FAKE_CODEX_CONSUME_FAIL file exists.
     elif method == "account/read":
         kind = os.environ.get("FAKE_CODEX_ACCOUNT", "chatgpt")
-        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": "pro"}
+        # FAKE_CODEX_PLAN is the planType the account reports (default "pro").
+        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": os.environ.get("FAKE_CODEX_PLAN", "pro")}
         send({"id": mid, "result": {"account": account, "requiresOpenaiAuth": True}})
     # FAKE_CODEX_RESET_CREDITS sets how many reset credits are banked (default two);
     # FAKE_CODEX_CONSUME_OUTCOME is what a redemption answers (default "reset").
@@ -655,9 +668,13 @@ for line in sys.stdin:
         else:
             credits = {"availableCount": int(count), "credits": [
                 {"status": "available", "expiresAt": 1800000000 + i} for i in range(int(count))]}
-        main = {"limitId": "codex", "planType": "pro",
+        # FAKE_CODEX_USAGE_PLAN is the planType the usage read reports ("none" omits it).
+        usage_plan = os.environ.get("FAKE_CODEX_USAGE_PLAN", os.environ.get("FAKE_CODEX_PLAN", "pro"))
+        main = {"limitId": "codex",
                 "primary": {"usedPercent": 0 if reset else 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
+        if usage_plan != "none":
+            main["planType"] = usage_plan
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},

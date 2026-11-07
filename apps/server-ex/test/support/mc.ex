@@ -3473,7 +3473,7 @@ defmodule HalC2.Test.Mc.World do
       )
 
     codex =
-      fake_cli(dir, "codex", opts[:codex_layout], opts[:codex_version] || "0.50.0",
+      fake_cli(dir, "codex", opts[:codex_layout], opts[:codex_version] || "0.160.0",
         version_line: "echo \"codex-cli $(cat #{Path.join(dir, "codex.version")})\"",
         exec: "python3 -u #{@fakes}/fake_codex.py \"$@\""
       )
