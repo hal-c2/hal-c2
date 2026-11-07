@@ -52,6 +52,7 @@ Feature: Removing and updating projects
     Then "shop" is no longer listed for "laptop"
     And the draft for "shop" is gone
 
+  # Upstream #15864: removing a project no longer opens a new thread for it
   @backlog @shared
   Scenario: Removing the most recent project does not open a new thread in it
     Given "shop" is the project the user worked in most recently
@@ -123,6 +124,7 @@ Feature: Removing and updating projects
 
     # The MC already does this (HalC2.Projects.auto_pull runs as a Task child after the web server);
     # @backlog only until its steps exist.
+    # Upstream #14912: the startup project sync no longer delays the app window
     @backlog @mc
     Scenario: Automatic pull does not hold the MC's readiness
       Given "shop" and "api" have automatic pull on
