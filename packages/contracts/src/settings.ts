@@ -1089,8 +1089,16 @@ const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
 
+// Days after a thread settles; 0 removes its worktree once the settle grace minute is over.
+const SettledWorktreeRetentionDays = Schema.NullOr(
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
+);
+
 export const WorktreeCleanupRules = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays,
+  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
@@ -1188,6 +1196,9 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
 
 export const StorageCleanupSettings = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1598,6 +1609,7 @@ export const ServerSettingsPatch = Schema.Struct({
           mode: Schema.Literal("custom"),
           rules: Schema.Struct({
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+            worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
             worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
             worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
@@ -1609,6 +1621,7 @@ export const ServerSettingsPatch = Schema.Struct({
   storageCleanup: Schema.optionalKey(
     Schema.Struct({
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+      worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
       worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),

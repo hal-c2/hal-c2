@@ -192,7 +192,7 @@ defmodule HalC2.Vcs do
   defp github_pull_request(cwd, branch, fresh?) do
     case HalC2.PullRequests.Branches.pull_request(cwd, branch, fresh: fresh?) do
       {:ok, %{} = pr} ->
-        Map.take(pr, ~w(number title url baseRef headRef state isDraft updatedAt))
+        Map.take(pr, ~w(number title url baseRef headRef headSha state isDraft updatedAt))
 
       _ ->
         nil

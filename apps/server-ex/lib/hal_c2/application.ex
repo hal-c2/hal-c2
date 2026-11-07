@@ -65,6 +65,8 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
       {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
+      # Terminals starting and storage cleanup removing a worktree take turns on its folder.
+      HalC2.WorkspaceLease,
       {Registry, keys: :unique, name: HalC2.Terminal.Registry},
       {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
       HalC2.Terminal.Hub,
