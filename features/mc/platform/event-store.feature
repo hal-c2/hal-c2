@@ -184,6 +184,7 @@ Feature: The MC's event store and projections
   # T3 Code's #15937 has an older server skip event types a newer build wrote when a client
   # resumes past them. The MC's log holds patches, not typed events, and an older MC refuses
   # a newer store outright (above), so there is nothing to skip.
+  # Upstream #15937: an older server skips event types a newer build wrote when a client resumes past them
   @dropped @mc
   Scenario: A thread resumes past an event a newer build wrote
     Given a thread's log holds an event of a type only a newer build knows
@@ -215,6 +216,7 @@ Feature: The MC's event store and projections
     And timeline items keep the order they first had
     And the check against the log passes
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog
   # Upstream keeps the oldest event of each message as well as the newest
   # (pingdotgg/t3code#19435): a client adds a message where it first sees it.
@@ -226,6 +228,7 @@ Feature: The MC's event store and projections
     And the thread's creation, its deletion, its runs and every timeline item update stay in the log
     And rebuilding the projections gives the same threads as before
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog @priority-high
   Scenario: A visit does not compact away the rename that carries the thread's activity time
     Given a thread was renamed and then visited
@@ -233,6 +236,7 @@ Feature: The MC's event store and projections
     Then the rename stays in the log
     And of the visits and marks as unread only the newest is kept
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog @priority-high
   Scenario: A client resuming from before a compaction ends in the same state
     Given a client last read the log at an offset before many messages were streamed
@@ -240,6 +244,7 @@ Feature: The MC's event store and projections
     When the client resumes from its offset
     Then it ends with the same threads and messages, in the same order, as a client that read every event
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog @priority-low
   Scenario: The log is compacted in the background
     When the MC has been running for one minute
@@ -253,12 +258,14 @@ Feature: The MC's event store and projections
     Then it reports how many events and receipts it removed
     And how many bytes the store can now give back
 
+  # Upstream #19435: superseded history is compacted in the background
   @mc @backlog
   Scenario: Compacting a long log does not hold up other work
     Given a log with many thousands of events
     When the log is compacted while clients send commands
     Then the commands are accepted between the batches of 50 events it works through
 
+  # Upstream #19436: t3 doctor reclaims database space
   @mc @backlog @priority-low
   Scenario: The doctor command reclaims the space of a store that cannot shrink online
     Given a store created before it could give space back to the disk while running
@@ -268,6 +275,7 @@ Feature: The MC's event store and projections
     And it reports the store's size before and after and how many events it removed
     And a second run reports "Nothing to repair"
 
+  # Upstream #19436: t3 doctor reclaims database space
   @mc @backlog
   Scenario Outline: The doctor command asks before it repairs
     When the user runs the MC's doctor command <how>
@@ -279,12 +287,14 @@ Feature: The MC's event store and projections
       | with "--dry-run"             | the repairs are listed and nothing changes                 |
       | with "--dry-run" and "--fix" | the repairs are listed and nothing changes                 |
 
+  # Upstream #19436: t3 doctor reclaims database space
   @mc @backlog @priority-high
   Scenario: The doctor command does not repair a store that is open
     Given an MC or a client has the store open
     When the user runs the MC's doctor command with "--fix"
     Then it refuses and changes nothing
 
+  # Upstream #19436: t3 doctor reclaims database space
   @mc @backlog @priority-low
   Scenario: The doctor command pauses this home's background service while it repairs
     Given the MC runs as a background service for this home
@@ -295,6 +305,7 @@ Feature: The MC's event store and projections
 
   # The TypeScript server's numbered projection migrations. The MC stores entity
   # patches, and its state format migrates snapshots in place instead.
+  # Upstream #15925: a migration id clash stops startup with a clear error
   @dropped @mc
   Scenario: The server runs numbered projection migrations on startup
     Given a database from an older server
