@@ -210,6 +210,141 @@ defmodule HalC2.CheckpointTest do
     refute diff =~ "b.txt"
   end
 
+  test "a capture is taken when git refuses line-ending changes (core.safecrlf)", %{dir: dir} do
+    git!(dir, ~w(config core.safecrlf true))
+    git!(dir, ~w(config core.autocrlf true))
+    File.write!(Path.join(dir, "a.txt"), "one\ntwo\n")
+
+    scope = Checkpoint.scope_id("t")
+    checkpoint = Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)
+
+    assert checkpoint["status"] == "ready"
+    assert git!(dir, ["show", "#{checkpoint["ref"]}:a.txt"]) == "one\ntwo\n"
+    # The user's own settings and index are unchanged.
+    assert git!(dir, ~w(config core.safecrlf)) == "true\n"
+    assert git!(dir, ~w(diff --cached --name-only)) == ""
+  end
+
+  test "a capture leaves a split index the repository still uses", %{dir: dir} do
+    git!(dir, ~w(config core.splitIndex true))
+    git!(dir, ~w(config splitIndex.sharedIndexExpire now))
+    git!(dir, ~w(update-index --split-index))
+    shared = Path.wildcard(Path.join(dir, ".git/sharedindex.*"))
+    assert shared != []
+
+    File.write!(Path.join(dir, "a.txt"), "one\ntwo\n")
+    scope = Checkpoint.scope_id("t")
+    assert Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)["status"] == "ready"
+
+    for file <- shared, do: assert(File.exists?(file), "#{file} is gone")
+    assert git!(dir, ~w(status --porcelain)) == " M a.txt\n"
+  end
+
+  test "flagged entries are captured as edited without touching the user's flags", %{dir: dir} do
+    File.write!(Path.join(dir, "b.txt"), "bbbb\n")
+    File.write!(Path.join(dir, "c.txt"), "cccc\n")
+    git!(dir, ~w(add b.txt c.txt))
+    git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m more))
+    git!(dir, ~w(update-index --assume-unchanged b.txt))
+    git!(dir, ~w(update-index --skip-worktree c.txt))
+    File.write!(Path.join(dir, "b.txt"), "BB!!\n")
+    File.write!(Path.join(dir, "c.txt"), "CC!!\n")
+
+    scope = Checkpoint.scope_id("t")
+    checkpoint = Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)
+
+    assert checkpoint["status"] == "ready"
+    assert git!(dir, ["show", "#{checkpoint["ref"]}:b.txt"]) == "BB!!\n"
+    assert git!(dir, ["show", "#{checkpoint["ref"]}:c.txt"]) == "CC!!\n"
+    # The user's index keeps its flags.
+    assert git!(dir, ~w(ls-files -v)) =~ "h b.txt"
+    assert git!(dir, ~w(ls-files -v)) =~ "S c.txt"
+  end
+
+  test "a workspace folder its repository ignores gets missing checkpoints", %{dir: dir} do
+    File.write!(Path.join(dir, ".gitignore"), "sub/\n")
+    git!(dir, ~w(add .gitignore))
+    git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m ignore))
+    sub = Path.join(dir, "sub")
+    File.mkdir_p!(sub)
+    File.write!(Path.join(sub, "new.txt"), "new\n")
+
+    scope = Checkpoint.scope_id("t")
+    assert Checkpoint.capture_run(sub, scope, 1, "run-1", "n", "t", nil)["status"] == "missing"
+  end
+
+  test "tracked files in an ignored workspace folder are still checkpointed", %{dir: dir} do
+    File.write!(Path.join(dir, ".gitignore"), "sub/\n")
+    git!(dir, ~w(add .gitignore))
+    git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m ignore))
+    sub = Path.join(dir, "sub")
+    File.mkdir_p!(sub)
+    File.write!(Path.join(sub, "tracked.txt"), "v1\n")
+    git!(dir, ~w(add -f sub/tracked.txt))
+    git!(dir, ~w(-c user.name=t -c user.email=t@t commit -q -m tracked))
+    File.write!(Path.join(sub, "tracked.txt"), "v2\n")
+    File.write!(Path.join(sub, "ignored.txt"), "ignored\n")
+
+    scope = Checkpoint.scope_id("t")
+    checkpoint = Checkpoint.capture_run(sub, scope, 1, "run-1", "n", "t", nil)
+
+    assert checkpoint["status"] == "ready"
+    assert git!(sub, ["show", "#{checkpoint["ref"]}:sub/tracked.txt"]) == "v2\n"
+    tree = git!(sub, ["ls-tree", "-r", "--name-only", checkpoint["ref"], "--", "."])
+    refute tree =~ "ignored.txt"
+  end
+
+  test "restoring removes what a .gitignore from the undone work was hiding", %{dir: dir} do
+    scope = Checkpoint.scope_id("t")
+    first = Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)
+    assert first["status"] == "ready"
+
+    File.mkdir_p!(Path.join(dir, "web/node_modules"))
+    File.write!(Path.join(dir, "web/.gitignore"), "node_modules/\n.env\n")
+    File.write!(Path.join(dir, "web/node_modules/a.js"), "a\n")
+    File.write!(Path.join(dir, "web/.env"), "secret\n")
+
+    assert :ok = Checkpoint.restore(dir, first["ref"])
+    refute File.exists?(Path.join(dir, "web/.gitignore"))
+    refute File.exists?(Path.join(dir, "web/node_modules/a.js"))
+    refute File.exists?(Path.join(dir, "web/.env"))
+  end
+
+  test "a restore that cannot clear nested .gitignore hiding fails", %{dir: dir} do
+    scope = Checkpoint.scope_id("t")
+    first = Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)
+    assert first["status"] == "ready"
+
+    # Each level's .gitignore hides the next level's folder.
+    levels = ~w(l1 l1/l2 l1/l2/l3 l1/l2/l3/l4 l1/l2/l3/l4/l5)
+
+    for {level, next} <- Enum.zip(levels, tl(levels) ++ ["leaf"]) do
+      File.mkdir_p!(Path.join(dir, level))
+      File.write!(Path.join(dir, "#{level}/.gitignore"), "#{Path.basename(next)}/\n")
+    end
+
+    File.write!(Path.join(dir, "l1/l2/l3/l4/l5/leaf.txt"), "leaf\n")
+
+    assert {:error, _} = Checkpoint.restore(dir, first["ref"])
+  end
+
+  test "restoring in a repository with no commits leaves nothing staged", %{tmp_dir: dir} do
+    fresh = Path.join(dir, "fresh")
+    File.mkdir_p!(fresh)
+    git!(fresh, ~w(init -q -b main))
+    File.write!(Path.join(fresh, "file.txt"), "v1\n")
+
+    scope = Checkpoint.scope_id("t")
+    first = Checkpoint.capture_run(fresh, scope, 1, "run-1", "n", "t", nil)
+    assert first["status"] == "ready"
+    File.write!(Path.join(fresh, "file.txt"), "v2\n")
+
+    assert :ok = Checkpoint.restore(fresh, first["ref"])
+    assert File.read!(Path.join(fresh, "file.txt")) == "v1\n"
+    assert git!(fresh, ~w(diff --cached --name-only)) == ""
+    assert git!(fresh, ~w(status --porcelain)) == "?? file.txt\n"
+  end
+
   test "outside a repository the checkpoint is missing" do
     # tmp_dir sits inside this repository's checkout, so use the system temp dir.
     outside =

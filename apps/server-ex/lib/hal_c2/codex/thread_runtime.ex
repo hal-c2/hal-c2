@@ -946,21 +946,37 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rewind(state, plan) do
     thread = state.native_thread_id
 
-    with {:error, _} <-
-           if(plan.first_dropped,
-             do:
-               Connection.call(state.conn, "thread/revert", %{
-                 "threadId" => thread,
-                 "beforeTurnId" => plan.first_dropped
-               }),
-             else: {:error, :no_turn_id}
-           ),
-         do:
-           Connection.call(state.conn, "thread/rollback", %{
-             "threadId" => thread,
-             "numTurns" => plan.drop
-           })
+    revert =
+      if plan.first_dropped,
+        do:
+          Connection.call(state.conn, "thread/revert", %{
+            "threadId" => thread,
+            "beforeTurnId" => plan.first_dropped
+          }),
+        else: {:error, :no_turn_id}
+
+    case revert do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, reason} ->
+        if revert_unavailable?(reason),
+          do:
+            Connection.call(state.conn, "thread/rollback", %{
+              "threadId" => thread,
+              "numTurns" => plan.drop
+            }),
+          else: {:error, reason}
+    end
   end
+
+  # An app-server without `thread/revert` (older Codex) says the method does
+  # not exist, and dropping by count is then the only way. A refusal of the
+  # revert itself — a legacy-history thread on a Codex that has no
+  # `thread/rollback` either — is Codex's answer, not a cue to fall back.
+  defp revert_unavailable?(:no_turn_id), do: true
+  defp revert_unavailable?(%{"code" => -32601}), do: true
+  defp revert_unavailable?(_reason), do: false
 
   # An approval's reason when Codex gave one, else what it wants to do.
   defp reason_or(params, fallback) do

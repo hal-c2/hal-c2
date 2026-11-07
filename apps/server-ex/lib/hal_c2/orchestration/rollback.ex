@@ -259,10 +259,22 @@ defmodule HalC2.Orchestration.Rollback do
         undo(plan, undo)
 
         case error do
-          {:error, {_status, detail}} -> {:error, "Could not restore the checkpoint: #{detail}"}
-          {:error, reason} -> {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
+          {:error, {_status, detail}} ->
+            {:error, "Could not restore the checkpoint: #{restore_detail(detail)}"}
+
+          {:error, reason} ->
+            {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
         end
     end
+  end
+
+  # A restore another git process blocks says so, instead of leaving the user
+  # to read git's lock complaint.
+  defp restore_detail(detail) do
+    if detail =~ "index.lock",
+      do:
+        "git's index lock (index.lock) is held by another git process; try again once it is free.",
+      else: detail
   end
 
   defp settle(state, plan, patch) do

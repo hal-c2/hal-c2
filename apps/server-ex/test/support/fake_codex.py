@@ -620,6 +620,12 @@ for line in sys.stdin:
     elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
         # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
         send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
+    elif method == "thread/revert" and not paginated and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
+        # Codex 0.156 dropped thread/rollback, and thread/revert refuses a
+        # thread whose history predates paginated history (before 0.151).
+        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not supported for threads with legacy history"}})
+    elif method == "thread/rollback" and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
+        send({"id": mid, "error": {"code": -32601, "message": method}})
     elif method == "thread/revert" and paginated and page_size and int(params["beforeTurnId"].rsplit("-", 1)[1]) <= turns - page_size:
         send({"id": mid, "error": {"code": -32600, "message": f"{params['beforeTurnId']} is not on the latest history page"}})
     elif method == "thread/revert" and paginated:

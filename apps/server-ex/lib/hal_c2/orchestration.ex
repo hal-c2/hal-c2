@@ -1403,6 +1403,7 @@ defmodule HalC2.Orchestration do
   end
 
   defp begin_turn_now(thread_id, turn) do
+    turn = refresh_provider_thread(thread_id, turn)
     restore_worktree(thread_id)
     :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
     :ok = start_turn(thread_id, turn)
@@ -1444,6 +1445,23 @@ defmodule HalC2.Orchestration do
   catch
     :exit, {reason, _} when reason in [{:shutdown, :released}, :noproc] ->
       runtime(turn.ids.instance).start_turn(thread_id, turn)
+  end
+
+  # A turn resumes the provider conversation where it stands when the turn
+  # starts, not where it stood when its message was decided: a rewind in
+  # between (an earlier effect on this thread's lane, so it has settled by
+  # now) moved it, and resuming the decided native thread would put the
+  # rewound history back.
+  defp refresh_provider_thread(thread_id, turn) do
+    with id when is_binary(id) <- Map.get(turn.ids, :provider_thread),
+         %{} = provider_thread <-
+           thread_id |> HalC2.Streams.state() |> StreamState.get("provider-thread") |> Map.get(id) do
+      turn
+      |> Map.put(:native_thread_id, get_in(provider_thread, ["nativeThreadRef", "nativeId"]))
+      |> Map.put(:head, get_in(provider_thread, ["nativeConversationHeadRef", "nativeId"]))
+    else
+      _ -> turn
+    end
   end
 
   # A worktree the storage sweep removed comes back at the same path from the
