@@ -310,6 +310,30 @@ defmodule HalC2.CheckpointTest do
     refute File.exists?(Path.join(dir, "web/.env"))
   end
 
+  # `git clean` skips a nested repository on every pass, dry runs included:
+  # one in the workspace must not read as files left behind, or every
+  # restore in such a workspace fails. The repository itself is the user's,
+  # and a restore leaves it alone.
+  test "restoring succeeds with an untracked nested repository in the workspace",
+       %{dir: dir} do
+    scope = Checkpoint.scope_id("t")
+    first = Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)
+    assert first["status"] == "ready"
+
+    nested = Path.join(dir, "vendor/lib")
+    File.mkdir_p!(nested)
+    git!(nested, ~w(init -q -b main))
+    File.write!(Path.join(nested, "lib.txt"), "lib\n")
+
+    File.write!(Path.join(dir, "a.txt"), "later\n")
+    File.write!(Path.join(dir, "loose.txt"), "loose\n")
+
+    assert :ok = Checkpoint.restore(dir, first["ref"])
+    assert File.read!(Path.join(dir, "a.txt")) == "one\n"
+    refute File.exists?(Path.join(dir, "loose.txt"))
+    assert File.read!(Path.join(nested, "lib.txt")) == "lib\n"
+  end
+
   test "a restore that cannot clear nested .gitignore hiding fails", %{dir: dir} do
     scope = Checkpoint.scope_id("t")
     first = Checkpoint.capture_run(dir, scope, 1, "run-1", "n", "t", nil)

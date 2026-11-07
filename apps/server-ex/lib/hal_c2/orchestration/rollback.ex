@@ -338,7 +338,10 @@ defmodule HalC2.Orchestration.Rollback do
   # Where the provider thread's latest run stands once settled: the rewind's
   # target, unless a message decided while the rewind ran already named a
   # later run as its latest. That run resumes the rewound conversation, so
-  # settling must not move the marker back under it.
+  # settling must not move the marker back under it. Only a run that started
+  # counts: one still queued, or cancelled from the queue, is above the
+  # target too, but the provider never saw it, so the marker must not claim
+  # it did.
   defp settled_last_run_ordinal(state, plan) do
     rolled = MapSet.new(plan.runs, & &1["id"])
 
@@ -346,7 +349,7 @@ defmodule HalC2.Orchestration.Rollback do
       for run <- StreamState.list(state, "run"),
           run["ordinal"] > plan.target,
           not MapSet.member?(rolled, run["id"]),
-          run["status"] != "rolled_back",
+          run["status"] in @active,
           do: run["ordinal"]
 
     case Enum.max([plan.target | decided]) do

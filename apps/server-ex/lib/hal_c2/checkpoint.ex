@@ -323,30 +323,49 @@ defmodule HalC2.Checkpoint do
 
   # A `.gitignore` the undone runs created hides files from the clean that
   # removes the `.gitignore` itself, so one pass can leave them behind to
-  # creep into the next checkpoint. Clean again while a dry run still finds
-  # something to remove; past four passes (a chain of nested `.gitignore`
-  # files each hiding the next) the restore fails instead of reporting
-  # success with files left behind.
+  # creep into the next checkpoint. Clean again while something a further
+  # clean could remove is still there; past four passes (a chain of nested
+  # `.gitignore` files each hiding the next) the restore fails instead of
+  # reporting success with files left behind.
   @clean_passes 4
 
   defp clean(cwd, pass \\ 1) do
     with :ok <- clean_once(cwd),
          :ok <- File.mkdir_p(cwd),
-         {:ok, dry} <- git(cwd, @restore_config ++ ~w(clean -nd -- .)) do
-      # An emptied workspace folder inside a repository is itself untracked, so
-      # the dry run also answers "Would refuse to remove current working
-      # directory": that refusal is the folder staying, not a file left behind.
-      left =
-        dry
-        |> String.split("\n", trim: true)
-        |> Enum.reject(&(&1 == "Would refuse to remove current working directory"))
-
+         {:ok, left} <- left_behind(cwd) do
       cond do
         left == [] -> :ok
         pass < @clean_passes -> clean(cwd, pass + 1)
         true -> {:error, {1, "git clean could not remove: #{Enum.join(left, "\n")}"}}
       end
     end
+  end
+
+  # What a clean left behind that a further clean could still remove, asked
+  # of the index rather than clean's own words: its dry run also reports the
+  # nested repositories it deliberately skips and, for an emptied workspace
+  # folder inside a repository, the folder itself, in prose no locale
+  # guarantees. A nested repository is listed as the folder holding its
+  # `.git`; clean without a second `-f` never touches one, so it is not
+  # left behind.
+  defp left_behind(cwd) do
+    case git(cwd, @restore_config ++ ~w(ls-files --others --exclude-standard -z -- .)) do
+      {:ok, out} ->
+        left =
+          out
+          |> String.split("\0", trim: true)
+          |> Enum.reject(&nested_repo?(cwd, &1))
+
+        {:ok, left}
+
+      error ->
+        error
+    end
+  end
+
+  defp nested_repo?(cwd, entry) do
+    path = Path.join(cwd, entry)
+    File.dir?(path) and File.exists?(Path.join(path, ".git"))
   end
 
   defp clean_once(cwd) do

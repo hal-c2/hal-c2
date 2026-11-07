@@ -3272,6 +3272,53 @@ defmodule HalC2.OrchestrationTest do
       _ = await_statuses(thread_id, ["completed", "completed"])
     end
 
+    # The default instance takes over a provider thread another Claude
+    # instance left under its id, and the decide carries that instance's
+    # native thread — the instances share a home, so it is the same
+    # conversation — without storing it on the taken-over record. The turn
+    # that starts must still resume it, not open a fresh conversation.
+    test "a foreign takeover keeps the native thread the decide carried" do
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+
+      default = HalC2.Orchestration.Entities.provider_thread_id("claudeAgent", thread_id)
+      other = HalC2.Orchestration.Entities.provider_thread_id("claude-work", thread_id)
+
+      native =
+        get_in(StreamState.get(current(thread_id), "provider-thread")[default], [
+          "nativeThreadRef"
+        ])
+
+      assert %{"nativeId" => "fake-session-1"} = native
+
+      {:ok, _} =
+        HalC2.Streams.commit(thread_id, :thread, [
+          {"provider-thread", default, %{"s" => %{"providerInstanceId" => "claude-work"}}},
+          {"provider-thread", other,
+           %{
+             "s" => %{
+               "id" => other,
+               "threadId" => thread_id,
+               "providerInstanceId" => "claude-work",
+               "driver" => "claudeAgent",
+               "status" => "idle",
+               "nativeThreadRef" => native
+             }
+           }}
+        ])
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "wait for me")
+      _ = await_statuses(thread_id, ["completed", "running"])
+
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      assert %{turn: %{native_thread_id: "fake-session-1"}} = :sys.get_state(pid)
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      _ = await_statuses(thread_id, ["completed", "interrupted"])
+    end
+
     # Another instance of Claude runs with its own variables and home, so its turn needs
     # its own CLI even when it launches Claude as the first does. A runtime updated in
     # place from before launches recorded their instance cannot tell the one its CLI
@@ -3844,6 +3891,63 @@ defmodule HalC2.OrchestrationTest do
 
       assert [%{"nativeThreadRef" => %{"nativeId" => "native-thread-1-dropped-1"}}] =
                StreamState.list(current(thread_id), "provider-thread")
+    end
+
+    # An app-server without `thread/revert` cannot deserialize the method and
+    # answers -32600 naming it an unknown variant, not -32601: dropping by
+    # count is still the fallback.
+    test "a Codex that knows no thread/revert drops its later turns by count", %{work: work} do
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_LEGACY=1",
+        "FAKE_CODEX_NO_REVERT=1",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch_in(work, "write a.txt", "codex")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+      await_statuses(thread_id, ["completed", "completed"])
+
+      assert {:ok, _} = rollback(thread_id, 1)
+
+      assert [%{"nativeThreadRef" => %{"nativeId" => "native-thread-1-dropped-1"}}] =
+               StreamState.list(current(thread_id), "provider-thread")
+    end
+
+    # A run above the target that never started — still in a held queue, or
+    # cancelled out of it — is one the provider never saw: settling must not
+    # leave `lastRunOrdinal` at it.
+    for status <- ["queued", "cancelled"] do
+      test "rewinding past a #{status} run settles lastRunOrdinal at the target",
+           %{work: work} do
+        thread_id = launch_in(work, "write a.txt", "codex")
+        await_statuses(thread_id, ["completed"])
+        {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+        await_statuses(thread_id, ["completed", "completed"])
+
+        {:ok, _} =
+          HalC2.Streams.commit(thread_id, :thread, [
+            {"run", "never-started",
+             %{
+               "s" => %{
+                 "id" => "never-started",
+                 "threadId" => thread_id,
+                 "ordinal" => 3,
+                 "status" => unquote(status),
+                 "queuePosition" => 1,
+                 "queueHeld" => true
+               }
+             }}
+          ])
+
+        assert {:ok, _} = rollback(thread_id, 1)
+
+        assert [%{"lastRunOrdinal" => 1}] =
+                 StreamState.list(current(thread_id), "provider-thread")
+      end
     end
 
     # Picking another provider in the composer moves the selection, not the

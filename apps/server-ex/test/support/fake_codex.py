@@ -625,8 +625,10 @@ for line in sys.stdin:
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
-        # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
-        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
+        # FAKE_CODEX_NO_REVERT: an app-server without thread/revert. It cannot
+        # deserialize the method into its request type, so it answers -32600
+        # naming it an unknown variant rather than -32601.
+        send({"id": mid, "error": {"code": -32600, "message": "Invalid request: unknown variant `thread/revert`, expected one of `thread/rollback`, `turn/start`"}})
     elif method == "thread/revert" and not paginated and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
         # Codex 0.156 dropped thread/rollback, and thread/revert refuses a
         # thread whose history predates paginated history (before 0.151).

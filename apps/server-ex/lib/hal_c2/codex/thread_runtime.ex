@@ -971,11 +971,24 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # An app-server without `thread/revert` (older Codex) says the method does
-  # not exist, and dropping by count is then the only way. A refusal of the
-  # revert itself — a legacy-history thread on a Codex that has no
-  # `thread/rollback` either — is Codex's answer, not a cue to fall back.
+  # not exist, and dropping by count is then the only way. It says so two
+  # ways: -32601, or -32600 naming `thread/revert` as an unknown variant,
+  # since a method it cannot deserialize into its request type never
+  # reaches dispatch. A refusal of the revert itself — a legacy-history
+  # thread on a Codex that has no `thread/rollback` either — is Codex's
+  # answer, not a cue to fall back.
   defp revert_unavailable?(:no_turn_id), do: true
   defp revert_unavailable?(%{"code" => -32601}), do: true
+
+  defp revert_unavailable?(%{"code" => -32600, "message" => message})
+       when is_binary(message) do
+    message = String.downcase(message)
+
+    String.contains?(message, "thread/revert") and
+      (String.contains?(message, "unknown variant") or
+         String.contains?(message, "unknown method"))
+  end
+
   defp revert_unavailable?(_reason), do: false
 
   # An approval's reason when Codex gave one, else what it wants to do.
