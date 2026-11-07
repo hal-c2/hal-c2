@@ -263,7 +263,8 @@ defmodule HalC2.Orchestration.Recovery do
   @doc """
   Settles one thread's interrupted turn: `{entities changed, what}`, where `what` is
   the run that was mid-turn on a provider thread that can resume, `:requeued` for a
-  run that goes back to the queue, `{:background, run, work}` when the thread's
+  run that goes back to the queue (a wake that never started is cancelled instead,
+  and passed over), `{:background, run, work}` when the thread's
   turn had finished and only the work it left running in the background was
   ended (`run` is that turn's), or nil.
   """
@@ -272,7 +273,12 @@ defmodule HalC2.Orchestration.Recovery do
 
     HalC2.Streams.transact(thread_id, :thread, fn state ->
       changes = changes(state, Entities.now(), trigger, capturing) ++ note(state, thread_id)
-      requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
+
+      requeued? =
+        Enum.any?(
+          StreamState.list(state, "run"),
+          &(unstarted?(state, &1) and not lost_wake?(state, &1))
+        )
 
       what =
         cond do
@@ -635,14 +641,16 @@ defmodule HalC2.Orchestration.Recovery do
   # is numbered below it since the renumbering). A held run made after `run` —
   # a message queued behind it, held by this very settle — still counts as
   # newer-sent, so no continuation jumps it: creation order (the order of
-  # `StreamState.list/2`) tells the two apart where the ordinal no longer can.
+  # `StreamState.list/2`) tells the two apart where the ordinal no longer can. A wake
+  # that never started (`lost_wake?/2`) is nobody's message.
   defp latest?(state, run) do
     runs = StreamState.list(state, "run")
     made = Map.new(Enum.with_index(runs, &{&1["id"], &2}))
 
     Enum.all?(runs, fn other ->
-      (HalC2.Projection.Shell.held_never_started?(other) and
-         made[other["id"]] <= made[run["id"]]) or
+      lost_wake?(state, other) or
+        (HalC2.Projection.Shell.held_never_started?(other) and
+           made[other["id"]] <= made[run["id"]]) or
         (other["ordinal"] || 0) <= (run["ordinal"] || 0)
     end)
   end
@@ -650,8 +658,29 @@ defmodule HalC2.Orchestration.Recovery do
   # The thread's latest run, passing over held queued runs: a run that passed a held
   # queue is numbered below the held run it passed (`Orchestration.start_ordinal/3`). A
   # queue that is not held was sent after the latest run that began, and is latest.
+  # A wake that never started (`lost_wake?/2`) is passed over too: the run before it
+  # is the one whose work the restart ended.
   defp latest_run(state),
-    do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
+    do:
+      state
+      |> StreamState.list("run")
+      |> Enum.reject(&lost_wake?(state, &1))
+      |> HalC2.Projection.Shell.latest_run()
+
+  # A wake (`HalC2.Orchestration.Wake`) whose run had not reached its provider when
+  # the MC stopped (queued or still starting), or that the restart cancelled for it.
+  # Its run replays what the provider process had sent by itself, and that process is
+  # gone, so the restart cancels it rather than requeueing or holding it, and continues
+  # from the run before it.
+  defp lost_wake?(state, run) do
+    (run["status"] in ~w(queued cancelled) or unstarted?(state, run)) and
+      run["startedAt"] == nil and
+      is_binary(run["userMessageId"]) and
+      match?(
+        %{"providerWake" => true},
+        StreamState.fetch(state, "message", run["userMessageId"])
+      )
+  end
 
   # A run the user had asked to stop is not continued: the restart only finished the stop.
   defp continuable(state) do
@@ -711,6 +740,13 @@ defmodule HalC2.Orchestration.Recovery do
           into: MapSet.new(),
           do: own
 
+    wakes =
+      for run <- StreamState.list(state, "run"),
+          run["status"] != "cancelled" and lost_wake?(state, run),
+          into: MapSet.new(),
+          do: run["id"]
+
+    cancelled = %{"status" => "cancelled", "completedAt" => at}
     ended = if trigger == :shutdown, do: "shut down", else: "restarted"
     detail = "#{@cut_off}#{ended} before the provider work completed."
 
@@ -731,6 +767,7 @@ defmodule HalC2.Orchestration.Recovery do
            fn run ->
              cond do
                # Queued messages wait for the user to resume the queue.
+               run["id"] in wakes -> Map.merge(run, Map.put(cancelled, "queuePosition", nil))
                run["status"] == "queued" -> Map.put(run, "queueHeld", true)
                # Never reached its provider: it goes first and starts again.
                unstarted?(state, run) -> requeue(run)
@@ -738,7 +775,14 @@ defmodule HalC2.Orchestration.Recovery do
                true -> nil
              end
            end},
-          {"run-attempt", &if(&1["status"] in @active, do: Map.merge(&1, done))},
+          {"run-attempt",
+           fn attempt ->
+             cond do
+               attempt["status"] not in @active -> nil
+               attempt["runId"] in wakes -> Map.merge(attempt, cancelled)
+               true -> Map.merge(attempt, done)
+             end
+           end},
           {"provider-turn", &if(&1["status"] in @active, do: Map.merge(&1, done))},
           {"node",
            &if(&1["status"] in @active and &1["id"] not in delegated, do: Map.merge(&1, done))},

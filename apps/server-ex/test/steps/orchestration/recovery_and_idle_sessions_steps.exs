@@ -1654,26 +1654,82 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   # The fake Claude ends its turn with only that work running in the background; the
   # provider process then dies with the MC.
-  step ~r/^thread "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
-       %{args: [thread, work]} = context do
-    context = context |> World.providers() |> World.named_thread(thread)
-    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+  step(
+    ~r/^thread "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
+    %{args: [thread, work]} = context,
+    do: wait_on(context, thread, work)
+  )
 
-    context =
-      for {text, n} <- [{"Hi", 1}, {waiting_on(work), 2}], reduce: context do
-        context ->
-          context = World.dispatch_message(context, thread, text, claude)
-          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
-          World.await_run(context, thread, &(&1["ordinal"] == n and &1["status"] == "completed"))
-          context
-      end
-
-    run = World.await_run(context, thread, &(&1["ordinal"] == 2))
-
+  step "\"continue threads after restarts\" is on", context do
+    HalC2.Test.Mc.ensure(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
+    {:ok, _} = HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => true}, version)
     context
-    |> Map.put(:thread, thread)
-    |> leave_waiting()
-    |> Map.merge(%{settled_run: run, work: work})
+  end
+
+  # Claude woke "thread" by itself as the MC stopped (`HalC2.Orchestration.Wake`): the
+  # wake's run, after the turn that left a command in the background, had not reached
+  # its provider yet.
+  step "a wake of {string} was still starting when the MC stopped, after a settled run whose background work was lost",
+       %{args: [thread]} = context do
+    context = wait_on(context, thread, "a background task")
+    settled = context.settled_run
+    wake = "run:wake-#{thread}"
+    message = "message:wake-#{thread}"
+    at = HalC2.Orchestration.Entities.now()
+
+    {:ok, _} =
+      HalC2.Streams.commit(World.thread_id(context, thread), :thread, [
+        {"message", message,
+         %{
+           "s" => %{
+             "id" => message,
+             "role" => "user",
+             "text" => "Background task completed.",
+             "providerWake" => true,
+             "createdBy" => "agent",
+             "runId" => wake,
+             "createdAt" => at
+           }
+         }},
+        {"run", wake,
+         %{
+           "s" =>
+             Map.merge(Map.take(settled, ~w(modelSelection providerThreadId)), %{
+               "id" => wake,
+               "ordinal" => settled["ordinal"] + 1,
+               "status" => "starting",
+               "userMessageId" => message,
+               "activeAttemptId" => "attempt:#{wake}",
+               "requestedAt" => at,
+               "startedAt" => nil,
+               "completedAt" => nil
+             })
+         }},
+        {"run-attempt", "attempt:#{wake}",
+         %{"s" => %{"id" => "attempt:#{wake}", "runId" => wake, "status" => "pending"}}}
+      ])
+
+    Map.put(context, :wake, wake)
+  end
+
+  step "{string} is continued from the settled run that lost the work",
+       %{args: [thread]} = context do
+    id = "message:restart-continuation:#{context.settled_run["id"]}"
+    state = World.await_state(context, thread, &HalC2.StreamState.fetch(&1, "message", id))
+    run_id = HalC2.StreamState.fetch(state, "message", id)["runId"]
+
+    state =
+      World.await_state(context, thread, &(&1.entities["run"][run_id]["status"] in @started))
+
+    assert state.entities["message"][id]["text"] =~ "ended the background command `npm run build`"
+
+    # The wake replayed what the gone provider process had sent: it is cancelled, not
+    # started again, and the run that lost the work is the one continued.
+    assert %{"status" => "cancelled"} = state.entities["run"][context.wake]
+    assert %{"status" => "cancelled"} = state.entities["run-attempt"]["attempt:#{context.wake}"]
+    assert state.entities["run"][context.settled_run["id"]]["status"] == "completed"
+    context
   end
 
   # A Claude child of "parent"'s task, whose only turn ends that way.
@@ -2307,6 +2363,29 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   defp waiting_on("a monitor"), do: "start a monitor"
   defp waiting_on("a subagent"), do: "only the subagent in the background"
   defp waiting_on("a background task"), do: "only the command in the background"
+
+  # The fake Claude ends "thread"'s second turn with only `work` running in the
+  # background; the provider process then dies with the MC.
+  defp wait_on(context, thread, work) do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+
+    context =
+      for {text, n} <- [{"Hi", 1}, {waiting_on(work), 2}], reduce: context do
+        context ->
+          context = World.dispatch_message(context, thread, text, claude)
+          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+          World.await_run(context, thread, &(&1["ordinal"] == n and &1["status"] == "completed"))
+          context
+      end
+
+    run = World.await_run(context, thread, &(&1["ordinal"] == 2))
+
+    context
+    |> Map.put(:thread, thread)
+    |> leave_waiting()
+    |> Map.merge(%{settled_run: run, work: work})
+  end
 
   # Kills the provider process of `context.thread` once its one background task shows.
   defp leave_waiting(context) do

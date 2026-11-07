@@ -722,7 +722,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the continuation of "t1" names the subagent by its own thread id
     And says it will not report back on its own
 
-  @backlog @mc
+  @mc
   Scenario: A wake that never started does not hide the run that lost the work
     Given "continue threads after restarts" is on
     And a wake of "t1" was still starting when the MC stopped, after a settled run whose background work was lost

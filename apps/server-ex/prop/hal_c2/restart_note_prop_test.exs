@@ -13,7 +13,10 @@ defmodule HalC2.RestartNotePropTest do
     piece of that work (the `<server_restart>` section `Handoff.plan/5` builds from the
     thread's `restartNote`), and the turn after it does not;
   - a session-long monitor or a delegated task, which runs on in its own thread, is
-    never named, and a restart leaves the task running.
+    never named, and a restart leaves the task running;
+  - a wake (`HalC2.Orchestration.Wake`) whose run had not reached its provider when the
+    MC stopped is cancelled, and does not hide the turn before it: that turn's ended
+    work is still named and woken for.
 
   The runs are written to the stream as the turn writer leaves them, with no provider
   behind them, and the MC takes no automatic actions, so the wake is read from what
@@ -63,39 +66,51 @@ defmodule HalC2.RestartNotePropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # runs: how many turns ran; open: the latest turn's work still running, as the agent
-  # would hear it named (nil for a session-long monitor); released: the session was
-  # stopped since; note: the work the next turn hears the restart ended.
-  def initial_state, do: %{runs: 0, open: [], released: false, note: nil}
+  # runs: the ordinal of the thread's last run; last: that of its last turn; open: the
+  # last turn's work still running, as the agent would hear it named (nil for a
+  # session-long monitor); released: the session was stopped since; note: the work the
+  # next turn hears the restart ended; wake: a wake run still starting.
+  def initial_state, do: %{runs: 0, last: 0, open: [], released: false, note: nil, wake: nil}
 
   def command(state) do
     frequency(
       [
-        {4, {:call, __MODULE__, :turn, [state.runs + 1, work()]}},
         {3, {:call, __MODULE__, :restart, []}}
       ] ++
+        if(state.wake, do: [], else: [{4, {:call, __MODULE__, :turn, [state.runs + 1, work()]}}]) ++
+        if(state.wake != nil or state.runs == 0,
+          do: [],
+          else: [{2, {:call, __MODULE__, :wake, [state.runs + 1]}}]
+        ) ++
         if(state.runs == 0, do: [], else: [{2, {:call, __MODULE__, :release, []}}]) ++
-        if(state.open == [], do: [], else: [{2, {:call, __MODULE__, :end_work, [state.runs]}}])
+        if(state.open == [], do: [], else: [{2, {:call, __MODULE__, :end_work, [state.last]}}])
     )
   end
 
   defp work, do: resize(3, list(oneof(@kinds)))
 
-  def precondition(state, {:call, _, :turn, [n, _]}), do: n == state.runs + 1
+  def precondition(state, {:call, _, :turn, [n, _]}),
+    do: state.wake == nil and n == state.runs + 1
+
+  def precondition(state, {:call, _, :wake, [n]}),
+    do: state.wake == nil and state.runs > 0 and n == state.runs + 1
+
   def precondition(state, {:call, _, :release, _}), do: state.runs > 0
-  def precondition(state, {:call, _, :end_work, [n]}), do: state.open != [] and n == state.runs
+  def precondition(state, {:call, _, :end_work, [n]}), do: state.open != [] and n == state.last
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :turn, [n, kinds]}),
-    do: %{state | runs: n, open: Enum.map(kinds, &named/1), released: false, note: nil}
+    do: %{state | runs: n, last: n, open: Enum.map(kinds, &named/1), released: false, note: nil}
+
+  def next_state(state, _result, {:call, _, :wake, [n]}), do: %{state | runs: n, wake: n}
 
   def next_state(state, _result, {:call, _, :release, _}), do: %{state | released: true}
   def next_state(state, _result, {:call, _, :end_work, _}), do: %{state | open: []}
 
   def next_state(state, _result, {:call, _, :restart, _}) do
     case ended(state) do
-      [] -> %{state | open: []}
-      work -> %{state | open: [], note: work}
+      [] -> %{state | open: [], wake: nil}
+      work -> %{state | open: [], note: work, wake: nil}
     end
   end
 
@@ -113,11 +128,17 @@ defmodule HalC2.RestartNotePropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :restart, _}, %{woken: woken, note: note, running: running}) do
+  def postcondition(state, {:call, _, :restart, _}, %{
+        woken: woken,
+        note: note,
+        running: running,
+        wakes: wakes
+      }) do
     work = ended(state)
     expected_note = if work == [], do: state.note, else: work
 
     running == [] and woken == (work != [] and not state.released) and
+      Enum.all?(wakes, &(&1 == "cancelled")) and
       case expected_note do
         nil -> note == nil
         work -> is_binary(note) and Enum.all?(work, &String.contains?(note, &1))
@@ -183,6 +204,30 @@ defmodule HalC2.RestartNotePropTest do
     context
   end
 
+  # The provider woke the thread by itself (`HalC2.Orchestration.Wake`), and the wake's
+  # run, `n`, is still starting: it has not reached the provider.
+  def wake(n) do
+    run = "run-#{n}"
+    message = "message:wake-#{n}"
+
+    commit([
+      {"message", message,
+       %{"id" => message, "role" => "user", "providerWake" => true, "runId" => run}},
+      {"run", run,
+       %{
+         "id" => run,
+         "ordinal" => n,
+         "status" => "starting",
+         "userMessageId" => message,
+         "activeAttemptId" => "attempt-#{n}",
+         "providerThreadId" => @provider_thread,
+         "startedAt" => nil
+       }},
+      {"run-attempt", "attempt-#{n}",
+       %{"id" => "attempt-#{n}", "runId" => run, "status" => "pending"}}
+    ])
+  end
+
   # The background work of turn `n` ends, as its provider reports.
   def end_work(n) do
     state = stream()
@@ -224,7 +269,12 @@ defmodule HalC2.RestartNotePropTest do
     %{
       woken: woken,
       note: StreamState.get(state, "thread")[@thread]["restartNote"],
-      running: running
+      running: running,
+      wakes:
+        for(
+          %{"userMessageId" => "message:wake-" <> _} = run <- StreamState.list(state, "run"),
+          do: run["status"]
+        )
     }
   end
 
