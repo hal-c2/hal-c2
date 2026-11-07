@@ -127,7 +127,8 @@ defmodule HalC2.ClaudeProviderTest do
     assert option_ids(model("opus"), "effort") ==
              ~w(low medium high xhigh max ultracode ultrathink)
 
-    assert descriptor_ids(model("opus")) == ~w(effort fastMode contextWindow)
+    # `opus` resolves to Opus 5.5, which runs a fixed 1M window: no context window choice.
+    assert descriptor_ids(model("opus")) == ~w(effort fastMode)
 
     # An id that names its context window offers no other.
     assert descriptor_ids(model("claude-fable-5-1[1m]")) == ~w(effort)
@@ -149,13 +150,14 @@ defmodule HalC2.ClaudeProviderTest do
     reports(@reported)
     :ok = Provider.load()
 
-    # Claude Code takes a context suffix on the model's id, not on its alias.
-    assert %{model: "claude-opus-5-5[1m]", effort: "xhigh", settings: %{"ultracode" => true}} =
+    # A Claude 5 alias keeps its name, with the 1M suffix its fixed window runs under.
+    assert %{model: "opus[1m]", effort: "xhigh", settings: %{"ultracode" => true}} =
              Provider.launch("opus", %{"effort" => "ultracode"})
 
-    assert %{model: "opus"} = Provider.launch("opus", %{"contextWindow" => "200k"})
+    assert %{model: "opus[1m]", context_window: 1_000_000} =
+             Provider.launch("opus", %{"contextWindow" => "200k"})
 
-    assert %{model: "claude-opus-5-5", effort: nil, prompt_effort: "ultrathink"} =
+    assert %{model: "claude-opus-5-5[1m]", effort: nil, prompt_effort: "ultrathink"} =
              Provider.launch("claude-opus-5-5", %{
                "effort" => "ultrathink",
                "contextWindow" => "200k"

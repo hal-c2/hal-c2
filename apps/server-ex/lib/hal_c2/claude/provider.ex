@@ -129,10 +129,18 @@ defmodule HalC2.Claude.Provider do
     snapshot = %{
       "cwd" => cwd,
       "checkedAt" => HalC2.Orchestration.Entities.now(),
+      # Claude reports its commands for the MC's own folder; the thread's project adds
+      # those under its `.claude/commands`.
       "slashCommands" =>
         case executable(id) do
-          nil -> []
-          path -> slash_commands(id, path)
+          nil ->
+            []
+
+          path ->
+            Enum.uniq_by(
+              slash_commands(id, path) ++ HalC2.Claude.Skills.commands(cwd),
+              & &1["name"]
+            )
         end,
       "skills" => skills
     }
@@ -549,7 +557,7 @@ defmodule HalC2.Claude.Provider do
     others =
       for %{"id" => id} = descriptor <- known,
           id not in ["effort", "fastMode"],
-          not (id == "contextWindow" and suffixed?(row["value"])),
+          not (id == "contextWindow" and (suffixed?(row["value"]) or claude_5?(resolved_id(row)))),
           do: descriptor
 
     case Enum.reject(
@@ -591,9 +599,8 @@ defmodule HalC2.Claude.Provider do
   defp option?(options, id), do: Enum.any?(options, &(&1["id"] == id))
 
   # How the CLI runs a listed row: the profile's adapter, less mappings for levels the
-  # CLI now runs itself, and without context suffixes on an id that carries one. A
-  # context suffix goes on `modelId`, the model the row resolves to, since Claude Code
-  # takes none on an alias (`opus[1m]`).
+  # CLI now runs itself, and without context suffixes on an id that carries one;
+  # `modelId` is the model the row resolves to (`launch_name/3`).
   defp cli_adapter(row, profile) do
     adapter = get_in(profile, ["adapter", "claudeCode"]) || %{}
     levels = List.wrap(row["supportedEffortLevels"])
@@ -601,10 +608,50 @@ defmodule HalC2.Claude.Provider do
     adapter
     |> Map.put(
       "modelId",
-      String.replace(row["resolvedModel"] || row["value"], ~r/\[[^\]]*\]$/, "")
+      String.replace(resolved_id(row), ~r/\[[^\]]*\]$/, "")
     )
     |> Map.update("effortMap", %{}, &Map.drop(&1, levels))
     |> then(&if suffixed?(row["value"]), do: Map.delete(&1, "modelSuffixes"), else: &1)
+    |> then(&claude_5_window(&1, resolved_id(row)))
+  end
+
+  defp resolved_id(row), do: row["resolvedModel"] || row["value"]
+
+  # A Claude 5 model, whether picked by its own id (`claude-opus-5-5`) or by an alias
+  # the CLI resolves to one (`opus`), always runs with a 1M context window, so there is
+  # nothing to choose. It launches under the name it was picked by with the `[1m]`
+  # suffix (`claude-opus-5-5[1m]`, `opus[1m]`): Claude Code treats the spellings as one
+  # 1M model, and the suffix keeps a CLI that predates a model's native 1M window from
+  # starting it at 200k.
+  defp claude_5?(id), do: is_binary(id) and id =~ ~r/^claude-[a-z]+-5(-|\[|$)/
+
+  defp claude_5_window(adapter, id) do
+    if claude_5?(id),
+      do:
+        adapter
+        |> Map.drop(["modelSuffixes", "contextWindowTokens"])
+        |> Map.merge(%{"fixedContextWindowTokens" => 1_000_000, "fixedModelSuffix" => "[1m]"}),
+      else: adapter
+  end
+
+  # A manifest entry's profile, with a Claude 5 model's fixed window (`claude_5_window/2`).
+  defp manifest_profile(%{"slug" => slug} = entry) do
+    profile = profile(entry)
+
+    if claude_5?(slug) do
+      descriptors =
+        for descriptor <- get_in(profile, ["capabilities", "optionDescriptors"]) || [],
+            descriptor["id"] != "contextWindow",
+            do: descriptor
+
+      adapter = claude_5_window(get_in(profile, ["adapter", "claudeCode"]) || %{}, slug)
+
+      profile
+      |> Map.update("capabilities", %{}, &Map.put(&1 || %{}, "optionDescriptors", descriptors))
+      |> Map.put("adapter", %{"claudeCode" => adapter})
+    else
+      profile
+    end
   end
 
   defp suffixed?(value), do: String.ends_with?(value, "]")
@@ -624,7 +671,7 @@ defmodule HalC2.Claude.Provider do
         "isCustom" => false,
         "isDefault" => model["slug"] == get_in(catalog, ["defaults", "chat"]),
         "isLegacy" => model["status"] == "legacy",
-        "capabilities" => profile(model)["capabilities"]
+        "capabilities" => manifest_profile(model)["capabilities"]
       }
       |> then(&if model["badge"], do: Map.put(&1, "badge", model["badge"]), else: &1)
     end
@@ -662,9 +709,10 @@ defmodule HalC2.Claude.Provider do
         effort = choice(descriptors, "effort", options)
 
         suffix =
-          Enum.find_value(adapter["modelSuffixes"] || %{}, "", fn {id, suffixes} ->
-            suffixes[choice(descriptors, id, options)]
-          end)
+          adapter["fixedModelSuffix"] ||
+            Enum.find_value(adapter["modelSuffixes"] || %{}, "", fn {id, suffixes} ->
+              suffixes[choice(descriptors, id, options)]
+            end)
 
         settings = %{
           "fastMode" => toggle(descriptors, "fastMode", options),
@@ -675,7 +723,7 @@ defmodule HalC2.Claude.Provider do
         injected = (descriptor(descriptors, "effort") || %{})["promptInjectedValues"] || []
 
         %{
-          model: if(suffix == "", do: slug, else: (adapter["modelId"] || slug) <> suffix),
+          model: launch_name(slug, adapter, suffix),
           effort: Map.get(adapter["effortMap"] || %{}, effort, effort),
           settings: Map.reject(settings, fn {_, value} -> value == nil end),
           prompt_effort: if(effort in injected, do: effort),
@@ -689,6 +737,17 @@ defmodule HalC2.Claude.Provider do
         }
     end
   end
+
+  # A chosen context suffix goes on `modelId`, the model a listed row resolves to. A
+  # fixed one goes on the name the model was picked by, alias included (`opus[1m]`),
+  # except the CLI's `default`, which has no suffixed spelling.
+  defp launch_name(slug, _adapter, ""), do: slug
+
+  defp launch_name(slug, %{"fixedModelSuffix" => suffix}, suffix)
+       when slug != "default",
+       do: String.replace(slug, ~r/\[[^\]]*\]$/, "") <> suffix
+
+  defp launch_name(slug, adapter, suffix), do: (adapter["modelId"] || slug) <> suffix
 
   @doc """
   The config directory instance `instance`'s Claude uses: its `homePath` setting
@@ -784,7 +843,7 @@ defmodule HalC2.Claude.Provider do
     case listed(model, instance) do
       nil ->
         with %{} = entry <- find(model) do
-          profile = profile(entry)
+          profile = manifest_profile(entry)
 
           %{
             "slug" => entry["slug"],
