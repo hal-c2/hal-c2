@@ -313,7 +313,6 @@ Feature: Codex
 
   # Upstream #24664: two instances whose CODEX_HOME was set only in their environment variables
   # counted as one home, so switching between them resumed the thread in the wrong home.
-  @backlog
   Scenario: Codex instances with different CODEX_HOME variables are different homes
     Given the Codex instances "work" and "personal" leave their home blank
     And their environment variables set CODEX_HOME to "~/work-codex" and "~/personal-codex"
@@ -452,7 +451,6 @@ Feature: Codex
     And it says to send the message again after the reset
 
   # Upstream #17501: retry exhaustion on HTTP 429 was a generic error.
-  @backlog
   Scenario: Codex giving up after repeated 429 responses is a usage limit
     When Codex ends a turn after too many failed attempts that each answered 429
     Then the thread is marked as limited
@@ -599,7 +597,7 @@ Feature: Codex
 
   # Upstream #25341: Codex reports a used-up ChatGPT sharing allowance as a stream disconnect,
   # which failed the thread with no way to recover.
-  @mc @shared @backlog @priority-high
+  @mc @shared @priority-high @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A sharing limit reported as a disconnect leaves the thread limited, not failed
     Given Codex is signed in with a personal ChatGPT plan
     When a turn stops with "stream disconnected before completion: The ChatGPT user has reached their Subscription Sharing usage limit."
@@ -1331,7 +1329,6 @@ Feature: Codex
 
   # Upstream #29168: the wake text cut the command at 200 and its output at 1,000 UTF-16 units, so an
   # emoji at a cut left a lone surrogate, Codex never answered the turn start, and the wake hung.
-  @backlog @priority-high
   Scenario: A background command whose output is cut through an emoji still wakes the agent
     Given a Codex agent started a background command that finishes after the turn settled
     And its command or the start of its output's last 1,000 characters falls inside an emoji
@@ -1349,7 +1346,6 @@ Feature: Codex
 
   # Upstream #23840: a parent that ended its turn stayed idle when its native subagent finished
   # later, until the user sent a message.
-  @backlog
   Scenario: A Codex subagent that finishes after its parent's turn wakes the parent
     Given a Codex turn started a subagent and then finished
     When the subagent finishes
@@ -1358,7 +1354,6 @@ Feature: Codex
 
   # Upstream #23840: a finished native subagent does not wake a parent that was interrupted, is still
   # running a turn, or is itself a subagent.
-  @backlog
   Scenario Outline: A finished Codex subagent does not wake a parent that <case>
     Given a Codex subagent whose parent <case>
     When the subagent finishes
@@ -1388,7 +1383,6 @@ Feature: Codex
 
   # Upstream #21366: a failed root turn ends its run at once while its subagents carry on in their
   # own threads; an interrupted turn still waits, since Stop interrupts the subagents too.
-  @backlog @priority-high
   Scenario: A failed Codex turn does not hold the thread for its subagents
     Given a Codex turn with two subagents at work
     When the turn fails while the subagents keep working
@@ -1629,7 +1623,6 @@ Feature: Codex
     When the user sends another message in the same thread
     Then the turn runs on the updated Codex
 
-  @backlog @priority-high
   Scenario: A thread whose Codex session was archived outside HAL-C2 resumes it
     Given the native Codex session of a thread was archived by Codex itself
     When the user sends a turn
@@ -1638,7 +1631,6 @@ Feature: Codex
 
   # Upstream #29582: rollback resumed an unloaded Codex thread without the archived-session recovery
   # sending a message had, so the whole restore failed and no files came back.
-  @backlog @priority-high
   Scenario: A checkpoint restores after the thread's Codex session was archived outside HAL-C2
     Given the native Codex session of a thread was archived by Codex itself
     And Codex no longer has the thread loaded
@@ -1647,7 +1639,6 @@ Feature: Codex
 
   # Upstream #29618: forking sent the fork straight to the archived session and failed, though
   # resuming it already unarchived and retried.
-  @backlog @priority-high
   Scenario: Forking a thread whose Codex session was archived outside HAL-C2
     Given the native Codex session of a thread was archived by Codex itself
     When the user forks the thread

@@ -293,6 +293,15 @@ for line in sys.stdin:
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
     elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
         send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
+    # While the file FAKE_CODEX_ARCHIVED_FILE names exists, the native thread is
+    # archived: resuming or forking it fails until thread/unarchive removes the file.
+    elif method in ("thread/resume", "thread/fork") and os.environ.get("FAKE_CODEX_ARCHIVED_FILE") and os.path.exists(os.environ["FAKE_CODEX_ARCHIVED_FILE"]):
+        send({"id": mid, "error": {"code": -32600, "message": f"thread {params.get('threadId')} is archived"}})
+    elif method == "thread/unarchive":
+        flag = os.environ.get("FAKE_CODEX_ARCHIVED_FILE")
+        if flag and os.path.exists(flag):
+            os.remove(flag)
+        send({"id": mid, "result": {"thread": {"id": params.get("threadId") or thread_id}}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):

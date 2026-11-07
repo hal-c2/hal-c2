@@ -48,11 +48,22 @@ defmodule HalC2.Codex.Home do
     end
   end
 
-  @doc "The home shared by every account of `instance`'s Codex home, or nil for the default."
+  @doc """
+  The home shared by every account of `instance`'s Codex home, or nil for the
+  default. A `CODEX_HOME` set only in the instance's environment variables is
+  its home too: two instances pointing it at different folders are different
+  homes, however their home settings read.
+  """
   def shared(instance) do
-    case HalC2.Settings.instance_setting(instance, "homePath") do
-      nil -> nil
-      home -> expand(home)
+    case HalC2.Settings.instance_env(instance)["CODEX_HOME"] do
+      home when is_binary(home) and home != "" ->
+        expand(home)
+
+      _ ->
+        case HalC2.Settings.instance_setting(instance, "homePath") do
+          nil -> nil
+          home -> expand(home)
+        end
     end
   end
 
