@@ -113,25 +113,30 @@ defmodule HalC2.ProviderLog do
     error -> Logger.warning("Failed to log a provider event: #{Exception.message(error)}")
   end
 
+  @bearer ~r/\bBearer\s+[^\s"'\\,}]+/i
   @credential_key ~r/(authorization|apikey|token|password|secret)$/i
 
   @doc "The event with every credential replaced by `[REDACTED]`."
   def redact(event), do: redact(event, nil)
 
-  defp redact(map, _key) when is_map(map),
-    do: Map.new(map, fn {key, value} -> {key, redact(value, key)} end)
-
-  defp redact(list, key) when is_list(list), do: Enum.map(list, &redact(&1, key))
-
-  defp redact(value, key) when is_binary(value) do
-    cond do
-      credential_key?(key) -> "[REDACTED]"
-      String.starts_with?(value, "Bearer ") -> "[REDACTED]"
-      true -> redact_text(value)
-    end
+  # Whatever sits under a credential key is one, whatever its shape.
+  defp redact(value, key) do
+    if credential_key?(key), do: "[REDACTED]", else: redact_value(value)
   end
 
-  defp redact(value, key), do: if(credential_key?(key), do: "[REDACTED]", else: value)
+  defp redact_value(map) when is_map(map),
+    do: Map.new(map, fn {key, value} -> {key, redact(value, key)} end)
+
+  defp redact_value(list) when is_list(list), do: Enum.map(list, &redact(&1, nil))
+
+  defp redact_value("Bearer " <> _), do: "[REDACTED]"
+
+  # A bearer token anywhere else in a string, such as a command line or tool output.
+  defp redact_value(value) when is_binary(value) do
+    Regex.replace(@bearer, redact_text(value), "Bearer [REDACTED]")
+  end
+
+  defp redact_value(value), do: value
 
   defp credential_key?(key) when is_binary(key),
     do: Regex.match?(@credential_key, String.replace(key, ["_", "-"], ""))

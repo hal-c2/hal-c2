@@ -156,9 +156,14 @@ defmodule HalC2.Diagnostics do
   of one second up to the window.
   """
   def history_bounds(window, bucket) do
-    window = window |> max(@min_window) |> min(@keep)
-    {window, bucket |> max(1_000) |> min(window)}
+    window = window |> whole() |> max(@min_window) |> min(@keep)
+    {window, bucket |> whole() |> max(1_000) |> min(window)}
   end
+
+  # A fraction of a millisecond is no bucket: truncated, and anything else counts as nothing.
+  defp whole(value) when is_integer(value), do: value
+  defp whole(value) when is_float(value), do: trunc(value)
+  defp whole(_value), do: 0
 
   @doc """
   What a cumulative counter adds between two readings `gap_ms` apart: the difference, or nothing

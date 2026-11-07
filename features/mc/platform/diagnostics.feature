@@ -432,6 +432,8 @@ Feature: MC diagnostics
       | a value that starts with "Bearer "                                          |
       | a field whose name ends in authorization, apikey, token, password or secret |
       | either of those inside JSON carried as text                                 |
+      | a credential field that holds an object rather than text                    |
+      | a bearer token in the middle of a command line or tool output               |
 
   @mc @plugin-claude
   Scenario: Claude's logged start-up options leave out its environment and credentials

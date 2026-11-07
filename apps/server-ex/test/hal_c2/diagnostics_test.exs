@@ -97,4 +97,9 @@ defmodule HalC2.DiagnosticsTest do
     assert HalC2.Diagnostics.counter_delta(160, 100, 5_000) == 0
     assert HalC2.Diagnostics.counter_delta(100, 160, 90_000) == 0
   end
+
+  test "a history request with a fractional or non-numeric size is truncated, not crashed on" do
+    assert HalC2.Diagnostics.history_bounds(600_000.9, 1_500.7) == {600_000, 1_500}
+    assert HalC2.Diagnostics.history_bounds("x", nil) == {1_000, 1_000}
+  end
 end

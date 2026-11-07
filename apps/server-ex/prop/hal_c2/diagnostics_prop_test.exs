@@ -12,7 +12,8 @@ defmodule HalC2.DiagnosticsPropTest do
   alias HalC2.Diagnostics
 
   property "a history request is held to what the MC keeps" do
-    forall {window, bucket} <- {non_neg_integer(), non_neg_integer()} do
+    forall {window, bucket} <-
+             {oneof([non_neg_integer(), float()]), oneof([non_neg_integer(), float()])} do
       {window_used, bucket_used} = Diagnostics.history_bounds(window, bucket)
 
       window_used in 1_000..3_600_000 and bucket_used in 1_000..window_used and
@@ -45,7 +46,15 @@ defmodule HalC2.DiagnosticsPropTest do
              {oneof(~w(authorization apiKey api_key accessToken password clientSecret)),
               non_empty(list(range(?a, ?z)))} do
       secret = "sk-" <> to_string(secret)
-      event = %{"params" => %{key => secret, "list" => [%{"note" => "Bearer " <> secret}]}}
+
+      event = %{
+        "params" => %{
+          key => %{"value" => secret},
+          "list" => [%{"note" => "Bearer " <> secret}],
+          "line" => "curl -H 'Authorization: Bearer " <> secret <> "' x"
+        }
+      }
+
       redacted = HalC2.ProviderLog.redact(event)
 
       not String.contains?(JSON.encode!(redacted), secret) and

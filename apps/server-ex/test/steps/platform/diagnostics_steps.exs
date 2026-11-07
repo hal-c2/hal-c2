@@ -909,6 +909,10 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     "a value that starts with \"Bearer \"" => ~s({"note": "Bearer sk-live-1"}),
     "a field whose name ends in authorization, apikey, token, password or secret" =>
       ~s({"Authorization": "sk-live-1", "api_key": "sk-live-1", "accessToken": "sk-live-1", "dbPassword": "sk-live-1", "clientSecret": "sk-live-1", "inputTokens": 12}),
+    "a credential field that holds an object rather than text" =>
+      ~s({"apiKey": {"value": "sk-live-1"}, "authorization": {"type": "bearer", "credentials": "sk-live-1"}}),
+    "a bearer token in the middle of a command line or tool output" =>
+      ~s({"command": "curl -H 'Authorization: Bearer sk-live-1' https://example.test"}),
     "either of those inside JSON carried as text" =>
       ~s({"text": "{\\"auth\\": \\"Bearer sk-live-1\\", \\"password\\": \\"sk-live-1\\"}"})
   }
