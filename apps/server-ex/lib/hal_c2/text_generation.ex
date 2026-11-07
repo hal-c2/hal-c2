@@ -255,10 +255,9 @@ defmodule HalC2.TextGeneration do
   # An ACP agent is off until turned on (`HalC2.Acp.enabled?/1`); a project's own
   # switch, which `settings` carries where it differs from the environment's, wins.
   defp acp_on?(settings, id) do
-    switch = ["providerInstances", id, "enabled"]
-    on = get_in(settings, switch)
+    on = HalC2.Settings.switch(settings, id)
 
-    if is_boolean(on) and on != get_in(HalC2.Settings.settings(), switch),
+    if is_boolean(on) and on != HalC2.Settings.switch(HalC2.Settings.settings(), id),
       do: on,
       else: HalC2.Acp.enabled?(id)
   end

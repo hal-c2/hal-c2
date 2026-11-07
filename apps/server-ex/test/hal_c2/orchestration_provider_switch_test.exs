@@ -103,6 +103,54 @@ defmodule HalC2.OrchestrationProviderSwitchTest do
              StreamState.get(current(thread_id), "runtime-request")[request["id"]]
   end
 
+  test "a released prepared run says its provider is off, not an older failure",
+       %{thread_id: thread_id} do
+    at = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    :ok =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        message = %{
+          "id" => "prep-msg",
+          "threadId" => thread_id,
+          "role" => "user",
+          "createdBy" => "user",
+          "creationSource" => "web",
+          "text" => "hello",
+          "attachments" => [],
+          "streaming" => false,
+          "createdAt" => at,
+          "updatedAt" => at
+        }
+
+        run = %{
+          "id" => "prep-run",
+          "threadId" => thread_id,
+          "ordinal" => 1,
+          "status" => "preparing",
+          "providerInstanceId" => "codex",
+          "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+          "userMessageId" => "prep-msg",
+          "startedAt" => nil
+        }
+
+        # An earlier session's failure must not stand for this refusal.
+        stale = %{"id" => "a-stale", "threadId" => thread_id, "lastError" => "stale failure"}
+
+        changes =
+          for {kind, entity} <- [{"message", message}, {"run", run}, {"provider-session", stale}],
+              do: Orchestration.upsert(state, kind, entity["id"], fn _ -> entity end)
+
+        {changes, :ok}
+      end)
+
+    turn_off("codex")
+
+    assert {:error, "Codex is turned off for this project." <> _} =
+             Orchestration.release_prepared(thread_id, "prep-run")
+
+    assert %{"status" => "failed"} = StreamState.get(current(thread_id), "run")["prep-run"]
+  end
+
   # The running turn's agent asks a question it is answered by message.
   defp ask_by_message(thread_id, rid) do
     [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)

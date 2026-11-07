@@ -1983,23 +1983,31 @@ defmodule HalC2.Orchestration do
     case HalC2.Streams.transact(thread_id, :thread, decide) do
       {:ok, turn} ->
         begin_turn(thread_id, turn)
-        started(thread_id, run_id)
+
+        started(
+          thread_id,
+          run_id,
+          HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance)
+        )
 
       {:error, _} = error ->
         error
     end
   end
 
-  # An agent that cannot start fails its run before `start_turn` returns.
-  defp started(thread_id, run_id) do
+  # An agent that cannot start fails its run before `start_turn` returns. A provider
+  # turned off refused it (`begin_turn_now/2`) and `off` is why; otherwise the session
+  # says.
+  defp started(thread_id, run_id, off) do
     state = HalC2.Streams.state(thread_id)
 
     case StreamState.get(state, "run")[run_id] do
       %{"status" => "failed"} ->
         error =
-          state
-          |> StreamState.list("provider-session")
-          |> Enum.find_value(& &1["lastError"])
+          off ||
+            state
+            |> StreamState.list("provider-session")
+            |> Enum.find_value(& &1["lastError"])
 
         {:error, error || "the run failed"}
 

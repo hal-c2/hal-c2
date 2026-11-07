@@ -198,10 +198,23 @@ defmodule HalC2.Settings do
     end
   end
 
-  defp environment_on?(settings, instance) do
+  defp environment_on?(settings, instance), do: switch(settings, instance) != false
+
+  @doc """
+  The `enabled` switch settings carry for `instance`: its `providerInstances` entry's,
+  else its driver's in `providers`; nil where neither says. `resolve/2` writes a
+  project's switch to the same place.
+  """
+  def switch(settings, instance) do
     case get_in(settings, ["providerInstances", instance]) do
-      %{"enabled" => on} when is_boolean(on) -> on
-      _ -> get_in(settings, ["providers", instance, "enabled"]) != false
+      %{"enabled" => on} when is_boolean(on) ->
+        on
+
+      _ ->
+        case get_in(settings, ["providers", instance, "enabled"]) do
+          on when is_boolean(on) -> on
+          _ -> nil
+        end
     end
   end
 
