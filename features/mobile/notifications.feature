@@ -103,7 +103,9 @@ Feature: Push notifications and live agent activity
 
   # What a machine had when it joined the cluster is not news either, but its first
   # finished turn is, even when it joined with no threads at all.
-  @mc @mobile
+  # The phone sees only one environment, so it cannot join a second machine to the
+  # cluster yet (#1092); the MC's half runs under features/mc.
+  @mc @mobile @backlog-mobile
   Scenario: A machine that joins the cluster with no threads alerts about its first finished turn
     Given device notifications are on
     And "Studio" joins the cluster with no threads

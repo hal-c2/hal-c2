@@ -431,6 +431,33 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # Codex's spawnAgent call, still working on its task.
+  step "{string} has a running turn with a subagent still running",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    {_, runtime} = World.codex_runtime(context, thread)
+
+    context =
+      notify(
+        context,
+        "item/started",
+        item("collabAgentToolCall", "collab-1", %{
+          "tool" => "spawnAgent",
+          "prompt" => "List the modules in lib",
+          "senderThreadId" => runtime.native_thread_id,
+          "receiverThreadIds" => ["native-child-1"],
+          "status" => "inProgress",
+          "agentsStates" => %{"native-child-1" => %{"status" => "running"}}
+        })
+      )
+
+    World.await_state(context, thread, fn state ->
+      match?([%{"status" => "running"}], HalC2.StreamState.list(state, "subagent"))
+    end)
+
+    context
+  end
+
   step "no turn item of the run is still running", context do
     await_status(context, context.running, "completed")
 
@@ -1022,6 +1049,294 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- a workspace that is gone ---------------------------------------------------------
+
+  step "the workspace of {string} is not a worktree and its folder is gone",
+       %{args: [thread]} = context do
+    context = World.providers(context)
+    root = World.project(context, "demo").root
+    File.rm_rf!(root)
+    refute File.exists?(root)
+    Map.put(context, :thread, thread)
+  end
+
+  step "the run fails", context do
+    World.await_latest_run(context, context.thread, "failed")
+    context
+  end
+
+  step "no provider process is started for it", context do
+    # The app-server never answered a request, and no connection to one is left.
+    assert World.codex_requests(context, "initialize") == []
+    assert World.codex_requests(context, "turn/start") == []
+
+    for {pid, _} <-
+          Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, context.thread)),
+        do: assert(:sys.get_state(pid).conn == nil)
+
+    context
+  end
+
+  # --- an interrupt's record --------------------------------------------------------------
+
+  step "the user interrupts the run giving the reason {string}",
+       %{args: [reason]} = context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => context.running,
+      "reason" => reason
+    })
+  end
+
+  step "the user interrupts the run without a reason", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => context.running
+    })
+  end
+
+  step "the run records an item titled {string} saying {string}",
+       %{args: [title, message]} = context do
+    assert {:ok, _} = context.reply
+    assert interrupt_item(context, title, message)
+    context
+  end
+
+  step "once the provider stops, an item titled {string} saying {string}",
+       %{args: [title, message]} = context do
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["runId"] == context.running and &1["title"] == title and &1["message"] == message)
+      )
+    end)
+
+    context
+  end
+
+  # --- stopping a run nothing drives ------------------------------------------------------
+
+  # The runtime stops without ending the turn, as one does when its provider vanishes
+  # (a `:shutdown` is not a crash, which the run would be failed for).
+  step "a run is still active because its provider vanished before reporting an end", context do
+    context = World.providers(context) |> Map.put(:thread, "t1")
+    context = World.dispatch_message(context, "t1", "approve the command")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_request(context, "t1")
+    run = World.latest_run(context, "t1")
+    File.write!(Path.join(World.project(context, "demo").root, "partial.txt"), "half\n")
+
+    {runtime, _} = World.codex_runtime(context, "t1")
+    :ok = GenServer.stop(runtime, :shutdown)
+
+    assert World.latest_run(context, "t1")["status"] in ~w(running waiting)
+    Map.merge(context, %{running: run["id"], run: run["id"]}) |> Map.delete(:reply)
+  end
+
+  step "the user stops the thread", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread)
+    })
+  end
+
+  step "the run is settled as stopped with its partial output kept", context do
+    assert {:ok, _} = context.reply, "stop failed: #{inspect(context.reply)}"
+    state = await_status(context, context.running, "interrupted")
+
+    items =
+      for i <- HalC2.StreamState.list(state, "turn-item"), i["runId"] == context.running, do: i
+
+    assert Enum.any?(items, &(&1["id"] == "turn-item:codex:cmd-1"))
+    assert Enum.all?(items, &(&1["status"] != "running"))
+    context
+  end
+
+  step "its pending requests are closed and its checkpoint is captured", context do
+    state = World.state(context, context.thread)
+
+    refute Enum.any?(
+             HalC2.StreamState.list(state, "runtime-request"),
+             &(&1["status"] in ~w(pending open))
+           )
+
+    run = state.entities["run"][context.running]
+
+    assert %{"status" => "ready", "files" => files} =
+             state.entities["checkpoint"][run["checkpointId"]]
+
+    assert Enum.any?(files, &(&1["path"] == "partial.txt"))
+    context
+  end
+
+  step "a late result from the provider cannot undo the stop or replace a newer attempt",
+       context do
+    id = World.thread_id(context, context.thread)
+    :ok = HalC2.Orchestration.TurnWriter.abandon(id, context.running, "failed", "late")
+    :ok = HalC2.Orchestration.TurnWriter.abandon(id, context.running, "completed", nil)
+
+    assert %{"status" => "interrupted"} =
+             World.state(context, context.thread).entities["run"][context.running]
+
+    context
+  end
+
+  # --- stopping during a slow start --------------------------------------------------------
+
+  # The runtime has its provider turn started and waits to claim the run, as it does
+  # while a slow provider takes its time.
+  step "a provider session is still starting", context do
+    context = World.providers(context)
+    id = World.thread_id(context, "t1")
+    watch = suspend_watch()
+    test = self()
+    spawn(fn -> send(test, {:sent, HalC2.Orchestration.dispatch(start(id))}) end)
+    runtime = await_claim(watch)
+    Map.merge(context, %{thread: "t1", watch: watch, runtime: runtime})
+  end
+
+  step "the user stops the thread before the start completes", context do
+    context =
+      World.command(context, %{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    :ok = :sys.resume(context.watch)
+    assert_receive {:sent, {:ok, _}}, 5_000
+    context
+  end
+
+  step "the half-started provider session is cleaned up", context do
+    assert {:ok, _} = context.reply, "stop failed: #{inspect(context.reply)}"
+    World.await_runs(context, context.thread, ["interrupted"])
+    # The runtime let go of the turn its provider started, and told the provider so.
+    :ok = GenServer.call(context.runtime, :settle)
+    assert :sys.get_state(context.runtime).turn == nil
+    assert [%{"turnId" => _}] = World.codex_requests(context, "turn/interrupt")
+    World.await_runs(context, context.thread, ["interrupted"])
+    context
+  end
+
+  # --- what a failure says -----------------------------------------------------------
+
+  # What each provider message is, and what the thread records of it.
+  @secrets %{
+    "a URL with a user name, password and query" =>
+      {"request to https://bob:hunter2@example.com/v1/chat?key=abc123 failed",
+       "request to https://example.com/v1/chat failed"},
+    "a bearer or basic authorization value" =>
+      {"rejected Authorization: Bearer abc123def and Basic dXNlcjpwYXNz",
+       "rejected Authorization: Bearer [REDACTED] and Basic [REDACTED]"},
+    "an API key, token, password or secret" =>
+      {"bad api_key=sk-12345 token: t0k3n password=hunter2 secret=s3cr3t",
+       "bad api_key=[REDACTED] token: [REDACTED] password=[REDACTED] secret=[REDACTED]"},
+    "a prefixed key, client secret or refresh token" =>
+      {~s(bad OPENAI_API_KEY=sk-abc client_secret=c5 body {"refresh_token":"r7"}),
+       ~s(bad OPENAI_API_KEY=[REDACTED] client_secret=[REDACTED] body {"refresh_token":"[REDACTED]"})},
+    "a URL that cannot be read" =>
+      {"could not reach http://[::1 broken", "could not reach [REDACTED_URL] broken"}
+  }
+
+  step ~r/^the provider fails a turn of "(?<thread>[^"]+)" with a message holding (?<secret>.+)$/,
+       %{args: [thread, secret]} = context do
+    {message, _} = Map.fetch!(@secrets, secret)
+    context = World.running_turn(context, thread)
+
+    context =
+      notify(context, "turn/completed", %{
+        "turn" => %{
+          "id" => native_turn(context),
+          "status" => "failed",
+          "error" => %{"message" => message}
+        }
+      })
+
+    await_status(context, context.running, "failed")
+    Map.put(context, :secret, secret)
+  end
+
+  step ~r/^the failure the thread records shows (?<shown>.+)$/, %{args: [_shown]} = context do
+    {message, expected} = Map.fetch!(@secrets, context.secret)
+    recorded = session(context, context.thread, "codex")["lastError"]
+    assert recorded == expected
+    refute recorded == message
+
+    for %{"failure" => %{"message" => text}} <-
+          World.entities(context, context.thread, "turn-item"),
+        do: assert(text == expected)
+
+    context
+  end
+
+  step "the provider fails a turn of {string} with a message longer than 4,096 characters",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    context =
+      notify(context, "turn/completed", %{
+        "turn" => %{
+          "id" => native_turn(context),
+          "status" => "failed",
+          "error" => %{"message" => String.duplicate("long ", 1_000)}
+        }
+      })
+
+    await_status(context, context.running, "failed")
+    context
+  end
+
+  step "the failure the thread records is at most 4,096 characters and ends with {string}",
+       %{args: [ending]} = context do
+    recorded = session(context, context.thread, "codex")["lastError"]
+    assert String.length(recorded) == 4_096
+    assert String.ends_with?(recorded, ending)
+    context
+  end
+
+  # --- a stream that ends without ending its turn --------------------------------------
+
+  step "the provider's event stream ends without saying the turn ended", context do
+    kill_app_server(context)
+  end
+
+  step "the run and its subagents are failed", context do
+    await_status(context, context.running, "failed")
+
+    World.await_state(context, context.thread, fn state ->
+      match?(
+        [%{"status" => "failed", "runId" => run}] when run == context.running,
+        HalC2.StreamState.list(state, "subagent")
+      )
+    end)
+
+    context
+  end
+
+  # The same end, with the MC itself going down: the runtime sees its connection end
+  # (traced, so the scenario knows it did) and leaves the run as it was.
+  step "a stream the MC ends because it is shutting down leaves the run for recovery",
+       context do
+    context = World.running_turn(context, context.thread)
+    {runtime, state} = World.codex_runtime(context, context.thread)
+
+    HalC2.Orchestration.Recovery.leaving(true)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Orchestration.Recovery.leaving(false) end)
+    :erlang.trace(runtime, true, [:receive])
+    kill_app_server(context)
+    conn = state.conn
+    assert_receive {:trace, ^runtime, :receive, {:EXIT, ^conn, _}}, 5_000
+    :erlang.trace(runtime, false, [:receive])
+    :ok = GenServer.call(runtime, :settle)
+
+    assert %{"status" => "running"} =
+             World.state(context, context.thread).entities["run"][context.running]
+
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   defp run(context), do: World.state(context, context.thread).entities["run"][context.run]
@@ -1093,6 +1408,20 @@ defmodule HalC2.Steps.Orchestration.Runs do
       end
 
     Map.put(context, :reply, reply)
+  end
+
+  defp interrupt_item(context, title, message) do
+    Enum.find(
+      World.entities(context, context.thread, "turn-item"),
+      &(&1["runId"] == context.running and &1["title"] == title and &1["message"] == message)
+    )
+  end
+
+  defp kill_app_server(context) do
+    {_, runtime} = World.codex_runtime(context, context.thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    context
   end
 
   defp turn_starts(context), do: World.codex_requests(context, "turn/start")

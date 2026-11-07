@@ -357,7 +357,6 @@ Feature: Claude
       | context window | 200k or 1M                                                |
 
   # Upstream #16908: the Claude 5 models always run with a 1M context window.
-  @backlog
   Scenario Outline: Which Claude models let the user choose a context window
     When the user opens the options for <model>
     Then <choice>
@@ -366,16 +365,21 @@ Feature: Claude
       | model          | choice                                                   |
       | Opus 5.5       | there is no context window option and it runs 1M        |
       | Sonnet 5.5     | there is no context window option and it runs 1M        |
-      | Opus 4.6       | the user can choose a 200k or 1M context window          |
-      | Sonnet 4.6     | the user can choose a 200k or 1M context window          |
+      | Opus 4.6       | the user can choose 200k or 1M                          |
+      | Sonnet 4.6     | the user can choose 200k or 1M                          |
       | Opus 4.5       | there is no context window option and it runs 200k       |
       | Haiku 4.5      | there is no context window option and it runs 200k       |
 
-  @backlog @priority-low
-  Scenario: A context window saved on a Claude 5 thread is ignored
-    Given a thread on Opus 5.5 that saved a 200k context window
-    When the user sends a message
-    Then Claude runs Opus 5.5 with its 1M context window
+  @priority-low
+  Scenario Outline: A context window saved on a Claude 5 thread is ignored
+    Given a thread on Opus 5.5, picked as "<picked>", that saved a 200k context window
+    When the user sends it a message
+    Then Claude is started as "<started>" and the context meter is out of 1,000,000 tokens
+
+    Examples:
+      | picked          | started             |
+      | claude-opus-5-5 | claude-opus-5-5[1m] |
+      | opus            | opus[1m]            |
 
   Scenario Outline: A Claude turn runs with the model options the user picked
     Given the installed Claude can run every model in the manifest
@@ -542,7 +546,7 @@ Feature: Claude
       | runs through Bedrock or Vertex                         | signed in                                          |
       | is too old to report its account                       | signed in                                          |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: The HAL-C2 tools' credential is never in Claude's command line
     Given the project allows the HAL-C2 tools
     When a Claude turn starts
@@ -880,7 +884,7 @@ Feature: Claude
 
   # Upstream #17778: a gateway such as 9router wraps Claude's 429 as a 503 that names its
   # cooldown, and Claude reports it as an API error with no reset time.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A gateway's wrapped rate limit is a usage limit that resets when it says
     When a Claude turn ends at 13:00 with a 503 rate_limit_error saying "(reset after <cooldown>)"
     Then the thread is marked as limited with a reset time of <reset>
@@ -892,7 +896,7 @@ Feature: Claude
       | 1h 2m 3s  | 14:02:03 |
       | 7s        | 13:00:07 |
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A 503 that is not a wrapped rate limit stays a provider error
     When a Claude turn ends with a 503 <error>
     Then the run fails with a provider error and the thread is not marked as limited
@@ -1049,9 +1053,9 @@ Feature: Claude
 
   # Upstream #13999: Claude gets a few seconds to record an interrupted turn before its session
   # closes, so the conversation it saved can be continued.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A stopped Claude turn is recorded before its session closes
-    Given the user stopped a running Claude turn
+    Given the user stopped a running Claude turn, leaving Claude its 10 seconds to stop
     When Claude records the interrupted turn within three seconds
     Then the session closes only after that record
     And the thread's next message continues the same conversation
@@ -1141,7 +1145,7 @@ Feature: Claude
     And says to start a new thread afterwards, or to check the instance's credentials when it uses an API key
 
   # Upstream #15872: Claude labels a 403 as an authentication failure, like a 401.
-  @backlog @mc
+  @mc
   Scenario: A Claude turn refused with a 403 shows Claude's reason, not a sign-in hint
     Given Claude ends a turn with the API error 403 "Your organization does not have access to this model."
     Then the turn fails showing "Your organization does not have access to this model."
@@ -1364,7 +1368,9 @@ Feature: Claude
     Then the item is titled with the tool's display name and server, with its icon
     And the raw name like "Mcp__server__tool" is not shown
 
-  @backlog @mc @priority-high
+  # Only what the user picks (model and options) is refused. A restart for a change
+  # the user did not make, such as HAL-C2's MCP config, still ends the background work.
+  @mc @priority-high
   Scenario: A model change that would kill background agents is refused
     Given Claude has a background agent or shell still running
     When the user sends a message on a different model or option
@@ -1451,35 +1457,35 @@ Feature: Claude
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
 
-  @backlog @priority-high
+  @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
     Given a Claude turn is running a command
     When the user stops the turn
     Then the command is recorded as interrupted, as Codex and Cursor record it
     And agents reading the thread are told it was interrupted, not that it failed
 
-  @backlog @priority-high
+  @priority-high
   Scenario: A thread stays out of plan mode that Claude entered itself
     Given Claude calls EnterPlanMode during a turn on a thread whose mode is not plan
     When the user sends the next turn
     Then Claude can edit again and the subagents it starts do not inherit plan mode
     And ExitPlanMode still captures the plan as a proposed plan and denies the tool
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A skill whose description holds a colon is still listed
     Given a Claude skill whose frontmatter description contains an unquoted ": "
     When the skill picker is opened
     Then the skill is listed with its invocation metadata
     And a skill with malformed structure is still left out
 
-  @backlog @priority-high
+  @priority-high
   Scenario: Slash commands are discovered in the thread's own workspace
     Given a project with commands under its ".claude/commands"
     When the user opens the slash menu in a thread of that project
     Then those commands are listed, not only the ones found in the MC's directory
     And if command discovery fails the workspace's skills are still listed
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Normal and unset fast mode count as the same selection
     Given a Claude thread has a command running in the background
     When a follow-up arrives with fast mode off where the first turn left it unset
@@ -1546,11 +1552,23 @@ Feature: Claude
     And it reads the messages it missed before the new one
 
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
-  @backlog @mc @plugin-claude @priority-high
-  Scenario: A prompt Claude never starts a turn for fails instead of hanging
-    Given Claude acknowledges a prompt without ever starting a turn for it
+  @mc @plugin-claude @priority-high
+  Scenario Outline: A prompt Claude never starts a turn for fails instead of hanging
+    Given Claude ends a prompt as <state> without ever starting a turn for it
     Then the turn fails with "Claude acknowledged the message but never started a turn for it."
     And the next message the user sends starts a turn as usual
+
+    Examples:
+      | state     |
+      | completed |
+      | discarded |
+      | refused   |
+
+  @mc @plugin-claude
+  Scenario: A prompt Claude never starts a turn for leaves its background work running
+    Given Claude has a background agent or shell still running
+    When the user sends a message Claude never starts a turn for
+    Then that message fails and the running background work is untouched
 
   # Upstream #16486: a background subagent keeps working after its parent's turn ended.
   @backlog @mc @shared @plugin-claude
