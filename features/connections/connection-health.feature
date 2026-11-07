@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15052
+#   https://github.com/pingdotgg/t3code/pull/18155
+#   https://github.com/pingdotgg/t3code/pull/18469
 #   https://github.com/pingdotgg/t3code/pull/14518
 #   https://github.com/pingdotgg/t3code/pull/20441
 #   https://github.com/pingdotgg/t3code/pull/16200
@@ -259,12 +262,22 @@ Feature: Connection health
 
   # The client's own reason for a drop ("timeout", "HTTP 502", a socket error) goes to its
   # log under the attempt's trace id; the user reads a sentence.
+  # Upstream #18469: losing a live session reads as reconnecting, not as a failed connection.
   @desktop @mobile
   Scenario: The environment's status says it is reconnecting, in plain words
     Given the connection dropped because of a timeout
     Then the environment reads "Reconnecting"
     And the notice says why: "It stopped answering. HAL-C2 keeps trying."
     And no surface shows the client's own reason "timeout"
+
+  # Upstream #18469: losing a live session reads as reconnecting, not as a failed connection.
+  # The desktop and the phone pass the scenario above; this is the terminal client's half.
+  @backlog @tui
+  Scenario: The terminal client shows a session lost after connecting as reconnecting
+    Given the client was connected to the environment
+    When the connection drops
+    Then the environment's status says "Reconnecting"
+    And it does not say the connection failed
 
   # The window shows its connection as an icon and a word; hovering it says what is going
   # on, and clicking it opens a panel with the sentence and what the user can do.
@@ -299,6 +312,14 @@ Feature: Connection health
     When the app starts and connects to it
     Then within a second and a half the window shows it is not connected
     And nothing said it was connected
+
+  # Upstream #18155: what a connecting environment is asked for stays loading, not failed.
+  @backlog @shared
+  Scenario: An environment that is still connecting is not shown as failing
+    Given the user opens Usage while an environment is connecting
+    When the connection is handed over to a new session
+    Then the environment's usage shows as loading
+    And it is never shown as unable to report
 
   @desktop @mobile
   Scenario: The user copies a connection's trace id for a bug report
@@ -507,6 +528,21 @@ Feature: Connection health
       | protocol                       | advice                                   |
       | a newer protocol than the client | update HAL-C2 on this device          |
       | an older protocol than the client | update HAL-C2 on that environment    |
+
+  # Upstream #15052: an incompatible host is retried once it is compatible instead of being switched off for good
+  @backlog @shared
+  Scenario: A blocked environment connects by itself once it is compatible again
+    Given the connection to "server" was blocked because its MC speaks an older protocol
+    When "server" is updated to a protocol the client speaks
+    Then the client connects to "server" without the user switching it back on
+    And "server" was never saved as switched off
+
+  # Upstream #15052: only the user's own choice keeps an environment off
+  @backlog @shared
+  Scenario: An environment the user switched off stays off
+    Given the user switched "server" off
+    When "server" becomes reachable and compatible
+    Then the client does not connect to "server"
 
   # Legacy: packages/client-runtime/src/connection/layer.ts (watchDiscoveredCompatibility)
   # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.

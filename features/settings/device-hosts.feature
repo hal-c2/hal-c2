@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17440
 #   apps/web/src/components/settings/DeviceHostsSettings.tsx
 #   apps/web/src/components/settings/DeviceHostEditor.tsx
 #   apps/web/src/components/settings/deviceHostsSettings.logic.ts (updateDeviceHosts)
@@ -96,3 +97,12 @@ Feature: Device hosts
       Given saving on "Build box" fails
       When the user adds a device host
       Then the user is told the device hosts were not saved on all environments
+
+    # Upstream #17440: SSH device-host tunnels keep their own connection under ControlMaster.
+    # SSH device hosts are dropped; a remote machine's devices come from its own MC.
+    @dropped @mc
+    Scenario: An SSH device host's tunnel does not share the user's SSH connection
+      Given the user's SSH configuration shares connections to "mac-mini"
+      When the MC opens a tunnel to the device host "mac-mini"
+      Then the tunnel uses a connection of its own
+      And closing it leaves no forwards behind

@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18991
+#   https://github.com/pingdotgg/t3code/pull/18415
+#   https://github.com/pingdotgg/t3code/pull/21366
+#   https://github.com/pingdotgg/t3code/pull/18548
+#   https://github.com/pingdotgg/t3code/pull/18248
+#   https://github.com/pingdotgg/t3code/pull/20991
+#   https://github.com/pingdotgg/t3code/pull/15839
+#   https://github.com/pingdotgg/t3code/pull/17501
+#   https://github.com/pingdotgg/t3code/pull/19733
+#   https://github.com/pingdotgg/t3code/pull/17265
 #   https://github.com/pingdotgg/t3code/pull/15945
 #   https://github.com/pingdotgg/t3code/pull/16236
 #   https://github.com/pingdotgg/t3code/pull/17026
@@ -173,6 +183,13 @@ Feature: Codex
       | the MC checks Codex's version         |
       | Codex writes a title for a new thread |
 
+  # Upstream #15839: MCP servers in Codex's launch arguments are kept beside HAL-C2's own
+  @backlog
+  Scenario: MCP servers named in Codex's launch arguments stay alongside HAL-C2's
+    Given the Codex instance's launch arguments add the MCP server "docs"
+    When a Codex thread starts, resumes, forks or is rolled back
+    Then Codex has both "docs" and HAL-C2's tools
+
   Scenario: Reverting a Codex turn rolls Codex back too
     Given a Codex thread with three turns
     When the user reverts to the end of the first turn
@@ -275,10 +292,25 @@ Feature: Codex
     When the Codex app-server exits unexpectedly
     Then the turn fails saying Codex exited unexpectedly
 
+  # Upstream #19733: the reader ends the session on a line above 128 MiB.
+  @backlog
+  Scenario: A Codex message larger than 128 MiB ends the session
+    Given a Codex turn is running
+    When Codex sends a message larger than 128 MiB
+    Then the turn fails saying Codex sent a message too large to read
+    And requests waiting on Codex fail too
+
   Scenario: Codex stopping on a usage limit names the limit and the reset
     When Codex stops because the weekly limit is used up
     Then the thread says the weekly limit is used up and when it resets
     And it says to send the message again after the reset
+
+  # Upstream #17501: retry exhaustion on HTTP 429 was a generic error.
+  @backlog
+  Scenario: Codex giving up after repeated 429 responses is a usage limit
+    When Codex ends a turn after too many failed attempts that each answered 429
+    Then the thread is marked as limited
+    And the run does not fail as a provider error
 
   Scenario: A workspace plan out of credits says who can fix it
     Given the Codex account is on a workspace plan with no credits left
@@ -293,6 +325,15 @@ Feature: Codex
       | option       | choices                                               |
       | reasoning    | none, minimal, low, medium, high, extra high, max     |
       | service tier | standard or fast                                      |
+
+  # Upstream #20991: an unset effort follows the model's default instead of being forced to medium
+  @backlog
+  Scenario: A Codex turn with no reasoning chosen runs at the model's own default
+    Given a Codex model whose default reasoning is "high"
+    And the thread has no reasoning level chosen
+    When the user sends a message
+    Then the turn runs at "high"
+    And a reasoning level the user picks is used instead, in plan mode too
 
   Scenario: Codex subagents appear as child threads
     When Codex starts a subagent
@@ -479,6 +520,14 @@ Feature: Codex
     When the user sends a message in plan mode and then one in default mode
     Then Codex receives HAL-C2's orchestration instructions with the second message only
 
+  # Upstream #18415: Codex threads get the whole orchestration instructions
+  @backlog @priority-high
+  Scenario: Codex receives the whole orchestration instructions
+    Given a Codex thread in default mode
+    When the turn starts
+    Then Codex is given every part of HAL-C2's orchestration instructions
+    And none is cut away by Codex's limit on the length of one instruction
+
   # Upstream #13547: a model catalog's own default-mode text replaced the instructions sent
   # inside the collaboration mode, so HAL-C2's details went missing on newer models.
   @mc @plugin-codex @backlog @priority-high
@@ -492,6 +541,19 @@ Feature: Codex
     Given the "hal-c2" server is attached to a Codex thread
     When Codex compacts the thread's context
     Then the next message carries HAL-C2's runtime and tool instructions again
+
+  # Upstream #17265: unfinished Codex compactions settle when their turn ends; failed and stopped labels win.
+  @backlog @shared
+  Scenario Outline: A compaction Codex never finished ends with its turn
+    Given Codex started compacting the thread and never reported the compaction finished
+    When the turn <ends>
+    Then the compaction no longer reads as running
+    And it reads "<label>"
+
+    Examples:
+      | ends                   | label   |
+      | is stopped by the user | Stopped |
+      | fails                  | Failed  |
 
   Scenario: Codex is not told about browser or device tools it does not have
     Given the "hal-c2" server is attached to a Codex thread without browser or device tools
@@ -575,6 +637,14 @@ Feature: Codex
     When Codex asks without a reason to change 23 files
     Then the approval lists the first 20 files in path order
     And it ends with "+3 more"
+
+  # Upstream #18248: Codex's approval request carries no file names, only the change it belongs
+  # to; the files come from when Codex started that change.
+  @backlog
+  Scenario: A Codex approval names the files Codex said it would change
+    Given Codex started a change to edit "src/cart.ts" and delete "src/old.ts"
+    When Codex asks without a reason to approve that change, naming no files
+    Then the approval lists "src/cart.ts" to edit and "src/old.ts" to delete
 
   @mc
   Scenario Outline: An older Codex's approval requests are answered too
@@ -826,6 +896,16 @@ Feature: Codex
     Then both subagents' turns are stopped
     And both subagents are shown as interrupted
 
+  # Upstream #21366: a failed root turn ends its run at once while its subagents carry on in their
+  # own threads; an interrupted turn still waits, since Stop interrupts the subagents too.
+  @backlog @priority-high
+  Scenario: A failed Codex turn does not hold the thread for its subagents
+    Given a Codex turn with two subagents at work
+    When the turn fails while the subagents keep working
+    Then the run ends as failed and the subagents carry on
+    And the thread no longer shows the agent thinking
+    And the next message the user sends starts a new turn instead of waiting in the queue
+
   @mc
   Scenario: A Codex subagent that starts work under a stopped turn is interrupted
     Given a Codex turn that was stopped
@@ -911,6 +991,13 @@ Feature: Codex
       | the shadow home is the shared home itself             | the shadow home must be different from the shared home   |
       | a real file sits where a link to the shared home belongs | the entry already exists and is not a link            |
       | the login file is a link                              | the login must be a real file, not a link                |
+
+  # Upstream #18991: Finder metadata no longer blocks shadow-home setup
+  @backlog @priority-low
+  Scenario: A Finder ".DS_Store" does not stop a Codex account's home being set up
+    Given a Codex account's home folder holds only a ".DS_Store" file left by Finder
+    When the account is set up
+    Then its home is set up as if the folder were empty
 
   # Upstream #17663: Codex 0.160 writes the lock at its home's root; a shadow home used
   # on its own kept a real one and the instance stayed disabled.
@@ -1049,6 +1136,16 @@ Feature: Codex
       When the user looks at the tool call
       Then the app is shown with its content
       And the app sees no cookies and keeps none it sets
+
+    # Upstream #18548: an app went full screen on load and again right after the user left it.
+    @backlog @desktop @mobile @priority-high
+    Scenario: An MCP app goes full screen only after the user taps inside it
+      Given an MCP app is open in a Codex thread
+      When the app asks to go full screen without the user touching it
+      Then the app stays in the thread
+      When the user taps inside the app and it asks again
+      Then the app opens full screen
+      And the user can always leave full screen, and the app cannot go back without another tap
 
     # Upstream #17040: a short card left a large gap under a fixed 420 point frame.
     @backlog @mobile @priority-low

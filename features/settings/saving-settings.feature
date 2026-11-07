@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18406
 #   https://github.com/pingdotgg/t3code/pull/19312
 #   apps/desktop-qt/src/native/SettingsController.cpp (the MC's settings document, this device's preferences)
 #   apps/server-ex/lib/hal_c2/settings.ex (versioned put: a stale write is refused)
@@ -88,6 +89,13 @@ Feature: Saving settings from the desktop
       And the desktop holds the MC's settings at version 0
       When the desktop turns "enableAssistantStreaming" off
       Then the MC saved the change at version 0
+
+    # Upstream #18406: changes made while the first snapshot loaded were lost.
+    @backlog @mc
+    Scenario: A change made while a client loads its settings reaches it
+      Given a client has asked for its settings and not yet received them
+      When another client changes a setting
+      Then the first client receives its settings followed by that change
 
   Rule: This device's preferences stay on this device
 

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20980
+#   https://github.com/pingdotgg/t3code/pull/20551
+#   https://github.com/pingdotgg/t3code/pull/18623
 #   https://github.com/pingdotgg/t3code/pull/18472
 #   https://github.com/pingdotgg/t3code/pull/15746
 #   https://github.com/pingdotgg/t3code/pull/7079
@@ -142,6 +145,7 @@ Feature: Antigravity
     When the user refreshes provider status
     Then the user is told the executable or its helper is missing
 
+  # Upstream #18623: an unchecked Antigravity sign-in is shown neutrally, not as a warning.
   Scenario Outline: Antigravity's health states are explained
     Given <situation>
     When the user opens the provider list
@@ -721,3 +725,18 @@ Feature: Antigravity
       | linux-arm64  |
       | win32-x64    |
       | win32-arm64  |
+
+  # Upstream #20980: the version learned at the ACP handshake survives a probe that cannot read it.
+  @backlog
+  Scenario: Antigravity keeps the version it reported when it started
+    Given Antigravity runs from a custom executable
+    And it reported version "1.4.0" when its session started
+    When a later version check of that executable cannot tell its version
+    Then Antigravity is still shown as version "1.4.0"
+
+  # Upstream #20551: Antigravity uses the system certificate bundle so it can reach Google on NixOS.
+  @backlog
+  Scenario: Antigravity reaches Google on NixOS
+    Given the MC runs on NixOS, where certificates are not in the usual places
+    When the user sends a message to Antigravity
+    Then Antigravity reaches Google and answers

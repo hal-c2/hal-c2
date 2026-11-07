@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15920
 #   apps/server-ex/lib/hal_c2/import/v2.ex (Node V2 orchestration_events import)
 #   apps/server-ex/lib/mix/tasks/hal_c2.import.ex (the manual import task)
 #   apps/server-ex/lib/hal_c2/import/v1_thread.ex (version 1 threads)
@@ -129,6 +130,7 @@ Feature: Bringing history over from the Node server
     Then the whole transcript is migrated before the thread is read or changed
     And migrating it again adds no message twice
 
+  # Upstream #15920: one failed thread no longer stops the background migration; it is retried.
   @mc @backlog @priority-high
   Scenario: A transcript that fails to migrate does not stop the others
     Given the transcript of one version 1 thread cannot be migrated
@@ -161,6 +163,15 @@ Feature: Bringing history over from the Node server
       | damaged attachments on a message          | that message without attachments     |
       | a reply that was still streaming          | that reply marked interrupted        |
       | system or tool messages                   | only its user and assistant messages |
+
+  # Upstream #15920: a message whose optional context could not be read stopped startup; the
+  # migration now drops that context and keeps the message.
+  @mc @backlog @priority-low
+  Scenario: A version 1 message with an unreadable context keeps its text
+    Given a version 1 message carries one context that can be read and one that cannot
+    When the thread is migrated
+    Then the message keeps its text and the readable context
+    And the migration goes on to the next thread
 
   @mc @backlog
   Scenario: A linked pull request of a version 1 thread joins its pull request list once

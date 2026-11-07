@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19775
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (hidden commit per run, private index, 10 MB diff limit)
 #   apps/server-ex/lib/hal_c2/orchestration/rollback.ex (checkpoint.rollback, restoreFiles, errors)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (rolled_back runs hidden)
@@ -51,6 +52,13 @@ Feature: Checkpoints and rewinding
       | its reply      | Revert files too | the workspace files match the end of turn 1    |
       | the diff panel | Keep files       | the MC is asked to leave the files as they are |
       | the diff panel | Revert files too | the workspace files match the end of turn 1    |
+
+  # Upstream #19775: the Edit from here confirmation warns that reverting files also undoes the user's own edits.
+  @backlog @desktop
+  Scenario: Restoring files warns that the user's own edits go too
+    Given the user edited "src/cart.ts" by hand after turn 1
+    When the user asks to revert to turn 1 from its reply
+    Then the confirmation warns that "Revert files too" also undoes the user's own edits since then
 
   @mc
   Scenario: Rewinding hides the later turns from the timeline

@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17061
+#   https://github.com/pingdotgg/t3code/pull/20081
+#   https://github.com/pingdotgg/t3code/pull/19808
+#   https://github.com/pingdotgg/t3code/pull/15116
+#   https://github.com/pingdotgg/t3code/pull/14657
+#   https://github.com/pingdotgg/t3code/pull/10700
+#   https://github.com/pingdotgg/t3code/pull/21413
+#   https://github.com/pingdotgg/t3code/pull/10310
+#   https://github.com/pingdotgg/t3code/pull/18624
 #   https://github.com/pingdotgg/t3code/pull/19207
 #   https://github.com/pingdotgg/t3code/pull/17711
 #   https://github.com/pingdotgg/t3code/pull/17530
@@ -49,11 +58,28 @@ Feature: Subscription limits
     When the next check of Codex fails
     Then the windows from a minute ago are still shown
 
+  # Upstream #15116: a window reported mid-turn cleared the failed-check marker; the failure now
+  # stays until a full check succeeds.
+  @mc @backlog
+  Scenario: A reading from a running turn does not hide a failed check
+    Given the last check of Codex's limits failed
+    When a running Codex turn reports one rate-limit window
+    Then that window is shown
+    And Codex's limits still say the last check failed until a check succeeds
+
   @mc
   Scenario: An API key account reports that limits are not available
     Given Codex is signed in with an API key
     When the MC checks Codex's limits
     Then Codex's limits are reported as not supported for this account
+
+  # Upstream #18624: a Claude account with limits but no data is a failed check, not unsupported
+  @mc @backlog @plugin-claude
+  Scenario: A Claude account whose limits come back empty is checked again
+    Given a Claude subscription account whose check says it has limits but returns none
+    When the MC checks Claude's limits
+    Then the check is reported as failed, not as not supported
+    And the next check that returns limits shows them
 
   @mc
   Scenario: A disabled provider shows no limits until it is enabled again
@@ -82,6 +108,14 @@ Feature: Subscription limits
     When the background check interval passes
     Then Codex and Claude are not checked
 
+  # Upstream #10310: switching background checks off also stops reading the usage hubs
+  @mc @backlog
+  Scenario: Background checks switched off do not read the usage hubs either
+    Given the health check interval is set to never
+    When a minute passes
+    Then no usage hub is read
+    And refreshing by hand still reads them
+
   @mc
   Scenario: Using a Codex reset credit restores the limit
     Given Codex has a banked reset credit
@@ -93,6 +127,14 @@ Feature: Subscription limits
     Given Codex has a banked reset credit
     When the user uses the reset credit and the following check fails
     Then the user is told "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
+
+  # Upstream #19808: reset credit progress shows after the usage popover closes
+  @backlog @desktop
+  Scenario: Using a reset credit shows its progress under the usage bar
+    Given Codex has a banked reset credit
+    When the user uses the reset credit from the usage bar and confirms
+    Then "Using reset credit…" shows under the bar after the popover closes
+    And it is replaced by how the reset went
 
   @backlog @mc @plugin-codex @priority-low
   Scenario Outline: A refused Codex reset credit is not reported as unconfirmed when the following check fails
@@ -239,6 +281,14 @@ Feature: Subscription limits
     When the MC reads the hub
     Then the account shows its session and weekly windows and the model's own weekly window
 
+  # Upstream #21413: a hub Codex account keeps its plan when the usage response leaves it out
+  @mc @backlog @priority-high
+  Scenario: A hub's Codex account keeps its plan when the usage report leaves it out
+    Given a hub Codex account on the Free plan whose usage report names no plan
+    When the MC reads the hub
+    Then the account is labelled with the Free plan from its sign-in details
+    And its quota is shown as that plan's window, not as a session window
+
   # Legacy: apps/server/src/usage/cliproxyApi.ts (consume outcomes)
   # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (@outcomes)
   @mc @backlog @priority-high
@@ -284,6 +334,14 @@ Feature: Subscription limits
       | Grok          | its billing period allowance and reset time |
       | OpenCode Go   | its session, weekly and monthly allowance  |
 
+  # Upstream #14657: a Codex Enterprise allowance with no session or weekly window was dropped; it
+  # is now a monthly credit limit with the reset Codex reports.
+  @mc @backlog
+  Scenario: A Codex Enterprise allowance shows as a monthly credit limit
+    Given Codex is signed in to an Enterprise workspace that reports only its allowance, 99% left
+    When the MC checks limits
+    Then Codex reports a monthly credit limit 1% used, with the reset Codex gave
+
   @mc
   Scenario: Grok with an explicit API key reports no subscription limits
     Given Grok is connected with an explicit API key
@@ -298,6 +356,22 @@ Feature: Subscription limits
     When the user opens Limits
     Then Grok's account is listed with the notice "No limits reported."
     And it is not reported as not supported
+
+  # Upstream #17061: a complete weekly or monthly period with no usage percentage now reads as
+  # unused; an incomplete, unsupported or invalid period still reports no limits. Replaces the
+  # scenario above once the MC and the clients carry it.
+  @mc @shared @backlog @plugin-grok @priority-low
+  Scenario Outline: A Grok account with no metered usage yet shows its billing period unused
+    Given Grok is signed in with a subscription and has not used any metered credit yet
+    And xAI reports <period> without a usage percentage
+    When the user opens Limits
+    Then <shown>
+
+    Examples:
+      | period                            | shown                                                           |
+      | a complete weekly billing period  | Grok's weekly window reads 0% used with its reset time          |
+      | a complete monthly billing period | Grok's monthly window reads 0% used with its reset time         |
+      | an incomplete billing period      | Grok's account is listed with the notice "No limits reported."  |
 
   @mc @backlog @priority-low
   Scenario: Grok names its limits by the signed-in account's email
@@ -316,6 +390,15 @@ Feature: Subscription limits
     Given the same Codex account is signed in on two environments and reported by a hub
     When the user opens Limits
     Then that account is counted once in each window
+
+  # Upstream #10700: two instances of a provider signed in to one subscription counted twice; they
+  # are one account, with the freshest usage and reset credit.
+  @backlog @mc @desktop @mobile @priority-low
+  Scenario: Two instances signed in to the same account count once
+    Given the Codex instances "codex" and "codex-work" are signed in to the same account and workspace
+    When the user opens Limits
+    Then that account is shown once, with the freshest usage either instance reported
+    And its reset credit is redeemed through the instance that reported it
 
   # OpenCode Go reports no account email, so a shared API key is what identifies the account.
   @backlog @desktop @mobile @priority-low
@@ -471,3 +554,12 @@ Feature: Subscription limits
     When the user opens the usage limits
     Then Antigravity shows its 5-hour and weekly windows
     And the Gemini models' windows are kept apart from those of the Claude and GPT models it shares
+
+  # Upstream #20081: Antigravity's limits merge both quota services
+  @backlog @mc @plugin-antigravity @priority-low
+  Scenario: Antigravity's Gemini limits show when one quota service leaves them out
+    Given one of Google's quota services reports only the Claude and GPT limits for the account
+    And the other reports the Gemini limits
+    When the user opens the usage limits
+    Then Antigravity shows both the Gemini limits and the Claude and GPT limits
+    And a limit both services report shows the more used reading

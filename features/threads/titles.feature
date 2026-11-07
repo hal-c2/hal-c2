@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19822
 #   docs/user/thread-sidebar.md (Rename, Regenerate title, agent-managed metadata)
 #   apps/web/src/hooks/useRenameThread.ts
 #   apps/mobile/src/features/threads/thread-title-rename.ts (empty refused, unchanged title sends nothing)
@@ -194,6 +195,13 @@ Feature: Thread titles
     When the user starts a thread with "fix" followed by a reference to "src/cart.ts" and a cited reply
     Then the thread's first title holds the words and the cited text without link markup
     And the citation is sent as written
+
+  # Upstream #19822: an image-first task on the phone showed reference markup in its first title.
+  @backlog @mobile @priority-low
+  Scenario: A task started from the phone with an image is first titled from its words
+    When the user starts a task on the phone with the image "cart.png" and "why is the total wrong"
+    Then the thread is first listed as "why is the total wrong"
+    And the title holds no reference markup
 
   @backlog @mobile @priority-low
   Scenario: A first title is cut short when a comment makes it long

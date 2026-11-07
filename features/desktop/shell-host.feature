@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19554
+#   https://github.com/pingdotgg/t3code/pull/20277
+#   https://github.com/pingdotgg/t3code/pull/15044
+#   https://github.com/pingdotgg/t3code/pull/16670
 #   https://github.com/pingdotgg/t3code/pull/19118
 #   https://github.com/pingdotgg/t3code/pull/17587
 #   https://github.com/pingdotgg/t3code/pull/14784
@@ -126,12 +130,29 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the MC listens on the next free port
 
+    # Upstream #15044: a host without IPv6 support no longer reports every free port as taken.
+    @backlog @desktop @priority-low
+    Scenario: A host without IPv6 still finds a free port for the MC
+      Given the host was started with IPv6 turned off
+      And nothing listens on the MC's default port
+      When the user starts the desktop app
+      Then the MC listens on its default port
+
     @desktop
     Scenario: An MC already running on the desktop's files is used instead of starting another
       Given the background service runs an MC on the files the desktop app's MC would use
       When the user starts the desktop app
       Then the shell is told that MC's address and the MC's own access token
       And the desktop app starts no MC of its own
+
+    # Upstream #19554: a second launch of the app starts no second backend
+    @backlog @desktop
+    Scenario: Starting the desktop app again shows the window already open
+      Given the desktop app is running
+      When the user starts it again
+      Then the open window is brought forward
+      And no second app or MC is started
+      And a link the second start was given is handled by the running app
 
     # At login the app can start before the background service's MC has said where it
     # listens; the MC that gets the files first keeps them (mc-startup.feature).
@@ -239,6 +260,13 @@ Feature: The desktop app runs its own MC
       Given the desktop app is attached to a running MC
       When the user quits the desktop app
       Then the MC keeps running
+
+    # Upstream #20277: the backend a desktop started exits when that desktop dies.
+    @backlog @desktop
+    Scenario: A desktop app that dies without quitting does not leave its MC running
+      Given the desktop app started its own MC
+      When the desktop app is killed
+      Then the MC it started stops
 
   Rule: Start-up failures say what went wrong
 
@@ -395,6 +423,7 @@ Feature: The desktop app runs its own MC
 
   Rule: The app fits the desktop it runs on
 
+    # Upstream #16670: older xdg-open could not find a quoted Exec path; the path is quoted only when it must be.
     # Legacy: apps/desktop/src/app/DesktopLinuxUrlHandler.ts
     @backlog @desktop @priority-low
     Scenario: On Linux a link for HAL-C2 opens the installed app

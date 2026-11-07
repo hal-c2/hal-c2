@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18175
+#   https://github.com/pingdotgg/t3code/pull/21523
 #   https://github.com/pingdotgg/t3code/pull/19103
 #   https://github.com/pingdotgg/t3code/pull/10984
 #   https://github.com/pingdotgg/t3code/pull/19257
@@ -820,6 +822,20 @@ Feature: Acting on a pull request
     Then "Needed again" stays in the conversation
     And the user sees an "error" toast "Could not reopen this pull request"
 
+  # Upstream #18175: closing with a comment ran on the first press; it asks for a second press like
+  # the other close controls and keeps the comment when left unconfirmed. Reopening with a comment
+  # still takes one press.
+  @backlog @desktop
+  Scenario: Closing with a comment asks to be pressed again
+    Given the user has written "Superseded by #50" on pull request 42
+    When the user chooses to close pull request 42 with the comment
+    Then pull request 42 is still open and the same control asks to confirm
+    When the user presses Escape
+    Then the control no longer asks to confirm
+    And "Superseded by #50" is still in the comment
+    When the user closes pull request 42 with the comment and confirms
+    Then "Superseded by #50" is posted and pull request 42 is closed
+
   @backlog @desktop
   Scenario: A comment that could not be posted stops the close
     Given the host refuses comments on pull request 42
@@ -920,6 +936,14 @@ Feature: Acting on a pull request
     When the user merges it
     Then the merge request is merged now
     And auto-merge is not left armed
+
+  # Upstream #21523: GitLab merges and auto-merge name the merge request's current head.
+  @backlog @mc @priority-low
+  Scenario: A GitLab merge is pinned to the head the user saw
+    Given a GitLab project that only merges a merge request at a stated head
+    When the user merges one of its merge requests or arms auto-merge
+    Then the merge names the merge request's current head and GitLab accepts it
+    And when that head cannot be read the user is told and nothing is merged
 
   @backlog @mc @priority-low
   Scenario Outline: Auto-merge keeps the method it was armed with

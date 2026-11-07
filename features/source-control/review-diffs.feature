@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19550
+#   https://github.com/pingdotgg/t3code/pull/17886
+#   https://github.com/pingdotgg/t3code/pull/15393
+#   https://github.com/pingdotgg/t3code/pull/20297
+#   https://github.com/pingdotgg/t3code/pull/20449
 #   https://github.com/pingdotgg/t3code/pull/14623
 #   https://github.com/pingdotgg/t3code/pull/17724
 #   https://github.com/pingdotgg/t3code/pull/17528
@@ -132,6 +137,13 @@ Feature: Reviewing working tree and branch changes
     When a client asks to review "/etc"
     Then the request is refused with "This folder is not part of a project on this machine, so its changes cannot be shown."
 
+  # Upstream #20449: review diffs load for a thread's worktree outside the managed worktrees folder.
+  @backlog @mc
+  Scenario: A thread's worktree outside the project folder can be reviewed
+    Given thread "Work" of project "shop" works in a worktree outside the project folder
+    When the user reviews the working tree of "Work"
+    Then the changes in that worktree are shown
+
   @tui
   Scenario: Each file is shown with its own highlighting
     Given the diff changes "src/cart.ts" and "README.md"
@@ -244,6 +256,15 @@ Feature: Reviewing working tree and branch changes
     Then the diff shows the new changes without the user refreshing
     And coming back to the window after working elsewhere shows the checkout as it is now
 
+  # Upstream #17886: an empty diff flashed a loading placeholder each time it refreshed; only a
+  # first load shows one.
+  @backlog @desktop
+  Scenario: An empty diff keeps saying so while it refreshes
+    Given the user is reviewing a working tree with no changes
+    When the diff refreshes in the background
+    Then it keeps saying there are no changes
+    And no loading placeholder is shown
+
   @desktop
   Scenario: The branch diff compares against the branch's own base unless another is chosen
     Given the branch "feature/tax" was started from "main"
@@ -253,6 +274,15 @@ Feature: Reviewing working tree and branch changes
     Then the diff compares against "origin/main"
     When the user picks "Automatic" again
     Then the diff compares against "main"
+
+  # Upstream #15393: the automatic base used origin even when the default branch tracks another
+  # remote; it now uses what the default branch tracks.
+  @backlog @mc @desktop
+  Scenario: The automatic base follows what the default branch tracks
+    Given "main" tracks "upstream/main" and "origin/main" is behind it
+    When the user reviews the branch changes
+    Then the diff compares against "upstream/main"
+    And commits already on "upstream/main" are not counted as changes
 
   @desktop
   Scenario: A base that exists only on the remote is offered and marked
@@ -324,6 +354,13 @@ Feature: Reviewing working tree and branch changes
     When the user switches between "Tax" and "Fees"
     Then each thread shows its own selection with its own base
     And a thread that was never reviewed opens on the working tree without needing git status
+
+  # Upstream #20297: switching away from the diff and back reset what the user chose to review.
+  @backlog @desktop
+  Scenario: The diff keeps what the user chose to review after switching away
+    Given the user chose to review the uncommitted changes
+    When the user switches to the thread's files and back to the diff
+    Then the diff still shows the uncommitted changes
 
   @desktop
   Scenario: A turn that no longer exists falls back to the latest turn
@@ -473,3 +510,11 @@ Feature: Reviewing working tree and branch changes
     When the user opens the diff panel
     Then it shows Changes: everything since the merge base through the working tree
     And Working tree is still selectable
+
+  # Upstream #19550: reopening the diff panel reused what it showed last time, hiding edits made outside the app.
+  @backlog @desktop
+  Scenario: Reopening the diff panel shows edits made outside the app
+    Given the user closed the diff panel
+    And "README.md" was edited in another editor
+    When the user opens the diff panel again
+    Then it shows the edit to "README.md"

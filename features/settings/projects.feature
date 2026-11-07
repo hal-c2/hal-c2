@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20231
 #   https://github.com/pingdotgg/t3code/pull/18901
 #   https://github.com/pingdotgg/t3code/pull/17860
 #   docs/user/project-settings.md (Project category, mobile Overview, project icons)
@@ -101,6 +102,14 @@ Feature: Projects settings panel
     When the user asks to remove the "laptop" checkout of "shop"
     Then the confirmation names 3 threads, the folder and "laptop"
     And the confirmation says conversation history is cleared permanently
+
+  # Upstream #20231: removing a project returns to the project overview and keeps the chosen environment.
+  @backlog @desktop
+  Scenario: Removing a project returns to the project list
+    Given the user is looking at the "laptop" checkout of "shop" in the Projects settings
+    When the user removes it and confirms
+    Then the Projects settings list the remaining projects
+    And "laptop" is still the environment shown
 
   @desktop
   Scenario: Removing from the desktop folder explorer opens the removal in settings

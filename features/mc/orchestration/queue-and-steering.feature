@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16926
+#   https://github.com/pingdotgg/t3code/pull/21473
+#   https://github.com/pingdotgg/t3code/pull/15691
+#   https://github.com/pingdotgg/t3code/pull/17773
 #   https://github.com/pingdotgg/t3code/pull/20184
 #   https://github.com/pingdotgg/t3code/pull/18824
 #   https://github.com/pingdotgg/t3code/pull/19210
@@ -52,6 +56,14 @@ Feature: Queueing, steering and restarting
     Given "t1" has a turn that is starting on "codex"
     When the user sends "Next" to "t1" with automatic delivery
     Then "Next" waits in the queue
+
+  # Upstream #15691: automatic messages queue in the gap between a run's provider turns instead of being rejected.
+  @backlog @mc
+  Scenario: An automatic message queues while a run is between provider turns
+    Given "t1" has an active run whose provider turn has finished and whose next turn has not started
+    When the user sends "Next" to "t1" with automatic delivery
+    Then "Next" waits in the queue
+    And the message is not rejected
 
   @mc
   Scenario Outline: Queueing needs the provider the message is queued for to support a queue
@@ -328,6 +340,31 @@ Feature: Queueing, steering and restarting
     And the running turn is interrupted
     And "Hurry" runs on "claudeAgent"
 
+  # Upstream #16926: a queued message promoted to a steer after Stop could land on the stopping
+  # run and be lost.
+  @backlog @mc @priority-high
+  Scenario Outline: A turn being stopped cannot be steered into
+    Given the user stopped the running turn of "t1" and the provider is still stopping it
+    And "Next" is queued on "t1"
+    When the user tries to <action>
+    Then the command is refused
+    And "Next" is still queued and held
+
+    Examples:
+      | action                              |
+      | promote "Next" to a steer           |
+      | send "Also" to "t1" as a steer      |
+      | send "Instead" to "t1" with restart |
+
+  # Upstream #16926: an ordinary send during the Stop waits in the queue instead of steering.
+  @backlog @mc @priority-high
+  Scenario: A message sent while a turn is being stopped queues behind earlier messages
+    Given the user stopped the running turn of "t1" and the provider is still stopping it
+    And "Next" is queued on "t1"
+    When the user sends "Also" to "t1"
+    Then "Also" is queued after "Next" without steering the stopping turn
+    And "Next" starts once the turn has stopped
+
   @mc
   Scenario: Queued messages wait after an MC restart until the user resumes the queue
     Given "t1" had a queued message when the MC restarted
@@ -354,13 +391,32 @@ Feature: Queueing, steering and restarting
     When another run of "t1" ends
     Then "A" is still queued
 
+  # Upstream #21473: a run started by a message the user sent now releases the hold, so only a
+  # run the user did not start leaves it. Replaces the scenario above once the MC carries it.
+  @backlog @mc @priority-high
+  Scenario: A held queue does not start when a run the user did not start ends
+    Given "t1" has a held queued message "A"
+    When another agent's message reaches "t1" and its run ends
+    Then "A" is still queued
+
   # Runs are numbered in the order they start: checkpoints, handoffs and windowed
   # history count by it.
+  # Upstream #17773: queued messages land after a resume that ran before them
   @mc
   Scenario: A held queued message that a newer message passed starts after it
     Given "t1" has a held queued message "A"
     And another run of "t1" ends
     When the user resumes the queue of "t1"
+    Then the run for "A" starts with ordinal 3
+    And the run for "Something else" has ordinal 2
+    And the thread's latest run is the run for "A"
+
+  # Upstream #21473: the newer message the user sent releases the hold, so "A" starts after it
+  # without a resume, still numbered after it. Replaces the scenario above once the MC carries it.
+  @backlog @mc @priority-high
+  Scenario: A held queued message starts on its own after a newer message the user sent
+    Given "t1" has a held queued message "A"
+    When the user sends "Something else" to "t1" and its run ends
     Then the run for "A" starts with ordinal 3
     And the run for "Something else" has ordinal 2
     And the thread's latest run is the run for "A"
@@ -412,6 +468,46 @@ Feature: Queueing, steering and restarting
     When the user queues "B" on "t1"
     Then "B" is held behind "A"
     And no run starts until the user resumes the queue
+
+  # Upstream #21473: a message the user sends releases a held queue, so nothing queued after it
+  # inherits the hold. Replaces the scenario above once the MC carries it.
+  @backlog @mc @priority-high
+  Scenario: A message the user sends resumes a held queue
+    Given "t1" has a held queued message "A"
+    When the user sends "B" to "t1"
+    Then no queued message is held
+    And "A" starts after the run for "B" ends
+    And a delegated task result queued behind "B" is not held
+
+  # Upstream #21473: a Stop holds the queue as a restart does.
+  @backlog @mc @priority-high
+  Scenario: Stopping a turn holds the queue
+    Given "t1" has a running turn and a queued message "A"
+    When the user stops the turn
+    Then "A" is held
+    And no run starts for it until the user resumes the queue or sends a message
+
+  # Upstream #21473: only the user coming back releases the hold.
+  @backlog @mc @priority-high
+  Scenario Outline: What is not the user sending a message leaves the queue held
+    Given "t1" has a held queued message "A"
+    When <what> reaches "t1"
+    Then "A" is still held
+
+    Examples:
+      | what                                             |
+      | a steer the user sent                            |
+      | the prompt of a scheduled task the user created  |
+      | the MC continuing the thread after a usage limit |
+      | the MC continuing the thread after it restarted  |
+
+  # Upstream #21473: messages held because the worktree could not be set up would otherwise start
+  # in the project checkout.
+  @backlog @mc @priority-high
+  Scenario: A queue held because the worktree could not be set up stays held when the user sends
+    Given "t1" has a held queued message "A" because its worktree could not be set up
+    When the user sends "B" to "t1"
+    Then "A" is still held until "t1" has a worktree
 
   # Only what the user queues waits on a held queue: what the agent is sent still wakes it.
   @mc

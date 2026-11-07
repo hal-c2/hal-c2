@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21086
+#   https://github.com/pingdotgg/t3code/pull/13865
 #   https://github.com/pingdotgg/t3code/pull/19197
 #   https://github.com/pingdotgg/t3code/pull/17637
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -203,6 +205,13 @@ Feature: Approvals and agent questions
     When the user answers "DuckDB, in memory"
     Then the agent receives "DuckDB, in memory"
 
+  # Upstream #13865: a typed answer was lost after opening a new thread and coming back.
+  @backlog @shared @priority-low
+  Scenario: A half-written answer survives leaving the thread
+    Given the agent asks "Which database?" and the user has typed "DuckDB" without sending it
+    When the user opens a new thread and comes back
+    Then the answer still reads "DuckDB" on the same question
+
   @backlog @shared
   Scenario: A link in the agent's question opens the way a chat link does
     Given the agent asks "Authorize this device at https://example.com/device with `RTJS-TQGS`"
@@ -218,6 +227,14 @@ Feature: Approvals and agent questions
     When the timeline shows the exchange collapsed
     Then the row reads "Which approach should we use?" and shows "Incremental migration" beside it
     And expanding the row still shows the full question and answer
+
+  # Upstream #21086: an answered question stays in sight after its turn.
+  @backlog @shared
+  Scenario: An answered question stays in sight after the turn finishes
+    Given the agent asked the user a question during a turn and the user answered
+    When the turn finishes
+    Then the question and its answer are shown outside the turn's folded work
+    And they are not merged into a summary of commands and tools
 
   @mc
   Scenario: The user dismisses a question without answering

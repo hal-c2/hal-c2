@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20803
+#   https://github.com/pingdotgg/t3code/pull/21473
+#   https://github.com/pingdotgg/t3code/pull/15719
+#   https://github.com/pingdotgg/t3code/pull/17964
+#   https://github.com/pingdotgg/t3code/pull/20910
+#   https://github.com/pingdotgg/t3code/pull/19590
+#   https://github.com/pingdotgg/t3code/pull/18846
+#   https://github.com/pingdotgg/t3code/pull/19281
 #   https://github.com/pingdotgg/t3code/pull/15856
 #   https://github.com/pingdotgg/t3code/pull/15841
 #   https://github.com/pingdotgg/t3code/pull/17492
@@ -49,6 +57,26 @@ Feature: Writing to an agent from a phone
     When the user starts typing a message
     Then the message being written stays visible above the keyboard
     And the latest messages stay visible above the composer
+
+  # Upstream #20803: an input that keeps its focus through an app switch stays above the
+  # keyboard Android brings back with it.
+  @backlog @mobile
+  Scenario Outline: Coming back to the app with the keyboard up keeps the input above it
+    Given the user is writing in <input> with the keyboard up
+    When the user switches to another app and back
+    Then <input> is still shown above the keyboard
+
+    Examples:
+      | input                              |
+      | the composer                       |
+      | the answer to the agent's question |
+
+  # Upstream #20803: the case the keyboard check guards, a send followed at once by leaving the app.
+  @backlog @mobile
+  Scenario: Leaving the app right after sending leaves the composer at rest
+    Given the user sent a message and the keyboard is closing
+    When the user leaves the app within a second and comes back
+    Then the composer rests where it does with the keyboard closed
 
   @mobile
   Scenario: Dismissing the keyboard keeps the draft
@@ -140,6 +168,14 @@ Feature: Writing to an agent from a phone
     Given the message "also update docs" is waiting for the current turn
     When the user edits it to "also update the changelog"
     Then "also update the changelog" runs after the current turn
+
+  # Upstream #18846: typing during the save was lost when the edit closed.
+  @backlog @mobile
+  Scenario: The composer takes no typing while an edited queued message saves
+    Given the user is saving an edit to a queued message
+    Then the composer does not take typing until the save ends
+    When the save fails
+    Then the user can type in the composer again
 
   @mobile
   Scenario: The user cancels a queued message
@@ -410,6 +446,13 @@ Feature: Writing to an agent from a phone
     Then the user is told the pasted text is too large
     And the draft and the selection are unchanged
 
+  # Upstream #19590: only the clipboard's first item was pasted.
+  @backlog @mobile @priority-low
+  Scenario: Pasting a clipboard of several text items keeps them all
+    Given the Android clipboard holds three text items
+    When the user pastes into the composer
+    Then all three are in the draft, one per line
+
   @backlog @mobile @priority-low
   Scenario: Paste as Text pastes copied references as their text
     Given the clipboard holds references copied from another draft
@@ -576,6 +619,13 @@ Feature: Writing to an agent from a phone
     Then the command is removed from the draft
     And the thread's usage limits are shown
 
+  # Upstream #20910: the open keyboard pushed the panel's close button under the header.
+  @backlog @mobile @priority-low
+  Scenario: The usage limits panel can be closed while the keyboard is open
+    Given the keyboard is open
+    When the user opens the usage limits from the composer
+    Then the user can close the usage limits without closing the keyboard first
+
   @backlog @mobile
   Scenario Outline: Choosing a built-in command changes the thread instead of sending
     Given the Build and Plan toggle setting is on
@@ -650,6 +700,16 @@ Feature: Writing to an agent from a phone
     When the user types "#" in the composer
     Then the suggestion list shows why pull requests could not be read
     And no pull request is offered
+
+  # Upstream #17964: the floating thread status sat over the suggestion list and caught its taps.
+  @backlog @mobile @priority-low
+  Scenario: The thread's status stays clear of the composer's suggestions
+    Given the agent is working
+    When the user types "/" in the composer
+    Then the thread's status covers none of the suggestions
+    And every suggestion can be chosen
+    When the suggestion list closes
+    Then the thread's status is shown where it was
 
   @backlog @mobile @priority-low
   Scenario: A Codex feedback notice can be dismissed unless it is still sending
@@ -734,6 +794,15 @@ Feature: Writing to an agent from a phone
     Then the user is told the queue is held
     When the user resumes the queue
     Then "also update docs" runs after the current turn
+
+  # Upstream #21473: a queue holding only the agent's own wakes showed no way to resume on the phone.
+  @backlog @mobile @priority-high
+  Scenario: A queue held with only the agent's own wakes can be resumed on the phone
+    Given the user stopped a turn while a delegated task result was queued in the thread
+    And no message of the user's is queued
+    Then the composer offers to resume the queue
+    When the user resumes the queue
+    Then the turn carrying the task result starts
 
   @backlog @mobile
   Scenario: An empty queue says nothing is waiting
@@ -1246,6 +1315,7 @@ Feature: Writing to an agent from a phone
     When the user starts a new task
     Then the task starts on a model of a provider that is signed in
 
+  # Upstream #15719: the model sheet showed catalog defaults until Save; it now shows the remembered options as soon as the model is picked.
   @backlog @mobile @priority-low
   Scenario: The options chosen for a model come back when that model is chosen again
     Given the user chose "Opus 4" with high effort in "Fix checkout"
@@ -1325,3 +1395,12 @@ Feature: Writing to an agent from a phone
     When the text returns to the composer
     Then the reason shows above that thread's composer
     And it is not shown on the add-environment screen
+
+  # Upstream #19281: the composer came back empty and rejected typing after a question card.
+  @backlog @mobile
+  Scenario: The draft comes back after answering a question
+    Given the draft holds "also check refunds"
+    And the agent asks a question
+    When the user answers it
+    Then the composer shows "also check refunds"
+    And the user can go on typing after it

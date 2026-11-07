@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19336
+#   https://github.com/pingdotgg/t3code/pull/18168
 #   https://github.com/pingdotgg/t3code/pull/11368
 #   docs/user/usage.md (CLIProxyAPI hub)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (reading hubs, errors, refresh)
@@ -65,6 +67,20 @@ Feature: Usage limit sources
     When the user views limits
     Then usage says "Team hub: Hub unreachable."
 
+  # Upstream #18168: a hub failure is described by its kind, and an untrusted certificate
+  # says how to make the server trust the hub's certificate authority.
+  @backlog @mc
+  Scenario Outline: A hub that cannot be read says why
+    Given the hub "Team hub" <fails>
+    When the user views limits
+    Then usage names "Team hub" and says <reason>
+
+    Examples:
+      | fails                                           | reason                                                        |
+      | presents a certificate from a private authority | its certificate is not trusted and how to trust its authority |
+      | answers with HTTP 502                           | it answered with HTTP 502                                     |
+      | does not answer in time                         | it timed out                                                  |
+
   @shared @backlog-mobile
   Scenario: A reset credit a hub also reports is spent through the hub
     Given Codex has a reset credit banked
@@ -83,6 +99,14 @@ Feature: Usage limit sources
     When the user views limits
     Then the hub is listed under its id, with its error
     And its saved URL is left as it was
+
+  # Upstream #19336: a hub served under a path is read at that path.
+  @backlog @mc
+  Scenario: A hub served under a path is read at that path
+    Given the user adds the hub "https://tools.example/cliproxy"
+    When the MC reads the hub's accounts
+    Then it reads them from under "/cliproxy"
+    And the hub's accounts appear in limits
 
   @shared @backlog-mobile
   Scenario: A hub cannot be added without a URL and key

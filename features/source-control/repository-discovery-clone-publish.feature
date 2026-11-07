@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16316
+#   https://github.com/pingdotgg/t3code/pull/15395
+#   https://github.com/pingdotgg/t3code/pull/19219
+#   https://github.com/pingdotgg/t3code/pull/19362
 #   https://github.com/pingdotgg/t3code/pull/11059
 #   https://github.com/pingdotgg/t3code/pull/16353
 #   https://github.com/pingdotgg/t3code/pull/15876
@@ -234,6 +238,15 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | "backup" on an unknown server and "mirror" on GitHub, no origin | "mirror"              |
       | "backup" on an unknown server and "mirror" on another unknown  | "backup", the first   |
 
+  # Upstream #16316: git lists a partial clone's remotes with a filter such as "[blob:none]", and
+  # those lines were not read.
+  @mc @backlog @priority-low
+  Scenario: A partial clone's remotes are read like any other
+    Given the checkout is a partial clone of "https://github.com/acme/shop.git" made with a blob filter
+    When the user asks which host the checkout is on
+    Then the host is reported as GitHub for "acme/shop"
+    And "origin" is listed among the checkout's remotes
+
   # Legacy: packages/shared/src/sourceControl.ts (detectSourceControlProviderFromRemoteUrl, isSshRemoteUrl)
   @mc @backlog
   Scenario Outline: A remote is told apart by its host name, however the address is written
@@ -255,6 +268,13 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | https://git.gitea.mycorp.example/acme/app.git   | Forgejo               |
       | https://git.example.test/acme/app.git          | git.example.test      |
 
+    # Upstream #19362: "*.ghe.com" remotes are GitHub by their name; "ghe.com" itself is not.
+    Examples:
+      | remote                                          | host                  |
+      | https://acme.ghe.com/acme/app.git               | GitHub                |
+      | https://ghe.com/acme/app.git                    | ghe.com               |
+
+  # Upstream #15395: a self-hosted GitLab without "gitlab" in its name stayed unknown, so linking a bare merge request number asked for a full URL.
   # Legacy: apps/server/src/sourceControl/SourceControlProviderDiscovery.ts (refineUnknownRemote), gitLabAuthStatus.ts
   @mc @backlog @priority-low
   Scenario Outline: A self-hosted server is recognised only when the user is signed in to it
@@ -460,6 +480,17 @@ Feature: Finding hosting tools, cloning and publishing repositories
     When the user publishes "notes" to GitHub
     Then the repository is created and added as the remote
     And the result says the remote was added without pushing
+
+  # Upstream #19219: a publish whose first push failed said only that it could not be completed,
+  # and publishing again failed too.
+  @backlog @mc
+  Scenario: A publish whose first push fails says what to do next
+    Given the user publishes "notes" to GitHub over SSH
+    And GitHub refuses the user's SSH key
+    When the repository is created but the first push fails
+    Then the user is told the repository was created and the push was refused
+    And they are told to push again rather than publish again
+    And they are given the command that switches the remote to HTTPS
 
   # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (publishRepository: selectRemoteUrl)
   # Likely already implemented: apps/server-ex/lib/hal_c2/source_control.ex

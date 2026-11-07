@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19616
 #   https://github.com/pingdotgg/t3code/pull/17370
 #   https://github.com/pingdotgg/t3code/pull/18509
 #   https://github.com/pingdotgg/t3code/pull/14128
@@ -469,6 +470,16 @@ Feature: MC authentication and scopes
     When it presents its access token with a proof
     Then the MC accepts it
     And a token presented with an invalid proof is refused rather than treated as a bearer
+
+  # Upstream #19616: the host computed DPoP key thumbprints with its locale's sort order, so hosts
+  # in a Latvian, Lithuanian, Basque or Azerbaijani locale refused valid clients.
+  # Likely already implemented: apps/server-ex/lib/hal_c2/auth/dpop.ex (thumbprint/1 writes the members in a fixed order)
+  @backlog @mc @priority-high
+  Scenario: A client's key is recognised whatever the host's locale
+    Given the MC runs under a Latvian, Lithuanian, Basque or Azerbaijani locale
+    And a client that paired with a DPoP key
+    When it presents its access token with a proof
+    Then the MC accepts it
 
   @backlog @mc
   Scenario: A session bound to a client key lasts one hour and is not a plain bearer

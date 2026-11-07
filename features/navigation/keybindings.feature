@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19055
+#   https://github.com/pingdotgg/t3code/pull/19928
 #   https://github.com/pingdotgg/t3code/pull/16694
 #   https://github.com/pingdotgg/t3code/pull/14475
 #   docs/user/keybindings.md
@@ -21,6 +23,7 @@
 #   preview.zoomOut, preview.resetZoom, commandPalette.toggle, filePicker.toggle,
 #   projectSearch.toggle, theme.select, appearance.cycle, themeEditor.toggle, composer.stash,
 #   composer.sendAlternate, composer.sendBackground, composer.host, composer.effort,
+#   composer.increaseEffort, composer.decreaseEffort,
 #   composer.mode, composer.workspace, composer.previousWorktree, composer.branch, chat.new,
 #   chat.newLocal, editor.openFavorite, modelPicker.toggle, modelPicker.previousProvider,
 #   modelPicker.nextProvider, modelPicker.jump.1-9, thread.stop, thread.steerQueuedMessage,
@@ -154,6 +157,20 @@ Feature: Keybindings
       Then the command "threadPanel.toggle" runs
       And pressing mod+shift+b in a terminal does not toggle the thread details panel
       And a command the user bound to mod+shift+b earlier keeps that key
+
+    # Upstream #19928: composer.increaseEffort and composer.decreaseEffort have no default key.
+    @backlog @desktop
+    Scenario Outline: The effort step commands can be bound
+      Given no custom keybindings
+      Then "<command>" has no shortcut
+      When the user binds "<command>" to <key>
+      And the user presses <key> in the composer
+      Then the composer's effort steps <direction>
+
+      Examples:
+        | command                 | key   | direction |
+        | composer.increaseEffort | alt+= | up        |
+        | composer.decreaseEffort | alt+- | down      |
 
     @desktop
     Scenario: A binding outside its context does nothing
@@ -384,6 +401,9 @@ Feature: Keybindings
       When the user starts a new thread
       Then a new thread starts in that project without asking
 
+    # Upstream #19055: the new-thread shortcuts the palette lists now run from it (command-palette.feature,
+    # "A new-thread shortcut the palette lists runs while the palette is open"), so chat.new and
+    # chat.newLocal no longer wait.
     @backlog @desktop
     Scenario Outline: Thread shortcuts wait while the command palette is open
       Given the command palette is open
@@ -392,8 +412,6 @@ Feature: Keybindings
 
       Examples:
         | command        |
-        | chat.new       |
-        | chat.newLocal  |
         | thread.undo    |
         | preview.toggle |
 

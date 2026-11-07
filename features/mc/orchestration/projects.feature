@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17340
+#   https://github.com/pingdotgg/t3code/pull/20035
+#   https://github.com/pingdotgg/t3code/pull/13129
+#   https://github.com/pingdotgg/t3code/pull/19202
 #   apps/server-ex/lib/hal_c2/projects.ex (projects.mutate: project.create, project.update,
 #     project.delete; which project a folder belongs to; repository identity)
 #   apps/server/src/project/RepositoryIdentityResolver.ts,
@@ -179,6 +183,48 @@ Feature: Projects on an MC
         | origin "acme/fork" only                        | origin "acme/fork"   |
         | "zeta" "acme/z" and "beta" "acme/b", no origin | "beta" "acme/b"      |
 
+    # Upstream #17340: bare repositories carry their remote's identity and group with checkouts of it.
+    @backlog @mc
+    Scenario: A project in a bare repository carries its repository
+      Given a project whose folder is a bare repository with the origin "git@github.com:acme/shop.git"
+      When a client reads the project
+      Then the project carries the repository "acme/shop"
+      And it is grouped with the other checkouts of "acme/shop"
+
+    # Upstream #13129: a remote that is a local path is not a repository identity
+    @mc @backlog
+    Scenario Outline: A remote that points at a folder does not group checkouts
+      Given project "p1" and project "p2" each have only the origin "<remote>"
+      When a client reads the projects
+      Then neither project is a checkout of a known repository
+      And they are not grouped together
+
+      Examples:
+        | remote               |
+        | .                    |
+        | ../shared            |
+        | /srv/git/shop        |
+        | ~/git/shop           |
+        | C:\git\shop          |
+        | \\\\server\git\shop  |
+        | file:///srv/git/shop |
+
+    # Upstream #13129: a checkout with a local and a real remote uses the real one
+    @mc @backlog
+    Scenario: A checkout with a folder remote and a hosted remote is grouped by the hosted one
+      Given project "p1" has the remote "local" at "/srv/git/shop" and the origin "https://github.com/acme/shop.git"
+      When a client reads the projects
+      Then project "p1" is a checkout of "github.com/acme/shop" named "shop" owned by "acme"
+
+    # Upstream #19202: repository names keep the remote's capitalisation
+    @mc @backlog
+    Scenario: A repository's name keeps the capitals its remote writes
+      Given project "p1" has the origin "https://github.com/Acme/Shop.git"
+      And project "p2" has the origin "https://github.com/acme/shop.git"
+      When a client reads the projects
+      Then project "p1" is a checkout of a repository named "Shop" owned by "Acme"
+      And projects "p1" and "p2" are grouped as checkouts of one repository
+
     # Legacy: apps/server/src/project/RepositoryIdentityResolver.ts (resolve)
     @mc @backlog
     Scenario: A project in a subfolder of a checkout is the checkout's repository
@@ -274,3 +320,12 @@ Feature: Projects on an MC
     When the MC starts in "~/code/app" set to make its starting folder a project
     Then project "p1" is used and marked as already existing
     And no second project is created
+
+  # Upstream #20035: startup's first thread for the starting folder is skipped, not fatal,
+  # when its provider instance is switched off or the thread cannot be launched.
+  @mc @backlog
+  Scenario: A switched-off provider does not stop the MC starting in a project folder
+    Given the MC is set to make its starting folder a project and start a thread there
+    And the provider that thread would use is switched off
+    When the MC starts in "~/code/app"
+    Then the MC finishes starting with the project and no new thread

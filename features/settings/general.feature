@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14705
 #   https://github.com/pingdotgg/t3code/pull/18461
 #   https://github.com/pingdotgg/t3code/pull/14642
 #   https://github.com/pingdotgg/t3code/pull/19722
@@ -244,6 +245,15 @@ Feature: General settings
       And the user closed the side panel of the thread "Cart totals"
       When the user opens another thread with a linked pull request
       Then the pull request panel opens with that thread
+
+    # Upstream #14705: a proactive diff the user closed reopened on returning to the thread.
+    @backlog @desktop @priority-low
+    Scenario: A proactive diff the user closed stays closed when the user comes back
+      Given proactive panels are on
+      And a turn finished with large changes and its diff opened by itself
+      When the user closes the diff, opens another thread and comes back
+      Then the diff stays closed, after a restart too
+      And the next turn that finishes with large changes may open it again
 
     @backlog @desktop @priority-low
     Scenario: A thread with several pull requests opens their list
