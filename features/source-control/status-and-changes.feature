@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27103
+#   https://github.com/pingdotgg/t3code/pull/25207
+#   https://github.com/pingdotgg/t3code/pull/24258
+#   https://github.com/pingdotgg/t3code/pull/21046
 #   https://github.com/pingdotgg/t3code/pull/14942
 #   https://github.com/pingdotgg/t3code/pull/20175
 #   https://github.com/pingdotgg/t3code/pull/16453
@@ -26,6 +30,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
 #   apps/tui/src/gitActions.logic.ts (mergeVcsStatus, resolveGitQuickAction)
 #   apps/tui/src/connection.ts (subscribeVcsStatus)
+#   https://github.com/pingdotgg/t3code/pull/28600
 
 Feature: Repository status and working tree changes
   The checkout behind a thread reports its branch, its uncommitted changes and how it stands
@@ -110,6 +115,20 @@ Feature: Repository status and working tree changes
     And a client in front is showing a thread in "shop"
     When 30 seconds pass
     Then the MC fetches from the remote and the ahead and behind counts are updated
+
+  # Upstream #28600: the lines-changed totals stayed counted against the old base when only the
+  # base moved and the ahead and behind counts did not.
+  @backlog @mc
+  Scenario Outline: The Changes totals follow a base that moved
+    Given the thread's worktree in "shop" shows its Changes totals
+    When <what>
+    Then the Changes totals are counted against the new base
+
+    Examples:
+      | what                                                                  |
+      | an automatic fetch finds the base branch moved, with the same ahead and behind counts |
+      | the user refreshes and the merge base has changed                     |
+      | another client read the totals while the fetch was running            |
 
   @mc
   Scenario: A fetch interval of zero never fetches on its own
@@ -239,6 +258,38 @@ Feature: Repository status and working tree changes
     And the host now cannot be reached
     When the branch's remote is changed to a different repository and status is read again
     Then the status carries no pull request
+  # Upstream #21046: the local scan is published before a slow pull request lookup finishes.
+  @backlog @mc
+  Scenario: Local status is not held back by a slow pull request lookup
+    Given the host is slow to answer the pull request lookup for "feature/tax"
+    When the user changes "src/cart.ts" while the lookup is still waiting
+    Then the status shows the change to "src/cart.ts" before the lookup answers
+
+  # Upstream #21046: a lookup started on one branch never fills in the pull request of the branch checked out next.
+  @backlog @mc @priority-high
+  Scenario: A late pull request answer for the previous branch is not shown on the new one
+    Given a pull request lookup for "feature/tax" is still waiting
+    When the user checks out "feature/cart" and the lookup for "feature/tax" then answers
+    Then the status for "feature/cart" does not carry the pull request of "feature/tax"
+    And a later lookup still finds the pull request of "feature/cart"
+
+  # Upstream #24258: a branch with the same name as a tag read as "heads/<name>" in remote status and review.
+  @backlog @mc
+  Scenario: A branch named like a tag is still reported by its name
+    Given the checked out branch "release" has a tag also named "release"
+    When status is read for "shop"
+    Then the status names the branch "release", not "heads/release"
+    And the review compares "release" with the default branch
+    And the pull request of "release" is still found
+
+  # Upstream #25207: status of a repository with thousands of long changed paths failed on an output cap.
+  @backlog @mc
+  Scenario: Status of a repository with thousands of changed files is complete
+    Given the user has changed 6000 files with long paths in "shop"
+    When status is read for "shop"
+    Then the status lists all 6000 files with their line counts
+    And a commit can be prepared from them
+
 
   # Legacy: apps/server/src/git/GitManager.ts (prLookupFailureTtl)
   @mc
@@ -407,6 +458,13 @@ Feature: Repository status and working tree changes
     Given five clients ask for the status of "shop" within one second
     Then git is asked once for the checkout's status
     And all five get the same answer
+
+  # Upstream #27103: every refresh a subscriber asked for ran the checkout's git commands again.
+  @mc @backlog @priority-low
+  Scenario: A burst of refreshes reads the checkout at most twice
+    Given clients ask to refresh the status of "shop" five times while one read is running
+    Then the checkout's status is read at most twice
+    And every client gets a status read after its own request
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (fingerprints)
   @mc @backlog @priority-low

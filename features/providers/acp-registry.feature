@@ -1,4 +1,22 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25559
+#   https://github.com/pingdotgg/t3code/pull/25545
+#   https://github.com/pingdotgg/t3code/pull/24015
+#   https://github.com/pingdotgg/t3code/pull/26715
+#   https://github.com/pingdotgg/t3code/pull/24908
+#   https://github.com/pingdotgg/t3code/pull/23834
+#   https://github.com/pingdotgg/t3code/pull/21323
+#   https://github.com/pingdotgg/t3code/pull/26968
+#   https://github.com/pingdotgg/t3code/pull/26248
+#   https://github.com/pingdotgg/t3code/pull/24024
+#   https://github.com/pingdotgg/t3code/pull/26647
+#   https://github.com/pingdotgg/t3code/pull/23847
+#   https://github.com/pingdotgg/t3code/pull/22608
+#   https://github.com/pingdotgg/t3code/pull/27927
+#   https://github.com/pingdotgg/t3code/pull/26951
+#   https://github.com/pingdotgg/t3code/pull/26651
+#   https://github.com/pingdotgg/t3code/pull/25786
+#   https://github.com/pingdotgg/t3code/pull/25564
 #   https://github.com/pingdotgg/t3code/pull/19699
 #   https://github.com/pingdotgg/t3code/pull/20417
 #   https://github.com/pingdotgg/t3code/pull/24596
@@ -25,6 +43,8 @@
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/25704
 #   https://github.com/pingdotgg/t3code/pull/18277
+#   https://github.com/pingdotgg/t3code/pull/23684
+#   https://github.com/pingdotgg/t3code/pull/26623
 #   docs/user/providers-acp.md
 #   apps/server-ex/lib/hal_c2/acp.ex (acpRegistry driver, entries, probes, commandPath override)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex (search, prepare, uninstall, cache, checksums, runners)
@@ -52,6 +72,8 @@
 #   apps/server/src/provider/acp/AcpClientFs.ts, AcpClientPolicy.ts, AcpClientTerminals.ts (client-side files and terminals)
 #   packages/effect-acp/src/client.ts, packages/effect-acp/src/protocol.ts, packages/effect-acp/src/compat.ts (wire generations)
 #   packages/effect-acp/src/errors.ts (protocol error codes and messages)
+#   https://github.com/pingdotgg/t3code/pull/19958
+#   https://github.com/pingdotgg/t3code/pull/23440
 
 @plugin-acp-registry @mc @priority-low
 Feature: ACP registry agents
@@ -88,6 +110,14 @@ Feature: ACP registry agents
     Then "acme" is installed under the MC's tools folder at the registry's version
     And an instance of "acme" is created and enabled
 
+  # Upstream #23684: one shared lock made every registry agent wait on another agent's install.
+  @backlog
+  Scenario: Installing one registry agent does not hold up the others
+    Given the registry agent "acme" is installed
+    And the registry agent "beta" is still downloading
+    When the user starts a thread on "acme"
+    Then "acme" answers without waiting for "beta" to finish installing
+
   # Moonshot archived Kimi CLI for Kimi Code, which the registry does not list yet.
   Scenario: The registry's Kimi runs Kimi Code
     Given the registry lists Kimi CLI
@@ -121,6 +151,12 @@ Feature: ACP registry agents
     When the archive downloaded for "acme" cannot be unpacked
     Then adding "acme" fails saying the archive is invalid
 
+  # Upstream #25545: Cortex Code's archive listed so many files that unpacking it failed for too much output.
+  @backlog
+  Scenario: An agent whose archive holds a very large file tree installs
+    When the archive downloaded for "cortex-code" holds a bundled tree of many thousands of files
+    Then "cortex-code" is installed
+
   Scenario: The registry cannot be reached and nothing is cached
     Given the MC has never fetched the registry
     And the registry cannot be reached
@@ -131,6 +167,27 @@ Feature: ACP registry agents
     Given the MC fetched the registry an hour ago
     When the MC needs registry data without a search
     Then the cached copy is used
+
+  # Upstream #26248: every search downloaded the whole index again, up to 1 MB.
+  @backlog
+  Scenario Outline: A search reuses a registry fetched in the last five minutes
+    Given the MC <fetched>
+    When the user searches the registry
+    Then the registry is <outcome>
+
+    Examples:
+      | fetched                                                          | outcome                 |
+      | fetched the registry four minutes ago                            | not fetched again       |
+      | fetched the registry six minutes ago                             | fetched again           |
+      | could not reach the registry a minute ago and used its cached copy | fetched again         |
+      | fetched the registry a minute ago, but its clock has since gone back | fetched again       |
+
+  # Upstream #26248: an install still picks up a new version at once.
+  @backlog
+  Scenario: Adding a registry agent fetches the latest registry
+    Given the MC fetched the registry a minute ago
+    When the user adds the registry agent "acme"
+    Then the registry is fetched again before "acme" is prepared
 
   Scenario: Removing the last instance of an agent removes its downloaded files
     Given one instance of "acme" exists
@@ -227,6 +284,24 @@ Feature: ACP registry agents
     When the user stops the turn
     Then the request to the MCP server is abandoned
 
+  # Upstream #23834: every MCP message an agent sent over ACP waited behind the one before it, so a
+  # long thread wait held up even a tool listing.
+  @backlog @priority-low
+  Scenario: A quick HAL-C2 tool call over ACP does not wait behind a long one
+    Given "acme" reaches HAL-C2's tools over its ACP connection
+    And "acme" is waiting on a HAL-C2 tool call that takes minutes
+    When "acme" lists HAL-C2's tools
+    Then the list is answered at once
+
+  # Upstream #21323: when an agent closed its output but kept running, the waiting request and every
+  # later one hung.
+  @backlog @priority-high
+  Scenario: A request to an agent fails soon after the agent closes its output while still running
+    Given the MC is waiting on "acme" for an answer
+    When "acme" closes its output and keeps running
+    Then within a quarter of a second the request fails saying the agent's input ended
+    And later requests to "acme" fail the same way instead of waiting
+
   Scenario: The next turn after a rollback starts a fresh agent session
     Given an "acme" thread with three turns
     When the user rolls back to the first turn
@@ -250,6 +325,25 @@ Feature: ACP registry agents
     And the runtime of "acme" restarted
     When the user switches the thread to the other model
     Then the agent's session uses the new model through set_model
+
+  # Upstream #26623: a saved model the session's account could not use was skipped silently, and
+  # the turn ran on the agent's own default.
+  @backlog @priority-high
+  Scenario: A chosen model the agent's session does not offer is refused
+    Given the thread is set to the model "acme-pro"
+    And "acme" offers only "acme-lite" to the signed-in account
+    When the user sends a message
+    Then the turn does not start and the thread says "acme-pro" is not available
+    And a thread on the agent's default model still runs on whatever the agent picks
+
+  # Upstream #25786: Kimi answers a session reload with no models, and the picker collapsed to Default.
+  @backlog @shared
+  Scenario: Reopening a thread whose agent reloads without models keeps the probed models
+    Given "acme" offers twelve models when probed
+    And "acme" reloads a saved session reporting no models
+    When the user reopens an "acme" thread
+    Then the model picker still offers the twelve models
+    And option controls the reload reported apply to those models
 
   Scenario: Agent file and terminal requests are refused
     When "acme" asks the client to read a file or run a terminal
@@ -287,6 +381,21 @@ Feature: ACP registry agents
     When the user saves model provider headers that are not a JSON object of strings
     Then the save is refused with a message about the header format
 
+  # Upstream #23847: saving or disabling one model provider reloaded the list and threw away another row's unsaved URL and headers.
+  @backlog @shared
+  Scenario: Saving one model provider keeps unsaved edits to the others
+    Given "acme" lists the model providers "openrouter" and "bedrock"
+    And the user has typed a base URL and headers for "bedrock" without saving
+    When the user saves or disables "openrouter"
+    Then the base URL and headers typed for "bedrock" are still there
+
+  # Upstream #23847: refreshing the provider list is the deliberate way to throw away unsaved edits.
+  @backlog @shared
+  Scenario: Refreshing the model providers discards unsaved edits
+    Given the user has typed a base URL for "bedrock" without saving
+    When the user refreshes "acme"'s model providers
+    Then "bedrock" shows its saved routing
+
   Scenario: Agent slash commands and skills appear in the composer
     Given a running "acme" session offers the command "/review" and the skill "$deploy"
     When the user types a slash
@@ -296,6 +405,27 @@ Feature: ACP registry agents
   Scenario: Agent plans and context usage are shown
     When "acme" reports a plan and its context usage during a turn
     Then the task list and the context meter follow the agent's reports
+
+  # Upstream #23440: an agent replacing its plan with an empty one left the old steps showing.
+  @backlog @priority-low
+  Scenario: An agent that empties its plan clears the task list
+    Given "acme" reported a plan of three steps during a turn
+    When "acme" replaces its plan with an empty one
+    Then the task list shows no steps
+
+  # Upstream #19958: ACP turns recorded no token usage; only agents proven to report it per turn do.
+  @backlog @mc @priority-low
+  Scenario: Token usage an ACP agent reports for its turn is recorded with the turn
+    Given the GLM agent from the registry reports the tokens each prompt used
+    When a turn on it completes having used 2432 input and 180 output tokens
+    Then the turn's token usage is 2432 input and 180 output tokens
+
+  # Upstream #19958: an agent not known to report per-turn usage is not guessed at.
+  @backlog @mc @priority-low
+  Scenario: An ACP agent not known to report per-turn usage records none
+    Given "acme" is not known to report the tokens each prompt used
+    When a turn on "acme" completes
+    Then the turn's token usage is unavailable
 
   Scenario: Agent-owned terminals are shown read-only
     When an ACP v2 agent runs a command in its own terminal
@@ -344,6 +474,62 @@ Feature: ACP registry agents
     And the runtime of "acme" restarted
     When the user switches the thread out of plan mode
     Then "acme" runs in the mode it had before plan mode
+
+  # Upstream #26951: Copilot names its modes by address ("…/session-modes#plan"), and the plan
+  # toggle matched only the literal names "plan" and "architect", so Copilot stayed in agent mode.
+  @backlog
+  Scenario Outline: An agent whose modes are named by address follows the plan toggle
+    Given Copilot CLI runs over ACP offering the modes "<agent mode>" and "<plan mode>" as its <offered as>
+    When the user switches the thread to plan mode
+    Then Copilot runs in "<plan mode>"
+    When the user switches the thread out of plan mode
+    Then Copilot runs in "<agent mode>" again
+
+    Examples:
+      | offered as                     | agent mode                                                 | plan mode                                                 |
+      | session modes                  | https://agentclientprotocol.com/protocol/session-modes#agent | https://agentclientprotocol.com/protocol/session-modes#plan |
+      | mode option                    | https://agentclientprotocol.com/protocol/session-modes#agent | https://agentclientprotocol.com/protocol/session-modes#plan |
+      | collaboration mode option      | https://agentclientprotocol.com/protocol/session-modes#agent | https://agentclientprotocol.com/protocol/session-modes#plan |
+
+  # Upstream #26968: Copilot refuses MCP servers that are not HTTP, so it never got HAL-C2's tools;
+  # an agent that says it takes MCP over HTTP now gets HAL-C2's endpoint that way.
+  @backlog
+  Scenario: Copilot gets HAL-C2's tools over HTTP
+    Given Copilot CLI runs over ACP and says it takes MCP servers over HTTP
+    When a Copilot thread starts, resumes, forks or restarts its session
+    Then Copilot is given HAL-C2's MCP server over HTTP with the session's credential
+    And Copilot can call HAL-C2 tools such as delegating a task
+    But an agent that does not take MCP over HTTP is still given HAL-C2's tools the way it can use
+  # Upstream #26715: steering a Copilot thread interrupted its prompt and killed its background agents.
+  @backlog @priority-high
+  Scenario: A follow-up to a Copilot thread waits for the prompt instead of interrupting it
+    Given Copilot CLI runs over ACP and a Copilot background agent is still working in the thread
+    When the user sends "After the background agent completes, reply FOLLOWUP_DONE."
+    Then the message waits in the thread's queue and the background agent keeps running
+    And the message is sent once Copilot's current prompt finishes
+    And Stop still stops the turn, while a restart from an agent's send is refused as not supported
+
+
+  # Upstream #26651: after Copilot lost or locked its session it failed every later prompt the
+  # same way until the app restarted; now the next message restarts it and reloads the session.
+  @backlog
+  Scenario Outline: A Copilot session that was lost or locked restarts on the next message
+    Given Copilot CLI runs over ACP in a thread
+    And Copilot fails a prompt with an internal error saying "<cause>"
+    Then that turn fails with Copilot's error and is not retried
+    When the user sends the next message
+    Then a new Copilot process reloads the thread's saved session and runs the message
+
+    Examples:
+      | cause                                                                       |
+      | session not found                                                           |
+      | session lock unavailable during is_session_generation_current: acquisition timed out |
+
+  @backlog
+  Scenario: Copilot's other prompt errors keep its process
+    Given Copilot CLI runs over ACP in a thread
+    When Copilot fails a prompt with any other internal error
+    Then the next message is sent to the same Copilot process
 
   Scenario: Images and audio the client cannot render show as placeholders
     When "acme" returns an image resource in its answer
@@ -952,6 +1138,17 @@ Feature: ACP registry agents
       | a HAL-C2 pairing link                                       | "[pairing-url]" in place of the link |
       | a bearer or basic authorization value                       | "[redacted]" in place of the value   |
       | an API key header or a token that looks like a provider key | "[redacted]" in place of the value   |
+  # Upstream #24015: an "sk-" key with "_" in its body kept its body, or was not redacted at all.
+  @backlog @priority-high
+  Scenario Outline: A provider key with underscores in an agent's error output is redacted whole
+    When the error output of "acme" contains "<key>"
+    Then the failure and the MC's log show "[redacted]" in place of the whole key
+
+    Examples:
+      | key                                   |
+      | sk-ant-api03-AbCdEf_GhIjKlMnOpQr-AA   |
+      | sk-proj-AbCdEfGhIj_KlMnOpQrStUv       |
+
 
   @backlog
   Scenario: Model provider headers are left out of the agent protocol log
@@ -959,6 +1156,8 @@ Feature: ACP registry agents
     When the user sets headers for a model provider of "acme"
     Then the logged request shows "[redacted]" in place of each header value
 
+  # Upstream #24024: every output chunk of a long agent command re-saved its whole output; the
+  # command now keeps a bounded tail, past what the thread shows.
   @backlog
   Scenario: Long tool output keeps only its newest part
     When a tool of "acme" has produced more than 8,000 characters of output
@@ -970,6 +1169,14 @@ Feature: ACP registry agents
     When the updates arrive
     Then the first update, every change of title or status, and the tool's completion are always shown
     And updates in between are shown only once 256 new characters or ten skipped updates have built up
+
+  # Upstream #25559: a tool the agent cancelled kept running and was marked completed when the turn ended.
+  @backlog
+  Scenario: A tool call the agent cancels ends as failed
+    Given a tool of "acme" is running
+    When "acme" reports the tool call as cancelled
+    Then the tool stops showing as running
+    And it is not marked completed when the turn ends
 
   @backlog
   Scenario: Streamed text arrives in bounded pieces
@@ -1024,6 +1231,14 @@ Feature: ACP registry agents
       | points to a plan file                     | shows "Plan file:" and the file's address             |
       | sends a plan of a kind HAL-C2 cannot read | says the plan content is unsupported, naming its kind |
       | removes its plan                          | is emptied                                            |
+
+  # Upstream #25564: a cancelled plan entry read as pending, so the plan never completed.
+  @backlog @shared
+  Scenario: Steps an agent cancelled are left out of its plan
+    Given "acme" shares a plan of three steps
+    When "acme" completes the first and last steps and cancels the second
+    Then the plan shows the two completed steps and leaves the cancelled one out
+    And the plan is complete
 
   @backlog
   Scenario: Output of an agent's own terminal is capped
@@ -1298,6 +1513,24 @@ Feature: ACP registry agents
     Given the user approved a tool "acme" did not describe
     When "acme" asks the client to run a command in a terminal
     Then the command is not covered by that approval
+  # Upstream #26647: Devin asks permission by tool call id alone; the request now takes the
+  # command it already announced, so the prompt names the command and approving it grants the terminal.
+  @backlog @mc @shared
+  Scenario: An approval asked by tool call alone shows the command it announced
+    Given the thread runs "acme" with approval required
+    And "acme" announced it will run "python3 build.py"
+    When "acme" asks permission naming only that tool call
+    Then the user is asked to approve running "python3 build.py"
+    And once the user approves, "acme" can run it in a terminal
+
+  # Upstream #26647: a tracked tool of another kind is not turned into a command grant.
+  @backlog @mc
+  Scenario: An approval asked by tool call alone for a tool that is not a command grants no terminal
+    Given "acme" announced a tool that does not run a command
+    And "acme" asked permission naming only that tool call, and the user approved it
+    When "acme" asks the client to run a command in a terminal
+    Then the command is not covered by that approval
+
 
   @backlog
   Scenario Outline: A client request the thread's mode stops tells the agent what to do next
@@ -1350,6 +1583,7 @@ Feature: ACP registry agents
     Then fx is offered beside Codex and Claude, with Supervised and Auto modes
     And the "$" menu lists the skills fx can invoke
 
+  # Upstream #24908: ACP v2 echoed the prompt, with the instructions HAL-C2 sent, as a second user message.
   @backlog
   Scenario: An agent repeating the user's message does not show it twice
     When "acme" echoes the user's message back as part of the turn
@@ -2037,7 +2271,16 @@ Feature: ACP registry agents
       | tokens used and a window size of 0                  | the tokens used, with no window size |
       | tokens used, a window size and a cost in a currency | the cost with its currency as well   |
       | a cost without a currency                           | no cost                              |
-      | only its total tokens when it goes idle             | that total as the tokens used        |
+
+  # Upstream #22608: a turn's idle total counts every model request it made, and saved as the
+  # context size it dropped the window size and shrank the provider handoff budget to nothing.
+  # Upstream #27927: carried the same fix onto current main.
+  @backlog @shared
+  Scenario: A turn's token spend is not taken for its context usage
+    Given "acme" reported 37,347 tokens used of a 1,000,000 token window during a turn
+    When the turn ends with a total of 94,740 tokens spent across its model requests
+    Then the context meter still shows 37,347 of 1,000,000 tokens
+    And switching the thread to another provider is not refused for lack of context allowance
 
   @backlog
   Scenario: A character split across two pieces of terminal output is kept whole

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27141
+#   https://github.com/pingdotgg/t3code/pull/27221
 #   https://github.com/pingdotgg/t3code/pull/16926
 #   https://github.com/pingdotgg/t3code/pull/21473
 #   https://github.com/pingdotgg/t3code/pull/15691
@@ -8,6 +10,8 @@
 #   https://github.com/pingdotgg/t3code/pull/19210
 #   https://github.com/pingdotgg/t3code/pull/13764 (covered: the MC sends queued runs, so a thread the user is not viewing still sends when its turn ends)
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/25837
+#   https://github.com/pingdotgg/t3code/pull/17885
 #   apps/server-ex/priv/mcp_tools.json (hal_c2_thread_interrupt, holdQueue)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
@@ -189,6 +193,16 @@ Feature: Queueing, steering and restarting
     When the user sends "Instead" to "t1" to restart the active turn and the provider never ends the interrupted turn
     Then the restart fails saying the provider turn did not end before the restart
     And no second turn is started alongside the first
+
+  # Upstream #27141: Antigravity ignored the cancel of a restarted turn; Stop then looked only for
+  # the new attempt's turn, found none, and the old turn blocked every later message.
+  @backlog @mc @priority-high
+  Scenario: Stopping during a restart also stops the turn the provider did not give up
+    Given "t1" has a running turn on a provider that ignores a request to end its turn
+    And the user sent "Instead" to "t1" to restart the active turn
+    When the user stops "t1" before the run for "Instead" reaches the provider
+    Then the old turn is stopped as by a normal Stop
+    And the next message the user sends to "t1" starts a turn
 
   @mc
   Scenario: A steer the provider refuses while its turn runs is reported to the sender
@@ -520,6 +534,53 @@ Feature: Queueing, steering and restarting
       | a background command's end  |
       | another agent's message     |
 
+  # Upstream #27221: messages from agents, MCP tools and scheduled tasks that arrived while the
+  # thread was busy joined the hold, and nobody ever resumed it (165 issue dispatches sat held).
+  @backlog @mc @priority-high
+  Scenario Outline: A held message no person wrote starts once the thread completes a run
+    Given "t1" has a held queued message "A" the user wrote
+    And <source> queued "B" on "t1" while a turn was running
+    When the newest run of "t1" completes
+    Then "B" starts in queue order
+    And "A" is still held for the user
+
+    Examples:
+      | source           |
+      | another agent    |
+      | an MCP tool      |
+      | a scheduled task |
+
+  # Upstream #27221
+  @backlog @mc @priority-high
+  Scenario Outline: A run that did not complete releases nothing held
+    Given another agent's message "B" is held on "t1"
+    When <ending>
+    Then "B" is still held
+
+    Examples:
+      | ending                                                  |
+      | the newest run of "t1" fails                            |
+      | the user stops a run that then completes anyway         |
+      | an older run of "t1" is completed again for bookkeeping |
+
+  # Upstream #17885: a Claude wake queued while a run was settling took on an older held user
+  # message, so it never started and its subagents stayed Running after they finished.
+  @backlog @mc @plugin-claude @priority-high
+  Scenario: A provider's wake queued while a run settles starts past an older held message
+    Given "t1" on Claude has a held queued message "A"
+    And a run of "t1" is settling
+    When a Claude background task of "t1" finishes and its wake is queued
+    Then a turn for the wake starts once the run has settled
+    And "A" is still queued
+
+  # Upstream #17885: a wake does not pass the hold once the user has stopped the run.
+  @backlog @mc @plugin-claude
+  Scenario: A provider's wake does not pass a held message once the user stopped the run
+    Given "t1" on Claude has a held queued message "A"
+    And the user stopped the running turn of "t1"
+    When a Claude background task of "t1" finishes and its wake is queued
+    Then neither the wake nor "A" starts until the user resumes the queue
+
   @mc
   Scenario: A queued message that could not start says so in the timeline
     Given "t1" has a running turn and a queued message "Next"
@@ -589,6 +650,20 @@ Feature: Queueing, steering and restarting
     And "t1" is running "/compact"
     When the user writes a follow-up, with or without the steer modifier held
     Then the composer's send action queues it
+
+  # Upstream #25837: Send now on a queued message during a compaction did nothing; it now stops
+  # the compaction and runs the message next, leaving the context uncompacted.
+  @mc @backlog @priority-high
+  Scenario Outline: Sending a queued message now during a compaction skips the compaction
+    Given "t1" is running "/compact" and "<message>" is queued
+    When the user sends "<message>" now
+    Then the compaction stops and the context is left as it was
+    And a turn starts with "<message>" next
+
+    Examples:
+      | message        |
+      | Check the docs |
+      | /goal ship it  |
 
   @mc
   Scenario: A queued message cannot be edited down to nothing

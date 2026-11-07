@@ -7,6 +7,7 @@
 #   https://github.com/pingdotgg/t3code/pull/16903
 #   https://github.com/pingdotgg/t3code/pull/18840
 #   https://github.com/pingdotgg/t3code/pull/14152 (carry: Claude Sonnet 5.5 in the catalog, @backlog)
+#   https://github.com/pingdotgg/t3code/pull/26358
 #   apps/server-ex/lib/hal_c2/codex/provider.ex (model/list, aliases), apps/server-ex/lib/hal_c2/claude/provider.ex (the models Claude Code lists, else the manifest's Claude catalog)
 #   apps/server-ex/lib/hal_c2/model_manifest.ex (bundled, fetched and cached manifest; policies)
 #   apps/server-ex/lib/hal_c2/acp.ex (models from the model config option, subProvider)
@@ -96,6 +97,14 @@ Feature: Models
     Then the current models are "Fable 5.1", "Opus 5.5", "Sonnet 5.5" and "Haiku 5.5"
     And "Opus 5" and "Sonnet 5" are listed as legacy
     And the aliases "opus", "sonnet" and "haiku" pick the 5.5 models
+
+  # Upstream #26358: new Claude threads defaulted to Fable 5.1; the manifest is dated anew so
+  # an MC holding a fetched copy picks the new default up.
+  @backlog @mc
+  Scenario: A new Claude thread starts on Opus 5.5
+    Given the user has not chosen a default Claude model
+    When the user starts a new thread on Claude
+    Then the thread runs on "Opus 5.5"
 
   @backlog @priority-low
   Scenario: Claude Haiku 5.5 offers reasoning effort but not fast mode

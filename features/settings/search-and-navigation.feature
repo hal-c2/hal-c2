@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27376
 #   https://github.com/pingdotgg/t3code/pull/20764
 #   https://github.com/pingdotgg/t3code/pull/17396
 #   https://github.com/pingdotgg/t3code/pull/17859
@@ -406,6 +407,25 @@ Feature: Settings search and navigation
       Given no environment is the primary one
       When the user searches settings for "writing style"
       Then "Writing style" is the first result
+
+    # Upstream #27376: the fallback model could not be found in settings search.
+    @backlog @desktop
+    Scenario Outline: The fallback model is found in settings search
+      When the user searches settings for "<query>"
+      Then "Fallback model" is a result
+
+      Examples:
+        | query          |
+        | fallback       |
+        | fallback agent |
+        | fallback model |
+
+    # Upstream #27376: choosing the other scope from the notice left the user on the notice.
+    @backlog @desktop
+    Scenario: The fallback model opens for all environments from a project's settings
+      Given the settings are scoped to the project "shop"
+      When the user opens the search result "Fallback model" and chooses all environments
+      Then the page shows the fallback model setting, not the scope notice
 
   Rule: Restoring defaults
 

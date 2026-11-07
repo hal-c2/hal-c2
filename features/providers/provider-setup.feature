@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24763
+#   https://github.com/pingdotgg/t3code/pull/27321
+#   https://github.com/pingdotgg/t3code/pull/22941
+#   https://github.com/pingdotgg/t3code/pull/25235
 #   https://github.com/pingdotgg/t3code/pull/20386
 #   https://github.com/pingdotgg/t3code/pull/18110
 #   https://github.com/pingdotgg/t3code/pull/20796
@@ -29,6 +33,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15539
 #   https://github.com/pingdotgg/t3code/pull/15501
 #   https://github.com/pingdotgg/t3code/pull/22504
+#   https://github.com/pingdotgg/t3code/pull/27847
+#   https://github.com/pingdotgg/t3code/pull/22044
 
 @mc
 Feature: Provider setup, updates and sign-in
@@ -170,6 +176,22 @@ Feature: Provider setup, updates and sign-in
     When the MC checks provider versions
     Then Codex is compared against the version Homebrew would install
 
+  # Upstream #22941: a Chocolatey Claude was compared with npm and offered Update now, which
+  # installed a second, native copy and left the Chocolatey one behind.
+  @backlog @mc @plugin-claude @priority-low
+  Scenario Outline: A Chocolatey Claude on Windows is compared against Chocolatey and updated by hand
+    Given Claude was installed with Chocolatey on Windows
+    And Chocolatey <offers>
+    When the user opens Claude's update details
+    Then <outcome>
+    And the user is not offered to update Claude now
+
+    Examples:
+      | offers                                    | outcome                                                            |
+      | a newer Claude than the installed one     | the user can copy "choco upgrade claude-code"                      |
+      | the installed version, though npm has a newer one | Claude shows no update                                     |
+      | no answer to the version lookup           | Claude's latest version is unknown and npm is not asked             |
+
   # Upstream #21451: refreshing a provider reused cached Homebrew metadata; an explicit refresh now
   # rereads it, background checks keep the cache.
   @backlog @priority-low
@@ -216,6 +238,36 @@ Feature: Provider setup, updates and sign-in
     When the MC checks provider versions
     Then Codex's update status is unknown
     And no error is shown to the user
+
+  # Upstream #22044: the four-second deadline ended when headers arrived, not when the body did.
+  @backlog @mc @priority-low
+  Scenario: A registry that stalls after it starts answering still ends the lookup at four seconds
+    Given Codex was installed with npm
+    And the package registry answers at once but stops sending before the version arrives
+    When the MC checks provider versions
+    Then after four seconds Codex's update status is unknown
+
+  # Upstream #27847: provider version checks went straight to the public npm registry.
+  @backlog @mc @priority-high
+  Scenario Outline: Provider version checks go through the npm setup on the machine
+    Given Codex was installed with npm
+    And <setup>
+    When the MC checks provider versions
+    Then <outcome>
+
+    Examples:
+      | setup                                                     | outcome                                                                    |
+      | npm on the MC's path is configured for a company registry | the latest version comes from the company registry                         |
+      | npm on the MC's path fails to look the version up         | Codex's update status shows the error and the public registry is not asked |
+      | npm is not installed on the machine                       | the latest version comes from the public npm registry                      |
+
+  # Upstream #27321: a provider whose settings put a version manager's Node on its PATH failed to
+  # update with "npm: NotFound", because the update ran with the server's PATH.
+  @backlog @mc
+  Scenario: A provider update runs with the PATH the provider's settings give it
+    Given Codex was installed with npm into a Node that only Codex's environment puts on the PATH
+    When the user updates Codex
+    Then the update finds npm on Codex's PATH and installs the latest Codex
 
   @backlog @mc @priority-low
   Scenario Outline: A provider that cannot be updated yet is not checked against the registry
@@ -338,6 +390,14 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then Codex's update waits for the Claude update to finish
 
+  # Upstream #24763: an update of a provider already on the latest version still ran its installer.
+  @backlog @mc
+  Scenario: Updating a provider already on its latest version does not run the installer
+    Given a fresh check finds Claude installed at its latest version
+    When the user updates Claude
+    Then the update finishes with "Already up to date."
+    And Claude's installer is not run
+
   Scenario: An update that leaves the provider outdated is reported as unchanged
     When an update finishes but the provider still reports the old version
     Then the user is told the provider is still outdated
@@ -402,6 +462,16 @@ Feature: Provider setup, updates and sign-in
     Given a Codex update is running
     When the user updates Codex again
     Then the second update is refused saying an update is already running for that provider
+
+  # Upstream #25235: accounts with their own Codex homes share one standalone Codex, which failed to
+  # find its install when updated with an account's home.
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: A standalone Codex shared by accounts with their own homes updates from its own install
+    Given two Codex accounts with their own Codex homes run one standalone Codex
+    And Codex is behind the latest version
+    When the user updates Codex
+    Then Codex is updated where it is installed
+    And both accounts keep their own homes and sign-ins
 
   Scenario Outline: A provider version outside the supported range is flagged
     Given the installed provider version is <status> for this HAL-C2 release

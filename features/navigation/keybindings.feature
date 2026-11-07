@@ -6,6 +6,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14475
 #   https://github.com/pingdotgg/t3code/pull/22607
 #   https://github.com/pingdotgg/t3code/pull/22905
+#   https://github.com/pingdotgg/t3code/pull/25860
 #   docs/user/keybindings.md
 #   https://github.com/pingdotgg/t3code/pull/9434 (usage.open, mod+u outside a terminal)
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
@@ -34,6 +35,8 @@
 #   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run,
 #   stage.moveTab, stage.toggleFocus, stage.nextPane, stage.dismiss, stage.layout.* (desktop only)
 #   apps/web/src/routes/_chat.tsx (thread shortcuts wait for the command palette; one project needs no chooser)
+#   https://github.com/pingdotgg/t3code/pull/28091
+#   https://github.com/pingdotgg/t3code/pull/24134
 
 Feature: Keybindings
   Every command has an id, and most have a default shortcut that only applies in a given
@@ -216,6 +219,22 @@ Feature: Keybindings
       Then the usage page opens
       When the user presses mod+u again
       Then the user is back on thread "A"
+
+    # Upstream #24134: the sidebar toggle and thread navigation took "editableFocus" as false,
+    # so a binding meant only for outside text fields fired while typing.
+    @desktop @backlog @priority-low
+    Scenario Outline: A shortcut bound to apply outside text fields stays out of the way while typing
+      Given mod+k is bound to "<command>" when "!editableFocus"
+      And the user is typing in <field>
+      When the user presses mod+k
+      Then "<command>" does not run
+      And the key goes to <field>
+
+      Examples:
+        | command          | field                |
+        | sidebar.toggle   | the composer         |
+        | thread.next      | the file editor      |
+        | thread.jump.1    | a settings text field |
 
   Rule: The desktop shell honours the web keymap
 
@@ -418,6 +437,39 @@ Feature: Keybindings
       When the user goes forward
       Then thread "B" is shown
 
+    # Upstream #28091: the desktop's two-finger sideways swipe goes back and forward through
+    # visited threads when nothing under the pointer can scroll that way.
+    @backlog @desktop
+    Scenario: A sideways trackpad swipe moves through visited threads
+      Given the user opened thread "A" and then thread "B"
+      When the user swipes sideways with two fingers over the conversation
+      Then thread "A" is shown
+
+    # Upstream #28091: a sideways scroll in a diff or file view switched threads even though the
+    # content still had room to scroll.
+    @backlog @desktop
+    Scenario Outline: A sideways swipe over content that can still scroll scrolls it
+      Given the user opened thread "A" and then thread "B"
+      And <pane> in "B" has long lines that can scroll further in the swipe's direction
+      When the user swipes sideways with two fingers over it
+      Then the content scrolls
+      And thread "B" is still shown
+
+      Examples:
+        | pane          |
+        | the diff      |
+        | the file view |
+
+    # Upstream #28091: a swipe that began as a scroll stays one through the edge; a fresh swipe at
+    # the edge navigates.
+    @backlog @desktop @priority-low
+    Scenario: A swipe that starts as a scroll stays a scroll until the fingers lift
+      Given the user is scrolling the diff in "B" sideways with two fingers
+      When the diff reaches its edge before the fingers lift
+      Then thread "B" is still shown
+      When the user starts a new sideways swipe at that edge
+      Then the previous thread is shown
+
     # Upstream #23519: going back could show a thread the sidebar had filtered out, hidden past
     # its preview limit or scrolled away.
     @backlog @desktop
@@ -472,6 +524,15 @@ Feature: Keybindings
         | a focused terminal and an open right panel tab    | the focused terminal closes       |
         | an active right panel tab and no focused terminal | the active right panel tab closes |
         | nothing but the window                            | the window closes                 |
+
+    # Upstream #25860: with no tab left, mod+w closed the window, which on Windows and Linux also
+    # quit the app. The window's close button and Quit still close it. This replaces the passing
+    # "the window closes" row above once the desktop follows.
+    @backlog @desktop @priority-high
+    Scenario: mod+w with nothing left to close leaves the window open
+      Given no terminal is focused and the right panel has no tab
+      When the user presses mod+w
+      Then the window stays open
 
     @desktop
     Scenario: Steering the first queued message

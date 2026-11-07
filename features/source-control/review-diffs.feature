@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19941
+#   https://github.com/pingdotgg/t3code/pull/27635
+#   https://github.com/pingdotgg/t3code/pull/25303
 #   https://github.com/pingdotgg/t3code/pull/18430
 #   https://github.com/pingdotgg/t3code/pull/19550
 #   https://github.com/pingdotgg/t3code/pull/17886
@@ -36,6 +39,10 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (Diff)
 #   https://github.com/pingdotgg/t3code/pull/15005
 #   https://github.com/pingdotgg/t3code/pull/21909
+#   https://github.com/pingdotgg/t3code/pull/28244
+#   https://github.com/pingdotgg/t3code/pull/23421
+#   https://github.com/pingdotgg/t3code/pull/27899
+#   https://github.com/pingdotgg/t3code/pull/25865
 
 Feature: Reviewing working tree and branch changes
   Beside a thread the user reviews what changed in the checkout, either uncommitted work
@@ -62,6 +69,20 @@ Feature: Reviewing working tree and branch changes
     When the user reviews the working tree
     Then "src/cart.ts" is still the only staged file afterwards
 
+  # Upstream #23421: expanding a diff dropped the UTF-8 byte-order mark from both sides, so a change
+  # that only added or removed it vanished.
+  @backlog @mc
+  Scenario Outline: A change to a file's byte-order mark is kept in the diff's contents
+    Given "notes.txt" <change> its UTF-8 byte-order mark and nothing else
+    When the user expands "notes.txt" in the working tree diff
+    Then the old side <old> the byte-order mark
+    And the new side <new> the byte-order mark
+
+    Examples:
+      | change | old                 | new                 |
+      | gained | does not start with | starts with         |
+      | lost   | starts with         | does not start with |
+
   # The review must not trust a copied index's timestamps to tell an unchanged file from a new one.
   # Untracked files are what make the review copy the index.
   @mc
@@ -84,6 +105,13 @@ Feature: Reviewing working tree and branch changes
     Given the only change in "src/cart.ts" is re-indentation
     When the user reviews the working tree hiding whitespace changes
     Then "src/cart.ts" shows no changed lines
+
+  # Upstream #25303: the client trimmed the patch, dropping a blank last line and spaces at the end of a final added line.
+  @backlog @shared
+  Scenario: A diff keeps whitespace at the end of its last hunk
+    Given "notes.txt" holds "alpha", "beta", "gamma" and an empty fourth line
+    When the user changes "alpha" to "ALPHA" and reviews the working tree
+    Then the diff of "notes.txt" shows the empty fourth line as context
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: PATCH_RENDER_PREFIX_ARGS)
   @mc
@@ -174,11 +202,72 @@ Feature: Reviewing working tree and branch changes
     When the user compares the branch against "origin/main" instead of "main"
     Then the diff shows the changes against "origin/main"
 
+  # Upstream #27635: a base with no common commit hid the base choice, and the choice was kept,
+  # so the diff stayed stuck after a reload.
+  @backlog @desktop
+  Scenario: A base the diff cannot be shown against can still be changed
+    Given the user chose to compare against a branch with no commit in common
+    When the diff fails to load, now or after a reload
+    Then the bases to compare against are still offered
+    And choosing Automatic or another branch shows the diff again
+
+  # Upstream #19941: the diff pane could not show one local commit, and a code host's commit link left the app
+  @backlog @mc @shared
+  Scenario: Reviewing one local commit in the diff
+    Given "feature/tax" has 3 commits on top of "main"
+    When the user picks the second of those commits in the diff
+    Then the diff shows only the changes that commit made
+    And the commit's hash is shown in the diff's header
+
+  @backlog @shared @mc
+  Scenario Outline: A <host> commit link in the thread opens that commit in the diff
+    Given the thread's checkout has the commit "a1b2c3d" and its remote is on <host>
+    When the user clicks a <host> link to commit "a1b2c3d" of that repository
+    Then the diff shows commit "a1b2c3d"
+    When the user clicks the link with a modifier held
+    Then the link opens in the browser instead
+
+    Examples:
+      | host             |
+      | GitHub           |
+      | GitLab           |
+      | Forgejo or Gitea |
+      | GitCafe          |
+      | Bitbucket Cloud  |
+      | Azure DevOps     |
+
+  @backlog @shared @mc
+  Scenario: A commit link the checkout cannot show follows the link setting
+    Given the thread's checkout does not have the commit a link points at
+    When the user clicks the link
+    Then it opens the way links are set to open
+    And a pull request's commit opens in that pull request's review instead
+
+  @backlog @mc
+  Scenario: A commit at the edge of a shallow clone is not shown as a diff
+    Given the checkout is a shallow clone and "a1b2c3d" is its oldest commit
+    When a client asks for the diff of "a1b2c3d"
+    Then the MC refuses it because the commit's parent is missing
+
   @desktop
   Scenario: Browsing the changed files as a tree
     When the user shows the file tree of the diff
     Then the changed files are listed by folder
     And choosing a file jumps to it
+
+  # Upstream #28244: the file lists of Changes and a pull request's code could not be widened,
+  # so long file names could not be told apart.
+  @backlog @desktop
+  Scenario Outline: The changed files list of <view> can be widened and keeps its width
+    Given the user shows the file tree of <view>
+    When the user widens the file list by pointer or keyboard
+    Then the file list is wider, up to 560 pixels
+    And it has that width again after the app restarts
+
+    Examples:
+      | view                      |
+      | the diff                  |
+      | a pull request's code     |
 
   @desktop
   Scenario: Collapsing and expanding every file
@@ -437,6 +526,24 @@ Feature: Reviewing working tree and branch changes
     Given the diff changes "src/cart.ts" and "README.md"
     When the user reviews the working tree
     Then each file is shown with the highlighting of its language
+
+  # Upstream #27899: assembly files were not highlighted; ".s" was taken for an unsupported RISC-V lexer.
+  # Upstream #25865: Luau and XSL files showed as plain text next to highlighted Lua and XML.
+  @backlog @shared
+  Scenario Outline: Files in dialects without a lexer of their own are highlighted as <language>
+    Given the diff changes "<file>"
+    When the user reviews the working tree or opens "<file>"
+    Then the file is shown with the highlighting of <language>
+
+    Examples:
+      | file              | language |
+      | boot/start.asm    | Assembly |
+      | boot/start.s      | Assembly |
+      | boot/start.S      | Assembly |
+      | boot/start.nasm   | Assembly |
+      | game/player.luau  | Lua      |
+      | site/page.xsl     | XML      |
+      | site/page.xslt    | XML      |
 
   # Waits for "Each file of the diff on the desktop is coloured by its language" (hal-c2/hal-c2#916): the
   # desktop's diff has no highlighter to fail yet.

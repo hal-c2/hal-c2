@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25187
+#   https://github.com/pingdotgg/t3code/pull/23437
+#   https://github.com/pingdotgg/t3code/pull/25217
+#   https://github.com/pingdotgg/t3code/pull/27101
+#   https://github.com/pingdotgg/t3code/pull/24474
 #   https://github.com/pingdotgg/t3code/pull/24588
 #   https://github.com/pingdotgg/t3code/pull/19666
 #   https://github.com/pingdotgg/t3code/pull/23647
@@ -13,6 +18,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19432
 #   https://github.com/pingdotgg/t3code/pull/15468
 #   https://github.com/pingdotgg/t3code/pull/25239
+#   https://github.com/pingdotgg/t3code/pull/26160
 #   docs/user/remote-access.md (Pair over a LAN or private network, Tailscale HTTPS, Hosted web app,
 #     Desktop-managed SSH)
 #   docs/internals/remote.md
@@ -35,6 +41,8 @@
 #   connections/cluster.feature holds MCs reaching each other over the tailnet;
 #   connections/hal-c2-connect.feature holds the dropped HAL-C2 Connect relay;
 #   settings/connections.feature holds the desktop network access, Tailscale HTTPS and add-over-SSH controls.
+#   https://github.com/pingdotgg/t3code/pull/22123
+#   https://github.com/pingdotgg/t3code/pull/23025
 
 Feature: How clients reach an environment
   An MC listens on loopback unless told otherwise. Clients reach it directly on a LAN or
@@ -90,6 +98,15 @@ Feature: How clients reach an environment
       | mixed-content-blocked  | warns that an HTTPS client cannot reach a plain HTTP link |
       | requires-configuration | says the address needs HTTPS set up first                 |
       | unknown                | offers it without a promise                               |
+
+  # Upstream #24474: after moving to another network, the LAN address and pairing links stayed on the old address.
+  @backlog @mc
+  Scenario: The advertised LAN address follows the machine to a new network
+    Given network access is on
+    And the MC's machine moves to another network and gets a new LAN address
+    When the user creates a pairing link for the local network
+    Then the link and the reachable address name the new LAN address
+    And the MC is not restarted
 
   @backlog @desktop @priority-low
   Scenario: Turning off network access keeps Tailscale HTTPS working
@@ -155,6 +172,26 @@ Feature: How clients reach an environment
     When the user looks for an SSH host to add
     Then "build" is suggested and "10.0.0.5" is not
     And searching for "10.0.0.5" finds "build"
+  # Upstream #25187: an Include naming a directory stopped discovery with EISDIR.
+  @backlog @desktop
+  Scenario Outline: An SSH config include that names a directory is skipped
+    Given the SSH config includes <include>, which matches a directory
+    And an included file names "build" and the known hosts hold "10.0.0.7"
+    When the user looks for an SSH host to add
+    Then "build" and "10.0.0.7" are suggested
+
+    Examples:
+      | include              |
+      | "config.d"           |
+      | "config.d/*"         |
+
+
+  # Upstream #26160: the add dialog reopened with the SSH choice still picked after an SSH add.
+  @backlog @desktop @priority-low
+  Scenario: Adding an environment starts afresh each time
+    Given the user added an SSH environment, or closed the add dialog with SSH chosen
+    When the user opens the add dialog again
+    Then a pairing link is the chosen way to add, with every field empty
 
   # Legacy: apps/desktop/src/main.ts (resolveDesktopSshCliRunner: the release the app is on, no Node on the host)
   @backlog @desktop
@@ -250,6 +287,15 @@ Feature: How clients reach an environment
     Then the prompt names "olafur@build-box"
     And it says the password is used for this connection attempt only and is not saved
 
+  # Upstream #23437: a key in an agent that will not sign while the Mac is locked, like
+  # 1Password or Secretive, opened a password prompt on every background reconnect.
+  @backlog @desktop
+  Scenario: An SSH agent that cannot sign does not bring up a password prompt
+    Given the key for "build-box" is held by an SSH agent that refuses to sign while the Mac is locked
+    When the desktop app reconnects to "build-box" in the background
+    Then no password prompt is shown
+    And the connection fails with the agent's signing error
+
   # Upstream #20272: the SSH prompt asks for a password or verification code.
   @backlog @desktop
   Scenario: An SSH host that asks for a verification code gets one
@@ -264,6 +310,23 @@ Feature: How clients reach an environment
     When the time runs out
     Then the prompt says it expired and cannot be answered
     And the user is told to try connecting again
+
+  # Upstream #22123: every command after an answered password prompt left a new helper folder
+  # in the system's temporary folder.
+  @backlog @desktop @priority-low
+  Scenario: Answering a password prompt leaves no new temporary folder per command
+    Given the user answered the password prompt for "build"
+    When the app launches, pairs with and reconnects to "build" several times
+    Then the system's temporary folder gains at most one folder for the app's password helper
+
+  # Upstream #23025: a command whose connection dropped silently held recovery for its whole
+  # 15-minute limit.
+  @backlog @desktop
+  Scenario: An SSH command whose connection drops is noticed within a minute
+    Given the app is installing or pairing with the server on "build" over SSH
+    When the network to "build" goes silent without closing the connection
+    Then the command fails as disconnected within about a minute
+    And a healthy install may still take as long as it needs
 
   @backlog @desktop @priority-low
   Scenario: Cancelling the password prompt stops the connection without retrying
@@ -632,6 +695,23 @@ Feature: How clients reach an environment
     Then the tailnet route is tried after a head start of half a second, not after the LAN check gives up
     And a route that answered late is tried before routes that are still silent
 
+  # Upstream #27101: the better-route check probed a dead route every minute, each probe waiting
+  # out its timeout.
+  @backlog @shared @priority-low
+  Scenario: A route that keeps not answering is checked less and less often
+    Given a client connected over its tailnet route holds a LAN route that never answers
+    When the client keeps checking for a better route
+    Then the LAN route is checked again after 2, 4, 8, 16 and then every 30 minutes
+    And a route that answers is checked on the usual schedule again
+
+  # Upstream #27101
+  @backlog @shared @priority-low
+  Scenario: A network change checks a quiet route at once
+    Given the client's LAN route has been silent long enough to be checked only every 30 minutes
+    When the device's network changes or it wakes from a long sleep
+    Then the LAN route is checked at once
+    And the client moves to it if it answers
+
   # Upstream #20445: a credential paired over HTTPS, loopback or the tailnet is not copied to a
   # learned plain-HTTP address on the local network or the internet; tailnet addresses are still learned.
   @backlog @shared @priority-high
@@ -660,6 +740,17 @@ Feature: How clients reach an environment
       | interface                                | kind                    |
       | Tailscale's network interface            | a tailnet address       |
       | a Cloudflare WARP or other VPN interface | a local network address |
+
+  # Upstream #25217: renamed or localized VirtualBox and VMware host-only adapters on Windows
+  # slipped past the name filter and were advertised as LAN routes.
+  @backlog @mc @priority-low
+  Scenario: A Windows MC listening on every address does not advertise its virtual machine host adapters
+    Given an MC on Windows listens on every address
+    And the machine has a VirtualBox and a VMware host-only adapter under renamed connection names
+    When the MC reports the addresses it can be reached on
+    Then the host-only adapters' addresses are not advertised
+    And its LAN and tailnet addresses still are
+    And an MC bound explicitly to a host-only address still advertises it
 
   # Upstream #17158: Cloudflare and other VPN addresses no longer show as Tailscale
   @backlog @shared @priority-low

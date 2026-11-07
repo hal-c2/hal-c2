@@ -1,6 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19456 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/26633
+#   https://github.com/pingdotgg/t3code/pull/27224
+#   https://github.com/pingdotgg/t3code/pull/23771
+#   https://github.com/pingdotgg/t3code/pull/22328
+#   https://github.com/pingdotgg/t3code/pull/24866
+#   https://github.com/pingdotgg/t3code/pull/24244
 #   https://github.com/pingdotgg/t3code/pull/25068
 #   https://github.com/pingdotgg/t3code/pull/17244
+#   https://github.com/pingdotgg/t3code/pull/26173
+#   https://github.com/pingdotgg/t3code/pull/22542
 #   https://github.com/pingdotgg/t3code/pull/19919
 #   https://github.com/pingdotgg/t3code/pull/19579
 #   https://github.com/pingdotgg/t3code/pull/17736
@@ -79,6 +88,18 @@
 #   https://github.com/pingdotgg/t3code/pull/25491
 #   https://github.com/pingdotgg/t3code/pull/25462
 #   https://github.com/pingdotgg/t3code/pull/25521
+#   https://github.com/pingdotgg/t3code/pull/22835
+#   https://github.com/pingdotgg/t3code/pull/25275
+#   https://github.com/pingdotgg/t3code/pull/26027
+#   https://github.com/pingdotgg/t3code/pull/27893
+#   https://github.com/pingdotgg/t3code/pull/23577
+#   https://github.com/pingdotgg/t3code/pull/23434
+#   https://github.com/pingdotgg/t3code/pull/22522
+#   https://github.com/pingdotgg/t3code/pull/22739
+#   https://github.com/pingdotgg/t3code/pull/22892
+#   https://github.com/pingdotgg/t3code/pull/23646
+#   https://github.com/pingdotgg/t3code/pull/22639
+#   https://github.com/pingdotgg/t3code/pull/23338
 
 Feature: In-app preview browser
   A thread can keep browser tabs beside it for the app it is building. The MC remembers each
@@ -115,6 +136,13 @@ Feature: In-app preview browser
       When a client opens a browser tab for the thread at "ftp://example.com/file"
       Then no tab opens
       And the client is told the address cannot be opened
+
+    # Upstream #22328: mod+L did nothing while the page itself had the keyboard.
+    @backlog @desktop
+    Scenario: The address shortcut works while the page has the keyboard
+      Given the user clicked into the search box of the page in a browser tab
+      When the user presses mod+L
+      Then the tab's address bar has the keyboard with its address selected
 
     @backlog @desktop @priority-low
     Scenario Outline: Text typed in the address bar that is not an address is searched for
@@ -353,6 +381,63 @@ Feature: In-app preview browser
       And "http://localhost:5173" is suggested
       And a port where any listener is not a HAL-C2 terminal's is not probed
 
+    # Upstream #27893: probing the ports agent processes listened on broke non-web services such as
+    # Unity, Flutter and Gradle test runners; discovered ports are now listed without any probe,
+    # and only configured preview addresses are still checked.
+    @backlog @mc @priority-high
+    Scenario: A port a thread's agent or terminal opened is listed without being probed
+      Given a Redis server on port 6379 started by a thread's agent
+      When a client watches for local servers
+      Then "http://localhost:6379" is suggested
+      And port 6379 receives no HTTP request and no TLS handshake
+
+    # Upstream #27893
+    @backlog @mc @priority-low
+    Scenario: Listing local servers on its own can be turned off
+      Given the MC was started with automatic local server listing turned off
+      And a dev server on port 5173 started in a thread's terminal
+      When a client names the configured address "http://localhost:3000/app" and watches for local servers
+      Then port 5173 is not suggested
+      And "http://localhost:3000/app" is still checked and suggested when it serves a page
+
+    # Upstream #22542: a server an agent started in the background ("npm run dev &") showed up
+    # nowhere, and once the turn ended nothing in the app could find or stop it.
+    @backlog @mc @desktop @mobile @priority-high
+    Scenario: The thread lists the servers its agent started
+      Given the agent of "Fix checkout" started a server on port 5173 in the background
+      When the agent's turn ends
+      Then the details of "Fix checkout" list the server on port 5173
+      And choosing it opens it in the thread's browser
+
+    # Upstream #22542
+    @backlog @mc @desktop @mobile
+    Scenario: The user stops a server the agent started
+      Given the details of "Fix checkout" list the server on port 5173
+      When the user stops it
+      Then the server's processes are asked to stop and killed if they have not after 3 seconds
+      And the server is no longer listed
+
+    # Upstream #22542: a stop never reaches HAL-C2's own processes, the agent or a terminal's shell.
+    @backlog @mc @priority-high
+    Scenario: Stopping a server never stops HAL-C2, an agent or a terminal shell
+      Given the port the user stops is now held by the agent's own process
+      When the user stops the server on that port
+      Then the stop is refused and nothing is stopped
+
+    # Upstream #22542
+    @backlog @mc
+    Scenario: Stopping a server needs terminal access
+      Given a session without terminal access
+      When it asks to stop a server a thread started
+      Then the stop is refused
+
+    # Upstream #22542
+    @backlog @mc @priority-low
+    Scenario: A server an agent left running before a restart is still listed
+      Given the agent of "Fix checkout" left a server on port 5173 running
+      When the MC restarts
+      Then the details of "Fix checkout" still list the server on port 5173
+
     @backlog @mc @priority-low
     Scenario: Closing the terminal that started a dev server drops its suggestion
       Given "http://localhost:5173" is suggested for a dev server started in a thread's terminal
@@ -566,6 +651,19 @@ Feature: In-app preview browser
         | ERR_CERT_AUTHORITY_INVALID  | Certificate authority is not trusted   |
         | ERR_TOO_MANY_REDIRECTS      | Too many redirects                     |
 
+    # Upstream #24244: error names with digits were cut at the first digit, so ERR_HTTP2_PROTOCOL_ERROR read "ERR_HTTP".
+    @backlog @mc @desktop
+    Scenario Outline: A load error whose name holds digits keeps its whole name
+      Given a browser tab whose page fails with "net::<code>"
+      Then the tab names the error "<code>"
+      And an agent asking for the tab's status or navigating it is told "<code>"
+
+      Examples:
+        | code                         |
+        | ERR_HTTP2_PROTOCOL_ERROR     |
+        | ERR_TLS13_DOWNGRADE_DETECTED |
+        | ERR_HTTP_1_1_REQUIRED        |
+
     @backlog @desktop
     Scenario: A tab opened at a file the browser cannot show offers to open or download it
       When the user opens a browser tab at "http://localhost:5173/report.pdf", which downloads
@@ -641,6 +739,14 @@ Feature: In-app preview browser
       Given a browser tab that fills its space
       When the user picks the "Pixel 7" device size
       Then the page renders at that device's size
+
+    # Upstream #23338: with the aspect ratio locked, typing a width rewrote its digits as they came.
+    @backlog @desktop @priority-low
+    Scenario: A width typed with the aspect ratio locked is kept as typed
+      Given the preview is set to a device size of 1920 by 1080 with the aspect ratio locked
+      When the user types the width 2560
+      Then the width field shows 2560 while the user types
+      And the preview is set to 2560 by 1440
 
     @desktop
     Scenario: The user sees the page at several sizes side by side
@@ -870,6 +976,21 @@ Feature: In-app preview browser
       Then no tab or window opens and the page is told it was refused
       And the page stays as it was
 
+    # Upstream #24866: a popup to a data: address replaced the page, past the browser's own block
+    # on pages moving themselves to such addresses.
+    @backlog @desktop @priority-high
+    Scenario Outline: A page cannot open a local or inline address as a popup
+      When the page opens a window at "<address>"
+      Then no tab or window opens and the page is told it was refused
+      And the page and its address stay as they were
+
+      Examples:
+        | address                      |
+        | data:text/html,<h1>hi</h1>   |
+        | file:///etc/hosts            |
+        | javascript:alert(1)          |
+        | view-source:https://acme.dev |
+
     @desktop
     Scenario: A popup cannot open further popups
       Given a sign-in popup opened by a page in a browser tab
@@ -878,6 +999,8 @@ Feature: In-app preview browser
 
     # Upstream #20237: sites were granted notifications and could raise system notifications
     # in the app's name; notifications are now refused like the other unlisted permissions.
+    # Upstream #22835: tabs reported loopback access as denied, which stopped Okta FastPass sign-in.
+    # Upstream #25275: browser games and 3D viewers could not capture the mouse; Escape releases it.
     @backlog @desktop
     Scenario Outline: A page may ask for some things and not others
       Given a page in a browser tab asks for <permission>
@@ -885,14 +1008,50 @@ Feature: In-app preview browser
 
       Examples:
         | permission                         | outcome |
-        | the clipboard's text               | allowed |
         | to put text on the clipboard       | allowed |
         | to show notifications              | refused |
         | the user's location                | allowed |
         | the camera                         | refused |
         | the microphone                     | refused |
         | the list of installed fonts        | refused |
+        | to lock the mouse pointer          | allowed |
+        | this computer's own addresses      | allowed |
+        | other devices on the local network | refused |
         | anything else a page can ask for   | refused |
+
+    # Upstream #26173: every page could read the clipboard without asking, the user's tabs and an
+    # agent's alike.
+    @backlog @desktop @priority-high
+    Scenario Outline: A page asks before it reads the clipboard
+      Given a page from "https://example.com" in a browser tab asks to read the clipboard
+      Then the user is asked whether "https://example.com" may see what was copied
+      When the user <answer>
+      Then the page <result>
+      And "https://example.com" is not asked again while the browser stays open
+
+      Examples:
+        | answer    | result              |
+        | allows it | reads the clipboard |
+        | blocks it | gets nothing        |
+
+    # Upstream #26173
+    @backlog @desktop
+    Scenario: Each site is asked on its own whether it may read the clipboard
+      Given the user allowed "https://example.com" to read the clipboard
+      When a page from "https://other.example" asks to read the clipboard
+      Then the user is asked about "https://other.example"
+
+    # Upstream #26173: Enter typed into the page could otherwise accept a prompt the page raised.
+    @backlog @desktop @priority-high
+    Scenario Outline: A page's prompt starts on its refusing choice
+      When a page <asks>
+      Then the prompt's default choice refuses it
+      And a request that arrives while another prompt is open is refused without being remembered
+
+      Examples:
+        | asks                         |
+        | asks to read the clipboard   |
+        | asks to open an outside link |
 
     # Upstream #20237: refusing a page notifications leaves the app's own notifications alone.
     @backlog @desktop @priority-high
@@ -958,6 +1117,19 @@ Feature: In-app preview browser
       When the user presses Escape
       Then the field shows the page's address again
       And the field no longer has focus
+
+    # Upstream #23577: an address the browser could not open was silently put back.
+    @backlog @desktop
+    Scenario Outline: An address that is not a web page says what to type instead
+      Given a browser tab showing the thread's dev server
+      When the user types "<typed>" in the address field and presses Enter
+      Then the user is told to enter an http or https URL
+      And the tab stays on its page
+
+      Examples:
+        | typed                    |
+        | mailto:alice@example.com |
+        | http://                  |
 
     @desktop
     Scenario: Focusing the address field selects the whole address
@@ -1061,6 +1233,7 @@ Feature: In-app preview browser
       Then nothing is pasted from the user's clipboard
       And no HAL-C2 shortcut runs
 
+    # Upstream #22522: the mouse's Back over a preview switched threads instead of moving the page.
     @backlog @desktop @priority-low
     Scenario: The mouse's back and forward buttons move through the tab's history
       Given a browser tab showing a page that has a page before it
@@ -1107,6 +1280,14 @@ Feature: In-app preview browser
       When the user clears the cache from the "Work" tab's menu
       Then the "Work" profile fetches its pages again
       And the "Personal" profile keeps its cache
+
+    # Upstream #23434: two clears of one profile at once deleted its data while its pages were closing.
+    @backlog @desktop @priority-low
+    Scenario: Clearing a profile twice at once waits for its pages to close
+      Given a browser tab under the profile "Work"
+      When two clears of the "Work" profile's data are asked for at the same time
+      Then both wait until the "Work" pages have closed
+      And the "Work" data is removed once
 
     @backlog @desktop @priority-low
     Scenario: A tab's menu names the profile its actions apply to
@@ -1887,6 +2068,15 @@ Feature: In-app preview browser
       Then the player grows keeping the page's aspect ratio
       But it never becomes smaller than a small minimum
 
+    # Upstream #26027: a floating preview squeezed below its minimum by the layout grew back
+    # wider than the user left it once room returned.
+    @backlog @desktop @priority-low
+    Scenario: A floating preview squeezed by the layout keeps the size the user dragged it to
+      Given the conversation is so narrow that the floating preview is smaller than its usual minimum
+      When the user drags its edge inward
+      And the conversation gets wider again
+      Then the floating preview keeps the width it was dragged to
+
     @backlog @desktop
     Scenario: A floating preview moves aside when the composer grows
       Given a floating preview in the lower part of the conversation
@@ -2206,6 +2396,15 @@ Feature: In-app preview browser
       When the user chooses Paste from the tab's menu
       Then the text on the phone's clipboard is typed into the page's focused field
 
+    # Upstream #19456: the phone said "You have control" of a tab the desktop hosts, but its taps,
+    # typing and scrolling never reached the page. The phone does not stream or control browser
+    # tabs here; its pages go to the system's browser.
+    @dropped @mobile
+    Scenario: The phone's taps, typing and scrolling reach a tab the desktop hosts
+      Given the user controls a browser tab the desktop hosts from the phone
+      When the user taps, types and scrolls in it
+      Then the page on the desktop receives them where the phone shows them
+
     @tui
     Scenario: The terminal client lists preview addresses without an embedded browser
       Given a project with configured and discovered preview addresses
@@ -2225,6 +2424,51 @@ Feature: In-app preview browser
       Given a page is streamed to a client over a slow link
       When the client clicks in the page
       Then the reply to the click is not held behind frames already out of date
+
+    # Upstream #22739: a click on a streamed page waited behind hover moves that were out of
+    # date. Dropped: the MC streams no pages, the desktop draws them.
+    @dropped @mc
+    Scenario: A click on a streamed page does not wait behind old hover moves
+      Given a page is streamed to a client whose pointer moves faster than the page takes them
+      When the user clicks in the page
+      Then the click reaches the page without waiting for the hover moves before it
+
+    # Upstream #22639: the suggested setup command named whichever t3 was on the PATH rather
+    # than this install's. Dropped with the setup command itself.
+    # Upstream #22892: an MC running as root could not start its own browser's
+    # sandbox, so the browser error and "t3 browser setup" explained the server-side opt-out.
+    # Dropped: the MC runs no browser of its own, the desktop draws every page.
+    # Upstream #23646: same change as #22892.
+    @dropped @mc
+    Scenario: The browser setup explains how to run the MC's browser as root
+      Given the MC runs as root
+      When an agent opens a preview
+      Then the agent is told to run the MC as another user or allow the browser without its sandbox and restart the MC
+    # Upstream #23771: two servers sharing one home deleted each other's installed headless browser.
+    # Dropped: the MC runs no browser of its own, the desktop draws every page.
+    @dropped @mc
+    Scenario: Two MCs sharing a home keep each other's browser
+      Given an older and a newer MC share one home, each with its own browser version
+      When the newer MC installs its browser
+      Then the older MC's browser version is kept and only versions older than both are removed
+
+    # Upstream #27224: under an AppArmor profile that refused signals, every HTML preview left its
+    # headless browser running; the server now asks it to quit. Dropped: the MC runs no browser
+    # of its own, the desktop draws every page.
+    @dropped @mc
+    Scenario: An HTML preview's browser quits when the preview is done
+      Given the MC's headless browser cannot be sent signals
+      When an HTML preview finishes rendering
+      Then the browser is asked to quit and exits within 2 seconds
+
+    # Upstream #26633: Copy and Cut from the desktop's Edit menu did nothing in a browser tab that
+    # ran on the server. Dropped: the MC runs no browser of its own, the desktop draws every page.
+    @dropped @mc
+    Scenario: The Edit menu copies and cuts in a page streamed from the server
+      Given the user controls a browser tab streamed from the server
+      When the user chooses Copy or Cut from the Edit menu
+      Then the page's selection reaches the user's clipboard, and Cut removes it from the page
+
 
     # Upstream #19579: the phone closes a thread's browser tabs; the last one closed returns to the thread,
     # and a user without permission to operate previews cannot close them.

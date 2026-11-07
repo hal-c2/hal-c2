@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24139
+#   https://github.com/pingdotgg/t3code/pull/25453
+#   https://github.com/pingdotgg/t3code/pull/25220
 #   https://github.com/pingdotgg/t3code/pull/23729
 #   https://github.com/pingdotgg/t3code/pull/21899
 #   https://github.com/pingdotgg/t3code/pull/21898
@@ -25,7 +28,9 @@
 #   apps/server/src/usage/usageScanCache.ts, usageTranscriptReader.ts, UsageService.ts (resume guard, tail lines, saved scan, shared scans, price floor)
 #   https://github.com/pingdotgg/t3code/pull/15101
 #   https://github.com/pingdotgg/t3code/pull/15333
+#   https://github.com/pingdotgg/t3code/pull/23963
 #   https://github.com/pingdotgg/t3code/pull/11391
+#   https://github.com/pingdotgg/t3code/pull/22392
 
 Feature: Usage
   Usage adds up token use and estimated API-equivalent cost from the provider CLIs' own
@@ -188,6 +193,14 @@ Feature: Usage
     When the user opens Usage with both environments selected
     Then that history is counted once
 
+  # Upstream #25220: a recreated container gets a new hostname, so kept history looked like another machine's.
+  @backlog @mc @priority-low
+  Scenario: History kept across a recreated container still counts once
+    Given the MC runs in a container whose HAL-C2 home is kept on a volume
+    When the container is recreated with a new hostname
+    Then the kept provider history keeps this machine's identity and is counted once
+    And an operator-set host id overrides the saved one
+
   @mc
   Scenario: A repeat scan reads only what changed
     Given the user opened Usage a minute ago
@@ -200,6 +213,14 @@ Feature: Usage
     Given a Codex session re-sends the same token count at a stream boundary
     When the user opens Usage
     Then the repeated count adds nothing to the totals
+
+  # Upstream #22392: Codex re-sending the first count of its sequence billed that request twice.
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: Codex re-sending its first token count of a run is counted once
+    Given a Codex session reported a request of 120 tokens and then a running total of 240 tokens
+    When it re-sends its first count and then reports a running total of 360 tokens
+    Then the session counts 360 tokens
+    And no record is skipped
 
   @backlog @mc @priority-low
   Scenario: A transcript record too large to hold in memory still counts its usage
@@ -302,6 +323,13 @@ Feature: Usage
     Then each event of the copied rollout is counted once
     And the two identical events inside a single rollout are both counted
 
+  # Upstream #25453: compressed Codex rollouts were skipped, so those sessions were missing from the totals.
+  @backlog @mc
+  Scenario: A compressed Codex rollout is counted
+    Given a Codex rollout saved compressed as ".jsonl.zst"
+    When the user opens Usage
+    Then its tokens are counted like an uncompressed rollout's
+
   # Legacy: apps/server/src/usage/usageTranscripts.ts (Grok reads updates.jsonl only)
   @mc
   Scenario: Only Grok's session update log is read as usage
@@ -322,7 +350,18 @@ Feature: Usage
     When the user opens Usage
     Then the request is priced at $0.56
 
-  # Upstream #21898, #21899: Codex can omit its first turn's tier, which priced it at Standard.
+  # Upstream #24139: Claude's advisor calls appear only inside the executor's usage, so Usage
+  # showed the executor's $0.13 and dropped the advisor's $0.75.
+  @mc @plugin-claude @backlog
+  Scenario: A Claude advisor call counts under the advisor's model
+    Given a Claude turn whose executor consulted an advisor on another model
+    When the user opens Usage
+    Then the advisor's tokens are counted and priced under the advisor's model
+    And the executor's request is counted once, as before
+    And transcripts counted before this are read again to pick up their advisor calls
+
+  # Upstream #21898: Codex can omit its first turn's tier, which priced it at Standard.
+  # Upstream #21899: same change as #21898.
   @mc @plugin-codex @backlog @priority-low
   Scenario: A Codex turn started on Fast is priced at Fast when Codex did not record the tier
     Given a Codex thread was started on the Fast service tier
@@ -500,6 +539,15 @@ Feature: Usage
     When usage is summed
     Then the preview model's tokens and cost count under "claude-opus-5-5" at that model's price
     And clearing the mapping lists the preview model on its own row again
+
+  # Upstream #23963: model price mappings that would loop are rejected before saving.
+  @backlog @shared @priority-low
+  Scenario: Model price mappings that loop cannot be saved
+    Given the model prices map "model-a" to "model-b"
+    When the user maps "model-b" to "model-a"
+    Then the mapping says it would loop
+    And the model prices cannot be saved until the loop is removed
+    But clearing "model-a" to "model-b" and mapping "model-b" to "model-a" in one save is accepted
 
   @backlog @shared @priority-low
   Scenario: Model shares and order follow the selected metric

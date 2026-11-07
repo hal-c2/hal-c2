@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27310
+#   https://github.com/pingdotgg/t3code/pull/23240
+#   https://github.com/pingdotgg/t3code/pull/24248
+#   https://github.com/pingdotgg/t3code/pull/25232
 #   https://github.com/pingdotgg/t3code/pull/24972
 #   https://github.com/pingdotgg/t3code/pull/25128
 #   https://github.com/pingdotgg/t3code/pull/19007
@@ -27,6 +31,12 @@
 #   https://github.com/pingdotgg/t3code/pull/25593
 #   https://github.com/pingdotgg/t3code/pull/25426
 #   https://github.com/pingdotgg/t3code/pull/25169
+#   https://github.com/pingdotgg/t3code/pull/25846
+#   https://github.com/pingdotgg/t3code/pull/25837
+#   https://github.com/pingdotgg/t3code/pull/26159
+#   https://github.com/pingdotgg/t3code/pull/26355
+#   https://github.com/pingdotgg/t3code/pull/25877
+#   https://github.com/pingdotgg/t3code/pull/21594
 
 Feature: Follow-ups while the agent is working
   A message sent while a turn is running either waits in the queue or steers
@@ -117,6 +127,15 @@ Feature: Follow-ups while the agent is working
     When the user edits it to "fix all typos"
     Then the queued message reads "fix all typos"
     And it keeps its place in the queue
+
+  # Upstream #25877: loading a long queued message into the composer pushed the chat column out
+  # of place, leaving the composer mid-screen.
+  @backlog @desktop @priority-low
+  Scenario: Editing a long queued message keeps the composer at the bottom
+    Given a turn is running and a long message is queued
+    When the user chooses to edit the queued message
+    Then the composer stays at the bottom of the window
+    And only the conversation scrolls
 
   @desktop
   Scenario: Editing the last queued message from the composer and cancelling restores the prior draft
@@ -347,6 +366,7 @@ Feature: Follow-ups while the agent is working
     And the changed edit waits in the thread's composer if it was empty, with a message naming the thread
 
   # Upstream #25468: an unchanged edit whose run starts closes without a message.
+  # Upstream #25232: the phone discards an untouched queued edit when its run starts.
   @backlog @desktop @mobile @priority-low
   Scenario: An unchanged edit whose message starts running closes quietly
     Given "fix typo" is queued
@@ -434,11 +454,82 @@ Feature: Follow-ups while the agent is working
     Then the message is listed in the queue as being saved
     And it cannot be edited, reordered, steered or removed until the MC confirms it
 
-  @backlog @desktop
+  # Upstream #25846: reordering left the web and phone queues (drag, arrow keys, move up and
+  # down); it was not worth its weight. The MC's reorder command and the agents' queue tool
+  # keep it, so old event logs replay.
+  @dropped @desktop
   Scenario: A queued message is moved with the arrow keys
     Given "a", "b" and "c" are queued in that order
     When the user focuses the handle of "c" and presses Up twice
     Then the queue order is "c", "a", "b"
+
+  # Upstream #25846: a queued message offers Send now first, then edit and remove; no position
+  # numbers and no way to reorder it.
+  @backlog @shared @priority-high
+  Scenario: A queued message offers to send it now, edit it or remove it
+    Given "a" and "b" are queued
+    When the user looks at "b" in the queue
+    Then the user is offered to send "b" now, to edit it and to remove it
+    And the user is not offered to move "b" in the queue
+
+  # Upstream #26355: a message sent now from the queue showed both in the turn and still in the
+  # queue, and queued messages showed in the timeline before they were sent.
+  @backlog @mc @shared @priority-high
+  Scenario: A queued message sent now is shown once
+    Given "a", "b" and "c" are queued while a turn runs
+    When the user sends "a" now and then sends "b" now
+    Then "a" and "b" are each shown once in the conversation and no longer in the queue
+    And "c" is still queued and not shown in the conversation
+
+  # Upstream #26355: a message that went back to the queue can be sent now again.
+  @backlog @mc @shared
+  Scenario: A queued message that returned to the queue can be sent now again
+    Given the user sent "a" now from the queue and it went back to the queue
+    When the user sends "a" now again
+    Then "a" is shown once in the conversation and no longer in the queue
+
+  # Upstream #25846: Send now is offered only when it can send.
+  @backlog @shared
+  Scenario: Send now is not offered when the message cannot be sent now
+    Given "a" is queued
+    And the provider can neither take a steer nor be stopped for "a"
+    Then the user is not offered to send "a" now
+
+  # Upstream #25837: Send now during a compaction is offered even where the provider cannot
+  # steer, and skips the compaction.
+  @backlog @shared @priority-high
+  Scenario: Send now during a compaction offers to skip it
+    Given the thread is compacting its context and "a" is queued
+    Then the user is offered to skip the compaction and send "a"
+
+  # Upstream #27310: a message queued by Compact and send could not be edited until the
+  # compaction ended, and then went out with its old text.
+  @backlog @desktop @priority-high
+  Scenario: A message queued by Compact and send can be edited while the compaction runs
+    Given the user chose "Compact and send" for "a" on a stale thread
+    When the user edits the queued "a" to "b" while the compaction runs
+    Then the edit is saved at once
+    And "b" is sent once the compaction ends
+
+  # Upstream #26159: queued messages say who sent them, as sent messages do.
+  @backlog @shared
+  Scenario Outline: A queued message says who sent it
+    Given <sender> queued "a"
+    Then the queued "a" <presentation>
+
+    Examples:
+      | sender                      | presentation                                                 |
+      | an automation               | is folded to one line naming the automation, and can open it |
+      | the agent of another thread | is folded to one line naming that thread, and can open it    |
+      | HAL-C2 itself               | says "Sent by HAL-C2"                                        |
+      | a guest                     | shows the guest's name                                       |
+
+  # Upstream #26159: every queued message shows when it was queued.
+  @backlog @shared @priority-low
+  Scenario: A queued message shows when it was queued
+    Given "a" is queued
+    When the user rests on "a" in the queue
+    Then the user sees when "a" was queued
 
   # Upstream #22790: a stopped thread offers Send now on a held queued message instead of a
   # disabled Steer; a running thread keeps Steer.
@@ -467,6 +558,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #22790: the steer-queued-message shortcut acts on the selected message whether or
   # not a turn is running.
+  # Upstream #24248: the keybindings guide now says mod+Shift+Enter sends the first queued message when the thread is stopped.
   @backlog @desktop
   Scenario: The steer shortcut sends the selected queued message now on a stopped thread
     Given "a" and "b" are queued and held, and the turn is no longer running
@@ -557,6 +649,16 @@ Feature: Follow-ups while the agent is working
     Then the saved next-turn selection is the newest choice
     And a steer that misses the turn starts the follow-up on that choice
 
+  # Upstream #23240: steering with a queued message used the thread's old model, not the one
+  # picked when the message was queued.
+  @backlog @mc @priority-high
+  Scenario: Steering with a queued message keeps the model picked for it
+    Given a turn is running on Codex
+    And the user picked Claude and queued "use the new API"
+    When the user steers with "use the new API"
+    Then Claude answers "use the new API"
+    And the thread stays on Claude
+
   # Upstream #15417: removing a queued message on mobile is tappable
   @backlog @mobile @priority-high
   Scenario: A queued message can be removed on the phone
@@ -621,3 +723,16 @@ Feature: Follow-ups while the agent is working
       Then the thread shows the goal's state
       And no "Goal set", "Goal cleared" or "Goal paused" reply appears in the conversation
       And "No goal set" still answers a goal command with nothing to act on
+
+    # Upstream #21594: a goal's token count just under a million read "1000k".
+    @backlog @shared @priority-low
+    Scenario Outline: A goal's token count is rounded before its unit is picked
+      Given the agent is working toward a goal with a budget of 2,000,000 tokens
+      When the goal has used <used> tokens
+      Then the goal reads "<shown> / 2m tokens"
+
+      Examples:
+        | used      | shown |
+        | 999,499   | 999k  |
+        | 999,500   | 1m    |
+        | 1,000,000 | 1m    |

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25696
+#   https://github.com/pingdotgg/t3code/pull/24614
+#   https://github.com/pingdotgg/t3code/pull/22291
 #   https://github.com/pingdotgg/t3code/pull/24589
 #   https://github.com/pingdotgg/t3code/pull/24648
 #   https://github.com/pingdotgg/t3code/pull/23783
@@ -135,6 +138,14 @@ Feature: What the engine projects for clients
     # A distinct session error carries no class; both servers drop the turn's classification.
     Then the shell row of "t1" shows the session's error without the turn's classification
 
+  # Upstream #24614: a provider whose event stream failed showed its formatted internal error,
+  # stack trace and nested cause as the session error.
+  @mc @backlog
+  Scenario: A provider session that breaks shows a readable error, not its stack trace
+    Given the provider session of "t1" fails with an error carrying a stack trace and a nested cause
+    Then the shell row of "t1" shows the same short, redacted message a failed turn would
+    And the full cause is written to the MC's log
+
   @mc
   Scenario: An error from an earlier run is not shown after a later run succeeds
     Given run 1 of "t1" failed and run 2 completed
@@ -204,6 +215,15 @@ Feature: What the engine projects for clients
       | the user follows a link to "t1-child"               | "t1-child" opens                                          |
       | the phone sends a message queued for "t1-child"     | the message is sent once its family is read, not dropped  |
       | the user deletes a thread that shares the worktree  | the MC is asked which threads use the worktree first      |
+  # Upstream #25696: at 32,767 threads the shell snapshot hit SQLite's variable limit, so no
+  # client got a thread list and startup could fail.
+  @backlog @mc @priority-low
+  Scenario: The shell snapshot loads with more than 32,767 threads
+    Given the environment holds 32,767 active threads
+    When a client asks for the shell snapshot
+    Then it receives every thread
+    And the MC starts again with them without error
+
 
   @mc
   Scenario: The archived shell snapshot lists archived threads and their projects
@@ -323,6 +343,15 @@ Feature: What the engine projects for clients
     And an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns
     When a client asks for a bounded snapshot of "t1"
     Then the snapshot still carries the plan, the handoff, the approval and the queued message
+
+  # Upstream #22291: a question an agent asked before working on fell out of the newest turns,
+  # so the sidebar said the thread needed input but the opened thread showed nothing to answer.
+  @mc @backlog @priority-high
+  Scenario: An open question older than the newest turns still opens its answer panel
+    Given the agent in "t1" asked a question and kept working long after
+    When the user opens "t1"
+    Then the question and its answer panel are shown
+    And once the question is answered the snapshot no longer carries it
 
   @mc
   Scenario: Finished plans and handoffs in a bounded snapshot carry only their status

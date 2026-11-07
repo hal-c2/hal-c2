@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27222
+#   https://github.com/pingdotgg/t3code/pull/27836
 #   https://github.com/pingdotgg/t3code/pull/20306
 #   https://github.com/pingdotgg/t3code/pull/22846
 #   https://github.com/pingdotgg/t3code/pull/12513
@@ -42,6 +44,7 @@
 #   docs/user/ (continuing threads after an update)
 #   https://github.com/pingdotgg/t3code/pull/15323
 #   https://github.com/pingdotgg/t3code/pull/15604
+#   https://github.com/pingdotgg/t3code/pull/19229
 Feature: Recovering from restarts and releasing idle sessions
   Provider processes that cannot go on through a restart (reattach-after-restart.feature)
   are killed at the next boot, before any thread goes on. At boot the engine ends
@@ -101,6 +104,24 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then the subagent thread is settled or interrupted
     And it is not left running
+
+  # Upstream #19229: a question the agent asked was gone after a restart, and the thread only
+  # said how long it had worked. Here it covers a program the MC could not reattach.
+  @backlog @mc @shared @priority-high
+  Scenario: A question whose program a restart ended is still asked
+    Given the agent of "t1" asked the user a question
+    And its program was not reattached when the MC restarted
+    Then the question of "t1" is still waiting for the user
+    And "t1" is still shown as waiting for input
+
+  # Upstream #19229: the answer goes back as a user message, each question followed by its
+  # answer, in a new run that resumes the same conversation.
+  @backlog @mc @priority-high
+  Scenario: Answering a question whose program a restart ended starts a run with the answer
+    Given the agent of "t1" asked "Which colour?" and its program was ended by a restart
+    When the user answers "Blue"
+    Then a new run of "t1" starts in the same provider conversation
+    And the agent receives a message giving "Which colour?" with the answer "Blue"
 
   @mc
   Scenario: Work cut off by a restart says the restart ended it
@@ -189,6 +210,17 @@ Feature: Recovering from restarts and releasing idle sessions
     Then "t1" receives "Continue where you left off." from the server on the same model
     And it starts immediately
 
+  # Upstream #27836: a command the cut turn started could still be running after the restart,
+  # and the agent, told only to continue, ran a deploy or push a second time.
+  @mc @backlog @priority-high
+  Scenario: A thread continued after a restart is told to check before repeating what it did
+    Given project "demo" continues threads after a server update
+    And thread "t1" was running a deploy when the MC restarted
+    When "t1" is continued after the restart
+    Then the message starts with "Continue where you left off."
+    And it tells the agent its last turn was cut short and a command it started may have finished or still be running
+    And it tells the agent to confirm an action did not take effect before repeating it, and to say so when it cannot tell
+
   @mc
   Scenario Outline: A cut-off thread is not continued
     Given project "demo" continues threads after a server update
@@ -273,6 +305,42 @@ Feature: Recovering from restarts and releasing idle sessions
     And the continuation of "t1" was recorded but not yet delivered
     When "t1" is archived before it is delivered
     Then no continuation message is sent to "t1"
+
+  # Upstream #27222: a continuation whose resumed session timed out before its prompt reached the
+  # provider failed for good, and the delegated task it belonged to settled on that failure.
+  @backlog @mc @priority-high
+  Scenario: A continuation that fails before its agent took the prompt is tried again
+    Given project "demo" continues threads after a server update
+    And the continuation of "t1" failed before its provider accepted the prompt
+    When a minute passes, and if that fails too another three minutes
+    Then "t1" is continued again, at most twice
+    And a delegated task "t1" works on stays open until the last try's outcome
+
+  # Upstream #27222
+  @backlog @mc
+  Scenario Outline: A failed continuation is not tried again when trying again cannot help
+    Given project "demo" continues threads after a server update
+    And the continuation of "t1" failed before its provider accepted the prompt, because <reason>
+    Then "t1" is not continued again
+    And the failure shows in "t1"
+
+    Examples:
+      | reason                                         |
+      | the provider's usage limit was reached         |
+      | the provider refused it for lack of permission |
+      | the provider found the request invalid         |
+      | the user stopped "t1" while it waited to retry |
+
+  # Upstream #27222: a parent's Stop just before an update was cut off before reaching its
+  # delegated children, and recovery continued them anyway.
+  @backlog @mc @priority-high
+  Scenario: A delegated child is not continued after its parent was stopped
+    Given project "demo" continues threads after a server update
+    And thread "child" was mid-turn on a task that thread "parent" delegated
+    And the user stopped "parent" just before the MC stopped
+    When the MC restarts
+    Then no continuation message is sent to "child"
+    And the task is settled as cancelled
 
   # The runtime is the MC's process driving the provider; its provider process
   # goes down with it.

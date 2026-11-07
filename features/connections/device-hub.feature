@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25836
+#   https://github.com/pingdotgg/t3code/pull/22358
+#   https://github.com/pingdotgg/t3code/pull/25205
+#   https://github.com/pingdotgg/t3code/pull/25216
 #   https://github.com/pingdotgg/t3code/pull/19974
 #   https://github.com/pingdotgg/t3code/pull/20182
 #   https://github.com/pingdotgg/t3code/pull/22012
@@ -6,6 +10,8 @@
 #   https://github.com/pingdotgg/t3code/pull/18159
 #   https://github.com/pingdotgg/t3code/pull/12402
 #   https://github.com/pingdotgg/t3code/pull/24912
+#   https://github.com/pingdotgg/t3code/pull/23441
+#   https://github.com/pingdotgg/t3code/pull/22114
 #   apps/server-ex/lib/hal_c2/devices.ex (device.list, device.open, device.close, device.shutdown,
 #     device.detail, device.action, device.testHost, devices shape, platform reasons)
 #   apps/server-ex/lib/hal_c2/devices/actions.ex (per-platform actions, DeviceActionUnavailableError)
@@ -26,6 +32,7 @@
 #   apps/server/src/device/AgentDeviceShim.ts (device command refused before a device is opened)
 #   apps/server/src/device/DeviceHubProxy.ts, DeviceHubProxy.test.ts (path allow-lists, operate scope per
 #     route, header and credential stripping, origin rewrite, socket pump)
+#   https://github.com/pingdotgg/t3code/pull/21478
 
 Feature: Device hub on an MC
   Each MC offers the iOS Simulators and Android Emulators on its own machine. Threads open
@@ -250,6 +257,18 @@ Feature: Device hub on an MC
     When a client asks for a booted device's detail
     Then the MC answers with its settings and foreground app
 
+  # Upstream #22114: the smallest iOS text size was read as Large.
+  @mc @backlog @priority-low
+  Scenario Outline: A simulator's text size is read as the size it is set to
+    Given a booted iOS Simulator whose text size is <category>
+    When a client asks for its detail
+    Then its text size reads <size>
+
+    Examples:
+      | category    | size        |
+      | extra-small | extra small |
+      | extra-large | extra large |
+
   @mc
   Scenario Outline: A device action runs and returns the fresh detail
     When a client runs "<action>" on a booted <platform> device
@@ -262,6 +281,18 @@ Feature: Device hub on an MC
       | sendPush       | iOS      |
       | setOrientation | Android  |
       | launchApp      | Android  |
+  # Upstream #25205: adb shell joined the arguments, so a URL with "&", "'" or a space arrived cut short or split.
+  @mc @backlog
+  Scenario Outline: A URL opened on an Android device arrives whole
+    When a client opens "<url>" on a booted Android device, on this machine or over SSH
+    Then the device is asked to open exactly "<url>"
+
+    Examples:
+      | url                                         |
+      | https://shop.example/cart?item=1&qty=2      |
+      | https://shop.example/search?q=sam's%20shop  |
+      | myapp://open?title=Tax report               |
+
 
   @mc
   Scenario Outline: An action the platform lacks is unavailable
@@ -357,6 +388,18 @@ Feature: Device hub on an MC
       | camera        | granted | iOS      |
       | notifications | granted | Android  |
       | location      | revoked | Android  |
+  # Upstream #22358: every Android grant or revoke reported success, even for an app that is not installed.
+  @mc @backlog
+  Scenario Outline: An Android permission change that applied nowhere is reported as failed
+    Given the permission "<permission>" stands for several Android permissions
+    When a client sets it to granted for "<app>" on a booted Android device
+    Then the MC answers <answer>
+
+    Examples:
+      | permission | app                 | answer                                           |
+      | camera     | com.example.missing | with the device's error for the first that failed |
+      | photos     | com.example.shop    | with the device's detail, as one of them applied  |
+
 
   @mc
   Scenario Outline: A client sets a device's location and later clears it
@@ -512,12 +555,43 @@ Feature: Device hub on an MC
     Then it sees every host's devices and why a host has none
     And which of them are open in its own thread
 
+  # Upstream #25836: a host named by its label instead of its id listed no devices and no error,
+  # and a failed screenshot hid the reason behind a generic message.
+  @backlog @mc
+  Scenario Outline: An agent may name a device host by its label
+    Given agents have been granted device access
+    And the hosts are <hosts>
+    When an agent lists the devices on the host "<named>"
+    Then <outcome>
+
+    Examples:
+      | hosts                                   | named         | outcome                                                          |
+      | "Oliver's Mac" and "Build box"          | oliver's mac  | it sees the devices of "Oliver's Mac"                            |
+      | "Oliver's Mac" and "Build box"          | Studio        | it is told no host is called that, with each host's label and id |
+      | two hosts both labelled "EAS Simulator" | EAS Simulator | it is told the label is shared, with those hosts' ids to choose  |
+
+  # Upstream #25836
+  @backlog @mc
+  Scenario: A device screenshot that fails says why
+    Given agents have been granted device access
+    When an agent asks for a screenshot on a host that does not exist
+    Then the agent is told which hosts there are instead of only that the screenshot failed
+
   @mc
   Scenario: An agent opens a device and learns how to drive it
     Given agents have been granted device access
     When an agent opens an iOS Simulator
     Then the device opens in the thread for the user to watch
     And the agent is told the device command and arguments pinned to that device
+
+  # Upstream #23441: opening a device kept handing out the address of a device agent that had exited.
+  @mc @backlog
+  Scenario: A device agent that exited is started again when a device is opened
+    Given agents have been granted device access
+    And the device agent the MC started for an earlier open has exited
+    When an agent opens an iOS Simulator
+    Then the MC starts the device agent again and hands out its new address
+    And a device agent that is still healthy is reused without installing its tools again
 
   @mc
   Scenario: A device chosen by platform prefers one already running
@@ -567,6 +641,15 @@ Feature: Device hub on an MC
     When the agent asks for a device screenshot
     Then the agent is told to open a device first
 
+  # Upstream #25216: screenshot errors reached the agent without their message, and a hub's refusal read as a transport failure.
+  @backlog @mc
+  Scenario: A screenshot the device hub refuses tells the agent to list or reopen devices
+    Given an agent has opened a device in its thread
+    And the device hub answers the screenshot with an HTTP error
+    When the agent asks for a device screenshot
+    Then the agent is told the hub refused the screenshot, with advice to list devices or reopen the device
+    And both the text and the structured result carry that message
+
     # Legacy: apps/server/src/device/DeviceService.test.ts (discovery after a restart)
     @mc
     Scenario: A named device can be captured right after the MC restarts
@@ -586,6 +669,24 @@ Feature: Device hub on an MC
     Given an agent has opened a device in its thread
     When the agent closes the device asking to shut it down
     Then the device leaves the thread and powers off
+
+  # Upstream #21478: closing a device left the thread's claim on it, so no other thread could use it.
+  @backlog @mc @priority-high
+  Scenario: A device an agent closes can be used by another thread
+    Given an agent in thread "a" has opened the iOS Simulator "iPhone 17"
+    When the agent closes the device
+    Then thread "a" no longer holds the device
+    And an agent in thread "b" can open "iPhone 17"
+    And the device stays booted
+
+  # Upstream #21478: a release that fails keeps the device in the thread so closing can be tried again.
+  @backlog @mc
+  Scenario: A device whose release fails stays in the thread to close again
+    Given an agent has opened a device in its thread
+    And the device's host cannot release the agent's session
+    When the agent closes the device
+    Then the close fails
+    And the device is still listed in the thread
 
   @mc
   Scenario: A project's agent device access overrides the environment's

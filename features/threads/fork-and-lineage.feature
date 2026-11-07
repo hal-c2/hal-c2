@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23753
 #   https://github.com/pingdotgg/t3code/pull/18603
 #   https://github.com/pingdotgg/t3code/pull/22075
 #   https://github.com/pingdotgg/t3code/pull/20747
@@ -298,6 +299,19 @@ Feature: Forking threads and merging work back
     Given the agent session of "Plan billing" is stopped
     When the user looks at the lineage actions of "Plan billing"
     Then "Disconnect agent session" is not offered
+
+  # Upstream #23753: a merge back or disconnect that failed showed nothing; it now shows the error, and a retry clears it.
+  @backlog @shared
+  Scenario Outline: A lineage action that fails says why
+    Given the MC rejects the next attempt to <action> "Try Stripe"
+    When the user chooses to <action> "Try Stripe"
+    Then the user sees the MC's error
+    And the error goes away when the user tries again
+
+    Examples:
+      | action                                  |
+      | merge back into "Plan billing"          |
+      | disconnect the agent session of         |
 
   # Upstream #22075: a forked Claude thread lost the context count and Compact until it reported usage.
   @backlog @mc @desktop
