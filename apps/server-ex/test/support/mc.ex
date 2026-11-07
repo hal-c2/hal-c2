@@ -2059,23 +2059,52 @@ defmodule HalC2.Test.Mc.World do
 
   @doc """
   Waits until `fun` holds for the thread's stream state and returns that state.
-  Wakes on the stream's own commits, never on a timer.
+  Wakes on the stream's own commits, never on a timer. `timeout` ms with no commit
+  fails it, unless the MC still has effects waiting or running (a checkpoint's git
+  fsyncs on a busy disk take seconds): those are waited out on the effect worker's
+  drain, and each effect is waited out once.
   """
   def await_thread(context, title, fun, timeout \\ 5_000) do
     id = thread_id(context, title)
     state = stream(context, title)
-    if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
+    if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state, MapSet.new())
   end
 
-  defp await_stream_next(id, fun, timeout, last) do
+  defp await_stream_next(id, fun, timeout, last, drained) do
     receive do
       {:hal_c2_stream, ^id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
-        if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
+        if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state, drained)
     after
       timeout ->
-        runs = last |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"])
-        flunk("#{id} never reached the expected state (runs: #{inspect(runs)})")
+        case Enum.reject(effects_in_flight(), &MapSet.member?(drained, &1["id"])) do
+          [] ->
+            runs = last |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"])
+            flunk("#{id} never reached the expected state (runs: #{inspect(runs)})")
+
+          effects ->
+            for thread <- Enum.uniq(Enum.map(effects, & &1["threadId"])),
+                do: :ok = HalC2.Orchestration.Effects.drain(thread, :infinity)
+
+            state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+            drained = MapSet.union(drained, MapSet.new(effects, & &1["id"]))
+
+            if fun.(state),
+              do: state,
+              else: await_stream_next(id, fun, timeout, state, drained)
+        end
+    end
+  end
+
+  # The effects this MC's worker has recorded and not finished.
+  defp effects_in_flight do
+    if Process.whereis(HalC2.Orchestration.Effects) && Process.whereis(HalC2.Store) do
+      for {_key, json} <- HalC2.Store.metas(HalC2.Store.path(), "effect:"),
+          %{"status" => status} = effect = JSON.decode!(json),
+          status in ~w(pending running),
+          do: effect
+    else
+      []
     end
   end
 
