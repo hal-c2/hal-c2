@@ -6,6 +6,9 @@
 #   https://github.com/pingdotgg/t3code/pull/13551 (the sync status waits 400 ms before it shows)
 #   https://github.com/pingdotgg/t3code/pull/13060 (Run a shell command from a reply in the thread terminal)
 #   https://github.com/pingdotgg/t3code/pull/13504 (section titles held until their text)
+#   https://github.com/pingdotgg/t3code/pull/22783
+#   https://github.com/pingdotgg/t3code/pull/21393
+#   https://github.com/pingdotgg/t3code/pull/21392
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (hidden items)
 #   packages/contracts/src/orchestrationV2.ts (message.updated, run.created, run.updated, ResponseStreamingMode)
@@ -134,6 +137,23 @@ Feature: Streaming the agent's reply
     Then the tool calls fold behind "Worked for 2m"
     And the answer stays visible
 
+  # Upstream #21393: the phone left the agent's progress notes beside the final answer.
+  @backlog @shared
+  Scenario: Progress notes fold with the work and the final answer stays
+    Given the agent wrote two progress notes between its tool calls and then answered
+    When the turn completes
+    Then the progress notes fold with the tool calls
+    And only the final answer stays visible
+
+  # Upstream #21392: what a finished turn changed showed only in review.
+  @backlog @mobile
+  Scenario: A finished turn's row says how much it changed
+    Given a turn added 12 lines and removed 3 and folded behind "Worked for 2m"
+    Then the "Worked for 2m" row also reads "+12 -3"
+    When the user taps "+12 -3"
+    Then the review of that turn opens
+    But tapping the rest of the row opens the folded work
+
   # TUI: implemented in apps/tui/src/timeline.ts
   @shared
   Scenario: A folded turn can be opened and closed again
@@ -154,6 +174,29 @@ Feature: Streaming the agent's reply
       | when                   | label                     |
       | after 40 seconds       | You stopped after 40s     |
       | before it did any work | You stopped this response |
+
+  # Upstream #22783: each steer splits a finished turn's folded work; the first fold says how
+  # long the whole turn took and opens only the work before the first steer.
+  @backlog @shared
+  Scenario: The work before the first steer folds behind the whole turn's time
+    Given the agent ran two tool calls, the user steered, and the agent ran three more and answered
+    When the turn completes after 2 minutes
+    Then the first two tool calls fold behind "Worked for 2m" above the steer
+    And the three later tool calls fold behind a "Continued for" row below the steer
+
+  # Upstream #22783: a steer's "Continued for" row opens only the work done after that steer.
+  @backlog @shared
+  Scenario: Opening a steer's fold shows only the work after that steer
+    Given a finished turn with two steers, each followed by its own "Continued for" row
+    When the user opens the second steer's "Continued for" row
+    Then only the work done after the second steer is shown
+
+  # Upstream #22783: a steer that arrives before any output splits nothing.
+  @backlog @shared
+  Scenario: A steer sent before the agent did any work splits nothing
+    Given the user steered before the agent produced any output
+    When the turn completes
+    Then the turn's work folds behind one "Worked for" row
 
   @shared
   Scenario: A turn interrupted in this session stays open

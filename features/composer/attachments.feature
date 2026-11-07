@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21356
+#   https://github.com/pingdotgg/t3code/pull/21355
+#   https://github.com/pingdotgg/t3code/pull/23832
+#   https://github.com/pingdotgg/t3code/pull/24625
 #   https://github.com/pingdotgg/t3code/pull/22072
 #   https://github.com/pingdotgg/t3code/pull/10429
 #   https://github.com/pingdotgg/t3code/pull/18393
@@ -6,6 +10,7 @@
 #   https://github.com/pingdotgg/t3code/pull/20737
 #   https://github.com/pingdotgg/t3code/pull/16480
 #   https://github.com/pingdotgg/t3code/pull/19364
+#   https://github.com/pingdotgg/t3code/pull/21458
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
@@ -251,6 +256,41 @@ Feature: Attaching images and files to a message
       | without accessibility data                     | that the app did not provide accessibility data    |
 
   @backlog @desktop
+  # Upstream #21356: a message whose context ran past 120,000 characters lost the paths of its
+  # attachments, so the agent never learned about the files.
+  @backlog @mc @priority-high
+  Scenario: A very long message still tells the agent where each attachment was saved
+    Given the draft holds 119,000 characters of text and four attached files
+    When the user sends it
+    Then the provider receives the saved path of each of the four files
+
+  # Upstream #21355: an SVG was refused as an unsupported image.
+  @backlog @mc @shared
+  Scenario Outline: An SVG is attached as a file the agent reads by its path
+    When the user <adds> "diagram.svg"
+    Then "diagram.svg" is attached as a file showing a picture of the drawing
+    And the agent receives its saved path
+
+    Examples:
+      | adds     |
+      | chooses  |
+      | pastes   |
+      | drops    |
+
+  # Upstream #21355
+  @backlog @mc @shared @priority-high
+  Scenario: Scripts inside an attached SVG never run
+    Given "diagram.svg" holds a script
+    When the user sees its picture in the draft, the message or the file viewer
+    Then the script does not run
+
+  # Upstream #21355
+  @backlog @shared @priority-low
+  Scenario: An SVG whose picture cannot be drawn shows as a file
+    Given the picture of the attached "broken.svg" cannot be drawn
+    Then "broken.svg" shows as a file that still opens
+
+  @backlog @desktop
   Scenario: A message takes at most 100 attachments, images and files together
     Given the draft carries 100 attachments
     When the user attaches "notes.pdf"
@@ -298,6 +338,13 @@ Feature: Attaching images and files to a message
     When the user attaches "IMG_2041.heic"
     Then "IMG_2041.jpg" is attached
     And it fits within the size limit
+
+  # Upstream #24625: a DNG labelled as PNG, JPEG or TIFF was processed as an image.
+  @backlog @desktop @priority-low
+  Scenario: A DNG photo is attached as its original file
+    When the user attaches "IMG_2041.dng"
+    Then "IMG_2041.dng" is attached as a file with its original bytes
+    And it is not scaled down or converted
 
   @backlog @desktop
   Scenario Outline: A photo too big to even try scaling down is refused
@@ -351,6 +398,14 @@ Feature: Attaching images and files to a message
     When the user sends the message
     Then nothing is sent
     And the user sees an "info" toast "Still compressing a pasted image." saying "Send again once its thumbnail appears."
+
+  # Upstream #23832: a pasted image showed nothing until it was scaled down, worst on remote environments.
+  @backlog @desktop
+  Scenario: A pasted image shows its tile at once
+    When the user pastes a large screenshot into the composer
+    Then its tile shows the image at 0% straight away
+    And the tile stays in place, without flashing, once the image is scaled down
+    And the composer stays expanded while the image is being prepared
 
   # Upstream #18393: an image that finishes compressing after the user switched threads is
   # added to the draft it was pasted in, leaving the visible draft alone.
@@ -579,3 +634,35 @@ Feature: Attaching images and files to a message
     And the phone could not keep a copy of the draft
     When the user sends the message
     Then the message is sent with the image
+
+  # Upstream #21458: attached office documents, e-books and notebooks reach the agent as readable
+  # text kept beside the original file, instead of only a binary path.
+  @backlog @mc
+  Scenario Outline: An attached document reaches the agent as text beside the original
+    When the user sends a message with "<file>" attached
+    Then the agent is told where "<file>" is and where its text is
+    And the text holds what "<file>" says
+
+    Examples:
+      | file            |
+      | plan.docx       |
+      | budget.xlsx     |
+      | pitch.pptx      |
+      | minutes.odt     |
+      | figures.ods     |
+      | review.odp      |
+      | letter.rtf      |
+      | handbook.epub   |
+      | analysis.ipynb  |
+
+  @backlog @mc @priority-low
+  Scenario: A document whose text cannot be read is still attached as it is
+    When the user sends a message with a damaged "plan.docx" attached
+    Then the agent is told where "plan.docx" is
+    And the agent is not given text for it
+
+  @backlog @mc @priority-low
+  Scenario: A document's text past the limits is cut with one notice
+    When the user sends a message with a "budget.xlsx" whose sheets are larger than the agent is given
+    Then the agent's text for "budget.xlsx" ends where the limit was reached
+    And it says once that the rest was left out

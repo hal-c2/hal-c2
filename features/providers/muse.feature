@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19306
+#   https://github.com/pingdotgg/t3code/pull/19195
 #   https://github.com/pingdotgg/t3code/pull/19100
 #   https://github.com/pingdotgg/t3code/pull/18266
 #   https://github.com/pingdotgg/t3code/pull/19558
@@ -446,3 +448,21 @@ Feature: Muse Code
     When a turn is refused because the subscription quota is used up
     Then the thread is Limited until 10:45, not failed
     And a plain rate limit still fails the turn
+
+  # Upstream #19195: a Muse host that died between turns stranded the thread.
+  @backlog
+  Scenario: A Muse Code host that died between turns is started again
+    Given a Muse Code thread finished a turn
+    And its Muse Code host has since exited
+    When the user sends the next message
+    Then a new Muse Code host starts and resumes the saved conversation
+    And nothing the old host left behind shows in the thread
+
+  # Upstream #19306: approvals HAL-C2 answers for a workflow's agents in full access flashed up.
+  @backlog
+  Scenario: A Muse Code workflow's approvals in full access are not shown
+    Given a Muse Code thread in full access runs a workflow of two agents
+    When a workflow agent asks for approval
+    Then the approval is given without showing it to the user
+    And the thread does not wait on it after a reconnect
+    But if giving it fails while the agent is still running, the user is asked

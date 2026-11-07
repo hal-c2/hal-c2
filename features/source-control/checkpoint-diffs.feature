@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19533
 #   https://github.com/pingdotgg/t3code/pull/18152
 #   https://github.com/pingdotgg/t3code/pull/17161
 #   packages/contracts/src/checkpointDiff.ts (TurnCountRange, getTurnDiff, getFullThreadDiff)
@@ -139,6 +140,14 @@ Feature: What each turn changed
     Then the 5000 lines of "src/rates.ts" are shown
     When the user collapses "src/rates.ts" in the diff
     Then "src/rates.ts" is listed collapsed
+
+  # Upstream #19533: switching to another side panel tab and back expanded every file again.
+  @backlog @desktop @priority-low
+  Scenario: Collapsed files stay collapsed across side panel tabs
+    Given the user collapsed "src/cart.ts" in the diff of the latest turn
+    When the user switches to another side panel tab and back to the diff
+    Then "src/cart.ts" is still collapsed
+    But after the app starts again the diff opens with its usual folding
 
   @desktop
   Scenario: Every file of a diff can be collapsed and expanded at once

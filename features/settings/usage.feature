@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22443
+#   https://github.com/pingdotgg/t3code/pull/24834
+#   https://github.com/pingdotgg/t3code/pull/17055
+#   https://github.com/pingdotgg/t3code/pull/22936
 #   https://github.com/pingdotgg/t3code/pull/21055
 #   https://github.com/pingdotgg/t3code/pull/19245
 #   https://github.com/pingdotgg/t3code/pull/20349
@@ -36,6 +40,7 @@
 #   apps/web/src/components/usage/UsageLimitsPooled.tsx (account chips)
 #   packages/shared/src/usageMerge.ts, packages/shared/src/usageLimits.ts
 #   https://github.com/pingdotgg/t3code/pull/15108
+#   https://github.com/pingdotgg/t3code/pull/22558
 
 Feature: Usage and limits
   Usage adds up token use and estimated cost from each provider's local
@@ -49,6 +54,14 @@ Feature: Usage and limits
       Given Codex, Claude Code and Grok have session history on the machine
       When a client asks for the usage summary
       Then the summary has tokens, cache savings and estimated cost per model
+
+    # Upstream #22443: Muse Code history was not counted.
+    @backlog @mc @plugin-muse @priority-low
+    Scenario: Muse Code history counts in usage
+      Given Muse Code has session history on the machine, with child sessions and automated reviews
+      When a client asks for the usage summary
+      Then that history is counted, priced by its models
+      And a model without a price is listed as unpriced
 
     @mc
     Scenario: A provider home moved by environment variable is found
@@ -67,6 +80,24 @@ Feature: Usage and limits
       Given a Claude session was resumed into a new transcript
       When a client asks for the usage summary
       Then the repeated turns count once
+
+    # Upstream #22558: a Codex session resumed in a new process starts its counters again;
+    # its first request was dropped as inconsistent and its cost lost.
+    @backlog @mc @plugin-codex
+    Scenario: A Codex session resumed in a new process counts its first request
+      Given a Codex session was resumed later in a new Codex process
+      When a client asks for the usage summary
+      Then the first request after the resume is counted and priced
+      And usage reports no skipped records
+
+    # Upstream #22558: after a context compaction Codex records the new context size with no
+    # input or output; that is not a request and not a malformed record.
+    @backlog @mc @plugin-codex
+    Scenario: A Codex compaction is not counted as a request or a bad record
+      Given a Codex session compacted its context
+      When a client asks for the usage summary
+      Then the compaction is not counted as a request
+      And usage reports no skipped records
 
     # Upstream #14672: Claude's "<synthetic>" placeholder is not listed as a model, cached or not.
     @mc
@@ -258,6 +289,27 @@ Feature: Usage and limits
       When the user refreshes usage prices
       Then the MC fetches the prices through GitHub's API
       And if that fails too, costs keep using the saved prices
+
+    # Upstream #24834: Antigravity's Gemini 4 Argon usage was "Unpriced": a price source listing
+    # the model under several providers, only some with a fast tier, was read as a conflict.
+    @backlog @mc @priority-low
+    Scenario: A model listed with and without a fast tier still has a price
+      Given the price list has "gemini-4-argon" twice at one base rate, once with a fast tier
+      When the MC reads usage of "gemini-4-argon"
+      Then the usage is priced at that base rate
+
+    # Upstream #24834
+    @backlog @mc @plugin-antigravity @priority-low
+    Scenario Outline: A model named with its thinking level is priced as its model
+      Given Antigravity recorded usage of "<model>"
+      When the user opens Usage
+      Then "<model>" is listed on its own row, priced at the rate of "gemini-4-argon"
+
+      Examples:
+        | model                  |
+        | gemini-4-argon-low     |
+        | gemini-4-argon-medium  |
+        | gemini-4-argon-high    |
 
   Rule: Reading usage
 
@@ -539,11 +591,29 @@ Feature: Usage and limits
       When the user views limits
       Then usage says "Codex: Could not read limits."
 
+    # Upstream #17055: a Codex that needs signing in lost its "codex login" guidance and said
+    # only that limits could not be read.
+    @mc @shared @backlog
+    Scenario: Limits of a Codex that needs signing in say how to sign in
+      Given Codex is not signed in
+      When the user views limits
+      Then the Codex limit says to sign in with "codex login"
+      And it does not say "Could not read limits."
+
     @shared @backlog-mobile @backlog-tui
     Scenario: Without limits to show the page says so
       Given no provider reports limits
       When the user views limits
       Then usage says "No provider on the selected environments reports subscription limits."
+
+    # Upstream #22936: an environment switched off in Connections kept its last limits on screen.
+    @shared @backlog
+    Scenario: Limits leave out an environment that is switched off
+      Given the environments "laptop" and "server" each report Codex limits
+      When the user switches "server" off in Connections
+      Then limits show only the Codex limits of "laptop"
+      When the user switches "server" back on
+      Then limits show the Codex limits of both again
 
     @shared @backlog-mobile @backlog-tui
     Scenario: Leaving usage stops following limits

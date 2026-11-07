@@ -758,7 +758,8 @@ defmodule HalC2.Attachments do
 
   defp safe_id?(id), do: is_binary(id) and Regex.match?(~r/^[a-z0-9_-]{1,200}$/i, id)
 
-  defp thread_segment(thread_id) do
+  @doc "The part of a thread's attachment ids that names the thread."
+  def thread_segment(thread_id) do
     segment =
       thread_id
       |> String.downcase()

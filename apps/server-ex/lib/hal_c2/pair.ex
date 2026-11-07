@@ -4,7 +4,7 @@ defmodule HalC2.Pair do
   minutes, single use) and prints the URL a client opens or pastes to pair with this
   MC.
 
-      pair [BASE_URL]
+      pair [BASE_URL] [--ttl 1h] [--label "Ana's phone"] [--json]
       pair --tailscale [--tailscale-serve-port PORT]
       pair --release [BASE_URL | --tailscale]
 
@@ -12,6 +12,11 @@ defmodule HalC2.Pair do
   fragment, and defaults to the MC's own address (`HalC2.Web.base_url/0`), such as
   `http://127.0.0.1:3790` for the installed MC (`:3780` for one run from a checkout), or
   the LAN or tailnet address it was bound to.
+
+  The link lasts five minutes unless `--ttl` gives another life (`90s`, `30m`, `1h`, `2d`);
+  `--label` names it in Settings → Connections. The readable output is the link, then
+  when it expires as an ISO 8601 time; `--json` prints only a JSON document with the
+  link's `id`, `label`, `token`, `scopes` and `expiresAt`.
 
   From a checkout with no HAL-C2 home configured it pairs with the MC that is running,
   whether that is the installed one or a development one (`HalC2.RuntimeRecord.locate/2`).
@@ -52,7 +57,14 @@ defmodule HalC2.Pair do
 
     {opts, rest, invalid} =
       OptionParser.parse(args,
-        strict: [release: :boolean, tailscale: :boolean, tailscale_serve_port: :integer]
+        strict: [
+          release: :boolean,
+          tailscale: :boolean,
+          tailscale_serve_port: :integer,
+          ttl: :string,
+          label: :string,
+          json: :boolean
+        ]
       )
 
     with :ok <- check_options(invalid, rest, opts),
@@ -66,17 +78,23 @@ defmodule HalC2.Pair do
       dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
 
       with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running, dirs),
-           {:ok, token} <- mint_for(opts, serve_port, dirs, running) do
-        link = "#{String.trim_trailing(base, "/")}/?token=#{token}"
+           {:ok, minted} <- mint_for(opts, serve_port, dirs, running) do
+        link = "#{String.trim_trailing(base, "/")}/?token=#{minted["credential"]}"
 
-        if opts[:tailscale] do
-          {:ok,
-           [
-             link,
-             "Tailscale Serve maps #{base} to this MC and keeps it across restarts. Remove it with `tailscale serve --https=#{serve_port} off`."
-           ]}
-        else
-          {:ok, [link]}
+        cond do
+          opts[:json] ->
+            {:ok, [JSON.encode!(listing(minted))]}
+
+          opts[:tailscale] ->
+            {:ok,
+             [
+               link,
+               "Expires #{minted["expiresAt"]}",
+               "Tailscale Serve maps #{base} to this MC and keeps it across restarts. Remove it with `tailscale serve --https=#{serve_port} off`."
+             ]}
+
+          true ->
+            {:ok, [link, "Expires #{minted["expiresAt"]}"]}
         end
       end
     end
@@ -92,7 +110,7 @@ defmodule HalC2.Pair do
   defp mint_for(opts, serve_port, dirs, running) do
     tailscale = opts[:tailscale]
 
-    case mint(dirs, running) do
+    case mint(opts, dirs, running) do
       {:error, message} when tailscale ->
         {:error,
          message <>
@@ -103,14 +121,52 @@ defmodule HalC2.Pair do
     end
   end
 
-  defp mint(dirs, running) do
-    # Minting ahead of a first start: the store's directory may not be there yet.
-    if running == nil, do: HalC2.Paths.ensure!(dirs)
-    {:ok, HalC2.Auth.create_pairing_token(Path.join(dirs.data, "hal-c2.sqlite"))}
+  defp listing(minted) do
+    %{
+      "id" => minted["id"],
+      "label" => minted["label"],
+      "token" => minted["credential"],
+      "scopes" => minted["scopes"],
+      "expiresAt" => minted["expiresAt"]
+    }
+  end
+
+  defp mint(opts, dirs, running) do
+    with {:ok, ttl_ms} <- ttl(opts[:ttl]) do
+      # Minting ahead of a first start: the store's directory may not be there yet.
+      if running == nil, do: HalC2.Paths.ensure!(dirs)
+
+      {:ok,
+       HalC2.Auth.mint_pairing_link(Path.join(dirs.data, "hal-c2.sqlite"),
+         ttl_ms: ttl_ms,
+         label: opts[:label]
+       )}
+    end
   rescue
     error ->
       {:error, "Could not create a pairing token in #{dirs.data}: #{Exception.message(error)}"}
   end
+
+  # `90s`, `30m`, `1h`, `2d`: how long the link lasts.
+  defp ttl(nil), do: {:ok, nil}
+
+  defp ttl(text) do
+    case Regex.run(~r/^(\d{1,6})([smhd])$/, text) do
+      [_, count, unit] when count != "" ->
+        case String.to_integer(count) do
+          0 -> ttl_error(text)
+          n -> {:ok, n * %{"s" => 1, "m" => 60, "h" => 3600, "d" => 86_400}[unit] * 1000}
+        end
+
+      _ ->
+        ttl_error(text)
+    end
+  end
+
+  defp ttl_error(text),
+    do:
+      {:error,
+       "`--ttl` is a count and a unit, such as 90s, 30m, 1h or 2d, not #{printable(text)}"}
 
   @doc """
   What to run to pair a client with this MC, for a message that tells the operator:

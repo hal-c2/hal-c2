@@ -1,13 +1,23 @@
 defmodule Mix.Tasks.HalC2.Auth do
-  @shortdoc "Lists or revokes the clients paired with this MC"
+  @shortdoc "Lists, issues or revokes the access this MC has handed out"
   @moduledoc """
-  Manages the sessions of clients paired with this MC, the list Settings →
-  Connections shows, from the command line:
+  Manages the access of this MC, what Settings → Connections shows, from the command
+  line:
 
       mix hal_c2.auth session list
+      mix hal_c2.auth session issue SUBJECT [--token | --json]
       mix hal_c2.auth session revoke SESSION_ID
+      mix hal_c2.auth pairing list
+      mix hal_c2.auth pairing revoke PAIRING_ID
 
-  Works next to a running MC: it reads and writes the MC's store directly.
+  `session issue` makes an administrative session for a headless client such as CI:
+  it prints the bearer token the client signs in with (`--token` prints only that, for a
+  script to capture, `--json` a JSON document). Pairing links are minted with
+  `mix hal_c2.pair`.
+
+  Works with the MC running or stopped: it reads and writes the MC's store directly.
+  Bearer tokens and pairing tokens of what already exists are never printed, as the
+  store keeps only their hashes.
   """
 
   use Mix.Task
@@ -17,33 +27,112 @@ defmodule Mix.Tasks.HalC2.Auth do
     Mix.Task.run("app.config")
     {:ok, _} = Application.ensure_all_started(:exqlite)
     store = HalC2.Store.home_path()
+    {opts, rest, invalid} = OptionParser.parse(args, strict: [token: :boolean, json: :boolean])
+    if invalid != [], do: usage()
 
-    case args do
+    case rest do
       ["session", "list"] ->
-        for client <- HalC2.Auth.list_sessions(store) do
+        list_sessions(store)
+
+      ["session", "issue", subject] ->
+        issue(store, subject, opts)
+
+      ["session", "revoke", id] ->
+        revoke(HalC2.Auth.revoke_session(store, id), id, "session")
+
+      ["pairing", "list"] ->
+        list_pairing(store)
+
+      ["pairing", "revoke", id] ->
+        revoke(HalC2.Auth.revoke_pairing_link(store, id), id, "pairing")
+
+      _ ->
+        usage()
+    end
+  end
+
+  defp usage, do: Mix.raise(@moduledoc |> String.split("\n\n") |> Enum.at(1) |> String.trim())
+
+  defp list_sessions(store) do
+    case HalC2.Auth.list_sessions(store) do
+      [] ->
+        Mix.shell().info("No active sessions.")
+
+      clients ->
+        for client <- clients do
           Mix.shell().info(
             Enum.join(
               [
                 client["sessionId"],
-                client["client"]["label"] || "-",
-                client["client"]["deviceType"],
+                client["client"]["label"] || "unlabeled client",
+                client["method"],
+                client["subject"],
                 Enum.join(client["scopes"], ","),
-                client["expiresAt"]
+                "issued #{client["issuedAt"]}",
+                "expires #{client["expiresAt"]}",
+                "last connected #{client["lastConnectedAt"] || "never"}"
               ],
               "\t"
             )
           )
         end
-
-      ["session", "revoke", id] ->
-        if HalC2.Auth.revoke_session(store, id),
-          do: Mix.shell().info("Revoked #{id}."),
-          else: Mix.raise("No session #{id}.")
-
-      _ ->
-        Mix.raise(
-          "Usage: mix hal_c2.auth session list | mix hal_c2.auth session revoke SESSION_ID"
-        )
     end
   end
+
+  defp list_pairing(store) do
+    case HalC2.Auth.pairing_links(store) do
+      [] ->
+        Mix.shell().info("No active pairing credentials.")
+
+      links ->
+        for link <- links do
+          Mix.shell().info(
+            Enum.join(
+              [
+                link["id"],
+                link["label"] || "unlabeled link",
+                Enum.join(link["scopes"], ","),
+                "expires #{link["expiresAt"]}"
+              ],
+              "\t"
+            )
+          )
+        end
+    end
+  end
+
+  defp issue(store, subject, opts) do
+    session = HalC2.Auth.issue_session(store, subject)
+
+    cond do
+      opts[:token] ->
+        Mix.shell().info(session.token)
+
+      opts[:json] ->
+        Mix.shell().info(
+          JSON.encode!(%{
+            "id" => session.id,
+            "token" => session.token,
+            "scopes" => session.scopes,
+            "subject" => subject,
+            "expiresAt" => session.expires_at
+          })
+        )
+
+      true ->
+        Mix.shell().info("Session #{session.id} for #{subject}, expires #{session.expires_at}")
+        Mix.shell().info(session.token)
+    end
+  end
+
+  defp revoke(true, id, "session"), do: Mix.shell().info("#{id}: the session was revoked")
+
+  defp revoke(false, id, "session"),
+    do: Mix.shell().info("#{id}: no active session has that id")
+
+  defp revoke(true, id, "pairing"),
+    do: Mix.shell().info("#{id}: the pairing credential was revoked")
+
+  defp revoke(false, id, "pairing"),
+    do: Mix.shell().info("#{id}: no active pairing credential has that id")
 end

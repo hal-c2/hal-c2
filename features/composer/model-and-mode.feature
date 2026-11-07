@@ -1,5 +1,6 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/15636
+#   https://github.com/pingdotgg/t3code/pull/20886
+#   https://github.com/pingdotgg/t3code/pull/22242
 #   https://github.com/pingdotgg/t3code/pull/19900
 #   https://github.com/pingdotgg/t3code/pull/11933
 #   https://github.com/pingdotgg/t3code/pull/14961
@@ -8,6 +9,9 @@
 #   https://github.com/pingdotgg/t3code/pull/16069
 #   https://github.com/pingdotgg/t3code/pull/13590
 #   https://github.com/pingdotgg/t3code/pull/13555
+#   https://github.com/pingdotgg/t3code/pull/25609
+#   https://github.com/pingdotgg/t3code/pull/21404
+#   https://github.com/pingdotgg/t3code/pull/21406
 #   docs/user/composer.md (custom models, remembered model defaults)
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
@@ -155,7 +159,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user toggles back
     Then the next turn builds again
 
-  @desktop
+  # Upstream #21406: the phone hid Ultrathink and Ultracode.
+  @desktop @mobile @backlog-mobile
   Scenario: Ultrathink prefixes the prompt
     Given the thread runs on Claude
     When the user turns on Ultrathink and sends "design the cache"
@@ -196,6 +201,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user chooses the model "claude-opus"
     Then the next turn moves the thread to Claude before it runs on "claude-opus"
 
+  # Upstream #20886: a model picked earlier in a draft kept overriding a change made elsewhere.
+  @backlog @shared @mobile
+  Scenario: A draft follows a model change made on another client
+    Given the user picked "gpt-5" in the draft of a thread on this client
+    And then changed the thread to "claude-opus" on another client
+    When the user returns to the thread here
+    Then the draft is on "claude-opus"
+    But an unsent pick in another thread's draft is kept
+
   @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: The last model used with each provider is remembered
     Given the user last used "gpt-5" with Codex
@@ -221,6 +235,16 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Given the project is a Git repository
     When the user chooses to work in a new worktree from branch "main"
     Then the first turn works in a new worktree based on "main"
+
+  # Upstream #21404: the phone could inherit new-worktree mode for a plain folder and then
+  # refuse to start on a branch that cannot exist.
+  @backlog @shared
+  Scenario: A project that is not a Git repository starts its thread in its folder
+    Given the project is a plain folder with no Git repository
+    And the last thread was started in a new worktree, or a saved draft asked for one
+    When the user starts a new thread in the project
+    Then the thread works in the project's folder
+    And no branch or worktree can be chosen
 
   @desktop
   Scenario: A branch that does not exist is created when chosen
@@ -259,23 +283,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the new thread is in "scratch" on "server"
     And the prompt is still there
 
-  # Upstream #15636: grouped choices hid reachable checkouts behind an offline one; every
-  # checkout is now listed, connected first, and unavailable ones keep their status.
+  # Upstream #22242: reverted #15636, which listed every checkout as its own row; checkouts of
+  # one repository are grouped as one project again.
   @backlog @desktop
-  Scenario: Every checkout of the project is offered for a new thread, connected ones first
-    Given "shop" has checkouts on "laptop" and "server", which are connected, and on "office", which is not
-    When the user opens the machine picker for a new thread in "shop"
-    Then "laptop" and "server" are listed before "office"
-    And "office" is listed as not connected
-    When "office" connects while the picker is open
-    Then "office" is listed as connected
-
-  # Upstream #15636: choosing one checkout pins the draft and clears Auto balance.
-  @backlog @desktop
-  Scenario: Choosing a checkout pins the new thread to that machine
-    Given the user chose "Auto balance" for a new thread in "shop"
-    When the user chooses the checkout on "server"
-    Then the new thread will start on "server" whatever the machines' free resources
+  Scenario: Checkouts of one repository are one project in the new-thread picker
+    Given "shop" has checkouts on "laptop" and "server"
+    When the user opens the project picker for a new thread
+    Then "shop" is listed once
+    And both machines are offered under it
 
   @backlog @desktop
   Scenario: The user lets a new thread's machine be picked automatically
@@ -412,6 +427,18 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user looks through Codex's models
     Then "gpt-6" is marked as new
 
+  # Upstream #25609: the new mark comes from the model's release date and lasts seven days.
+  @backlog @mc @desktop
+  Scenario Outline: A model is marked new for seven days after its release
+    Given "gpt-6" was released <age>
+    When the user looks through Codex's models
+    Then "gpt-6" <mark>
+
+    Examples:
+      | age               | mark                  |
+      | six days ago      | is marked as new      |
+      | eight days ago    | is not marked as new  |
+
   @backlog @desktop @priority-high
   Scenario Outline: A provider that cannot be used says why in the model picker
     Given the provider instance "Codex Work" <state>
@@ -520,7 +547,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the permissions read "Supervised"
     And the thread's saved permissions are unchanged until the user chooses
 
-  @backlog @desktop
+  # Upstream #21406: the phone sums the options up too, beside both model controls.
+  @backlog @desktop @mobile
   Scenario Outline: The model's options are summed up beside the model
     Given the thread runs on a model with <options>
     Then the composer sums the model's options up as "<summary>"
@@ -634,11 +662,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | no provider is available                             |
       | the user is holding the step key down after one step |
 
-  @backlog @desktop @priority-high
+  # Upstream #21406: the phone previewed different options from those it saved.
+  @backlog @desktop @mobile @priority-high
   Scenario: Each model keeps the options the user last gave it
     Given the user set "opus" to high effort and "sonnet" to low effort
     When the user switches from "opus" to "sonnet" and back
     Then "sonnet" was offered with low effort and "opus" is back at high effort
+
+  # Upstream #21406: an existing thread on the phone hid accounts it could move to.
+  @backlog @desktop @mobile
+  Scenario: An existing thread offers every account its conversation can continue on
+    Given the thread runs on one Codex account and a second Codex account can continue its conversation
+    When the user opens the thread's model picker
+    Then both Codex accounts are offered for the thread
 
   @backlog @desktop @priority-low
   Scenario: An unavailable model shows the options saved with it without letting them change

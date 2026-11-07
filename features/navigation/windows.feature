@@ -1,5 +1,4 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/19232
 #   https://github.com/pingdotgg/t3code/pull/21200
 #   https://github.com/pingdotgg/t3code/pull/13713
 #   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
@@ -261,22 +260,12 @@ Feature: Windows, zoom and quitting
       Then its title is "HAL-C2"
       And it cannot be made smaller than 640 by 400
 
-    # Upstream #19232: the floor dropped from 840 by 620 to 600 by 620, for windows and their saved
-    # sizes, so a window can tile to half of a scaled screen.
     @backlog @desktop
     Scenario: The first window opens at a comfortable size it cannot shrink below
       Given the user has never resized the window
       When the app starts
       Then the first window opens at 1100 by 780
-      And it cannot be made smaller than 600 by 620
-
-    # Upstream #19232: a half-screen width such as 768 pixels is kept, including on restart.
-    @backlog @desktop
-    Scenario: A window tiled to half of a scaled screen keeps that size
-      Given the screen is 1536 pixels wide at its scale
-      When the user tiles the window to the left half
-      Then the window is 768 pixels wide
-      And it opens 768 pixels wide after a restart
+      And it cannot be made smaller than 840 by 620
 
     @backlog @desktop
     Scenario: The first window remembers its size and position across restarts

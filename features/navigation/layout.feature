@@ -1,8 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24847
+#   https://github.com/pingdotgg/t3code/pull/22898
 #   https://github.com/pingdotgg/t3code/pull/18860
 #   https://github.com/pingdotgg/t3code/pull/18849
 #   https://github.com/pingdotgg/t3code/pull/17327
 #   https://github.com/pingdotgg/t3code/pull/17730
+#   https://github.com/pingdotgg/t3code/pull/25389
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
 #   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
@@ -76,6 +79,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user opens settings
       Then the thread list is hidden
       And the settings sections are shown in its place
+
+    # Upstream #24847: the settings sections moved out of the sidebar into the settings dialog.
+    # Replaces the scenario above once desktop carries it.
+    @backlog @desktop
+    Scenario: Settings keep their sections beside their pages, leaving the thread list
+      When the user opens settings
+      Then the thread list stays as it was
+      And the settings sections are shown beside the settings page
 
     @desktop
     Scenario: The sidebar snaps rather than animating its width
@@ -442,6 +453,15 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses Escape
       Then the right panel is closed
 
+    # Upstream #25389: the right panel lost its maximize control once it opened over the thread.
+    @backlog @desktop @priority-low
+    Scenario: The right panel over the thread can still be maximized
+      Given the window is 960 pixels wide and the right panel is open over the thread
+      When the user maximizes the right panel
+      Then it takes the window's full width, as it does in a wide window
+      When the user restores it
+      Then it is shown over the thread again
+
     # The timeline's floor is the layout's (LayoutController's
     # contentMinimumWidth), the room the thread list leaves it too.
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
@@ -536,6 +556,18 @@ Feature: Layout: sidebar, header, right panel and drawer
         | P      | pull request          |
         | L      | linked pull requests  |
         | M      | device                |
+
+    # Upstream #22898: typing with nothing focused moves the keys to the composer, and that took
+    # the panel's letters first when the panel opened after the window had loaded.
+    @backlog @desktop @priority-low
+    Scenario: An empty right panel's letters open their tab instead of going to the composer
+      Given the right panel was opened with no tabs after the window had loaded
+      And nothing has keyboard focus, so typing goes to the composer
+      When the user presses "t"
+      Then a terminal tab opens in the right panel
+      And the composer is still empty
+      When the user presses "x"
+      Then "x" is typed into the composer
 
     @backlog @desktop @priority-low
     Scenario: The letters of an empty right panel are left alone while the user types

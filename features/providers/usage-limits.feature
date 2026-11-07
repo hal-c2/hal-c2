@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18723
 #   https://github.com/pingdotgg/t3code/pull/17061
 #   https://github.com/pingdotgg/t3code/pull/20081
 #   https://github.com/pingdotgg/t3code/pull/19808
@@ -94,6 +95,14 @@ Feature: Subscription limits
     Given a hub is connected
     When the user refreshes the providers
     Then Codex, Claude and the hub are checked again
+
+  # Upstream #18723: refreshing could replace newer live readings with an older probe's.
+  @mc @backlog
+  Scenario: An older reading does not replace newer limits
+    Given Claude's limits were read live at 10:05
+    When a check that Claude started at 10:00 returns its limits
+    Then the limits read at 10:05 are still shown
+    And a reading of 10:05 or later replaces them
 
   @mc
   Scenario: Limits are checked in the background only while a client shows them

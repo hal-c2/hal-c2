@@ -1,5 +1,5 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/12978
+#   https://github.com/pingdotgg/t3code/pull/15538
 #   https://github.com/pingdotgg/t3code/pull/11325
 #   https://github.com/pingdotgg/t3code/pull/11037
 #   docs/user/snap-shot.md
@@ -35,6 +35,14 @@ Feature: Snap Shot captures another app's window into the draft
     Given no thread is open and the current project is "shop"
     When the user presses the Snap Shot shortcut from another app
     Then a new draft in "shop" holds the capture
+
+  # Upstream #15538: a capture taken while the agent asked a question went to the hidden draft.
+  @backlog
+  Scenario: A capture taken while the agent asks a question is attached to the answer
+    Given the thread open in HAL-C2 is waiting on the agent's question
+    When the user presses the Snap Shot shortcut
+    Then the capture is attached to the answer to that question
+    But a capture that finishes after the question closed goes to the thread's draft
 
   Scenario: Capturing while HAL-C2 is in front captures HAL-C2
     Given HAL-C2 is the app in front
@@ -666,10 +674,3 @@ Feature: Snap Shot captures another app's window into the draft
     When the captured window and the draft are on different displays
     Then the flying image is shown across each display it passes over
     And a failing display does not cut the flight short on the others
-
-  # Upstream #12978: macOS captures could pick a browser's thin helper strip.
-  @backlog
-  Scenario: A Snap Shot on macOS captures the front window, not a helper strip
-    Given the front app on macOS has a thin untitled strip above its content window
-    When the user presses the Snap Shot shortcut
-    Then the content window is captured
