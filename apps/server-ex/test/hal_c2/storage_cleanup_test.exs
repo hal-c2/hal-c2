@@ -228,6 +228,41 @@ defmodule HalC2.StorageCleanupTest do
     end
   end
 
+  test "a tracked edit made between the clean and the removal keeps the worktree",
+       %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => "tracked-changes"})
+    path = thread(repo, "th-11", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    File.write!(Path.join(path, "notes.txt"), "draft\n")
+    hook({__MODULE__, :edit_at_cleaned, []})
+
+    # Without the look after the clean, Git refuses the removal and the sweep fails.
+    :ok = HalC2.StorageCleanup.sweep()
+    assert kept(path) == "Has uncommitted changes (1 file)"
+    assert File.read!(Path.join(path, "a.txt")) == "edit\n"
+  end
+
+  test "too many untracked entries to look through keep the worktree", %{repo: repo} do
+    settings(%{"worktreeOnDelete" => true, "worktreeKeepWhen" => "uncommitted-changes"})
+    path = thread(repo, "th-12", %{"deletedAt" => "2026-01-02T00:00:00.000Z"})
+    ignore(path, "*.log")
+
+    # Ignored files don't count under this choice, but the look for nested
+    # repositories reads them all, past its 64 KB limit.
+    for n <- 1..1200,
+        do:
+          File.write!(
+            Path.join(path, "build-output-#{String.pad_leading("#{n}", 40, "0")}.log"),
+            ""
+          )
+
+    :ok = HalC2.StorageCleanup.sweep()
+    assert kept(path) == "Untracked files exceed the inspection limit"
+  end
+
+  @doc false
+  def edit_at_cleaned(:cleaned, path), do: File.write!(Path.join(path, "a.txt"), "edit\n")
+  def edit_at_cleaned(_stage, _path), do: :ok
+
   @doc false
   # The sweep's `:removing` stage, inside the lease: the agent edits a tracked file.
   def edit_at_removing(:removing, path), do: File.write!(Path.join(path, "a.txt"), "edit\n")

@@ -682,10 +682,13 @@ defmodule HalC2.StorageCleanup do
 
   # Under "tracked-changes" untracked files may go too, but Git refuses to remove a
   # worktree that has them, so they are cleaned first; no other choice ever cleans.
-  # One `-f` never lets the clean delete a nested repository, and anything left after
-  # it (made meanwhile) keeps the worktree rather than going with a forced removal.
+  # One `-f` never lets the clean delete a nested repository, and anything made
+  # meanwhile, a tracked edit or a file left after the clean, keeps the worktree
+  # rather than failing or going with a forced removal.
   defp clean_untracked(path) do
     with {:ok, _} <- Git.ok(path, ~w(clean -fdxq)),
+         _ = hook(:cleaned, path),
+         nil <- local_changes(path, "tracked-changes"),
          {:ok, left} <- Git.ok(path, ~w(ls-files --others --directory -z)) do
       case Enum.reject(String.split(left, <<0>>, trim: true), &dependencies?/1) do
         [] -> nil
@@ -693,6 +696,7 @@ defmodule HalC2.StorageCleanup do
       end
     else
       {:error, _} -> "Untracked files could not be cleaned"
+      reason -> reason
     end
   end
 
@@ -703,7 +707,8 @@ defmodule HalC2.StorageCleanup do
     dry = ~w(-c core.quotePath=false clean -ndx)
 
     with {:ok, others} <- Git.ok(path, ~w(ls-files --others --directory -z)),
-         {:ok, plan} <- Git.ok(path, dry, env: [{"LC_ALL", "C"}]) do
+         {:ok, plan} <- Git.ok(path, dry, env: [{"LC_ALL", "C"}]),
+         true <- byte_size(others) <= 64 * 1024 and byte_size(plan) <= 64 * 1024 do
       removed =
         for "Would remove " <> entry <- String.split(plan, "\n", trim: true),
             into: MapSet.new(),
@@ -717,6 +722,7 @@ defmodule HalC2.StorageCleanup do
         entry -> "Has a nested repository (#{entry})"
       end
     else
+      false -> "Untracked files exceed the inspection limit"
       {:error, _} -> "Untracked files could not be read"
     end
   end
