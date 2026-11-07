@@ -487,6 +487,7 @@ navigation/appearance.feature: Font preferences change their part of the app [pr
 navigation/appearance.feature: Font preferences change their part of the app [terminal, JetBrains Mono, 12, the terminal]
 navigation/appearance.feature: Font smoothing is offered only on macOS
 navigation/appearance.feature: Holding the appearance shortcut does not spin through modes
+navigation/appearance.feature: Interface sliders change the look [glass opacity, 50, toasts and floating buttons are more see-through]
 navigation/appearance.feature: Interface sliders change the look [glass opacity, 50, translucent surfaces are more see-through]
 navigation/appearance.feature: Panel animations can be slowed down
 navigation/appearance.feature: Panel animations respect reduced motion
@@ -792,6 +793,8 @@ navigation/landing.feature: The open thread going away lands on a new thread
 navigation/landing.feature: With no projects the window stays home
 navigation/layout.feature: A hidden right panel does no work
 navigation/layout.feature: A hidden sidebar stays hidden after a restart
+navigation/layout.feature: A hidden sidebar stays hidden in a narrow window
+navigation/layout.feature: A monospace interface font widens the sidebar
 navigation/layout.feature: A tab kind that the thread cannot show is not offered
 navigation/layout.feature: A window too narrow for the sidebar and the thread shows the sidebar over the thread
 navigation/layout.feature: Adding a tab to the right panel [agents]
@@ -810,6 +813,7 @@ navigation/layout.feature: Opening and closing the right panel
 navigation/layout.feature: Resetting the sidebar width
 navigation/layout.feature: Resizing the right panel
 navigation/layout.feature: Resizing the sidebar is remembered
+navigation/layout.feature: Resizing the window does not hide or show the sidebar
 navigation/layout.feature: Right panel contents survive a visit to settings
 navigation/layout.feature: Right panel contents survive closing the panel
 navigation/layout.feature: Settings replace the thread list with the settings sections
@@ -828,6 +832,11 @@ navigation/layout.feature: The right panel's tabs and width survive a restart
 navigation/layout.feature: The sidebar cannot be narrower than its minimum or wider than the window allows
 navigation/layout.feature: The sidebar shortcut hides and shows the sidebar
 navigation/layout.feature: The sidebar snaps rather than animating its width
+navigation/layout.feature: The sidebar's rows follow the window's width [1000, one-line rows]
+navigation/layout.feature: The sidebar's rows follow the window's width [1100, two-line rows]
+navigation/layout.feature: The sidebar's rows follow the window's width [1280, two-line rows]
+navigation/layout.feature: The sidebar's rows follow the window's width [800, a rail of icons]
+navigation/layout.feature: The sidebar's rows follow the window's width [860, one-line rows]
 navigation/layout.feature: The thread details panel leads to the thread it was forked from
 navigation/layout.feature: The thread title uses the room it has
 navigation/layout.feature: The thread's git actions are in the header

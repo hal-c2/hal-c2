@@ -30,7 +30,7 @@ struct Library {
     route_before: String,
     /// This device's themes before an import.
     before: Vec<Value>,
-    /// How solid menus and dialogs were before the glass opacity changed.
+    /// How solid toasts were before the glass opacity changed.
     overlay: f64,
 }
 
@@ -1480,15 +1480,17 @@ pub fn register(steps: &mut Steps) {
                 == Some(value)
         })
     });
+    // What toasts and floating buttons draw on; menus and dialogs draw it
+    // solid.
     steps.step(
-        "translucent surfaces are more see-through",
+        "toasts and floating buttons are more see-through",
         |world, _, _| {
             let before = library(world).overlay;
             let now = theme::drawn_color(world.engine(), "surfaceOverlay")
                 .map_or(0.0, |color| color.to_rgba_f()[3]);
             expect!(
                 now < before && (now - 0.5).abs() < 0.01,
-                "menus and dialogs were {before} solid and are now {now}"
+                "toasts were {before} solid and are now {now}"
             );
             Ok(())
         },
