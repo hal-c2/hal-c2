@@ -72,6 +72,22 @@ jobs:
             exit 1
           fi
 
+  # The ledger claims only what a runner selects: every @desktop/@mobile
+  # scenario without a backlog tag must be named by that surface's
+  # kDefaultGlobs. Cheap enough to run on every change, including ones
+  # that touch only the native runners' glob lists.
+  ledger:
+    name: Ledger check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Claimed desktop/mobile scenarios are selected by their runners
+        run: python3 mise-tasks/features/check
+
   # The one job that saves the build every other MC job restores.
   mc_check:
     name: MC check

@@ -804,12 +804,16 @@ Feature: Acting on a pull request
       | a draft the user may not mark ready             | Draft                       |
       | in conflict with its base                       | Resolve conflicts to merge  |
 
+  # Upstream #29465: "Disable auto-merge" stays in the merge button's menu while auto-merge is
+  # pending.
   @backlog @mobile
   Scenario: A pending auto-merge can still be cancelled from the phone's merge button
     Given auto-merge is armed on pull request 42
     When the user opens the merge button's menu on the phone
     Then it offers "Disable auto-merge"
 
+  # Upstream #29486: the line under the button now only appears for permission or capability
+  # reasons the button cannot say.
   @backlog @mobile
   Scenario: The line under the phone's merge button is kept for what the button cannot say
     Given pull request 42 is open with passing checks

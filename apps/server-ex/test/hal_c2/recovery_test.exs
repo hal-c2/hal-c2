@@ -228,7 +228,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
       ])
 
     assert_receive {:hal_c2_shell,
-                    {:rows, _, [{"t2", {"thread", %{"pendingBackgroundTasks" => [_]}}}]}},
+                    {:rows, _, [{"t2", {"thread", %{"runningBackgroundTasks" => [_]}}}]}},
                    1_000
 
     assert Recovery.run() == ["t2"]
@@ -236,7 +236,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert %{"status" => "interrupted"} = StreamState.get(state, "subagent")["s1"]
     assert %{"status" => "interrupted"} = StreamState.get(state, "turn-item")["i1"]
     assert %{"status" => "completed"} = StreamState.get(state, "run")["r1"]
-    assert {"thread", %{"pendingBackgroundTasks" => []}} = HalC2.Shell.row(node(), "t2")
+    assert {"thread", %{"runningBackgroundTasks" => []}} = HalC2.Shell.row(node(), "t2")
   end
 
   test "a delegated task is left running at boot, as it settles with its own thread" do
@@ -266,7 +266,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
       ])
 
     assert_receive {:hal_c2_shell,
-                    {:rows, _, [{"t3", {"thread", %{"pendingBackgroundTasks" => [_]}}}]}},
+                    {:rows, _, [{"t3", {"thread", %{"runningBackgroundTasks" => [_]}}}]}},
                    1_000
 
     assert Recovery.run() == []

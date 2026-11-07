@@ -39,8 +39,8 @@ defmodule HalC2.AgentSessions do
     candidates =
       transcripts
       |> with_cwds()
-      |> Enum.group_by(& &1.cwd)
-      |> Enum.flat_map(fn {cwd, group} -> candidate(cwd, group, projects) end)
+      |> Enum.group_by(&real_path(&1.cwd))
+      |> Enum.flat_map(fn {real, group} -> candidate(real, group, projects) end)
       |> Enum.sort_by(&{&1["lastActiveAt"], &1["path"]}, fn {a, pa}, {b, pb} ->
         if a == b, do: pa <= pb, else: a >= b
       end)
@@ -50,14 +50,16 @@ defmodule HalC2.AgentSessions do
      |> then(&if(truncated, do: Map.put(&1, "truncated", true), else: &1))}
   end
 
-  defp candidate(cwd, group, projects) do
-    path = Path.expand(cwd)
-
-    with false <- excluded?(path),
-         true <- File.dir?(path),
-         {:ok, git} <- git_identity(path) do
-      project = projects[path]
-      last = group |> Enum.map(& &1.mtime) |> Enum.max()
+  # `real` is the folder with its links followed, only the key to compare by; the
+  # candidate shows the project's own root, else where the newest transcript ran.
+  defp candidate(real, group, projects) do
+    with false <- excluded?(real),
+         true <- File.dir?(real),
+         {:ok, git} <- git_identity(real) do
+      {project_id, project_root} = projects[real] || {nil, nil}
+      newest = Enum.max_by(group, & &1.mtime)
+      path = project_root || Path.expand(newest.cwd)
+      last = newest.mtime
 
       [
         %{
@@ -66,10 +68,10 @@ defmodule HalC2.AgentSessions do
           "sources" => group |> Enum.map(& &1.source) |> Enum.uniq(),
           "threadCount" => length(group),
           "lastActiveAt" => iso(last),
-          "alreadyImported" => project != nil,
+          "alreadyImported" => project_id != nil,
           "git" => git
         }
-        |> then(&if(project, do: Map.put(&1, "projectId", project), else: &1))
+        |> then(&if(project_id, do: Map.put(&1, "projectId", project_id), else: &1))
       ]
     else
       _ -> []
@@ -130,7 +132,7 @@ defmodule HalC2.AgentSessions do
       timeout: 30_000
     )
     |> Enum.flat_map(fn
-      {:ok, %{cwd: cwd} = transcript} when is_binary(cwd) -> [transcript]
+      {:ok, %{cwd: cwd, child: false} = transcript} when is_binary(cwd) -> [transcript]
       _ -> []
     end)
   end
@@ -141,13 +143,26 @@ defmodule HalC2.AgentSessions do
     fallback = if source == "claudeAgent", do: Path.basename(path, ".jsonl")
 
     header =
-      each_record(path, %{cwd: nil, session_id: nil}, @cwd_scan_bytes, fn record, acc ->
-        acc = %{acc | session_id: acc.session_id || session_id(record)}
+      each_record(path, %{cwd: nil, session_id: nil, child: false}, @cwd_scan_bytes, fn record,
+                                                                                        acc ->
+        acc = %{
+          acc
+          | session_id: acc.session_id || session_id(record),
+            child: acc.child or child?(record)
+        }
+
         if cwd = cwd(record), do: {:halt, %{acc | cwd: cwd}}, else: {:cont, acc}
       end)
 
     %{header | session_id: header.session_id || fallback}
   end
+
+  # A Codex subagent, review or other child session names the session that spawned it
+  # in `source` (a map); a top-level one has a plain string.
+  defp child?(%{"type" => "session_meta", "payload" => %{"source" => source}}),
+    do: is_map(source)
+
+  defp child?(_), do: false
 
   defp session_id(%{"type" => "session_meta", "payload" => %{} = p}),
     do: trimmed(p["id"]) || trimmed(p["session_id"])
@@ -322,12 +337,37 @@ defmodule HalC2.AgentSessions do
     end
   end
 
+  # A folder with every link in its path followed, so different spellings of one
+  # folder are one. A path that cannot be followed stays as spelled.
+  defp real_path(path), do: path |> Path.expand() |> Path.split() |> follow([], 0)
+
+  defp follow(parts, acc, depth) when depth > 40, do: Path.join(Enum.reverse(acc) ++ parts)
+  defp follow([], acc, _depth), do: acc |> Enum.reverse() |> Path.join()
+
+  defp follow([part | rest], acc, depth) do
+    here = Path.join(Enum.reverse([part | acc]))
+
+    case :file.read_link_all(String.to_charlist(here)) do
+      {:ok, target} ->
+        target =
+          Path.expand(
+            to_string(target),
+            Path.join(Enum.reverse(acc) |> then(&if(&1 == [], do: ["/"], else: &1)))
+          )
+
+        follow(Path.split(target) ++ rest, [], depth + 1)
+
+      _ ->
+        follow(rest, [part | acc], depth)
+    end
+  end
+
   # Active projects on this MC by root.
   defp projects_by_root do
     for {{mc, id}, {"project", project}} <- HalC2.Shell.rows(),
         mc == node() and project["deletedAt"] == nil and is_binary(project["workspaceRoot"]),
         into: %{},
-        do: {Path.expand(project["workspaceRoot"]), project["id"] || id}
+        do: {real_path(project["workspaceRoot"]), {project["id"] || id, project["workspaceRoot"]}}
   end
 
   # --- import ---------------------------------------------------------------------
@@ -351,10 +391,10 @@ defmodule HalC2.AgentSessions do
 
     case active do
       root when is_binary(root) ->
-        root = Path.expand(root)
+        root = real_path(root)
         expected = input["expectedWorkspaceRoot"]
 
-        if expected && Path.expand(expected) != root,
+        if expected && real_path(expected) != root,
           do: {:error, project_error("AgentSessionImportProjectChangedError", project_id)},
           else: {:ok, import_root(project_id, root)}
 
@@ -375,32 +415,38 @@ defmodule HalC2.AgentSessions do
     }
 
   defp import_root(project_id, root) do
-    cutoff = System.os_time(:millisecond) - @window_ms
+    now = System.os_time(:millisecond)
+    cutoff = now - @window_ms
     {transcripts, _} = transcripts()
 
     recent =
       transcripts
-      |> Enum.filter(&(&1.mtime >= cutoff))
+      |> Enum.filter(&(&1.mtime >= cutoff and &1.mtime <= now))
       |> with_cwds()
-      |> Enum.filter(&(Path.expand(&1.cwd) == root))
+      |> Enum.filter(&(real_path(&1.cwd) == root))
       |> Enum.sort_by(& &1.mtime, :desc)
 
-    moved = moved_sessions()
+    # Other threads' sessions only matter to a session without its import row.
+    owned =
+      if Enum.any?(recent, &(not import_row?(&1, project_id))),
+        do: MapSet.union(moved_sessions(), owned_sessions(project_id)),
+        else: MapSet.new()
 
-    {done, pending} =
-      Enum.split_with(
-        recent,
-        &(imported?(&1, project_id) or MapSet.member?(moved, "#{&1.source}:#{&1.session_id}"))
-      )
+    by_state = Enum.group_by(recent, &session_state(&1, project_id, owned))
+    done = Map.get(by_state, :imported, [])
+    pending = Map.get(by_state, :new, [])
+    continued = length(Map.get(by_state, :continued, []))
 
     {too_big, pending} = Enum.split_with(pending, &(&1.size > max_import_bytes()))
     {eligible, over_budget} = Enum.split(pending, @max_imports)
+    names = codex_names()
+    eligible = Enum.map(eligible, &Map.put(&1, :saved_name, names[&1.session_id]))
     already = done |> Enum.map(&"import:#{&1.source}:#{&1.session_id}") |> MapSet.new()
 
     {imported, skipped, _seen} =
       Enum.reduce(
         eligible,
-        {MapSet.size(already), length(too_big) + length(over_budget), already},
+        {MapSet.size(already), continued + length(too_big) + length(over_budget), already},
         fn transcript, {imported, skipped, seen} ->
           case parse(transcript) do
             nil ->
@@ -426,17 +472,55 @@ defmodule HalC2.AgentSessions do
     %{"importedCount" => imported, "skippedCount" => skipped}
   end
 
-  # A session this project already holds, which does not count against the budget.
-  # The thread's row can trail its write by a moment; such a session is read again
-  # and found in its stream.
-  defp imported?(%{source: source, session_id: id}, project_id) when is_binary(id) do
-    match?(
-      {"thread", %{"projectId" => ^project_id}},
-      HalC2.Shell.row(node(), "import:#{source}:#{id}")
-    )
+  # Where a session stands for this import: `:imported` (its import thread is here, as
+  # imported), `:continued` (that thread has run since, so it is left alone and counts
+  # skipped), `:owned` (another thread runs the session; neither imported nor failed),
+  # or `:new`. The thread's row can trail its write by a moment; such a session is
+  # read again and found in its stream.
+  defp session_state(%{source: source, session_id: id}, project_id, owned) when is_binary(id) do
+    case HalC2.Shell.row(node(), "import:#{source}:#{id}") do
+      {"thread", %{"projectId" => ^project_id, "latestRunId" => nil}} -> :imported
+      {"thread", %{"projectId" => ^project_id}} -> :continued
+      _ -> if MapSet.member?(owned, "#{source}:#{id}"), do: :owned, else: :new
+    end
   end
 
-  defp imported?(_transcript, _project_id), do: false
+  defp session_state(_transcript, _project_id, _owned), do: :new
+
+  defp import_row?(%{source: source, session_id: id}, project_id) when is_binary(id),
+    do:
+      match?(
+        {"thread", %{"projectId" => ^project_id}},
+        HalC2.Shell.row(node(), "import:#{source}:#{id}")
+      )
+
+  defp import_row?(_transcript, _project_id), do: false
+
+  # The sessions that other threads of the project run, archived and deleted ones
+  # included, as "source:id". Only those threads' streams are read, once per import.
+  defp owned_sessions(project_id) do
+    for {{mc, id}, {"thread", %{"projectId" => ^project_id}}} <- HalC2.Shell.rows(),
+        mc == node() and not String.starts_with?(id, "import:"),
+        pt <- HalC2.Streams.read(id, &StreamState.list(&1, "provider-thread")),
+        %{"driver" => driver, "nativeId" => native} <- [pt["nativeThreadRef"]],
+        is_binary(native),
+        into: MapSet.new(),
+        do: "#{driver}:#{native}"
+  end
+
+  # The names the user saved for Codex conversations, `session id => name`: the last
+  # non-blank one in the index, so renaming to a blank keeps the one before.
+  defp codex_names do
+    home = System.get_env("CODEX_HOME") || Path.join(user_home(), ".codex")
+
+    each_record(Path.join(home, "session_index.jsonl"), %{}, :infinity, fn
+      %{"id" => id, "thread_name" => name}, acc when is_binary(id) ->
+        {:cont, if(trimmed(name), do: Map.put(acc, id, trimmed(name)), else: acc)}
+
+      _record, acc ->
+        {:cont, acc}
+    end)
+  end
 
   # The sessions of threads that moved from this MC to another (`HalC2.ThreadMove`),
   # as "source:id": they belong to those threads, not to an import.
@@ -579,12 +663,13 @@ defmodule HalC2.AgentSessions do
   assistant messages (the last #{@max_messages}, keeping the first prompt), or nil
   when it has no resumable session or no prompt.
   """
-  def parse(%{source: source, path: path, mtime: mtime}) do
+  def parse(%{source: source, path: path, mtime: mtime} = transcript) do
     fallback = iso(mtime)
 
     initial = %{
       session_id: if(source == "claudeAgent", do: Path.basename(path, ".jsonl"), else: nil),
       title: nil,
+      custom_title: nil,
       model: nil,
       messages: [],
       count: 0,
@@ -636,7 +721,9 @@ defmodule HalC2.AgentSessions do
         %{
           source: source,
           session_id: acc.session_id,
-          title: acc.title || if(derived == "", do: "Imported thread", else: derived),
+          title:
+            transcript[:saved_name] || acc.custom_title || acc.title ||
+              if(derived == "", do: "Imported thread", else: derived),
           model: acc.model,
           updated_ms: mtime,
           messages: kept
@@ -652,6 +739,7 @@ defmodule HalC2.AgentSessions do
         acc
         |> put_if(:session_id, trimmed(r["sessionId"]))
         |> put_if(:title, trimmed(r["aiTitle"]))
+        |> put_custom_title(r)
         |> put_if(:model, claude_model(get_in(r, ["message", "model"])))
 
       with type when type in ["user", "assistant"] <- r["type"],
@@ -734,6 +822,12 @@ defmodule HalC2.AgentSessions do
       model -> model
     end
   end
+
+  # A rename the user gave the session; renaming to nothing takes it back.
+  defp put_custom_title(acc, %{"type" => "custom-title"} = r),
+    do: %{acc | custom_title: trimmed(r["customTitle"])}
+
+  defp put_custom_title(acc, _record), do: acc
 
   defp put_if(acc, _key, nil), do: acc
   defp put_if(acc, key, value), do: Map.put(acc, key, value)

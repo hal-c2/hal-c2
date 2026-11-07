@@ -87,6 +87,23 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     assert [%{"status" => "running", "queuePosition" => nil}] = runs(current(thread_id))
   end
 
+  # Send now for the run that is itself the active turn (the queue started it
+  # first, or a double click): it is not queued, not stuck behind another turn.
+  test "sending now the run that is already the active turn says it is not queued",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+
+    assert {:error, "Queued run #{running["id"]} is not queued."} ==
+             Orchestration.dispatch(%{
+               "type" => "queued-run.start",
+               "threadId" => thread_id,
+               "runId" => running["id"]
+             })
+
+    assert [%{"status" => "running"}] = runs(current(thread_id))
+  end
+
   test "promoting on an archived thread is refused", %{thread_id: thread_id} do
     {:ok, _} = send_message(thread_id, "m1")
     [running] = await_statuses(thread_id, ["running"])

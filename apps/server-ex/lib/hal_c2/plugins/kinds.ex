@@ -82,6 +82,10 @@ defmodule HalC2.Plugins.ProviderAdapter do
       new session from the copy; when it cannot open it, it starts a new one with
       `HalC2.Orchestration.Handoff.prompt(fallback, turn.text)`.
 
+  A turn that names a `native_thread_id` the provider no longer has, and so goes on
+  in a new native conversation, is handed the whole thread first
+  (`HalC2.Orchestration.Handoff.fresh_start/2`).
+
   Without them, or when either fails, the thread moves and its next run there gets
   a summary of the conversation.
 
@@ -95,6 +99,12 @@ defmodule HalC2.Plugins.ProviderAdapter do
   run on another provider), or `nil`. A stop of the thread's active run reaches
   only that run's adapter, so it leaves background work any adapter holds; a stop
   between turns reaches every adapter.
+
+  `await_background/3` (optional) marks or clears the mark on background work the
+  agent waits on (`hal_c2_background_wait`), named by the task ids the agent saw, and
+  answers `{:ok, matched}`, the ids that named running background work. An adapter
+  without it refuses the mark as unsupported; its commands and monitors never hold
+  the thread Working (`HalC2.Projection.BackgroundWork`).
 
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
@@ -120,6 +130,12 @@ defmodule HalC2.Plugins.ProviderAdapter do
   @callback respond(thread_id :: String.t(), request_id :: String.t(), response :: map) ::
               :ok | {:error, String.t()}
   @callback rollback(thread_id :: String.t(), plan :: map) :: {:ok, map} | {:error, String.t()}
+  @callback await_background(
+              thread_id :: String.t(),
+              task_ids :: [String.t()],
+              awaited :: boolean
+            ) ::
+              {:ok, [String.t()]}
   @callback providers(settings :: map) :: [map]
   @callback session_files(native_id :: String.t(), cwd :: String.t()) :: [{String.t(), Path.t()}]
   @callback place_session(
@@ -132,6 +148,7 @@ defmodule HalC2.Plugins.ProviderAdapter do
                       steer: 3,
                       respond: 3,
                       rollback: 2,
+                      await_background: 3,
                       providers: 1,
                       session_files: 2,
                       place_session: 3

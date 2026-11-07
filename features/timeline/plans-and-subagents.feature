@@ -716,6 +716,8 @@ Feature: Plans and subagents
       | Opus 5.5 at Low effort      | High → Low                        |
       | Sonnet 5.5 at Medium effort | Opus 5.5 High → Sonnet 5.5 Medium |
 
+  # Upstream #28995: a start that brings a context handoff is skipped, so a provider swap
+  # never shows two rows.
   @backlog @mc @shared @priority-low
   Scenario: A change of provider is still marked as a context handoff only
     Given the thread's last message was sent with Claude

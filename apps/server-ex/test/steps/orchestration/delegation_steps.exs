@@ -1219,7 +1219,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     end)
 
     World.send_turn(context, "subagent", "say Waiting on my task.")
-    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] != []))
+    World.await_row(World.thread_id(context, "subagent"), &(&1["runningBackgroundTasks"] != []))
     context
   end
 
@@ -1665,7 +1665,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
         "target" => %{"providerInstanceId" => "grok"}
       })
 
-    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] != []))
+    World.await_row(World.thread_id(context, "subagent"), &(&1["runningBackgroundTasks"] != []))
     assert task(context)["status"] == "running"
     context
   end
@@ -1750,7 +1750,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   step "the subagent's command is stopped", context do
-    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] == []))
+    World.await_row(World.thread_id(context, "subagent"), &(&1["runningBackgroundTasks"] == []))
     context
   end
 
@@ -4069,7 +4069,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     )
 
     end_turn(context, answer)
-    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] != []))
+    World.await_row(World.thread_id(context, "subagent"), &(&1["runningBackgroundTasks"] != []))
     context
   end
 

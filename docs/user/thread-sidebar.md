@@ -80,7 +80,8 @@ On desktop, the list also animates section changes made with thread actions such
 preference. While dragging, rows follow the insertion gap without replaying a second transition
 after the drop.
 
-New threads appear above the active threads you have arranged. Settling clears a thread's active
+New threads appear above the active threads you have arranged (on desktop, with the
+[Working section](#the-working-section) off). Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
 position until you move it again. Thread activity does not change the order. The settled shelf
 continues to use settlement time.
@@ -102,6 +103,18 @@ Agents connected through HAL-C2 can use the same server-owned metadata workflow 
 rename a thread, regenerate its title, or link and unlink a pull request. These changes
 appear on desktop and mobile without requiring the originating client to remain
 open.
+
+### The Working section
+
+On desktop, threads whose agent is running, connecting, or waiting on background work
+fold into a collapsed **Working** section above **Snoozed** and **Settled**, ordered by the
+last message you sent. A thread comes back to the top of the active list when it finishes,
+fails, or asks for an approval or an answer. A thread that stops waits two seconds before
+it leaves, so a run that continues or a settle that follows doesn't flash it through the list.
+
+While the section is on, the active list keeps the order threads came back in, so you can't
+rearrange it; drags into other sections still work. Turn it off with **Working section** in
+Settings → General to arrange the active list yourself.
 
 ## Settle finished work
 

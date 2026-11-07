@@ -14,6 +14,9 @@
 #include "ThreadList.h"
 #include "World.h"
 
+// LegacyTreeSteps.cpp: a drag between the legacy tree's projects.
+bool dragProject(World& world, const QString& dragged, const QString& target);
+
 namespace {
 
 struct Arrangement {
@@ -115,6 +118,7 @@ const Steps steps([] {
     waitOrder(world, c[0], c[1], c[2]);
   });
   step(QStringLiteral("the user drags %1 above %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (dragProject(world, c[0], c[1])) return;
     drop(world, c[0], sidebarSectionOf(world, threadKeyOf(world, c[1])), c[1]);
   });
   step(QStringLiteral("the order is the same after a restart"), [](World& world, const Captures&, const Table&) {

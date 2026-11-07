@@ -79,8 +79,9 @@ defmodule HalC2.Steps.Files.ProjectScriptsAndActions do
   step "{string} runs in the new worktree's setup terminal", %{args: [command]} = context do
     {context, snapshot} = await_snapshot(context, &(stage(&1, "setup-script") in ~w(done failed)))
 
+    # A script that succeeds closes its setup terminal (`worktree-setup.feature`), so the
+    # terminal is named by the snapshot, not looked up.
     assert %{"command" => ^command, "terminalId" => "setup"} = snapshot["setupScript"]
-    assert [_] = Registry.lookup(HalC2.Terminal.Registry, {context.setup_thread, "setup"})
 
     ran_in = context.bun_log |> Path.join("install.cwd") |> File.read!() |> String.trim()
     assert real(ran_in) == real(snapshot["worktreePath"])
