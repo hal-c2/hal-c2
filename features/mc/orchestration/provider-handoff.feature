@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15477
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.model-selection.set, thread.model-selection-updated,
 #     provider.switch, thread.provider-switched, context-handoff.updated, provider-thread.updated,
@@ -263,13 +264,17 @@ Feature: Changing model and provider mid-thread
     And "t1" stays on "codex"
     And the run for "Later" starts on "codex" with the conversation intact
 
+  # Upstream #15477: a handoff between two accounts of the same provider and model is a handoff
+  # like any other, its marker naming the account on each side. Another account runs in its own
+  # home, so it cannot resume the first account's conversation (see "Moving to another instance
+  # of the same provider starts a conversation there").
   @backlog @mc
-  Scenario: A queued switch to another account of the same provider needs no handoff
+  Scenario: A queued switch to another account of the same provider hands the conversation over
     Given "t1" has a running turn on the "codex" instance
-    And another instance of "codex" cannot take handoff summaries
-    When the user queues "Next" for that other instance and the running turn completes
-    Then "Next" resumes the same provider conversation on that instance
-    And no handoff is created
+    And a second Codex instance "codex-work" with its own home
+    When the user queues "Next" for "codex-work" and the running turn completes
+    Then the run for "Next" starts a new provider thread on "codex-work"
+    And a handoff from "codex" to "codex-work" carries the earlier conversation
 
   @backlog @mc @priority-high
   Scenario: Switching to a provider instance that cannot run is refused

@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12292
+#   https://github.com/pingdotgg/t3code/pull/21464
+#   https://github.com/pingdotgg/t3code/pull/16662
+#   https://github.com/pingdotgg/t3code/pull/15634
+#   https://github.com/pingdotgg/t3code/pull/20278
 #   apps/server-ex/lib/hal_c2/agent_sessions.ex (agentSessions.scan, agentSessions.import)
 #   apps/server/src/project/AgentSessionScanner.ts and its import service
 #   apps/server/src/project/AgentSessionImporter.ts (modified or moved threads), AgentSessionJson.ts (streaming selection and limits)
@@ -83,6 +88,21 @@ Feature: Importing history from agents already used on this machine
     When a client imports them again
     Then no new threads are created
 
+  # Upstream #15634: bulk import skips a native session another thread already owns, archived
+  # and deleted owners included, and counts it as neither imported nor failed.
+  @mc @backlog @priority-high
+  Scenario Outline: A session a thread already runs is not imported again
+    Given thread "t1" in "demo" already runs the agent session "s1" and is <state>
+    When a client imports agent sessions for "demo"
+    Then no new thread is created for "s1"
+    And "s1" is counted as neither imported nor failed
+
+    Examples:
+      | state    |
+      | active   |
+      | archived |
+      | deleted  |
+
   @mc
   Scenario: At most 100 sessions are imported and the rest reported skipped
     Given project "demo" has 120 recent sessions
@@ -108,6 +128,13 @@ Feature: Importing history from agents already used on this machine
       | has no title and a multi-line first prompt | the first line of the prompt, up to 100 characters |
       | has no title and a blank first prompt      | the first line of the next prompt          |
 
+  # Upstream #12292: imports ignored a user's rename; an empty rename restores the fallback.
+  @backlog @mc @plugin-claude
+  Scenario: An imported Claude session keeps the title the user gave it
+    Given a Claude session the user renamed "Cart totals" and Claude later titled "Fix rounding"
+    When it is imported
+    Then its thread title is "Cart totals"
+
   @mc
   Scenario: Imported threads use the session's model
     Given a Codex session ran on "gpt-5.4"
@@ -125,6 +152,20 @@ Feature: Importing history from agents already used on this machine
     Given a Codex session records each prompt both as typed and with setup text
     When it is imported
     Then each user message is the typed prompt only
+
+  # Upstream #20278: imported Codex threads are titled after the user's request
+  @backlog @mc @plugin-codex
+  Scenario: An imported Codex thread is titled after what the user asked
+    Given a Codex session whose first message starts with injected setup instructions before the user's request
+    When the session is imported
+    Then the thread's title comes from the user's request, not the setup instructions
+
+  # Upstream #20278: a first message that is only setup does not title the thread
+  @backlog @mc @plugin-codex
+  Scenario: An imported Codex thread whose first message is only setup is titled from the next one
+    Given a Codex session whose first message holds only injected setup instructions
+    When the session is imported
+    Then the thread's title comes from the next message the user wrote
 
   @mc
   Scenario Outline: Sessions that cannot be resumed are skipped
@@ -390,6 +431,15 @@ Feature: Importing history from agents already used on this machine
     When it is imported
     Then the thread resumes the id the transcript names first
 
+  # Upstream #16662: Codex subagent, review and other child sessions were imported as threads of
+  # their own and used up the budget before their parents.
+  @mc @backlog @plugin-codex
+  Scenario: Codex subagent sessions are not imported as threads of their own
+    Given a folder holds 100 recent Codex subagent sessions and 4 older top-level sessions
+    When a client imports agent sessions for "demo"
+    Then the 4 top-level sessions are imported
+    And the subagent sessions are neither imported nor counted
+
   # Legacy: apps/server/src/project/AgentSessionImporter.ts (providerInstanceId from the session's home)
   @mc @backlog
   Scenario: An imported session stays with the account whose home holds it
@@ -405,3 +455,11 @@ Feature: Importing history from agents already used on this machine
     When a client imports agent sessions for "demo"
     Then the sessions that fit are imported
     And every later session is counted as skipped without being read
+
+  # Upstream #21464: large Windows file ids collided, so a replaced transcript looked imported.
+  @backlog @mc @priority-low
+  Scenario: A transcript replaced at the same path is imported again on Windows
+    Given an imported session's transcript is replaced by another of the same size and time
+    And Windows gives the two files ids that differ only past 2^53
+    When the MC scans for sessions
+    Then the replacement is imported

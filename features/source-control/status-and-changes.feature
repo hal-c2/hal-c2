@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14942
+#   https://github.com/pingdotgg/t3code/pull/20175
+#   https://github.com/pingdotgg/t3code/pull/16453
+#   https://github.com/pingdotgg/t3code/pull/20412
+#   https://github.com/pingdotgg/t3code/pull/19371
+#   https://github.com/pingdotgg/t3code/pull/20440
 #   https://github.com/pingdotgg/t3code/pull/12465
 #   https://github.com/pingdotgg/t3code/pull/16771
 #   https://github.com/pingdotgg/t3code/pull/13894
@@ -43,6 +49,25 @@ Feature: Repository status and working tree changes
     Then it lists " leading.txt" with its leading space
     And a git action given " leading.txt" acts on that file, not on "leading.txt"
 
+  # Upstream #20175: status parsed git's display output, which quotes and escapes some paths.
+  @backlog @mc @priority-high
+  Scenario Outline: Status lists changed files by their real paths
+    Given the user has <change> in "shop"
+    When status is read for "shop"
+    Then it lists <listed>
+    And a git action given that path acts on that file
+
+    Examples:
+      | change                                   | listed                                        |
+      | added "docs/résumé.md"                   | "docs/résumé.md"                              |
+      | added 'notes/a "quoted" name.txt'        | 'notes/a "quoted" name.txt'                   |
+      | renamed "src/cart.ts" to "src/basket.ts" | "src/basket.ts" as renamed from "src/cart.ts" |
+
+    # Upstream #19371: a quoted file name lost a leading U+FEFF, the invisible byte-order mark.
+    Examples:
+      | change                                                       | listed                                                |
+      | renamed "old.txt" to a name of U+FEFF followed by "note.txt" | that name, U+FEFF included, as renamed from "old.txt" |
+
   # Upstream #16771: counting the lines of thousands of untracked files pegged the CPU.
   @backlog @mc @priority-low
   Scenario: Status over 5,000 untracked files says its totals are incomplete
@@ -58,6 +83,16 @@ Feature: Repository status and working tree changes
     When status is read for "shop"
     Then the status says the branch has an upstream
     And it reports 2 commits ahead and 1 behind
+
+  # Upstream #16453: a branch without an upstream that is configured to merge into "upstream/main"
+  # was still compared with the fork's "origin/main".
+  @backlog @mc
+  Scenario: A branch's changes are compared with the base it is configured to merge into
+    Given the branch "fix-tax" has no upstream and is set to merge into "upstream/main"
+    And the fork's "origin/main" is behind "upstream/main"
+    When status is read for "shop" on "fix-tax"
+    Then its changes and the commits it is ahead are counted against "upstream/main"
+    And commits only "upstream/main" has are not shown as the branch's changes
 
   # Delivered natively (WorkspaceController follows the checkout's vcs status); no desktop test yet.
   @mc @desktop @tui
@@ -132,10 +167,29 @@ Feature: Repository status and working tree changes
     When status is read for "notes"
     Then the status says it is not a repository
 
+  # Upstream #20440: every git process runs with safe.bareRepository=explicit, so a bare
+  # repository hidden in a project's files cannot bring its config or hooks into HAL-C2's git calls.
+  # A project whose own folder is a bare repository is still opened, by naming it explicitly
+  # (mc/orchestration/projects.feature, "A project in a bare repository carries its repository").
+  @backlog @mc @priority-high
+  Scenario: A bare repository among a project's files is not opened as a repository
+    Given the folder "fixtures/evil" in "shop" is shaped like a bare repository with a hook
+    When HAL-C2 runs git inside "fixtures/evil"
+    Then "fixtures/evil" is not opened as a repository
+    And the hook does not run
+
   # Legacy: apps/server/src/git/GitManager.test.ts (status returns an explicit non-repo result for deleted directories)
   @mc @backlog
   Scenario: A folder that has been deleted says it is not a repository
     Given the folder of the project "notes" was deleted
+    When status is read for "notes"
+    Then the status says it is not a repository
+    And no failure is reported
+
+  # Upstream #14942: without git installed, a folder read as a failure to start git.
+  @backlog @mc
+  Scenario: A folder on a machine without git says it is not a repository
+    Given git is not installed on the MC's machine
     When status is read for "notes"
     Then the status says it is not a repository
     And no failure is reported
@@ -284,6 +338,16 @@ Feature: Repository status and working tree changes
     When status is read for "shop" on "fix/loader"
     Then the status carries that pull request
     And the pull request is not linked to the thread until the user links it
+
+  # Upstream #20412: with no "origin", the branch's remote was taken for a fork, so its pull
+  # request was not found and "Commit, push & PR" tried to open a second one.
+  @backlog @mc
+  Scenario: A branch on a repository's only remote finds its pull request without an origin
+    Given the only remote of "shop" is named "github"
+    And an open pull request on "github" comes from "fix-tax"
+    When status is read for "shop" on "fix-tax"
+    Then the status carries that pull request
+    And committing, pushing and opening a pull request from "fix-tax" uses it instead of opening another
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus), GitManager.ts (refreshMissingPullRequest)
   @mc @backlog @priority-high

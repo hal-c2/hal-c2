@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18814
+#   https://github.com/pingdotgg/t3code/pull/9814
+#   https://github.com/pingdotgg/t3code/pull/18288
 #   https://github.com/pingdotgg/t3code/pull/8011
 #   https://github.com/pingdotgg/t3code/pull/15642
 #   https://github.com/pingdotgg/t3code/pull/11594
@@ -342,6 +345,13 @@ Feature: Appearance
         | Red & green   | green and red   |
         | Blue & orange | blue and orange |
 
+    # Upstream #18288: diff counts follow the selected colour palette
+    @backlog @desktop @priority-low
+    Scenario: Added and removed line counts use the chosen diff colors
+      Given the user has chosen other diff colors
+      When the user looks at a thread's changes and at a file change's details
+      Then the added and removed line counts use the chosen colors
+
     @desktop
     Scenario: Composer context stays visible after the first message
       Given the user turned on composer context
@@ -407,6 +417,13 @@ Feature: Appearance
       Then the preview plays again
       And the preview does not animate when the operating system asks for reduced motion
 
+    # Upstream #18814: some status dots kept pulsing with Reduce Motion on.
+    @backlog @desktop
+    Scenario: Status dots stay still when the system asks for reduced motion
+      Given the operating system asks for reduced motion
+      When a thread is working and the connection is reconnecting
+      Then the thread's and the connection's status dots show without pulsing
+
   Rule: Fonts and text
 
     @desktop
@@ -440,6 +457,14 @@ Feature: Appearance
       Given the user set the interface font to "Inter"
       When the user resets the interface font
       Then the interface uses the system default font
+
+    # Upstream #9814: filtering the font picker keeps the keyboard highlight on the matches.
+    @backlog @desktop @priority-low
+    Scenario: A filtered font list can be picked from the keyboard
+      Given the user opens the interface font picker
+      When the user types "Jet"
+      Then the first matching font is highlighted
+      And pressing Enter applies it and closes the picker
 
     # Legacy: apps/web/src/components/settings/SettingsFontPreviews.tsx
     @backlog @desktop

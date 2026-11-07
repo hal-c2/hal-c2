@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17547
 #   https://github.com/pingdotgg/t3code/pull/16674
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
 #   https://github.com/pingdotgg/t3code/pull/11846 (per-thread Auto-settle behavior: Enabled, Disabled)
@@ -80,6 +81,8 @@ Feature: Settling threads
     When the user settles "Ship checkout"
     Then the question is dismissed
 
+  # Upstream #17547: the server's confirmation brought the old wake time back; settling now
+  # clears the snooze where it is stored.
   @desktop @mobile
   Scenario: Settling a snoozed thread ends the snooze
     Given "Ship checkout" is snoozed until tomorrow

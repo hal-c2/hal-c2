@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19366
+#   https://github.com/pingdotgg/t3code/pull/18429
 #   https://github.com/pingdotgg/t3code/pull/11305
 #   https://github.com/pingdotgg/t3code/pull/19395
 #   https://github.com/pingdotgg/t3code/pull/17091
@@ -50,6 +52,7 @@ Feature: Terminal input and output
       Then attached clients receive the lines in a few batched output events
       And no output is lost
 
+    # Upstream #18429: a slow terminal client queued output without bound.
     @mc @tui
     Scenario: A client that falls behind stops receiving the shell's output instead of buffering it
       Given a running terminal whose shell prints continuously
@@ -131,6 +134,7 @@ Feature: Terminal input and output
       When the terminal is restarted
       Then the held back client shows the new shell
 
+    # Upstream #18429: a client that caught up resumed from a snapshot instead of the queued output.
     @tui
     Scenario: A client that fell behind and reconnects starts over from a snapshot
       Given a running terminal whose shell prints continuously
@@ -387,6 +391,15 @@ Feature: Terminal input and output
         | keys   | outcome                                 |
         | Ctrl+C | the selected text is on the clipboard   |
         | Ctrl+V | the clipboard text is sent to the shell |
+
+    # Upstream #19366: a keyboard paste in the terminal is sent once, never twice.
+    @backlog @desktop
+    Scenario: A paste from the keyboard reaches the shell once
+      Given the clipboard holds "echo hi"
+      When the user presses "Ctrl+V" in the terminal
+      Then the shell receives "echo hi" once
+      When the user then chooses "Paste" from the terminal's menu
+      Then the shell receives "echo hi" a second time
 
     @desktop
     Scenario: Ctrl+C with nothing selected still interrupts the program

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17457
 #   https://github.com/pingdotgg/t3code/pull/17867
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/thread-sidebar.md (Inspect agent work: Limited, Resume at reset, Snooze until reset)
@@ -95,6 +96,19 @@ Feature: Threads stopped by a usage limit
     When the user snoozes "Port tests" until the reset
     Then "Port tests" is snoozed until 14:00
     And it wakes without sending a message
+
+  # Upstream #17457: a failed resume or snooze says why without hiding the limit notice.
+  @backlog @desktop @priority-low
+  Scenario Outline: A recovery from a usage limit that fails says why and keeps the notice readable
+    Given "Port tests" stopped on a usage limit that resets at 14:00
+    When the user asks to <recover> and that fails
+    Then the user is told why
+    And the limit notice still shows its title and the reset time
+
+    Examples:
+      | recover                             |
+      | resume "Port tests" at the reset    |
+      | snooze "Port tests" until the reset |
 
   @desktop @mobile @backlog-mobile
   Scenario: Snoozing and auto-resume together wake and continue the thread

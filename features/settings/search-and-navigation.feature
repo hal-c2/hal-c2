@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20764
 #   https://github.com/pingdotgg/t3code/pull/17396
 #   https://github.com/pingdotgg/t3code/pull/17859
 #   https://github.com/pingdotgg/t3code/pull/13516 (Escape in settings returns to the last main page)
@@ -166,6 +167,15 @@ Feature: Settings search and navigation
       When the user presses escape in the search
       Then the search is empty
       And the list of sections is shown again
+
+    # Upstream #20764: the highlight stays clamped when the results shrink and come back.
+    @backlog @desktop @priority-low
+    Scenario: The highlighted result stays within the results when they shrink
+      Given the user has searched settings and highlighted the eighth of eight results
+      When the results shrink to two
+      Then the second result is highlighted
+      When the results grow back to eight without the user moving the highlight
+      Then the second result is still highlighted
 
     # The native runner drives the settings navigation beside its page (SettingsSearchSteps.cpp).
     @desktop

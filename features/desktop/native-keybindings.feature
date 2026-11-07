@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18983
 #   apps/desktop-qt/src/native/KeybindingController.cpp (the keymap and its native commands)
 #   apps/desktop-qt/src/native/Keybindings.cpp (defaults, when expressions, merging the MC's rules)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (window shortcuts, standing down for a focused terminal)
@@ -54,6 +55,20 @@ Feature: The desktop shell keeps the keymap
       Given the native chrome has keyboard focus
       When the user presses mod+o
       Then "editor.openFavorite" runs
+
+    # Upstream #18983: mod+o opened the preferred editor once per handler that saw it.
+    @backlog @desktop @priority-low
+    Scenario Outline: mod+o opens the preferred editor once
+      Given <visible> is shown
+      When the user presses mod+o
+      Then the preferred editor opens once on <target>
+
+      Examples:
+        | visible                                  | target                |
+        | nothing beside the thread                | the workspace         |
+        | the thread's details                     | the workspace         |
+        | a file preview of "src/cart.ts"          | "src/cart.ts"         |
+        | the thread's details and a file preview  | the previewed file    |
 
     @desktop
     Scenario: A key the shell has no command for stays with the focused control

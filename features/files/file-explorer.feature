@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21258
+#   https://github.com/pingdotgg/t3code/pull/17132
 #   https://github.com/pingdotgg/t3code/pull/17378
 #   https://github.com/pingdotgg/t3code/pull/11500
 #   apps/server-ex/lib/hal_c2/workspace.ex (index, list_entries)
@@ -169,11 +171,29 @@ Feature: Exploring project files
     When the user collapses every folder
     Then only the top level is visible
 
+  # Upstream #21258: Expand all skips ignored folders; Collapse all still closes them.
+  @backlog @desktop
+  Scenario: Expanding every folder leaves ignored folders closed
+    Given the project has an ignored "node_modules" folder
+    When the user expands every folder
+    Then "node_modules" stays closed
+    And "cart.ts" is visible
+
   @desktop
   Scenario: Filtering the tree can hide entries that do not match
     When the user filters the tree by "cart" and hides non-matches
     Then only "src/lib/cart.ts" and its folders are shown
     When the user stops filtering
+    Then the full tree is shown again
+
+  # Upstream #17132: a filter that hides non-matches and matches nothing says "No matching
+  # files." instead of showing the unfiltered tree.
+  @backlog @desktop
+  Scenario: A tree filter that matches nothing says so
+    When the user filters the tree by ".env.local" and hides non-matches
+    Then the tree says "No matching files."
+    And no other files are shown
+    When the user clears the filter
     Then the full tree is shown again
 
   @desktop

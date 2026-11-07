@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19065
 #   https://github.com/pingdotgg/t3code/pull/15686
 #   https://github.com/pingdotgg/t3code/pull/15207
 #   apps/desktop-qt/qml/HalC2/Bricks/js/centreViews.js (the routes the shell draws itself)
@@ -100,8 +101,14 @@ Feature: The desktop shell draws the thread in the window's centre
     And incognito tabs are not kept across a restart
 
   # Upstream #15686: open the right panel tab menu with Mod+T
+  # Upstream #19065: Mod+T opens the tab menu while a pull request tab is open.
   @backlog @desktop @priority-low
-  Scenario: A shortcut opens the menu for a new side-panel tab
-    Given the side panel is open and the terminal does not have focus
+  Scenario Outline: A shortcut opens the menu for a new side-panel tab
+    Given the side panel is showing <tab> and the terminal does not have focus
     When the user presses the new-tab shortcut
     Then the menu of tabs to open appears
+
+    Examples:
+      | tab            |
+      | a browser tab  |
+      | a pull request |

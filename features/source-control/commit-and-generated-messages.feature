@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20175
+#   https://github.com/pingdotgg/t3code/pull/19605
+#   https://github.com/pingdotgg/t3code/pull/19181
 #   https://github.com/pingdotgg/t3code/pull/18754
 #   docs/user/source-control.md (Commit, push and PR with generated messages)
 #   packages/contracts/src/git.ts (GitStackedAction, GitRunStackedActionInput, GitActionProgressEvent)
@@ -33,6 +36,14 @@ Feature: Committing with written or generated messages
     Then a commit "Add tax to the cart" holds both files
     And the user is told the commit was made with its short hash
 
+  # Upstream #19605: a message the user wrote skips building the diff the writer model would
+  # need; a blank message still gets the full context.
+  @backlog @mc @priority-low
+  Scenario: A commit with the user's own message does not need a readable diff
+    Given a git text converter configured for "src/tax.ts" fails
+    When the user commits with the message "Add tax to the cart"
+    Then a commit "Add tax to the cart" holds both files
+
   @mc @desktop
   Scenario: A blank message is written by the writer model
     When the user commits without writing a message
@@ -48,6 +59,11 @@ Feature: Committing with written or generated messages
       | raw                                  | subject                                  |
       | a subject longer than 72 characters  | cut to at most 72 characters             |
       | empty                                | "Update project files"                   |
+
+    # Upstream #19181: a subject cut to length could split an emoji or an accented letter.
+    Examples:
+      | raw                                                                                | subject                                            |
+      | a subject longer than 72 characters, with an emoji and accented letters at the cut | cut to at most 72 characters without splitting one |
 
   @tui
   Scenario: A blank message is written for the user in the terminal client
@@ -65,6 +81,15 @@ Feature: Committing with written or generated messages
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit holds only "src/cart.ts"
     And "src/tax.ts" is still changed in the working tree
+
+  # Upstream #20175: in a project nested inside its repository the picked files resolved against
+  # the wrong folder.
+  @backlog @mc @desktop @priority-high
+  Scenario: Committing only the picked files of a project inside a larger repository
+    Given "shop" is the folder "apps/shop" of a larger repository
+    When the user leaves "src/tax.ts" out of the commit and commits
+    Then the commit holds only "apps/shop/src/cart.ts"
+    And opening "src/cart.ts" in the editor opens "apps/shop/src/cart.ts"
 
   @desktop
   Scenario: Leaving every file out disables committing

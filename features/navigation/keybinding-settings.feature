@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15972
+#   https://github.com/pingdotgg/t3code/pull/11109
 #   https://github.com/pingdotgg/t3code/pull/19400
 #   https://github.com/pingdotgg/t3code/pull/12822
 #   docs/user/keybindings.md (Settings → Keybindings)
@@ -111,18 +113,22 @@ Feature: Keybindings settings
         | Linux    | Super   | meta+y  |
 
     # Legacy: apps/web/src/components/settings/KeybindingsSettings.logic.ts (keybindingFromKeyboardEvent)
+    # Upstream #15972: the recorder stored the US key for punctuation on other layouts; it now stores
+    # the character the user's layout types, with Shift kept as a modifier and US Shift symbols
+    # stored as their unshifted key.
     @backlog @desktop
-    Scenario Outline: A recorded shortcut names the key that was pressed, not what Shift made it type
-      Given the user is on macOS
+    Scenario Outline: A recorded punctuation key follows the user's keyboard layout
+      Given the user's keyboard layout is <layout>
       And the user is recording a shortcut for "diff.toggle"
-      When the user presses Command and Shift with the key that types <typed> where <place>
+      When the user presses <keys>
       Then the recorded shortcut is <stored>
 
       Examples:
-        | typed | place                  | stored        |
-        | @     | the digit 2 key sits   | mod+shift+2   |
-        | "     | the digit 2 key sits   | mod+shift+2   |
-        | @     | the quote key sits     | mod+shift+'   |
+        | layout       | keys                                          | stored      |
+        | US on macOS  | Command and Shift with the key that types "@" | mod+shift+2 |
+        | US           | Shift with the key that types "["             | shift+[     |
+        | German       | Shift with the key that types "#"             | shift+'     |
+        | German       | the key that types "#"                        | #           |
 
     @backlog @desktop
     Scenario: A recorded letter follows the user's keyboard layout
@@ -227,6 +233,13 @@ Feature: Keybindings settings
       Given two environments are connected
       When the user rebinds "diff.toggle"
       Then both environments store the new binding
+
+    # Upstream #11109: saving one binding threw away unsaved edits to the others.
+    @backlog @desktop @priority-low
+    Scenario: Saving one binding keeps the unsaved edits of the others
+      Given the user changed the conditions of two bindings without saving them
+      When the user saves only the first
+      Then the second still shows its unsaved condition and can be saved
 
     @desktop
     Scenario Outline: Save failures are reported

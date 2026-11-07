@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16303
+#   https://github.com/pingdotgg/t3code/pull/19023
 #   https://github.com/pingdotgg/t3code/pull/19131
 #   https://github.com/pingdotgg/t3code/pull/15571
 #   https://github.com/pingdotgg/t3code/pull/15442
@@ -183,6 +185,14 @@ Feature: Runs and turns
     When the provider finishes the reply
     Then the whole reply is written at once, whatever was held back
 
+  # Upstream #19023: a held-back reply written at turn end stays where it was said.
+  @backlog @mc
+  Scenario: A held-back reply cut off by a steer keeps its place
+    Given the agent's reply is partly held back
+    And the user steers the turn before the reply finishes
+    When the turn ends and the held-back reply is written
+    Then the reply appears before the steer and what followed it, where the agent said it
+
   @mc
   Scenario: Tool output streams without waiting for a paragraph
     Given "t1" has a running turn
@@ -220,6 +230,18 @@ Feature: Runs and turns
   Scenario: A provider that dies while starting the turn says why
     Given the provider process exits saying "Config files in mise.toml are not trusted." while "t1" starts a turn
     Then the run is failed, and its error ends with "It said:\nConfig files in mise.toml are not trusted."
+
+  # Upstream #16303: known reasons a provider refused a turn were hidden behind a generic failure.
+  @backlog @mc @priority-low
+  Scenario Outline: A turn the provider refuses to start says why
+    Given the provider refuses to start the turn of "t1" because <cause>
+    Then the run is failed with "<message>"
+    And the provider's own details are not shown as the message
+
+    Examples:
+      | cause                                 | message                                                    |
+      | an attached file could not be read    | An attachment could not be read. Attach it again.          |
+      | it is still running the previous turn | The previous turn is still running. Wait for it to finish. |
 
   @mc
   Scenario: A provider session that cannot be opened fails the run

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18329
+#   https://github.com/pingdotgg/t3code/pull/18549
+#   https://github.com/pingdotgg/t3code/pull/14345
 #   https://github.com/pingdotgg/t3code/pull/17749
 #   https://github.com/pingdotgg/t3code/pull/17662
 #   https://github.com/pingdotgg/t3code/pull/11922
@@ -568,6 +571,14 @@ Feature: The MC working with its host machine
     Given a client asks the MC to run a command that is not installed
     Then the client is told the command could not be started and in which folder it was tried
 
+  # Upstream #14345: a spawn that fails because PATH runs through a file is a start failure
+  @backlog @mc
+  Scenario: A command whose search path runs through a file is reported as not started
+    Given a PATH entry is a file, not a folder
+    When the MC runs a command found through that PATH
+    Then the user is told the command could not start and why
+    And the client stays connected
+
   @backlog @mc @priority-low
   Scenario: Output that is not valid text is passed on and marked
     Given a command prints bytes that are not valid UTF-8
@@ -716,6 +727,15 @@ Feature: The MC working with its host machine
     When the thread starts a new agent session and that turn fails for another reason
     Then the failure does not say "Killed: out of memory."
 
+  # Upstream #18329: an out-of-memory kill of one tool stopped the shared Codex app-server's
+  # scope, interrupting unrelated Codex threads; the shared scope now survives the kill.
+  @backlog @mc @plugin-codex
+  Scenario: A Codex tool killed for using too much memory does not stop other Codex threads
+    Given the MC runs on Linux under a systemd user manager
+    And two threads run turns on one Codex account
+    When a tool in one thread uses more memory than the machine can give and is killed
+    Then the other thread's Codex turn keeps running
+
   # Upstream #11922: on macOS a terminal's ssh to a LAN host failed with "No route to host"
   # until the app declared why it uses the local network.
   @backlog @desktop @priority-low
@@ -724,3 +744,10 @@ Feature: The MC working with its host machine
     When the user runs "ssh build-box.local hostname" in a HAL-C2 terminal
     Then macOS asks once whether HAL-C2 may use the local network, saying it is for remote environments, terminals and agents
     And once allowed, the command reaches "build-box.local"
+
+  # Upstream #18549: File Explorer opens the folder asked for, whatever its slashes
+  @backlog @mc @priority-low
+  Scenario: A folder written with forward slashes opens in File Explorer on Windows
+    Given the MC runs on Windows
+    When the user opens "C:/work/shop" in the file manager
+    Then File Explorer opens the folder "C:\work\shop"

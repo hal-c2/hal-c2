@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16595
+#   https://github.com/pingdotgg/t3code/pull/20025
+#   https://github.com/pingdotgg/t3code/pull/19801
+#   https://github.com/pingdotgg/t3code/pull/19759
+#   https://github.com/pingdotgg/t3code/pull/15331
+#   https://github.com/pingdotgg/t3code/pull/21487
+#   https://github.com/pingdotgg/t3code/pull/20310
+#   https://github.com/pingdotgg/t3code/pull/19058
+#   https://github.com/pingdotgg/t3code/pull/19019
+#   https://github.com/pingdotgg/t3code/pull/20213
 #   https://github.com/pingdotgg/t3code/pull/19538
 #   https://github.com/pingdotgg/t3code/pull/19521
 #   https://github.com/pingdotgg/t3code/pull/18459
@@ -113,6 +123,14 @@ Feature: Delegating tasks to subagents
     When the agent in "parent" delegates a task
     Then the tool fails with code "workspace_escalation_denied"
     And "parent" has no subagent task
+
+  # Upstream #20213: worktree delegation from a checkout outside the project is refused
+  @backlog @mc
+  Scenario: A new worktree is refused for a caller working outside the project's repository
+    Given a caller thread whose checkout is not part of its project's repository
+    When it delegates a task in a new worktree
+    Then the delegation is refused with advice to share the caller's workspace
+    And no task is created
 
   @mc
   Scenario: A worktree that cannot be prepared ends the task, not the caller's checkout
@@ -388,6 +406,7 @@ Feature: Delegating tasks to subagents
     When the MC restarts
     Then the task, its node and its turn item are "interrupted"
 
+  # Upstream #19058: the task result is the subagent's last answer even when its messages share a timestamp.
   @mc
   Scenario: The task result is the subagent's last answer
     When the subagent's turn ends with two assistant messages
@@ -404,6 +423,14 @@ Feature: Delegating tasks to subagents
     When the agent asks for the task's status
     Then it sees the child thread, provider, model, status and whether child runs are pending
     And the work state is "working" until the task ends and "result_available" after
+
+  # Upstream #19759: a finished task's status no longer repeats its result
+  @backlog @mc
+  Scenario: A finished task's status gives its result once
+    Given the agent in "parent" delegated a task that finished with its answer
+    When the agent asks for the task's status
+    Then the answer is given once, not again as the latest answer
+    And a later answer that differs from the result is still given
 
   @mc
   Scenario: A task's work state says whether its subagent works, waits on work it left, or has ended
@@ -455,6 +482,25 @@ Feature: Delegating tasks to subagents
     When the agent cancels the task
     Then the subagent's turn is interrupted and the message behind it cancelled
     And the task is cancelled and its delivery disposed
+
+  # Upstream #21487: the task follows its run into queued, starting and its end, recovery puts
+  # held runs back to idle, and cancelling removes the task's own run from a held queue.
+  @backlog @mc
+  Scenario: A task's status follows its subagent's queued run
+    Given the agent in "parent" delegated a task whose run is queued behind the subagent's turn
+    When the agent asks for the task's status
+    Then the status says the task is queued
+    When the run starts
+    Then the status says the task is working
+
+  # Upstream #21487
+  @backlog @mc
+  Scenario: Cancelling a task removes its run from a held queue and leaves the rest
+    Given the agent in "parent" delegated a task whose run waits in a queue held for the user
+    And another message waits in the same queue
+    When the agent cancels the task
+    Then the task's run is removed from the queue
+    And the other message stays queued
 
   @backlog @mc
   Scenario Outline: A task that ends <ending> <fate> its subagent's open questions
@@ -708,6 +754,28 @@ Feature: Delegating tasks to subagents
     Then "parent" is not woken for either
     And a wake already queued for that turn is cancelled
 
+  # Upstream #15331: stopping a wake turn left the tasks it delegated able to wake the caller again;
+  # both sets are stopped now.
+  @mc @backlog
+  Scenario: Stopping a wake turn also keeps the tasks it delegated from waking the caller
+    Given "parent" was woken to hear that task "one" finished
+    And during that wake it delegated task "two" without waiting
+    When the user interrupts the turn of "parent"
+    And "two" finishes afterwards
+    Then "parent" is not woken for "two"
+    And the results of "one" and "two" can still be read
+
+  # Upstream #20310: Stop on the parent cancels a follow-up task left running after its
+  # subagent finished, when the subagent has no run, request or background work left.
+  @mc @backlog
+  Scenario: Stopping the caller ends a task left running after its subagent finished
+    Given the agent in "parent" sent a follow-up to the task "one"
+    And the subagent of "one" has finished with nothing running, queued or waiting
+    But "one" still shows as running on "parent"
+    When the user stops "parent"
+    Then "one" is cancelled
+    And a task whose subagent is still working keeps running
+
   @mc
   Scenario Outline: Acknowledging tasks of a queued wake trims or cancels the wake
     Given a wake for the finished tasks "one" and "two" of "parent" is queued
@@ -895,3 +963,43 @@ Feature: Delegating tasks to subagents
     When "parent" asks for the status and result of "task-1"
     Then it gets "task-1"'s run, not the later one
     And a follow-up continued after a restart stays the task it was
+
+  # Upstream #19019: a message steered into a running subagent run opens no task.
+  @backlog @mc
+  Scenario: A message steered into a running subagent does not leave a task waiting
+    Given a subagent is running a turn that no task is waiting on
+    When the parent sends it a message that steers the running turn
+    Then the parent is told the message was steered
+    And no task is opened for it
+    And the parent is not shown waiting on the subagent
+
+  # Upstream #19801: delegated children no longer watch pull requests (refusing their watch is
+  # source-control/pull-request-threads.feature); they hand the pull request back to the caller.
+  @backlog @mc
+  Scenario: A subagent's result names the pull request for its caller to watch
+    Given the subagent of "parent" opened pull request 42 and its checks are still running
+    When the subagent finishes its task
+    Then the result delivered to "parent" names pull request 42, its head commit and that its checks are pending
+
+  # Upstream #20025: a delegated completion no longer reverts a finished parent run or clears its checkpoint.
+  @backlog @mc @priority-high
+  Scenario: A subagent finishing while its caller checkpoints leaves the caller's run finished
+    Given the run of "parent" is finishing and taking its checkpoint
+    When the subagent of "parent" finishes at that moment
+    Then the run of "parent" stays completed with its checkpoint
+    And the subagent's result is delivered to "parent"
+
+  # Upstream #16595: a subagent's options merge with the caller's when the model is inherited;
+  # an empty list clears them and a new provider or model starts without them.
+  @backlog @mc
+  Scenario: A subagent keeps fast mode when its task sets only the effort
+    Given "parent" runs with fast mode on
+    When "parent" delegates a task that sets the reasoning effort to "high"
+    Then the subagent runs with effort "high" and fast mode on
+
+  # Upstream #16595
+  @backlog @mc
+  Scenario: A subagent on another model starts without the caller's options
+    Given "parent" runs with fast mode on
+    When "parent" delegates a task on another model
+    Then the subagent runs without fast mode

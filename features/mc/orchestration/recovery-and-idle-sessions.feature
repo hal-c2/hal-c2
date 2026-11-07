@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20306
+#   https://github.com/pingdotgg/t3code/pull/12513
 #   https://github.com/pingdotgg/t3code/pull/19291
 #   https://github.com/pingdotgg/t3code/pull/18461
 #   https://github.com/pingdotgg/t3code/pull/16917 (covered: an idle Codex thread's session is released; background work keeps it)
@@ -162,6 +164,15 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the sessions are released side by side, not one after another
     And none is left running for the next MC to resume beside it
 
+  # Upstream #12513: helpers that ignored SIGTERM hung shutdown and survived the backend;
+  # they are now killed a second after the stop request.
+  @backlog @mc
+  Scenario: A helper process that ignores the stop request does not outlive the MC
+    Given a provider's helper process ignores the request to stop
+    When the MC shuts down
+    Then the helper is killed a second after it was asked to stop
+    And the MC finishes shutting down
+
   @backlog @mc @priority-high
   Scenario: Agents a killed MC left running are stopped before new ones start
     Given an MC was killed while its agents were still running
@@ -227,6 +238,16 @@ Feature: Recovering from restarts and releasing idle sessions
     And "t1" waits for the user's next message
     When the user sends "Try again" to "t1"
     Then "t1" may be continued after a later restart again
+
+  # Upstream #20306: the restart guard counts only continuations requested within five minutes
+  # of the interrupted run finishing; rapid loops still stop at three.
+  @backlog @mc
+  Scenario: Continuations far apart do not use up the restart limit
+    Given project "demo" continues threads after a server update
+    And "t1" has been continued after 3 restarts, each after more than five minutes of work
+    And thread "t1" was mid-turn on a provider conversation that can resume
+    When the MC restarts
+    Then "t1" receives "Continue where you left off." from the server
 
   @backlog @mc
   Scenario Outline: A cut-off thread that should not be answered for is not continued

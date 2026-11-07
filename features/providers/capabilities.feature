@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18309
 #   https://github.com/pingdotgg/t3code/pull/16750
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
@@ -215,3 +216,13 @@ Feature: Provider capabilities
       | age        | outcome                                                     |
       | 6 minutes  | "api" is scanned again and the dollar menu offers "deploy"  |
       | 2 minutes  | "api" is not scanned again and "deploy" is not offered yet  |
+
+  # Upstream #18309: a folder's skill scan is published even while the provider's health
+  # check fails; commands it cannot read keep the last known ones instead of going empty.
+  @backlog
+  Scenario: Skills stay offered while the provider's health check fails
+    Given Codex's health check fails
+    And Codex's skill scan of folder "api" finds the skill "deploy"
+    When the user opens the composer for a thread working in "api"
+    Then the dollar and slash menus offer "deploy"
+    And Codex still shows its health problem

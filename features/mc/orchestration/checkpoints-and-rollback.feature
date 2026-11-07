@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18395
+#   https://github.com/pingdotgg/t3code/pull/14892
+#   https://github.com/pingdotgg/t3code/pull/13538
+#   https://github.com/pingdotgg/t3code/pull/17150
+#   https://github.com/pingdotgg/t3code/pull/11340
+#   https://github.com/pingdotgg/t3code/pull/14411
+#   https://github.com/pingdotgg/t3code/pull/17074
+#   https://github.com/pingdotgg/t3code/pull/20195
 #   https://github.com/pingdotgg/t3code/pull/17079
 #   https://github.com/pingdotgg/t3code/pull/14874
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -49,6 +57,14 @@ Feature: Checkpoints, diffs and rewinding
     When a run of "t1" completes
     Then the run's checkpoint has status error
 
+  # Upstream #20195: a saved checkpoint is not captured again when the status refresh after it fails.
+  @backlog @mc
+  Scenario: A status refresh that fails after a saved checkpoint does not hold the next turn
+    Given a run's checkpoint has been saved
+    When reading the project's status afterwards times out
+    Then the checkpoint stays saved and is not captured again
+    And the user's next message starts its turn at once
+
   @mc
   Scenario: A failed baseline does not stop the run
     Given capturing the baseline of "t1" fails
@@ -61,6 +77,14 @@ Feature: Checkpoints, diffs and rewinding
     When the host loses power right after the capture
     Then the checkpoint ref is readable after the MC restarts
 
+  # Upstream #14411: a checkpoint whose full flush is refused retries that git command with a plain flush.
+  @backlog @mc @priority-low
+  Scenario: A checkpoint is captured on a filesystem that refuses a full flush
+    Given the worktree of "t1" is on a macOS network mount that refuses Git's full flush
+    When a run of "t1" completes
+    Then the checkpoint is captured with a plain flush instead
+    And a capture that fails for another reason is still marked as an error
+
   # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: sparse checkout)
   # Likely already implemented: apps/server-ex/lib/hal_c2/checkpoint.ex
   @mc
@@ -69,6 +93,16 @@ Feature: Checkpoints, diffs and rewinding
     When a run of "t1" completes
     Then the checkpoint still holds "docs"
     And the turn's diff does not list the files of "docs" as removed
+
+  # Upstream #13538: checkpoint capture and restore failed past Windows' 260-character path limit;
+  # they now turn on git's long paths for themselves.
+  @mc @backlog @priority-low
+  Scenario: A Windows workspace with very long paths is checkpointed and restored
+    Given the MC runs on Windows and git's long paths setting is off
+    And the worktree of "t1" holds a file whose path is longer than 260 characters
+    When a run of "t1" completes
+    Then the checkpoint holds that file
+    And rewinding "t1" to that checkpoint restores it
 
   # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: CHECKPOINT_RECOVERY_MAX_CANDIDATES, CHECKPOINT_RECOVERY_TIMEOUT)
   @mc
@@ -127,6 +161,14 @@ Feature: Checkpoints, diffs and rewinding
       | state                  |
       | missing                |
       | not a valid index file |
+
+  # Upstream #17074: capturing a checkpoint leaves the repository's split index alone.
+  @backlog @mc @priority-high
+  Scenario: A checkpoint leaves a split index the repository still uses
+    Given a repository that keeps its git index split, with shared index files that expire
+    When a checkpoint is captured
+    Then the shared index the repository uses is still there
+    And git commands in the repository keep working
 
   # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: filter runs, temp index cleanup)
   @mc
@@ -193,6 +235,15 @@ Feature: Checkpoints, diffs and rewinding
     When a client asks for the diff from turn 2 to turn 3 of "t1"
     Then it fails with "turn 3 has no checkpoint"
 
+  # Upstream #17150: the turn after a stopped turn could not be diffed because the stopped turn's
+  # checkpoint was not taken as its start; the previous turn's ready checkpoint is used.
+  @mc @backlog
+  Scenario: The turn after a stopped turn can be diffed
+    Given run 2 of "t1" was stopped and run 3 of "t1" completed
+    When a client asks for the diff from turn 2 to turn 3 of "t1"
+    Then the patch shows only what turn 3 changed
+
+  # Upstream #18395: the 10 MB diff cap counts every batch of a turn together
   @mc
   Scenario: Very large diffs are capped
     Given run 1 of "t1" produced a diff larger than 10 MB
@@ -247,6 +298,21 @@ Feature: Checkpoints, diffs and rewinding
     Given thread "t3" works in a subfolder of a repository, with no git folder of its own
     When a run of "t3" completes after changing a file
     Then a ready checkpoint for that run exists
+
+  # Upstream #14892: a project folder its repository ignores gets missing checkpoints instead of errors
+  @backlog @mc
+  Scenario: A workspace folder its repository ignores gets missing checkpoints
+    Given thread "t3" works in a subfolder that its repository ignores, with no tracked files
+    When a run of "t3" completes
+    Then the run's checkpoint is missing, not an error
+
+  # Upstream #14892: tracked files in an ignored folder are still captured
+  @backlog @mc
+  Scenario: Tracked files in an ignored workspace folder are still checkpointed
+    Given thread "t3" works in an ignored subfolder that holds tracked files
+    When a run of "t3" completes after changing a tracked file
+    Then a ready checkpoint holds that change
+    And new files the repository ignores are left out
 
   @mc
   Scenario: A capture asked for twice leaves the first checkpoint in place
@@ -390,6 +456,15 @@ Feature: Checkpoints, diffs and rewinding
     Then the rewind ends with an error
     And "t1" is not left waiting
     And the checkpoint of run 1 is still the last valid checkpoint
+
+  # Upstream #11340: a restore blocked by git's index lock ended with a generic error.
+  @backlog @mc @shared @priority-low
+  Scenario: A rewind blocked by git's index lock says so
+    Given runs 1 and 2 of "t1" completed with checkpoints
+    And another git process holds the index lock of the workspace
+    When the user rewinds "t1" to run 1 and restores the files
+    Then the rewind ends with an error saying git's index lock is held and to try again once it is free
+    And the lock file and the workspace files are left as they were
 
   # The files are restored before the provider is asked to drop the later turns, so a
   # failed restore leaves its conversation matching what the thread still shows.
