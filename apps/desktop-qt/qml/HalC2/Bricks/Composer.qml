@@ -1418,7 +1418,7 @@ Rectangle {
                             readonly property bool sendable: composer.ready && !stopMode && (editing || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                             // A send during a turn joins it or waits behind it, per the
                             // follow-up setting; the button says which before the click.
-                            readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
+                            readonly property string followUp: composer.model?.isRunning && !stopMode && !editing ? (composer.model.followUpBehavior ?? "steer") : ""
                             readonly property color accent: Theme.palette.color("accent", "#3b6fe0")
 
                             implicitWidth: Theme.control.md

@@ -26,6 +26,10 @@ const QString kNow = QStringLiteral("2026-09-23T10:00:00Z");
 QString lastQueued;
 // What the user made of it in the composer.
 QString editedText;
+// The thread's draft as it stood when an edit began.
+QString priorDraft;
+// The command the scenario's When step sent, which its Then must find.
+QString expectedCommand;
 
 QList<int> followers(FakeMc& mc, const QString& thread) {
   QList<int> ids;
@@ -429,6 +433,11 @@ const Steps steps([] {
   // A queued run behind the running turn and its message; `fields` are what
   // the message carries beyond its text.
   const auto queue = [](World& world, const QString& text, const QJsonObject& fields) {
+    // Every scenario queues first: start each from a clean slate.
+    lastQueued.clear();
+    editedText.clear();
+    priorDraft.clear();
+    expectedCommand.clear();
     FakeStreams& fake = world.mc.part<FakeStreams>();
     const int ordinal = ++fake.ordinal;
     const QString run = S("run-%1").arg(ordinal);
@@ -441,8 +450,8 @@ const Steps steps([] {
     world.sync();
   };
   step(S("the message %1 is waiting for the current turn").arg(kQuoted), [queue](World& world, const Captures& c, const Table&) {
-    lastQueued = c[0];
     queue(world, c[0], {});
+    lastQueued = c[0];
   });
   // As apps/server-ex/lib/hal_c2/orchestration/delegation.ex queues it.
   step(S("the result of the delegated task %1 is waiting for the current turn").arg(kQuoted), [queue](World& world, const Captures& c, const Table&) {
@@ -488,6 +497,7 @@ const Steps steps([] {
   };
 
   step(S("the user edits it to %1").arg(kQuoted), [tapQueued](World& world, const Captures& c, const Table&) {
+    expectedCommand = S("queued-run.edit");
     tapQueued(world, S("queueEdit"), lastQueued);
     QQuickItem* input = editor(world);
     world.waitFor([&] { return input->property("text").toString() == lastQueued; },
@@ -499,11 +509,14 @@ const Steps steps([] {
     world.tap(S("primaryAction"));
     world.sync();
   });
-  step(S("%1 runs after the current turn").arg(kQuoted), [queuedRun](World& world, const Captures& c, const Table&) {
-    const QList<QJsonObject> edits = commandsOf(world, S("queued-run.edit"));
-    const bool edited = !edits.isEmpty() && edits.last().value(QLatin1String("text")) == c[0] && edits.last().value(QLatin1String("threadId")) == world.thread;
-    const bool resumed = !commandsOf(world, S("queue.resume")).isEmpty();
-    expect(edited || resumed, S("the MC has %1").arg(describeCommands(world)));
+  step(S("%1 runs after the current turn").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(!expectedCommand.isEmpty(), S("no step sent the edit or the resume"));
+    const QList<QJsonObject> sent = commandsOf(world, expectedCommand);
+    expect(!sent.isEmpty(), S("the MC to get %1; it has %2").arg(expectedCommand, describeCommands(world)));
+    if (expectedCommand == QLatin1String("queued-run.edit")) {
+      expect(sent.last().value(QLatin1String("text")) == c[0] && sent.last().value(QLatin1String("threadId")) == world.thread,
+             S("the edit to carry %1; the MC has %2").arg(c[0], describeCommands(world)));
+    }
   });
   step(S("the user cancels it"), [tapQueued](World& world, const Captures&, const Table&) { tapQueued(world, S("queueRemove"), lastQueued); });
   step(S("it does not run"), [](World& world, const Captures&, const Table&) {
@@ -516,6 +529,7 @@ const Steps steps([] {
   const auto startEdit = [queue, tapQueued](World& world, const QString& text) {
     queue(world, text, {});
     lastQueued = text;
+    priorDraft = composer(world).value(S("text")).toString();
     tapQueued(world, S("queueEdit"), text);
     QQuickItem* input = editor(world);
     world.waitFor([&] { return input->property("text").toString() == text; },
@@ -547,7 +561,9 @@ const Steps steps([] {
   step(S("the message is not changed"), [](World& world, const Captures&, const Table&) {
     expect(commandsOf(world, S("queued-run.edit")).isEmpty(), S("the MC has %1").arg(describeCommands(world)));
   });
-  step(S("the composer's own draft is empty"), [](World&, const Captures&, const Table&) {});
+  step(S("the composer's own draft is empty"), [](World&, const Captures&, const Table&) {
+    expect(priorDraft.isEmpty(), S("the thread's draft before the edit read %1").arg(priorDraft));
+  });
   step(S("the message starts running on another device"), [](World& world, const Captures&, const Table&) {
     setEntity(world.mc, world.thread, S("run"), S("run-%1").arg(world.mc.part<FakeStreams>().ordinal), {{S("status"), S("running")}});
     world.sync();
@@ -579,7 +595,7 @@ const Steps steps([] {
                   [&] { return S("no edit; the composer is %1").arg(show(composer(world))); });
   });
   step(S("the composer holds the draft the user had before the edit"), [](World& world, const Captures&, const Table&) {
-    expect(composer(world).value(S("text")).toString().isEmpty(), S("the composer is %1").arg(show(composer(world))));
+    expect(composer(world).value(S("text")).toString() == priorDraft, S("the composer is %1; the draft before the edit read %2").arg(show(composer(world)), priorDraft));
   });
 
   // A queue the MC holds after its restart.
@@ -597,6 +613,7 @@ const Steps steps([] {
     world.waitFor([&] { return world.find(S("queueHeld")) != nullptr; }, [&] { return S("the held queue; the screen says: %1").arg(screenTexts(world)); });
   });
   step(S("the user resumes the queue"), [](World& world, const Captures&, const Table&) {
+    expectedCommand = S("queue.resume");
     world.tap(S("queueResume"));
     world.sync();
   });
