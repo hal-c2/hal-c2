@@ -240,8 +240,8 @@ defmodule HalC2.TextGeneration do
     case driver(id) do
       "codex" -> enabled?(settings, id) and executable?(codex_command(id))
       "claudeAgent" -> enabled?(settings, id) and executable?(claude_command(id))
-      "pi" -> HalC2.Acp.enabled?(id) and executable?(HalC2.Acp.binary_path(id) || "pi")
-      driver when driver in @acp_drivers -> HalC2.Acp.enabled?(id) and acp_installed?(id)
+      "pi" -> acp_on?(settings, id) and executable?(HalC2.Acp.binary_path(id) || "pi")
+      driver when driver in @acp_drivers -> acp_on?(settings, id) and acp_installed?(id)
       # A text-generation backend plugin (`HalC2.Plugins.TextGeneration`) by its id.
       _ -> HalC2.Plugins.text_backend?(id)
     end
@@ -250,11 +250,17 @@ defmodule HalC2.TextGeneration do
   def usable?(_settings, _selection), do: false
 
   # Codex and Claude are on unless turned off.
-  defp enabled?(settings, id) do
-    case get_in(settings, ["providerInstances", id]) do
-      %{} = instance -> instance["enabled"] != false
-      _ -> get_in(settings, ["providers", id, "enabled"]) != false
-    end
+  defp enabled?(settings, id), do: HalC2.Settings.provider_on?(settings, nil, id)
+
+  # An ACP agent is off until turned on (`HalC2.Acp.enabled?/1`); a project's own
+  # switch, which `settings` carries where it differs from the environment's, wins.
+  defp acp_on?(settings, id) do
+    switch = ["providerInstances", id, "enabled"]
+    on = get_in(settings, switch)
+
+    if is_boolean(on) and on != get_in(HalC2.Settings.settings(), switch),
+      do: on,
+      else: HalC2.Acp.enabled?(id)
   end
 
   defp acp_installed?(id) do

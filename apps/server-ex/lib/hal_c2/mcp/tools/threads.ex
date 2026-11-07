@@ -97,7 +97,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     with :ok <- live(caller),
          :ok <- batch_size(args["threads"]) do
       parent = thread(me["id"])
-      providers = HalC2.Environment.providers()
+      providers = HalC2.Settings.providers_for((parent || me)["projectId"])
       key = args["clientRequestId"] || HalC2.Environment.uuid4()
 
       args["threads"]
@@ -344,7 +344,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   def run("orchestrator_capabilities", args, %{row: me} = caller) do
     parent = thread(me["id"]) || me
     only = if is_binary(args["providerInstanceId"]), do: args["providerInstanceId"]
-    providers = HalC2.Environment.providers()
+    providers = HalC2.Settings.providers_for(parent["projectId"])
 
     if only && not Enum.any?(providers, &(&1["instanceId"] == only)) do
       {:error, "invalid_request", "Unknown providerInstanceId #{only}."}

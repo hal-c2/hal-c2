@@ -1002,6 +1002,7 @@ defmodule HalC2.Orchestration.TurnWriter do
             cond do
               failure["class"] == "usage_limit" -> "Usage limit reached"
               failure["code"] == "queued_start_failed" -> "Queued provider could not start"
+              failure["code"] == "provider_turned_off" -> "Provider turned off"
               true -> "Provider error"
             end,
           "failure" => failure

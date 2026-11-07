@@ -97,15 +97,28 @@ defmodule HalC2.Projects do
       {threads, _} ->
         with :ok <- delete_threads(threads, m["commandId"] || "project.delete:#{id}"),
              :ok <- HalC2.ProjectClones.discard(id),
-             do:
+             {:ok, _} = deleted <-
                update(
                  id,
                  &Map.merge(&1, %{"deletedAt" => Entities.now(), "updatedAt" => Entities.now()})
-               )
+               ) do
+          drop_overrides(id)
+          deleted
+        end
     end
   end
 
   def mutate(%{"type" => type}), do: {:error, "#{type} is not supported"}
+
+  # A deleted project's settings go with it: a provider it turned on would otherwise
+  # stay checked for a project nobody can open (upstream #17879).
+  defp drop_overrides(id) do
+    if Map.has_key?(HalC2.Settings.settings()["projectSettingsOverrides"] || %{}, id) do
+      HalC2.Settings.update(fn settings ->
+        Map.update(settings, "projectSettingsOverrides", %{}, &Map.delete(&1 || %{}, id))
+      end)
+    end
+  end
 
   defp update(id, fun) do
     HalC2.Streams.transact(id, :project, fn state ->

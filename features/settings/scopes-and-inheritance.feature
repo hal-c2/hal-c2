@@ -93,7 +93,7 @@ Feature: Settings scopes and inheritance
 
     # Upstream #17879. A project's provider switch overrides the environment's, and the MC
     # checks the project's value wherever a turn can start.
-    @backlog @mc
+    @mc
     Scenario Outline: A project turns a provider on or off apart from its environment
       Given the "Codex" provider is <environment> on this environment
       And the project "hal-c2" <project>
@@ -107,7 +107,7 @@ Feature: Settings scopes and inheritance
         | disabled    | has no provider switch of its own    | is refused because "Codex" is off  |
         | enabled     | has no provider switch of its own    | starts                             |
 
-    @backlog @mc
+    @mc
     Scenario Outline: Every way a turn starts honours the project's provider switch
       Given the project "hal-c2" turns "Codex" off
       When <how> on "Codex" in "hal-c2"
@@ -122,7 +122,7 @@ Feature: Settings scopes and inheritance
         | an agent starts a child thread or delegates by MCP |
         | a scheduled task runs                             |
 
-    @backlog @mc
+    @mc
     Scenario: A running turn finishes when its project turns the provider off
       Given a "Codex" turn is running on a thread in "hal-c2" for a delegated task
       When the project "hal-c2" turns "Codex" off
@@ -131,7 +131,7 @@ Feature: Settings scopes and inheritance
 
     # Upstream #23669: a prepared turn could still be retried or released after its project
     # turned the provider off.
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario Outline: A prepared turn does not start once its project turns the provider off
       Given a "Codex" thread in "hal-c2" is preparing its worktree
       And <when>
@@ -145,14 +145,14 @@ Feature: Settings scopes and inheritance
         | its preparation failed           | retried  |
         | its preparation is still running | released |
 
-    @backlog @mc
+    @mc
     Scenario: A provider off on the environment keeps running for a project that turned it on
       Given the "Codex" provider is disabled on this environment
       And the project "hal-c2" turns "Codex" on
       Then "Codex" stays available for turns in "hal-c2"
       And other projects still cannot start "Codex" turns
 
-    @backlog @mc
+    @mc
     Scenario: Writing in a project falls back when the project turned the writer's provider off
       Given titles and commit messages are written by "Codex"
       And the project "hal-c2" turns "Codex" off
@@ -161,7 +161,7 @@ Feature: Settings scopes and inheritance
       And titles in other projects are still written by "Codex"
 
     # Upstream #23672: stacked git actions from a draft thread resolve its project before picking a writer.
-    @backlog @mc
+    @mc
     Scenario: A draft thread's commit message honours its project's provider switch from a subfolder
       Given commit messages are written by "Codex"
       And the project "hal-c2" turns "Codex" off
@@ -169,7 +169,7 @@ Feature: Settings scopes and inheritance
       When the user commits and opens a pull request from that thread
       Then the commit message and pull request text are written by the next usable provider
 
-    @backlog @mc
+    @mc
     Scenario: Deleting a project drops its provider switches
       Given the project "hal-c2" turns "Codex" off
       When the project "hal-c2" is deleted

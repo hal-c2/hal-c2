@@ -31,6 +31,9 @@ defmodule HalC2.Codex.Provider do
   @spec entry(String.t()) :: map | nil
   def entry(id \\ "codex") do
     enabled = HalC2.Settings.instance_enabled?(id, "codex")
+    # Off on this MC but on for some project, it is checked as an enabled one is, so
+    # that project's turns can run on it.
+    checked? = enabled or HalC2.Settings.provider_on_in_a_project?(id)
 
     with [executable | _] <- command(id),
          path when is_binary(path) <- System.find_executable(executable) do
@@ -58,9 +61,9 @@ defmodule HalC2.Codex.Provider do
           |> :persistent_term.get(%{})
           |> Map.values()
       }
-      |> with_health(id, enabled)
+      |> with_health(id, checked?)
     else
-      _ -> not_installed_or_checked(id, enabled)
+      _ -> not_installed_or_checked(id, enabled, checked?)
     end
     |> with_continuation(id)
   end
@@ -98,8 +101,8 @@ defmodule HalC2.Codex.Provider do
 
   # No executable a path names: not installed — unless a check already ran and
   # could not start it, which is the answer that check gave.
-  defp not_installed_or_checked(id, enabled) do
-    case enabled && check(id) do
+  defp not_installed_or_checked(id, enabled, checked?) do
+    case checked? && check(id) do
       %{"message" => message, "installed" => installed} ->
         %{
           "instanceId" => id,

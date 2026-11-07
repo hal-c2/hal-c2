@@ -77,19 +77,131 @@ defmodule HalC2.Settings do
           acc
 
         key in ~w(textGenerationModelSelection defaultModelSelection) and is_map(value) and
-            not provider_enabled?(settings, value["instanceId"]) ->
+            not provider_on?(settings, project_id, value["instanceId"]) ->
           acc
 
         true ->
           Map.put(acc, key, value)
       end
     end)
+    |> with_project_switches(overrides["providerInstances"])
   end
 
-  defp provider_enabled?(settings, instance) do
+  # The resolved document says which providers are on for the project where the
+  # environment's say lives (`providerInstances.<id>.enabled`, else
+  # `providers.<id>.enabled`), so what reads it (text generation) honours the switch.
+  defp with_project_switches(settings, %{} = switches) do
+    Enum.reduce(switches, settings, fn
+      {instance, %{"enabled" => on}}, acc when is_boolean(on) ->
+        if is_map(get_in(acc, ["providerInstances", instance])),
+          do: put_in(acc, ["providerInstances", instance, "enabled"], on),
+          else: deep_put(acc, ["providers", instance, "enabled"], on)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp with_project_switches(settings, _switches), do: settings
+
+  defp deep_put(map, [key], value), do: Map.put(map || %{}, key, value)
+
+  defp deep_put(map, [key | rest], value) do
+    map = map || %{}
+    inner = if is_map(map[key]), do: map[key], else: %{}
+    Map.put(map, key, deep_put(inner, rest, value))
+  end
+
+  @doc """
+  Whether provider instance `instance` may run turns in project `project_id`. The
+  project's own switch (`projectSettingsOverrides.<id>.providerInstances.<instance>.enabled`)
+  wins in either direction; without one the environment's applies: the instance's
+  `enabled` in `providerInstances`, else its driver's in `providers`. Only a switch set
+  to false turns a provider off here; a provider that is off until turned on (the ACP
+  agents) is its adapter's to refuse.
+  """
+  def provider_on?(settings \\ settings(), project_id, instance) do
+    case project_switch(settings, project_id, instance) do
+      on when is_boolean(on) -> on
+      nil -> environment_on?(settings, instance)
+    end
+  end
+
+  @doc """
+  Why a turn on `instance` cannot start in project `project_id`, or nil: the reason a
+  refused message or a run that did not start carries.
+  """
+  def provider_off(settings \\ settings(), project_id, instance) do
+    unless provider_on?(settings, project_id, instance) do
+      name = HalC2.ThreadMove.provider_name(instance)
+
+      if project_switch(settings, project_id, instance) == false,
+        do:
+          "#{name} is turned off for this project. Turn it on in the project's provider settings or pick another provider.",
+        else:
+          "#{name} is turned off on this MC. Turn it on in provider settings or pick another provider."
+    end
+  end
+
+  @doc """
+  Whether some project turns `instance` on: a provider off on the environment keeps
+  being checked and offered for that project's turns.
+  """
+  def provider_on_in_a_project?(settings \\ settings(), instance) do
+    Enum.any?(
+      Map.keys(settings["projectSettingsOverrides"] || %{}),
+      &(project_switch(settings, &1, instance) == true)
+    )
+  end
+
+  @doc """
+  `HalC2.Environment.providers/0` as they stand for project `project_id`: `enabled` is
+  the project's switch where it has one, and one the project turned off says so. What
+  an agent in that project may pick a provider from.
+  """
+  def providers_for(project_id) do
+    settings = settings()
+    Enum.map(HalC2.Environment.providers(), &project_provider(settings, &1, project_id))
+  end
+
+  defp project_provider(settings, %{"instanceId" => instance} = entry, project_id) do
+    case project_switch(settings, project_id, instance) do
+      true ->
+        Map.put(entry, "enabled", true)
+
+      false ->
+        Map.merge(entry, %{
+          "enabled" => false,
+          "status" => "disabled",
+          "message" => provider_off(settings, project_id, instance)
+        })
+
+      nil ->
+        entry
+    end
+  end
+
+  defp project_provider(_settings, entry, _project_id), do: entry
+
+  defp project_switch(_settings, nil, _instance), do: nil
+
+  defp project_switch(settings, project_id, instance) do
+    case get_in(settings, ["projectSettingsOverrides", project_id]) do
+      %{"providerInstances" => %{} = switches} ->
+        case switches[instance] do
+          %{"enabled" => on} when is_boolean(on) -> on
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp environment_on?(settings, instance) do
     case get_in(settings, ["providerInstances", instance]) do
-      %{} = config -> config["enabled"] != false
-      nil -> get_in(settings, ["providers", instance, "enabled"]) != false
+      %{"enabled" => on} when is_boolean(on) -> on
+      _ -> get_in(settings, ["providers", instance, "enabled"]) != false
     end
   end
 

@@ -350,7 +350,8 @@ defmodule HalC2.Mcp.Tools do
          "currentThreadId" => me["id"],
          "currentProjectId" => me["projectId"],
          "providers" =>
-           for provider <- HalC2.Environment.providers(), provider["enabled"] != false do
+           for provider <- HalC2.Settings.providers_for(me["projectId"]),
+               provider["enabled"] != false do
              %{
                "providerInstanceId" => provider["instanceId"],
                "driver" => provider["driver"],
