@@ -151,7 +151,7 @@ Feature: Importing history from agents already used on this machine
       | has no title and a blank first prompt      | the first line of the next prompt          |
 
   # Upstream #12292: imports ignored a user's rename; an empty rename restores the fallback.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: An imported Claude session keeps the title the user gave it
     Given a Claude session the user renamed "Cart totals" and Claude later titled "Fix rounding"
     When it is imported
@@ -176,21 +176,21 @@ Feature: Importing history from agents already used on this machine
     Then each user message is the typed prompt only
 
   # Upstream #20278: imported Codex threads are titled after the user's request
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: An imported Codex thread is titled after what the user asked
     Given a Codex session whose first message starts with injected setup instructions before the user's request
     When the session is imported
     Then the thread's title comes from the user's request, not the setup instructions
 
   # Upstream #20278: a first message that is only setup does not title the thread
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: An imported Codex thread whose first message is only setup is titled from the next one
     Given a Codex session whose first message holds only injected setup instructions
     When the session is imported
     Then the thread's title comes from the next message the user wrote
 
   # Upstream #24982: imports ignored the name a user saved for a Codex conversation.
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: An imported Codex thread keeps the name the user saved in Codex
     Given a Codex conversation the user renamed "Renamed chat", then "Cart totals", then to a blank name
     When it is imported
@@ -240,7 +240,7 @@ Feature: Importing history from agents already used on this machine
       | the thread now belongs to another project           |
 
   # Legacy: apps/server/src/project/AgentSessionJson.ts (createTranscriptJsonReader), AgentSessionScanner.ts (readTranscript)
-  @mc @backlog
+  @mc
   Scenario Outline: A damaged record in a transcript costs only that record
     Given a session's transcript has one line that <damage>
     When a client imports the agent sessions of "demo"
@@ -394,7 +394,7 @@ Feature: Importing history from agents already used on this machine
       | with nothing set anywhere                                                                  | "~/.claude"           |
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (scan: directoryIdentity merges aliases)
-  @mc @backlog
+  @mc
   Scenario: Different spellings of one folder are one candidate
     Given sessions were recorded under "~/code/app" and under "~/links/app", a link to the same folder
     When a client scans for agent sessions
@@ -409,7 +409,7 @@ Feature: Importing history from agents already used on this machine
     Then "App" and "app" are separate candidates
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (scan: importedProjectsByRoot)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A project is recognised through a link to its folder and keeps its own path
     Given project "demo" has the folder "~/code/app"
     And sessions were recorded under "~/links/app", a link to that folder
@@ -418,21 +418,21 @@ Feature: Importing history from agents already used on this machine
     And the candidate's path is "~/code/app"
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (readCwd)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A transcript is placed by a folder named after its first records
     Given a transcript whose first records hold only history and name the folder "~/code/app" in a later record
     When a client scans for agent sessions
     Then the transcript counts toward "app"
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (prepareRecentThreads: transcript.mtimeMs > nowMs)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A transcript dated in the future is not imported
     Given project "demo" has a session whose transcript was last changed tomorrow
     When a client imports agent sessions for "demo"
     Then no thread is created for it
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (importedSessions, Duplicate), AgentSessionImporter.ts
-  @mc @backlog @priority-low
+  @mc
   Scenario: A session copied into two transcript files is imported once without being counted skipped
     Given project "demo" has the same Claude session in two transcript files
     When a client imports agent sessions for "demo"
@@ -448,14 +448,14 @@ Feature: Importing history from agents already used on this machine
     Then that session is counted as skipped
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (normalizeTimestamp, parseAgentSessionRecords)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A message with no readable time takes the transcript's last change time
     Given a session has a message whose time is missing or not a date
     When it is imported
     Then that message is dated with the transcript's last change time
 
   # Legacy: apps/server/src/project/AgentSessionScanner.ts (session_meta: hasCodexSessionId)
-  @mc @backlog @plugin-codex
+  @mc @plugin-codex
   Scenario: A forked Codex session is imported under its own id
     Given a Codex session was forked and its transcript begins with its ancestor's session metadata
     When it is imported
@@ -463,7 +463,7 @@ Feature: Importing history from agents already used on this machine
 
   # Upstream #16662: Codex subagent, review and other child sessions were imported as threads of
   # their own and used up the budget before their parents.
-  @mc @backlog @plugin-codex
+  @mc @plugin-codex
   Scenario: Codex subagent sessions are not imported as threads of their own
     Given a folder holds 100 recent Codex subagent sessions and 4 older top-level sessions
     When a client imports agent sessions for "demo"

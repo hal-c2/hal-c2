@@ -604,7 +604,272 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
     context
   end
 
+  # --- damaged records, titles, and other ways a transcript differs ---------------------------
+
+  step ~r/^a session's transcript has one line that (?<damage>is cut off in the middle of its JSON|is not JSON at all|has no message in it that the MC understands)$/,
+       %{args: [damage]} = context do
+    line =
+      case damage do
+        "is cut off in the middle of its JSON" -> ~s({"type":"user","message":{"role":"us)
+        "is not JSON at all" -> "this line is not JSON"
+        _ -> %{"type" => "queue-operation", "operation" => "enqueue"}
+      end
+
+    records = [
+      claude_record("user", "Before the damage"),
+      line,
+      claude_record("assistant", "After the damage")
+    ]
+
+    single(context, source: "claude", records: records)
+  end
+
+  step "a client imports the agent sessions of {string}", %{args: [title]} = context do
+    import_sessions(context, title)
+  end
+
+  step "the session is imported with its other messages", context do
+    assert context.import == %{"importedCount" => 1, "skippedCount" => 0}
+
+    assert context |> messages() |> Enum.map(& &1["text"]) == [
+             "Before the damage",
+             "After the damage"
+           ]
+
+    context
+  end
+
+  step "that line is not a message of the thread", context do
+    assert length(messages(context)) == 2
+    context
+  end
+
+  @setup "<environment_context>cwd: /work</environment_context>"
+
+  step "a Codex session whose first message starts with injected setup instructions before the user's request",
+       context do
+    records = [
+      codex_item("user", @setup <> "\nFix the flaky test"),
+      %{
+        "type" => "event_msg",
+        "payload" => %{"type" => "user_message", "message" => "Fix the flaky test"}
+      },
+      codex_item("assistant", "On it.")
+    ]
+
+    context
+    |> single(source: "codex", records: records)
+    |> Map.put(:expected_title, "Fix the flaky test")
+  end
+
+  step "a Codex session whose first message holds only injected setup instructions", context do
+    records = [
+      codex_item("user", @setup),
+      codex_item("assistant", "Ready."),
+      codex_item("user", @setup <> "\nAdd tests"),
+      %{"type" => "event_msg", "payload" => %{"type" => "user_message", "message" => "Add tests"}}
+    ]
+
+    context |> single(source: "codex", records: records) |> Map.put(:expected_title, "Add tests")
+  end
+
+  step "the session is imported", context do
+    import_sessions(context, "demo")
+  end
+
+  step "the thread's title comes from the user's request, not the setup instructions", context do
+    [{_id, row}] = imported(context, "demo")
+    assert row["title"] == context.expected_title
+    context
+  end
+
+  step "the thread's title comes from the next message the user wrote", context do
+    [{_id, row}] = imported(context, "demo")
+    assert row["title"] == context.expected_title
+    context
+  end
+
+  step "a Codex conversation the user renamed {string}, then {string}, then to a blank name",
+       %{args: [first, second]} = context do
+    id = "019f3efa-0b5d-7c63-b7fd-d961f1277744"
+    context = single(context, source: "codex", id: id)
+    write_index(context, id, [first, second, ""])
+    Map.put(context, :expected_title, second)
+  end
+
+  step "a Codex conversation with no saved name is titled from its messages as before", context do
+    records = [
+      %{
+        "type" => "event_msg",
+        "payload" => %{"type" => "user_message", "message" => "Unnamed work"}
+      }
+    ]
+
+    session(context, mkdir(dir(context, "~/code/app")), source: "codex", records: records)
+    context = import_sessions(context, "demo")
+    titles = for {_id, row} <- imported(context, "demo"), do: row["title"]
+    assert Enum.sort(titles) == ["Cart totals", "Unnamed work"]
+    context
+  end
+
+  step "a Claude session the user renamed {string} and Claude later titled {string}",
+       %{args: [mine, theirs]} = context do
+    records = [
+      claude_record("user", "Fix it"),
+      %{"type" => "custom-title", "customTitle" => mine},
+      %{"type" => "ai-title", "aiTitle" => theirs}
+    ]
+
+    single(context, source: "claude", records: records)
+    |> Map.put(:expected_title, mine)
+  end
+
+  step "a Codex session was forked and its transcript begins with its ancestor's session metadata",
+       context do
+    ancestor = %{
+      "type" => "session_meta",
+      "payload" => %{"id" => "ancestor-session", "cwd" => "/x"}
+    }
+
+    prompt = %{
+      "type" => "event_msg",
+      "payload" => %{"type" => "user_message", "message" => "Continue the work"}
+    }
+
+    context = single(context, source: "codex", id: "forked-session", records: [ancestor, prompt])
+    Map.put(context, :session_id, "forked-session")
+  end
+
+  step "the thread resumes the id the transcript names first", context do
+    assert [{"import:codex:forked-session", _}] = imported(context, "demo")
+    context
+  end
+
+  step "a folder holds {int} recent Codex subagent sessions and {int} older top-level sessions",
+       %{args: [children, top]} = context do
+    path = mkdir(dir(context, "~/code/app"))
+    now = System.os_time(:second)
+    for i <- 1..children, do: session(context, path, source: "codex", child: true, mtime: now - i)
+    for i <- 1..top, do: session(context, path, source: "codex", mtime: now - 1_000 - i)
+    project(context, "demo", path)
+  end
+
+  step "the {int} top-level sessions are imported", %{args: [n]} = context do
+    assert context.import["importedCount"] == n
+    assert length(imported(context, "demo")) == n
+    context
+  end
+
+  step "the subagent sessions are neither imported nor counted", context do
+    assert context.import["skippedCount"] == 0
+    context
+  end
+
+  step "project {string} has a session whose transcript was last changed tomorrow",
+       %{args: [title]} = context do
+    path = mkdir(dir(context, "~/code/app"))
+    session(context, path, source: "claude", mtime: System.os_time(:second) + @day)
+    project(context, title, path)
+  end
+
+  step "project {string} has the same Claude session in two transcript files",
+       %{args: [title]} = context do
+    path = mkdir(dir(context, "~/code/app"))
+    id = HalC2.Environment.uuid4()
+    session(context, path, source: "claude", id: id)
+    session(context, path, source: "claude", id: id)
+    project(context, title, path)
+  end
+
+  step "one thread exists for the session", context do
+    assert [_] = imported(context, "demo")
+    context
+  end
+
+  step "a session has a message whose time is missing or not a date", context do
+    mtime = System.os_time(:second) - 3_600
+
+    records = [
+      claude_record("user", "No time") |> Map.delete("timestamp"),
+      claude_record("assistant", "Odd time", "yesterday-ish")
+    ]
+
+    context |> single(source: "claude", records: records, mtime: mtime) |> Map.put(:mtime, mtime)
+  end
+
+  step "that message is dated with the transcript's last change time", context do
+    expected =
+      (context.mtime * 1000) |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
+
+    assert context |> messages() |> Enum.map(& &1["createdAt"]) == [expected, expected]
+    context
+  end
+
+  step "a transcript whose first records hold only history and name the folder {string} in a later record",
+       %{args: [folder]} = context do
+    path = mkdir(dir(context, folder))
+
+    records = [
+      %{"type" => "response_item", "payload" => %{"type" => "reasoning"}},
+      %{"type" => "event_msg", "payload" => %{"type" => "user_message", "message" => "Hi"}}
+    ]
+
+    session(context, path, source: "codex", records: records, late_cwd: true)
+    context
+  end
+
+  step "the transcript counts toward {string}", %{args: [title]} = context do
+    assert [%{"title" => ^title, "threadCount" => 1}] = context.scan["candidates"]
+    context
+  end
+
+  step "sessions were recorded under {string} and under {string}, a link to the same folder",
+       %{args: [real, via]} = context do
+    app = mkdir(dir(context, real))
+    session(context, app, source: "codex")
+    link(context, app, via)
+    session(context, dir(context, via), source: "claude")
+    context
+  end
+
+  step "there is one candidate {string} counting the sessions of both",
+       %{args: [title]} = context do
+    assert [%{"title" => ^title, "threadCount" => 2}] = context.scan["candidates"]
+    context
+  end
+
+  step "sessions were recorded under {string}, a link to that folder", %{args: [via]} = context do
+    app = dir(context, "~/code/app")
+    link(context, app, via)
+    session(context, dir(context, via), source: "codex")
+    context
+  end
+
+  step "the candidate is marked already imported with project {string}",
+       %{args: [title]} = context do
+    id = World.project(context, title).id
+    assert [%{"alreadyImported" => true, "projectId" => ^id}] = context.scan["candidates"]
+    context
+  end
+
+  step "the candidate's path is {string}", %{args: [folder]} = context do
+    assert [%{"path" => path}] = context.scan["candidates"]
+    assert path == dir(context, folder)
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
+
+  defp link(context, target, via) do
+    path = dir(context, via)
+    File.mkdir_p!(Path.dirname(path))
+    File.ln_s!(target, path)
+  end
+
+  defp write_index(context, id, names) do
+    lines = for name <- names, do: JSON.encode!(%{"id" => id, "thread_name" => name}) <> "\n"
+    File.write!(Path.join(context.agent_home, ".codex/session_index.jsonl"), lines)
+  end
 
   defp claude_model, do: %{"instanceId" => "claudeAgent", "model" => "haiku"}
 
@@ -718,14 +983,25 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
                 ]
             end)
 
+          source = if opts[:child], do: %{"subagent" => %{"thread_spawn" => %{}}}, else: "cli"
+          late = opts[:late_cwd]
+
           meta = %{
             "type" => "session_meta",
-            "payload" => Map.reject(%{"id" => id, "cwd" => cwd}, &is_nil(elem(&1, 1)))
+            "payload" =>
+              Map.reject(
+                %{"id" => id, "cwd" => if(late, do: nil, else: cwd), "source" => source},
+                &is_nil(elem(&1, 1))
+              )
           }
 
           model = %{
             "type" => "turn_context",
-            "payload" => %{"model" => opts[:model] || "gpt-5.4"}
+            "payload" =>
+              Map.reject(
+                %{"model" => opts[:model] || "gpt-5.4", "cwd" => if(late, do: cwd)},
+                &is_nil(elem(&1, 1))
+              )
           }
 
           file =
@@ -735,15 +1011,20 @@ defmodule HalC2.Steps.Orchestration.AgentSessionImport do
       end
 
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path, Enum.map(records, &(JSON.encode!(&1) <> "\n")))
+    # A binary record is written as it is, to make a damaged line.
+    File.write!(
+      path,
+      Enum.map(records, &(if(is_binary(&1), do: &1, else: JSON.encode!(&1)) <> "\n"))
+    )
+
     File.touch!(path, mtime)
     id
   end
 
-  defp claude_record(role, text) do
+  defp claude_record(role, text, timestamp \\ DateTime.utc_now() |> DateTime.to_iso8601()) do
     %{
       "type" => role,
-      "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "timestamp" => timestamp,
       "message" => %{"role" => role, "content" => text}
     }
   end
