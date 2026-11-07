@@ -195,6 +195,17 @@ step("the user opens another thread", async (ctx: ScrollWorld) => {
   await render(ctx);
 });
 
+step("the user opens another thread whose rows arrive in two turns", async (ctx: ScrollWorld) => {
+  const key = addThread(ctx, "t2", "Docs");
+  await open(ctx, key);
+  const all = replies(LONG, "Docs");
+  ctx.fake!.emitThread(detailOf("t2", "Docs", all.slice(0, 6)));
+  await snapshot(ctx);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  ctx.fake!.emitThread(detailOf("t2", "Docs", all));
+  await render(ctx);
+});
+
 step("the other thread shows its latest output", async (ctx: ScrollWorld) => {
   expect(await snapshot(ctx)).toContain(`Second paragraph of Docs ${LONG - 1}.`);
   expect(atEnd(ctx)).toBe(true);

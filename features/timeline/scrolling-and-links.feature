@@ -94,6 +94,11 @@ Feature: Moving through a thread and following links
     Then the newest rows are shown at the end
     And "Scroll to end" is no longer offered
 
+  @tui @priority-high
+  Scenario: A thread whose rows mount over several turns still opens at its end
+    When the user opens another thread whose rows arrive in two turns
+    Then the other thread shows its latest output
+
   # Upstream #19663: a long thread opened from an empty or loading pane stopped well above its end.
   @shared @backlog-mobile @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled

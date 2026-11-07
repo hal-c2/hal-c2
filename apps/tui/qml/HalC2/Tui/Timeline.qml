@@ -27,7 +27,10 @@ ScrollView {
     // arrive, however far the last one was scrolled; the page key says which thread.
     readonly property var pageKey: Shell.state.page.key ?? null
     property bool opening: true
-    onPageKeyChanged: opening = true
+    onPageKeyChanged: {
+        opening = true
+        openingHeight = -1
+    }
     onTimelineChanged: if (opening && timeline.items.length > 0) settleOpening()
 
     // Rows mount over a few frames: every height change while opening goes to the
@@ -47,7 +50,6 @@ ScrollView {
     function settleOpening() {
         heightBefore = -1
         scrollToBottom()
-        openingHeight = contentHeight
         Qt.callLater(endOpening)
     }
 
