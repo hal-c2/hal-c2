@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24014
 #   https://github.com/pingdotgg/t3code/pull/16623
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.fork, thread.merge_back, thread.created,
@@ -8,6 +9,8 @@
 #   apps/server/src/orchestration-v2/ (fork and merge-back transfers)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts, CodexAdapterV2.ts (native fork points)
 #   docs/internals/ (context transfers and handoffs)
+#   https://github.com/pingdotgg/t3code/pull/23554
+#   https://github.com/pingdotgg/t3code/pull/26901
 Feature: Forking a thread and merging work back
   A fork is a new thread that starts with a copy of its source's history through
   a finished run. Its first run picks the conversation up natively when the
@@ -42,6 +45,14 @@ Feature: Forking a thread and merging work back
   Scenario: Forking with a title uses it
     When the user forks "t1" as "f1" titled "Try a different parser"
     Then thread "f1" is titled "Try a different parser"
+
+  # Upstream #24014: a fork made while its source's title was being generated stayed marked as regenerating forever.
+  @mc @backlog
+  Scenario: A fork does not inherit its source's title regeneration
+    Given the title of "t1" is still being generated
+    When the user forks "t1" as "f1"
+    Then "f1" is not marked as regenerating its title
+    And the user can regenerate the title of "f1"
 
   @mc
   Scenario: A fork starts unorganized
@@ -134,6 +145,16 @@ Feature: Forking a thread and merging work back
     When the user sends "Try again" to "f1"
     Then the provider receives a transcript of the copied history before the message
 
+  # Upstream #26901: a native fork of a running Claude or OpenCode session failed, and a Codex one
+  # forked the live session; whether the source runs is checked again when the fork first runs.
+  @backlog @mc @priority-high
+  Scenario: A fork of a thread that is running starts from a transcript on every provider
+    Given "f1" is a fork of "t1" at run 2 on "codex"
+    And "t1" is running when "f1" first runs
+    When the user sends "Try again" to "f1" on "codex"
+    Then the provider receives a transcript of the copied history before the message
+    And the fork transfer is consumed as portable context
+
   # ClaudeAdapterV2.ts resolveClaudeForkCursor, CodexAdapterV2.ts resolveCodexForkBoundary:
   # a native fork needs the provider's own mark for the run it forks at.
   @mc
@@ -224,6 +245,44 @@ Feature: Forking a thread and merging work back
     Given "f1" is a fork of "t1" with a running run 3
     When the user merges "f1" back into "t1" at run 3
     Then the command fails saying only finished runs can be used
+
+  # Upstream #23554: a merge into a busy parent left a transfer its queued message could not take,
+  # and that message failed.
+  # Upstream #26901: Bring back is refused while the parent runs.
+  @backlog @mc @priority-high
+  Scenario Outline: Merging back into a parent that is busy is refused
+    Given "f1" is a fork of "t1"
+    And <busy>
+    When the user merges "f1" back into "t1"
+    Then the command fails saying "t1" must be idle with an empty queue
+    And nothing is handed to "t1"
+
+    Examples:
+      | busy                                  |
+      | "t1" has a run being prepared         |
+      | "t1" has a run starting               |
+      | "t1" has a run running                |
+      | "t1" has a run waiting on the user    |
+      | "t1" has a queued message             |
+
+  # Upstream #26901: Bring back is also refused while the parent still holds another fork's unused
+  # work; this replaces "Merges from different forks all reach the parent's next run" above.
+  @backlog @mc
+  Scenario: Merging back is refused while the parent holds another fork's unused work
+    Given "f2" was merged back into "t1" and "t1" has not run since
+    When the user merges "f1" back into "t1"
+    Then the command fails saying "t1" already has pending context from another fork
+    And only the merge from "f2" reaches the parent's next run
+
+  # Upstream #23554: the refusal does not block ordinary messages, and the merge works once idle.
+  @backlog @mc
+  Scenario: A refused merge-back can be retried once the parent is idle
+    Given merging "f1" back into the busy "t1" was refused
+    When the user queues a message in "t1"
+    Then the message is queued
+    When "t1" finishes and its queue is empty
+    And the user merges "f1" back into "t1"
+    Then the fork's work is queued for "t1"'s next run
 
   @mc
   Scenario: A merge-back only carries what the parent has not seen yet

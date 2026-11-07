@@ -1,11 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27662
 #   https://github.com/pingdotgg/t3code/pull/23803
+#   https://github.com/pingdotgg/t3code/pull/21735
 #   https://github.com/pingdotgg/t3code/pull/21114
 #   https://github.com/pingdotgg/t3code/pull/22915
 #   https://github.com/pingdotgg/t3code/pull/17457
 #   https://github.com/pingdotgg/t3code/pull/17867
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/25005
+#   https://github.com/pingdotgg/t3code/pull/24634
+#   https://github.com/pingdotgg/t3code/pull/24697
 #   docs/user/thread-sidebar.md (Inspect agent work: Limited, Resume at reset, Snooze until reset)
 #   apps/web/src/components/ChatView.tsx (limit recovery)
 #   apps/web/src/components/settings/SettingsPanels.tsx (Auto-resume limited threads, Snooze limited threads)
@@ -78,6 +82,14 @@ Feature: Threads stopped by a usage limit
     When the user resumes "Port tests"
     Then the thread continues on the picked model and account, not the limited one
 
+  # Upstream #24697: switching threads while Resume saved its settings sent the other thread's model.
+  @backlog @shared @priority-high
+  Scenario: Resume keeps the model shown when it was pressed after the user switches threads
+    Given "Port tests" on Claude Opus and "Tax rounding" on Codex are both open
+    And resuming "Port tests" has to save a changed permission first
+    When the user resumes "Port tests" and opens "Tax rounding" before the save returns
+    Then "Port tests" continues on Claude Opus
+
   @mc
   Scenario Outline: A scheduled resume is dropped when the user moves on
     Given "Port tests" is scheduled to resume at 14:00
@@ -100,6 +112,20 @@ Feature: Threads stopped by a usage limit
     And the thread no longer shows a scheduled resume
     And a snooze the thread had is kept
 
+  # Upstream #24634: a limit that landed just after Stop or task_cancel was still resumed at the reset.
+  @mc @backlog @priority-high
+  Scenario Outline: A usage limit that lands as the run is stopped is not resumed
+    Given the user turned on auto-resume for limited threads
+    And Claude is running "Port tests"
+    When <who> stops "Port tests" and Claude reports a usage limit that resets at 14:00 as the run ends
+    Then "Port tests" does not continue on its own at 14:00
+    And the user can still choose to resume it at the reset
+
+    Examples:
+      | who                                        |
+      | the user                                   |
+      | the parent agent cancelling its task       |
+
   # Upstream #21114: a stopped usage-limit thread no longer auto-resumes, so resuming it is an explicit choice.
   @shared @mc @backlog
   Scenario: A stopped limited thread can be set to resume at the reset again
@@ -113,6 +139,17 @@ Feature: Threads stopped by a usage limit
     And the environment was stopped from 13:00 until 15:00
     When the environment starts again
     Then "Port tests" continues
+
+  # Upstream #21735: after an update, a recovery sweep armed and resumed threads whose limits had
+  # reset days before; a reset more than 24 hours overdue is no longer freshly armed.
+  @backlog @mc @priority-high
+  Scenario: A limit stop days old is not freshly scheduled to resume
+    Given the user turned on auto-resume for limited threads
+    And Claude stopped "Port tests" on a usage limit that reset four days ago
+    And no resume was ever scheduled for it
+    When the environment starts again
+    Then "Port tests" is not scheduled to resume
+    But a limit stop whose reset passed an hour ago is still scheduled to resume
 
   @mc
   Scenario: Limit stops resume on their own when the user chose that
@@ -166,6 +203,41 @@ Feature: Threads stopped by a usage limit
     Given the agent stopped "Port tests" on a limit without saying when it resets
     When the user opens "Port tests"
     Then the user can retry by hand or snooze with the usual choices
+
+  # Upstream #27662: the phone's Resume only resumed the queue, which the server refuses while the
+  # limit holds it, and the refusal was only logged.
+  @backlog @shared
+  Scenario: Resuming a limited thread continues it before its queue
+    Given the agent stopped "Port tests" on a limit without saying when it resets
+    And "also update the changelog" is queued behind the limit
+    When the user resumes the thread
+    Then "Port tests" continues where it left off
+    And "also update the changelog" runs after it
+
+  # Upstream #27662: the phone offered Resume only when the queue was held.
+  @backlog @shared
+  Scenario: A limited thread with nothing queued can be resumed
+    Given the agent stopped "Port tests" on a limit without saying when it resets
+    And nothing is queued in "Port tests"
+    Then the user is offered "Resume thread"
+    When the user resumes the thread
+    Then "Port tests" continues where it left off
+
+  # Upstream #27662: the phone saves composer modes to the thread before continuing.
+  @backlog @shared
+  Scenario: Resuming carries a mode the user changed in the composer
+    Given "Port tests" stopped on a usage limit
+    And the user switched the composer of "Port tests" to plan mode
+    When the user resumes the thread
+    Then "Port tests" continues in plan mode
+
+  # Upstream #27662: the phone shows a failed continue or resume in a dialog.
+  @backlog @shared
+  Scenario: A resume that fails is shown once
+    Given "Port tests" stopped on a usage limit
+    And the environment refuses to continue "Port tests"
+    When the user resumes the thread
+    Then the user is told once why it could not continue
 
   @backlog @desktop @mobile
   Scenario: Continuing a limited thread on another agent

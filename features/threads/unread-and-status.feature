@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24080
 #   https://github.com/pingdotgg/t3code/pull/24610
 #   https://github.com/pingdotgg/t3code/pull/21500
 #   https://github.com/pingdotgg/t3code/pull/20996
@@ -28,6 +29,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15034
 #   https://github.com/pingdotgg/t3code/pull/25368
 #   https://github.com/pingdotgg/t3code/pull/21394
+#   https://github.com/pingdotgg/t3code/pull/28515
 
 Feature: Unread and status in the thread list
   Each thread says whether it needs the user, is busy, or has finished work the user has
@@ -116,13 +118,14 @@ Feature: Unread and status in the thread list
 
   # Upstream #15430: a question the agent asked without waiting for the answer showed Input while
   # it kept working; it shows Input once the run ends, and a secret request still shows Input at once.
+  # Upstream #28515: reverses #15430; any question waiting for the user moves the thread out of
+  # Working at once, whether or not the agent keeps working.
   @backlog @mc @desktop @mobile @tui
-  Scenario: A question the agent does not wait on leaves the thread working
+  Scenario: A question the agent does not wait on still shows the thread waiting for an answer
     Given "Build search" has an agent working that asked a question it does not wait on
     When the user looks at the thread list
-    Then "Build search" is shown as working
-    When the run ends with the question unanswered
     Then "Build search" is shown as waiting for an answer
+    And it is not in the Working section
 
   @desktop @mobile @backlog-mobile
   Scenario: A project shows the most urgent state of its threads
@@ -404,3 +407,11 @@ Feature: Unread and status in the thread list
     Given a thread shows Woke
     When the user dismisses it from the pill or the chat banner
     Then it is dismissed on the user's other devices too
+
+  # Upstream #24080: Mark unread brought a dismissed Woke back instead of showing Done.
+  @backlog @mc @shared
+  Scenario: Marking a thread unread after its wake was dismissed shows Done, not Woke
+    Given "Build search" was snoozed, woke, and the user dismissed Woke
+    When the user marks "Build search" unread
+    Then the row for "Build search" reads "Done"
+    And it does not show Woke again until it is snoozed and wakes once more

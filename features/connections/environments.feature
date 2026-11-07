@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24716
 #   https://github.com/pingdotgg/t3code/pull/21658
 #   https://github.com/pingdotgg/t3code/pull/21070
 #   https://github.com/pingdotgg/t3code/pull/18575
@@ -478,6 +479,14 @@ Feature: Managing environments on a client
     When the client connects
     Then it checks the direct routes in parallel and uses the first that answers as that environment
     And a route that is blocked is skipped, while an incompatible server stops the walk
+
+  # Upstream #24716: after a reorder, adding one route and removing another left only one route listed.
+  @backlog @desktop @mobile
+  Scenario: A route added after the routes were reordered stays listed
+    Given an environment's routes "A" and "B" were reordered to "B", "A" and saved
+    When the user adds route "C" and removes route "A"
+    Then the environment's routes list "B" and "C"
+    And either can be removed
 
   @backlog @desktop
   Scenario: The desktop retries a transient failure when signing in to its own MC

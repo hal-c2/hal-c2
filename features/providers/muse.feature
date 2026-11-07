@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23856
 #   https://github.com/pingdotgg/t3code/pull/19306
 #   https://github.com/pingdotgg/t3code/pull/19195
 #   https://github.com/pingdotgg/t3code/pull/19100
@@ -17,6 +18,7 @@
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/adapter.ts (capabilities, approvals, questions, steering, MCP tools)
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/modelCatalog.ts (reasoning effort tiers)
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/protocol.ts (approval choices)
+#   https://github.com/pingdotgg/t3code/pull/22346
 #
 # Steering, the hidden plan/build toggle and the missing rewind are in capabilities.feature.
 
@@ -69,6 +71,14 @@ Feature: Muse Code
     Given Muse Code is installed and enabled
     When the user sends a message to Muse Code
     Then the turn runs on the user's own Muse Code installation
+
+  # Upstream #22346: on a case-insensitive disk, a project path in another case failed every turn.
+  @backlog
+  Scenario: A Muse Code turn runs when the project path's case differs from the disk
+    Given the MC runs on macOS
+    And the project was added as "~/code/EEVEE" while the folder on disk is "~/code/eevee"
+    When the user sends a message to Muse Code in that project
+    Then the turn runs in "~/code/eevee"
 
   Scenario: A Muse Code instance the user added is read again after its binary changes
     Given a Muse Code instance the user added runs a muse whose version check fails
@@ -215,6 +225,15 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent and the turn completes first
     When the subagent answers after the turn has ended
     Then the subagent is shown with its answer in its own thread
+
+  # Upstream #23856: Muse lists a running child as background work under one id while its turn
+  # item uses another that changes as the child runs, so the same child could show twice.
+  @backlog
+  Scenario: A running Muse Code subagent is listed once as background work
+    Given Muse Code delegates a review to a subagent that is still running
+    When Muse Code names the subagent's own session while it runs
+    Then the thread lists the subagent once as background work
+    And recovering after a restart does not stop it a second time
 
   # Upstream #18353. Muse child threads have no session of their own to answer through.
   @backlog

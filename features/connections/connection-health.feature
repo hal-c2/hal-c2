@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24691
 #   https://github.com/pingdotgg/t3code/pull/22159
 #   https://github.com/pingdotgg/t3code/pull/15052
 #   https://github.com/pingdotgg/t3code/pull/18155
@@ -738,6 +739,15 @@ Feature: Connection health
     When the user chooses to disconnect it from the thread's notice
     Then the user is told "Could not disconnect server" with the reason
     And the user stays on the thread
+
+  # Upstream #24691: Reconnect on the offline notice of a switched-off environment did nothing.
+  @backlog @desktop @mobile
+  Scenario: Reconnecting from a thread's notice switches a switched-off computer back on
+    Given the user switched "studio" off from a thread's notice
+    And the user comes back to one of its threads
+    When the user chooses to reconnect from the thread's notice
+    Then "studio" is switched on in connections
+    And the client connects to it
 
   @desktop
   Scenario: A reconnect that fails says why

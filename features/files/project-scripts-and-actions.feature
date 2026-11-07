@@ -22,6 +22,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15394
 #   https://github.com/pingdotgg/t3code/pull/15490
 #   https://github.com/pingdotgg/t3code/pull/16290
+#   https://github.com/pingdotgg/t3code/pull/23640
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -205,6 +206,13 @@ Feature: Project actions
     Scenario: Editing an action
       When the user changes the command of "Dev" to "bun run dev --host"
       Then "Dev" runs "bun run dev --host"
+
+    # Upstream #23640: on a phone or tablet the edit control of a saved action showed only on hover.
+    @backlog @mobile
+    Scenario: A saved action can be edited from a touch screen
+      Given the user is on a touch screen with no pointer that hovers
+      When the user looks at the project's actions
+      Then each saved action offers to be edited without first hovering or focusing it
 
     @desktop @mobile @tui @backlog-mobile
     Scenario: Deleting an action asks first and cannot be undone

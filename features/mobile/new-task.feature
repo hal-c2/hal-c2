@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23391
 #   https://github.com/pingdotgg/t3code/pull/20825
 #   https://github.com/pingdotgg/t3code/pull/19641
 #   https://github.com/pingdotgg/t3code/pull/17409
@@ -294,6 +295,15 @@ Feature: Starting a task from a phone
     Then a single No project row is at the top, above the projects
     And it starts on the selected machine when that machine offers it, otherwise on the first that does
     And scratch projects are never listed as projects
+
+  # Upstream #23391: the No project row appeared after connecting and pushed the projects down.
+  @backlog @mobile @priority-low
+  Scenario: The No project row shows at once while the machine is still connecting
+    Given the phone remembers that the machine offers No project
+    And the machine is still connecting
+    When the user opens the project picker
+    Then the No project row is at the top from the start, but cannot be chosen yet
+    And it can be chosen once the machine is connected
 
   # Upstream #19641: a draft without a project reads "No project" in the project picker.
   @backlog @mobile @priority-low

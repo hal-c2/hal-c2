@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/17896
+#   https://github.com/pingdotgg/t3code/pull/26096
 #   apps/mobile/src/features/voice-input/ (on-device dictation states, errors, draft safety)
 #   packages/client-runtime/src/voice-input/controller.ts, transcription.ts (where the transcript goes, spacing)
 # Composer drafting is specified in features/composer/. Dictation is phone-only.
@@ -245,3 +246,23 @@ Feature: Dictating a message
     When dictation first sees the earbuds "Studio Buds"
     Then "Studio Buds" is listed by name just above the Bluetooth row
     And the user can move it anywhere in the order
+
+  # Upstream #26096: a dragged row snapped back on release and its order never saved; the same
+  # handle in the environment's route list had the same bug.
+  @backlog @mobile
+  Scenario: A microphone dragged to a new place keeps it
+    When the user drags the Bluetooth row above the built-in microphone
+    Then the order is saved with Bluetooth first
+
+  # Upstream #26096: forgetting a device took an Edit mode; it is now a swipe.
+  @backlog @mobile @priority-low
+  Scenario Outline: The user forgets a microphone by swiping it away
+    Given the earbuds "Studio Buds" are in the microphone order
+    When the user <does>
+    Then "Studio Buds" is no longer in the order
+    And the rows for a kind of microphone cannot be forgotten
+
+    Examples:
+      | does                                         |
+      | swipes "Studio Buds" left and chooses Forget |
+      | uses the Forget accessibility action         |

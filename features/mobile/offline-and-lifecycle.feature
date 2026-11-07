@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21527
+#   https://github.com/pingdotgg/t3code/pull/26540
+#   https://github.com/pingdotgg/t3code/pull/26565
 #   https://github.com/pingdotgg/t3code/pull/23467
 #   https://github.com/pingdotgg/t3code/pull/22128
 #   https://github.com/pingdotgg/t3code/pull/15870
@@ -11,6 +14,9 @@
 #   https://github.com/pingdotgg/t3code/pull/25477
 #   https://github.com/pingdotgg/t3code/pull/25627
 #   https://github.com/pingdotgg/t3code/pull/21395
+#   https://github.com/pingdotgg/t3code/pull/25824
+#   https://github.com/pingdotgg/t3code/pull/25632
+#   https://github.com/pingdotgg/t3code/pull/26643
 #   apps/mobile/src/connection/app-state-wakeups.ts (probe vs reconnect after 10 seconds)
 #   apps/mobile/src/connection/background-activity.ts
 #   apps/mobile/src/connection/background-activity-scopes.ts
@@ -43,12 +49,15 @@ Feature: Staying useful through backgrounding and bad connections
     Given the phone is paired with "My MacBook"
     And the user has opened the thread "Fix checkout" before
 
+  # Upstream #26540: on iOS a trip to the home screen of a second or two suspended the app and cost a
+  # reconnect; the app now asks the system for a short grace period so the connection survives.
   @mobile
   Scenario: Returning to the app after a moment checks the connection quickly
     Given the user switched away from the app for 5 seconds
     When the user returns to the app
     Then the phone checks the existing connection instead of reconnecting
 
+  # Passes today; upstream #25824 keeps a connection that still answers, see the backlog scenario below.
   @mobile @priority-high
   Scenario: Returning to the app after a longer break reconnects
     Given the user switched away from the app for a minute
@@ -56,7 +65,48 @@ Feature: Staying useful through backgrounding and bad connections
     Then the phone reconnects to "My MacBook"
     And "Fix checkout" catches up on what happened while the app was away
 
-  # Upstream #16329 and #16330: the Git status read before the break stayed on screen.
+  # Upstream #25824: a return after 10 seconds or more always threw the connection away, so every
+  # return showed "Reconnecting" and reloaded the thread list. The phone now checks it first.
+  @backlog @mobile @priority-high
+  Scenario: Returning to the app after a longer break keeps a connection that still answers
+    Given the user switched away from the app for a minute
+    And the connection to "My MacBook" still answers
+    When the user returns to the app
+    Then the phone keeps the connection without showing "Reconnecting"
+    And "Fix checkout" catches up on what happened while the app was away
+
+  # Upstream #25824: the phone tells a dead connection from a slow one by asking "My MacBook" over a
+  # fresh request; one lost packet on a phone network does not cost a live connection.
+  @backlog @mobile @priority-high
+  Scenario Outline: A connection that died while the app was away is replaced quickly
+    Given the phone reaches "My MacBook" over <route>
+    And the connection died while the app was away
+    When the user returns to the app
+    And "My MacBook" answers a fresh request
+    Then the phone reconnects <when>
+
+    Examples:
+      | route         | when                                     |
+      | the local LAN | at once                                  |
+      | Tailscale     | once the old connection was silent 2.5 s |
+
+  # Upstream #25824: a live connection over Tailscale relays or a VPN that took over 3 seconds to
+  # answer was torn down.
+  @backlog @mobile
+  Scenario Outline: A connection is given time to answer that suits its route
+    Given the phone reaches "My MacBook" over <route>
+    And the user switched away from the app for 5 seconds
+    And "My MacBook" cannot be reached by a fresh request either
+    When the user returns to the app
+    Then the phone waits <wait> for the connection to answer before replacing it
+
+    Examples:
+      | route         | wait       |
+      | the local LAN | 3 seconds  |
+      | Tailscale     | 15 seconds |
+
+  # Upstream #16329: the Git status read before the break stayed on screen.
+  # Upstream #16330: same change as #16329.
   @backlog @mobile
   Scenario: The Git status of the open thread is refreshed after a reconnect
     Given "Fix checkout" showed its checkout as clean
@@ -74,6 +124,7 @@ Feature: Staying useful through backgrounding and bad connections
     And the user is told cached data remains available until the connection returns
 
   # Upstream #25627: a thread that cannot load is not a dead end; it gives way to a new task.
+  # Upstream #26565: an environment still reconnecting no longer gives way; see the next scenario.
   @backlog @mobile
   Scenario Outline: A thread that cannot be shown gives way to a new task
     Given <why>
@@ -83,8 +134,19 @@ Feature: Staying useful through backgrounding and bad connections
     Examples:
       | why                                                            |
       | "My MacBook" is unreachable                                     |
-      | "My MacBook" is still reconnecting after a failed connection     |
+      | "My MacBook" failed to connect                                  |
+      | "My MacBook" was removed                                        |
       | the thread was deleted                                         |
+
+  # Upstream #26565: a thread opened while its environment reconnects waited as a draft and was lost;
+  # it now waits on "Thread unavailable" with Reconnect and opens by itself once it syncs.
+  @backlog @mobile @priority-high
+  Scenario: A thread opened while its environment reconnects opens once it syncs
+    Given "My MacBook" is reconnecting after a failed connection
+    When the user opens a thread the phone has never loaded, from a notification or a link
+    Then the user is told the thread is unavailable for now and offered to reconnect
+    And no new task's draft takes its place
+    And once "My MacBook" has synced the thread, it opens by itself
 
   # Upstream #25627: an environment reads as connecting until its connection first reports.
   @backlog @shared
@@ -182,6 +244,14 @@ Feature: Staying useful through backgrounding and bad connections
       | "My MacBook" runs a version this app cannot use  | Client not supported                       |
       | "My MacBook" refused the connection              | Failed to connect to My MacBook            |
 
+  # Upstream #26643: a reconnect that had failed once, even in the background, opened on "Failed to connect".
+  @backlog @mobile
+  Scenario: A thread opened while reconnecting waits before calling it a failure
+    Given the phone's last attempt to reach "My MacBook" failed and it is reconnecting
+    When the user opens "Fix checkout"
+    Then the status reads "Reconnecting to My MacBook..."
+    And it reads "Failed to connect. Retrying My MacBook..." only if the reconnect still fails 5 seconds later
+
   @backlog @mobile
   Scenario Outline: The thread's status says what the phone is doing while the conversation loads
     Given the phone is connected to "My MacBook"
@@ -215,6 +285,16 @@ Feature: Staying useful through backgrounding and bad connections
     When "My MacBook" creates the thread and the agent starts
     Then the thread shows the agent working instead of "Starting…"
     And going back and opening the thread again shows it, not "Thread unavailable"
+
+  # Upstream #25632: a tap on the new thread's row read it before its creation landed, and the
+  # thread stayed on "Starting…" and then read "Thread unavailable".
+  @backlog @mobile
+  Scenario: Opening a new task's row before the environment has created it shows the run
+    Given the user started a new task and "My MacBook" has not created the thread yet
+    When the user opens the new thread's row in the thread list
+    And "My MacBook" creates the thread and the agent starts
+    Then the thread shows the agent working
+    And opening the thread again shows it, not "Thread unavailable"
 
   @backlog @mobile
   Scenario: The thread's status gives way to a pending question or approval
@@ -346,6 +426,28 @@ Feature: Staying useful through backgrounding and bad connections
     Given the phone has shown a thread with three attached photos
     When the app comes back from the background and reconnects
     Then the photos show from the phone's cache without being downloaded again
+
+  # Upstream #21527: each image had a fresh signed address, so the phone downloaded it again
+  # every time a thread reopened.
+  @backlog @mobile @priority-low
+  Scenario Outline: An image that cannot have changed is not downloaded again
+    Given the phone has shown <image>
+    When the user reopens the thread after restarting the app
+    Then the image shows from the phone's cache
+
+    Examples:
+      | image                                          |
+      | an image in the chat from a workspace file     |
+      | an image uploaded to a GitHub pull request     |
+      | an image from a GitHub file pinned to a commit |
+
+  # Upstream #21527: a changed file, or a file on a branch, may hold a new picture.
+  @backlog @mobile @priority-low
+  Scenario: An image whose file changed is downloaded fresh
+    Given the phone has shown the workspace image "docs/mock.png"
+    When an agent edits "docs/mock.png" and the user reopens the thread
+    Then the new picture is downloaded and shown
+    And an image from a GitHub branch is downloaded again as before
 
   @backlog @mobile @priority-low
   Scenario: Clearing all client caches asks first

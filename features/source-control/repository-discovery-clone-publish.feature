@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27511
+#   https://github.com/pingdotgg/t3code/pull/26770
 #   https://github.com/pingdotgg/t3code/pull/16316
 #   https://github.com/pingdotgg/t3code/pull/15395
 #   https://github.com/pingdotgg/t3code/pull/19219
@@ -24,6 +26,9 @@
 #   apps/web/src/components/GitActionsControl.tsx (publish repository)
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Publish repository)
 #   apps/tui/src/features.backlog.test.ts (repository-setup-publishing)
+#   https://github.com/pingdotgg/t3code/pull/21325
+#   https://github.com/pingdotgg/t3code/pull/22246
+#   https://github.com/pingdotgg/t3code/pull/26176
 
 Feature: Finding hosting tools, cloning and publishing repositories
   The MC finds which version control and hosting tools it can use and whether they are
@@ -58,6 +63,15 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Given the GitHub CLI is installed but not signed in
     When the user asks which source control tools are available
     Then GitHub is reported not authenticated and the user is told to run gh auth login
+
+  # Upstream #27511: an expired glab login failed as "GitLab CLI command failed.", and the pull
+  # request list only said it could not load.
+  @mc @backlog
+  Scenario: An expired GitLab CLI login says to sign in again
+    Given the GitLab CLI's login can no longer be renewed and glab answers "invalid_grant"
+    When the user opens the pull requests of a GitLab project
+    Then the user is told "GitLab CLI is not authenticated. Run `glab auth login` and retry."
+    But a glab network failure is not reported as a sign-in problem
 
   @mc
   Scenario: Bitbucket is found through its environment variables
@@ -239,6 +253,21 @@ Feature: Finding hosting tools, cloning and publishing repositories
     Then the host is reported as GitHub for "acme/shop"
     And "origin" is listed among the checkout's remotes
 
+  # Upstream #26176: a lookup for "evil.com#.ghe.com/o/n" passed the ".ghe.com" check and sent the
+  # GitHub token to api.evil.com; a host that is not a plain host name is refused.
+  @mc @backlog @priority-high
+  Scenario Outline: A repository lookup on a host that is not a plain host name sends no token
+    Given the MC has a GitHub token
+    When a client looks up the repository "<selector>"
+    Then the lookup is refused as a repository it cannot read
+    And no request carrying the token leaves the MC
+
+    Examples:
+      | selector                  |
+      | evil.com#.ghe.com/o/n     |
+      | evil.com?.ghe.com/o/n     |
+      | user@evil.com.ghe.com/o/n |
+
   # Legacy: packages/shared/src/sourceControl.ts (detectSourceControlProviderFromRemoteUrl, isSshRemoteUrl)
   @mc @backlog
   Scenario Outline: A remote is told apart by its host name, however the address is written
@@ -265,6 +294,15 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | remote                                          | host                  |
       | https://acme.ghe.com/acme/app.git               | GitHub                |
       | https://ghe.com/acme/app.git                    | ghe.com               |
+
+    # Upstream #22246: a per-account SSH alias such as "github.com-work" asked for the alias's
+    # credentials and skipped pull request sync.
+    Examples:
+      | remote                                          | host                     |
+      | git@github.com-work:acme/app.git                | GitHub                   |
+      | ssh://git@github.com-work/acme/app.git          | GitHub                   |
+      | git@github.com-evil.example:acme/app.git        | github.com-evil.example  |
+      | https://github.com-work/acme/app.git            | github.com-work          |
 
   # Upstream #15395: a self-hosted GitLab without "gitlab" in its name stayed unknown, so linking a bare merge request number asked for a full URL.
   # Legacy: apps/server/src/sourceControl/SourceControlProviderDiscovery.ts (refineUnknownRemote), gitLabAuthStatus.ts
@@ -402,6 +440,21 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | GitHub | acme/shop  |
       | GitLab | acme/infra |
 
+  # Upstream #21325: ".git" was dropped only at the very end, so "web.git/" and "web.git?tab=readme"
+  # looked up "acme/web.git" and found nothing.
+  @mc @backlog
+  Scenario Outline: A pasted GitHub address ending in ".git" with more after it names the repository
+    When the user looks up "<pasted>" on GitHub
+    Then the repository "<repository>" is looked up
+
+    Examples:
+      | pasted                                     | repository       |
+      | https://github.com/acme/web.git/           | acme/web         |
+      | https://github.com/acme/web.git?tab=readme | acme/web         |
+      | acme/web.git/                              | acme/web         |
+      | github.com/acme/web.git                    | acme/web         |
+      | acme/web.git.git                           | acme/web.git     |
+
   @mc
   Scenario Outline: Looking up, cloning and publishing on other hosts
     When the user looks up "acme/shop" on <host>
@@ -472,6 +525,15 @@ Feature: Finding hosting tools, cloning and publishing repositories
     When the user publishes "notes" to GitHub
     Then the repository is created and added as the remote
     And the result says the remote was added without pushing
+
+  # Upstream #26770: the Forgejo CLI's sign-in check read the empty repository and failed before reaching the server.
+  @backlog @mc @priority-low
+  Scenario: A repository with no commits can be published to Forgejo
+    Given the project "notes" is a git repository with no commits
+    And the Forgejo CLI is signed in to "codeberg.org"
+    When the user publishes "notes" to Forgejo on "codeberg.org"
+    Then the repository is created and added as the remote
+    And Forgejo is not reported as signed out
 
   # Upstream #19219: a publish whose first push failed said only that it could not be completed,
   # and publishing again failed too.

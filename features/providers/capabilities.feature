@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23174
 #   https://github.com/pingdotgg/t3code/pull/18309
 #   https://github.com/pingdotgg/t3code/pull/24899
 #   https://github.com/pingdotgg/t3code/pull/16750
@@ -217,6 +218,16 @@ Feature: Provider capabilities
       | age        | outcome                                                     |
       | 6 minutes  | "api" is scanned again and the dollar menu offers "deploy"  |
       | 2 minutes  | "api" is not scanned again and "deploy" is not offered yet  |
+
+  # Upstream #23174: a failed rescan that hands back the stale scan no longer counts as fresh
+  # for five minutes; the composer asks again after its ten-second wait, up to three times.
+  @backlog @shared @priority-low
+  Scenario: A rescan that fails and returns the stale skills is tried again shortly
+    Given the skills of folder "api" are stale
+    And rescanning "api" fails, so the stale skills are returned
+    When the user keeps editing the draft for more than ten seconds
+    Then "api" is asked for again, up to three times in all
+    And once a rescan succeeds the dollar menu offers the skills it found
 
   # Upstream #18309: a folder's skill scan is published even while the provider's health
   # check fails; commands it cannot read keep the last known ones instead of going empty.
