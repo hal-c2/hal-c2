@@ -80,6 +80,9 @@ defmodule HalC2.Codex.Home do
       {:error,
        "Codex shadow home path '#{shared}' must be different from the shared home path '#{shared}'."}
 
+  # The homes are the instance's own `homePath`/`shadowHomePath` settings, which only the
+  # operator sets; the entry names are the shared home's own listing or fixed names here.
+  # sobelow_skip ["Traversal.FileModule"]
   defp link(shared, shadow) do
     File.mkdir_p!(shadow)
     for directory <- @shared_directories, do: File.mkdir_p!(Path.join(shared, directory))
@@ -120,6 +123,8 @@ defmodule HalC2.Codex.Home do
     {:shadow_home, message} -> {:error, message}
   end
 
+  # As `link/2`: both paths are below the operator's configured homes.
+  # sobelow_skip ["Traversal.FileModule"]
   defp link_entry(target, link, name) do
     case :file.read_link_all(link) do
       {:ok, existing} ->
