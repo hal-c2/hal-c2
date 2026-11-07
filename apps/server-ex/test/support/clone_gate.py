@@ -12,21 +12,38 @@
 # file through), anything else fails with that line as git's error. The test closing
 # the connection fails the gate. Like any helper git starts, the gate ends once git
 # is gone (the end of its stdout git reads closes), so a killed git is reported.
+#
+# "hold" first instead has a held gate outlive the git it holds, as a helper git
+# started that has not exited yet: once git is gone the gate says "gone" and waits
+# for the test to close the connection. It keeps the descriptors 3 and 4 it got from
+# git (Exile's, as it runs git), so until then git's exit is not reported.
 import os
 import select
 import shutil
 import socket
 import sys
 
-# Only stdin, stdout and stderr: an inherited end of its own stdout pipe would keep
-# it from seeing git go.
-os.closerange(3, os.sysconf("SC_OPEN_MAX"))
+# Only stdin, stdout, stderr and Exile's two: an inherited end of its own stdout
+# pipe would keep it from seeing git go.
+os.closerange(5, os.sysconf("SC_OPEN_MAX"))
 
 port, token = int(sys.argv[1]), sys.argv[2]
 if token == "@cwd":
     token = os.path.basename(os.getcwd())
 conn = socket.create_connection(("127.0.0.1", port))
 conn.sendall((token + "\n").encode())
+
+
+def line():
+    # Unbuffered, so a line the test sent next is still there for poll to see.
+    got = b""
+    while not got.endswith(b"\n"):
+        byte = conn.recv(1)
+        if not byte:
+            break
+        got += byte
+    return got.decode().strip()
+
 
 # git gone: nothing reads stdout any more (POLLERR), or, as a transport behind
 # `git remote-ext`, which outlives git, stdin closes (POLLHUP; git sends nothing
@@ -37,10 +54,18 @@ poll.register(sys.stdout.fileno(), 0)
 transport = len(sys.argv) > 3
 if transport:
     poll.register(sys.stdin.fileno(), 0)
-if any(fd != conn.fileno() for fd, _ in poll.poll()):
-    sys.exit(1)
 
-verdict = conn.makefile("r").readline().strip()
+hold = False
+while True:
+    if any(fd != conn.fileno() for fd, _ in poll.poll()):
+        if hold:
+            conn.sendall(b"gone\n")
+            line()
+        sys.exit(1)
+    verdict = line()
+    if verdict != "hold":
+        break
+    hold = True
 
 if verdict != "ok":
     sys.stderr.write("fatal: %s\n" % (verdict or "the gate closed"))
@@ -48,6 +73,7 @@ if verdict != "ok":
 
 if transport:
     service, repository = sys.argv[3], sys.argv[4]
+    os.closerange(3, 5)
     os.execvp(service, [service, repository])
 else:
     shutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)

@@ -78,6 +78,20 @@ defmodule HalC2.Test.CloneGate do
   end
 
   @doc """
+  Has gate `socket` outlive the git it holds, as a helper git started that has not
+  exited: once git is killed the gate holds git's exit report back until
+  `let_go/1`.
+  """
+  def hold(socket), do: :ok = :gen_tcp.send(socket, "hold\n")
+
+  @doc "Waits until the git a held gate holds is gone."
+  def await_gone(socket, timeout \\ 10_000),
+    do: {:ok, "gone\n"} = :gen_tcp.recv(socket, 0, timeout)
+
+  @doc "Lets a held gate end, and with it git's exit be reported."
+  def let_go(socket), do: :gen_tcp.close(socket)
+
+  @doc """
   A bare repository with one commit of `files` (path => content), made under `dir`
   at `bare` (by default a fresh name); returns its path.
   """

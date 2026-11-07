@@ -71,6 +71,60 @@ defmodule HalC2.ProjectClonesTest do
     assert {:ok, %{"applied" => true}} = HalC2.ProjectClones.retry(%{"projectId" => "project-10"})
   end
 
+  test "a local remote is spelled out against the clone's parent folder", %{dir: dir} do
+    dest = Path.join(dir, "shop")
+    assert HalC2.ProjectClones.address("origin", dest) == Path.join(dir, "origin")
+    assert HalC2.ProjectClones.address("./up/../origin/", dest) == Path.join(dir, "origin")
+    assert HalC2.ProjectClones.address("/srv/origin", dest) == "/srv/origin"
+
+    assert HalC2.ProjectClones.address("../origin", dest) ==
+             Path.join(Path.dirname(dir), "origin")
+
+    for url <- ["https://example.com/a.git", "git@example.com:a.git", "ext::cmd %S"],
+        do: assert(HalC2.ProjectClones.address(url, dest) == url)
+  end
+
+  test "a clone from a relative local path is cancelled and its files taken away",
+       %{origin: origin, dir: dir} do
+    # The checkout waits at a gate (a smudge filter) until the cancel is in.
+    File.write!(Path.join(origin, ".gitattributes"), "README.md filter=gate\n")
+    {_, 0} = System.cmd("git", ~w(add .gitattributes), cd: origin)
+    {_, 0} = System.cmd("git", ~w(-c user.name=t -c user.email=t@t commit -q -m gate), cd: origin)
+    port = HalC2.Test.CloneGate.listen()
+
+    on_exit(
+      HalC2.Test.CloneGate.git_config(%{
+        "filter.gate.smudge" => HalC2.Test.CloneGate.smudge(port, "@cwd"),
+        "filter.gate.required" => "true"
+      })
+    )
+
+    dest = Path.join(dir, "shop")
+    File.mkdir_p!(dest)
+    {:ok, []} = HalC2.ProjectClones.subscribe(self())
+
+    assert {:ok, _} =
+             HalC2.ProjectClones.start(%{
+               "projectId" => "project-11",
+               "title" => "Relative",
+               "createdAt" => "2026-09-23T00:00:00.000Z",
+               "remoteUrl" => "./origin/",
+               "destinationPath" => dest
+             })
+
+    gate = HalC2.Test.CloneGate.await("shop")
+    assert File.exists?(Path.join(dest, ".git/config"))
+
+    assert {:ok, %{"applied" => true}} =
+             HalC2.ProjectClones.cancel(%{"projectId" => "project-11"})
+
+    assert File.ls!(dest) == []
+    assert File.exists?(Path.join(origin, ".git/config"))
+    :gen_tcp.close(gate)
+
+    assert {:ok, %{"applied" => true}} = HalC2.ProjectClones.retry(%{"projectId" => "project-11"})
+  end
+
   describe "taking a clone's files away" do
     setup %{origin: origin, dir: dir} do
       File.mkdir_p!(Path.join(origin, "src/lib"))

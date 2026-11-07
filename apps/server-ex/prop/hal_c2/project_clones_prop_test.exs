@@ -5,7 +5,10 @@ defmodule HalC2.ProjectClonesPropTest do
   and releases, one at the fetch and one at the checkout of the last file: a clone
   runs until it is let on, finish or fail, is cancelled, retried, or its project
   deleted; git reports progress; the user puts files of their own in a clone's folder
-  at any time; and threads are started in its project.
+  at any time; and threads are started in its project. A cancel can also be slow: a
+  helper git started outlives the killed git (a held gate, `CloneGate.hold/1`), so
+  git is not reported until the helper ends, and meanwhile threads are started in
+  the clone's project and other clones go on; none of it waits on that cancel.
 
   The invariant under all of it is about the user's files: after every step each
   folder holds exactly what the model says, the user's files always and of the
@@ -82,6 +85,8 @@ defmodule HalC2.ProjectClonesPropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
 
         # Stops every git still running before the services go.
+        for {id, %{phase: :stopping}} <- state.clones, do: let_go(id)
+
         for {id, %{phase: :running}} <- state.clones,
             do: ProjectClones.cancel(%{"projectId" => id})
 
@@ -99,8 +104,9 @@ defmodule HalC2.ProjectClonesPropTest do
 
   # --- model ------------------------------------------------------------------
 
-  # clones: id => %{phase: :running | :done | :failed | :cancelled | :deleted, slot,
-  # stage: :fetch | :checkout}, the gate a running clone is held at.
+  # clones: id => %{phase: :running | :stopping | :done | :failed | :cancelled |
+  # :deleted, slot, stage: :fetch | :checkout}, the gate a running clone is held at;
+  # a stopping one is being cancelled, its git killed and a helper still running.
   # made: the folders that exist; user: slot => the user's files in it;
   # wrote: slot => what of the clone's is in it.
   def initial_state,
@@ -118,6 +124,8 @@ defmodule HalC2.ProjectClonesPropTest do
     ids = Map.keys(state.clones)
     at = fn stage -> for {id, %{phase: :running, stage: ^stage}} <- state.clones, do: id end
     running = at.(:fetch) ++ at.(:checkout)
+    stopping = for {id, %{phase: :stopping}} <- state.clones, do: id
+    settled = ids -- stopping
 
     always = [
       {2, {:call, __MODULE__, :start, ["p#{state.next}", oneof(@slots)]}},
@@ -133,11 +141,14 @@ defmodule HalC2.ProjectClonesPropTest do
         some.(1, running, &{:call, __MODULE__, :progress, [&1, oneof(@lines)]}) ++
         some.(3, at.(:fetch), &{:call, __MODULE__, :checkout, [&1]}) ++
         some.(3, at.(:checkout), &{:call, __MODULE__, :finish, [&1]}) ++
+        some.(3, at.(:checkout), &{:call, __MODULE__, :slow_cancel, [&1]}) ++
+        some.(1, stopping, &{:call, __MODULE__, :let_go, [&1]}) ++
+        some.(3, stopping, &{:call, __MODULE__, :thread_create, [&1, "t#{state.threads + 1}"]}) ++
         some.(2, running, &{:call, __MODULE__, :fail, [&1]}) ++
-        some.(2, ids, &{:call, __MODULE__, :cancel, [&1]}) ++
-        some.(2, ids, &{:call, __MODULE__, :retry, [&1]}) ++
-        some.(2, ids, &{:call, __MODULE__, :delete, [&1]}) ++
-        some.(1, ids, &{:call, __MODULE__, :thread_create, [&1, "t#{state.threads + 1}"]})
+        some.(2, settled, &{:call, __MODULE__, :cancel, [&1]}) ++
+        some.(2, settled, &{:call, __MODULE__, :retry, [&1]}) ++
+        some.(2, settled, &{:call, __MODULE__, :delete, [&1]}) ++
+        some.(2, ids, &{:call, __MODULE__, :thread_create, [&1, "t#{state.threads + 1}"]})
     )
   end
 
@@ -150,13 +161,21 @@ defmodule HalC2.ProjectClonesPropTest do
   def precondition(state, {:call, _, :checkout, [id]}),
     do: phase(state, id) == :running and state.clones[id].stage == :fetch
 
-  def precondition(state, {:call, _, :finish, [id]}),
+  def precondition(state, {:call, _, command, [id]}) when command in [:finish, :slow_cancel],
     do: phase(state, id) == :running and state.clones[id].stage == :checkout
+
+  def precondition(state, {:call, _, :let_go, [id]}), do: phase(state, id) == :stopping
+
+  # A stopping clone's cancel is under way; nothing else stops it.
+  def precondition(state, {:call, _, :delete, [id]}),
+    do: phase(state, id) not in [nil, :stopping, :deleted]
+
+  def precondition(state, {:call, _, command, [id]}) when command in [:cancel, :retry],
+    do: Map.has_key?(state.clones, id) and phase(state, id) != :stopping
 
   def precondition(state, {:call, _, :thread_create, [id, name]}),
     do: phase(state, id) not in [nil, :deleted] and name == "t#{state.threads + 1}"
 
-  def precondition(state, {:call, _, :delete, [id]}), do: phase(state, id) not in [nil, :deleted]
   def precondition(state, {:call, _, _, [id]}), do: Map.has_key?(state.clones, id)
 
   def next_state(state, _result, {:call, _, :start, [id, slot]}) do
@@ -202,6 +221,11 @@ defmodule HalC2.ProjectClonesPropTest do
       do: %{state | user: Map.put(state.user, slot, [])} |> wrote(slot, []),
       else: state
   end
+
+  def next_state(state, _result, {:call, _, :slow_cancel, [id]}), do: phase(state, id, :stopping)
+
+  def next_state(state, _result, {:call, _, :let_go, [id]}),
+    do: state |> phase(id, :cancelled) |> wrote(slot(state, id), [])
 
   def next_state(state, _result, {:call, _, :cancel, [id]}) do
     if phase(state, id) == :running,
@@ -260,6 +284,11 @@ defmodule HalC2.ProjectClonesPropTest do
   defp answer?(_state, {:call, _, :fail, _}, result),
     do: match?({"failed", error} when is_binary(error), result) and elem(result, 1) =~ "denied"
 
+  defp answer?(_state, {:call, _, :slow_cancel, _}, result), do: result == :stopping
+
+  defp answer?(_state, {:call, _, :let_go, _}, result),
+    do: result == {true, {:ok, %{"applied" => true}}}
+
   defp answer?(state, {:call, _, :cancel, [id]}, result),
     do: result == {:ok, %{"applied" => phase(state, id) == :running}}
 
@@ -280,7 +309,7 @@ defmodule HalC2.ProjectClonesPropTest do
 
   defp answer?(state, {:call, _, :thread_create, [id, _]}, result) do
     case phase(state, id) do
-      :running ->
+      p when p in [:running, :stopping] ->
         result == {:error, "The repository is still being cloned."}
 
       p when p in [:failed, :cancelled] ->
@@ -294,7 +323,7 @@ defmodule HalC2.ProjectClonesPropTest do
   defp start_outcome(state, slot) do
     cond do
       Enum.any?(state.clones, fn {_, c} ->
-        c.slot == slot and c.phase in [:running, :failed, :cancelled]
+        c.slot == slot and c.phase in [:running, :stopping, :failed, :cancelled]
       end) ->
         :claimed
 
@@ -385,6 +414,24 @@ defmodule HalC2.ProjectClonesPropTest do
     CloneGate.release(Process.delete({:gate, id}), "access denied")
     snapshot = await(id, &(&1["phase"] in ["done", "failed"]))
     {{snapshot["phase"], snapshot["error"]}, listing()}
+  end
+
+  # Cancels a clone whose git leaves a helper behind: the cancel waits, in a task,
+  # for that helper; this returns once git itself is gone.
+  def slow_cancel(id) do
+    gate = Process.get({:gate, id})
+    CloneGate.hold(gate)
+    Process.put({:cancel, id}, Task.async(fn -> ProjectClones.cancel(%{"projectId" => id}) end))
+    CloneGate.await_gone(gate)
+    {:stopping, listing()}
+  end
+
+  # The helper ends; the cancel can finish.
+  # The cancel was still waiting for it.
+  def let_go(id) do
+    waiting = :sys.get_state(ProjectClones).runs[id].waiters != []
+    CloneGate.let_go(Process.delete({:gate, id}))
+    {{waiting, Task.await(Process.delete({:cancel, id}), 20_000)}, listing()}
   end
 
   def cancel(id) do
