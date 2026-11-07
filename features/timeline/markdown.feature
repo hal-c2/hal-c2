@@ -103,11 +103,13 @@ Feature: Formatted messages
       | list      | اكتب دالة `sumBy` تجمع القيم      | right to left |
       | paragraph | Run `npm test` before you push    | left to right |
 
+  # Upstream #22777: Arabic and Hebrew text reads and navigates right to left, with code kept left to right.
   @shared @backlog
   Scenario: Code inside right-to-left text stays left to right
     When the agent answers in Arabic with "fetch()" in inline code and a code block after it
     Then "fetch()" and the code block read left to right
 
+  # Upstream #22777: Arabic and Hebrew text reads right to left, including a thread title.
   @shared @backlog @priority-low
   Scenario: A thread title reads in its own direction
     Given a thread titled in Hebrew
@@ -536,7 +538,7 @@ Feature: Formatted messages
       | https://example.com/cart.ts       | not a file link             |
       | #install                          | not a file link             |
 
-  # Upstream a12d6ed94: a network path in a reply made Windows open an SMB session to its host
+  # Upstream a12d6ed9428d8e64d76ca86d178abbf564b57cee: a network path in a reply made Windows open an SMB session to its host
   # and send the user's credentials, with no click. Network paths (\\h, //h, /\h) now resolve only
   # inside the thread's project, so a project on a share keeps working.
   @backlog @desktop @mobile @mc @priority-high
@@ -553,12 +555,16 @@ Feature: Formatted messages
       | links to             | //attacker.test/share/notes.md     | it is not a file link and nothing is read |
       | links to             | /\\attacker.test\share\notes.md    | it is not a file link and nothing is read |
 
+  # Upstream a12d6ed9428d8e64d76ca86d178abbf564b57cee: network paths resolve only inside the thread's project,
+  # so a project on a network share still opens its files.
   @backlog @desktop @mobile @mc
   Scenario: A file link inside a project on a network share still opens
     Given the thread's project is "\\build-box\share\shop"
     When the agent's reply links to "\\build-box\share\shop\src\cart.ts"
     Then the link is a file link to "src/cart.ts"
 
+  # Upstream a12d6ed9428d8e64d76ca86d178abbf564b57cee: network paths resolve only inside the thread's project,
+  # so the MC refuses a network path outside it for a file read or media.
   @backlog @mc @priority-high
   Scenario: The MC refuses a network path outside the project for a file read or media
     Given the thread's project is "C:\work\shop"
