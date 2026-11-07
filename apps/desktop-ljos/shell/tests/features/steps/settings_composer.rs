@@ -93,6 +93,13 @@ fn height_of(world: &mut World, brick: Brick, item: ObjectId) -> f64 {
         .unwrap_or(0.0)
 }
 
+/// One line of the editor's text: its content over its lines, as the
+/// composer's FontMetrics (no objectName) gives the prompt's line height.
+fn line_spacing(world: &World, brick: Brick, input: ObjectId) -> f64 {
+    let number = |name: &str| brick.read(world, input, name).as_number().unwrap_or(0.0);
+    number("contentHeight") / number("lineCount").max(1.0)
+}
+
 fn scroll_conversation(world: &mut World) -> Outcome<Heights> {
     open_turn_thread(world)?;
     composer_brick(world)?;
@@ -202,9 +209,13 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             let heights = scroll_conversation(world)?;
             let item = composer_item(world)?;
-            let (brick, _) = editor(world)?;
+            let (brick, input) = editor(world)?;
+            // At rest the prompt is two lines; scrolled away, one.
+            let line = line_spacing(world, brick, input);
             expect!(
-                brick.flag(world, item, "resting") && heights.scrolled < heights.before - 20.0,
+                brick.flag(world, item, "resting")
+                    && line > 0.0
+                    && heights.scrolled <= heights.before - line + 1.0,
                 "the composer is {} tall, {} before scrolling",
                 heights.scrolled,
                 heights.before
