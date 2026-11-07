@@ -158,9 +158,9 @@ describe("createHost", () => {
       host.dispatch("thread.new", { projectKey: "local:p1" });
       host.dispatch("composer.projectPicker.toggle");
       host.dispatch("select.choose", { index: 1 });
-      await host.settled();
       releaseOld();
-      await host.settled();
+      // Both projects' branch loads, the old one released last.
+      await host.idle();
       const draft = host.state.get("newThread") as any;
       expect(draft.branch).toBe("main");
       expect(JSON.stringify(draft)).not.toContain("old-only");
