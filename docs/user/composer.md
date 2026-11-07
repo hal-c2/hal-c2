@@ -22,8 +22,10 @@ apply, including images already in the conversation. A video attachment gives
 the agent a file path; it does not enable native video input. Antigravity does
 not accept video attachments.
 
-Uploads begin when you add an attachment. All uploads must finish before the
-message can send. Retry or remove a failed upload. On desktop, reloading
+Uploads begin when you add an attachment, and the chip shows how much has
+gone up. On mobile, a message sent while an upload is still going waits and
+sends when the upload finishes; on desktop, all uploads must finish before
+the message can send. Retry or remove a failed upload. On desktop, reloading
 before an upload finishes requires you to attach that file again.
 
 On desktop, you can paste images into the composer, or drop files anywhere
@@ -55,7 +57,8 @@ start of the composer to edit the most recently queued message. Change
 
 Mobile has the same choice under **Settings → Follow-ups**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
-other action for a single message, or hold `Cmd` while sending from a hardware
+other action for a single message, or to stop the turn and start a new one with
+your message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
 ## Queue messages offline on mobile

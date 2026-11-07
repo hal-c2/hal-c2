@@ -55,7 +55,7 @@ defmodule HalC2.Terminal do
   def open(%{"threadId" => _, "terminalId" => _, "cwd" => cwd} = input) do
     with :ok <- check_cwd(cwd),
          {:ok, input} <- provider_env(input),
-         do: call(ensure(input), {:open, input})
+         do: starting(input, cwd, fn -> call(ensure(input), {:open, input}) end)
   end
 
   @doc """
@@ -73,7 +73,7 @@ defmodule HalC2.Terminal do
       {nil, cwd} ->
         with :ok <- check_cwd(cwd),
              {:ok, input} <- provider_env(input),
-             do: call(ensure(input), {:attach, input, subscriber})
+             do: starting(input, cwd, fn -> call(ensure(input), {:attach, input, subscriber}) end)
 
       {pid, _} ->
         case running_attach_env(input) do
@@ -105,7 +105,16 @@ defmodule HalC2.Terminal do
   def restart(%{"cwd" => cwd} = input) do
     with :ok <- check_cwd(cwd),
          {:ok, input} <- provider_env(input),
-         do: call(ensure(input), {:restart, input})
+         do: starting(input, cwd, fn -> call(ensure(input), {:restart, input}) end)
+  end
+
+  # A shell starts holding its worktree's (else its folder's) lease, its folder checked
+  # again inside it: storage cleanup removing that worktree waits for the start, or the
+  # start for the removal and then finds the folder gone (`HalC2.WorkspaceLease`).
+  defp starting(input, cwd, start) do
+    HalC2.WorkspaceLease.with_lease(input["worktreePath"] || cwd, fn ->
+      with :ok <- check_cwd(cwd), do: start.()
+    end)
   end
 
   @doc "`terminal.close`: one terminal, or every terminal of the thread without a `terminalId`."

@@ -187,22 +187,11 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     end
   end
 
-  defp private_github_image(context) do
+  defp private_github_image(context, signed_in \\ true) do
     token = "gho_private#{System.unique_integer([:positive])}"
-    fake_gh(context, [%{"args" => ["auth", "token"], "stdout" => token <> "\n"}])
+    fake_gh(context, if(signed_in, do: gh_signed_in(token), else: []))
     bytes = png(1024)
-
-    {:ok, pid} =
-      Bandit.start_link(
-        plug: {FakeGitHub, %{test: self(), token: token, bytes: bytes}},
-        port: 0,
-        ip: {127, 0, 0, 1},
-        startup_log: false
-      )
-
-    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :github_media_origin) end)
-    {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
-    Application.put_env(:hal_c2, :github_media_origin, "http://127.0.0.1:#{port}")
+    github_origin(%{test: self(), token: token, bytes: bytes})
 
     context
     |> Map.put(:github, %{token: token, bytes: bytes})
@@ -211,6 +200,138 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
       "cwd" => root(context),
       "url" => "https://github.com/user-attachments/assets/0f3c1d2e-screenshot"
     })
+  end
+
+  defp gh_signed_in(token), do: [%{"args" => ["auth", "token"], "stdout" => token <> "\n"}]
+
+  # Points the MC's GitHub media fetches at a local stand-in answering with `plug`.
+  defp github_origin(opts, plug \\ FakeGitHub) do
+    {:ok, pid} =
+      Bandit.start_link(
+        plug: {plug, opts},
+        port: 0,
+        ip: {127, 0, 0, 1},
+        startup_log: false
+      )
+
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :github_media_origin) end)
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
+    Application.put_env(:hal_c2, :github_media_origin, "http://127.0.0.1:#{port}")
+  end
+
+  # A stand-in for GitHub's media hosts answering as `mode` says; it tells the test what
+  # each request carried.
+  defmodule FakeUpstream do
+    @moduledoc false
+    import Plug.Conn
+
+    def init(opts), do: opts
+
+    def call(conn, %{test: test, mode: mode}) do
+      send(test, {:upstream_request, conn.request_path, conn.req_headers})
+      answer(conn, mode)
+    end
+
+    defp answer(conn, :not_found), do: send_resp(conn, 404, "Not Found")
+    defp answer(conn, :server_error), do: send_resp(conn, 503, "Unavailable")
+
+    defp answer(conn, :redirects) do
+      n = conn.request_path |> String.split("/") |> List.last() |> Integer.parse()
+      n = if match?({_, ""}, n), do: elem(n, 0), else: 0
+
+      conn
+      |> put_resp_header("location", "https://github.com/hop/#{n + 1}")
+      |> send_resp(302, "")
+    end
+
+    defp answer(conn, :insecure_redirect),
+      do: conn |> put_resp_header("location", "http://github.com/elsewhere") |> send_resp(302, "")
+
+    defp answer(conn, :html),
+      do: conn |> put_resp_content_type("text/html") |> send_resp(200, "<html>sign in</html>")
+
+    defp answer(conn, :octet_stream) do
+      conn
+      |> put_resp_content_type("application/octet-stream", nil)
+      |> send_resp(200, "mp4 bytes")
+    end
+
+    defp answer(conn, {:video, bytes}) do
+      case get_req_header(conn, "range") do
+        ["bytes=100-199"] ->
+          conn
+          |> put_resp_content_type("video/mp4", nil)
+          |> put_resp_header("content-range", "bytes 100-199/#{byte_size(bytes)}")
+          |> put_resp_header("accept-ranges", "bytes")
+          |> put_resp_header("etag", ~s("clip-v1"))
+          |> put_resp_header("last-modified", "Wed, 21 Oct 2026 07:28:00 GMT")
+          |> send_resp(206, binary_part(bytes, 100, 100))
+
+        _ ->
+          conn |> put_resp_content_type("video/mp4", nil) |> send_resp(200, bytes)
+      end
+    end
+  end
+
+  # An asset URL's signed claims, read without checking the signature.
+  defp claims(url) do
+    [payload | _] = url |> String.replace_prefix("/api/assets/", "") |> String.split(".")
+    payload |> Base.url_decode64!(padding: false) |> JSON.decode!()
+  end
+
+  defp attachment_dir_count(context),
+    do:
+      HalC2.Attachments.dir()
+      |> Path.join(String.downcase(thread(context)) <> "-*")
+      |> Path.wildcard()
+      |> length()
+
+  # --- macOS stand-in: the commands the MC runs to find an application's icon -------
+
+  @fake_mac Path.expand("../../support/fake_mac.sh", __DIR__)
+
+  defp mac(context) do
+    if context[:mac], do: context, else: Map.put(context, :mac, build_mac(context))
+  end
+
+  defp build_mac(context) do
+    tools = Mc.tmp_dir(context.mc, "mac-tools")
+    File.mkdir_p!(Path.join(tools, "used"))
+    File.write!(Path.join(tools, "mdfind.out"), "")
+    File.write!(Path.join(tools, "calls.log"), "")
+    System.put_env("FAKE_MAC_DIR", tools)
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_MAC_DIR") end)
+
+    bin = Path.join(tools, "bin")
+    File.mkdir_p!(bin)
+    for tool <- ~w(mdfind mdls plutil sips), do: File.ln_s!(@fake_mac, Path.join(bin, tool))
+    World.put_app_env(:host_os, :darwin)
+    World.put_app_env(:mac_tools_dir, bin)
+
+    %{dir: tools, apps: Mc.tmp_dir(context.mc, "Applications")}
+  end
+
+  # An application bundle: `icon` is the file named by `plist`'s icon key, if any.
+  defp mac_app(context, name, plist, resources) do
+    bundle = Path.join(context.mac.apps, name)
+    File.mkdir_p!(Path.join([bundle, "Contents", "Resources"]))
+    File.write!(Path.join([bundle, "Contents", "Info.plist"]), plist)
+
+    for {file, bytes} <- resources,
+        do: File.write!(Path.join([bundle, "Contents", "Resources", file]), bytes)
+
+    bundle
+  end
+
+  defp mac_calls(context),
+    do:
+      context.mac.dir |> Path.join("calls.log") |> File.read!() |> String.split("\n", trim: true)
+
+  defp set_spotlight(context, bundles, used) do
+    File.write!(Path.join(context.mac.dir, "mdfind.out"), Enum.join(bundles, "\n") <> "\n")
+
+    for {bundle, date} <- Enum.zip(bundles, used),
+        do: File.write!(Path.join([context.mac.dir, "used", Path.basename(bundle)]), date)
   end
 
   defp desktop_entry(dir, file, name, icon) do
@@ -572,7 +693,8 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
 
   # --- asset URLs ------------------------------------------------------------------
 
-  step ~r/^the client asks for an asset URL for (?<resource>.+)$/, %{args: [name]} = context do
+  step ~r/^the client asks for an asset URL for (?!the GitHub media address|"https?:)(?<resource>.+)$/,
+       %{args: [name]} = context do
     {resource, bytes} = resource(context, name)
     context |> Map.merge(%{resource: resource, bytes: bytes}) |> create_url(resource)
   end
@@ -628,8 +750,9 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
   end
 
   step ~r/^the MC fails with (?<tag>Asset\w+Error)$/, %{args: [tag]} = context do
-    assert {:error, _message, %{"_tag" => ^tag, "resource" => resource}} = context.asset
-    assert resource == context.resource
+    assert {:error, _message, %{"_tag" => ^tag} = detail} = context.asset
+    # The GitHub media error carries nothing: it must not repeat the address.
+    assert Map.get(detail, "resource", context.resource) == context.resource
     context
   end
 
@@ -861,6 +984,632 @@ defmodule HalC2.Steps.Platform.AttachmentsAndAssets do
     assert body == binary_part(context.bytes, 150_000, 1000)
     assert {"content-range", "bytes 150000-150999/200000"} in headers
     assert {"content-type", "video/mp4"} in headers
+    context
+  end
+
+  # --- claims that fail or are refused ----------------------------------------------
+
+  step "the client uploaded two images", context do
+    first = upload!(context, "image", "one.png", "image/png", png(2048))
+    second = upload!(context, "image", "two.png", "image/png", png(2048))
+    Map.put(context, :attachments, [first, second])
+  end
+
+  step "the client sends a message naming both and the second cannot be claimed", context do
+    [first, second] = context.attachments
+    send_message(context, [first, %{second | "sizeBytes" => 99}])
+  end
+
+  step "the message fails naming the second image", context do
+    assert {:error, "Attachment 'two.png' does not match its upload.", _} = context.reply
+    context
+  end
+
+  step "the first image does not belong to the thread", context do
+    assert attachment_dir_count(context) == 0
+    context
+  end
+
+  step "both uploads can still be sent again", context do
+    context = send_message(context, context.attachments)
+    assert {:ok, _} = context.reply
+    assert [%{"name" => "one.png"}, %{"name" => "two.png"}] = message(context)["attachments"]
+    context
+  end
+
+  # A steer aimed at a run that does not exist is a delivery no provider can make.
+  step "the client sends a message naming that upload and the MC refuses the message", context do
+    command = %{
+      "type" => "message.dispatch",
+      "threadId" => thread(context),
+      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "text" => "look at this",
+      "attachments" => [context.attachment],
+      "dispatchMode" => %{"type" => "steer_active", "targetRunId" => "run-that-is-not-active"}
+    }
+
+    {reply, context} = World.dispatch(context, command, "paired")
+    assert {:error, _, _} = reply
+    Map.put(context, :reply, reply)
+  end
+
+  step "the image does not belong to the thread", context do
+    assert attachment_dir_count(context) == 0
+    context
+  end
+
+  step "the upload can still be sent again", context do
+    context = send_message(context, [context.attachment])
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  # --- removing an upload ------------------------------------------------------------
+
+  step "an upload that is still pending and the same image already stored with a thread",
+       context do
+    {claimed, context} = claimed_image(context)
+    attachment = upload!(context, "image", "shot.png", "image/png", png(4096))
+    Map.merge(context, %{attachment: attachment, claimed: claimed})
+  end
+
+  step "a client deletes the pending upload twice and then deletes the thread's attachment id",
+       context do
+    ids = [context.attachment["id"], context.attachment["id"], context.claimed["id"]]
+
+    {replies, context} =
+      Enum.map_reduce(ids, context, fn id, context ->
+        rpc(context, "attachments.delete", %{"attachmentId" => id})
+      end)
+
+    Map.put(context, :replies, replies)
+  end
+
+  step "the pending upload is gone and both requests succeeded", context do
+    refute HalC2.Attachments.path(context.attachment)
+    assert Enum.all?(context.replies, &match?({:ok, _}, &1))
+    context
+  end
+
+  step "the thread's copy is still there", context do
+    assert File.regular?(HalC2.Attachments.path(context.claimed))
+    context
+  end
+
+  # --- pasted images that are not what they claim -----------------------------------
+
+  step ~r/^the client sends a message with a pasted image (?<problem>whose .+)$/,
+       %{args: [problem]} = context do
+    good = png(300)
+
+    bad =
+      case problem do
+        "whose data is not a base64 image" ->
+          %{"mimeType" => "image/png", "dataUrl" => "text:" <> Base.encode64(good)}
+
+        "whose data is a different image type than its declared type" ->
+          %{
+            "mimeType" => "image/png",
+            "dataUrl" => "data:image/jpeg;base64," <> Base.encode64(good)
+          }
+
+        "whose data is not valid base64" ->
+          %{"mimeType" => "image/png", "dataUrl" => "data:image/png;base64,@@not base64@@"}
+
+        "whose decoded size differs from its declared size" ->
+          %{
+            "mimeType" => "image/png",
+            "sizeBytes" => 301,
+            "dataUrl" => "data:image/png;base64," <> Base.encode64(good)
+          }
+      end
+
+    input = %{
+      "threadId" => thread(context),
+      "attachments" => [
+        %{
+          "name" => "good.png",
+          "mimeType" => "image/png",
+          "dataUrl" => "data:image/png;base64," <> Base.encode64(good)
+        },
+        Map.put(bad, "name", "bad.png")
+      ]
+    }
+
+    {reply, context} = rpc(context, "assets.persistChatAttachments", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "the message fails naming the image", context do
+    assert {:error, "Image 'bad.png' could not be saved.", _} = context.reply
+    context
+  end
+
+  step "the MC stores none of the message's pasted images", context do
+    assert attachment_dir_count(context) == 0
+    context
+  end
+
+  # --- names the MC cannot trust ------------------------------------------------------
+
+  step "the client uploads a file named {string}", %{args: [name]} = context do
+    attachment = upload!(context, "file", name, "application/octet-stream", "some bytes")
+    Map.put(context, :attachment, attachment)
+  end
+
+  step "the MC stores the file without an extension it cannot trust", context do
+    assert {:ok, _} = context.reply
+    [claimed] = message(context)["attachments"]
+    assert String.ends_with?(HalC2.Attachments.path(claimed), "-bin.bin")
+    Map.put(context, :claimed, claimed)
+  end
+
+  step "the provider and the user can still open it", context do
+    path = HalC2.Attachments.path(context.claimed)
+    assert File.read!(path) == "some bytes"
+
+    context =
+      create_url(context, %{
+        "_tag" => "attachment",
+        "attachmentId" => context.claimed["id"],
+        "fileName" => context.claimed["name"]
+      })
+
+    context = read(context, asset_url!(context))
+    assert {200, _, "some bytes"} = context.response
+    context
+  end
+
+  # --- ids that point elsewhere --------------------------------------------------------
+
+  step "a client asks for the attachment {string}", %{args: [id]} = context do
+    # A file where a traversing id would land, to be read if the id were trusted.
+    File.write!(Path.expand("../../settings.json", HalC2.Attachments.dir()), "{}")
+    create_url(context, %{"_tag" => "attachment", "attachmentId" => id})
+  end
+
+  step "the MC answers that no such attachment exists", context do
+    assert {:error, _message, %{"_tag" => "AssetAttachmentNotFoundError"}} = context.asset
+    context
+  end
+
+  step "nothing outside the attachment store is read", context do
+    refute match?({:ok, _}, context.asset)
+    context
+  end
+
+  # --- signed URLs that were altered ----------------------------------------------------
+
+  step ~r/^the client reads the URL with (?<change>.+)$/, %{args: [change]} = context do
+    url = asset_url!(context)
+    [_, token, name] = Regex.run(~r{^/api/assets/([^/]+)/(.+)$}, url)
+    [payload, signature] = String.split(token, ".", parts: 2)
+
+    other = host_file(context, "other.png", png(300))
+
+    context =
+      create_url(context, %{
+        "_tag" => "media-file",
+        "threadId" => thread(context),
+        "path" => other
+      })
+
+    [other_payload | _] =
+      context.asset
+      |> elem(1)
+      |> Map.fetch!("relativeUrl")
+      |> String.replace_prefix("/api/assets/", "")
+      |> String.split(".")
+
+    altered =
+      case change do
+        "extra characters after the signature" -> payload <> "." <> signature <> "AAAA"
+        "the signature removed" -> payload
+        "its payload swapped for another URL's" -> other_payload <> "." <> signature
+      end
+
+    read(context, "/api/assets/#{altered}/#{name}")
+  end
+
+  step "the MC does not serve the file", context do
+    assert {status, _, _} = context.response
+    assert status in [403, 404]
+    context
+  end
+
+  # --- the signing key ------------------------------------------------------------------
+
+  step "the client reads the URL within its hour", context do
+    read(context, asset_url!(context))
+  end
+
+  step "the MC serves the file", context do
+    assert {200, _, "# notes\n"} = context.response
+    context
+  end
+
+  step "a URL signed by a different MC's key is still refused", context do
+    [_, token, name] = Regex.run(~r{^/api/assets/([^/]+)/(.+)$}, asset_url!(context))
+    [payload, _signature] = String.split(token, ".", parts: 2)
+
+    forged =
+      :crypto.mac(:hmac, :sha256, :crypto.strong_rand_bytes(32), payload)
+      |> Base.url_encode64(padding: false)
+
+    assert {403, _, _} = Mc.request(context.mc, :get, "/api/assets/#{payload}.#{forged}/#{name}")
+    context
+  end
+
+  # --- favicons ---------------------------------------------------------------------------
+
+  defp favicon_file(context, svg) do
+    File.mkdir_p!(Path.join(root(context), "public"))
+    File.write!(Path.join([root(context), "public", "favicon.svg"]), svg)
+  end
+
+  # URLs are issued at a fixed moment, so a half-hour boundary cannot fall between asks.
+  defp favicon_url(context, now) do
+    {:ok, result} =
+      HalC2.Attachments.create_url(
+        %{"resource" => %{"_tag" => "project-favicon", "cwd" => root(context)}},
+        now
+      )
+
+    result
+  end
+
+  @half_hour 30 * 60_000
+
+  step "a signed URL for a project's favicon", context do
+    favicon_file(context, "<svg xmlns=\"http://www.w3.org/2000/svg\"><circle r=\"4\"/></svg>")
+    now = div(System.system_time(:millisecond), @half_hour) * @half_hour + 1_000
+    Map.merge(context, %{issued: now, favicon: favicon_url(context, now)})
+  end
+
+  step "a client asks for the project's favicon URL again within half an hour", context do
+    Map.put(context, :again, favicon_url(context, context.issued + 10 * 60_000))
+  end
+
+  step "it receives the same URL", context do
+    assert context.again == context.favicon
+    context
+  end
+
+  step "the icon file's contents change", context do
+    favicon_file(context, "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"4\"/></svg>")
+    Map.put(context, :changed, favicon_url(context, context.issued + 11 * 60_000))
+  end
+
+  step "the next URL ends in a different name", context do
+    name = fn %{"relativeUrl" => url} -> url |> String.split("/") |> List.last() end
+    assert name.(context.changed) != name.(context.favicon)
+    context
+  end
+
+  step "the URL's expiry falls on a half-hour boundary, between one and two half-hours away",
+       context do
+    expires = context.favicon["expiresAt"]
+    assert rem(expires, @half_hour) == 0
+    assert expires > context.issued + @half_hour
+    assert expires <= context.issued + 2 * @half_hour
+    context
+  end
+
+  step "the user saved {string} as the project's icon", %{args: [path]} = context do
+    File.write!(Path.join(root(context), "secret.txt"), "not an image")
+    project = World.project(context, "widgets")
+
+    {reply, context} =
+      World.call(context, "projects.mutate", %{
+        "type" => "project.update",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "projectId" => project.id,
+        "faviconPath" => path
+      })
+
+    assert {:ok, _} = reply
+    :ok = HalC2.Streams.flush_shell(project.id)
+    context
+  end
+
+  step "a client asks for the project's favicon URL", context do
+    create_url(context, %{"_tag" => "project-favicon", "cwd" => root(context)})
+  end
+
+  step "the MC refuses it saying only images are served as icons", context do
+    assert {:error, "Only images are served as icons.",
+            %{"_tag" => "AssetPreviewTypeValidationError"}} = context.asset
+
+    context
+  end
+
+  # --- applications' icons ---------------------------------------------------------------
+
+  step ~r/^the MC runs on macOS and Spotlight knows (?<apps>.+)$/, %{args: [apps]} = context do
+    context = mac(context)
+    [first | rest] = Regex.scan(~r/"([^"]+)"/, apps, capture: :all_but_first) |> List.flatten()
+
+    {names, id} =
+      if apps =~ "bundle id", do: {[first], List.first(rest)}, else: {[first | rest], nil}
+
+    bundles =
+      for name <- names do
+        id_line = if id, do: "CFBundleIdentifier=#{id}\n", else: ""
+
+        mac_app(context, name, id_line <> "CFBundleIconFile=icon\n", [
+          {"icon.icns", "icon-of-#{name}"}
+        ])
+      end
+
+    # Later names were used more recently when the row says so; otherwise one app.
+    used = Enum.with_index(bundles) |> Enum.map(fn {_, i} -> "2026-01-0#{i + 1}" end)
+    set_spotlight(context, bundles, used)
+    context
+  end
+
+  step ~r/^a client asks for the icon of the application (?<reference>.+)$/,
+       %{args: [reference]} = context do
+    context = mac(context)
+
+    app =
+      case Regex.run(~r/^with the bundle id "([^"]+)"$/, reference) do
+        [_, id] ->
+          %{"_tag" => "app-id", "appId" => id}
+
+        nil ->
+          name =
+            case reference do
+              "named a name with a line break" -> "Review\nApp"
+              "named a name with a NUL character" -> "Review\0App"
+              "named " <> quoted -> String.trim(quoted, "\"")
+            end
+
+          %{"_tag" => "display-name", "displayName" => name}
+      end
+
+    context = create_url(context, %{"_tag" => "native-app-icon", "app" => app})
+    context |> Map.put(:app, app) |> then(&read(&1, asset_url!(&1)))
+  end
+
+  step ~r/^the MC serves the icon of "(?<app>[^"]+)"$/, %{args: [app]} = context do
+    assert {200, headers, body} = context.response
+    assert body == "icon-of-#{app}"
+    assert {"content-type", "image/png"} in headers
+    context
+  end
+
+  step "the MC does not search the host with it as part of a query", context do
+    query = for "mdfind\t" <> query <- mac_calls(context), do: query
+
+    case context.app["displayName"] do
+      "Review * App" ->
+        assert Enum.all?(query, &(&1 =~ ~S(Review \* App) and not (&1 =~ ~r/[^\\]\*/)))
+
+      _ ->
+        assert query == []
+    end
+
+    context
+  end
+
+  step "the star only matches a star, not any name", context do
+    assert {404, _, _} = context.response
+    context
+  end
+
+  # --- GitHub media addresses -------------------------------------------------------------
+
+  step "the client asks for an asset URL for the GitHub media address {word}",
+       %{args: [address]} = context do
+    resource = %{"_tag" => "github-media", "cwd" => root(context), "url" => address}
+    context |> Map.put(:resource, resource) |> create_url(resource)
+  end
+
+  step "the URL ends in the attachment's id", context do
+    assert String.ends_with?(asset_url!(context), "/1a1842fb-6383-492f-873c-57aa0033fa6c")
+    context
+  end
+
+  step "the MC will fetch it from raw.githubusercontent.com instead", context do
+    assert claims(asset_url!(context))["url"] ==
+             "https://raw.githubusercontent.com/owner/repo/main/docs/shot.png"
+
+    context
+  end
+
+  step "the MC will fetch the older attachment address as it is", context do
+    assert claims(asset_url!(context))["url"] ==
+             "https://github.com/owner/repo/assets/45952064/1a1842fb"
+
+    context
+  end
+
+  step "the MC will fetch the Git LFS address as it is", context do
+    assert claims(asset_url!(context))["url"] ==
+             "https://media.githubusercontent.com/media/owner/repo/main/a.mp4"
+
+    context
+  end
+
+  step "the URL ends in {string}", %{args: [name]} = context do
+    assert String.ends_with?(asset_url!(context), "/" <> name)
+    context
+  end
+
+  step "the client asks for an asset URL for {string}", %{args: [address]} = context do
+    resource = %{"_tag" => "github-media", "cwd" => root(context), "url" => address}
+    context |> Map.put(:resource, resource) |> create_url(resource)
+  end
+
+  step "the failure does not contain the address or its token", context do
+    assert {:error, _, _} = context.asset
+    text = inspect(context.asset)
+    refute text =~ "example.com"
+    refute text =~ "private-media-token"
+    context
+  end
+
+  step "the host's GitHub CLI is not signed in", context do
+    token = "gho_private#{System.unique_integer([:positive])}"
+    fake_gh(context, [])
+    Map.put(context, :gh_token, token)
+  end
+
+  step "a private repository image is signed for a client", context do
+    token = context.gh_token
+    bytes = png(1024)
+    github_origin(%{test: self(), token: token, bytes: bytes})
+
+    context
+    |> Map.put(:github, %{token: token, bytes: bytes})
+    |> create_url(%{
+      "_tag" => "github-media",
+      "cwd" => root(context),
+      "url" => "https://github.com/user-attachments/assets/0f3c1d2e-screenshot"
+    })
+  end
+
+  step "the client reads it", context do
+    read(context, asset_url!(context))
+  end
+
+  step "GitHub answers 404 and the client receives 404", context do
+    assert_received {:github_request, _path, []}
+    assert {404, _, _} = context.response
+    context
+  end
+
+  step "the host signs in to GitHub", context do
+    File.write!(
+      Path.join(context.mc.home, "gh-rules.json"),
+      JSON.encode!(gh_signed_in(context.github.token))
+    )
+
+    context
+  end
+
+  step "the client reads it again", context do
+    read(context, asset_url!(context))
+  end
+
+  step "the MC sends the credential and serves the image", context do
+    token = context.github.token
+    assert_received {:github_request, _path, ["Bearer " <> ^token]}
+    assert {200, _, body} = context.response
+    assert body == context.github.bytes
+    context
+  end
+
+  step "the next requests reuse the credential without asking the CLI again", context do
+    asked = fn ->
+      Path.join(context.mc.home, "gh.log")
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.count(&(&1 =~ ~s("auth","token")))
+    end
+
+    before = asked.()
+    context = read(context, asset_url!(context))
+    assert {200, _, _} = context.response
+    context = read(context, asset_url!(context))
+    assert {200, _, _} = context.response
+    assert asked.() == before
+    context
+  end
+
+  # --- what GitHub answers ----------------------------------------------------------------
+
+  step ~r/^GitHub answers a media request with (?<upstream>.+)$/, %{args: [upstream]} = context do
+    {mode, name} =
+      case upstream do
+        "404, or any other status below 500" -> {:not_found, "shot.png"}
+        "a 5xx status" -> {:server_error, "shot.png"}
+        "four redirects in a row" -> {:redirects, "shot.png"}
+        "a redirect to an address that is not https" -> {:insecure_redirect, "shot.png"}
+        "an HTML page with status 200" -> {:html, "shot.png"}
+        ~s("application/octet-stream" for a file named "clip.mp4") -> {:octet_stream, "clip.mp4"}
+      end
+
+    fake_gh(context, [])
+    github_origin(%{test: self(), mode: mode}, FakeUpstream)
+
+    create_url(context, %{
+      "_tag" => "github-media",
+      "cwd" => root(context),
+      "url" => "https://github.com/owner/repo/blob/main/#{name}"
+    })
+  end
+
+  step "a client reads the media URL", context do
+    read(context, asset_url!(context))
+  end
+
+  step ~r/^the MC answers (?<answer>that same status, with no body|200 with the type "video\/mp4")$/,
+       %{args: [answer]} = context do
+    assert {status, headers, body} = context.response
+
+    case answer do
+      "that same status, with no body" ->
+        assert status == 404
+        assert body == ""
+
+      ~s(200 with the type "video/mp4") ->
+        assert status == 200
+        assert {"content-type", "video/mp4"} in headers
+    end
+
+    context
+  end
+
+  step "a signed URL for a video hosted on GitHub", context do
+    bytes = :crypto.strong_rand_bytes(1000)
+    fake_gh(context, [])
+    github_origin(%{test: self(), mode: {:video, bytes}}, FakeUpstream)
+
+    context
+    |> Map.put(:bytes, bytes)
+    |> create_url(%{
+      "_tag" => "github-media",
+      "cwd" => root(context),
+      "url" => "https://github.com/owner/repo/blob/main/clip.mp4"
+    })
+  end
+
+  step "a player asks for {string}", %{args: [range]} = context do
+    read(context, asset_url!(context), [{"range", range}])
+  end
+
+  step "the MC forwards that range to GitHub", context do
+    assert_received {:upstream_request, _path, headers}
+    assert {"range", "bytes=100-199"} in headers
+    context
+  end
+
+  step "answers with GitHub's range, length and validators", context do
+    assert {206, headers, body} = context.response
+    assert body == binary_part(context.bytes, 100, 100)
+    assert {"content-range", "bytes 100-199/1000"} in headers
+    assert {"content-length", "100"} in headers
+    assert {"etag", ~s("clip-v1")} in headers
+    assert {"last-modified", "Wed, 21 Oct 2026 07:28:00 GMT"} in headers
+    context
+  end
+
+  step "the response may be cached privately for as long as the signed URL has left, and not at all once it has expired",
+       context do
+    assert {206, headers, _} = context.response
+    {"cache-control", "private, max-age=" <> left} = List.keyfind(headers, "cache-control", 0)
+    assert String.to_integer(left) in 3590..3600
+
+    expired = %{
+      claims(asset_url!(context))
+      | "expiresAt" => System.system_time(:millisecond) - 1_000
+    }
+
+    assert {:ok, 200, headers, _} =
+             HalC2.Attachments.GitHubMedia.serve(expired, %{})
+
+    assert {"cache-control", "private, no-store"} in headers
     context
   end
 end
