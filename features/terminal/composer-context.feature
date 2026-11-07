@@ -1,5 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/24251
+#   https://github.com/pingdotgg/t3code/pull/29804
+#   https://github.com/pingdotgg/t3code/pull/27843
 #   docs/user/composer.md (terminal excerpts as context chips)
 #   apps/web/src/lib/terminalContext.ts (normalizeTerminalContextSelection, formatTerminalContextLabel, expired contexts)
 #   apps/web/src/components/ThreadTerminalDrawer.tsx (terminalSelectionMenuItems, terminalContextMenuItems)
@@ -27,6 +29,23 @@ Feature: Adding terminal output to a message
   Scenario: A one-line selection names a single line
     When the user adds line 7 of "Terminal 2" to the chat
     Then the draft gains an excerpt labelled "Terminal 2 line 7"
+
+  # Upstream #29804: a terminal selection over the 64,000 character limit made the message fail
+  # to send.
+  @backlog @desktop @tui
+  Scenario: A very large terminal selection is cut so the message still sends
+    Given the user added 90,000 characters of a build log from "Terminal 1" to the chat
+    When the user sends the message
+    Then the message is sent with the first 64,000 characters of the selection followed by a truncated marker
+    And the cut does not split a character in two
+
+  # Upstream #27843: an excerpt whose last line came before its first sent lines taken from the end
+  # of the terminal, numbered as if they were the excerpt.
+  @backlog @desktop @tui @priority-low
+  Scenario: An excerpt whose lines run backwards sends no lines
+    Given the draft holds an excerpt of "Terminal 1" that ends on line 3 and starts on line 5
+    When the user sends the message
+    Then the agent is told about "Terminal 1" with no lines from it
 
   @desktop
   Scenario: Selecting only blank lines adds nothing

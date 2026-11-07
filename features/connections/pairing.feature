@@ -35,6 +35,8 @@
 #   https://github.com/pingdotgg/t3code/pull/25591
 #   https://github.com/pingdotgg/t3code/pull/26178
 #   https://github.com/pingdotgg/t3code/pull/26318
+#   https://github.com/pingdotgg/t3code/pull/28529
+#   https://github.com/pingdotgg/t3code/pull/29684
 
 Feature: Pairing a client with an environment
   Pairing turns a one-time link into a lasting session for one device. Links are minted on
@@ -83,6 +85,15 @@ Feature: Pairing a client with an environment
   Scenario: An installed MC prints a pairing link from its single file
     When an operator runs "pair https://box.tailnet.ts.net" on the installed MC's command line
     Then it prints the address with a one-time token
+
+  # Upstream #29684: `t3 up --base-dir` told the user to run `t3 pair` without it, which found no
+  # server or paired with a different one.
+  @backlog @mc @priority-low
+  Scenario: The pairing command an MC suggests at startup reaches that MC
+    Given an operator started an MC with its own HAL-C2 home and port
+    When the MC says how to pair a client
+    Then the command it suggests names that home
+    And running that command prints a pairing link for that MC, not another one on the machine
 
   # Upstream #27817: a startup clean-up logged a line to standard output before a token
   # printed for a script, so `TOKEN=$(...)` captured both.
@@ -254,6 +265,14 @@ Feature: Pairing a client with an environment
     Given the MC listens only on "::1"
     When the user makes a pairing link over Tailscale
     Then the tailnet address reaches the MC
+
+  # Upstream #28529: a Tailscale Serve command that ignored the stop signal held up cleanup.
+  @backlog @mc @priority-low
+  Scenario: A Tailscale Serve command that hangs is stopped
+    Given the Tailscale Serve command never finishes and ignores being asked to stop
+    When the user makes a pairing link over Tailscale
+    Then the command is killed shortly after its time runs out
+    And the client is told Tailscale could not publish the MC
 
   @mc
   Scenario: No pairing link is made when Tailscale cannot publish the MC

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29575
+#   https://github.com/pingdotgg/t3code/pull/27960
+#   https://github.com/pingdotgg/t3code/pull/29579
+#   https://github.com/pingdotgg/t3code/pull/29571
 #   https://github.com/pingdotgg/t3code/pull/19941
 #   https://github.com/pingdotgg/t3code/pull/27635
 #   https://github.com/pingdotgg/t3code/pull/25303
@@ -43,6 +47,11 @@
 #   https://github.com/pingdotgg/t3code/pull/23421
 #   https://github.com/pingdotgg/t3code/pull/27899
 #   https://github.com/pingdotgg/t3code/pull/25865
+#   https://github.com/pingdotgg/t3code/pull/29852
+#   https://github.com/pingdotgg/t3code/pull/29693
+#   https://github.com/pingdotgg/t3code/pull/30567
+#   https://github.com/pingdotgg/t3code/pull/29615
+#   https://github.com/pingdotgg/t3code/pull/29880
 
 Feature: Reviewing working tree and branch changes
   Beside a thread the user reviews what changed in the checkout, either uncommitted work
@@ -68,6 +77,14 @@ Feature: Reviewing working tree and branch changes
     Given the user staged "src/cart.ts" and left "src/tax.ts" untracked
     When the user reviews the working tree
     Then "src/cart.ts" is still the only staged file afterwards
+
+  # Upstream #29571: a staged deletion git paired into a rename with a staged copy was lost from
+  # the uncommitted review, which showed only a new file.
+  @backlog @mc
+  Scenario: A staged deletion that git pairs with a staged copy stays in the uncommitted review
+    Given the user unstaged "src/old.ts" with it still on disk and staged a near copy "src/new.ts"
+    When the user reviews the uncommitted changes
+    Then "src/old.ts" is shown renamed to "src/new.ts", not "src/new.ts" as a new file
 
   # Upstream #23421: expanding a diff dropped the UTF-8 byte-order mark from both sides, so a change
   # that only added or removed it vanished.
@@ -120,6 +137,23 @@ Feature: Reviewing working tree and branch changes
     And "src/cart.ts" has an uncommitted change
     When the user reviews the working tree
     Then "src/cart.ts" is shown as one file with its change
+
+  # Upstream #29579: under diff.suppressBlankEmpty git writes a blank context line as an empty line,
+  # which the clients' parser dropped, shifting every later line number in the hunk.
+  @backlog @mc @shared
+  Scenario: A repository set to write blank context lines empty still shows them in the review
+    Given the user set git to suppress blank context lines in "shop"
+    And "src/cart.ts" changed a line that follows a blank line
+    When the user reviews the working tree
+    Then the blank line is shown as context and the changed line keeps its line number
+
+  # Upstream #29852: under diff.submodule=log or diff a moved submodule had no entry in the review.
+  @backlog @mc @shared @priority-low
+  Scenario: The review shows a moved submodule when git is set to log submodule changes
+    Given the user set git to show submodule changes as a log of their commits in "shop"
+    And the submodule "vendor/ui" now points at another commit
+    When the user reviews the working tree
+    Then "vendor/ui" has an entry showing its old and new commit
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: unborn HEAD)
   @mc
@@ -201,6 +235,15 @@ Feature: Reviewing working tree and branch changes
   Scenario: Choosing what to compare against
     When the user compares the branch against "origin/main" instead of "main"
     Then the diff shows the changes against "origin/main"
+
+  # Upstream #27960: on Android, switching the review to Uncommitted could show the counts but a
+  # blank diff, and Refresh did not bring it back.
+  @backlog @mobile
+  Scenario: Switching review sections on the phone never leaves the diff blank
+    Given "greeting.txt" has an uncommitted change and it is the thread's only change
+    When the user switches the review between Changes and Uncommitted, again and again
+    Then each section shows the diff of "greeting.txt"
+    And refreshing the diff keeps it shown
 
   # Upstream #27635: a base with no common commit hid the base choice, and the choice was kept,
   # so the diff stayed stuck after a reload.
@@ -418,6 +461,34 @@ Feature: Reviewing working tree and branch changes
     And a file's changes are loaded when the user opens that file
     And a file whose changes cannot be loaded says no patch is available for it
 
+  # Upstream #29693: in a diff loaded file by file, an untracked nested repository with commits
+  # never loaded, and Retry failed every time.
+  @backlog @mc @desktop @priority-low
+  Scenario: A nested repository in a diff loaded file by file loads its entry
+    Given the changes are too large for the diff to carry every file's patch
+    And "vendor/lib" is an untracked nested git repository with commits
+    When the user opens "vendor/lib" in the diff
+    Then its entry shows the repository's commit as a new subproject
+
+  # Upstream #29615: a listing of untracked files over the output cap, such as a "node_modules" from
+  # before a ".gitignore", failed the whole review and hid the tracked changes.
+  @backlog @mc @desktop @priority-high
+  Scenario: Too many untracked files to list still shows the tracked changes
+    Given "shop" has changes to tracked files and about 90,000 untracked files not ignored
+    When the user opens the diff of the working tree
+    Then the tracked changes are shown and the diff says it is incomplete
+    And the change totals say there are too many untracked files to count
+
+  # Upstream #29880: in a sparse checkout, one untracked file outside the checked-out folders failed
+  # the whole review.
+  @backlog @mc @desktop @priority-high
+  Scenario: A sparse checkout with an untracked file outside its folders still shows its changes
+    Given "shop" is a sparse checkout that leaves out the folder "docs"
+    And the agent changed "src/cart.ts" and created the untracked "docs/new.md"
+    When the user opens the diff of the working tree
+    Then the change to "src/cart.ts" and the new "docs/new.md" are shown
+    And the sparse checkout and the user's own staged changes are left as they were
+
   @desktop
   Scenario: A file too large to show in full is marked as a partial preview
     Given "src/cart.ts" has changes too large to show in full
@@ -432,6 +503,24 @@ Feature: Reviewing working tree and branch changes
     Then the file offers to retry loading the diff
     When the user retries and the environment answers
     Then the changes of "src/cart.ts" are shown
+
+  # Upstream #30567: Changes waited for untracked files to be found before showing tracked ones,
+  # and an open file jumped back to its top as patches arrived.
+  @backlog @mc @desktop @priority-high
+  Scenario: Changes lists the tracked files before untracked ones are found
+    Given finding the untracked files of "shop" takes a long time
+    When the user opens Changes
+    Then the tracked changed files are listed with their totals
+    And the untracked files join the same list once they are found
+
+  # Upstream #30567: Changes waited for untracked files to be found before showing tracked ones,
+  # and an open file jumped back to its top as patches arrived.
+  @backlog @desktop
+  Scenario: An open file keeps its scroll position as the rest of Changes loads
+    Given the user scrolled halfway down "src/cart.ts" in Changes
+    When untracked files are added above it and the other files' patches arrive
+    Then "src/cart.ts" stays where the user scrolled
+    And a refresh that fails keeps the content the user was reading
 
   @desktop
   Scenario: A file's changes that the checkout no longer has say the diff is gone
@@ -562,6 +651,21 @@ Feature: Reviewing working tree and branch changes
     When the message with that comment is sent
     Then the provider receives the comment and the quoted lines with the code kept in one piece
     And the quoted lines carry the language of "src/cart.ts"
+
+  # Upstream #29575: a comment's excerpt was trimmed, so a selection ending on a blank context line
+  # or trailing whitespace lost its last line, and a comment on one blank line sent a bare hunk header.
+  @backlog @shared
+  Scenario Outline: A review comment's excerpt keeps its last line
+    Given the user comments on lines 10 to 12 of "src/cart.ts", and line 12 is <last line>
+    When the message with that comment is sent
+    Then the provider receives line 12 in the comment's excerpt
+    And the comment shown on the sent message includes line 12
+
+    Examples:
+      | last line                       |
+      | a blank context line            |
+      | an added line ending in a tab   |
+      | a whitespace-only edit          |
 
   @desktop
   Scenario: A line comment is added from the keyboard

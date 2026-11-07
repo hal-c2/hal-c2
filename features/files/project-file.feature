@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/19949
 #   https://github.com/pingdotgg/t3code/pull/19166
+#   https://github.com/pingdotgg/t3code/pull/28482
 #   docs/user/project-settings.md (Import actions, Submodules)
 #   packages/contracts/src/halC2ProjectFile.ts
 #   packages/shared/src/halC2ProjectFile.ts (parseHalC2ProjectFile)
@@ -36,6 +37,22 @@ Feature: The hal-c2.json project file
       | the checkout's hal-c2.json                | top-level | one level deep           |
       | the checkout's hal-c2.json                | none      | not at all               |
       | the project's settings                | top-level | one level deep           |
+
+  # Upstream #28482: submodule checkouts inherited git's 30-second limit, so a slow clone was cut
+  # off mid-checkout while the worktree still reported success.
+  @backlog @mc
+  Scenario: A slow submodule checkout is not cut off
+    Given a submodule of "shop" takes two minutes to clone
+    When a new worktree is created for "shop"
+    Then the submodule is filled in full before the worktree is ready
+
+  # Upstream #28482
+  @backlog @mc @priority-low
+  Scenario: A submodule checkout that fails says the submodules may be incomplete
+    Given a submodule of "shop" cannot be cloned
+    When a new worktree is created for "shop"
+    Then the worktree is created
+    And the user is warned that its submodules may be incomplete
 
   @mc
   Scenario: Project settings win over hal-c2.json for submodules

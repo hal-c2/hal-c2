@@ -1,5 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/28253
 #   https://github.com/pingdotgg/t3code/pull/25559
+#   https://github.com/pingdotgg/t3code/pull/32411
+#   https://github.com/pingdotgg/t3code/pull/32409
+#   https://github.com/pingdotgg/t3code/pull/32391
 #   https://github.com/pingdotgg/t3code/pull/25545
 #   https://github.com/pingdotgg/t3code/pull/24015
 #   https://github.com/pingdotgg/t3code/pull/26715
@@ -43,6 +47,8 @@
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/25704
 #   https://github.com/pingdotgg/t3code/pull/18277
+#   https://github.com/pingdotgg/t3code/pull/14693
+#   https://github.com/pingdotgg/t3code/pull/29841
 #   https://github.com/pingdotgg/t3code/pull/23684
 #   https://github.com/pingdotgg/t3code/pull/26623
 #   docs/user/providers-acp.md
@@ -74,6 +80,15 @@
 #   packages/effect-acp/src/errors.ts (protocol error codes and messages)
 #   https://github.com/pingdotgg/t3code/pull/19958
 #   https://github.com/pingdotgg/t3code/pull/23440
+#   https://github.com/pingdotgg/t3code/pull/27771
+#   https://github.com/pingdotgg/t3code/pull/28419
+#   https://github.com/pingdotgg/t3code/pull/28135
+#   https://github.com/pingdotgg/t3code/pull/29463
+#   https://github.com/pingdotgg/t3code/pull/28987
+#   https://github.com/pingdotgg/t3code/pull/30295
+#   https://github.com/pingdotgg/t3code/pull/30361
+#   https://github.com/pingdotgg/t3code/pull/30719
+#   https://github.com/pingdotgg/t3code/pull/30701
 
 @plugin-acp-registry @mc @priority-low
 Feature: ACP registry agents
@@ -109,6 +124,13 @@ Feature: ACP registry agents
     When the user installs the registry agent "acme"
     Then "acme" is installed under the MC's tools folder at the registry's version
     And an instance of "acme" is created and enabled
+
+  # Upstream #28135: the phone's settings providers list drew registry agents with the generic ACP glyph.
+  @backlog @mobile
+  Scenario: The phone's settings list a registry agent with its registry icon
+    Given the registry agent "acme" is installed with the icon the registry publishes for it
+    When the user opens the providers in the phone's settings
+    Then "acme" is shown with its registry icon, as in the composer
 
   # Upstream #23684: one shared lock made every registry agent wait on another agent's install.
   @backlog
@@ -272,6 +294,16 @@ Feature: ACP registry agents
     When "acme" asks permission to run a command
     Then the user is asked to approve it
 
+  # Upstream #29463: "Always allow this session" answered an agent offering only allow-once by
+  # cancelling, which stopped the turn the user had just approved.
+  @backlog @priority-high
+  Scenario: Always allowing a request the agent can only allow once approves it once
+    Given the thread runs "acme" with approval required
+    And "acme" asks permission to run a command, offering only to allow once or reject
+    When the user chooses "Always allow this session"
+    Then "acme" is told the request is allowed once
+    And the turn goes on
+
   Scenario: Stopping an agent turn cancels it in the agent
     Given a turn is running on "acme"
     When the user stops the turn
@@ -307,6 +339,15 @@ Feature: ACP registry agents
     When the user rolls back to the first turn
     Then the files are restored to the first turn
     And the next message starts a new agent session without the later conversation
+
+  # Upstream #28987: the replacement session's events were never read after a rollback, so its
+  # turns showed nothing and Stop timed out after 15 seconds.
+  @backlog @priority-high
+  Scenario: An agent thread keeps showing the agent's work after a rollback
+    Given an "acme" thread that was rolled back to its first turn
+    When the user sends a message and then stops the turn
+    Then the thread shows what "acme" did for that message
+    And the turn stops without waiting for a time limit
 
   Scenario: Switching models inside an agent thread
     Given "acme" offers two models
@@ -500,6 +541,28 @@ Feature: ACP registry agents
     Then Copilot is given HAL-C2's MCP server over HTTP with the session's credential
     And Copilot can call HAL-C2 tools such as delegating a task
     But an agent that does not take MCP over HTTP is still given HAL-C2's tools the way it can use
+
+  # Upstream #30361: Claude and Codex sessions name their thread to the commands they run; ACP agents
+  # did not, so two agents in one folder looked the same to a tool both started.
+  @backlog
+  Scenario: A command an ACP agent runs knows which thread it belongs to
+    Given the ACP threads "t1" and "t2" on "acme" work in the same folder
+    When the agent of "t1" runs a command in its shell or terminal
+    Then the command's environment names "t1" as its thread
+
+  # Upstream #30719: the tool bridge also ended a line at U+2028 and U+2029, so a tool call holding
+  # text pasted from a PDF or web page was cut apart and hung until the agent timed out.
+  @backlog @priority-high
+  Scenario Outline: A HAL-C2 tool call holding a <separator> reaches HAL-C2 whole
+    Given "acme" reaches HAL-C2's tools through the bridge that reads its standard input
+    When the agent sends a tool call whose arguments hold a <separator>
+    Then HAL-C2 answers that tool call under its own request id
+    And no parse error is sent back
+
+    Examples:
+      | separator                    |
+      | line separator (U+2028)      |
+      | paragraph separator (U+2029) |
   # Upstream #26715: steering a Copilot thread interrupted its prompt and killed its background agents.
   @backlog @priority-high
   Scenario: A follow-up to a Copilot thread waits for the prompt instead of interrupting it
@@ -874,6 +937,26 @@ Feature: ACP registry agents
       | the MC cannot open terminals                                 | Interactive provider login is unavailable on this environment.              |
       | the agent's own sign-in fails                                | The ACP agent could not complete sign-in.                                   |
 
+  # Upstream #30295: an agent's own reason for refusing sign-in or the session after it was hidden
+  # behind the generic message.
+  @backlog @priority-low
+  Scenario Outline: A sign-in the agent refuses names the agent's reason
+    Given "acme" answers <step> with the error "Token expired: run acme login"
+    When the user signs in to "acme"
+    Then the user is told "<message> Token expired: run acme login."
+
+    Examples:
+      | step                                  | message                                                |
+      | its sign-in                           | The ACP agent could not complete sign-in.              |
+      | the session it is asked for afterward | The provider could not create a session after sign-in. |
+
+  # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
+  @backlog @priority-low
+  Scenario: A very long reason from the agent is cut at 500 characters
+    Given "acme" answers its sign-in with an error of 4,000 characters
+    When the user signs in to "acme"
+    Then the reason shown after the generic message is cut to 500 characters
+
   @backlog
   Scenario: Terminal sign-in methods are not offered where the MC cannot open a terminal
     Given the MC cannot open terminals
@@ -951,6 +1034,17 @@ Feature: ACP registry agents
     When the user lists the agent's sessions
     Then at most 256 sessions arrive with a marker for the next page
     And asking with that marker returns the sessions that follow
+
+  # Upstream #32409: opening the agent's settings before the projects had arrived left its session
+  # actions unusable until reopened, and a removed project stayed their target.
+  @backlog @desktop @priority-low
+  Scenario: An agent's session settings follow the projects as they arrive and go
+    Given the user opened the settings of "acme" before any project had arrived
+    When the projects arrive
+    Then listing and deleting the agent's sessions works for a project without reopening the settings
+    When the project chosen there is removed
+    Then the settings move to a project that remains, and results for the removed project are cleared
+    But a project the user chose that still exists stays chosen
 
   @backlog
   Scenario: At most 64 model providers are listed for an agent
@@ -1121,6 +1215,20 @@ Feature: ACP registry agents
     When the MC next starts an agent session
     Then the empty groups of the dead MC are removed
 
+  # Upstream #28419: a crash while the session opened showed a generic error and an internal
+  # session id, even when the MC knew the signal that ended the agent.
+  @backlog @shared
+  Scenario Outline: An agent that crashes while its session opens says how it ended
+    When "acme" is <ended> while the MC opens its session
+    Then the thread says the agent ended while opening its session, <how>
+    And it says to check the MC's logs for details
+    And it shows no internal session id
+
+    Examples:
+      | ended                    | how                        |
+      | killed by "SIGKILL"      | by the signal "SIGKILL"    |
+      | ended with exit code 3   | with exit code 3           |
+
   @backlog
   Scenario: An agent that exits mid-turn fails the turn with its last error output
     Given a turn is running on "acme"
@@ -1255,6 +1363,16 @@ Feature: ACP registry agents
     Then the thread shows it as a HAL-C2 tool
     And a tool of another MCP server with a similar name is not shown as one
 
+  # Upstream #28253: Kiro titles HAL-C2 tools "@t3-code/<tool>", so none was recognised and its
+  # published HTML pages never showed though Kiro was told they did.
+  @backlog
+  Scenario: Kiro's calls of HAL-C2 tools are recognised and its published pages show
+    Given the manual ACP agent Kiro titles its calls of HAL-C2 tools with "@" before the server name
+    When Kiro publishes an HTML page in the thread
+    Then the page shows in the thread as a published page
+    And Kiro's other HAL-C2 tool calls show as HAL-C2 tools
+    But another server's "@<server>/<tool>" call is still shown as that server's
+
   # Upstream #20376: an agent's own tool named like a HAL-C2 tool is not taken for one.
   @backlog
   Scenario: An agent's own tool that shares a HAL-C2 tool's name is shown as the agent's
@@ -1325,6 +1443,14 @@ Feature: ACP registry agents
     Given "acme" runs a command in a terminal it asked the client for
     When the command prints more than the terminal's limit of 4 MB, or of what the agent asked for up to 8 MB
     Then the agent receives the newest output marked as truncated
+
+  # Upstream #32391: error output arriving between the bytes of one character of normal output
+  # turned both into replacement characters.
+  @backlog
+  Scenario: A client terminal's output keeps its characters when its two streams interleave
+    Given "acme" runs a command in a terminal it asked the client for
+    When the command writes the first byte of "€", then "X" as error output, then the rest of "€"
+    Then the agent receives "€" and "X" whole
 
   @backlog
   Scenario: A request for a terminal the client does not know is refused
@@ -1583,6 +1709,32 @@ Feature: ACP registry agents
     When the user adds a provider
     Then fx is offered beside Codex and Claude, with Supervised and Auto modes
     And the "$" menu lists the skills fx can invoke
+
+  # Upstream #14693: upstream added Kiro (kiro-cli) as its own provider on the ACP adapter, off by
+  # default, with its own settings card, model list and reasoning levels.
+  # Dropped: as with fx (#18277 above), HAL-C2 carries no Kiro plugin. Kiro runs as a manual ACP
+  # agent, which the registry scenarios above already cover.
+  @dropped
+  Scenario: Kiro is offered as its own provider
+    When the user adds a provider
+    Then Kiro is offered beside Codex and Claude, signed in through kiro-cli or an API key
+    And the model picker lists the models the Kiro account can use
+
+  # Upstream #29841: a slow-starting kiro-cli lost the 4-second version check and showed Kiro as
+  # unavailable.
+  # Dropped: HAL-C2 carries no Kiro plugin (#14693 above), so it runs no Kiro version check.
+  @dropped
+  Scenario: A slow-starting kiro-cli still shows Kiro as available
+    Given kiro-cli takes longer than 4 seconds to report its version
+    When the MC checks Kiro's status
+    Then Kiro shows as available
+
+  # Upstream #30701: fx's clipped reply previews ending in a literal "\u" fell back to raw JSON.
+  # Dropped: HAL-C2 carries no fx plugin (#18277 above), so it has no fx reply previews to decode.
+  @dropped
+  Scenario: An fx reply preview ending in a literal backslash-u reads as text
+    When fx clips a reply preview that ends in a literal backslash followed by "u"
+    Then the preview shows that text, not the raw reply
 
   # Upstream #24908: ACP v2 echoed the prompt, with the instructions HAL-C2 sent, as a second user message.
   @backlog
@@ -2329,6 +2481,21 @@ Feature: ACP registry agents
       | 1          | loads an older session | session/load   |
       | 2          | loads an older session | session/resume |
 
+  # Upstream #27771: session/delete was refused for every generation 1 agent, even one that
+  # said it can delete sessions; whether the agent says so is what decides.
+  @backlog
+  Scenario Outline: Deleting a session follows what the agent says it can do, whatever its generation
+    Given "acme" answered the initialization as generation <generation> and <says>
+    When the MC deletes one of its sessions
+    Then <outcome>
+
+    Examples:
+      | generation | says                                       | outcome                                                   |
+      | 1          | it can delete sessions                     | "acme" is asked to delete the session                     |
+      | 2          | it can delete sessions                     | "acme" is asked to delete the session                     |
+      | 1          | nothing about deleting sessions            | the request fails with "Method not found: session/delete" |
+      | 2          | its session capabilities are empty         | the request fails with "Method not found: session/delete" |
+
   @backlog
   Scenario Outline: A request the agent's generation does not have is refused without being sent
     Given "acme" answered the initialization as generation <generation>
@@ -2338,7 +2505,6 @@ Feature: ACP registry agents
 
     Examples:
       | generation | does                         | method            |
-      | 1          | deletes a session            | session/delete    |
       | 1          | lists model providers        | providers/list    |
       | 1          | sets a model provider        | providers/set     |
       | 1          | disables a model provider    | providers/disable |
@@ -2534,3 +2700,11 @@ Feature: ACP registry agents
     And the parent is not left reading "Thinking"
     When the MC restarts while the subagent is working
     Then the child thread resumes its session
+
+  # Upstream #32411: a child session dropped the text its tools streamed, which a root session kept.
+  @backlog @shared
+  Scenario: A tool in a registry agent's child session keeps the output it streamed
+    Given a registry agent's subagent runs in a child thread
+    When a tool there streams its output in several parts and then reports only that it completed
+    Then the child thread shows the tool's whole output in the order it arrived
+    And output that arrives after the user stopped the turn keeps the tool shown as interrupted

@@ -60,6 +60,8 @@
 #   https://github.com/pingdotgg/t3code/pull/25066
 #   https://github.com/pingdotgg/t3code/pull/21537
 #   https://github.com/pingdotgg/t3code/pull/23447
+#   https://github.com/pingdotgg/t3code/pull/29013
+#   https://github.com/pingdotgg/t3code/pull/30345
 
 Feature: Referencing files, skills, commands and context
   The user pulls things into a message by typing a trigger character or by
@@ -395,6 +397,15 @@ Feature: Referencing files, skills, commands and context
     And the message cites the paragraph with the comment "Too slow?"
     And the draft no longer quotes it
 
+  # Upstream #29013: the place to return to kept the quote's source, so closing Settings or Usage
+  # scrolled the thread back up to it.
+  @backlog @shared @priority-low
+  Scenario: Leaving Settings after going to a quote's source keeps the thread where the user left it
+    Given the user went to the source of a quote in a sent message
+    And then scrolled to the end of the thread
+    When the user opens Settings or Usage and closes it again
+    Then the thread is still at its end and does not jump back to the quote's source
+
   @desktop
   Scenario: A stashed quote is listed by its text
     Given the draft quotes the assistant's paragraph about caching with the comment "Too slow?"
@@ -540,6 +551,15 @@ Feature: Referencing files, skills, commands and context
     Given the draft holds an annotation of the preview
     When the preview reloads and the user annotates it again
     Then the draft holds both annotations
+
+  # Upstream #30345: an annotation comment cut at 47 characters could keep half an emoji in its chip,
+  # the reference sent with the message, and a title seeded from it.
+  @backlog @desktop @priority-low
+  Scenario: A long annotation comment's chip is cut before an emoji, not through it
+    Given the user annotated the preview with a comment of 60 characters with an emoji at the 47th
+    When the annotation is attached to the draft
+    Then its chip label is cut before the emoji and ends in "…"
+    And the message sent with it names the annotation the same way
 
   # Upstream #24022: Annotate did nothing on a PDF open in the preview.
   @backlog @desktop

@@ -48,14 +48,19 @@ const FakeMc::Extension worktrees([](FakeMc& mc) {
   });
   mc.onRpc(S("orchestration.launchThread"), [&mc](const FakeMc::Rpc& rpc) {
     mc.part<FakeWorktrees>().launches.append(rpc.payload);
-    // An environment told to refuse new threads (SubagentSteps.cpp).
-    if (mc.refusals.contains(rpc.method)) return mc.refuse(rpc, mc.refusals.value(rpc.method));
-    const QString threadId = rpc.payload.value(QLatin1String("threadId")).toString();
-    const QJsonObject row{{S("id"), threadId}, {S("projectId"), rpc.payload.value(QLatin1String("projectId"))}, {S("title"), rpc.payload.value(QLatin1String("title"))},
-                          {S("createdAt"), kAt}, {S("updatedAt"), kAt}};
-    mc.threads.insert(threadId, row);
-    mc.sendRow(threadId, row);
-    mc.reply(rpc, QJsonObject{{S("threadId"), threadId}, {S("resumed"), false}});
+    const auto answer = [&mc, rpc] {
+      // An environment told to refuse new threads (SubagentSteps.cpp).
+      if (mc.refusals.contains(rpc.method)) return mc.refuse(rpc, mc.refusals.value(rpc.method));
+      const QString threadId = rpc.payload.value(QLatin1String("threadId")).toString();
+      const QJsonObject row{{S("id"), threadId}, {S("projectId"), rpc.payload.value(QLatin1String("projectId"))}, {S("title"), rpc.payload.value(QLatin1String("title"))},
+                            {S("createdAt"), kAt}, {S("updatedAt"), kAt}};
+      mc.threads.insert(threadId, row);
+      mc.sendRow(threadId, row);
+      mc.reply(rpc, QJsonObject{{S("threadId"), threadId}, {S("resumed"), false}});
+    };
+    // A start still setting up its worktree (ThreadCreateSteps.cpp).
+    if (mc.holding(S("answers"))) return mc.defer(answer);
+    answer();
   });
   mc.onShape(S("worktreeSetup"), [&mc](int id, const QJsonObject&) {
     const QJsonObject setup = mc.part<FakeWorktrees>().setup;

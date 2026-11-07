@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/26904
+#   https://github.com/pingdotgg/t3code/pull/24202
 #   https://github.com/pingdotgg/t3code/pull/26859
 #   https://github.com/pingdotgg/t3code/pull/21508
 #   https://github.com/pingdotgg/t3code/pull/24847
@@ -73,6 +74,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses the sidebar shortcut
       Then the sidebar is shown
 
+    # Upstream #24202: upstream's sidebar saved its collapsed state but never read it back.
     @desktop
     Scenario: A hidden sidebar stays hidden after a restart
       Given the sidebar is hidden

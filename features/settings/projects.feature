@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29917
+#   https://github.com/pingdotgg/t3code/pull/23641
 #   https://github.com/pingdotgg/t3code/pull/26154
 #   https://github.com/pingdotgg/t3code/pull/23231
 #   https://github.com/pingdotgg/t3code/pull/26798
@@ -122,6 +124,17 @@ Feature: Projects settings panel
     When the user manages "shop" in settings
     Then the checkouts on "laptop" and "server" are listed with their folders
 
+  # Upstream #23641: with related checkouts grouped, the panel had no per-checkout grouping, so a
+  # checkout could not be split into its own project there or put back under the global rule.
+  @backlog @desktop @mobile @priority-low
+  Scenario: A checkout's grouping is set and reset from the panel
+    Given project grouping combines matching repositories
+    When the user sets the "server" checkout of "shop" to stay apart
+    Then the "server" checkout is listed as a project of its own and the panel follows it
+    When the user sets it back to follow the global grouping
+    Then it is grouped into "shop" again and the checkout's other overrides are kept
+    And a grouping that cannot be saved is reported and the saved choice stays shown
+
   # Upstream #21409: the phone lists projects and checkouts and can now remove them too.
   @desktop @mobile @backlog-mobile
   Scenario: Removing one checkout keeps the others
@@ -141,6 +154,15 @@ Feature: Projects settings panel
     When the user asks to remove the "laptop" checkout of "shop"
     Then the confirmation names 3 threads, the folder and "laptop"
     And the confirmation says conversation history is cleared permanently
+
+  # Upstream #29917: the count included side chats and subagent threads, which no thread list
+  # shows, and moved as subagents started and went idle.
+  @backlog @desktop @mobile
+  Scenario: The removal confirmation counts only the threads the lists show
+    Given the "laptop" checkout of "shop" has 1 thread with a side chat and a running subagent
+    When the user asks to remove the "laptop" checkout of "shop"
+    Then the confirmation names 1 thread
+    And the side chat and the subagent are removed with that thread
 
   # Upstream #21409: after removal the phone left a dead screen and kept filtering by the project.
   @backlog @mobile

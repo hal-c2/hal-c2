@@ -26,6 +26,9 @@
 #   https://github.com/pingdotgg/t3code/pull/12588 (Grok reports the account's email so one account merges)
 #   https://github.com/pingdotgg/t3code/pull/26331
 #   https://github.com/pingdotgg/t3code/pull/23558
+#   https://github.com/pingdotgg/t3code/pull/28065
+#   https://github.com/pingdotgg/t3code/pull/28097
+#   https://github.com/pingdotgg/t3code/pull/25579
 #   docs/user/usage.md (Track subscription limits, Connect a CLIProxyAPI hub, Subscription usage widget)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex,
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (probes, probeFailed, unsupported, provider.consumeResetCredit)
@@ -232,6 +235,19 @@ Feature: Subscription limits
     When the user adds a hub with its URL and management key
     Then the hub's accounts are reported with their limits
 
+  # Upstream #25579: a hub saved as the address of its web panel, where users copy the key from,
+  # was asked for ".../management.html/v0/management/..." and lost every account to a 404.
+  @backlog @mc @priority-low
+  Scenario Outline: A hub saved as its management panel's address still shows its accounts
+    When the user adds a hub at "<address>" with its management key
+    Then the hub's accounts are read from "<api>"
+
+    Examples:
+      | address                                        | api                                          |
+      | https://hub.example/management.html            | https://hub.example/v0/management            |
+      | https://tools.example/cliproxy/management.html | https://tools.example/cliproxy/v0/management |
+      | https://tools.example/cliproxy                 | https://tools.example/cliproxy/v0/management |
+
   @mc
   Scenario: A hub's management key is kept out of the settings
     When the user adds a hub with a management key
@@ -417,6 +433,15 @@ Feature: Subscription limits
     When the MC checks limits
     Then Grok's limits name the account "dev@example.com"
 
+  # Upstream #28097: xAI refuses Grok Build for an account in Legacy privacy mode, and the
+  # generic "could not read usage limits" gave no way forward.
+  @backlog @mc @plugin-grok @priority-low
+  Scenario: A Grok account in Legacy privacy mode is told to switch to Privacy Mode
+    Given Grok is signed in to an xAI account whose privacy setting is Legacy
+    When the MC checks limits
+    Then Grok's limits say "Switch your xAI account to Privacy Mode to show Grok usage limits."
+    And the limits are shown once the account switches to Privacy Mode
+
   @mc
   Scenario: An external OpenCode server reports no limits
     Given OpenCode runs on an external server
@@ -437,6 +462,19 @@ Feature: Subscription limits
     When the user opens Limits
     Then that account is shown once, with the freshest usage either instance reported
     And its reset credit is redeemed through the instance that reported it
+
+  # Upstream #28065: a Claude instance routed through a hub merged with the hub's account but kept
+  # the default name "Claude" instead of the e-mail every other hub account shows.
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: An instance merged with a hub account is named <shown>
+    Given a Claude instance <named> is routed through a hub that reports the account "sam@example.com"
+    When the user opens Limits
+    Then the merged account is named <shown>
+
+    Examples:
+      | named                        | shown               |
+      | with the default name Claude | "sam@example.com"   |
+      | the user named "Work"        | "Work"              |
 
   # OpenCode Go reports no account email, so a shared API key is what identifies the account.
   @backlog @desktop @mobile @priority-low
@@ -567,6 +605,13 @@ Feature: Subscription limits
     When the user chooses to reveal the account
     Then the answer shows "sam@example.com"
     And the user can hide it again
+
+  # Upstream #28065: the /usage-limits rows kept the hub's auth file name, ".json" and all.
+  @backlog @desktop @mobile @tui @priority-low
+  Scenario: The /usage-limits answer names hub accounts without the auth file's extension
+    Given a hub "CLIProxyAPI" reports the account "team-seat.json"
+    When the user sends "/usage-limits"
+    Then the account's row is labelled "CLIProxyAPI · team-seat"
 
   @desktop
   Scenario: The /usage-limits answer is dismissed without sending anything
