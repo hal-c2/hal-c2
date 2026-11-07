@@ -113,6 +113,7 @@ const DYNAMIC: Record<string, string> = {
   "ImageViewer.qml": "image.close",
   "TerminalDrawer.qml": "terminal.scroll.lineUp",
   "Sidebar.qml": "thread.next",
+  "Conversation.qml": "timeline.showEnd",
 };
 
 const boundActions = new Set(

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23900
 #   https://github.com/pingdotgg/t3code/pull/20073
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
 #   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
@@ -156,6 +157,14 @@ Feature: Archiving and deleting threads
     And the user chose to always remove orphaned worktrees
     When the user deletes "Old spike"
     Then the thread and its worktree are deleted without a question
+
+  # Upstream #23900: the worktree was counted as the subagent's and left behind.
+  @backlog @mc
+  Scenario: Deleting a thread whose subagents shared its worktree removes the worktree
+    Given "Old spike" and the subagents it started are the only threads using its worktree
+    And the user chose to always remove orphaned worktrees
+    When the user deletes "Old spike"
+    Then the worktree is removed once its subagents are no longer working
 
   @desktop @mobile @backlog-mobile
   Scenario: A worktree that cannot be removed is reported

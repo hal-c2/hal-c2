@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/19525
+#   https://github.com/pingdotgg/t3code/pull/22918
 #   https://github.com/pingdotgg/t3code/pull/14545
 #   https://github.com/pingdotgg/t3code/pull/16580
 #   https://github.com/pingdotgg/t3code/pull/14319
@@ -167,6 +168,12 @@ Feature: Provider instances
       | codex_work     | CW       |
       | Claude Code CLI | CC      |
       | 🙂 Smile       | 🙂S      |
+
+    # Upstream #22918: punctuation in a name was taken as an initial, so "Codex (hub)" read "C(".
+    Examples: punctuation is not an initial
+      | name           | initials |
+      | Codex (hub)    | CH       |
+      | Codex 'hub'    | CH       |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (normalizeProviderAccentColor)
   @backlog @desktop @mobile @priority-low

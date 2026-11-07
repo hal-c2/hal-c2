@@ -1,8 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23519
 #   https://github.com/pingdotgg/t3code/pull/19055
 #   https://github.com/pingdotgg/t3code/pull/19928
 #   https://github.com/pingdotgg/t3code/pull/16694
 #   https://github.com/pingdotgg/t3code/pull/14475
+#   https://github.com/pingdotgg/t3code/pull/22607
+#   https://github.com/pingdotgg/t3code/pull/22905
 #   docs/user/keybindings.md
 #   https://github.com/pingdotgg/t3code/pull/9434 (usage.open, mod+u outside a terminal)
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
@@ -202,6 +205,18 @@ Feature: Keybindings
       Then the usage page does not open
       And the terminal receives the key
 
+    # Upstream #22905: the shortcut handlers and the palette never knew whether Usage was open,
+    # so a binding conditioned on "usagePageOpen" never matched and the second press stayed.
+    @desktop @backlog @priority-low
+    Scenario: A custom usage shortcut can toggle Usage by going back
+      Given mod+u is bound to "usage.open" when "!usagePageOpen"
+      And mod+u is bound to "navigation.back" when "usagePageOpen"
+      And the user is on thread "A"
+      When the user presses mod+u
+      Then the usage page opens
+      When the user presses mod+u again
+      Then the user is back on thread "A"
+
   Rule: The desktop shell honours the web keymap
 
     The desktop shell runs every command it has itself, from a window shortcut. A key with
@@ -375,6 +390,26 @@ Feature: Keybindings
       Then the composer's own undo runs
       And the thread stays settled
 
+    # Upstream #22607: right after a settle, snooze, archive or unpin, mod+z undoes it even from the
+    # composer, until the user types or presses another key. Replaces the scenario above once the
+    # desktop carries it.
+    @backlog @desktop @priority-high
+    Scenario: Undo right after a sidebar action works from the composer
+      Given the user settled a thread from the sidebar
+      And the composer has keyboard focus and holds a saved draft
+      When the user presses mod+z
+      Then the thread is no longer settled
+      And the draft is unchanged
+
+    # Upstream #22607: holding the undo shortcut undoes one action.
+    @backlog @desktop
+    Scenario: Holding mod+z undoes only the last sidebar action
+      Given the user settled a thread from the sidebar
+      And the composer has keyboard focus and holds a draft the user typed earlier
+      When the user holds mod+z
+      Then the thread is no longer settled
+      And the draft is unchanged
+
     @desktop
     Scenario: Back and forward move through visited threads like browser history
       Given the user opened thread "A" and then thread "B"
@@ -382,6 +417,17 @@ Feature: Keybindings
       Then thread "A" is shown
       When the user goes forward
       Then thread "B" is shown
+
+    # Upstream #23519: going back could show a thread the sidebar had filtered out, hidden past
+    # its preview limit or scrolled away.
+    @backlog @desktop
+    Scenario: Going back or forward shows the thread in the sidebar
+      Given the user opened thread "A" in "shop" and then thread "B" in "docs"
+      And the sidebar is filtered to "docs", with "A" past the threads it shows of "shop"
+      When the user goes back
+      Then the sidebar's filter widens to show "shop"
+      And "A" is listed and scrolled into view
+      But while the sidebar holds a search, "A" is shown once the search is cleared
 
     @desktop
     Scenario: A new thread may ask which project to use

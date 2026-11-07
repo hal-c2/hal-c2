@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23467
 #   https://github.com/pingdotgg/t3code/pull/22128
 #   https://github.com/pingdotgg/t3code/pull/15870
 #   https://github.com/pingdotgg/t3code/pull/16329
@@ -7,6 +8,9 @@
 #   https://github.com/pingdotgg/t3code/pull/18698
 #   https://github.com/pingdotgg/t3code/pull/18351
 #   https://github.com/pingdotgg/t3code/pull/18476
+#   https://github.com/pingdotgg/t3code/pull/25477
+#   https://github.com/pingdotgg/t3code/pull/25627
+#   https://github.com/pingdotgg/t3code/pull/21395
 #   apps/mobile/src/connection/app-state-wakeups.ts (probe vs reconnect after 10 seconds)
 #   apps/mobile/src/connection/background-activity.ts
 #   apps/mobile/src/connection/background-activity-scopes.ts
@@ -61,6 +65,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then the thread header's Git menu and the Git sheet read "1 changed"
     And the status is asked for once for each place that shows it
 
+  # Upstream #25627: the app reopened on "Thread unavailable" before it had read its cache.
   @mobile @priority-high
   Scenario: Cached threads open without a connection
     Given "My MacBook" is unreachable
@@ -68,11 +73,26 @@ Feature: Staying useful through backgrounding and bad connections
     Then the last known conversation is shown
     And the user is told cached data remains available until the connection returns
 
-  @mobile
-  Scenario: A thread never opened before cannot be shown offline
-    Given "My MacBook" is unreachable
+  # Upstream #25627: a thread that cannot load is not a dead end; it gives way to a new task.
+  @backlog @mobile
+  Scenario Outline: A thread that cannot be shown gives way to a new task
+    Given <why>
     When the user opens a thread the phone has never loaded
-    Then the user is told the thread will load when the connection returns
+    Then a new task's draft opens on "My MacBook" in its place
+
+    Examples:
+      | why                                                            |
+      | "My MacBook" is unreachable                                     |
+      | "My MacBook" is still reconnecting after a failed connection     |
+      | the thread was deleted                                         |
+
+  # Upstream #25627: an environment reads as connecting until its connection first reports.
+  @backlog @shared
+  Scenario: An environment reads as connecting until its connection reports
+    Given the app has just opened and "My MacBook" has not answered yet
+    When the user looks at "My MacBook" or opens one of its cached threads
+    Then "My MacBook" reads as connecting, not as available or unavailable
+    And the cached thread opens from the client's cache without waiting for the connection
 
   # Upstream #18351. Changing a pull request (reviewing, merging, commenting) still needs
   # the connection; only reading and drafting work offline.
@@ -187,6 +207,7 @@ Feature: Staying useful through backgrounding and bad connections
     When the task is not using a new worktree
     Then the status reads "Starting…"
 
+  # Upstream #25477: a new thread read before its creation landed was marked unavailable.
   @backlog @mobile
   Scenario: A new task's thread is not read before the environment has created it
     Given the user started a new task over a slow connection
@@ -207,6 +228,43 @@ Feature: Staying useful through backgrounding and bad connections
     Then the status offers to open the agents and says "3 queued"
     When the user chooses the queued messages
     Then the queue opens for reordering, steering or removal
+
+  # Upstream #21395: background work that outlives the turn is reachable from the status, and
+  # Stop ends it without touching the draft.
+  @backlog @mobile @priority-high
+  Scenario: Background work left after the turn can be seen and stopped
+    Given the turn in "Fix checkout" ended with a subagent still running
+    Then the thread's status says one piece of background work is running and offers Stop
+    When the user opens the background work
+    Then the running subagent is listed and leads to its thread
+    When the user chooses Stop
+    Then the subagent is stopped
+    And the draft in "Fix checkout" is kept
+
+  # Upstream #21395: a stop the user may not make, or that fails, says so and can be retried.
+  @backlog @mobile
+  Scenario: A stop that fails can be tried again
+    Given "Fix checkout" has a subagent running after its turn
+    And the environment refuses the stop
+    When the user chooses Stop
+    Then the user is told the work could not be stopped
+    And Stop is offered again
+
+  # Upstream #21395: the open thread's status shows its snooze, settle and woke state with the
+  # action that undoes it.
+  @backlog @mobile
+  Scenario Outline: An open thread's status offers the way back from its state
+    Given "Fix checkout" <state>
+    When the user opens "Fix checkout"
+    Then the thread's status says "<status>" and offers "<action>"
+    When the user chooses "<action>"
+    Then "Fix checkout" <after>
+
+    Examples:
+      | state                     | status           | action    | after                     |
+      | is settled                | Settled          | Un-settle | is active again           |
+      | is snoozed until tomorrow | Snoozed          | Wake now  | is active again           |
+      | woke from a snooze        | Woke from snooze | Dismiss   | is no longer marked woke  |
 
   @backlog @mobile
   Scenario: A conversation that cannot be loaded says why
@@ -255,6 +313,15 @@ Feature: Staying useful through backgrounding and bad connections
     When the user sends "first" and then "second" in "Fix checkout"
     And "My MacBook" becomes reachable
     Then "first" is sent before "second"
+
+  # Upstream #23467: messages queued offline stay at the bottom of the thread, marked pending,
+  # and the thread stays selected in the sidebar.
+  @backlog @mobile @priority-low
+  Scenario: A message written offline waits at the bottom of the thread, marked as waiting
+    Given "My MacBook" is unreachable
+    When the user sends "first" in "Fix checkout"
+    Then "first" is shown at the bottom of "Fix checkout" as waiting to send
+    And "Fix checkout" stays selected in the sidebar
 
   @mobile @priority-high
   Scenario: A message the environment rejects after reconnecting is kept for the user

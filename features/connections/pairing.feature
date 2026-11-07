@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23789
 #   https://github.com/pingdotgg/t3code/pull/19902
 #   https://github.com/pingdotgg/t3code/pull/10958
 #   docs/user/remote-access.md (Pair over a LAN or private network, Manage or revoke access)
@@ -41,6 +42,14 @@ Feature: Pairing a client with an environment
     When an operator asks the MC for a pairing link with its LAN address
     Then it prints the address with a one-time token
     And the token grants standard scopes for five minutes
+
+  # Upstream #23789: pairing against an MC on another protocol printed a token it could not use.
+  @backlog @mc
+  Scenario: A pairing command refuses an MC that speaks another protocol
+    Given the running MC speaks another protocol than the pairing command
+    When an operator asks for a pairing link
+    Then the command fails naming both protocols and the command that pairs with that MC
+    And no token, database or tailnet setting is written
 
   @mc
   Scenario: A pairing link names the address the operator gives it

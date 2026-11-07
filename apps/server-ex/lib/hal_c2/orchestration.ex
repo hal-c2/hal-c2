@@ -900,7 +900,17 @@ defmodule HalC2.Orchestration do
             )
 
           positions = with_changes(state, requeued) |> first_in_queue(run_id)
-          {requeued ++ Enum.reject(positions, &is_nil/1), queue_waits(thread)}
+
+          # Queued again, the message interrupts the target and runs next (the
+          # caller restarts it), so the target ends steered by it.
+          case queue_waits(thread) do
+            :queued ->
+              steered = steered_by(state, target_id, run_id)
+              {requeued ++ Enum.reject([steered | positions], &is_nil/1), :queued}
+
+            waits ->
+              {requeued ++ Enum.reject(positions, &is_nil/1), waits}
+          end
       end
     end
   end
@@ -2646,10 +2656,34 @@ defmodule HalC2.Orchestration do
     queued_id = command["queuedRunId"]
     target_id = command["targetRunId"]
 
-    with {:ok, result} <- queue_change(thread_id, &first_in_queue(&1, queued_id)) do
+    with {:ok, result} <-
+           queue_change(
+             thread_id,
+             &[steered_by(&1, target_id, queued_id) | first_in_queue(&1, queued_id)]
+           ) do
       restart_target(thread_id, target_id)
       {:ok, result}
     end
+  end
+
+  # Marks the active run `run_id` as interrupted for the steer that runs as `steer_id`,
+  # so a client can tell a reply a steer cut off from one a stop, a crash or a
+  # restart of the MC left interrupted.
+  defp steered_by(state, nil, steer_id) do
+    case Enum.find(StreamState.list(state, "run"), &(&1["status"] in @active_statuses)) do
+      nil -> nil
+      active -> steered_by(state, active["id"], steer_id)
+    end
+  end
+
+  defp steered_by(state, run_id, steer_id) do
+    upsert(state, "run", run_id, fn
+      %{"status" => status} = run when status in @active_statuses ->
+        Map.put(run, "steeredByRunId", steer_id)
+
+      _ ->
+        nil
+    end)
   end
 
   # Interrupts the promoted message's target, whose end starts the queue's head. A
@@ -4112,7 +4146,10 @@ defmodule HalC2.Orchestration do
             upsert(state, "run", queued_run["id"], &Map.put(&1, "queuePosition", position)),
           do: change
 
-    {[create("run", ids.run, run), create("message", message_id, message)] ++ shifted,
+    steered = if restart_of, do: [steered_by(state, restart_of, ids.run)], else: []
+
+    {[create("run", ids.run, run), create("message", message_id, message)] ++
+       shifted ++ Enum.reject(steered, &is_nil/1),
      {:ok, if(restart_of, do: {:restart, restart_of, ids.run}, else: :queued)}}
   end
 

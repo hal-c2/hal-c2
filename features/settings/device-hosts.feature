@@ -1,5 +1,9 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/17440
+#   https://github.com/pingdotgg/t3code/pull/21842
+#   https://github.com/pingdotgg/t3code/pull/21843
+#   https://github.com/pingdotgg/t3code/pull/21844
+#   https://github.com/pingdotgg/t3code/pull/21846
 #   apps/web/src/components/settings/DeviceHostsSettings.tsx
 #   apps/web/src/components/settings/DeviceHostEditor.tsx
 #   apps/web/src/components/settings/deviceHostsSettings.logic.ts (updateDeviceHosts)
@@ -106,3 +110,125 @@ Feature: Device hosts
       When the MC opens a tunnel to the device host "mac-mini"
       Then the tunnel uses a connection of its own
       And closing it leaves no forwards behind
+
+  # Upstream #21846: an EAS Simulator host runs iOS simulators in Expo's cloud for one
+  # environment, which holds the Expo credential and starts the sessions. Sessions bill the
+  # Expo account until they stop, so every session is bounded. Not an SSH host and not a
+  # machine of the cluster, so this is not dropped with SSH hosts.
+  Rule: EAS Simulator hosts
+
+    # Upstream #21842: a host holds a label, an optional EAS project and its session bounds.
+    @backlog @desktop @priority-low
+    Scenario: An EAS Simulator host is added with bounds on its sessions
+      When the user adds an EAS Simulator host "Cloud iPhone" to "Laptop" with sessions of at most 60 minutes, 10 idle minutes and 2 at once
+      Then "Cloud iPhone" is listed with those limits
+
+    # Upstream #21842: EAS caps a session at 115 minutes and its idle time below its length.
+    @backlog @desktop @priority-low
+    Scenario Outline: EAS Simulator session limits EAS would refuse cannot be saved
+      When the user sets an EAS Simulator host's sessions to <length> minutes with <idle> idle minutes
+      Then the host cannot be saved and the user is told why
+
+      Examples:
+        | length | idle |
+        | 120    | 10   |
+        | 30     | 30   |
+
+    # Upstream #21843: the credential is the host's saved token, then EXPO_TOKEN, then the
+    # session "eas login" keeps; no Expo CLI is needed.
+    @backlog @mc @priority-low
+    Scenario Outline: An EAS Simulator host signs in with the first credential it finds
+      Given <available>
+      When the MC signs in to Expo for the EAS Simulator host
+      Then it uses <used>
+
+      Examples:
+        | available                                                          | used                   |
+        | a token saved for the host, EXPO_TOKEN and an "eas login" session | the saved token        |
+        | EXPO_TOKEN and an "eas login" session                              | EXPO_TOKEN             |
+        | only an "eas login" session                                        | the "eas login" session |
+
+    # Upstream #21843: the saved token is a secret setting.
+    @backlog @mc @priority-low
+    Scenario: An EAS Simulator host's token never reaches clients
+      Given the EAS Simulator host has a saved access token
+      When a client reads the settings
+      Then the token is redacted
+      And saving the redacted value back keeps the saved token
+
+    # Upstream #21843: a credential that is not printable text is refused without echoing it.
+    @backlog @mc @priority-low
+    Scenario: A malformed Expo credential is refused naming where it came from
+      Given EXPO_TOKEN holds a token with a newline in it
+      When the MC signs in to Expo for the EAS Simulator host
+      Then the sign-in is refused naming EXPO_TOKEN
+      And the token is not shown
+
+    # Upstream #21843: without a project on the host, sessions run under the EAS project the
+    # thread's app config names.
+    @backlog @mc @priority-low
+    Scenario: An EAS Simulator session runs under the thread's EAS project
+      Given the EAS Simulator host names no project
+      And the thread's project has an app config naming the EAS project "shop-app"
+      When the thread opens the host's iPhone
+      Then the session runs under "shop-app"
+
+    # Upstream #21844: opening the host's iPhone starts a session and shows it like any device.
+    @backlog @mc @desktop @priority-low
+    Scenario: Opening an EAS Simulator host's iPhone starts a cloud session
+      When the user opens the iPhone of the EAS Simulator host "Cloud iPhone"
+      Then an EAS Simulator session starts with the host's limits
+      And once it runs the thread shows it like any other device
+
+    # Upstream #21844: powering off stops the session; closing the panel leaves it to its idle limit.
+    @backlog @mc @priority-low
+    Scenario: Powering off an EAS Simulator stops its session
+      Given an EAS Simulator session is running for the thread
+      When the user powers the device off
+      Then the session is stopped and stops billing the account
+
+    # Upstream #21844: the host refuses to start past its concurrent session limit.
+    @backlog @mc @priority-low
+    Scenario: An EAS Simulator host refuses a session past its limit
+      Given the EAS Simulator host allows 2 sessions at once and 2 are running
+      When another thread opens the host's iPhone
+      Then the session is refused and the user is told the host's limit is reached
+
+    # Upstream #21844: a session is recorded before it is created, so one a crashed MC left
+    # behind is found and stopped; sessions started elsewhere on the account are left alone.
+    @backlog @mc @priority-low
+    Scenario: EAS Simulator sessions an MC left behind are stopped when it starts again
+      Given the MC stopped while an EAS Simulator session it started was running
+      And another session on the same Expo account was started elsewhere
+      When the MC starts again
+      Then the session it started is stopped
+      And the other session keeps running
+
+    # Upstream #21844: removing or changing the host, or turning device support off, stops its sessions.
+    @backlog @mc @priority-low
+    Scenario: Removing an EAS Simulator host stops its sessions
+      Given an EAS Simulator session is running on the host "Cloud iPhone"
+      When the user removes "Cloud iPhone"
+      Then the session is stopped
+
+    # Upstream #21846: the editor checks the account as it opens and on "Check account".
+    @backlog @desktop @priority-low
+    Scenario: The EAS Simulator editor names the Expo account and its projects
+      Given the MC signs in to Expo as "julius" through its "eas login" session
+      When the user opens the EAS Simulator host editor
+      Then it says the host signs in as "julius" through "eas login"
+      And the user can pick the session project from that account's projects
+
+    # Upstream #21846: a rejected token is shown in the editor.
+    @backlog @desktop @priority-low
+    Scenario: A rejected Expo token is called out in the EAS Simulator editor
+      Given the EAS Simulator host's saved token was revoked
+      When the user chooses "Check account"
+      Then the editor says the token was rejected
+
+    # Upstream #21846: an MC that does not know EAS hosts would drop them on save.
+    @backlog @desktop @priority-low
+    Scenario: EAS Simulator hosts are offered only for MCs that support them
+      Given the environment "Old" runs an MC that does not know EAS Simulator hosts
+      When the user opens the Integrations settings for "Old"
+      Then no EAS Simulator section is shown

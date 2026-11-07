@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18827
+#   https://github.com/pingdotgg/t3code/pull/21924
 #   docs/user/appearance.md (Custom themes)
 #   apps/web/src/components/settings/ThemeSettings.tsx
 #   apps/web/src/components/settings/ThemeImportDialog.tsx
@@ -15,6 +17,7 @@
 #   packages/shared/src/keybindings.ts (themeEditor.toggle)
 #   https://github.com/pingdotgg/t3code/pull/14499
 #   https://github.com/pingdotgg/t3code/pull/14498
+#   https://github.com/pingdotgg/t3code/pull/25076
 
 Feature: Custom themes
   Users create, import, edit, share and remove their own themes, and can pick a color
@@ -261,6 +264,16 @@ Feature: Custom themes
       When the user closes the editor without saving
       Then the app is drawn with the stored theme again
 
+    # Upstream #18827: code highlighting kept the saved appearance while a draft of the other one
+    # was previewed.
+    @backlog @desktop @priority-low
+    Scenario: Code is highlighted for the draft's appearance while it is previewed
+      Given the appearance is Dark
+      And the theme editor previews a light draft
+      Then code in the timeline and the diff is highlighted in light colors
+      When the user closes the editor without saving
+      Then code is highlighted in dark colors again
+
     @backlog @desktop
     Scenario: A theme not made in the guided view opens with its colors untouched
       Given "Nord" was imported from a file
@@ -402,11 +415,14 @@ Feature: Custom themes
       When the user expands it again
       Then the changes are still there
 
+    # Upstream #25076: growing the window back left the editor at the edge it was pushed to.
     @backlog @desktop
     Scenario: The theme editor stays reachable when the window shrinks
       Given the user moved and resized the theme editor
       When the window becomes smaller than the editor's position
       Then the editor is moved back inside the window so its header can still be grabbed
+      When the window grows back to its size
+      Then the editor is back where the user left it, at the size the user gave it
 
     # Legacy: apps/web/src/components/settings/ThemeEditorPanel.tsx (resize grip, MIN_WIDTH, MIN_HEIGHT)
     @backlog @desktop
@@ -525,6 +541,15 @@ Feature: Custom themes
         | one HAL-C2 theme file       | the theme is added              |
         | one VS Code theme file       | the theme is added              |
         | three theme files at once    | the user is told "3 themes added" |
+
+    # Upstream #21924: a theme error colour too dim to read became white, so destructive
+    # buttons and the stop button drew white on white.
+    @backlog @desktop @priority-low
+    Scenario: An imported VS Code theme keeps the hue of its status colours
+      When the user imports a VS Code theme whose error red reads 2.7:1 on its background
+      Then the theme's error colour is still a red
+      And it reads at least 4.5:1 on that background
+      And a status colour that already read 4.5:1 is kept as it was
 
     @desktop
     Scenario: Pasting theme JSON
