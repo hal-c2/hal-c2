@@ -529,6 +529,26 @@ Item {
             compare(sent.payload.id, "tc-1");
         }
 
+        // Removing the chip removes the context; the controller strips the
+        // [@title](hal-c2-context://v1/thread/...) link from the draft with it
+        // (tst_ComposerRegression's removingAThreadChipStripsItsLinkFromTheDraft).
+        function test_threadChipNamesTheThreadAndRemovesIt() {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    text: "see [@Fix the login](hal-c2-context://v1/thread/thread_th-1) please",
+                    threadContexts: [{ id: "th-1", label: "Fix the login" }]
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const chip = findChild(composer, "threadContext-th-1");
+            verify(!!chip);
+            compare(chip.text, "Fix the login");
+            mouseClick(chip);
+            const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.terminalContext.remove");
+            compare(sent.payload.id, "th-1");
+        }
+
         function test_quotedReplyChipTakesACommentAndRemoves() {
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, {

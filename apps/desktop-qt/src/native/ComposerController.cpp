@@ -386,8 +386,25 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
       action == QLatin1String("composer.reviewComment.remove")) {
     if (target.isEmpty()) return true;
     const QString id = map.value(QStringLiteral("id")).toString();
-    if (m_drafts[target].excerpts.removeIf([&](const Excerpt& context) { return context.id == id; }) > 0) {
-      publish();
+    Draft& kept = m_drafts[target];
+    // A carried thread's link is in the text where it was chosen: taking
+    // its chip off takes the link out too, or the send carries a link with
+    // no record behind it.
+    const bool threadLink = std::any_of(kept.excerpts.cbegin(), kept.excerpts.cend(),
+                                        [&](const Excerpt& context) { return context.id == id && !context.thread.isEmpty(); });
+    if (kept.excerpts.removeIf([&](const Excerpt& context) { return context.id == id; }) > 0) {
+      bool published = false;
+      if (threadLink) {
+        const QString text = draft(target);
+        const QString stripped =
+            QString(text).remove(QRegularExpression(QStringLiteral(" ?\\[@[^\\]]*\\]\\(hal-c2-context://v1/thread/thread_%1\\)")
+                                                        .arg(QRegularExpression::escape(id))));
+        if (stripped != text) {
+          setText(target, stripped, std::min(kept.cursor, int(stripped.size())));
+          published = true;
+        }
+      }
+      if (!published) publish();
     }
     return true;
   }

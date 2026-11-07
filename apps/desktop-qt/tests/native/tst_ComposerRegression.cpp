@@ -805,6 +805,44 @@ private slots:
     onInstance(QStringLiteral("antigravity"));
     QTRY_COMPARE(shell.composerState().value(QStringLiteral("canSteer")).toBool(), false);
   }
+
+  // Taking a carried thread's chip off dropped its record but left the
+  // [@title](hal-c2-context://v1/thread/...) link selectSuggestion put in
+  // the draft, so the send carried a link with no record behind it.
+  void removingAThreadChipStripsItsLinkFromTheDraft() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QJsonObject other = shell.mc.threads.value(QStringLiteral("t1"));
+    other.insert(QStringLiteral("id"), QStringLiteral("t2"));
+    other.insert(QStringLiteral("title"), QStringLiteral("Other thread"));
+    shell.mc.threads.insert(QStringLiteral("t2"), other);
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    shell.mc.sendRow(QStringLiteral("t2"), other);
+    QVERIFY(shell.open());
+    shell.type(QStringLiteral("look @"));
+    QTRY_VERIFY(std::any_of(shell.composerState().value(QStringLiteral("suggestions")).toList().cbegin(),
+                            shell.composerState().value(QStringLiteral("suggestions")).toList().cend(), [](const QVariant& entry) {
+                              return entry.toMap().value(QStringLiteral("id")).toString() == QLatin1String("thread:env-a:t2");
+                            }));
+    shell.bridge->dispatch(QStringLiteral("composer.suggest.select"),
+                           QVariantMap{{QStringLiteral("id"), QStringLiteral("thread:env-a:t2")}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 1);
+    QVERIFY(shell.composerState().value(QStringLiteral("text")).toString().contains(
+        QStringLiteral("[@Other thread](hal-c2-context://v1/thread/thread_")));
+    const QString id = shell.composerState()
+                           .value(QStringLiteral("threadContexts"))
+                           .toList()
+                           .constFirst()
+                           .toMap()
+                           .value(QStringLiteral("id"))
+                           .toString();
+
+    // What the chip's click sends (Composer.qml).
+    shell.bridge->dispatch(QStringLiteral("composer.terminalContext.remove"), QVariantMap{{QStringLiteral("id"), id}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 0);
+    QTRY_VERIFY(!shell.composerState().value(QStringLiteral("text")).toString().contains(QStringLiteral("hal-c2-context")));
+    QCOMPARE(shell.composerState().value(QStringLiteral("text")).toString().trimmed(), QStringLiteral("look"));
+  }
 };
 
 int main(int argc, char** argv) {
