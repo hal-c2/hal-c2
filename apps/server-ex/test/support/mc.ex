@@ -1961,6 +1961,7 @@ defmodule HalC2.Test.Mc.World do
       |> Map.put_new("FAKE_CODEX_LOG", Path.join(context.mc.home, "codex-requests.log"))
       |> Map.put_new("FAKE_CODEX_REJECT_STEER", Path.join(context.mc.home, "reject-steer"))
       |> Map.put_new("FAKE_CODEX_HOLD_STEER", Path.join(context.mc.home, "hold-steer"))
+      |> Map.put_new("FAKE_CODEX_KEEP_TURN", Path.join(context.mc.home, "keep-turn"))
       |> Map.put_new("FAKE_ACP_LOG", Path.join(context.mc.home, "acp-requests.log"))
       |> Map.put_new("FAKE_CLAUDE_LOG", Path.join(context.mc.home, "claude-prompts.log"))
       |> Map.put_new("FAKE_CODEX_GATE", Path.join(context.mc.home, "gate"))
