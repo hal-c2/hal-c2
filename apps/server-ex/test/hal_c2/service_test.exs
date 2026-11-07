@@ -95,6 +95,26 @@ defmodule HalC2.ServiceTest do
     assert %{"current" => true, "problems" => []} = Service.status()
   end
 
+  test "a start clears restart-pending only on the version it names or a later one" do
+    pending = fn -> "restart-pending" in Service.status()["problems"] end
+    {:ok, _} = Service.install()
+
+    Service.mark_restart_pending("1.4.0")
+    Service.started("1.3.9")
+    assert pending.()
+    Service.started("1.4.0")
+    refute pending.()
+
+    Service.mark_restart_pending("1.4.0")
+    Service.started("1.10.0")
+    refute pending.()
+
+    # A marker no version compares with stands only for what is installed, which runs.
+    Service.mark_restart_pending("latest")
+    Service.started("1.3.0")
+    refute pending.()
+  end
+
   # The programs a leaving MC kept, under the home it runs on now.
   defp kept_program(thread) do
     {:ok, sub} = HalC2.Subprocess.start(["sh", "-c", "while read l; do :; done"], durable: thread)

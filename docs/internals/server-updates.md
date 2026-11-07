@@ -63,6 +63,14 @@ records the rollback and restarts into the new version through `bin/hal-c2-servi
 `releases/start_erl.data` names the version the next boot runs. The previous file is kept beside
 it until the new version boots, and `bin/hal-c2-service` puts it back and starts the old version
 if it cannot.
+Before it stops, the MC asks the staged version whether it can run here
+([`HalC2.Upgrade.Preflight`](../../apps/server-ex/lib/hal_c2/upgrade/preflight.ex)): it starts the
+bundle's own launcher on the bundle's own runtime and loads every module, so a runtime or NIF built
+for another machine fails while the old MC still serves. The bundle's launchers replace the
+release's `bin/` only after that, since `bin/hal-c2-service` runs whichever `bin/hal_c2` is there.
+Each boot from a release then removes the versions nothing can use any more
+([`HalC2.Upgrade.Prune`](../../apps/server-ex/lib/hal_c2/upgrade/prune.ex)); it keeps the way
+back and anything a process on the machine runs from, and removes nothing when it cannot tell.
 `HalC2.Upgrade` takes no copy of the SQLite file. A rollback restores the code, not the data, so a
 migration must be written to be read by the version before it, or must not run in an update that
 can fail to boot.
@@ -82,7 +90,9 @@ ends every run still active on the MC's threads as interrupted before the MC tak
 Otherwise a thread would stay "running" and refuse its next message. A run the MC accepted but
 never handed to its provider goes back to the front of the queue instead.
 
-Continuing a cut-off thread is a project setting (`continueThreadsAfterServerUpdate`), and
-`continue/0` runs only after the MC can start turns. A slow provider must not
+Continuing a cut-off thread is a project setting (`continueThreadsAfterServerUpdate`), or asked
+of one restart by the update itself (`continueRunningThreads`). That request travels in the
+`restarting` outcome and `HalC2.Upgrade` reads it as it starts, before Recovery, so it covers that
+boot alone. `continue/0` runs only after the MC can start turns. A slow provider must not
 delay readiness. Work a provider left running in the background after its turn dies with the
 process and is ended the same way.
