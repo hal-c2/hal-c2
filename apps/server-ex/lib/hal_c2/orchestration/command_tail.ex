@@ -63,6 +63,12 @@ defmodule HalC2.Orchestration.CommandTail do
     :ok
   end
 
+  @doc "Forgets every command's output on a thread: its run ended, so none is running."
+  def drop_thread(thread_id) do
+    if running?(), do: :ets.match_delete(@table, {{thread_id, :_}, :_, :_})
+    :ok
+  end
+
   @doc "`text` cut to its last `limit` bytes, from a whole character."
   def cut(text, limit) when byte_size(text) <= limit, do: text
 

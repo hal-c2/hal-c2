@@ -497,12 +497,13 @@ defmodule HalC2.Orchestration.TurnWriter do
               stream,
               "turn-item",
               item_id,
-              &Map.merge(&1, %{
-                "status" => status,
-                "streaming" => false,
-                "completedAt" => at,
-                "updatedAt" => at
-              })
+              &(Map.merge(&1, %{
+                  "status" => status,
+                  "streaming" => false,
+                  "completedAt" => at,
+                  "updatedAt" => at
+                })
+                |> stopped_output(item, state.thread_id))
             ),
             Orchestration.upsert(
               stream,
@@ -523,8 +524,21 @@ defmodule HalC2.Orchestration.TurnWriter do
           do: change
     end)
 
+    for {_native, %{kind: :command, id: item_id}} <- state.items,
+        do: CommandTail.delete(state.thread_id, item_id)
+
     state
   end
+
+  # A command stopped mid-run keeps what it had printed.
+  defp stopped_output(%{"output" => ""} = item, %{kind: :command, id: id}, thread_id) do
+    case CommandTail.get(thread_id, id) do
+      nil -> item
+      tail -> %{item | "output" => tail}
+    end
+  end
+
+  defp stopped_output(item, _meta, _thread_id), do: item
 
   @doc """
   Marks the turn as running: its provider turn (`ids.provider_turn`), attempt, run,
@@ -735,6 +749,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp finished(state, status, failure, queue?) do
     ids = state.turn.ids
     TurnWatch.release(ids.run)
+    # A command the run left running has no more output to show.
+    CommandTail.drop_thread(state.thread_id)
 
     # The turn may have changed the checkout; clients watching it see the result.
     if cwd = state.turn.cwd do

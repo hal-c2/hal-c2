@@ -88,6 +88,28 @@ defmodule HalC2.Orchestration.TurnWriterTest do
       assert CommandTail.get("t1", "i2") == nil
     end
 
+    test "a command the turn stopped keeps what it printed and frees its tail" do
+      alias HalC2.Orchestration.CommandTail
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, [{"node", "n2", %{"s" => %{"id" => "n2"}}}])
+
+      {:ok, _} =
+        HalC2.Streams.commit("t1", :thread, [
+          {"turn-item", "i2", %{"s" => %{"status" => "running"}}}
+        ])
+
+      state = state("paragraph")
+      state |> TurnWriter.buffer("c", "output", "partial\n") |> TurnWriter.flush(:timer)
+
+      _ = TurnWriter.close_open_items(state, "interrupted")
+      assert text("i2")["output"] == "partial\n"
+      assert CommandTail.get("t1", "i2") == nil
+
+      # A run that ends with a command still running leaves no tail either.
+      CommandTail.append("t1", "i9", "left")
+      CommandTail.drop_thread("t1")
+      assert CommandTail.get("t1", "i9") == nil
+    end
+
     test "turn mode writes assistant text only at a boundary" do
       state =
         state("turn") |> TurnWriter.buffer("a", "text", "One\n\nTwo") |> TurnWriter.flush(:timer)
