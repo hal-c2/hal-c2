@@ -355,6 +355,10 @@ const Steps steps([] {
       expect(kindOf(item) != QLatin1String("provider-slash-command"), QStringLiteral("a provider command is offered: %1").arg(describeMenu(world)));
     }
   });
+  step(QStringLiteral("a built-in command or skill is offered"), [](World& world, const Captures&, const Table&) {
+    waitForOffered(world, [](const QVariant& item) { return kindOf(item) == QLatin1String("skill") || idOf(item).startsWith(QLatin1String("slash:")); },
+                   QStringLiteral("a built-in command or skill to be offered"));
+  });
   step(QStringLiteral("the built-in model command is offered"), [](World& world, const Captures&, const Table&) {
     waitForOffered(world, [](const QVariant& item) { return idOf(item) == QLatin1String("slash:model"); }, QStringLiteral("/model to be offered"));
   });

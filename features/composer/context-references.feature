@@ -105,6 +105,22 @@ Feature: Referencing files, skills, commands and context
       | please /compact       | no provider command is offered             |
       | please /model         | the built-in model command is offered      |
 
+  @desktop
+  Scenario Outline: A slash typed after other text keeps its menu open while it heads for a name
+    Given the provider offers the command "compact"
+    And the provider offers the skill "review"
+    When the user types "<typed>" into the composer
+    Then no provider command is offered
+    And a built-in command or skill is offered
+
+    Examples:
+      | typed                |
+      | Please use /         |
+      | Please use /mo       |
+      | Please use /ski      |
+      | Please use /skill    |
+      | Please use /skill:re |
+
   @shared @backlog-mobile @backlog-tui
   Scenario: A slash typed after other text searches skills
     Given the provider offers the skill "review"

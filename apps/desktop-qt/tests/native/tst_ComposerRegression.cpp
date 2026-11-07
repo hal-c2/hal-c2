@@ -220,6 +220,23 @@ private slots:
              QStringLiteral("slash:model"));
   }
 
+  // The menu labels skills "/skill:<name>", so a word typed toward that label
+  // keeps the mid-line menu open rather than closing it mid-word.
+  void aSlashWordTypedTowardTheSkillLabelKeepsTheMenuOpen() {
+    const QJsonObject review{{QStringLiteral("name"), QStringLiteral("review")}, {QStringLiteral("enabled"), true}};
+    composer::Instance instance;
+    instance.driver = QStringLiteral("claudeAgent");
+    instance.skills = QJsonArray{review};
+    for (const char* word : {"s", "ski", "skill", "skill:", "skill:rev"}) {
+      const composer::Trigger t{QStringLiteral("slash-command"), QString::fromLatin1(word), 10, 10 + 1 + int(strlen(word)), true};
+      bool offersReview = false;
+      for (const auto& s : composer::slashItems(&instance, t, true, true, false)) offersReview |= s.label == QLatin1String("/skill:review");
+      QVERIFY2(offersReview, word);
+    }
+    const composer::Trigger other{QStringLiteral("slash-command"), QStringLiteral("skx"), 10, 14, true};
+    QVERIFY(composer::slashItems(&instance, other, true, true, false).isEmpty());
+  }
+
   // A bare `@` opened no menu. It is never searched, so the menu opens at
   // once and says nothing matches, as the web's did; a word after it says it
   // is searching until its search answers.

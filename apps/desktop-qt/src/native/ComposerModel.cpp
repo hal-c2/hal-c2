@@ -785,8 +785,10 @@ QList<Suggestion> slashItems(const Instance* instance, const Trigger& trigger, b
     // never picked instead of sending.
     if (trigger.midLine) {
       const QString wanted = item.group == 2 && query.startsWith(QLatin1String("skill:")) ? query.mid(6) : query;
+      // The menu labels skills "/skill:<name>", so typing toward that label names every skill.
       const bool named = item.name.toLower().startsWith(wanted) ||
-                         (item.group == 2 && skillLabel(item.skill).toLower().startsWith(wanted));
+                         (item.group == 2 && (skillLabel(item.skill).toLower().startsWith(wanted) ||
+                                              QStringLiteral("skill:").startsWith(query)));
       if (!named) continue;
     }
     std::optional<int> score;
