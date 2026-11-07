@@ -673,6 +673,14 @@ defmodule HalC2.Steps.Common do
     assert File.dir?(path), "the worktree #{path} was removed"
     assert path in worktrees(context.worktree.root)
     if control = context[:control], do: refute(File.exists?(control), "the sweep did not run")
+
+    # A scenario that knows why the sweep keeps it checks the sweep's own report.
+    if reason = context[:expected_reason] do
+      report = HalC2.StorageCleanup.report() || []
+      entry = Enum.find(report, &(&1["path"] == Path.expand(path)))
+      assert %{"outcome" => "kept", "reason" => ^reason} = entry
+    end
+
     context
   end
 

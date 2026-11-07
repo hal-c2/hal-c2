@@ -15,12 +15,18 @@ defmodule HalC2.Steps.Settings.Storage do
 
   # --- rules -------------------------------------------------------------------------
 
-  step ~r/^the user turned on deleting (?<rule>worktrees of deleted threads|worktrees idle for \d+ days|merged worktrees|unchanged worktrees)$/,
+  step ~r/^the user turned on deleting (?<rule>worktrees of deleted threads|worktrees idle for \d+ days|worktrees of threads settled for \d+ days|merged worktrees|unchanged worktrees)(?: only)?$/,
        %{args: [rule]} = context do
     rules =
       case rule do
         "worktrees of deleted threads" ->
           %{"worktreeOnDelete" => true}
+
+        "worktrees of threads settled for " <> days ->
+          %{
+            "worktreeSettledAfterDays" =>
+              days |> String.trim_trailing(" days") |> String.to_integer()
+          }
 
         "merged worktrees" ->
           %{"worktreeOnMerge" => true}
@@ -307,13 +313,593 @@ defmodule HalC2.Steps.Settings.Storage do
     context
   end
 
+  # --- settled threads ---------------------------------------------------------------
+
+  step "a thread settles and the MC sweeps storage within a minute", context do
+    context
+    |> World.worktree_thread("settled work")
+    |> World.patch_thread("settled work", %{"settledAt" => World.iso_from_now(0)})
+    |> World.sweep_storage()
+  end
+
+  step "the worktree is kept so the project's settle script can run in it", context do
+    assert File.dir?(context.worktree.path)
+    assert kept_reason(context) == "Settled moments ago"
+    context
+  end
+
+  step "the next sweep after that minute removes it", context do
+    past = World.iso_from_now(-61_000)
+
+    context =
+      context
+      |> World.patch_thread("settled work", %{"settledAt" => past, "createdAt" => past})
+      |> World.sweep_storage()
+
+    refute File.exists?(context.worktree.path)
+    assert outcome(context)["reason"] == "Settled for 0 days"
+    context
+  end
+
+  # --- the last look before removal --------------------------------------------------
+
+  step "a worktree about to be removed is being measured", context do
+    context =
+      context
+      |> World.update_settings(%{"storageCleanup" => %{"worktreeAfterDays" => 8}})
+      |> idle_worktree("idle work")
+
+    thread = World.thread_id(context, "idle work")
+    World.put_app_env(:storage_cleanup_hook, {__MODULE__, :start_turn_at, [self(), thread]})
+    context
+  end
+
+  step "its thread starts a turn before the measuring ends", context do
+    context = World.sweep_storage(context)
+    assert_received {:turn_started, :measuring}
+    assert World.row(context, "idle work")["activeRunId"]
+    assert kept_reason(context) == "Thread activity or shared worktree changed since check"
+    context
+  end
+
+  @doc false
+  # The sweep's `:measuring` stage: the thread's turn starts, its row committed before
+  # the sweep goes on.
+  def start_turn_at(test, thread, stage, _path) do
+    if stage == :measuring do
+      {id, run} = run(thread, "running", World.iso_from_now(0))
+      {:ok, _} = HalC2.Streams.commit(thread, :thread, [{"run", id, %{"s" => run}}])
+      :ok = HalC2.Streams.flush_shell(thread)
+      send(test, {:turn_started, stage})
+    end
+
+    :ok
+  end
+
+  # The sweep is held where it is about to remove the folder, holding its lease, while
+  # the terminal asks for that lease; the trace on the lease server is the receipt that
+  # the terminal is waiting before the sweep goes on.
+  step ~r/^a terminal is (?<action>opened|restarted) in that worktree while the sweep is removing it$/,
+       %{args: [action]} = context do
+    context = World.start_storage_cleanup(context)
+    World.start_terminals()
+    %{path: path, root: root} = context.worktree
+    thread = World.thread_id(context, "idle work")
+
+    # A terminal restarted into the worktree was running elsewhere (in the project).
+    if action == "restarted", do: World.open_terminal(thread, root)
+
+    input = %{"threadId" => thread, "terminalId" => "term-1", "cwd" => path}
+    World.put_app_env(:storage_cleanup_hook, {__MODULE__, :pause_at, [self(), :removing]})
+    sweep = Task.async(fn -> HalC2.StorageCleanup.sweep() end)
+
+    paused =
+      receive do
+        {:paused, :removing, pid} -> pid
+      after
+        30_000 -> flunk("the sweep never came to removing the worktree")
+      end
+
+    lease = Process.whereis(HalC2.WorkspaceLease)
+    :erlang.trace(lease, true, [:receive])
+    start = if action == "opened", do: :open, else: :restart
+    terminal = Task.async(fn -> apply(HalC2.Terminal, start, [input]) end)
+    terminal_pid = terminal.pid
+
+    receive do
+      {:trace, ^lease, :receive, {:"$gen_call", {^terminal_pid, _}, {:acquire, _}}} -> :ok
+    after
+      10_000 -> flunk("the terminal never asked for the worktree's lease")
+    end
+
+    :erlang.trace(lease, false, [:receive])
+    assert HalC2.WorkspaceLease.held() == [real(path)]
+    assert Task.yield(terminal, 0) == nil, "the terminal started while the sweep held the folder"
+    send(paused, :go)
+    assert :ok = Task.await(sweep, 30_000)
+    Map.put(context, :terminal_start, Task.await(terminal, 30_000))
+  end
+
+  @doc false
+  def pause_at(test, wanted, stage, _path) do
+    if stage == wanted do
+      send(test, {:paused, stage, self()})
+
+      receive do
+        :go -> :ok
+      after
+        30_000 -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  step "the sweep and the terminal's start run one after the other", context do
+    refute File.exists?(context.worktree.path), "the sweep did not remove the worktree"
+    assert {:error, %{"_tag" => "TerminalCwdNotFoundError"}} = context.terminal_start
+    context
+  end
+
+  step "the terminal is never started inside a folder that is being deleted", context do
+    path = context.worktree.path
+
+    refute Enum.any?(HalC2.Terminal.Hub.summaries(), fn t ->
+             t["status"] in ["starting", "running"] and
+               String.starts_with?(Path.expand(t["cwd"] || "/") <> "/", path <> "/")
+           end)
+
+    context
+  end
+
+  # --- deleted threads ---------------------------------------------------------------
+
+  step "a thread was deleted and its cleanup steps have not all finished", context do
+    HalC2.Test.Mc.ensure(HalC2.Orchestration.Effects)
+    context = World.worktree_thread(context, "deleted work")
+    id = World.thread_id(context, "deleted work")
+    World.put_app_env(:effects_hook, {__MODULE__, :hold_effect, [self(), id, "terminal.cleanup"]})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+    World.await_row(id, & &1["deletedAt"])
+
+    held =
+      receive do
+        {:effect_held, effect, pid} -> {effect, pid}
+      after
+        10_000 -> flunk("the deletion's terminal cleanup never ran")
+      end
+
+    Map.put(context, :held_effect, held)
+  end
+
+  @doc false
+  def hold_effect(test, thread, type, :execute, %{"threadId" => thread, "type" => type} = record) do
+    id = record["id"]
+    send(test, {:effect_held, id, self()})
+
+    receive do
+      {:release_effect, ^id} -> :ok
+    after
+      30_000 -> :ok
+    end
+  end
+
+  def hold_effect(_test, _thread, _type, _stage, _record), do: :ok
+
+  step "its worktree is kept", context do
+    assert File.dir?(context.worktree.path)
+    assert kept_reason(context) == "Thread deletion is still pending"
+    context
+  end
+
+  step "the cleanup steps have finished and the MC sweeps storage again", context do
+    {effect, pid} = context.held_effect
+    send(pid, {:release_effect, effect})
+    id = World.thread_id(context, "deleted work")
+    :ok = HalC2.Orchestration.Effects.drain(id)
+
+    assert Enum.all?(
+             HalC2.Orchestration.Effects.effects(id),
+             &(&1["status"] in ["succeeded", "cancelled"])
+           )
+
+    World.sweep_storage(context)
+  end
+
+  step "a deleted thread's worktree is set not to show untracked files in its status",
+       context do
+    context = deleted_worktree(context, "deleted work")
+    World.git!(context.worktree.path, ~w(config status.showUntrackedFiles no))
+    assert World.git!(context.worktree.path, ~w(status --porcelain)) == ""
+    context
+  end
+
+  step "it holds an untracked file {string}", %{args: [name]} = context do
+    File.write!(Path.join(context.worktree.path, name), "mine\n")
+    assert World.git!(context.worktree.path, ~w(status --porcelain)) == ""
+    Map.put(context, :untracked, name)
+  end
+
+  step "the worktree is kept with {string}", %{args: [name]} = context do
+    assert File.read!(Path.join(context.worktree.path, name)) == "mine\n"
+    assert kept_reason(context) == "Has uncommitted changes (1 file)"
+    context
+  end
+
+  # --- what the default branch has -----------------------------------------------------
+
+  step "a thread's worktree has commits the default branch does not have", context do
+    context |> origin() |> World.worktree_thread("branch work") |> commit("feature.txt")
+  end
+
+  step "a thread's worktree on branch {string} has commits the default branch does not have",
+       %{args: [branch]} = context do
+    context
+    |> origin()
+    |> World.worktree_thread("#{branch} work", nil, %{"branch" => branch})
+    |> commit("feature.txt")
+  end
+
+  step "no merged pull request covers them", context do
+    gh_rule(context, %{"args" => ["pr list", context.worktree.branch], "stdout" => []})
+  end
+
+  step ~r/^GitHub says pull request (?<number>\d+) from "(?<branch>[^"]+)" was squash merged (?<detail>.+)$/,
+       %{args: [number, branch, detail]} = context do
+    head = World.git!(context.worktree.path, ~w(rev-parse HEAD))
+    base = if detail =~ "release branch", do: "release", else: "main"
+    context = gh_rule(context, merged_pr(context, String.to_integer(number), branch, base, head))
+
+    if detail =~ "later commit",
+      do: commit(context, "later.txt"),
+      else: context
+  end
+
+  step "a thread's worktree whose pull request was squash merged at its current head", context do
+    context =
+      context |> origin() |> World.worktree_thread("squashed work") |> commit("feature.txt")
+
+    %{path: path, branch: branch} = context.worktree
+    head = World.git!(path, ~w(rev-parse HEAD))
+    gh_rule(context, merged_pr(context, 7, branch, "main", head))
+  end
+
+  step "its pull request was not read", context do
+    calls =
+      case File.read(Path.join(context.mc.home, "gh.log")) do
+        {:ok, log} -> log |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+        {:error, :enoent} -> []
+      end
+
+    refute Enum.any?(calls, &(Enum.join(&1["args"], " ") =~ "pr list")),
+           "the sweep asked for the pull request: #{inspect(calls)}"
+
+    context
+  end
+
+  # An origin whose default is "trunk", pushed to and never fetched from, so the
+  # checkout has no `origin/HEAD`.
+  step "the repository's remote was added by hand, so the checkout does not record its default branch",
+       context do
+    context = World.worktree_thread(context, "trunk work")
+    %{id: id, root: root} = World.project(context)
+    origin = Path.join([context.mc.home, "github.com", "acme", "#{id}.git"])
+    File.mkdir_p!(Path.dirname(origin))
+    World.git!(context.mc.home, ["init", "-q", "--bare", "-b", "trunk", origin])
+    World.git!(root, ["remote", "add", "origin", origin])
+    World.git!(root, ~w(push -q origin main:trunk))
+    assert {_, code} = System.cmd("git", ~w(symbolic-ref -q refs/remotes/origin/HEAD), cd: root)
+    assert code != 0
+    commit(context, "feature.txt")
+  end
+
+  step ~r/^the remote says its default is "trunk" and the worktree's commits are (?<where>on "trunk"|only on "main")$/,
+       %{args: [where]} = context do
+    %{path: path, branch: branch} = context.worktree
+    target = if where == ~s(on "trunk"), do: "trunk", else: "main"
+    World.git!(path, ["push", "-q", "origin", "#{branch}:#{target}"])
+    head = World.git!(path, ~w(rev-parse HEAD))
+    context = gh_rule(context, merged_pr(context, 9, branch, target, head))
+    if target == "main", do: Map.put(context, :expected_reason, "Not merged"), else: context
+  end
+
+  # Its commits are on a "main" the remote has, which a guess at the default would
+  # take as merged.
+  step "the remote cannot be asked for its default branch", context do
+    %{path: path, branch: branch, root: root} = context.worktree
+    World.git!(path, ["push", "-q", "origin", "#{branch}:main"])
+    head = World.git!(path, ~w(rev-parse HEAD))
+    missing = Path.join([context.mc.home, "github.com", "acme", "missing.git"])
+    World.git!(root, ["remote", "set-url", "origin", missing])
+    context = gh_rule(context, merged_pr(context, 9, branch, "main", head))
+    Map.put(context, :expected_reason, "Default branch is unavailable")
+  end
+
+  # --- statuses ------------------------------------------------------------------------
+
+  step ~r/^a thread whose last turn (?<ended>completed|was interrupted|failed|was cancelled|was rolled back) has been idle for 9 days with no pending work$/,
+       %{args: [ended]} = context do
+    status =
+      Map.fetch!(
+        %{
+          "completed" => "completed",
+          "was interrupted" => "interrupted",
+          "failed" => "failed",
+          "was cancelled" => "cancelled",
+          "was rolled back" => "rolled_back"
+        },
+        ended
+      )
+
+    context = idle_worktree(context, "idle work")
+    context = World.add_run(context, "idle work", status, World.iso_from_now(-World.days(9)))
+    row = World.row(context, "idle work")
+    assert row["status"] == status and row["activeRunId"] == nil
+    context
+  end
+
+  # --- shared worktrees ----------------------------------------------------------------
+
+  step "a thread and a subagent it delegated to share its worktree", context do
+    context |> idle_worktree("parent work") |> share("subagent work", "subagent")
+  end
+
+  step "a thread and two subagents it delegated to share its worktree on its branch", context do
+    context
+    |> idle_worktree("parent work")
+    |> share("first subagent", "subagent")
+    |> share("second subagent", "subagent", "first subagent")
+  end
+
+  step "all three have been idle for 9 days with no pending work", context do
+    for title <- ["parent work", "first subagent", "second subagent"],
+        do: assert(World.row(context, title)["status"] == "idle")
+
+    context
+  end
+
+  step ~r/^(?<condition>the subagent is on another branch|the subagent has no branch|a forked thread also works in the worktree|an unrelated thread also works in the worktree)$/,
+       %{args: [condition]} = context do
+    case condition do
+      "the subagent is on another branch" ->
+        World.patch_thread(context, "subagent work", %{"branch" => "other"})
+
+      "the subagent has no branch" ->
+        World.patch_thread(context, "subagent work", %{"branch" => nil})
+
+      "a forked thread also works in the worktree" ->
+        share(context, "forked work", "fork")
+
+      "an unrelated thread also works in the worktree" ->
+        share(context, "unrelated work", nil)
+    end
+  end
+
+  step "the worktree is kept with the reason {string}", %{args: [reason]} = context do
+    assert File.dir?(context.worktree.path)
+    assert kept_reason(context) == reason
+    context
+  end
+
+  step "a thread idle for 9 days shares its worktree with a subagent that worked 2 days ago",
+       context do
+    context
+    |> idle_worktree("parent work")
+    |> share("subagent work", "subagent")
+    |> World.add_message(
+      "subagent work",
+      "user",
+      "Keep going",
+      World.iso_from_now(-World.days(2))
+    )
+    |> Map.put(:expected_reason, "Inactive for 2 of 8 days")
+  end
+
+  # The archived thread's worktree goes; the one it shares with a thread that has
+  # changes in it is checked by the sweep too (`a worktree an archived thread shares…`).
+  step "an archived thread's worktree has been idle for 9 days with nothing to lose", context do
+    context =
+      context
+      |> idle_worktree("archived sharing")
+      |> World.patch_thread("archived sharing", %{"archivedAt" => World.iso_from_now(0)})
+      |> share("changing work", nil)
+
+    File.write!(Path.join(context.worktree.path, "README.md"), "changed\n")
+    shared = context.worktree.path
+
+    context
+    |> idle_worktree("archived work")
+    |> World.patch_thread("archived work", %{"archivedAt" => World.iso_from_now(0)})
+    |> Map.put(:shared_with_archived, shared)
+  end
+
+  step "a worktree an archived thread shares with one that could lose work is kept", context do
+    path = context.shared_with_archived
+    assert File.read!(Path.join(path, "README.md")) == "changed\n"
+    entry = Enum.find(HalC2.StorageCleanup.report(), &(&1["path"] == Path.expand(path)))
+    assert %{"outcome" => "kept", "reason" => "Shared by 2 threads"} = entry
+    context
+  end
+
+  # --- submodules ----------------------------------------------------------------------
+
+  step "an idle thread's worktree has initialized submodules with nothing to lose", context do
+    context |> idle_worktree("idle work") |> submodule()
+  end
+
+  step "an idle thread's worktree has a submodule with a commit not pushed anywhere", context do
+    context = context |> idle_worktree("idle work") |> submodule()
+    %{path: path} = context.worktree
+    lib = Path.join(path, "lib")
+    File.write!(Path.join(lib, "local.txt"), "unpublished\n")
+    World.git!(lib, ~w(add local.txt))
+    World.git!(lib, ~w(-c user.email=hal-c2@example.com -c user.name=HAL-C2 commit -q -m local))
+    World.git!(path, ~w(add lib))
+    World.git!(path, ~w(commit -q -m bump))
+
+    Map.put(
+      context,
+      :expected_reason,
+      "Submodule has commits not on a remote-tracking ref"
+    )
+  end
+
+  # --- browser captures through links --------------------------------------------------
+
+  step "the captures folder holds a symbolic link to an old file elsewhere", context do
+    old = System.os_time(:second) - 400 * 86_400
+    target = Path.join([context.mc.home, "elsewhere", "kept.png"])
+    File.mkdir_p!(Path.dirname(target))
+    File.write!(target, "mine\n")
+    File.touch!(target, old)
+    dir = Path.join(context.mc.home, "browser-artifacts")
+    File.mkdir_p!(dir)
+    link = Path.join(dir, "browser-screenshot-link.png")
+    File.ln_s!(target, link)
+    {_, 0} = System.cmd("touch", ["-h", "-d", "@#{old}", link])
+    Map.put(context, :link, %{target: target, path: link, mtime: File.stat!(target).mtime})
+  end
+
+  step "the file the link points to is untouched", context do
+    %{target: target, mtime: mtime} = context.link
+    assert File.read!(target) == "mine\n"
+    assert File.stat!(target).mtime == mtime
+    context
+  end
+
+  step "the link is left in place", context do
+    assert {:ok, %File.Stat{type: :symlink}} = File.lstat(context.link.path)
+    assert File.read_link!(context.link.path) == context.link.target
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
+
+  # The last sweep's result for the scenario's worktree, and why it kept it.
+  defp outcome(context) do
+    path = Path.expand(context.worktree.path)
+    report = HalC2.StorageCleanup.report() || []
+
+    Enum.find(report, &(&1["path"] == path)) ||
+      flunk("the last sweep did not report #{path}: #{inspect(report)}")
+  end
+
+  defp kept_reason(context) do
+    entry = outcome(context)
+    assert entry["outcome"] == "kept", "the worktree was not kept: #{inspect(entry)}"
+    entry["reason"]
+  end
+
+  defp commit(context, file) do
+    path = context.worktree.path
+    File.write!(Path.join(path, file), "#{file}\n")
+    World.git!(path, ["add", file])
+    World.git!(path, ["commit", "-q", "-m", file])
+    context
+  end
+
+  # A fake `gh` rule answering the branch's pull request: merged into `base` from `head`.
+  defp merged_pr(context, number, branch, base, head) do
+    pr = %{
+      "number" => number,
+      "title" => branch,
+      "url" => "https://github.com/acme/#{World.project(context).id}/pull/#{number}",
+      "baseRefName" => base,
+      "headRefName" => branch,
+      "headRefOid" => head,
+      "state" => "MERGED",
+      "isDraft" => false,
+      "updatedAt" => World.iso_from_now(0),
+      "mergedAt" => World.iso_from_now(0)
+    }
+
+    %{"args" => ["pr list", branch], "stdout" => [pr]}
+  end
+
+  # Another thread, idle as long, in the scenario's worktree on its branch: under
+  # `parent` as `relationship` ("subagent", "fork"), or unrelated with none.
+  defp share(context, title, relationship, parent \\ "parent work") do
+    %{path: path, branch: branch} = worktree = context.worktree
+
+    context =
+      context
+      |> World.worktree_thread(title, nil, %{"branch" => branch, "worktreePath" => path})
+      |> World.patch_thread(title, %{"createdAt" => World.iso_from_now(-World.days(9))})
+
+    context =
+      if relationship do
+        parent_id = World.thread_id(context, parent)
+        root = get_in(World.thread(context, parent), ["lineage", "rootThreadId"]) || parent_id
+
+        World.patch_thread(context, title, %{
+          "lineage" => %{
+            "parentThreadId" => parent_id,
+            "relationshipToParent" => relationship,
+            "rootThreadId" => root
+          }
+        })
+      else
+        context
+      end
+
+    Map.put(context, :worktree, worktree)
+  end
+
+  # A submodule cloned from a repository of its own and committed in the worktree.
+  defp submodule(context) do
+    lib = World.git_repo(context, "lib-#{System.unique_integer([:positive])}")
+    path = context.worktree.path
+
+    World.git!(path, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "--quiet",
+      "add",
+      lib,
+      "lib"
+    ])
+
+    World.git!(path, ~w(commit -q -m submodule))
+    assert File.exists?(Path.join(path, "lib/README.md"))
+    context
+  end
+
+  defp run(thread, status, at) do
+    id = "run-#{System.unique_integer([:positive])}"
+
+    {id,
+     %{
+       "id" => id,
+       "threadId" => thread,
+       "ordinal" => System.unique_integer([:positive, :monotonic]),
+       "providerInstanceId" => "codex",
+       "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+       "providerThreadId" => nil,
+       "userMessageId" => nil,
+       "rootNodeId" => nil,
+       "activeAttemptId" => nil,
+       "status" => status,
+       "queuePosition" => nil,
+       "requestedAt" => at,
+       "startedAt" => at,
+       "completedAt" => nil,
+       "checkpointId" => nil,
+       "contextHandoffId" => nil
+     }}
+  end
+
+  defp real(path) do
+    {:ok, real} = HalC2.Paths.real(path)
+    real
+  end
 
   defp deleted_worktree(context, title) do
     context = World.worktree_thread(context, title)
     id = World.thread_id(context, title)
     {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
     World.await_row(id, & &1["deletedAt"])
+    :ok = HalC2.Orchestration.Effects.drain(id)
     context
   end
 
