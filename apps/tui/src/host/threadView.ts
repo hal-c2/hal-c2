@@ -378,7 +378,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
           {
             id: "scroll-to-end",
             title: "Scroll to end",
-            keywords: "bottom latest newest jump",
+            keywords: "bottom latest jump",
             action: "timeline.showEnd",
           },
         ]
