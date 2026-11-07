@@ -1230,7 +1230,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step ~r/^the MC (?:removes versions nothing can use|starts again)$/, context do
+  step "the MC removes versions nothing can use", context do
     boot(nil)
     context
   end
