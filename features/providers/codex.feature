@@ -385,7 +385,7 @@ Feature: Codex
   # Upstream #18200. Codex shares one model catalog cache between every client on the
   # machine, and the plain CLI's catalog has no Ultrafast. Codex started by the MC asks for
   # HAL-C2's own catalog, and the probe waits briefly for that refresh before it lists.
-  @backlog @mc @plugin-codex
+  @backlog @mc @plugin-codex @priority-low
   Scenario: Ultrafast stays offered after another Codex client refreshes the catalog
     Given the ChatGPT account is entitled to the Ultrafast tier
     And another Codex client on the machine wrote a model catalog without it
@@ -393,7 +393,7 @@ Feature: Codex
     Then the models still list the Ultrafast tier
     And a thread set to Ultrafast stays on Ultrafast
 
-  @backlog @mc @plugin-codex
+  @backlog @mc @plugin-codex @priority-low
   Scenario: Ultrafast is no longer offered once the account loses it
     Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
     When the MC checks Codex's models
@@ -914,7 +914,7 @@ Feature: Codex
 
   # Upstream #17663: Codex 0.160 writes the lock at its home's root; a shadow home used
   # on its own kept a real one and the instance stayed disabled.
-  @backlog
+  @backlog @priority-low
   Scenario: A Codex account's own sqlite maintenance lock is replaced by the shared one
     Given a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file
     When the instance is prepared
@@ -1014,28 +1014,28 @@ Feature: Codex
         | sends a message to the thread           |
         | downloads a file                        |
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: What an MCP app tells the model goes with the next message
       Given an MCP app in a Codex thread gave the model some context
       When the user sends the next message
       Then that context goes with it, cut to 16 KiB
       And a fork of the thread keeps it and a rollback past it drops it
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: An MCP app in a thread whose session stopped says so
       Given the Codex session of a thread with an MCP app has stopped
       When the user opens the app
       Then the app says the session has stopped
       And no session is started for it
 
-    @backlog
+    @backlog @priority-low
     Scenario: Deleting a thread removes its MCP apps' documents
       Given a Codex thread with an MCP app
       When the user deletes the thread
       Then the app's stored documents are removed with it
 
     # Upstream #17026: a Confluence result's canvas stayed white under dark text.
-    @backlog @shared @mc
+    @backlog @shared @mc @priority-low
     Scenario: An MCP app follows the app's light or dark appearance
       Given an MCP app is open in a Codex thread
       When the user switches the app between light and dark
@@ -1043,7 +1043,7 @@ Feature: Codex
       And an MCP app stored in the thread before this works the same
 
     # Upstream #17027: Jira's app threw on reading cookies in its sandbox and vanished.
-    @backlog @shared @mc
+    @backlog @shared @mc @priority-low
     Scenario: An MCP app that reads cookies in its sandbox still shows
       Given a Codex tool call returned an MCP app that reads its cookies while it starts
       When the user looks at the tool call
@@ -1051,7 +1051,7 @@ Feature: Codex
       And the app sees no cookies and keeps none it sets
 
     # Upstream #17040: a short card left a large gap under a fixed 420 point frame.
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario Outline: An MCP app in a thread on the phone is as tall as its content
       Given an MCP app in a Codex thread reports content <height> points tall
       When the user reads the thread on the phone

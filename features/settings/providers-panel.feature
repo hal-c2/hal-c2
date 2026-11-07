@@ -1018,7 +1018,7 @@ Feature: Providers settings panel
       Then the user is told "Codex" could not be updated
 
     # Upstream #16958: a bare spinner could not tell downloading from stuck.
-    @backlog @mc @desktop @mobile
+    @backlog @mc @desktop @mobile @priority-low
     Scenario: A provider update shows each step as it runs
       Given "Claude" is behind its latest release
       When the user updates "Claude"
@@ -1027,7 +1027,7 @@ Feature: Providers settings panel
       And then the updater's latest line, such as "Updating · Downloading 2.1.293... 66%"
       And then "Updating · Verifying the installed version"
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: An updater's output is sent to clients at most once a second, plain and short
       Given a provider updater redraws a coloured progress bar many times a second
       When the user updates that provider

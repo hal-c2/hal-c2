@@ -367,7 +367,7 @@ Feature: The thread list
 
   # Upstream #17050. Each environment's scratch folder is its own project, so each one used
   # to get its own "No project" entry. A real project named "No project" is not merged in.
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Threads without a project on every environment share one "No project" filter
     Given the environments "home" and "work" each have a thread without a project
     When the user opens the project filter
@@ -376,7 +376,7 @@ Feature: The thread list
     Then the list shows the threads without a project from "home" and "work"
     And no thread of a project is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A chosen "No project" filter survives the environments connecting late
     Given the user scoped the list to "No project"
     When the user restarts the app and the environments' settings arrive after their projects
@@ -436,7 +436,7 @@ Feature: The thread list
     Then the row for "Beta" says "Terminal process running"
     And pointing at the row says "2 terminal processes running"
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The running-terminal mark opens the terminal that is running
     Given "Beta" has the terminals "term-1" and "term-2" split side by side
     And only "term-2" is running a process
@@ -457,7 +457,7 @@ Feature: The thread list
     Then the row for "Gamma" shows the kind of machine and the name "work"
 
   # Upstream #17022: every machine has its own "No project", so the row says which one.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A thread without a project names its machine where a branch would be
     Given <environments> connected
     And "Notes" has no project and runs on "work"
@@ -508,7 +508,7 @@ Feature: The thread list
     Then the user sees each pull request with its state and its place in the stack
 
   # Upstream #18368: the second pull request arrived while the app was open.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Pointing at a row's pull requests lists them after a second one is linked
     Given "Beta" is linked to pull request 12
     When pull request 14 is linked to "Beta" while the user watches the thread list

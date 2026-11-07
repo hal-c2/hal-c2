@@ -193,14 +193,14 @@ Feature: Permission modes
     When a thread in another project asks Grok to run the same command
     Then the user is asked to approve it
 
-  @backlog @plugin-codex
+  @backlog @plugin-codex @priority-high
   Scenario: Codex stops asking for a kind of request the user always allowed this session
     Given a supervised Codex thread
     When the user chooses "Always allow this session" for a command
     Then later commands in that Codex session run without asking
     But a file change still asks until the user always allows file changes too
 
-  @backlog @plugin-codex
+  @backlog @plugin-codex @priority-high
   Scenario: A Codex session allowance ends with the mode it was given in
     Given the user always allowed commands in a supervised Codex thread
     When a turn runs in another access mode and the thread returns to supervised

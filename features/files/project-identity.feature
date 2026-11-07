@@ -56,7 +56,7 @@ Feature: Project and environment identity
         | ".idea/icon.svg" only                  | ".idea/icon.svg"     |
 
     # Upstream #17149: a macOS app's icon kept only as .icns, which no client can draw.
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario Outline: A macOS app icon is served as a picture every client can draw
       Given the checkout of "shop" has <file> only, holding PNG pictures of <sizes>
       When a client asks for the icon of "shop"
@@ -68,7 +68,7 @@ Feature: Project and environment identity
         | "AppIcon.icns"             | 32 and 64 pixels wide         | its 64 pixel PNG is served          |
         | "AppIcon.icns"             | no PNG at all                 | the MC answers that there is no icon |
 
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: An .icns file can be chosen as a project's icon
       When the user sets "shop"'s icon to "Resources/AppIcon.icns"
       Then the icon is saved and shown

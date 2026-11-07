@@ -148,7 +148,7 @@ Feature: Reattaching to terminals
       Then the history is written to the MC's terminal store
 
     # Upstream #17181: a terminal that never went quiet kept the history writer to itself.
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: A busy terminal does not hold up saving another terminal's history
       Given four terminals that never stop printing
       And a fifth terminal whose output has just gone quiet

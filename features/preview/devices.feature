@@ -294,7 +294,7 @@ Feature: Device panel
 
     # Upstream #18326. An idle simulator can go minutes without a keyframe of its own, so
     # only the video is reconnected; input and the 3D view stay connected.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A simulator picture that fell behind catches up within seconds
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
@@ -312,7 +312,7 @@ Feature: Device panel
 
     # Upstream #17566: a decoder backlog switched the viewer to still pictures for good and
     # lost the 3D view.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A decoder that falls behind starts again at a keyframe and keeps the video
       Given the thread has the iOS Simulator "iPhone 17" open in 3D
       And the user is watching the "iPhone 17" tab
@@ -320,7 +320,7 @@ Feature: Device panel
       Then the decoder starts again from the device's next keyframe
       And the tab keeps showing video in the same 3D view
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A still picture that arrives late does not cover newer video
       Given the "iPhone 17" tab has shown decoded video
       When the device's first still picture arrives after it
@@ -812,7 +812,7 @@ Feature: Device panel
       Given the wizard is at "Device hub" and the hub is off
       Then the user cannot continue
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A ready remote machine lets the wizard go on without local device tools
       Given the thread's environment has no simulator tooling and its own hub is idle
       And the remote machine "Mac mini" has its device tools ready with "iOS Simulator"

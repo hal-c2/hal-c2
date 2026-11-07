@@ -29,7 +29,7 @@ Feature: Navigating the phone app and opening links into it
     When the user opens "Fix checkout" from the home screen
     Then going back returns to the home screen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A tap right after swiping back opens what was tapped
     Given the user opened "Fix checkout" from the home screen
     When the user swipes back and at once taps "Fix checkout" again

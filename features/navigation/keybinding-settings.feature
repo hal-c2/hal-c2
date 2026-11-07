@@ -239,7 +239,7 @@ Feature: Keybindings settings
         | saves   | Unable to save keybinding  |
         | removes | Unable to remove keybinding|
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A locked keybindings page says why it is locked
       Given <state>
       Then the bindings cannot be changed

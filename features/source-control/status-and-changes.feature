@@ -44,7 +44,7 @@ Feature: Repository status and working tree changes
     And a git action given " leading.txt" acts on that file, not on "leading.txt"
 
   # Upstream #16771: counting the lines of thousands of untracked files pegged the CPU.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Status over 5,000 untracked files says its totals are incomplete
     Given "shop" has 6,000 untracked files and a change to "src/cart.ts"
     When status is read for "shop"

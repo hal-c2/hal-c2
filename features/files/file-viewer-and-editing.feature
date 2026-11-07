@@ -135,14 +135,14 @@ Feature: Viewing and editing files
       Then the file's contents are returned
       And the file comes back under its full path
 
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: A folder on the host outside the project and its parent can be listed
       Given the host has the folder "/home/sam/study" with "notes.md" in it
       When a client lists "/home/sam/study" and then "/home/sam" from "shop"
       Then each listing returns that folder's entries
       And a listing that climbs out of the folder it was given with ".." is refused
 
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario: A link to a folder outside the project opens that folder
       Given the agent linked "/home/sam/study"
       When the user opens the link
@@ -163,7 +163,7 @@ Feature: Viewing and editing files
       When the user chooses the project in its path
       Then the file explorer is shown
 
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario Outline: Walking up stops at the top of the path
       Given the files panel shows a file under "<top>"
       Then "<top>" is the highest folder the path can move to
@@ -174,7 +174,7 @@ Feature: Viewing and editing files
         | C:\            |
         | \\server\share |
 
-    @shared @backlog
+    @shared @backlog @priority-low
     Scenario: Searching a host folder's tree filters only the folders already loaded
       Given the files panel shows a tree rooted at "/home/sam"
       When the user searches the tree for "notes"
@@ -292,14 +292,14 @@ Feature: Viewing and editing files
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A download link in a previewed web page downloads its file
       Given "public/report.html" has a link that downloads "report.csv"
       When the user previews "public/report.html" and follows that link
       Then "report.csv" is downloaded
       And the page still cannot open dialogs or reach the app
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An image in a previewed web page can be copied
       Given "public/index.html" shows <image>
       When the user previews "public/index.html" and copies that image
@@ -311,7 +311,7 @@ Feature: Viewing and editing files
         | an animated GIF                         |
         | a WebP image given inline as data       |
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A table of contents link in a Markdown preview moves within the file
       Given "docs/plan.md" has a heading "1. Operating model" and a contents link to "#1-operating-model"
       When the user previews "docs/plan.md" and follows that link
@@ -663,7 +663,7 @@ Feature: Viewing and editing files
       Then "VS Code" and "Zed" are offered
       And "Sublime Text" is not among them
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A remote environment's workspace opens in a JetBrains IDE over SSH
       Given the thread's environment is on another machine reachable over SSH as "devbox"
       And this computer has "IntelliJ IDEA" and the JetBrains Toolbox App installed

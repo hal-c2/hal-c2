@@ -51,7 +51,7 @@ Feature: Storage cleanup
       When the user sends the thread a new message
       Then its worktree is checked out again from the branch
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A worktree is never removed in the minute after its thread settles
       Given the user turned on deleting worktrees of threads settled for 0 days
       When a thread settles and the MC sweeps storage within a minute
@@ -107,7 +107,7 @@ Feature: Storage cleanup
       And the last run lists each worktree removed, kept or failed, with removed sizes, why each was kept, and each failure's reason
       And it shows how much space was recovered
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A worktree that gets busy while it is being measured is kept
       Given a worktree about to be removed is being measured
       When its thread starts a turn before the measuring ends
@@ -189,7 +189,7 @@ Feature: Storage cleanup
         | deleting merged worktrees    |
         | deleting unchanged worktrees |
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario Outline: A worktree whose pull request was squash merged is removed only at the merged head
       Given the user turned on deleting merged worktrees
       And a thread's worktree on branch "cart" has commits the default branch does not have
@@ -211,7 +211,7 @@ Feature: Storage cleanup
       Then the worktree is kept
       And its pull request was not read
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: An untracked file the repository's status settings hide still keeps the worktree
       Given the user turned on deleting worktrees of deleted threads
       And a deleted thread's worktree is set not to show untracked files in its status
@@ -273,7 +273,7 @@ Feature: Storage cleanup
       When the MC sweeps storage
       Then the worktree is removed
 
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario Outline: A worktree shared with subagents is kept when one of them could lose work
       Given the user turned on deleting worktrees idle for 8 days
       And a thread and a subagent it delegated to share its worktree
@@ -331,7 +331,7 @@ Feature: Storage cleanup
       When the MC sweeps storage
       Then the 200-entry report lists failed and removed entries first, then the unused folders, then the other kept entries
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Measuring unused folders has a time budget per sweep
       Given unused folders too large to measure in 30 seconds
       When the MC sweeps storage
@@ -371,7 +371,7 @@ Feature: Storage cleanup
       When the user opens storage settings
       Then the user is asked to update that machine first
 
-    @mc @shared @backlog
+    @mc @shared @backlog @priority-low
     Scenario: A store with much space to reclaim suggests the doctor command
       Given the machine's store cannot give space back while running
       And it has 2.7 GiB it could reclaim
@@ -380,7 +380,7 @@ Feature: Storage cleanup
       And the user can copy the doctor command that targets that machine's data
       And the user can dismiss the notice
 
-    @mc @shared @backlog
+    @mc @shared @backlog @priority-low
     Scenario Outline: The reclaim notice is not shown
       Given <situation>
       When the user opens storage settings
@@ -393,7 +393,7 @@ Feature: Storage cleanup
         | the MC runs from a dev checkout with its own dev store     |
         | the user dismissed the notice                              |
 
-    @mc @backlog
+    @mc @backlog @priority-low
     Scenario: The store's size is published again only when it changed
       Given a client follows the store's size
       When the log is compacted and nothing it reports changed

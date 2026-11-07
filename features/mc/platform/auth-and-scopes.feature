@@ -437,7 +437,7 @@ Feature: MC authentication and scopes
     Then the client's socket is closed as revoked
     And it cannot reconnect with its old session
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A session that ends closes the sockets it has open
     Given a paired client has an open socket
     When <ending>
@@ -540,7 +540,7 @@ Feature: MC authentication and scopes
     And Connections settings lists the link as "Ana's phone"
 
   # Upstream #14128: the readable output printed "DateTime.Utc(...)" for the expiry.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A minted pairing link's readable output gives its expiry as an ISO 8601 time
     When an operator mints a pairing link from the command line
     Then the output says when the link expires as an ISO 8601 time such as "2026-09-28T00:56:46.668Z"
@@ -654,7 +654,7 @@ Feature: MC authentication and scopes
     Then scopes it does not know are left out of what it is told
     And it stays connected, with single features denied rather than the connection
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: An action needs its own narrower scope, not only orchestration
     Given a session with the orchestration scopes but without "<scope>"
     When it <action>

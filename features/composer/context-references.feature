@@ -207,7 +207,7 @@ Feature: Referencing files, skills, commands and context
       | Hello\|       | Hello       |
       | Hello\| world | Hello world |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A quote's unsaved comment survives a question from the agent
     Given the user is writing the comment "check this" on a quote and has not saved it
     When the agent asks a question and the user answers it

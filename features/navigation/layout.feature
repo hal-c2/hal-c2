@@ -574,7 +574,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       And "Close others" can be chosen
 
     # Upstream #17730: tabs kept the order they were opened in.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Right panel tabs are put in order by dragging
       Given the right panel has "Diff", "Files" and "Terminal" tabs in that order
       And the terminal is running a command
@@ -583,7 +583,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       And the terminal is still running its command
       And the thread keeps that order when it is opened again
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A browser tab that opens after a reorder goes at the end
       Given the user has dragged the right panel's tabs into the order "Terminal", "Diff" and "Files"
       When the agent opens a browser tab

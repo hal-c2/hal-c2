@@ -329,7 +329,7 @@ Feature: Settings scopes and inheritance
       When the user changes a setting
       Then the user is told the setting saved on some environments and could not update "Build box"
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: A setting an environment refuses names that environment and those that saved it
       Given the user is editing settings across "Laptop" and "Build box"
       And this device's session on "Build box" may not change settings
@@ -529,7 +529,7 @@ Feature: Settings scopes and inheritance
       Then the layers are listed under "Laptop" and again under "Build box"
       And the layer in effect is marked on each
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: An environment that accepts a setting but does not keep it is named
       Given the user is editing settings across "Laptop" and "Build box"
       And "Build box" runs a build that does not know the setting being changed

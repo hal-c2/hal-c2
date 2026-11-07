@@ -202,14 +202,14 @@ Feature: Preparing a new thread's worktree
     When the user opens the setup details
     Then the user sees the last few lines of the script's output
 
-  @backlog @mc @shared @mobile
+  @backlog @mc @shared @mobile @priority-high
   Scenario: A new worktree thread keeps its worktree when the agent starts
     Given a new worktree thread whose setup script runs alongside the agent
     When the agent starts its first turn
     Then the thread stays on its worktree and branch
     And the first turn completes
 
-  @backlog @mc @shared @mobile
+  @backlog @mc @shared @mobile @priority-high
   Scenario: A message sent while the worktree is being set up is queued
     Given a new worktree thread is still checking out its worktree or running a setup script it must wait for
     When the user sends a follow-up

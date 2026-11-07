@@ -37,7 +37,7 @@ Feature: Starting a task from a phone
 
   # Upstream #17611: the draft named the workspace's folder ("server") while the picker named
   # the repository, and on iOS its header was empty.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A new task's draft names the project as the picker does and says it is new
     Given a project at <folder> is listed as "<listed>" in the project picker
     When the user chooses it for a new task

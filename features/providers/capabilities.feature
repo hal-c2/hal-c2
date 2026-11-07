@@ -204,7 +204,7 @@ Feature: Provider capabilities
 
   # Upstream #16750: a folder's skill scan goes stale after five minutes; the composer rescans
   # it once when it opens there, so a skill added to the project shows up without a restart.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Opening the composer rescans a folder's skills only once they are stale
     Given the skills of folder "api" were scanned <age> ago
     And a skill "deploy" was added to "api" since

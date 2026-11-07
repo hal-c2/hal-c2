@@ -74,7 +74,7 @@ Feature: Source control writing settings
     Then the user is told "Source control writer model not saved"
 
   # Upstream #18488: both pickers chose a model but not its options.
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: The <model> model's options are chosen beside it
     Given the <model> model is "gpt-5.5" on Codex
     When the user sets its reasoning effort to high and turns on fast mode beside the picker
@@ -85,7 +85,7 @@ Feature: Source control writing settings
       | source control writer    |
       | review guide             |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Model options are not offered while environments disagree on the model
     Given "Laptop" and "Build box" use different source control writer models
     When the user looks at the writer model for both

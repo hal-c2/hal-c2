@@ -235,14 +235,14 @@ Feature: Threads that work on or link pull requests
     And the user is told that both fetches failed for pull request 42
 
   # Upstream #17725: Azure DevOps publishes only refs/pull/<n>/merge, never a head ref.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps pull request from the same repository is checked out by its branch
     Given open Azure DevOps pull request 42 comes from the branch "feature/azure-checkout" of the checkout's own repository
     When the user starts a thread on pull request 42 in a new worktree
     Then "feature/azure-checkout" is fetched from the checkout's remote
     And the thread starts in a worktree on the pull request's head that follows "origin/feature/azure-checkout"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An Azure DevOps pull request is not checked out from a branch that only shares its name
     Given Azure DevOps pull request 42 <origin>
     And the checkout's remote has a branch of the same name
@@ -733,7 +733,7 @@ Feature: Threads that work on or link pull requests
     When the user opens the pull requests of "Tax work"
     Then the user is told "3 pull requests chained by base branch."
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: Pull requests built on the same pull request stay in one stack under it
     Given pull requests 102 and 103 are both based on the branch of pull request 101
     And all three are linked to "Tax work"
@@ -742,7 +742,7 @@ Feature: Threads that work on or link pull requests
     And 102 and 103 sit one step under 101, side by side
     And the thread is counted as having one stack
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Pull requests built on the same pull request share a layer for agents
     Given pull requests 102 and 103 are both based on the branch of pull request 101 and linked to "caller"
     When the agent of "caller" lists its pull requests
@@ -805,7 +805,7 @@ Feature: Threads that work on or link pull requests
     Then "Tax work" is shown as "Linked" and cannot be chosen
     And the menu offers to unlink pull request 42 from this thread
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A pull request can be linked when no project is a repository on its host
     Given the only project is a folder of several repositories that is not a repository itself
     When the user links "https://github.com/acme/app/pull/42" to a thread in it

@@ -320,7 +320,7 @@ Feature: Cursor
     When the user opens the skill list in a Cursor thread
     Then the skill is offered as one only the user can run
 
-  @backlog
+  @backlog @priority-low
   Scenario: A skill folder nested too deep does not hide the other skills
     Given the project has the Cursor skill "review"
     And the user's ".claude/skills" holds a folder tree deeper than the scan reaches

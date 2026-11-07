@@ -375,7 +375,7 @@ Feature: Checkpoints, diffs and rewinding
 
   # Upstream #17079: a message read before the rewind's result was written put the old
   # provider session back, so the next turn ran on the history the rewind removed.
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A message sent while a rewind runs continues from the rewound history
     Given runs 1 and 2 of "t1" completed
     When the user rewinds "t1" to run 1

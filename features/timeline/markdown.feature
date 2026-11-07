@@ -63,7 +63,7 @@ Feature: Formatted messages
     Then the heading and the list are shown as text
     And the quote, the code block and the table are each shown in their own form
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: An ordered list past 99 keeps its whole numbers
     When the agent answers with an ordered list numbered 96 to 103
     Then every item shows its whole number, from "96." to "103."
@@ -84,7 +84,7 @@ Feature: Formatted messages
     When the agent answers with "Tom &amp; Jerry &copy; 2026"
     Then the reply reads "Tom & Jerry © 2026"
 
-  @mobile @backlog
+  @mobile @backlog @priority-low
   Scenario: Long pressing a link in a reply opens only the link's menu
     When the user long presses a link in the agent's reply
     Then the link's menu opens
@@ -357,7 +357,7 @@ Feature: Formatted messages
     Then the clipboard holds a link named "report.xlsx" to "outputs/report.xlsx"
     And the clipboard holds "Hello World (Document template)"
 
-  @backlog @desktop @mobile @plugin-codex
+  @backlog @desktop @mobile @plugin-codex @priority-low
   Scenario: A follow-up suggestion from Codex shows its label, not its markup
     When Codex ends its reply with the follow-up suggestion "Prepare print version"
     Then the reply shows "Prepare print version"
@@ -642,7 +642,7 @@ Feature: Formatted messages
       | the page "public/index.html" with a browser    | opening in the editor, in the in-app browser and revealing  |
       | the file "src/cart.ts"                         | opening in the editor and revealing it                      |
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario Outline: A file chip shows what the path really is
     Given the agent's reply names <path>, which is <what>
     When the reply is shown
@@ -713,7 +713,7 @@ Feature: Formatted messages
       | http://nas.lan/                         | nas.lan                        |
       | http://wiki.corp/                       | wiki.corp                      |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A public site's icon is asked for by its name alone
     When the agent's reply links to "https://example.com:8443/docs" with the text "the docs"
     Then the public icon service is told only "example.com", without the port
@@ -734,7 +734,7 @@ Feature: Formatted messages
     Then pull request 42 opens beside the conversation
     And the page can still be opened in a browser from there
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario Outline: A pull request link opened with a modifier goes to the browser
     Given the project's repository has pull request 42
     When the user <opens> a link to pull request 42
@@ -746,7 +746,7 @@ Feature: Formatted messages
       | Ctrl or Cmd-clicks             |
       | middle-clicks                  |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: Pull request links can always open on the hosting site
     Given the user turned off "Open pull requests in HAL-C2" in the browser settings
     When the user follows a link to pull request 42 from a reply, a reference, the sidebar or the composer

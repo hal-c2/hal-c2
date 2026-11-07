@@ -72,7 +72,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: Search results keep the provider's newest-first order
     Given Claude lists "Opus 5.5", "Opus 5", "Opus 4.8" and "Opus 4.5" in that order
     When the user searches the models for "opus"

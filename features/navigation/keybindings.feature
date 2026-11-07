@@ -120,7 +120,7 @@ Feature: Keybindings
         | preview.zoomOut           | mod+-           | in the preview                    | aligned |
         | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: With the model picker open a number jump picks a model, not a thread
       Given the model picker is open
       When the user presses mod+2
@@ -145,7 +145,7 @@ Feature: Keybindings
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The thread details panel has a default shortcut that a saved one overrides
       Given no custom keybindings
       When the user presses mod+shift+b outside a terminal

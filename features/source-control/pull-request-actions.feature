@@ -145,7 +145,7 @@ Feature: Acting on a pull request
     Then only the remote branch "feature/tax" is deleted
     And Delete branch is no longer offered for pull request 42
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A branch that is not safe to delete is kept
     Given pull request 42 on GitHub has merged and <situation>
     When the user deletes its branch
@@ -158,7 +158,7 @@ Feature: Acting on a pull request
       | its branch has moved past the pull request's last commit   |
       | the account may not write to the branch's repository       |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Deleting a branch is offered only for GitHub pull requests that are done
     When the user opens the menu of a pull request
     Then Delete branch is not offered for an open pull request
@@ -435,7 +435,7 @@ Feature: Acting on a pull request
 
   # Upstream #17710 dropped the success toasts the updated review already shows; revert keeps
   # its toast because it opens another pull request.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A finished action shows in the review without a toast
     When the user <action> pull request 42 from its review
     Then the review shows the change
@@ -453,7 +453,7 @@ Feature: Acting on a pull request
       | cancels auto-merge of        |
       | approves the workflows of    |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A revert says the new pull request was opened
     When the user reverts pull request 42 from its review
     Then the user sees a "success" toast "Revert pull request opened"
@@ -962,7 +962,7 @@ Feature: Acting on a pull request
     When the user looks at the actions of a Bitbucket pull request
     Then merging is offered
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A Bitbucket permission lookup that is refused reads as granted
     Given Bitbucket answers the workspace's repository permission lookup with <status>
     When the user looks at the actions of a Bitbucket pull request

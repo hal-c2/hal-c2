@@ -167,7 +167,7 @@ Feature: Settling threads
     And the settle sweep runs
     Then "Ship checkout" stays active
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A snoozed thread that wakes starts its quiet spell again
     Given the auto-settle rule is "after 1 day of inactivity"
     And "Ship checkout" has been snoozed for 3 days with no activity

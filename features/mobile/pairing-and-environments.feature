@@ -230,7 +230,7 @@ Feature: Pairing a phone with environments
     When the user edits the pairing code
     Then the failure is no longer shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Adding an environment asks for the camera only when the user chooses to scan
     Given the app has not been granted camera access
     When the user opens the screen to add an environment
@@ -717,7 +717,7 @@ Feature: Pairing a phone with environments
     When the user pairs with "My MacBook"
     Then "My MacBook" lists the phone with the app version "1.2.3"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Adding an environment offers scanning wherever it starts
     Given the app runs on <device>
     When the user adds an environment from <entry>

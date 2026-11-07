@@ -216,7 +216,7 @@ Feature: The desktop's terminal drawer
       Then the drawer is 400 pixels tall with "term-2" active
 
     # Upstream #17658: the clamped height used to be saved for good.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A window that shrinks and grows again gives the drawer back its height
       Given the user dragged the drawer to 750 pixels
       When the window shrinks so the drawer is held to 420 pixels, then grows back

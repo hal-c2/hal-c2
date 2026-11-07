@@ -447,13 +447,13 @@ Feature: Provider instances
       | Codex    | codex_work  | /opt/codex-work/bin/codex   |
       | Claude   | claude_work | /opt/claude-work/bin/claude |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A disabled provider is not checked for updates
     Given the Codex instance "codex_work" is disabled
     When the MC refreshes the providers' status
     Then the MC does not look for the binary of "codex_work" or check it for updates
 
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-low
   Scenario: A disabled Antigravity records no account changes
     Given the Antigravity instance is disabled
     When the user signs in or out of Antigravity elsewhere

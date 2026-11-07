@@ -98,7 +98,7 @@ Feature: In-app preview browser
       Then no tab opens
       And the client is told the address cannot be opened
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Text typed in the address bar that is not an address is searched for
       When the user types "<typed>" in a browser tab's address bar
       Then the tab loads <loaded>
@@ -317,7 +317,7 @@ Feature: In-app preview browser
     # Upstream #16687: probing every listener sent HTTP to binary-protocol servers, which
     # could close them. Upstream now probes only listeners its own terminals started, which
     # narrows the machine-wide suggestions above; configured addresses are still probed.
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: A program the MC's terminals did not start is never sent a probe
       Given a database listening on port 5432 that was not started in a HAL-C2 terminal
       And a dev server on port 5173 started in a thread's terminal
@@ -326,7 +326,7 @@ Feature: In-app preview browser
       And "http://localhost:5173" is suggested
       And a port where any listener is not a HAL-C2 terminal's is not probed
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Closing the terminal that started a dev server drops its suggestion
       Given "http://localhost:5173" is suggested for a dev server started in a thread's terminal
       When the user closes that terminal
@@ -547,7 +547,7 @@ Feature: In-app preview browser
       Then the tab stops loading and says "This file can't be shown here"
       And the tab offers "Open in browser" and "Download"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page that links to a file keeps showing itself while the file downloads
       Given a browser tab showing a page with a link to "report.zip"
       When the user follows the link
@@ -812,18 +812,18 @@ Feature: In-app preview browser
       Then the thread gets a new browser tab at the link, in the same profile, and it becomes active
       And the page that opened it stays open in its own tab and can still talk to it
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A link opened in the background leaves the current tab active
       When the user opens a link on the page in a background tab
       Then the thread gets a new browser tab at the link
       And the tab the user was on stays active
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A form sent to a new window loads in the tab
       When the user submits a form on the page that posts to a new window
       Then the form's result loads in the same browser tab
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page that opens a blank window keeps its own page
       When the page opens a blank window
       Then no tab or window opens and the page is told it was refused
@@ -852,7 +852,7 @@ Feature: In-app preview browser
         | anything else a page can ask for   | refused |
 
     # Upstream #16952: on macOS a passkey prompt in a tab showed nothing and hung until it timed out.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page that asks for a passkey on macOS gets a prompt to answer
       Given the user runs the packaged app on macOS
       When a page in a browser tab asks to sign in or register with a passkey
@@ -866,7 +866,7 @@ Feature: In-app preview browser
       Then the check is not failed because the app changed how the browser calls itself
 
     # Upstream #17264: a gateway that forwards the header refused a product name in brackets.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The browser names itself in a form every web server accepts
       When a page in a browser tab is asked for by the browser
       Then the User-Agent header names the app as product tokens with no spaces or brackets
@@ -934,13 +934,13 @@ Feature: In-app preview browser
       Then the tab keeps what had loaded
       And the tab offers to reload again
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A frame that loads late does not bring the loading bar back
       Given a browser tab whose page has finished loading
       When a frame inside the page from another site starts loading
       Then the tab does not show the page as loading
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A page's full screen fills its tab and leaves the window alone
       Given a browser tab showing a video
       When the page asks to go full screen
@@ -1120,7 +1120,7 @@ Feature: In-app preview browser
       Then nothing is added to the draft
       And the toolbar returns to normal
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An annotation comment follows the direction of its own text
       Given the user is annotating a <page> page in a browser tab
       When the user types the comment "<comment>"

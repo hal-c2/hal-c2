@@ -103,7 +103,7 @@ Feature: Moving through a thread and following links
 
   # Upstream #17348. Following a fast reply can leave the view a moment behind the end;
   # that lag is not the user scrolling away.
-  @desktop @backlog
+  @desktop @backlog @priority-high
   Scenario Outline: A thread following a fast reply still follows after the user <leaves>
     Given the agent is writing a long reply quickly in "Cart totals" and the view is following it
     When the user <leaves> and comes back to "Cart totals"
@@ -218,7 +218,7 @@ Feature: Moving through a thread and following links
     Then the third turn is shown
 
   # Upstream #17652: the turn index lies over the conversation.
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: Scrolling over the turn index scrolls the conversation
     Given the thread has ten turns
     And the user is pointing at the turn index with a turn previewed
@@ -226,7 +226,7 @@ Feature: Moving through a thread and following links
     Then the conversation scrolls up by as much as it would anywhere else
     And the view stops following new output
 
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: Selecting text keeps going under the turn index
     Given the thread has ten turns
     When the user starts selecting a message's text and drags onto the turn index
@@ -299,7 +299,7 @@ Feature: Moving through a thread and following links
 
   # Upstream #18238: an Option-click is a browser's "download this link", and opened a Save
   # dialog instead of the system browser, so link routers never saw the address.
-  @desktop @backlog
+  @desktop @backlog @priority-low
   Scenario: A link followed with Alt (Option on macOS) also held opens in the system browser
     Given the user's links open in the system browser
     And the agent's reply links to "https://example.com/docs"
@@ -387,13 +387,13 @@ Feature: Moving through a thread and following links
       | "t2" is titled "Fix checkout" in the reply's environment | "Fix checkout" and opens "t2"         |
       | "t2" is not known in the reply's environment             | "Old name"                             |
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: Copying a thread link gives back a link by the thread's id
     Given a reply links to thread "t2"
     When the user copies the reply
     Then the copied text links "t2" by its id, not by a baked title
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: A thread link with an escaped id still finds the thread
     Given a reply links to thread "t2" with its id percent-encoded
     When the user follows the link
@@ -431,7 +431,7 @@ Feature: Moving through a thread and following links
 
   # Upstream #17713: a triple click ran on through the tool row and the next reply's hidden
   # heading, none of which can be selected, so the reply ending before a tool call lost Cite.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The last paragraph of a reply followed by a tool call can be cited
     Given the agent wrote "Recording your answers in the session note:" and then ran a command
     When the user triple-clicks that line

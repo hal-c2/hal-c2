@@ -160,7 +160,7 @@ Feature: Claude
 
   # Upstream #18364. Claude 5.1 and later send the words written for the user just before
   # a tool call as a thinking block; earlier models send them as text.
-  @backlog
+  @backlog @priority-low
   Scenario Outline: What <model> writes just before a tool call is shown as its answer
     Given the thread runs on <model>
     When Claude thinks, then writes "I need to ask which file you mean", then asks the user a question
@@ -298,7 +298,7 @@ Feature: Claude
       | Opus 4.5       | there is no context window option and it runs 200k       |
       | Haiku 4.5      | there is no context window option and it runs 200k       |
 
-  @backlog
+  @backlog @priority-low
   Scenario: A context window saved on a Claude 5 thread is ignored
     Given a thread on Opus 5.5 that saved a 200k context window
     When the user sends a message
@@ -338,7 +338,7 @@ Feature: Claude
     Then the conversation is compacted first
     And "Carry on" is sent once compaction finishes
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Switching the compact chip to the full history keeps it for one send
     Given the composer offers "Compact 140k" on a long idle Claude thread
     When the user switches it to "Full" and sends "Carry on"
@@ -383,7 +383,7 @@ Feature: Claude
     Then the thread shows the message that resumed it
     And the parent thread does not
 
-  @backlog
+  @backlog @priority-high
   Scenario: A Claude subagent cancelled by a restart and then resumed keeps updating its own thread
     Given a Claude subagent was working when the MC restarted
     And recovery marked it cancelled
@@ -444,7 +444,7 @@ Feature: Claude
       | runs through Bedrock or Vertex                         | signed in                                          |
       | is too old to report its account                       | signed in                                          |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: The HAL-C2 tools' credential is never in Claude's command line
     Given the project allows the HAL-C2 tools
     When a Claude turn starts
@@ -709,7 +709,7 @@ Feature: Claude
 
   # Upstream #17778: a gateway such as 9router wraps Claude's 429 as a 503 that names its
   # cooldown, and Claude reports it as an API error with no reset time.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A gateway's wrapped rate limit is a usage limit that resets when it says
     When a Claude turn ends at 13:00 with a 503 rate_limit_error saying "(reset after <cooldown>)"
     Then the thread is marked as limited with a reset time of <reset>
@@ -721,7 +721,7 @@ Feature: Claude
       | 1h 2m 3s  | 14:02:03 |
       | 7s        | 13:00:07 |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A 503 that is not a wrapped rate limit stays a provider error
     When a Claude turn ends with a 503 <error>
     Then the run fails with a provider error and the thread is not marked as limited
@@ -1140,7 +1140,7 @@ Feature: Claude
       | thinking turned off                             |
       | a model that has no effort, such as Haiku 4.5   |
 
-  @backlog
+  @backlog @priority-low
   Scenario: Claude's probe and generated text work next to an administrator's managed MCP settings
     Given an administrator installed Claude Code's managed MCP settings on the machine
     When the MC checks Claude's status or asks Claude for a thread title
@@ -1148,7 +1148,7 @@ Feature: Claude
     And the check still starts none of the user's own MCP servers
 
   # Upstream #19320: some claude wrappers refuse to run outside a project, and the MC may start in $HOME.
-  @backlog
+  @backlog @priority-low
   Scenario: Claude's status check runs in the MC's own folder, not the home folder
     Given the claude command refuses to run in the user's home folder
     And the MC was started from the home folder
@@ -1175,7 +1175,7 @@ Feature: Claude
 
   # T3 Code's #18887 took back showing the last block as text: under summarized thinking
   # Claude's progress updates cannot be told apart from its reasoning.
-  @backlog
+  @backlog @priority-low
   Scenario: Claude's reasoning before a tool call stays a thought
     Given Claude writes a block of reasoning and then a second block before calling a tool
     Then both blocks show as collapsed thoughts with the tool calls
@@ -1243,7 +1243,7 @@ Feature: Claude
     Then the goal's state and the number of checks show in the thread
     And the goal shows complete only when Claude ends the turn normally
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: The commands Claude runs never see the MC's tool credential
     Given a Claude thread has HAL-C2's tools
     When Claude runs a shell command, a hook or a local MCP server
@@ -1263,7 +1263,7 @@ Feature: Claude
     When a Claude 5 model creates tasks, updates one to in progress and lists them
     Then the thread's task list shows those tasks with their status
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-low
   Scenario: A Claude usage limit leaves the context meter where it was
     Given a Claude thread's context meter shows 244,541 tokens used
     When the next turn is stopped by a usage limit
@@ -1280,7 +1280,7 @@ Feature: Claude
     And it reads the messages it missed before the new one
 
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: A prompt Claude never starts a turn for fails instead of hanging
     Given Claude acknowledges a prompt without ever starting a turn for it
     Then the turn fails with "Claude acknowledged the message but never started a turn for it."

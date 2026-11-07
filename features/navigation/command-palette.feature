@@ -304,7 +304,7 @@ Feature: Command palette
       Then the pull request URL is on the clipboard
 
     # Upstream #8513: the entry showed chat.new's key, which opens the project picker instead.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The new thread entry shows the key that starts a thread in the current project
       Given "chat.new" is bound to "mod+shift+o" and "chat.newLocal" to "mod+shift+n"
       When the user opens the command palette in the project "hal-c2"

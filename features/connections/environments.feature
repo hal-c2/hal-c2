@@ -90,7 +90,7 @@ Feature: Managing environments on a client
       | Tailscale reports a MagicDNS name and the machine has a name | the tailnet name first, then the .local name    |
       | Tailscale is not available                                   | only the machine's .local name                  |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Tailscale SSH alone advertises the tailnet name
     Given no SSH server is listening on this machine
     And Tailscale reports a MagicDNS name and <tailscale>

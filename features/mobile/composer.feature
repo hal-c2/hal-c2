@@ -436,7 +436,7 @@ Feature: Writing to an agent from a phone
 
   # Upstream #17492: with FUTO or HeliBoard, or a saved draft reopened, the editor stopped
   # following the caret after three lines.
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: The composer keeps the caret in view as a prompt wraps past its height
     Given an Android phone using <keyboard>
     And <draft>
@@ -475,7 +475,7 @@ Feature: Writing to an agent from a phone
       | #       | pull requests |
 
   # Upstream #15856: on Android the list showed four rows and swipes scrolled the chat behind it.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The trigger list scrolls to every match with the keyboard open or closed
     Given typing "$" offers 12 skills
     When the user swipes up in the list
@@ -669,7 +669,7 @@ Feature: Writing to an agent from a phone
     Then the next message is sent to "Opus" with the 1M context window and fast mode on
 
   # Upstream #17879: a project can turn a provider off apart from its environment.
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Sending with a model the project turned off keeps the message
     Given the thread's project turned off the provider of its selected model
     When the user sends "add a test"

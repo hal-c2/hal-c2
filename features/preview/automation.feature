@@ -189,19 +189,19 @@ Feature: Agents drive the preview browser
         | the user opened and is using             | the tool fails saying a person is in control of the tab      |
         | another agent session opened             | the tool fails saying the tab belongs to another agent       |
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Only the agent session that opened a tab can close it
       Given a tab the user opened
       When an agent closes that tab
       Then the tab stays open and the agent is told it did not open it
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: An agent's new tab opens in the user's default browser profile
       Given the desktop reports the profiles "Default" and "Work", with "Work" the default
       When an agent opens a preview without naming a profile
       Then the tab opens in the profile "Work"
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: An agent can name the profile a new tab opens in
       Given the desktop reports the profiles "Default" and "Work"
       When an agent opens a preview in the profile "<named>"
@@ -212,7 +212,7 @@ Feature: Agents drive the preview browser
         | work     | the tab opens in the profile "Work"                              |
         | personal | the tool fails and lists "Default" and "Work" as the profiles to use |
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: An agent's instructions let it use another browser only when the preview cannot do the job
       When <situation>
       Then the agent's instructions let it use another browser <how>
@@ -493,7 +493,7 @@ Feature: Agents drive the preview browser
       And the agent's next action on the tab runs at once
 
     # Upstream #17360: a drag that timed out before it finished took the whole server down.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A drag that times out fails without taking the browser down
       Given an agent's current tab shows a page
       When the agent drags an element and the drag times out while the cursor is still moving
@@ -762,7 +762,7 @@ Feature: Agents drive the preview browser
       When the agent types text without naming a target
       Then the text goes into the focused field
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: An agent typing in a preview tab does not type into the app the user is using
       Given the user is typing in the composer
       And an agent's current tab shows a page with a focused text field
@@ -770,14 +770,14 @@ Feature: Agents drive the preview browser
       Then the page's field holds "pairing-code" and receives the Enter
       And the composer keeps its text and its focus
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An agent's copy, cut and paste keys in a preview tab without focus are ignored
       Given the preview tab does not have the focus
       When the agent presses the copy, cut or paste key in the tab
       Then nothing is copied, cut or pasted
       And the user's clipboard is unchanged
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Typing into a frame from another site fails clearly while the preview has no focus
       Given the preview tab does not have the focus
       And the page's focus is in a frame from another site

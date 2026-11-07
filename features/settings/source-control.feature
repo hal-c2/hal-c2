@@ -226,13 +226,13 @@ Feature: Source Control settings
     When the user opens that host's settings on any client
     Then the field says a secret is saved without showing it
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: Removing a host's settings clears them
     Given a source control host has saved settings and a token
     When the user removes that host's settings
     Then the host's settings and token are gone and the host falls back to its environment or CLI sign-in
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Settings of a host this MC does not know are kept
     Given the settings file holds settings for a source control host this MC does not ship
     When the MC saves other settings

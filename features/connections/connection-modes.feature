@@ -304,7 +304,7 @@ Feature: How clients reach an environment
     When the user removes it
     Then that server keeps running
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Reconnecting reuses the server the app launched
     Given an SSH environment whose server the desktop app launched
     And that server recorded itself in the host's runtime record
@@ -327,7 +327,7 @@ Feature: How clients reach an environment
     Then a new forward is opened to the same server
     And the server on the host is not stopped
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A crashed launched server is replaced on reconnect
     Given an SSH environment whose launched server crashed and was not reaped
     When the app reconnects
@@ -516,7 +516,7 @@ Feature: How clients reach an environment
     And a route the user paired is never rewritten
     And the live session is not replaced by the change, only by the better-route check
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An address in the shared 100.64/10 range is a tailnet address only on Tailscale's own interface
     Given the MC's machine has the address "100.96.0.1" on <interface>
     When the MC reports the addresses it is bound to
@@ -527,7 +527,7 @@ Feature: How clients reach an environment
       | Tailscale's network interface            | a tailnet address       |
       | a Cloudflare WARP or other VPN interface | a local network address |
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: A route is labelled Tailscale only with proof
     Given a client has a route to "<host>"
     And <proof>

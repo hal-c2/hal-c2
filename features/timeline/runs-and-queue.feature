@@ -111,14 +111,14 @@ Feature: Runs, interruptions and the queue
     Then the message is marked "From queue"
     And the marker explains "Queued while the agent was busy"
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: A reply that finished before a steer stays the turn's answer
     Given the agent finished its reply
     When the user's steer restarts the run before the turn closed
     Then the finished reply stays visible as the turn's answer
     And it is not folded away as partial output
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: A reply cut off by a steer is folded as cut off
     Given the agent is in the middle of its reply
     When the user's steer restarts the run
@@ -290,7 +290,7 @@ Feature: Runs, interruptions and the queue
       | of an unknown window      | 144k used       |
 
   # Upstream #17539: counts just under a million rounded up inside the thousands and read "1000k".
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario Outline: A context count that rounds up to a million reads as a million
     Given the agent has used <tokens> tokens of an unknown window
     Then the context window reads "<reading>"
@@ -453,7 +453,7 @@ Feature: Runs, interruptions and the queue
     When the user later comes back to a long Claude conversation on that Claude instance
     Then the offer "Resume with less context" is not shown
 
-  @backlog @mc @desktop @mobile @tui @plugin-claude
+  @backlog @mc @desktop @mobile @tui @plugin-claude @priority-low
   Scenario Outline: The offer to continue with less context follows Claude's prompt cache lifetime
     Given a Claude thread with 100,000 tokens in its context window
     And Claude's last reply <cache>
@@ -468,7 +468,7 @@ Feature: Runs, interruptions and the queue
       | wrote no prompt cache                 | 69 minutes | not shown |
       | wrote no prompt cache                 | 70 minutes | shown     |
 
-  @backlog @desktop @mobile @tui
+  @backlog @desktop @mobile @tui @priority-low
   Scenario: The offer reads the thread's newest usage after a provider handoff
     Given a thread moved from Codex to Claude
     When the user reloads the thread

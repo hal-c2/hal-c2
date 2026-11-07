@@ -75,7 +75,7 @@ Feature: Staying useful through backgrounding and bad connections
 
   # Upstream #18351. Changing a pull request (reviewing, merging, commenting) still needs
   # the connection; only reading and drafting work offline.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Pull requests opened before stay readable offline
     Given the user opened pull request 42 with its activity, review guide and diffs
     And "My MacBook" is unreachable
@@ -91,7 +91,7 @@ Feature: Staying useful through backgrounding and bad connections
     When "My MacBook" becomes reachable
     Then the new task is sent
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A pull request whose environment is offline loads from another that has its repository
     Given "My MacBook" is unreachable
     And the connected "Office PC" has a checkout of the same repository
@@ -99,13 +99,13 @@ Feature: Staying useful through backgrounding and bad connections
     Then pull request 42 is read through "Office PC"
     And its files, reviewers and review open through "Office PC" too
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A pull request two environments list shows the connected one's copy
     Given "My MacBook" is unreachable and the connected "Office PC" lists the same pull request 42
     When the user opens the pull requests page
     Then pull request 42 is listed once, from "Office PC"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The phone keeps a bounded copy of pull requests per environment
     Given the phone has cached pull requests from "My MacBook"
     When <limit> is passed
@@ -117,14 +117,14 @@ Feature: Staying useful through backgrounding and bad connections
       | 256 saved answers                         |
       | 32 MiB of saved answers                   |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A pull request answer larger than 4 MiB is not kept offline
     Given pull request 42's diff is larger than 4 MiB
     When the user reads it and goes offline
     Then the diff of pull request 42 will load when the connection returns
 
   # Upstream #18476. A saved project stays chosen while its environment is offline.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Thread and pull request list filters are restored on the next launch
     Given the user filtered the threads to the project "shop" on "My MacBook"
     And the user filtered the pull requests of "My MacBook" to open ones awaiting the user's review
@@ -273,7 +273,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then offline threads for "My MacBook" are removed from the phone
     And the phone stays paired with "My MacBook"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Attached images already on the phone are not downloaded again after a reconnect
     Given the phone has shown a thread with three attached photos
     When the app comes back from the background and reconnects

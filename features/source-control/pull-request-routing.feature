@@ -185,7 +185,7 @@ Feature: Sharing GitHub access between environments
     When a client asks for pull request 7 of "team/app" on "git.example.test"
     Then the answer is that the provider is unsupported there
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Which tool owns an unrecognised host is asked once in five minutes
     Given the projects "web" and "api" have remotes on "acme.ghe.com", a host the MC does not recognise
     When pull requests are read for both projects twice within five minutes

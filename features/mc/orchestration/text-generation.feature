@@ -272,7 +272,7 @@ Feature: Generated titles, branch names and source control text
       | codex         | after printing "x" | Codex CLI command failed: x            |
       | codex         | with no output     | Codex CLI command failed with code 1.  |
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-low
   Scenario: A failed Claude writer shows the error Claude reported, not a wrapper's notice
     Given the claude command runs through a wrapper that prints a notice on its error output
     When a title is generated and Claude's result reports "API Error: 400 Model blocked by guardrail"
@@ -529,7 +529,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #15615. A suggested namespace such as fix/ is kept instead of nested under
   # feature/; only a name with no namespace gets feature/.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A generated branch keeps the namespace the writer chose
     Given the repository has the branches <existing>
     When the writing agent answers the branch <raw> for a new branch

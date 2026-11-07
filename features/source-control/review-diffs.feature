@@ -179,7 +179,7 @@ Feature: Reviewing working tree and branch changes
     Then the find bar shows "1 of 3"
     And moving to each match opens the collapsed file or the hidden lines that hold it
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Find in a diff can match case, whole words or a pattern
     When the user searches the diff for "<query>" with <option>
     Then only <matches> are matched
@@ -190,7 +190,7 @@ Feature: Reviewing working tree and branch changes
       | try      | whole word      | "try" and not "retry"         |
       | re.ry    | a pattern       | "retry" and "reply"           |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Find in a diff starts at the match in view and closes back to the diff
     Given the user has scrolled to the third match of "retry" in the diff
     When the user opens find and searches for "retry"
@@ -198,7 +198,7 @@ Feature: Reviewing working tree and branch changes
     When the user presses Escape
     Then the find bar closes, the matches are no longer marked and the diff has the keyboard
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Typing in a diff's find bar does not trigger shortcuts
     Given the find bar of a diff has the keyboard
     When the user types a letter that opens a panel elsewhere, or presses Ctrl+Z
@@ -448,20 +448,20 @@ Feature: Reviewing working tree and branch changes
       | for the contents of a file | outside the MC's projects and worktrees        | it is refused with "Review cwd must be inside one of this MC's projects."     |
       | for a review               | reached through a link out of the MC's projects | it is refused with "Review cwd must be inside one of this MC's projects."    |
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A project on another drive than the MC's folder shows its own diff
     Given the MC runs from the home folder and the project lives on another drive
     When the user opens the project's diff
     Then the project's own changes are shown
     And a refused diff shows its error instead of falling back to the diff of the MC's own folder
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A project at the root of a drive reads its agent instructions
     Given a project at the root of a drive has an AGENTS.md
     When the agent starts a turn in that project
     Then the project's instructions are read
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A GitLab merge request's unchanged lines can be expanded
     Given a GitLab merge request is open for review
     When the user expands the unchanged lines of a file

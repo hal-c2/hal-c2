@@ -331,21 +331,21 @@ Feature: Usage and limits
       And the shares are worked out again among what is shown
       And the choice is kept after usage is opened again
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: A provider that appears after the user filtered usage is shown
       Given the user hid Codex from usage
       When OpenCode reports usage for the first time
       Then OpenCode is shown alongside the other providers the user did not hide
 
     # Upstream #17147: Cursor's account history took up to half a minute to read every time.
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Cursor usage is answered from what was last read while it is read again
       Given Cursor's account usage was read before, even before the MC restarted
       When the user views usage
       Then usage answers at once with the Cursor figures last read, marked as refreshing
       And the fresh Cursor figures follow when they have been read
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: Only the figures still being read are dimmed
       Given Cursor's usage is refreshing and the other providers have answered
       When the user views usage
@@ -353,7 +353,7 @@ Feature: Usage and limits
       And the other providers' rows are not
       But a hidden provider that is refreshing dims nothing
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: Switching the period keeps the previous one on screen until the new one answers
       Given the user views cost for the past 7 days
       When the user switches to the past 30 days
@@ -551,7 +551,7 @@ Feature: Usage and limits
       Then the limit shows the time it resets and how long that is from now
 
     # Upstream #17869. Under a minute is not yet reset, so it never reads "resets in 0m".
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario Outline: How long until a limit resets is worded for the time left
       Given a limit window that resets in <time left>
       When the user views limits

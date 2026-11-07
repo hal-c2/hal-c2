@@ -91,7 +91,7 @@ Feature: General settings
       When the MC sweeps threads
       Then the thread is not settled
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Inactive settling can keep threads that have a pull request
       Given "Auto-settle inactive threads" is on with 3 days
       And "Keep threads with a PR" is on
@@ -102,7 +102,7 @@ Feature: General settings
       When the user turns "Keep threads with a PR" off
       Then the MC sweeps at once and the thread is settled
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Keeping threads with a PR is offered only while inactive settling is on
       Given "Auto-settle inactive threads" is off
       Then "Keep threads with a PR" is not shown

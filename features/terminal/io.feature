@@ -60,7 +60,7 @@ Feature: Terminal input and output
 
     # Upstream #17178: a client that only watched waited for an acknowledgement after
     # every chunk, so it slowed with network latency.
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: A client that only watches a terminal gets output as freely as one that types
       Given a client watches a running terminal without typing into it
       When the shell prints continuously
@@ -145,7 +145,7 @@ Feature: Terminal input and output
       When a client resizes it to 80 columns and 24 rows
       Then the running program sees 80 columns and 24 rows
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Releasing a resize drag tells the shell its new size at once
       Given the user is dragging the divider beside a running terminal
       When the user releases the drag at a narrower width
@@ -343,7 +343,7 @@ Feature: Terminal input and output
         | Copy   | the selected text is on the clipboard      |
         | Paste  | the clipboard text is sent to the shell    |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Select all in the terminal's menu selects the whole kept history
       Given the terminal has more output than fits on screen
       When the user chooses "Select all" from the terminal's menu and copies
@@ -466,7 +466,7 @@ Feature: Terminal input and output
         | scrolled-back output     | the history scrolls back and forth with the finger |
         | a full-screen program    | the program receives the scrolling                |
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: Touching a split terminal that is not active makes it active
       Given the terminal is split in two and the left one is active
       When the user touches the right one

@@ -692,7 +692,7 @@ Feature: Adding projects
       When the user looks up the GitHub repository " notes.git "
       Then the repository "octocat/notes" is found on the host the user is signed in to
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario Outline: A malformed repository name is refused before GitHub is asked
       When the user looks up the GitHub repository "<name>"
       Then the lookup is refused without asking GitHub

@@ -135,7 +135,7 @@ Feature: When source control goes wrong
       | prints more than the limit     | produced too much output |
       | cannot be started              | could not be started |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A Bitbucket request that stalls gives up after 30 seconds
     Given Bitbucket <stalls>
     When the MC reads a pull request from Bitbucket

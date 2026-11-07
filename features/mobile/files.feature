@@ -345,7 +345,7 @@ Feature: Browsing a thread's files on a phone
     Then the lines of "src/cart.ts" are shown without colour
 
   # Upstream #16729: the file was coloured in pieces that each forgot the one before.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A long source file keeps a multi-line comment's colour all the way through
     Given "src/cart.ts" has 4,000 lines and a block comment spanning lines 195 to 210
     When the user opens "src/cart.ts"
@@ -683,7 +683,7 @@ Feature: Browsing a thread's files on a phone
 
   # Upstream #15047: on Android swipe-to-close took the pinch, so pinch wins there and the
   # picture closes with its close button or Back.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: On Android a full-screen picture zooms with a pinch
     Given the user is looking at "shot.png" full screen on an Android phone
     When the user pinches the picture apart

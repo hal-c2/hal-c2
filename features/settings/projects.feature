@@ -165,7 +165,7 @@ Feature: Projects settings panel
     When the user creates a new project with "Create private repository on GitHub" on
     Then the repository is published after the project is created
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: mod+Enter creates the new project while an option is highlighted
     Given the user typed a name in the New project step
     And "Create private repository on GitHub" is highlighted
@@ -181,7 +181,7 @@ Feature: Projects settings panel
     Then the user can pick GitHub or GitLab, with GitHub first
     And the repository is published to the chosen host, and the messages name it
 
-  @backlog @shared @mobile
+  @backlog @shared @mobile @priority-low
   Scenario Outline: A host is offered for a new project only when it can say where the repository goes
     Given <host> is signed in <how>
     When the user creates a new project with publishing on

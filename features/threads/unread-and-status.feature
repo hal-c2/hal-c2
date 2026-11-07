@@ -275,7 +275,7 @@ Feature: Unread and status in the thread list
     And only subagents and monitors read "Waiting on" with a pulse
     And Stop is still offered
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A thread whose session was released stops reading Waiting
     Given a <provider> thread ended its turn with background work running in its session
     When the thread is <released>
@@ -292,7 +292,7 @@ Feature: Unread and status in the thread list
 
   # OpenCode's background subagents run on a server its sessions share and can
   # outlive the session, so its list is kept.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An OpenCode thread keeps its background work when its session is released
     Given an OpenCode thread ended its turn with a background subagent running
     When the thread is settled

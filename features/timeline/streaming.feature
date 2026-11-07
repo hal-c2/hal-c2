@@ -186,7 +186,7 @@ Feature: Streaming the agent's reply
       | only spaces and blank lines       | shown in full       |
 
   # Upstream #16624: the length is measured on the text the user sees, not the hidden markup.
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario Outline: A short message with references is measured by what it shows
     Given the user sent a 200 character message holding <reference>
     When the user looks at it in the conversation

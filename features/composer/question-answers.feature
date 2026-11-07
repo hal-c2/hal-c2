@@ -176,7 +176,7 @@ Feature: Answering the agent's questions from the composer
 
   # Upstream #17364: the move after a pick was still pending when the user moved by hand,
   # and it then skipped or undid that move.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Moving by hand right after a pick is not moved again
     Given the agent asked "Which database?", "Which cache?" and "Which queue?" in one request
     When the user picks "Postgres" and at once <moves>

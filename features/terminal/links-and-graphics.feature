@@ -205,7 +205,7 @@ Feature: Links and rendering inside terminals
 
     # Upstream #17653. The terminal drawer ends where the window ends, so the pointer can
     # never get past its bottom edge; the edge itself scrolls.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario Outline: Dragging a selection to the <edge> edge of the terminal scrolls its history
       Given the terminal has more history than fits <direction> the visible rows
       And the terminal's <edge> edge is also the window's <edge> edge
@@ -247,14 +247,14 @@ Feature: Links and rendering inside terminals
 
     # Upstream #17168. Without a palette of its own the terminal fell back to a pastel one
     # that washed out prompts on dark themes and was hard to read on light ones.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: The terminal's sixteen ANSI colours follow the app's light or dark theme
       Given a program printed red text and text in 256-colour red
       When the user switches the app between a light and a dark theme
       Then the red text is redrawn in the red of the new theme's terminal palette
       And the 256-colour red text keeps its colour
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A palette colour a program set itself is kept across theme changes
       Given a program changed the terminal's red to its own colour
       When the user switches the app to a dark theme

@@ -152,7 +152,7 @@ Feature: Browsing pull requests
 
   # Upstream #17681 adds GitCafe (git.cafe) as a host. Line comments in reviews, reviewer
   # requests, labels, commit diffs and updating a branch outside a stack are refused for now.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: GitCafe pull requests are listed, read and reviewed
     Given the project "cafe" has its remote on git.cafe
     When the user lists open pull requests, filtered to Authored or Reviewing
@@ -160,7 +160,7 @@ Feature: Browsing pull requests
     And a pull request's detail, activity, diff, checks and stack can be read
     And the user can comment, reply, resolve a conversation, submit a review and merge
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: GitCafe's token is sent only to GitCafe
     Given GitCafe's token comes from <source>
     When the MC talks to <host>
@@ -172,7 +172,7 @@ Feature: Browsing pull requests
       | the cafe CLI's git credential helper      | git.cafe                     | is sent     |
       | CAFE_TOKEN with CAFE_HOST naming git.cafe | a page git.cafe redirects to | is not sent |
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A thread's linked git.cafe pull request is shown as GitCafe
     Given a thread links "https://git.cafe/acme/shop/pulls/7"
     When the user looks at the thread's pull request
@@ -190,7 +190,7 @@ Feature: Browsing pull requests
       | the GitHub CLI is not signed in         | the user should run gh auth login and retry     |
 
   # Upstream #17725: "az devops login" signs in with a token that "az account show" does not know.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps CLI signed in with a token lists its pull requests
     Given the Azure DevOps CLI is signed in only with a personal access token
     And the user has opened a pull request in "dev.azure.com/acme/shop/_git/web"
@@ -198,7 +198,7 @@ Feature: Browsing pull requests
     Then the pull requests of "web" are listed
     And the user's own pull request is under Authored
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A token sign-in that has opened no pull request cannot name its viewer
     Given the Azure DevOps CLI is signed in only with a personal access token
     And the user has opened no pull request in "dev.azure.com/acme/shop/_git/web"
@@ -641,7 +641,7 @@ Feature: Browsing pull requests
     Then pull requests from that host are matched against an author actually named "me"
 
   # Upstream #19934: the Draft menu and the search box say the same thing.
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: The Draft menu shows a draft qualifier typed into the search
     Given the user is on the pull requests page
     When the user types "<typed>" into the search
@@ -653,7 +653,7 @@ Feature: Browsing pull requests
       | draft:true  | Drafts only |
       | draft:false | Hide drafts |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: Choosing a Draft value replaces a typed draft qualifier
     Given the user typed "fix draft:false" into the pull request search
     When the user chooses "<choice>" for Draft
@@ -665,19 +665,19 @@ Feature: Browsing pull requests
       | Drafts only | only draft pull requests               |
       | All         | drafts and ready pull requests alike   |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Changing another filter leaves a typed qualifier alone
     Given the user typed "draft:false" into the pull request search
     When the user chooses the merged state
     Then the search still reads "draft:false"
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A typed qualifier outranks the filter chosen in the menu
     Given the user chose "Drafts only" for Draft
     When the user types "draft:false" into the search
     Then only pull requests that are not drafts are listed
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Clearing a search that held only a qualifier shows loading, not an empty list
     Given the user typed "draft:false" into the pull request search
     When the user clears the search
@@ -1139,13 +1139,13 @@ Feature: Browsing pull requests
     Then the page lists pull requests of every project
     And before they arrive the scope is left as it was
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The Scratch folder is not a project to filter pull requests by
     When the user opens the project menu
     Then Scratch is not offered
     And a saved scope naming Scratch lists pull requests of every project
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The project menu lists projects in the sidebar's order
     Given the sidebar orders the projects "web", "api" and "docs"
     When the user opens the project menu
@@ -1735,7 +1735,7 @@ Feature: Browsing pull requests
     And pull request 42 is reported as not found
     And pull requests 41 and 43 are not read again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A malformed row in a listing is skipped
     Given GitHub answers a listing of open pull requests with one row that cannot be read
     When the user lists open pull requests
@@ -1976,7 +1976,7 @@ Feature: Browsing pull requests
     Then the rows are closed in order, failures do not stop the rest, and one summary reports the result
     And Escape cancels, before or after the drag starts
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario Outline: Quick actions follow what each host can do
     Given pull requests on <host>
     When the user asks for quick actions on the list or on a thread's linked pull request

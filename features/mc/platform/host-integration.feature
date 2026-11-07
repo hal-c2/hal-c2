@@ -56,7 +56,7 @@ Feature: The MC working with its host machine
     When a client reads the MC's server config
     Then the available editors include Cursor
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On a Mac Zed is found by its app before a "zed" on the PATH
     Given a Mac host with the Zed app installed and another program named "zed" earlier on its PATH
     When a client opens "src/app.ts" in Zed
@@ -115,7 +115,7 @@ Feature: The MC working with its host machine
 
   # Upstream #17749: a command shim re-reads its arguments through cmd.exe, which mangles
   # a line break or a double quote. Neither can be in a Windows file name.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: On Windows an editor started through a command shim is not given a path it would mangle
     Given the MC runs on Windows and the chosen editor is the command shim "code.cmd"
     When a client opens <path> in that editor
@@ -704,7 +704,7 @@ Feature: The MC working with its host machine
     Then that agent is killed and its turn fails with "Killed: out of memory."
     And the MC and the other agent keep running
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Where there is no systemd user manager agents start as before
     Given the MC runs on macOS or in a container without a systemd user manager
     When a thread starts an agent
@@ -718,7 +718,7 @@ Feature: The MC working with its host machine
 
   # Upstream #11922: on macOS a terminal's ssh to a LAN host failed with "No route to host"
   # until the app declared why it uses the local network.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: On macOS terminals and agents reach hosts on the local network
     Given the packaged desktop app runs on macOS with its MC
     When the user runs "ssh build-box.local hostname" in a HAL-C2 terminal

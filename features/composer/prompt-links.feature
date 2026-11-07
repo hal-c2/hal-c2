@@ -17,13 +17,13 @@ Feature: Sharing a prompt as a link
     Given the user's client is connected to "My MacBook"
     And "My MacBook" has the project "shop" from the repository github.com/acme/shop
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A prompt link opens a draft and never sends it
     When the user opens the link "hal-c2://new?prompt=Add%20a%20dark%20mode&repo=acme/shop"
     Then a new thread draft in "shop" holds "Add a dark mode"
     And nothing is sent until the user sends it
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario Outline: A prompt link cannot change how the thread runs
     When the user opens a prompt link for "acme/shop" that also asks for <setting>
     Then the draft keeps the user's own <kept>
@@ -107,7 +107,7 @@ Feature: Sharing a prompt as a link
     When the user opens a link to "Fix checkout" with the prompt "Also cover refunds"
     Then "Fix checkout" opens with "Also cover refunds" in its composer
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A prompt link asks before replacing what the user already wrote
     Given the user has written "Half a thought" in the composer of "Fix checkout"
     When the user opens a link to "Fix checkout" with the prompt "Also cover refunds"
@@ -132,13 +132,13 @@ Feature: Sharing a prompt as a link
       | Copy prompt link                     | with no project                        |
       | Copy prompt link with repo and model | in "acme/shop" with the thread's model |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Copying a prompt link with its repository is offered only for GitHub projects
     Given the thread is in a project with no GitHub repository
     When the user opens the command palette
     Then "Copy prompt link with repo and model" is not offered
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A sent message can be shared as a prompt link
     Given the user sent "Add a dark mode" in a thread
     When the user copies a prompt link from that message

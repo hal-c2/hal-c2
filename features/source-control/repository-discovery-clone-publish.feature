@@ -269,7 +269,7 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | git.example.com  | the Forgejo CLI has a login for it         | Forgejo               |
       | git.example.com  | no hosting tool has a login for it         | unknown               |
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A GitHub Enterprise server the GitHub CLI knows is recognised
     Given the checkout's remote is on "ghe.example.com", which is not a well-known host
     And the GitHub CLI lists "ghe.example.com" with <account>

@@ -141,7 +141,7 @@ Feature: Recovering from restarts and releasing idle sessions
 
   # Upstream #19291: a run that ended to wait on a monitor or subagent never woke after an update,
   # and its delegating parent took the interim message as the result.
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A run that ended to wait on work the restart stopped is continued
     Given project "demo" continues threads after a server update
     And thread "t1" ended its turn to wait on <work>
@@ -162,7 +162,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the sessions are released side by side, not one after another
     And none is left running for the next MC to resume beside it
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Agents a killed MC left running are stopped before new ones start
     Given an MC was killed while its agents were still running
     When a new MC on the same files launches its first agent

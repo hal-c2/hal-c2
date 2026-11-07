@@ -56,7 +56,7 @@ Feature: Settings search and navigation
       When the user presses Tab
       Then the list of sections has focus, on the current section
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The find key focuses the settings search in every section
       Given the user is in the "<section>" settings
       When the user presses mod+f

@@ -464,7 +464,7 @@ Feature: Usage
     Then each model's share and the order of the list are by tokens
     And a model with an unknown price shows its real token share
 
-  @backlog @mc @plugin-pi
+  @backlog @mc @plugin-pi @priority-low
   Scenario: Pi's own sessions count towards usage
     Given Pi kept sessions in its session directory, one of them copied into a fork
     When the user opens Usage

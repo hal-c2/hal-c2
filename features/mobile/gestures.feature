@@ -265,7 +265,7 @@ Feature: Touch gestures on a phone
     When the user swipes from the leading edge over the code block
     Then the user goes back instead of scrolling the code block
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A back swipe that starts on a row does not also press the row
     Given the user opened Settings and the environment row is under their finger
     When the user swipes back starting on that row, or starts the swipe and cancels it

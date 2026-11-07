@@ -109,7 +109,7 @@ Feature: Approvals and agent questions
 
   # Upstream #17637: a request arriving mid-sentence took over the composer and caught
   # the rest of the draft as its answer.
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A request that arrives while the user is typing waits until they stop
     Given the user is typing a follow-up in the thread's composer
     When the agent asks a question or an approval

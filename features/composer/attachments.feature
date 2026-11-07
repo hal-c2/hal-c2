@@ -123,7 +123,7 @@ Feature: Attaching images and files to a message
       | an image that is already attached    | bug.png is already attached.            |
       | a 101st image                        | You can attach up to 100 images.        |
 
-  @backlog @shared @mobile
+  @backlog @shared @mobile @priority-high
   Scenario Outline: A message of only images asks the agent to respond to them
     Given the draft carries "bug.png" and <text>
     When the user sends it, in a thread or as a new task

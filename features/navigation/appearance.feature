@@ -429,7 +429,7 @@ Feature: Appearance
 
     # Upstream #8011: the file trees held a fixed size; at the default interface size they read
     # three quarters of it.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: File trees grow and shrink with the interface font size
       Given the Files tree and a diff's file tree are open
       When the user sets the interface font size from 16 to 20

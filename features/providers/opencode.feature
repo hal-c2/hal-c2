@@ -46,7 +46,7 @@ Feature: OpenCode
 
   # Upstream #17424: OpenCode 2 lost the provider beside each model, so one model offered by
   # two subscriptions read the same twice.
-  @backlog @mc @shared @mobile
+  @backlog @mc @shared @mobile @priority-low
   Scenario Outline: A model offered by two OpenCode providers says which one it bills
     Given OpenCode 2 is connected to <provider>, which names itself "<name>" and lists "Step 5 Preview Free"
     When the user opens the model picker
@@ -587,7 +587,7 @@ Feature: OpenCode
     Then its OpenCode session is titled "Fix login"
     And OpenCode does not write a title of its own
 
-  @backlog
+  @backlog @priority-low
   Scenario: A renamed thread renames its OpenCode session at its next turn
     Given the thread "Fix login" runs on OpenCode
     When the thread is renamed "Fix the login redirect" and the user sends a message
@@ -800,7 +800,7 @@ Feature: OpenCode
 
   # OpenCode 2 runs background subagents; when one reports back, OpenCode replies on its own
   # and HAL-C2 shows that reply as a continuation turn.
-  @backlog @mc @plugin-opencode
+  @backlog @mc @plugin-opencode @priority-low
   Scenario: Each OpenCode 2 continuation shows its own background reply
     Given an OpenCode 2 turn started two background subagents
     And each one's report woke a reply, first "A" and then "B"
@@ -808,7 +808,7 @@ Feature: OpenCode
     Then that turn shows reply "B", not "A"
     And no reply is left waiting
 
-  @backlog @mc @plugin-opencode
+  @backlog @mc @plugin-opencode @priority-low
   Scenario: An OpenCode 2 continuation ends after a reconnect lost a stop's end
     Given an OpenCode 2 turn with a background subagent was stopped and its stop timed out
     And the event stream dropped before the stopped turn's end arrived
@@ -817,7 +817,7 @@ Feature: OpenCode
 
   # Upstream #17134: steering a running subagent joins its run, and OpenCode sends one
   # report for both calls; the second call stayed "Running" until a restart.
-  @backlog @mc @plugin-opencode
+  @backlog @mc @plugin-opencode @priority-low
   Scenario: Steering a running OpenCode 2 subagent finishes with the run it joined
     Given an OpenCode 2 turn started the background subagent "A"
     When the agent steers "A" while it is still running
@@ -825,14 +825,14 @@ Feature: OpenCode
     Then both the subagent call and the steer show "A"'s report
     And the thread is no longer waiting on background work
 
-  @backlog @mc @plugin-opencode
+  @backlog @mc @plugin-opencode @priority-low
   Scenario: A steer that joins a background run waits for its report
     Given an OpenCode 2 background subagent "A" is running
     When the agent steers "A" without asking for it to run in the background
     And the turn ends before "A" reports back
     Then the steer stays running until "A"'s report arrives
 
-  @backlog @mc @plugin-opencode
+  @backlog @mc @plugin-opencode @priority-low
   Scenario: A finished OpenCode 2 subagent asked again waits for its new run
     Given the OpenCode 2 subagent "A" finished its run
     When the agent calls "A" again and the old report arrives late

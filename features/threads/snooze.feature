@@ -147,7 +147,7 @@ Feature: Snoozing threads
       | a notification wake                      |
       | the completion of a task it delegated    |
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: Wakes held for output that was thrown away are cancelled
     Given "Refactor cart" has a wake queued for a provider notification
     When <discard>

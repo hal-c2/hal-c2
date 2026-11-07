@@ -332,7 +332,7 @@ Feature: Subscription limits
 
   # Upstream #19207: each machine's sign-in has its own refresh token, so the Google account id
   # identifies the account; when it cannot be read, the sign-in itself still does.
-  @backlog @mc @desktop @mobile
+  @backlog @mc @desktop @mobile @priority-low
   Scenario: One Google account signed in to Antigravity on two environments counts once
     Given the same Google account is signed in to Antigravity on two environments
     When the user opens Limits
@@ -340,7 +340,7 @@ Feature: Subscription limits
 
   # Upstream #17711: one email in two workspaces (a Plus plan and a Business workspace, or
   # one Claude login in two organizations) has two quotas, and they collapsed into one bar.
-  @backlog @mc @desktop @mobile
+  @backlog @mc @desktop @mobile @priority-low
   Scenario Outline: One email in two workspaces is two accounts
     Given <provider> is signed in as "same@example.com" in the workspaces "Personal" and "Business"
     When the user opens Limits
@@ -351,13 +351,13 @@ Feature: Subscription limits
       | Codex    |
       | Claude   |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Weekly limits of two Codex plans share one card
     Given Codex reports "Business" with its weekly limit first and "Personal" with its weekly limit second
     When the user opens Limits
     Then one Weekly card shows both "Personal" and "Business"
 
-  @backlog @mc @desktop @mobile
+  @backlog @mc @desktop @mobile @priority-low
   Scenario Outline: A report that names no workspace joins its email's only workspace
     Given a hub reports "same@example.com" without saying which workspace
     And "same@example.com" is signed in <workspaces>
@@ -370,7 +370,7 @@ Feature: Subscription limits
       | in two workspaces                                             | keeps its own row and its reset credit goes to neither workspace |
       | in two workspaces, one of whose limits cannot be read         | keeps its own row and its reset credit goes to neither workspace |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Last good limits are not kept for a login that switched workspace
     Given Codex reported the limits of "Personal" a minute ago
     And the login has since switched to "Business"
@@ -465,7 +465,7 @@ Feature: Subscription limits
 
   # Upstream now reads Antigravity's quota; the /usage-limits scenario above that leaves
   # Antigravity out predates it.
-  @backlog @mc @shared @mobile @plugin-antigravity
+  @backlog @mc @shared @mobile @plugin-antigravity @priority-low
   Scenario: Antigravity's subscription limits are shown with the other providers'
     Given an Antigravity instance signed in to a Google account
     When the user opens the usage limits

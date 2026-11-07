@@ -87,7 +87,7 @@ Feature: Models
     Then "claude-sonnet-5-5" is offered in the model picker for Claude
 
   # Upstream #16903: Haiku 5.5 joins the current Claude models; Opus 5 and Sonnet 5 move to legacy.
-  @backlog
+  @backlog @priority-high
   Scenario: The Claude catalog's current models are the 5.5 family and Fable 5.1
     Given the MC uses its bundled model manifest
     When the user opens the model picker for Claude
@@ -95,7 +95,7 @@ Feature: Models
     And "Opus 5" and "Sonnet 5" are listed as legacy
     And the aliases "opus", "sonnet" and "haiku" pick the 5.5 models
 
-  @backlog
+  @backlog @priority-low
   Scenario: Claude Haiku 5.5 offers reasoning effort but not fast mode
     Given the installed Claude is version 2.1.293 or newer
     When the user opens the options for "Haiku 5.5"
@@ -229,7 +229,7 @@ Feature: Models
       | the custom model "my-model" twice         | "my-model" once                         |
 
   # Every provider that takes custom models; Antigravity has none.
-  @backlog
+  @backlog @priority-low
   Scenario: A named custom model with a built-in's id renames the built-in
     When the settings for Codex are saved with the custom model "gpt-5.5" named "Team GPT"
     Then Codex's models list "gpt-5.5" once, still built in, named "Team GPT"
@@ -276,7 +276,7 @@ Feature: Models
     When the user shows "Haiku" again on the phone
     Then the desktop offers "Haiku" again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Model preferences saved on a device move to the environment once
     Given a client kept favourite and hidden models on its device before the environment kept them
     When it connects to an environment that keeps none yet
@@ -288,12 +288,12 @@ Feature: Models
     Given the desktop favourites "Opus" while the phone hides "Haiku" at the same time
     Then the environment keeps "Opus" as a favourite and "Haiku" hidden
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The phone can hide and restore models
     When the user opens "Manage hidden models" from the phone's model picker
     Then the user can hide a model and restore a hidden one
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Hidden models are left out of the models agents delegate to
     Given the user hid "Haiku" and added the custom model "my-model"
     When an agent asks the MC for its orchestrator capabilities
