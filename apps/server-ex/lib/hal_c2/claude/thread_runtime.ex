@@ -37,7 +37,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 11
+  @state_version 12
 
   # How to sign in, naming where when this instance runs under its own config
   # directory: the login has to land in the directory Claude will be pointed at.
@@ -274,7 +274,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        # A turn Claude runs by itself (`wake/2`) that no run follows yet:
        # `%{open: bool, buffer: [message] | nil}`, `open` until its `result`, `buffer` its
        # messages newest first, nil once the thread refused it a run.
-       wake: nil
+       wake: nil,
+       # Why the thread was last told Full access asks (`announce_bypass/2`), if it was.
+       bypass_notice: nil
      }}
   end
 
@@ -352,7 +354,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
 
-    turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
+    turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch) |> bypass_policy()
     last_ids = state.last_ids
 
     state = %{
@@ -404,6 +406,7 @@ defmodule HalC2.Claude.ThreadRuntime do
             # Fresh for every prompt: Claude finishes one whose uuid its transcript
             # already holds without running a turn for it (Upstream #16897).
             uuid = HalC2.Environment.uuid4()
+            state = announce_bypass(state, turn)
             state = put_in(state.turn[:prompt], %{uuid: uuid, started: false})
             Session.send_message(state.session, claude_content(turn), [uuid: uuid] ++ opts)
             {:reply, :ok, state}
@@ -661,6 +664,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         summarize_tool(tool, input)
 
     {state, request_id} = open_request(flush(state), id, kind, prompt)
+    state = explain_request(state, id, prompt, context)
     request = {:permission, id, tool, context["permission_suggestions"]}
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
@@ -767,6 +771,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
        |> Map.put_new(:placed, nil)
+       |> Map.put_new(:bypass_notice, nil)
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
@@ -997,7 +1002,8 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: take_permission_flag(rest, override, [arg | kept])
 
   # A permission flag in the launch arguments, else plan mode, else a read-only
-  # run's never-ask, else the thread's runtime mode.
+  # run's never-ask, else the thread's runtime mode: Full access asks as the default
+  # mode does when Claude's settings forbid bypassing (`bypass_policy/1`).
   defp permission_mode(turn) do
     launch = Map.get(turn, :launch) || %{}
 
@@ -1005,9 +1011,49 @@ defmodule HalC2.Claude.ThreadRuntime do
       launch[:permission_override] -> launch[:permission_override]
       Map.get(turn, :interaction_mode) == "plan" -> "plan"
       Map.get(turn, :read_only) -> "dontAsk"
+      Map.get(turn, :bypass_limited) -> "default"
       true -> Map.get(@permission_modes, turn.runtime_mode, "default")
     end
   end
+
+  # Claude refuses bypass mode when its settings disable it, so a Full access turn
+  # there runs in the default mode, asking the user before the tools those settings
+  # guard. Settings that cannot be read limit only this turn: each turn reads them again.
+  defp bypass_policy(turn) do
+    if permission_mode(turn) == "bypassPermissions" and turn.launch[:permission_override] == nil do
+      instance = Entities.instance(turn.ids)
+      config_dir = HalC2.Claude.Provider.config_dir(instance, turn.cwd)
+
+      case HalC2.Claude.Skills.bypass_permissions(config_dir, turn.cwd) do
+        :allowed -> turn
+        limited -> Map.put(turn, :bypass_limited, limited)
+      end
+    else
+      turn
+    end
+  end
+
+  @bypass_notices %{
+    disabled:
+      "Claude's settings turn off bypassing permissions here, so this Full access thread asks before the tools they guard run.",
+    unreadable:
+      "HAL-C2 could not read Claude's settings here, so this Full access turn asks before Claude's tools run."
+  }
+
+  # The thread says once why Full access asks, and again when the reason changes.
+  defp announce_bypass(state, %{bypass_limited: limited} = turn)
+       when limited != state.bypass_notice do
+    text = @bypass_notices[limited]
+    native = "bypass-limited:#{turn.ids.provider_turn}"
+
+    state
+    |> ensure_item(native, :notice, %{"title" => text, "message" => text})
+    |> finish_item(native, "completed", & &1)
+    |> Map.put(:bypass_notice, limited)
+  end
+
+  defp announce_bypass(state, %{bypass_limited: _}), do: state
+  defp announce_bypass(state, _turn), do: %{state | bypass_notice: nil}
 
   # A session carried from another machine that this Claude cannot open (a newer
   # Claude Code wrote it, say) ends before it answers `initialize`. The turn then starts
@@ -1556,7 +1602,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     # An answer after a retry means the request went through.
     state = recover_retry(state)
 
-    {blocks, placed} = placed(state.placed, id, content)
+    {blocks, placed} = placed(state.placed, id, with_presentation(content, message))
 
     Enum.reduce(blocks, flush(%{state | placed: placed}), fn {block, index}, state ->
       assistant_block(block, id, index, state)
@@ -2313,7 +2359,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp sidechain(%{"type" => "stream_event"}, _parent, state), do: state
 
   defp sidechain(
-         %{"type" => "assistant", "message" => %{"content" => content} = message},
+         %{"type" => "assistant", "message" => %{"content" => content}} = message,
          parent,
          state
        )
@@ -2321,12 +2367,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     state
     |> parent_work(Enum.filter(content, &parent_work?/1))
     |> to_subagent(parent, fn sub ->
-      {blocks, placed} = placed(sub[:placed], message["id"], content)
+      {blocks, placed} =
+        placed(sub[:placed], message["message"]["id"], with_presentation(content, message))
 
       for {block, index} <- blocks,
           not parent_work?(block),
           reduce: Map.put(sub, :placed, placed) do
-        sub -> subagent_block(sub, block, block_key(message["id"], index))
+        sub -> subagent_block(sub, block, block_key(message["message"]["id"], index))
       end
     end)
   end
@@ -2428,7 +2475,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        do: sub
 
   defp subagent_block(sub, %{"type" => "tool_use", "id" => tool_id, "name" => name} = block, _key) do
-    {kind, fields} = tool_kind(name, block["input"] || %{})
+    {kind, fields} = tool_kind(name, block["input"] || %{}, block["presentation"])
     sub = NativeSubagent.item(sub, tool_id, @item_types[kind], "running", fields)
     Map.put(sub, :tools, Map.put(Map.get(sub, :tools, %{}), tool_id, kind))
   end
@@ -2464,12 +2511,126 @@ defmodule HalC2.Claude.ThreadRuntime do
         do: put_in(state.work[tool_id], %{sub: nil, item: nil, background: true}),
         else: state
 
-    {kind, fields} = tool_kind(name, input)
+    {kind, fields} = tool_kind(name, input, block["presentation"])
     ensure_item(state, tool_id, kind, fields)
   end
 
+  # Claude Code names each MCP tool use on its assistant message, in `tool_use_meta`
+  # (undeclared by the SDK): the tool's display name, its server's and the server's
+  # icon. Each tool_use block carries its entry as `"presentation"`.
+  defp with_presentation(content, message) do
+    case message["tool_use_meta"] do
+      [_ | _] = meta ->
+        by_id = for %{"id" => id} = entry <- meta, is_binary(id), into: %{}, do: {id, entry}
+
+        Enum.map(content, fn
+          %{"type" => "tool_use", "id" => id} = block when is_map_key(by_id, id) ->
+            Map.put(block, "presentation", by_id[id])
+
+          block ->
+            block
+        end)
+
+      _ ->
+        content
+    end
+  end
+
+  # How an MCP tool call reads: Claude's title for it and the integration it groups
+  # under (`HalC2.Codex.ToolPresentation` gives Codex's the same fields), else a title
+  # made from its `mcp__<server>__<tool>` name. HAL-C2's own tools are named by the
+  # clients.
+  defp presentation_fields(_name, %{"display_name" => title} = meta)
+       when is_binary(title) and title != "" do
+    fields = %{"title" => bounded(title, 160)}
+
+    case meta["server_display_name"] do
+      server when is_binary(server) and server != "" ->
+        server = bounded(server, 160)
+
+        source =
+          %{"key" => "mcp:#{String.downcase(server)}", "name" => server, "kind" => "integration"}
+          |> then(fn source ->
+            case http_url(meta["icon_url"]) do
+              nil -> source
+              url -> Map.put(source, "icon", %{"_tag" => "themed-logo", "logoUrl" => url})
+            end
+          end)
+
+        Map.put(fields, "toolSource", source)
+
+      _ ->
+        fields
+    end
+  end
+
+  defp presentation_fields("mcp__" <> rest, _meta) do
+    case String.split(rest, "__", parts: 2) do
+      [server, tool] when server not in ["hal-c2", "hal_c2"] and tool != "" ->
+        %{"title" => tool |> String.replace(["_", "-"], " ") |> String.capitalize()}
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp presentation_fields(_name, _meta), do: %{}
+
+  # Claude's reason for asking goes on the approval when it says more than the
+  # prompt. In Full access Claude asks only when a user ask rule or its own safety
+  # check fires, so the item names which (`fullAccessOverride`) for the clients to
+  # explain why Full access still asked.
+  defp explain_request(state, id, prompt, context) do
+    reason =
+      case context["decision_reason"] do
+        reason when is_binary(reason) ->
+          reason = reason |> String.replace(~r/\e\[[0-9;?]*[A-Za-z]/, "") |> String.trim()
+          if reason != "" and reason != prompt, do: bounded(reason, 2000)
+
+        _ ->
+          nil
+      end
+
+    override =
+      if state.permission_mode == "bypassPermissions",
+        do: if(context["decision_reason_type"] == "rule", do: "ask_rule", else: "provider_check")
+
+    fields =
+      %{"reason" => reason, "fullAccessOverride" => override}
+      |> Map.reject(fn {_, value} -> is_nil(value) end)
+
+    if fields != %{} do
+      commit(state, fn stream ->
+        [
+          Orchestration.upsert(
+            stream,
+            "turn-item",
+            "turn-item:approval:#{id}",
+            &Map.merge(&1, fields)
+          )
+        ]
+      end)
+    end
+
+    state
+  end
+
+  defp bounded(text, max), do: text |> String.trim() |> String.slice(0, max)
+
+  defp http_url(url) when is_binary(url) and byte_size(url) <= 4096 do
+    case URI.new(url) do
+      {:ok, %URI{scheme: scheme, host: host}} when scheme in ["http", "https"] and host != nil ->
+        url
+
+      _ ->
+        nil
+    end
+  end
+
+  defp http_url(_url), do: nil
+
   # The item a tool call shows as: its kind (`TurnWriter.ensure_item/4`) and fields.
-  defp tool_kind(name, input) do
+  defp tool_kind(name, input, presentation) do
     cond do
       name == "Bash" ->
         {:command, %{"input" => input["command"] || "", "output" => ""}}
@@ -2483,6 +2644,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       true ->
         {:tool,
          %{"toolName" => name, "input" => input}
+         |> Map.merge(presentation_fields(name, presentation || %{}))
          |> then(fn fields ->
            case viewed_image_path(name, input) do
              nil -> fields

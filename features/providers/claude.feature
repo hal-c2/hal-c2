@@ -1540,7 +1540,8 @@ Feature: Claude
     When Claude reports a usage limit while the subagent runs
     Then the subagent's row and thread still show "haiku"
 
-  @backlog @mc @priority-high
+  # Upstream #14860: Claude Code's `tool_use_meta` titles an MCP call and names its server.
+  @mc @priority-high
   Scenario: Claude MCP tool calls show their names and icons
     When Claude calls an MCP tool
     Then the item is titled with the tool's display name and server, with its icon
@@ -1817,7 +1818,8 @@ Feature: Claude
     And Claude is told the user asked for "review" and where its instructions are
 
   # Upstream #19196: a wake run that only got a background completion never ended.
-  @backlog @mc @plugin-claude @priority-high
+  # HAL-C2's ends at once: with nothing of Claude's to follow, it has nothing to wait for.
+  @mc @plugin-claude @priority-high
   Scenario: A Claude wake run ends when Claude never opens the wake turn
     Given a Claude thread is woken by a background subagent finishing
     When Claude does not start a turn for the wake within two minutes
@@ -1825,7 +1827,7 @@ Feature: Claude
     And the user's next message starts a turn as usual
 
   # Upstream #19543: a later empty notification hid the usage-limit failure before it.
-  @backlog @mc @plugin-claude @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A Claude usage limit is not hidden by an empty notice that follows it
     Given a Claude turn hits a usage limit
     When Claude then reports a background task notice with nothing in it
@@ -1841,7 +1843,7 @@ Feature: Claude
     And an existing child thread keeps its title and model
 
   # Upstream #21188: rolling back a Claude fork's first run lost the history it inherited.
-  @backlog @mc @plugin-claude @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: Rolling back a Claude fork's first turn keeps the history it was forked with
     Given a Claude thread forked from another thread's second turn
     And the fork has run one turn of its own
@@ -1849,14 +1851,15 @@ Feature: Claude
     Then Claude still has the conversation the fork inherited
 
   # Upstream #21806: Full access approved requests Claude's settings meant to ask the user about.
-  @backlog @mc @shared @plugin-claude @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @plugin-claude @priority-high
   Scenario: A Claude whose settings restrict bypass still asks the user in Full access
     Given the project's or the managed Claude settings restrict bypassing permissions
     When a Claude thread in Full access wants to run a tool those settings guard
     Then the user is asked for permission
     And the thread says Claude's settings limited Full access
 
-  @backlog @mc @plugin-claude @priority-high
+  # Upstream #21806: settings HAL-C2 cannot read limit only the turn that read them.
+  @mc @plugin-claude @priority-high
   Scenario: Unreadable Claude settings make a Full access turn ask
     Given the project's Claude settings cannot be read
     When a Claude thread in Full access runs a turn
@@ -1970,7 +1973,7 @@ Feature: Claude
 
   # Upstream #22546: in Full access Claude still asks when its own safety check or a user ask rule
   # fires; the approval says why.
-  @backlog @mc @shared @plugin-claude @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @plugin-claude @priority-high
   Scenario Outline: A Claude approval in Full access says why Claude asked
     Given a Claude thread in Full access
     When <cause> makes Claude ask to run a command

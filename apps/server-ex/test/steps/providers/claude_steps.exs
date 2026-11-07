@@ -3655,7 +3655,7 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the thread runs a turn for that work", context do
-    World.await_value(context, @thread, fn state ->
+    World.await_value(context, @thread, fn _state ->
       match?([_, %{"status" => "running"}], World.runs(context, @thread))
     end)
 
@@ -3711,6 +3711,149 @@ defmodule HalC2.Steps.Providers.Claude do
   step "the run completes without asking Claude anything", context do
     World.await_runs(context, @thread, ["completed", "completed"], 10_000)
     assert length(user_messages(context)) == 1
+    context
+  end
+
+  # A wake whose subagent finished and that Claude never opened: the thread asks for its
+  # run, which has nothing of Claude's to wait on and ends at once (rather than after
+  # the two minutes upstream waits for Claude to begin).
+  step "a Claude thread is woken by a background subagent finishing", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "agent-1",
+      "status" => "completed",
+      "summary" => "Survey done"
+    })
+
+    flush_runtime(context)
+    [run] = World.runs(context, @thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "command:claude-wake:#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "messageId" => "message:wake-#{System.unique_integer([:positive])}",
+        "text" => "Background task completed.",
+        "attachments" => [],
+        "modelSelection" => run["modelSelection"],
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "createdBy" => "agent",
+        "creationSource" => "provider",
+        "providerWake" => true,
+        "notification" => %{
+          "source" => %{"kind" => "background_task"},
+          "outcome" => "updated",
+          "summary" => "Background activity updated"
+        }
+      })
+
+    context
+  end
+
+  step "Claude does not start a turn for the wake within two minutes", context do
+    context
+  end
+
+  step "the wake run ends", context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert length(user_messages(context)) == 1
+    context
+  end
+
+  step "the user's next message starts a turn as usual", context do
+    World.post_message(context, @thread, "hello again")
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    assert length(user_messages(context)) == 2
+    context
+  end
+
+  # A wake Claude opens hits the usage limit; an empty task notice and its own empty
+  # `result` follow it while its run waits to start.
+  step "a Claude turn hits a usage limit", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    resets = System.system_time(:second) + 3600
+
+    claude_says(context, %{
+      "type" => "stream_event",
+      "event" => %{"type" => "message_start", "message" => %{"id" => "m-limit"}}
+    })
+
+    refuse(context, "five_hour", resets)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "error" => "rate_limit",
+      "message" => %{
+        "id" => "m-limit",
+        "content" => [%{"type" => "text", "text" => "You've hit your limit"}]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "result" => "You've hit your limit"
+    })
+
+    Map.put(context, :limit_reset_s, resets)
+  end
+
+  step "Claude then reports a background task notice with nothing in it", context do
+    claude_says(context, %{"type" => "system", "subtype" => "task_notification"})
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "result" => ""
+    })
+
+    context
+  end
+
+  step "the turn ends as stopped by the usage limit", context do
+    World.await_runs(context, @thread, ["completed", "failed"])
+
+    row =
+      World.await_row(
+        World.thread_id(context, @thread),
+        &(&1["lastErrorClass"] == "usage_limit" and is_binary(&1["usageLimitResetAt"]))
+      )
+
+    Map.put(context, :limited_row, row)
+  end
+
+  step "it can be resumed when the limit resets", context do
+    row = context.limited_row
+    stopped = DateTime.to_iso8601(DateTime.utc_now(), :extended)
+
+    assert %{"type" => "message.dispatch"} =
+             HalC2.Orchestration.LimitRecovery.command(
+               row
+               |> Map.put("latestRunCompletedAt", stopped)
+               |> Map.put("limitRecovery", %{
+                 "runId" => row["latestRunId"],
+                 "resetAt" => row["usageLimitResetAt"],
+                 "autoResume" => true
+               }),
+               true,
+               (context.limit_reset_s + 1) * 1000
+             )
+
     context
   end
 
@@ -5027,6 +5170,293 @@ defmodule HalC2.Steps.Providers.Claude do
         File.rm_rf!(Path.join([root, ".claude", "skills", name]))
         Map.put(context, :thread_open, true)
     end
+  end
+
+  # --- MCP tool presentation -------------------------------------------------------------
+
+  # Claude Code names an MCP tool use in the assistant message's `tool_use_meta`; the
+  # second call has no entry, as from a Claude Code that sends none.
+  step "Claude calls an MCP tool", context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-mcp",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "mcp-scrape",
+            "name" => "mcp__claude_ai_Firecrawl__firecrawl_scrape",
+            "input" => %{"url" => "https://example.com"}
+          },
+          %{
+            "type" => "tool_use",
+            "id" => "mcp-map",
+            "name" => "mcp__claude_ai_Firecrawl__firecrawl_map",
+            "input" => %{"url" => "https://example.com"}
+          }
+        ]
+      },
+      "tool_use_meta" => [
+        %{
+          "id" => "mcp-scrape",
+          "display_name" => "Firecrawl scrape",
+          "server_display_name" => "Firecrawl",
+          "icon_url" => "https://www.google.com/s2/favicons?domain=firecrawl.dev&sz=64"
+        }
+      ]
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => "mcp-scrape", "content" => "scraped"},
+          %{"type" => "tool_result", "tool_use_id" => "mcp-map", "content" => "mapped"}
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success"})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the item is titled with the tool's display name and server, with its icon", context do
+    items = mcp_items(context)
+
+    assert %{
+             "type" => "dynamic_tool",
+             "status" => "completed",
+             "title" => "Firecrawl scrape",
+             "toolSource" => %{
+               "key" => "mcp:firecrawl",
+               "name" => "Firecrawl",
+               "kind" => "integration",
+               "icon" => %{
+                 "_tag" => "themed-logo",
+                 "logoUrl" => "https://www.google.com/s2/favicons?domain=firecrawl.dev&sz=64"
+               }
+             }
+           } = items["mcp-scrape"]
+
+    context
+  end
+
+  step "the raw name like {string} is not shown", context do
+    items = mcp_items(context)
+    # Without Claude's own name for it, a title made from the tool's part of the name.
+    assert %{"title" => "Firecrawl map"} = items["mcp-map"]
+    refute Map.has_key?(items["mcp-map"], "toolSource")
+
+    for {_id, item} <- items, do: refute(item["title"] =~ ~r/mcp__/i)
+    context
+  end
+
+  defp mcp_items(context) do
+    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+        item["toolName"] in [
+          "mcp__claude_ai_Firecrawl__firecrawl_scrape",
+          "mcp__claude_ai_Firecrawl__firecrawl_map"
+        ],
+        into: %{},
+        do: {if(item["toolName"] =~ "scrape", do: "mcp-scrape", else: "mcp-map"), item}
+  end
+
+  # --- Full access and Claude's own permission settings ------------------------------
+
+  step "the project's or the managed Claude settings restrict bypassing permissions",
+       context do
+    {context, _home} = skills_home(context)
+    path = settings_file(context, "the project's Claude settings")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, ~s({"permissions": {"disableBypassPermissionsMode": "disable"}}))
+    context
+  end
+
+  step "a Claude thread in Full access wants to run a tool those settings guard", context do
+    context = running_turn(context)
+    claude_asks(context, "perm-guarded", "Bash", %{"command" => "rm -rf build"})
+  end
+
+  step "the user is asked for permission", context do
+    assert flag_value(last_argv(context), "--permission-mode") == "default"
+
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => "pending"}], StreamState.list(state, "runtime-request"))
+    end)
+
+    context
+  end
+
+  step "the thread says Claude's settings limited Full access", context do
+    assert [notice] = bypass_notices(context)
+    assert notice =~ "Claude's settings turn off bypassing permissions"
+    context
+  end
+
+  step "the project's Claude settings cannot be read", context do
+    {context, _home} = skills_home(context)
+    path = settings_file(context, "the project's Claude settings")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, ~s({"permissions": {"allow": [}))
+    Map.put(context, :broken_settings, path)
+  end
+
+  step "a Claude thread in Full access runs a turn", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "which mode")
+
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :thread, @thread)
+  end
+
+  step "that turn asks the user before Claude's tools run", context do
+    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    assert World.replies(context, @thread) == ["mode default"]
+    assert [notice] = bypass_notices(context)
+    assert notice =~ "could not read Claude's settings"
+    context
+  end
+
+  step "the next turn reads the settings again", context do
+    File.write!(context.broken_settings, ~s({"permissions": {"allow": []}}))
+    context = World.post_message(context, @thread, "which mode")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert World.replies(context, @thread) == ["mode default", "mode bypassPermissions"]
+    context
+  end
+
+  defp bypass_notices(context) do
+    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+        item["type"] == "system_notice",
+        get_in(item, ["nativeItemRef", "nativeId"])
+        |> to_string()
+        |> String.starts_with?("bypass-"),
+        do: item["message"]
+  end
+
+  # Why Claude asks in Full access, as its permission request says it.
+  @full_access_causes %{
+    "Claude's own safety check on a recursive delete" =>
+      {"safetyCheck", "rm -rf on a path Claude could not verify always asks"},
+    "an ask rule in the user's Claude permissions" =>
+      {"rule", "Permission rule 'Bash(rm:*)' from user settings requires approval"}
+  }
+
+  step "a Claude thread in Full access", context do
+    running_turn(context)
+  end
+
+  step ~r/^(?<cause>Claude's own safety check on a recursive delete|an ask rule in the user's Claude permissions) makes Claude ask to run a command$/,
+       %{args: [cause]} = context do
+    {type, reason} = Map.fetch!(@full_access_causes, cause)
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+
+    send(
+      pid,
+      {:claude, :sys.get_state(pid).session,
+       {:permission, "perm-why", "Bash", %{"command" => "rm -rf build"},
+        %{
+          "title" => "Claude wants to run rm -rf build",
+          "decision_reason" => "\e[1m#{reason}\e[0m",
+          "decision_reason_type" => type
+        }}}
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+    end)
+
+    Map.put(context, :ask_reason, reason)
+  end
+
+  step "the approval shows Claude's reason", context do
+    approval = approval_item(context)
+    assert approval["prompt"] == "Claude wants to run rm -rf build"
+    assert approval["reason"] == context.ask_reason
+
+    # The session still holds the request, so the user's answer reaches Claude.
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+
+    assert Enum.any?(
+             Map.values(:sys.get_state(pid).requests),
+             &match?({:permission, "perm-why", _, _}, &1)
+           )
+
+    context
+  end
+
+  step ~r/^the user can find out why Full access still asks, explained as (?<explanation>.+)$/,
+       %{args: [explanation]} = context do
+    expected =
+      Map.fetch!(
+        %{"Claude's own safety check" => "provider_check", "the user's ask rule" => "ask_rule"},
+        explanation
+      )
+
+    assert approval_item(context)["fullAccessOverride"] == expected
+    context
+  end
+
+  defp approval_item(context) do
+    [approval] =
+      for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+          item["type"] == "approval_request",
+          do: item
+
+    approval
+  end
+
+  # --- rolling back a fork's first turn ---------------------------------------------------
+
+  @source "Claude source"
+
+  step "a Claude thread forked from another thread's second turn", context do
+    context = World.fake_providers(context)
+    {context, _home} = skills_home(context)
+    World.put_os_env("FAKE_SESSIONS", "1")
+    context = World.launch_on(context, @source, "claudeAgent", "first question")
+    World.await_runs(context, @source, ["completed"])
+    context = World.post_message(context, @source, "second question")
+    World.await_runs(context, @source, ["completed", "completed"])
+    context = World.fork(context, @source, 2, @thread)
+    assert {:ok, _} = context.reply
+    World.await_row(World.thread_id(context, @thread), & &1)
+    Map.put(context, :thread, @thread)
+  end
+
+  step "the fork has run one turn of its own", context do
+    done = length(World.runs(context, @thread))
+    context = World.post_message(context, @thread, "the fork's own question")
+    World.await_latest_run(context, @thread, "completed")
+    assert length(World.runs(context, @thread)) == done + 1
+    Map.put(context, :own_run, World.latest_run(context, @thread))
+  end
+
+  step "the user rolls that turn back and sends another message", context do
+    context =
+      World.rollback(context, @thread, context.own_run["ordinal"] - 1, %{"restoreFiles" => false})
+
+    assert {:ok, _} = context.reply
+    context = World.post_message(context, @thread, "where are we")
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "message"), &(&1["text"] =~ "resumed at"))
+    end)
+
+    context
+  end
+
+  step "Claude still has the conversation the fork inherited", context do
+    answer = Enum.find(World.replies(context, @thread), &(&1 =~ "resumed at"))
+    # The fake keeps a resumed transcript whole; `resumed at` is where Claude cuts it.
+    assert answer =~ "earlier [first question | second question", answer
+    refute answer =~ "resumed at None", answer
+    context
   end
 
   defp claude_says(context, message) do

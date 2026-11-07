@@ -2115,7 +2115,8 @@ Red"} <- StreamState.get(state, "message")[message],
     "the folder Codex wants to write under" => "/tmp/root"
   }
 
-  step ~r/^the approval shows (?<shown>.+)$/, %{args: [shown]} = context do
+  # Claude's reason is the Claude steps' own.
+  step ~r/^the approval shows (?!Claude's )(?<shown>.+)$/, %{args: [shown]} = context do
     assert approval_prompt(context) == Map.fetch!(@approval_shown, shown)
     context
   end
