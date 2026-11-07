@@ -228,9 +228,9 @@ Feature: Runs and turns
     And "t1" can take its next message
 
   # Upstream #19131: a run fails when its provider stream ends without a terminal event
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A provider stream that ends without ending its turn fails the run
-    Given "t1" has a running turn
+    Given "t1" has a running turn with a subagent still running
     When the provider's event stream ends without saying the turn ended
     Then the run and its subagents are failed
     And "t1" can take its next message
@@ -314,19 +314,20 @@ Feature: Runs and turns
       | the MC cannot tell whether handed-over history arrived  | HAL-C2 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.       |
       | of an internal error the provider did not explain       | Provider turn failed.                                                                                                    |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A failure message never shows credentials
     When the provider fails a turn of "t1" with a message holding <secret>
     Then the failure the thread records shows <shown>
 
     Examples:
-      | secret                                     | shown                                    |
-      | a URL with a user name, password and query | the URL without its credentials or query |
-      | a bearer or basic authorization value      | "[REDACTED]" in place of the value       |
-      | an API key, token, password or secret      | "[REDACTED]" in place of the value       |
-      | a URL that cannot be read                  | "[REDACTED_URL]" in place of the URL     |
+      | secret                                         | shown                                    |
+      | a URL with a user name, password and query     | the URL without its credentials or query |
+      | a bearer or basic authorization value          | "[REDACTED]" in place of the value       |
+      | an API key, token, password or secret          | "[REDACTED]" in place of the value       |
+      | a prefixed key, client secret or refresh token | "[REDACTED]" in place of the value       |
+      | a URL that cannot be read                      | "[REDACTED_URL]" in place of the URL     |
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A very long failure message is cut short
     When the provider fails a turn of "t1" with a message longer than 4,096 characters
     Then the failure the thread records is at most 4,096 characters and ends with "…"
@@ -376,7 +377,7 @@ Feature: Runs and turns
     Then the run fails with "Cannot compact an empty thread" and "Start a conversation before compacting this thread."
     And nothing is sent to the provider
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A workspace that is missing or is not a folder fails the turn before the provider starts
     Given the workspace of "t1" is not a worktree and its folder is gone
     When the user sends "Hi" to "t1"
@@ -444,14 +445,14 @@ Feature: Runs and turns
     When the user uploads feedback for "t1"
     Then it fails with "Provider 'claudeAgent' does not support feedback uploads."
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: An interrupt is recorded as a request and then as its outcome
     Given "t1" has a running turn
     When the user interrupts the run giving the reason "wrong branch"
     Then the run records an item titled "Interrupt requested" saying "wrong branch"
     And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: An interrupt without a reason says only that it was requested
     Given "t1" has a running turn
     When the user interrupts the run without a reason
@@ -509,7 +510,7 @@ Feature: Runs and turns
     And the output is recorded on the run of "t2"
 
   # Upstream #15442: Stop recovers a run whose provider is gone
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Stop settles a run whose provider disappeared before it finished
     Given a run is still active because its provider vanished before reporting an end
     When the user stops the thread
@@ -518,7 +519,7 @@ Feature: Runs and turns
     And a late result from the provider cannot undo the stop or replace a newer attempt
 
   # Upstream #15571: an interrupted provider start cleans up its session
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Stopping during a slow provider start leaves no session behind
     Given a provider session is still starting
     When the user stops the thread before the start completes
