@@ -138,13 +138,14 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
         do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
 
+    # (A failed end: an interrupted one first reads the run to capture its checkpoint.)
     # Held, the stream takes the run's end, then the unarchive, then what the end
     # starts once it has returned.
     stream = HalC2.Streams.ensure(thread_id)
     :ok = :sys.suspend(stream)
     :erlang.trace(stream, true, [:receive])
 
-    ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "interrupted", nil) end)
+    ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
     :erlang.trace(ender, true, [:procs])
     await_call(stream, ender)
 
@@ -161,10 +162,47 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     assert_receive {:trace, ^ender, :spawn, task, _}
     ref = Process.monitor(task)
     assert_receive {:DOWN, ^ref, :process, ^task, _}
-    assert ["interrupted", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
+    assert ["failed", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
-    await_statuses(thread_id, ["interrupted", "running"])
+    await_statuses(thread_id, ["failed", "running"])
+  end
+
+  # A stop's interrupted end captures the run's checkpoint before its transaction: when
+  # another end wins the run in between, the capture it no longer records is dropped.
+  test "an interrupted end that loses its run to a failed one leaves no checkpoint behind",
+       %{thread_id: thread_id, tmp_dir: dir} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    File.write!(Path.join([dir, "work", "changed.txt"]), "work in progress\n")
+
+    for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+        do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+    # Held, the stream answers the stop's read of the run (still running), then the
+    # failed end already waiting behind it, before the stop's capture is done.
+    stream = HalC2.Streams.ensure(thread_id)
+    :ok = :sys.suspend(stream)
+    :erlang.trace(stream, true, [:receive])
+
+    stopper = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "interrupted", nil) end)
+    stopped = Process.monitor(stopper)
+    await_call(stream, stopper)
+    failer = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
+    failed = Process.monitor(failer)
+    await_call(stream, failer)
+
+    :erlang.trace(stream, false, [:receive])
+    :ok = :sys.resume(stream)
+    assert_receive {:DOWN, ^failed, :process, ^failer, :normal}
+    assert_receive {:DOWN, ^stopped, :process, ^stopper, :normal}
+
+    state = current(thread_id)
+    assert ["failed"] = Enum.map(runs(state), & &1["status"])
+    assert [] = StreamState.list(state, "checkpoint")
+    # The run's own ref: what is left is the workspace before it (ordinal 0).
+    ref = HalC2.Checkpoint.ref(HalC2.Checkpoint.scope_id(thread_id), running["ordinal"])
+    refute HalC2.Checkpoint.exists?(Path.join(dir, "work"), ref)
   end
 
   # #277: a limit stop on a queue the restart held is what the user resumes at the reset.

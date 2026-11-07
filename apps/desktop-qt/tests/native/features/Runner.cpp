@@ -186,37 +186,45 @@ Match match(const Step& step) {
   return {found, captures};
 }
 
-QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& defaultGlobs, const QString& surface) {
+QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& defaultGlobs, const QString& surface,
+                                 Coverage* coverage) {
   const QDir root(featuresDir);
   QStringList globs = defaultGlobs;
   if (const QString requested = qEnvironmentVariable("HAL_C2_FEATURES"); !requested.isEmpty()) {
     globs = requested.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   }
-  // Each file, with the scenario names wanted from it (none: all of them).
-  QMap<QString, QList<QRegularExpression>> files;
+  // Each file, with what each glob that names it wants from it: all of its
+  // scenarios, or those whose names match.
+  struct Want {
+    qsizetype glob;
+    bool all;
+    QRegularExpression name;
+  };
+  QMap<QString, QList<Want>> files;
   QDirIterator it(root.path(), {QStringLiteral("*.feature")}, QDir::Files, QDirIterator::Subdirectories);
   while (it.hasNext()) {
     const QString path = it.next();
     const QString relative = root.relativeFilePath(path);
-    for (const QString& glob : globs) {
+    for (qsizetype g = 0; g < globs.size(); ++g) {
+      const QString& glob = globs.at(g);
       const qsizetype colon = glob.indexOf(QLatin1Char(':'));
       if (!wildcard(glob.left(colon)).match(relative).hasMatch()) continue;
-      QList<QRegularExpression>& names = files[path];
-      if (colon < 0) {
-        names.clear();
-        break;
-      }
-      names.append(wildcard(glob.mid(colon + 1)));
+      files[path].append({g, colon < 0, colon < 0 ? QRegularExpression() : wildcard(glob.mid(colon + 1))});
     }
   }
+  QList<bool> matched(globs.size(), false);
+  qsizetype named = 0;
   QList<Scenario> scenarios;
   for (auto file = files.cbegin(); file != files.cend(); ++file) {
     for (const Scenario& scenario : parseFeature(file.key())) {
-      if (!file.value().isEmpty() && std::none_of(file.value().cbegin(), file.value().cend(), [&](const QRegularExpression& name) {
-            return name.match(scenario.name).hasMatch();
-          })) {
-        continue;
+      bool wanted = false;
+      for (const Want& want : file.value()) {
+        if (!want.all && !want.name.match(scenario.name).hasMatch()) continue;
+        matched[want.glob] = true;
+        wanted = true;
       }
+      if (!wanted) continue;
+      ++named;
       // `@shared` is `@desktop @mobile @tui` (features/README.md).
       if (!scenario.tags.contains(QLatin1Char('@') + surface) && !scenario.tags.contains(QStringLiteral("@shared"))) continue;
       // Not delivered anywhere, dropped, or not on this surface yet.
@@ -225,6 +233,13 @@ QList<Scenario> collectScenarios(const QString& featuresDir, const QStringList& 
       if (scenario.tags.contains(QStringLiteral("@dropped")) || scenario.tags.contains(QStringLiteral("@blocked"))) continue;
       if (backlog != qEnvironmentVariableIsSet("HAL_C2_BACKLOG")) continue;
       scenarios.append(scenario);
+    }
+  }
+  if (coverage != nullptr) {
+    coverage->scenariosNamed = named;
+    coverage->unmatchedGlobs.clear();
+    for (qsizetype g = 0; g < globs.size(); ++g) {
+      if (!matched.at(g)) coverage->unmatchedGlobs.append(globs.at(g));
     }
   }
   return scenarios;
