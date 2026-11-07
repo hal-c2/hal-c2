@@ -360,6 +360,14 @@ for line in sys.stdin:
         if text.startswith("say "):
             say(ctx, text)
             continue
+        # "compact the context" has Codex compact the thread's context during the turn,
+        # as it does on its own when the context fills up.
+        if "compact the context" in text:
+            item = {"type": "contextCompaction", "id": f"compaction-{turn_id}"}
+            send({"method": "item/started", "params": {**ctx, "item": item}})
+            send({"method": "item/completed", "params": {**ctx, "item": item}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         if "where are we" in text:
             where = f"on {thread_id} history {'<conversation_history>' in prompt} merged {'<merged_work>' in prompt}"
             if SESSIONS:
@@ -649,6 +657,8 @@ for line in sys.stdin:
     elif method == "thread/backgroundTerminals/list":
         stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
         send({"id": mid, "result": {"data": stays, "nextCursor": None}})
+    elif method == "thread/inject_items":
+        send({"id": mid, "result": {}})
     elif method == "turn/interrupt":
         # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
         # existing, acknowledges the stop and never ends the turn.
