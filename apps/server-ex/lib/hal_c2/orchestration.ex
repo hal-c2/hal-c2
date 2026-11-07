@@ -3596,7 +3596,10 @@ defmodule HalC2.Orchestration do
         {:error,
          "Thread #{id} has a pending approval or user-input request and cannot be snoozed."}
 
-      Enum.any?(StreamState.list(state, "run"), &(&1["status"] == "queued")) ->
+      Enum.any?(
+        StreamState.list(state, "run"),
+        &(&1["status"] == "queued" and not agent_run?(state, &1))
+      ) ->
         {:error, "Thread #{id} has a queued run and cannot be snoozed."}
 
       true ->
@@ -3723,6 +3726,14 @@ defmodule HalC2.Orchestration do
   # messages carried a `notification`.
   defp agent_message?(message),
     do: message["notification"] != nil or message["delegatedCompletion"] != nil
+
+  # A run of a message the MC sent for the agent, a wake rather than the user's own message.
+  defp agent_run?(state, run) do
+    case StreamState.get(state, "message")[run["userMessageId"]] do
+      %{} = message -> agent_message?(message)
+      _ -> false
+    end
+  end
 
   # A queued message the MC sent for the agent is not the user's to rewrite, move or
   # steer with: it is what the agent is told, and when. `done` is what was refused

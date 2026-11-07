@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/23784
+#   https://github.com/pingdotgg/t3code/pull/29158
 #   apps/server-ex/lib/hal_c2/composer_context.ex (context links, markers, hal_c2_context envelope,
 #     attachment remapping)
 #   packages/shared/src/composerContextReferences.ts (the shared format)
@@ -53,6 +54,13 @@ Feature: Inline context in messages
       | containing brackets and backslashes | the label with those as spaces   |
       | 300 characters long                 | the first 200 characters         |
       | empty                               | the kind of the context          |
+
+  # Upstream #29158: a cut at 200 characters could split an emoji and leave a broken character.
+  @backlog @mc @shared @priority-low
+  Scenario: A long label is not cut through the middle of an emoji
+    When a message links context with a label whose 200th character starts an emoji
+    Then the marker label ends before that emoji
+    And it has no broken character
 
   @mc
   Scenario: Malformed links are left as text

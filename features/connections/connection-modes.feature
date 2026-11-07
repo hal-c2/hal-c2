@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/25187
+#   https://github.com/pingdotgg/t3code/pull/30910
 #   https://github.com/pingdotgg/t3code/pull/23437
 #   https://github.com/pingdotgg/t3code/pull/25217
 #   https://github.com/pingdotgg/t3code/pull/27101
@@ -185,6 +186,20 @@ Feature: How clients reach an environment
       | "config.d"           |
       | "config.d/*"         |
 
+  # Upstream #30910: discovery read hidden files a wildcard Include matched, unlike OpenSSH,
+  # and a stale ".backup.conf" showed the wrong host name.
+  @backlog @desktop @priority-low
+  Scenario Outline: An SSH config include reads hidden files only when it names them
+    Given the SSH config includes <include>
+    And "config.d/work.conf" names "work" and the hidden "config.d/.backup.conf" names "obsolete"
+    When the user looks for an SSH host to add
+    Then <suggested>
+
+    Examples:
+      | include                   | suggested                                  |
+      | "config.d/*"              | "work" is suggested and "obsolete" is not  |
+      | "config.d/.*"             | "obsolete" is suggested                    |
+      | "config.d/.backup.conf"   | "obsolete" is suggested                    |
 
   # Upstream #26160: the add dialog reopened with the SSH choice still picked after an SSH add.
   @backlog @desktop @priority-low

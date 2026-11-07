@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/26904
+#   https://github.com/pingdotgg/t3code/pull/24202
 #   https://github.com/pingdotgg/t3code/pull/26859
 #   https://github.com/pingdotgg/t3code/pull/21508
 #   https://github.com/pingdotgg/t3code/pull/24847
@@ -73,6 +74,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses the sidebar shortcut
       Then the sidebar is shown
 
+    # Upstream #24202: upstream's sidebar saved its collapsed state but never read it back.
     @desktop
     Scenario: A hidden sidebar stays hidden after a restart
       Given the sidebar is hidden
@@ -577,12 +579,14 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread details panel no longer shows those rows, at once
       And their keyboard shortcuts still work
 
+    # Upstream #26904: the thread details card can be chosen per row, and Reset to default brings back the standard rows.
     @backlog @desktop @priority-low
     Scenario: Reset to default brings back the standard thread details
       Given the user hid rows from the thread details
       When the user chooses "Reset to default"
       Then the thread details show the standard rows
 
+    # Upstream #26904: with every row hidden, the thread details card offers to choose what it shows.
     @backlog @desktop @priority-low
     Scenario: Thread details with every row hidden offer to choose what to show
       Given the user hid every row that has something to show in this thread

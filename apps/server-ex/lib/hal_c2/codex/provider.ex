@@ -464,6 +464,15 @@ defmodule HalC2.Codex.Provider do
     "gpt-5.3-spark" => "gpt-5.3-codex-spark"
   }
 
+  @doc "The name Codex's model list gives `slug`, or nil when the list does not have it."
+  def model_name(slug) do
+    slug = current_slug(slug)
+
+    Enum.find_value(:persistent_term.get(@key, @default_models), fn model ->
+      if model["slug"] == slug, do: model["name"]
+    end)
+  end
+
   @doc "The model Codex knows `model` as today: an older alias names its current id."
   def current_slug(model), do: Map.get(@aliases, model, model)
 

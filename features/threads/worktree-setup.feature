@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/18443
 #   https://github.com/pingdotgg/t3code/pull/17654
 #   https://github.com/pingdotgg/t3code/pull/24775
+#   https://github.com/pingdotgg/t3code/pull/29781
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
 #   packages/contracts/src/rpc.ts (subscribeWorktreeSetup, worktreeSetup.cancel)
@@ -52,6 +53,20 @@ Feature: Preparing a new thread's worktree
     When the user cancels the setup
     Then the rename is stopped before the worktree is removed
     And the thread is left with no worktree and no renamed branch
+
+  # Upstream #29781: the rollback removed the worktree but kept the branch it had created, and
+  # the leftover name pushed the next launch to a "-1" suffix.
+  @backlog @mc
+  Scenario Outline: A setup that is <ended> deletes the branch it created
+    Given the setup created a new branch for "Cart totals"
+    When the setup is <ended> before the agent starts
+    Then the worktree and the branch it created are both removed
+    And a branch the user already had is never deleted
+
+    Examples:
+      | ended     |
+      | cancelled |
+      | failed    |
 
   @mc
   Scenario: The setup cannot be cancelled once the agent has started
@@ -109,6 +124,7 @@ Feature: Preparing a new thread's worktree
     When the user answers it
     Then the setup script runs and its completion is reported
 
+  # Upstream #24775: a setup shell that exits while starting runs nothing.
   @backlog @mc
   Scenario: A setup shell that exits while starting runs nothing
     Given the setup shell exits before it is ready for a command

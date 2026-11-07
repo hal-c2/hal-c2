@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29595
 #   https://github.com/pingdotgg/t3code/pull/23848
 #   https://github.com/pingdotgg/t3code/pull/25052
 #   https://github.com/pingdotgg/t3code/pull/24738
@@ -66,6 +67,9 @@
 #   https://github.com/pingdotgg/t3code/pull/15061
 #   https://github.com/pingdotgg/t3code/pull/14242
 #   https://github.com/pingdotgg/t3code/pull/22022
+#   https://github.com/pingdotgg/t3code/pull/29892
+#   https://github.com/pingdotgg/t3code/pull/29763
+#   https://github.com/pingdotgg/t3code/pull/29170
 
 Feature: Threads that work on or link pull requests
   A thread can start from a pull request, checked out locally or in its own worktree,
@@ -408,6 +412,31 @@ Feature: Threads that work on or link pull requests
       | pastes to start a pull request thread     | http://git.internal/group/project/-/merge_requests/42       |
       | searches the branch list for              | https://code.example.com/group/project/-/merge_requests/42  |
       | searches the branch list for              | http://git.internal/group/project/-/merge_requests/42       |
+
+  # Upstream #29892: GitHub Enterprise Server links were refused because only github.com was accepted
+  @backlog @desktop @mobile
+  Scenario Outline: A GitHub Enterprise Server pull request link can be checked out
+    Given the project is hosted on GitHub Enterprise Server at "git.corp.example"
+    When the user <action> "<reference>"
+    Then pull request 42 can be checked out
+
+    Examples:
+      | action                                | reference                                           |
+      | pastes to start a pull request thread | https://git.corp.example/acme/web/pull/42           |
+      | pastes to start a pull request thread | gh pr checkout https://git.corp.example/acme/web/pull/42 |
+      | searches the branch list for          | https://git.corp.example/acme/web/pull/42           |
+
+  # Upstream #29763: legacy visualstudio.com links with the DefaultCollection segment were refused
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: A legacy Azure DevOps pull request link with its collection can be checked out
+    Given the project is hosted on Azure DevOps at "fabrikam.visualstudio.com"
+    When the user <action> "https://fabrikam.visualstudio.com/DefaultCollection/Project/_git/repo/pullrequest/42"
+    Then pull request 42 can be checked out
+
+    Examples:
+      | action                                |
+      | pastes to start a pull request thread |
+      | searches the branch list for          |
 
 
   @desktop
@@ -755,6 +784,14 @@ Feature: Threads that work on or link pull requests
       | bitbucket.org | https://bitbucket.org/pixp/theatre/pull-requests/1  |
       | codeberg.org  | https://codeberg.org/pixp/theatre/pulls/1           |
 
+  # Upstream #29170: a merge request link built from a GitLab remote reached over plain http or a
+  # custom port pointed at https on the default port.
+  @backlog @mc
+  Scenario: A bare number on a GitLab reached over http on its own port links to that address
+    Given the project of "Tax work" has the remote "http://gitlab.internal:8080/team/app.git"
+    When the user links "#5" to "Tax work"
+    Then the link points at "http://gitlab.internal:8080/team/app/-/merge_requests/5"
+
   @desktop
   Scenario: A bare number on a host with no pull request address
     Given the project of "Tax work" is on a host whose pull request addresses are not known
@@ -941,6 +978,15 @@ Feature: Threads that work on or link pull requests
     When a client asks for the preview of pull request 42
     Then the answer carries the repository, number, title, link, author, state, draft flag and creation time
     And it carries none of the conversation, checks or files
+
+  # Upstream #29595: git.cafe records a merge run on GitHub before its sync closes the pull request;
+  # the detail reads counted it as merged, but the link preview still said open.
+  @backlog @mc @shared @priority-low
+  Scenario: A GitCafe pull request merged on GitHub previews as merged before the sync catches up
+    Given GitCafe pull request 42 of a GitHub-synced repository was merged on GitHub
+    And git.cafe has not yet synced its state
+    When a client asks for the preview of pull request 42
+    Then the preview says it is merged, as pull request 42 does when opened
 
   @mc
   Scenario: A preview is not read again within a short while

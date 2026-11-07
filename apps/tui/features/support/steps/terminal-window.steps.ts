@@ -9,6 +9,7 @@ import { fetchRemoteEnvironmentDescriptor } from "@hal-c2/client-runtime/environ
 import * as Effect from "effect/Effect";
 import * as NodePath from "node:path";
 
+import { withProtocol } from "../../../../../packages/client-runtime/src/v3/clusterSocket.ts";
 import { buildTuiRuntime, makeTuiClient, type TuiClient } from "../../../src/connection.ts";
 import {
   createTerminalController,
@@ -114,7 +115,7 @@ const RealWebSocket = globalThis.WebSocket;
 
 /** Counts what the shell prints on a socket of its own, which never acknowledges. */
 async function listenToShell(ctx: WindowWorld, mint: () => Promise<string>) {
-  const socket = new RealWebSocket(await mint());
+  const socket = new RealWebSocket(withProtocol(await mint()));
   onCleanup(ctx, () => socket.close());
   await new Promise<void>((resolve) => {
     socket.onmessage = (message) => {

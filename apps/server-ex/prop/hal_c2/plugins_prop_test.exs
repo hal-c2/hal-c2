@@ -18,7 +18,9 @@ defmodule HalC2.PluginsPropTest do
   courier does) that each plugin holds until the test releases it, check that a
   package's code compiles without enabling it (`plugins.compile`: what runs and is
   loaded must be as it was, whatever the code does as it compiles), and kill the host
-  itself. After every step the listing, the document, the code that is loaded and
+  itself, and break settings.json and mend it (a document the MC cannot read refuses every
+  save: enabling, disabling and saving settings answer `ServerSettingsError` and change
+  nothing, and a new version's dropped permissions stay granted). After every step the listing, the document, the code that is loaded and
   running, what the packages' code did at compile time, the host's monitors, and the
   events still waiting for a plugin must agree with the model: an event belongs to the
   run of the plugin it was handed to, and is dropped when that run stops.
@@ -118,9 +120,13 @@ defmodule HalC2.PluginsPropTest do
   # client accepted for an id. last: what each topic last carried; subs and inbox:
   # what each client follows and has been sent. runs: how many runs have started, each
   # held entry's `run` its own. queue: the Slack events handed to each id and not yet
-  # heard to the end, `{run, n}` in order; next: the number of the next event.
+  # heard to the end, `{run, n}` in order; next: the number of the next event. broken:
+  # settings.json cannot be read; unrevoked: the ids whose dropped permissions a scan
+  # could not take back while it was (hal-c2/hal-c2#1225).
   def initial_state,
     do: %{
+      broken: false,
+      unrevoked: MapSet.new(),
       runs: 0,
       queue: %{},
       next: 0,
@@ -161,6 +167,8 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :kill_plugins, []}},
         {1, {:call, __MODULE__, :stale_worker, [held]}},
         {2, {:call, __MODULE__, :listen, [id(), oneof(["1", "2"])]}},
+        {if(state.broken, do: 3, else: 1),
+         {:call, __MODULE__, if(state.broken, do: :mend_settings, else: :break_settings), []}},
         {if(hearing(state) == [], do: 1, else: 8), {:call, __MODULE__, :deliver, [state.next]}}
       ] ++
         for({id, [{_, n} | _]} <- state.queue, do: {8, {:call, __MODULE__, :release, [id, n]}}) ++
@@ -293,6 +301,8 @@ defmodule HalC2.PluginsPropTest do
   def precondition(state, {:call, _, :release, [id, n]}),
     do: match?([{_, ^n} | _], state.queue[id])
 
+  def precondition(state, {:call, _, :break_settings, []}), do: not state.broken
+  def precondition(state, {:call, _, :mend_settings, []}), do: state.broken
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, call), do: state |> step(call) |> elem(0)
@@ -390,6 +400,8 @@ defmodule HalC2.PluginsPropTest do
 
   # `{next state, the reply expected}`.
   defp act(s, {:call, _, :write, [id, desc]}), do: {put_in(s.disk[id], desc), :ok}
+  defp act(s, {:call, _, :break_settings, []}), do: {%{s | broken: true}, :ok}
+  defp act(s, {:call, _, :mend_settings, []}), do: {%{s | broken: false}, :ok}
   defp act(s, {:call, _, :remove, [id]}), do: {%{s | disk: Map.delete(s.disk, id)}, :ok}
   defp act(s, {:call, _, :rescan, []}), do: {scan(s), :ok}
   defp act(s, {:call, _, :install, [id, desc]}), do: {scan(put_in(s.disk[id], desc)), :ok}
@@ -415,12 +427,16 @@ defmodule HalC2.PluginsPropTest do
       (missing = perms(s.held[id]) -- (conf(s, id).granted ++ (accepted || []))) != [] ->
         {s, {:consent, missing}}
 
+      s.broken ->
+        {s, {:tag, "ServerSettingsError"}}
+
       true ->
         e = s.held[id]
 
         s =
           s
           |> put_conf(id, &%{&1 | enabled: true, granted: perms(e)})
+          |> Map.update!(:unrevoked, &MapSet.delete(&1, id))
           |> update_in(
             [:accepted],
             &Map.update(&1, id, accepted || [], fn a -> a ++ (accepted || []) end)
@@ -438,6 +454,9 @@ defmodule HalC2.PluginsPropTest do
     case s.held[id] do
       nil ->
         {s, {:tag, "PluginNotFound"}}
+
+      _ when s.broken ->
+        {s, {:tag, "ServerSettingsError"}}
 
       e ->
         s =
@@ -595,13 +614,24 @@ defmodule HalC2.PluginsPropTest do
   defp scan(s) do
     held = Map.new(s.disk, fn {id, desc} -> {id, load(s, id, s.held[id], desc)} end)
 
-    # A version that stops asking for a permission gives it up.
+    # A version that stops asking for a permission gives it up, unless the document
+    # cannot be saved.
     s =
       Enum.reduce(held, s, fn {id, e}, s ->
-        if e.st in [:compiled, :uncompiled],
-          do:
-            put_conf(s, id, fn c -> %{c | granted: Enum.filter(c.granted, &(&1 in perms(e)))} end),
-          else: s
+        kept = Enum.filter(conf(s, id).granted, &(&1 in perms(e)))
+
+        cond do
+          e.st not in [:compiled, :uncompiled] or kept == conf(s, id).granted ->
+            s
+
+          s.broken ->
+            update_in(s.unrevoked, &MapSet.put(&1, id))
+
+          true ->
+            s
+            |> put_conf(id, &%{&1 | granted: kept})
+            |> update_in([:unrevoked], &MapSet.delete(&1, id))
+        end
       end)
 
     reconcile(%{s | held: held})
@@ -675,6 +705,10 @@ defmodule HalC2.PluginsPropTest do
 
       module? and Map.get(next, "count", 1) > 100 ->
         {s, {:tag, "PluginSettingsInvalid"}}
+
+      # Nothing is saved, the secret neither.
+      s.broken ->
+        {s, {:tag, "ServerSettingsError"}}
 
       true ->
         {stored, secret} =
@@ -766,7 +800,7 @@ defmodule HalC2.PluginsPropTest do
       [],
       for(
         {id, %{st: st} = e} <- s.held,
-        st in [:compiled, :uncompiled],
+        st in [:compiled, :uncompiled] and not MapSet.member?(s.unrevoked, id),
         p <- observed.config[id].granted,
         p not in perms(e),
         do: {id, p}
@@ -912,6 +946,18 @@ defmodule HalC2.PluginsPropTest do
   end
 
   def rescan, do: {Plugins.handle("rescan", %{}), observe()}
+
+  # The MC never noticed: the settings file check is off in this test.
+  def break_settings do
+    File.write!(settings_file(), "{ not json")
+    {:ok, observe()}
+  end
+
+  # Removed, the file is the MC's document again, as the error tells the user.
+  def mend_settings do
+    File.rm!(settings_file())
+    {:ok, observe()}
+  end
 
   def enable(id, nil), do: {Plugins.handle("enable", %{"id" => id}), observe()}
 
@@ -1253,6 +1299,7 @@ defmodule HalC2.PluginsPropTest do
   end
 
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
+  defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
   defp plugin_module(id), do: Packages.plugin_module(id)
 
   defmodule Client do

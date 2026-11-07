@@ -374,7 +374,7 @@ defmodule HalC2.Mcp.Tools do
           ~w(defaultThreadEnvMode newWorktreesStartFromOrigin enableProviderUpdateChecks backgroundActivity sourceControlWritingStyle)
         )
 
-      {:ok, preferences(update_settings(patch))}
+      with {:ok, settings} <- update_settings(patch), do: {:ok, preferences(settings)}
     end
   end
 
@@ -1101,8 +1101,10 @@ defmodule HalC2.Mcp.Tools do
       end
 
     case HalC2.Settings.put(next, version) do
-      {:ok, _} -> next
+      {:ok, _} -> {:ok, next}
       {:error, :stale} -> update_settings(patch)
+      # A settings.json the MC cannot read refuses the save.
+      {:error, error} -> orchestration({:error, error})
     end
   end
 

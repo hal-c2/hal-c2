@@ -1,6 +1,8 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/26099
 #   https://github.com/pingdotgg/t3code/pull/23873 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/22572
+#   https://github.com/pingdotgg/t3code/pull/30420 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/19706
 #   https://github.com/pingdotgg/t3code/pull/19554
 #   https://github.com/pingdotgg/t3code/pull/20277
@@ -34,6 +36,9 @@
 #   https://github.com/pingdotgg/t3code/pull/25317
 #   https://github.com/pingdotgg/t3code/pull/25345
 #   https://github.com/pingdotgg/t3code/pull/22471
+#   https://github.com/pingdotgg/t3code/pull/28368
+#   https://github.com/pingdotgg/t3code/pull/28464
+#   https://github.com/pingdotgg/t3code/pull/29635
 
 Feature: The desktop app runs its own MC
   Started on its own, the Qt desktop app starts an MC on this machine and connects to
@@ -292,6 +297,16 @@ Feature: The desktop app runs its own MC
       When the desktop app is killed
       Then the MC it started stops
 
+    # Upstream #22572: quit gave up on a backend at the same moment its SIGTERM grace ran out, so the
+    # SIGKILL that followed died with the app and the backend kept running, holding its database.
+    @backlog @desktop
+    Scenario: An MC slow to stop is still stopped when the desktop app quits
+      Given the desktop app started its MC
+      And that MC takes longer than its grace to shut down
+      When the user quits the desktop app
+      Then the desktop app waits until the MC has been killed before it exits
+      And no MC is left running for that home
+
     # Upstream #22471: the MC's own "launcher is gone" notice hit the closed pipe and crashed it,
     # leaving its runtime record and the home held.
     @backlog @mc @desktop
@@ -471,6 +486,15 @@ Feature: The desktop app runs its own MC
       Then the app starts with the default desktop settings
       And the file is not repaired until the user changes a setting
 
+    # Upstream #29635: each failed save of the desktop's settings, rewritten on every window move,
+    # left one more temporary file beside them.
+    @backlog @desktop @priority-low
+    Scenario: A desktop settings save that fails leaves no temporary file behind
+      Given the desktop app's settings file cannot be replaced for a while
+      When the user moves the window several times
+      Then no temporary settings files are left beside the settings file
+      And the next save that can replace the file saves the window's place
+
     # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (normalizeTailscaleServePort)
     @backlog @desktop @priority-low
     Scenario: A saved Tailscale HTTPS port that is not a valid port falls back to 443
@@ -535,6 +559,25 @@ Feature: The desktop app runs its own MC
       And the system's link handler registration fails
       When the app starts
       Then the app starts normally
+
+    # Upstream #28368: one of the helpers the link handler registration runs could hang, and the
+    # app never finished starting.
+    @backlog @desktop @priority-low
+    Scenario: A link handler registration that never finishes does not hold up the app
+      Given the user runs the packaged app on Linux
+      And the system's link handler registration never finishes
+      When the app starts
+      Then the app starts within seconds
+      And the stuck registration is stopped and logged
+
+    # Upstream #28464: restarting for a setting passed the link that launched the app to the new
+    # process, which acted on it again.
+    @backlog @desktop @priority-low
+    Scenario: Restarting the app for a setting does not open its launch link again
+      Given the app was started by opening a "hal-c2://pair" link
+      When the user changes a setting that restarts the app
+      Then the restarted app does not ask to pair again
+      And the app's other launch options are kept
 
     @backlog @desktop @priority-low
     Scenario: An unpackaged app does not take over the system's links
@@ -629,6 +672,7 @@ Feature: The desktop app runs its own MC
 
     # Legacy: apps/web/src/lib/favicon.ts, apps/web/public/manifest.webmanifest, apps/web/index.html.
     # The tab's icon, its installable-app manifest and its theme colour are the browser's.
+    # Upstream #30420: added the large icons Firefox on Android needs to install the web app as an app.
     @dropped @desktop
     Scenario: A browser tab carries the app's icon and can be installed as an app
       Given the user opens the app in a browser

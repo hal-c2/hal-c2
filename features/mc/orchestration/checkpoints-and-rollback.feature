@@ -1,5 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/28431
+#   https://github.com/pingdotgg/t3code/pull/23624
 #   https://github.com/pingdotgg/t3code/pull/18395
+#   https://github.com/pingdotgg/t3code/pull/30830
+#   https://github.com/pingdotgg/t3code/pull/32252
 #   https://github.com/pingdotgg/t3code/pull/14892
 #   https://github.com/pingdotgg/t3code/pull/13538
 #   https://github.com/pingdotgg/t3code/pull/17150
@@ -11,6 +15,9 @@
 #   https://github.com/pingdotgg/t3code/pull/14874
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13481 (Codex 0.156 rollback through thread/revert only)
+#   https://github.com/pingdotgg/t3code/pull/29795
+#   https://github.com/pingdotgg/t3code/pull/28647
+#   https://github.com/pingdotgg/t3code/pull/29826
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.captured, checkpoint-scope.created,
 #     checkpoint.rollback, checkpoint.rollback-requested, run.updated, provider-thread.updated)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
@@ -65,6 +72,16 @@ Feature: Checkpoints, diffs and rewinding
     Then the checkpoint stays saved and is not captured again
     And the user's next message starts its turn at once
 
+  # Upstream #28431: forge commands (Forgejo, GitLab, Azure DevOps, GitCafe) shared git's slots,
+  # so a slow forge held checkpoints back, and finishing a turn waited on a pull request lookup.
+  @backlog @mc @priority-high
+  Scenario: A slow forge does not hold up checkpoints or the next turn
+    Given the project's Forgejo answers each pull request lookup after six seconds
+    And twelve pull request lookups are waiting on it
+    When a run of "t1" completes and the user sends the next message
+    Then the run's checkpoint is captured without waiting on the forge
+    And the next turn starts without waiting on the pull request status of "t1"
+
   @mc
   Scenario: A failed baseline does not stop the run
     Given capturing the baseline of "t1" fails
@@ -85,6 +102,26 @@ Feature: Checkpoints, diffs and rewinding
     Then the checkpoint is captured with a plain flush instead
     And a capture that fails for another reason is still marked as an error
 
+  # Upstream #32252: Git following the system language printed its lock failures in that
+  # language, so a held lock was neither retried nor explained.
+  @backlog @mc
+  Scenario: A held git lock is retried whatever language the system speaks
+    Given the MC runs without a language set and Git would answer in Chinese
+    And another git process briefly holds the index lock of the worktree of "t1"
+    When a run of "t1" completes
+    Then the checkpoint capture is retried once the lock is free and is captured
+    And git hooks the capture runs still see the user's own locale
+
+  # Upstream #30830: a message sent after Stop started the next run before the stopped
+  # run's late capture, which then recorded its baselines under the next run.
+  @backlog @mc
+  Scenario: A stopped run's late capture is recorded under the stopped run
+    Given the user stopped a run of "t1"
+    And the user sent "Next" before the stopped run's checkpoint was captured
+    When the stopped run's checkpoint is captured
+    Then its baselines name the stopped run and the time it was asked for
+    And the run "Next" started keeps its own baselines
+
   # Legacy: apps/server/src/vcs/GitVcsDriver.ts (captureCheckpoint: sparse checkout)
   # Likely already implemented: apps/server-ex/lib/hal_c2/checkpoint.ex
   @mc
@@ -93,6 +130,21 @@ Feature: Checkpoints, diffs and rewinding
     When a run of "t1" completes
     Then the checkpoint still holds "docs"
     And the turn's diff does not list the files of "docs" as removed
+
+  # Upstream #23624: one tracked entry marked skip-worktree or assume-unchanged made capture rebuild
+  # the index from scratch and rehash every file, so large worktrees timed out.
+  @mc @backlog @priority-high
+  Scenario Outline: A worktree with a <flag> entry is captured without rehashing every file
+    Given the worktree of "t1" has 25,000 tracked files, one of them marked <flag>
+    And the user edited that file without changing its size
+    When a run of "t1" completes
+    Then the checkpoint is captured in about the time of a worktree with no such entry
+    And the checkpoint holds the edited content of that file
+
+    Examples:
+      | flag             |
+      | skip-worktree    |
+      | assume-unchanged |
 
   # Upstream #13538: checkpoint capture and restore failed past Windows' 260-character path limit;
   # they now turn on git's long paths for themselves.
@@ -365,6 +417,43 @@ Feature: Checkpoints, diffs and rewinding
     Then the file "new.txt" is gone
     And "build/out.js" is still there
     And nothing is left staged
+
+  # Upstream #28647: in a repository with no commits yet, a restore left every file from the
+  # checkpoint staged, so a plain commit took files the user never added.
+  @backlog @mc @priority-high
+  Scenario: Restoring files in a repository with no commits leaves nothing staged
+    Given the worktree of "t1" is a repository with no commits yet and the untracked file "file.txt"
+    And run 2 of "t1" changed "file.txt"
+    When the user rewinds "t1" to run 1
+    Then "file.txt" is untracked again, as it was before run 2
+    And nothing is left staged
+
+  # Upstream #29826: with core.safecrlf=true and a line-ending conversion, git refused every
+  # LF-only file, so the turn got no checkpoint, no diff and no restore point.
+  @backlog @mc @priority-high
+  Scenario: A turn's checkpoint is taken when the user's git refuses line-ending changes
+    Given the user's git has "core.safecrlf" set to true and converts line endings to CRLF
+    And run 2 of "t1" wrote a file with only LF line endings
+    When run 2 completes
+    Then run 2 has a checkpoint with its diff
+    And the user's own git settings and index are unchanged
+
+  # Upstream #29795: one clean pass removed the turn's new .gitignore but skipped what it had hidden,
+  # which then crept into the next checkpoint.
+  @backlog @mc @priority-high
+  Scenario: Restoring files removes what a .gitignore from the undone runs was hiding
+    Given run 2 of "t1" created "web/.gitignore" ignoring "node_modules/" and ".env"
+    And run 2 then created "web/node_modules/a.js" and "web/.env"
+    When the user rewinds "t1" to run 1 and restores files
+    Then "web/.gitignore", "web/node_modules/a.js" and "web/.env" are gone
+    And the next checkpoint of "t1" holds none of them
+
+  # Upstream #29795: after four passes the restore checks again and fails rather than leave files behind.
+  @backlog @mc @priority-low
+  Scenario: A restore that cannot clear what nested .gitignore files hid fails
+    Given run 2 of "t1" created a chain of more than four nested .gitignore files, each hiding the next
+    When the user rewinds "t1" to run 1 and restores files
+    Then the restore fails with the clean error rather than reporting success
 
   @mc
   Scenario: Rewinding refreshes source control state
