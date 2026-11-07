@@ -5,47 +5,87 @@
 
 use serde_json::{Value, json};
 
-use super::settings::publish_providers;
+use hal_c2_shell::controllers::settings::Settings;
+
+use super::settings::{publish_providers, publish_sources};
 use super::stream::{PROJECT, THREAD, look_at_thread};
 use crate::brick::{Brick, Shown, shown};
 use crate::expect;
-use crate::harness::{Outcome, Steps, show};
+use crate::harness::{Outcome, Q, Steps, show};
 use crate::world::World;
 
 fn model(slug: &str) -> Value {
     json!({"slug": slug, "name": slug})
 }
 
-/// Codex with a subscription's windows and the command; Antigravity with
-/// neither.
-fn providers(world: &World) -> Vec<Value> {
+fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// A subscription's 5-hour window, `used` percent spent.
+fn limits(world: &World, used: f64) -> Value {
     let now = world.now();
-    let limits = json!({
-        "checkedAt": now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    json!({
+        "checkedAt": stamp(now),
         "windows": [{
             "id": "five-hour",
             "kind": "session",
             "label": "5-hour",
-            "usedPercent": 40,
-            "resetsAt": (now + chrono::Duration::seconds(3600))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "usedPercent": used,
+            "resetsAt": stamp(now + chrono::Duration::seconds(3600)),
             "windowDurationMins": 300,
         }],
-    });
-    let entry = |id: &str, name: &str, slug: &str| {
-        json!({
-            "instanceId": id, "driver": id, "displayName": name,
-            "enabled": true, "installed": true, "status": "ready",
-            "models": [model(slug)],
-        })
-    };
-    let mut codex = entry("codex", "Codex", "gpt-5");
-    codex["usageLimits"] = limits;
+    })
+}
+
+fn entry(id: &str, driver: &str, name: &str, slug: &str) -> Value {
+    json!({
+        "instanceId": id, "driver": driver, "displayName": name,
+        "enabled": true, "installed": true, "status": "ready",
+        "models": [model(slug)],
+    })
+}
+
+fn antigravity() -> Value {
+    entry("antigravity", "antigravity", "Antigravity", "gemini-pro")
+}
+
+/// A Codex instance offering the command, with `limits` when there are
+/// any.
+fn codex(id: &str, name: &str, limits: Option<Value>) -> Value {
+    let mut codex = entry(id, "codex", name, "gpt-5");
+    if let Some(limits) = limits {
+        codex["usageLimits"] = limits;
+    }
     codex["slashCommands"] = json!([{
         "name": "usage-limits",
         "description": "Show this provider's usage limits",
     }]);
-    vec![codex, entry("antigravity", "Antigravity", "gemini-pro")]
+    codex
+}
+
+/// Codex with a subscription's windows and the command; Antigravity with
+/// neither.
+fn providers(world: &World) -> Vec<Value> {
+    vec![
+        codex("codex", "Codex", Some(limits(world, 40.0))),
+        antigravity(),
+    ]
+}
+
+/// A hub's Codex accounts, by id.
+fn hub(world: &World, accounts: &[&str]) -> Vec<Value> {
+    let listed: Vec<Value> = accounts
+        .iter()
+        .map(|id| json!({"id": id, "driver": "codex", "usageLimits": limits(world, 50.0)}))
+        .collect();
+    vec![json!({
+        "id": "team-hub",
+        "kind": "cliproxy",
+        "label": "Team hub",
+        "checkedAt": stamp(world.now()),
+        "accounts": listed,
+    })]
 }
 
 fn composer(world: &World) -> Value {
@@ -53,6 +93,18 @@ fn composer(world: &World) -> Value {
 }
 
 fn open_thread_on(world: &mut World, instance_id: &str, slug: &str) -> Outcome {
+    open_thread_with(world, instance_id, slug, Vec::new(), Vec::new())
+}
+
+/// The thread on `instance_id`, with the environment's `catalogue` of
+/// providers (the default one when empty) and its hubs.
+fn open_thread_with(
+    world: &mut World,
+    instance_id: &str,
+    slug: &str,
+    catalogue: Vec<Value>,
+    sources: Vec<Value>,
+) -> Outcome {
     if world.shell_subscriptions() == 0 {
         world.connect()?;
         world.sync()?;
@@ -63,8 +115,20 @@ fn open_thread_on(world: &mut World, instance_id: &str, slug: &str) -> Outcome {
     });
     world.mc.projects.insert(PROJECT.into(), project.clone());
     world.mc.send_row_of(PROJECT, &project, "project");
-    let all = providers(world);
+    let all = if catalogue.is_empty() {
+        providers(world)
+    } else {
+        catalogue
+    };
     publish_providers(&mut world.mc, all);
+    if !sources.is_empty() {
+        publish_sources(&mut world.mc, sources);
+        world.wait_for("the hubs to be read", |w| {
+            Settings::of(w.engine())
+                .config()
+                .contains_key("usageLimitSources")
+        })?;
+    }
     look_at_thread(world, PROJECT)?;
     let row = world
         .mc
@@ -103,6 +167,37 @@ fn dispatched(world: &World) -> bool {
         .commands
         .iter()
         .any(|command| command["type"] == json!("message.dispatch"))
+}
+
+/// The answer as drawn above the composer.
+fn answer(world: &mut World) -> Outcome<Brick> {
+    if let Some(brick) = world.part::<Shown>().0 {
+        return Ok(brick);
+    }
+    let brick = Brick::new(
+        world,
+        "import QtQuick\nimport HalC2.Bricks\nComposerUsageLimits { width: 600 }\n",
+        600.0,
+        300.0,
+    )?;
+    world.part::<Shown>().0 = Some(brick);
+    world.sync()?;
+    Ok(brick)
+}
+
+fn open_answer(world: &mut World) -> Outcome {
+    send(world, "/usage-limits")?;
+    world.wait_for_with(
+        |w| !composer(w)["usageLimits"].is_null(),
+        |w| format!("the answer; the composer shows {}", show(&composer(w))),
+    )
+}
+
+/// The account's label as drawn, scrambled or not.
+fn account_text(world: &mut World) -> Outcome<String> {
+    let brick = answer(world)?;
+    let account = brick.item(world, "composerUsageLimitsAccount")?;
+    Ok(brick.text_of(world, account, "text"))
 }
 
 /// The composer's command menu, when open, does not offer `command` (and
@@ -148,23 +243,18 @@ pub fn register(steps: &mut Steps) {
         "Codex's windows are shown above the composer without running the agent",
         |world, _, _| {
             let limits = composer(world)["usageLimits"].clone();
-            let window = limits["windows"][0].clone();
+            let account = limits["accounts"][0].clone();
+            let window = account["windows"][0].clone();
             expect!(
-                limits["provider"] == json!("Codex")
+                account["label"] == json!("Codex")
                     && window["label"] == json!("5-hour")
                     && window["remainingPercent"].as_f64() == Some(60.0),
                 "the composer shows {}",
                 show(&limits)
             );
-            let brick = Brick::new(
-                world,
-                "import QtQuick\nimport HalC2.Bricks\nComposerUsageLimits { width: 600 }\n",
-                600.0,
-                200.0,
-            )?;
-            world.part::<Shown>().0 = Some(brick);
+            let brick = answer(world)?;
             expect!(
-                brick.shows(world, "Codex limits")?
+                brick.shows(world, "Usage limits")?
                     && brick.shows(world, "5-hour")?
                     && brick.shows(world, "60% left")?,
                 "the limits are not drawn"
@@ -226,4 +316,137 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+    // Whose limits the answer shows.
+    steps.step(
+        "a Codex thread whose limits come from (.+)",
+        |world, c, _| {
+            let accounts = c[0].as_str();
+            if accounts.contains("plan") {
+                let plan = accounts.split('"').nth(1).unwrap_or_default();
+                let mut one = codex("codex", "Codex", Some(limits(world, 40.0)));
+                one["auth"] = json!({"status": "authenticated", "label": plan});
+                open_thread_with(
+                    world,
+                    "codex",
+                    "gpt-5",
+                    vec![one, antigravity()],
+                    Vec::new(),
+                )
+            } else if accounts.contains("named") {
+                let name = accounts.split('"').nth(1).unwrap_or_default();
+                // The default instance reports no limits of its own.
+                let catalogue = vec![
+                    codex("codex", "Codex", None),
+                    codex("codex_work", name, Some(limits(world, 40.0))),
+                    antigravity(),
+                ];
+                open_thread_with(world, "codex_work", "gpt-5", catalogue, Vec::new())
+            } else {
+                let sources = hub(world, &["ops.json", "build.json", "review.json"]);
+                let catalogue = vec![codex("codex", "Codex", None), antigravity()];
+                open_thread_with(world, "codex", "gpt-5", catalogue, sources)
+            }
+        },
+    );
+    steps.step(
+        &format!("the answer is headed {Q} and says {Q}"),
+        |world, c, _| {
+            let brick = answer(world)?;
+            expect!(
+                brick.shows(world, &c[0])? && brick.shows(world, &c[1])?,
+                "the answer is {}",
+                show(&composer(world)["usageLimits"])
+            );
+            expect!(
+                !dispatched(world),
+                "the command went to the agent: {}",
+                world.describe_commands()
+            );
+            Ok(())
+        },
+    );
+    // An account named by its email.
+    steps.step(&format!("a hub account is labelled {Q}"), |world, c, _| {
+        let sources = hub(world, &[c[0].as_str()]);
+        open_thread_with(
+            world,
+            "codex",
+            "gpt-5",
+            vec![codex("codex", "Codex", None)],
+            sources,
+        )
+    });
+    steps.step(&format!("the answer does not show {Q}"), |world, c, _| {
+        world.wait_for("the answer", |w| !composer(w)["usageLimits"].is_null())?;
+        let brick = answer(world)?;
+        let account = brick.item(world, "composerUsageLimitsAccount")?;
+        let drawn = brick.text_of(world, account, "text");
+        expect!(
+            brick.flag(world, account, "visible") && !drawn.contains(c[0].as_str()),
+            "the answer shows {} as \"{drawn}\"",
+            c[0]
+        );
+        // Only the account is hidden; the hub it came through is still named.
+        expect!(
+            brick.shows(world, "Team hub · ")?,
+            "the hub's name is hidden too"
+        );
+        Ok(())
+    });
+    steps.step("the user chooses to reveal the account", |world, _, _| {
+        answer(world)?.click(world, "composerUsageLimitsAccount")
+    });
+    steps.step(&format!("the answer shows {Q}"), |world, c, _| {
+        let drawn = account_text(world)?;
+        expect!(
+            drawn.contains(c[0].as_str()),
+            "the account reads \"{drawn}\""
+        );
+        Ok(())
+    });
+    steps.step("the user can hide it again", |world, _, _| {
+        answer(world)?.click(world, "composerUsageLimitsAccount")?;
+        let drawn = account_text(world)?;
+        expect!(
+            !drawn.contains("@example.com"),
+            "the account stayed revealed"
+        );
+        Ok(())
+    });
+    // Dismissed.
+    steps.step(
+        &format!("the answer to {Q} is shown above the composer"),
+        |world, _, _| {
+            open_thread_on(world, "codex", "gpt-5")?;
+            open_answer(world)?;
+            let brick = answer(world)?;
+            expect!(
+                brick.shows(world, "Usage limits")?,
+                "the answer is not drawn"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the user dismisses the usage limits", |world, _, _| {
+        answer(world)?.click(world, "composerUsageLimitsDismiss")
+    });
+    steps.step("the answer is gone", |world, _, _| {
+        let brick = answer(world)?;
+        world.sync()?;
+        expect!(
+            composer(world)["usageLimits"].is_null() && !brick.shows(world, "Usage limits")?,
+            "the answer stayed: {}",
+            show(&composer(world)["usageLimits"])
+        );
+        Ok(())
+    });
+    steps.step("nothing was sent to the agent", |world, _, _| {
+        world.sync()?;
+        expect!(
+            !dispatched(world),
+            "the MC was sent {}",
+            world.describe_commands()
+        );
+        Ok(())
+    });
 }

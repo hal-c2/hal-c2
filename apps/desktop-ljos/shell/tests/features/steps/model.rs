@@ -163,6 +163,10 @@ fn composer(world: &World) -> Value {
 }
 
 /// Sends a turn and returns the commands it made, the message last.
+/// Where the MC's commands stood when the user last set the permissions.
+#[derive(Default)]
+struct PermissionsSet(Option<usize>);
+
 fn send_turn(world: &mut World) -> Outcome<Vec<Value>> {
     let before = world.mc.commands.len();
     world.dispatch(
@@ -300,6 +304,48 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
+    // The MC is told before any message, and the picker keeps the mode once
+    // the thread's row carries it.
+    steps.step("the thread is in (.+) at once", |world, c, _| {
+        let wanted = c[0].to_lowercase();
+        let modes = runtime_modes(world);
+        let mode = modes
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| crate::harness::text(&entry["label"]).to_lowercase() == wanted)
+            .map(|entry| crate::harness::text(&entry["value"]))
+            .next_back()
+            .unwrap_or_default();
+        world.wait_for_with(
+            |w| {
+                w.mc.commands.iter().any(|command| {
+                    command["type"] == json!("thread.runtime-mode.set")
+                        && command["runtimeMode"] == json!(mode)
+                })
+            },
+            |w| {
+                format!(
+                    "the access change for {mode}; the MC has {}",
+                    w.describe_commands()
+                )
+            },
+        )?;
+        expect!(
+            !world
+                .mc
+                .commands
+                .iter()
+                .any(|command| command["type"] == json!("message.dispatch")),
+            "a message was sent with the access change"
+        );
+        update_thread(world, json!({"runtimeMode": mode}))?;
+        world.wait_for_with(
+            |w| composer(w)["runtimeMode"] == json!(mode),
+            |w| format!("the composer in {mode}; it shows {}", show(&composer(w))),
+        )
+    });
+
     // What the user does.
     steps.step("the user looks through the models", |world, _, _| {
         world.sync()
@@ -321,6 +367,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the user sets the permissions to (.+)", |world, c, _| {
+        // An open thread takes the change at once (the next turn's step
+        // reads it from here).
+        world.part::<PermissionsSet>().0 = Some(world.mc.commands.len());
         let modes = runtime_modes(world);
         for mode in modes.as_array().into_iter().flatten() {
             if mode["label"] == json!(c[0]) {
@@ -516,7 +565,13 @@ pub fn register(steps: &mut Steps) {
         );
         // The mode is set before the message, unless the thread already runs in it.
         let mut runs = before;
-        for command in send_turn(world)? {
+        let since = world.part::<PermissionsSet>().0.take();
+        let sent = send_turn(world)?;
+        let commands = match since {
+            Some(since) => world.mc.commands[since..].to_vec(),
+            None => sent,
+        };
+        for command in commands {
             if command["type"] == json!("thread.runtime-mode.set") {
                 runs = text(&command["runtimeMode"]);
             }

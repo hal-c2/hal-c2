@@ -15,8 +15,8 @@ use super::text::{
     stale_request,
 };
 use super::{
-    Composer, Recall, back, find_attachment, now_iso, publish_everywhere, string, thread_of, toast,
-    toast_error, uuid,
+    Composer, Recall, SettingMode, back, find_attachment, now_iso, publish_everywhere, string,
+    thread_of, toast, toast_error, uuid,
 };
 use crate::composer_model as model;
 use crate::controller;
@@ -176,9 +176,11 @@ impl Composer {
                 if !known || mode == self.runtime_mode_of(engine, &target) {
                     return true;
                 }
-                kept::edit_draft(engine, &target, |kept| kept.runtime_mode = mode);
+                let picked = mode.clone();
+                kept::edit_draft(engine, &target, |kept| kept.runtime_mode = picked);
                 kept::save(engine);
                 self.publish(engine);
+                self.set_thread_runtime_mode(engine, &target, &mode);
             }
             "composer.interactionMode.set" => {
                 if !target.is_empty() {
@@ -867,37 +869,125 @@ impl Composer {
         }) else {
             return false;
         };
-        let windows: Vec<Json> = instance
-            .usage_limits
-            .get("windows")
-            .and_then(Json::as_array)
-            .into_iter()
-            .flatten()
-            .map(|window| {
-                let used = window["usedPercent"].as_f64().unwrap_or(0.0);
-                json!({
-                    "label": window["label"].as_str().unwrap_or_default(),
-                    "usedPercent": used,
-                    "remainingPercent": (100.0 - used).clamp(0.0, 100.0),
-                    "resetsAt": window["resetsAt"].as_str().unwrap_or_default(),
-                })
-            })
-            .collect();
-        let message = if windows.is_empty() {
-            format!("{} has not reported its limits yet.", instance.display_name)
-        } else {
-            String::new()
+        let config = workspace::environment_config(engine);
+        let list = |key: &str| {
+            config
+                .get(key)
+                .and_then(Json::as_array)
+                .cloned()
+                .unwrap_or_default()
         };
-        let limits = json!({
-            "provider": instance.display_name,
-            "checkedAt": field(&instance.usage_limits, "checkedAt"),
-            "windows": windows,
-            "message": message,
-        });
+        let limits = model::usage_limits_report(
+            &instance.instance_id,
+            &list("providers"),
+            &list("usageLimitSources"),
+        );
         self.usage_limits.insert(target.to_owned(), limits);
         self.set_text_end(engine, target, "");
         self.publish(engine);
         true
+    }
+
+    /// An existing thread takes a new access mode at once, as the TUI's
+    /// does: a turn waiting on approvals blocks the composer, so the next
+    /// send may never come, and the provider can apply it to the running
+    /// turn. The draft shows it meanwhile, and goes once the MC holds it; a
+    /// refused change goes too, so the picker shows the mode the thread
+    /// really has. A pick back to the thread's mode still goes while another
+    /// is on its way, which would otherwise land after it.
+    fn set_thread_runtime_mode(&mut self, engine: &Engine, target: &str, mode: &str) {
+        let Some(thread) = thread_of(engine, target) else {
+            return;
+        };
+        if thread.runtime_mode == mode && !self.setting_mode.contains_key(target) {
+            return;
+        }
+        self.setting_mode.insert(
+            target.to_owned(),
+            SettingMode {
+                mode: mode.to_owned(),
+                ..SettingMode::default()
+            },
+        );
+        let (target, mode) = (target.to_owned(), mode.to_owned());
+        self.mc.dispatch_command(
+            &thread.environment_id,
+            json!({
+                "type": "thread.runtime-mode.set",
+                "threadId": thread.id,
+                "runtimeMode": mode,
+            }),
+            back(&self.me, move |c, engine, result| {
+                if c.setting_mode.get(&target).map(|s| s.mode.as_str()) != Some(mode.as_str()) {
+                    return;
+                }
+                match result {
+                    Ok(answer) => {
+                        let shell = &answer["shell"];
+                        if let Some(setting) = c.setting_mode.get_mut(&target) {
+                            setting.accepted = true;
+                            setting.mc = shell["mc"].as_str().unwrap_or_default().to_owned();
+                            setting.epoch = shell["epoch"].as_str().unwrap_or_default().to_owned();
+                            setting.rev = shell["rev"].as_f64().unwrap_or(0.0) as i64;
+                        }
+                        c.settle_runtime_modes(engine);
+                    }
+                    Err(error) => {
+                        c.setting_mode.remove(&target);
+                        toast_error(
+                            engine,
+                            "Failed to change the thread's access.",
+                            &error.message,
+                        );
+                        if kept::read(engine, |d| {
+                            d.drafts
+                                .get(&target)
+                                .is_some_and(|kept| kept.runtime_mode == mode)
+                        }) {
+                            kept::edit_draft(engine, &target, |kept| kept.runtime_mode.clear());
+                            kept::save(engine);
+                            c.publish(engine);
+                        }
+                    }
+                }
+            }),
+        );
+    }
+
+    /// Drops the drafts of access changes the threads' rows now hold,
+    /// whatever mode they show: the row and the MC's answer travel apart,
+    /// and another device's change can land with ours or after it.
+    pub(super) fn settle_runtime_modes(&mut self, engine: &Engine) {
+        let mut settled = Vec::new();
+        for (target, setting) in &self.setting_mode {
+            // From an MC that names no version, the row is as good as it gets.
+            let landed = setting.accepted
+                && (setting.epoch.is_empty()
+                    || store::with(engine, |s| {
+                        s.reached(&setting.mc, &setting.epoch, setting.rev)
+                    }));
+            if thread_of(engine, target).is_none() || landed {
+                settled.push(target.clone());
+            }
+        }
+        let mut changed = false;
+        for target in settled {
+            let Some(setting) = self.setting_mode.remove(&target) else {
+                continue;
+            };
+            if kept::read(engine, |d| {
+                d.drafts
+                    .get(&target)
+                    .is_some_and(|kept| kept.runtime_mode == setting.mode)
+            }) {
+                kept::edit_draft(engine, &target, |kept| kept.runtime_mode.clear());
+                changed = true;
+            }
+        }
+        if changed {
+            kept::save(engine);
+            self.publish(engine);
+        }
     }
 
     fn set_interaction_mode(&mut self, engine: &Engine, target: &str, mode: &str) {

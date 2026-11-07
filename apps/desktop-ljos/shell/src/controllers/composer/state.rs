@@ -196,10 +196,18 @@ impl Composer {
                 }
                 if let Some(latest) = latest {
                     let markdown = field(latest, "markdown");
+                    // `heading` is empty for a plan with none; `fileName`
+                    // and `workspaceRoot` start the dialog that saves it to
+                    // the workspace.
+                    let title = plan_title(markdown);
+                    let headed = !crate::controllers::plan::title_of(markdown).is_empty();
                     plan = json!({
                         "id": field(latest, "id"),
-                        "title": plan_title(markdown),
+                        "heading": if headed { title.as_str() } else { "" },
+                        "title": title,
                         "markdown": markdown,
+                        "fileName": crate::controllers::plan::file_name(markdown),
+                        "workspaceRoot": crate::controllers::plan::workspace_root(engine, &self.thread),
                     });
                 }
             }

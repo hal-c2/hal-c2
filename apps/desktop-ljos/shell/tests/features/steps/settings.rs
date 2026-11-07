@@ -200,6 +200,20 @@ pub fn document_of<'a>(mc: &'a mut FakeMc, environment: &str) -> &'a mut Documen
         .or_default()
 }
 
+/// The environment's usage-limit sources (hubs), as `config.usageLimitSources`
+/// brings them.
+pub fn publish_sources(mc: &mut FakeMc, sources: Vec<Value>) {
+    let environment = mc.environment_id.clone();
+    fake_config(mc)
+        .sources
+        .insert(environment.clone(), sources.clone());
+    send_config(
+        mc,
+        &environment,
+        json!({"t": "config.usageLimitSources", "sources": sources}),
+    );
+}
+
 /// The MC's providers become `providers`, announced as `config.providers`.
 pub fn publish_providers(mc: &mut FakeMc, providers: Vec<Value>) {
     fake_config(mc)

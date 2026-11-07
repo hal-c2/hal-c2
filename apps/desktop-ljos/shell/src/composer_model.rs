@@ -1485,5 +1485,160 @@ pub fn queued<'a>(
     queued
 }
 
+/// The one-line status where there are no windows to show, as Limits says
+/// it.
+fn limits_notice(limits: &Obj) -> String {
+    let unavailable = object(limits, "unavailable");
+    let message = text(unavailable, "message");
+    match text(unavailable, "reason") {
+        "unsupported" if message.is_empty() => "This account has no subscription limits.".into(),
+        "probeFailed" if message.is_empty() => "Could not read limits.".into(),
+        "unsupported" | "probeFailed" => message.to_owned(),
+        _ if array(limits, "windows").is_empty() => "No limits reported.".into(),
+        _ => String::new(),
+    }
+}
+
+fn account_key(driver: &str, email: &str) -> String {
+    let normalized = email.trim().to_lowercase();
+    if normalized.is_empty() {
+        String::new()
+    } else {
+        format!("{driver}:{normalized}")
+    }
+}
+
+/// `source` is the hub an account came through, kept apart from its label
+/// so only the label, which may be an email, is scrambled.
+fn report_account(source: &str, label: &str, plan: &str, limits: &Obj) -> Json {
+    let notice = limits_notice(limits);
+    let windows: Vec<Json> = if notice.is_empty() {
+        array(limits, "windows")
+            .iter()
+            .map(|window| {
+                let window = as_object(window);
+                let used = window
+                    .get("usedPercent")
+                    .and_then(Json::as_f64)
+                    .unwrap_or(0.0);
+                json!({
+                    "label": text(window, "label"),
+                    "usedPercent": used,
+                    "remainingPercent": (100.0 - used).clamp(0.0, 100.0),
+                    "resetsAt": text(window, "resetsAt"),
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    json!({
+        "source": source,
+        "label": label,
+        "sensitive": label.contains('@'),
+        "plan": plan,
+        "notice": notice,
+        "windows": windows,
+    })
+}
+
+/// What "/usage-limits" answers with for `instance_id`: every account of its
+/// driver, from the environment's providers and its hubs (`sources`), the
+/// same account reported both ways once. Each account has the hub it came
+/// through as `source` (empty for the environment's own), a `label` ("Codex
+/// · Work", or the hub's account id; `sensitive` when it holds an email,
+/// hidden until asked for), a `plan`, and its `windows` ({label,
+/// usedPercent, remainingPercent, resetsAt}) or a `notice` instead.
+/// `summary` is the one account, {label: "3 accounts"}, or an empty label
+/// when there are none; a hub that cannot be read is in `notices`. Null for
+/// an instance the environment does not list.
+pub fn usage_limits_report(instance_id: &str, providers: &[Json], sources: &[Json]) -> Json {
+    let driver = providers
+        .iter()
+        .map(as_object)
+        .rfind(|p| text(p, "instanceId") == instance_id)
+        .map(|p| text(p, "driver"))
+        .unwrap_or("");
+    if driver.is_empty() {
+        return Json::Null;
+    }
+    let brand = match brand_label(driver) {
+        "" => humanize_slug(driver),
+        brand => brand.to_owned(),
+    };
+    let mut accounts = Vec::new();
+    let mut native = HashSet::new();
+    for provider in providers.iter().map(as_object) {
+        let on = |key: &str| provider.get(key).and_then(Json::as_bool).unwrap_or(true);
+        if text(provider, "driver") != driver
+            || !on("enabled")
+            || !on("installed")
+            || text(provider, "availability") == "unavailable"
+            || !provider.contains_key("usageLimits")
+        {
+            continue;
+        }
+        let limits = object(provider, "usageLimits");
+        let auth = object(provider, "auth");
+        let key = account_key(driver, text(auth, "email"));
+        if !key.is_empty() && limits_notice(limits).is_empty() {
+            native.insert(key);
+        }
+        // The driver, then the instance's own name when it has one; the
+        // default instance is often named after its driver, and saying it
+        // twice adds nothing.
+        let id = text(provider, "instanceId");
+        let mut instance = text(provider, "displayName").trim().to_owned();
+        if instance.is_empty() && id != driver {
+            instance = id.to_owned();
+        }
+        let label = if instance.is_empty() || instance.to_lowercase() == brand.to_lowercase() {
+            brand.clone()
+        } else {
+            format!("{brand} · {instance}")
+        };
+        accounts.push(report_account("", &label, text(auth, "label"), limits));
+    }
+    let mut notices = Vec::new();
+    for source in sources.iter().map(as_object) {
+        let all = array(source, "accounts");
+        let mut matching = 0;
+        for account in all.iter().map(as_object) {
+            if text(account, "driver") != driver {
+                continue;
+            }
+            matching += 1;
+            if native.contains(&account_key(driver, text(account, "email"))) {
+                continue;
+            }
+            accounts.push(report_account(
+                text(source, "label"),
+                text(account, "id"),
+                text(account, "plan"),
+                object(account, "usageLimits"),
+            ));
+        }
+        // A hub that failed to read has no accounts left to match, so its
+        // error reaches every provider rather than going unsaid.
+        let error = text(source, "error");
+        if !error.is_empty() && (matching > 0 || all.is_empty()) {
+            notices.push(json!(format!("{}: {error}", text(source, "label"))));
+        }
+    }
+    // One account is named, with its plan; more are counted; none leaves the
+    // notices to say why.
+    let summary = if accounts.len() == 1 {
+        accounts[0].clone()
+    } else {
+        let label = if accounts.is_empty() {
+            String::new()
+        } else {
+            format!("{} accounts", accounts.len())
+        };
+        json!({"source": "", "label": label, "sensitive": false, "plan": ""})
+    };
+    json!({"summary": summary, "accounts": accounts, "notices": notices})
+}
+
 #[cfg(test)]
 mod tests;

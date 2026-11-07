@@ -263,6 +263,14 @@ impl ShellStore {
         held || self.previewing
     }
 
+    /// Whether the rows hold `mc`'s version (`epoch`, `rev`): true too for
+    /// an MC the store does not follow, or one since reset to another epoch.
+    pub fn reached(&self, mc: &str, epoch: &str, rev: i64) -> bool {
+        self.mcs
+            .get(mc)
+            .is_none_or(|rows| rows.epoch != epoch || rows.rev >= rev)
+    }
+
     /// Whether the rows held came from the cache and no MC has confirmed them.
     pub fn previewing(&self) -> bool {
         self.previewing

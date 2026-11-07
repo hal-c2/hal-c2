@@ -100,6 +100,18 @@ struct Recall {
     recalled: String,
 }
 
+/// An access change sent to the MC: once `accepted`, the version of the
+/// rows (`mc`, `epoch`, `rev`) that holds it; no epoch from an MC that names
+/// none.
+#[derive(Default)]
+struct SettingMode {
+    mode: String,
+    accepted: bool,
+    mc: String,
+    epoch: String,
+    rev: i64,
+}
+
 pub struct Composer {
     bridge: Bridge,
     mc: Rc<dyn Mc>,
@@ -134,6 +146,8 @@ pub struct Composer {
     recall: Option<Recall>,
     /// What "/usage-limits" showed, by target.
     usage_limits: HashMap<String, Json>,
+    /// The access changes on their way to the MC, by draft target.
+    setting_mode: HashMap<String, SettingMode>,
     /// This window's "Not connected: queue not resumed" toast, while it may
     /// still show.
     not_connected_toast: String,
@@ -234,6 +248,7 @@ impl Controller for Composer {
             paths: PathSearch::default(),
             recall: None,
             usage_limits: HashMap::new(),
+            setting_mode: HashMap::new(),
             not_connected_toast: String::new(),
         }
     }
@@ -256,6 +271,7 @@ impl Controller for Composer {
             hook(&self.me, |c, e| {
                 c.carry_drafts(e);
                 c.reconcile_unsent(e);
+                c.settle_runtime_modes(e);
                 c.publish(e);
             }),
         );

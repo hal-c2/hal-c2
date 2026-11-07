@@ -541,12 +541,16 @@ impl Settings {
         let field = |key: &str| frame.get(key).cloned().unwrap_or(Json::Null);
         match frame.get("t").and_then(Json::as_str).unwrap_or_default() {
             "config" => {
-                let config = match field("config") {
+                let mut config = match field("config") {
                     Json::Object(config) => config,
                     _ => Map::new(),
                 };
                 let changed = {
                     let mut s = self.0.state.borrow_mut();
+                    // The hubs come in their own frame after it.
+                    if let Some(sources) = s.config.get("usageLimitSources") {
+                        config.insert("usageLimitSources".into(), sources.clone());
+                    }
                     let changed = !same_map(&config, &s.config);
                     if changed {
                         s.config = config;
@@ -594,6 +598,15 @@ impl Settings {
                     _ => Vec::new(),
                 };
                 self.set_themes(engine, themes);
+            }
+            "config.usageLimitSources" => {
+                // Read when "/usage-limits" answers, so the hubs' quotas
+                // moving repaints nothing.
+                self.0
+                    .state
+                    .borrow_mut()
+                    .config
+                    .insert("usageLimitSources".into(), field("sources"));
             }
             _ => {}
         }
