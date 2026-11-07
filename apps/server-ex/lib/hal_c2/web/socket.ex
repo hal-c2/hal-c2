@@ -12,6 +12,11 @@ defmodule HalC2.Web.Socket do
   never itself cut short by a resync, or a client behind by more than the limit would
   be told to resync forever.
 
+  Progress of a running tool call (`HalC2.Streams.View.events/4` marks it) is held
+  for 50 ms, or until `@max_held_progress` updates wait, so a tool that reports many
+  times reaches the client as its latest state. Anything else for the subscription
+  sends what is held first, at once.
+
   Sidebar rows are buffered the same way, per MC, and flushed as one `shell.rows` frame
   per MC. The other shell messages are not buffered, but the rows before them go out first.
 
@@ -38,6 +43,7 @@ defmodule HalC2.Web.Socket do
 
   @max_buffered 8 * 1024 * 1024
   @max_buffered_events 1_000
+  @max_held_progress 512
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
@@ -350,9 +356,22 @@ defmodule HalC2.Web.Socket do
   def handle_info({:nodedown, mc}, state), do: {:ok, parted(state, mc)}
 
   def handle_info(:flush, state) do
-    {frames, state} = flush(state)
+    {frames, state} = flush(state, false)
     {shell_frames, state} = flush_shell(state)
     {:push, frames ++ shell_frames, %{state | flush_scheduled: false}}
+  end
+
+  # A subscription's held progress has waited long enough. A hold sent early leaves
+  # its timer stale.
+  def handle_info({:release_progress, id, hold}, state) do
+    case state.buffers do
+      %{^id => %{hold: ^hold} = buffer} ->
+        {frames, buffer} = release(id, buffer)
+        {:push, frames, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+
+      _ ->
+        {:ok, state}
+    end
   end
 
   def handle_info({:hal_c2_terminal_down, mc, key, reason}, state),
@@ -2129,18 +2148,58 @@ defmodule HalC2.Web.Socket do
         {:push, Protocol.encode(resync), state}
 
       true ->
-        buffer =
-          Map.merge(buffer, %{
-            events: Enum.reverse(events, buffer.events),
-            bytes: bytes,
-            count: count,
-            seq: seq
-          })
-
-        state = %{state | buffers: Map.put(state.buffers, id, buffer)}
-        {:ok, schedule_flush(state)}
+        buffer_events(state, id, buffer, events, seq)
     end
   end
+
+  defp buffer_events(state, id, buffer, events, seq) do
+    progress? = Enum.all?(events, &Map.get(&1, :progress, false))
+    held? = Map.has_key?(buffer, :hold)
+
+    # What else comes for the subscription goes after the progress held before it.
+    {frames, buffer} =
+      if held? and not progress?, do: release(id, buffer), else: {[], buffer}
+
+    # With nothing else waiting, the progress waits for more of itself.
+    hold? = progress? and (held? or buffer.events == [])
+
+    buffer =
+      Map.merge(buffer, %{
+        events: Enum.reverse(events, buffer.events),
+        bytes: buffer.bytes + Enum.reduce(events, 0, &(:erlang.external_size(&1.patch) + &2)),
+        count: Map.get_lazy(buffer, :count, fn -> length(buffer.events) end) + length(events),
+        seq: seq
+      })
+
+    cond do
+      hold? and buffer.count >= @max_held_progress ->
+        {frames, buffer} = release(id, buffer)
+        {:push, frames, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+
+      hold? ->
+        buffer = Map.put_new_lazy(buffer, :hold, fn -> hold(id) end)
+        {:ok, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+
+      true ->
+        state = schedule_flush(%{state | buffers: Map.put(state.buffers, id, buffer)})
+        if frames == [], do: {:ok, state}, else: {:push, frames, state}
+    end
+  end
+
+  defp hold(id) do
+    hold = make_ref()
+    Process.send_after(self(), {:release_progress, id, hold}, progress_hold_ms())
+    hold
+  end
+
+  # Features hold progress longer, so what they send in a row lands in one hold.
+  defp progress_hold_ms, do: Application.get_env(:hal_c2, :progress_hold_ms, 50)
+
+  defp release(id, buffer),
+    do: {[events_frame(id, Enum.reverse(buffer.events), buffer.seq)], sent(buffer)}
+
+  defp sent(buffer),
+    do: buffer |> Map.merge(%{events: [], bytes: 0, count: 0}) |> Map.delete(:hold)
 
   # The offset is the one the stream gave with the last of the events: a replay in
   # several parts only moves the client's offset with its last.
@@ -2152,17 +2211,18 @@ defmodule HalC2.Web.Socket do
   defp put_floor(frame, %{floor: floor}), do: Map.put(frame, "floor", floor)
   defp put_floor(frame, _meta), do: frame
 
-  defp flush(state) do
-    frames =
-      for {id, %{events: [_ | _] = events, seq: seq}} <- state.buffers,
-          do: events_frame(id, Enum.reverse(events), seq)
+  # Sends what the subscriptions have buffered, with their held progress unless
+  # `held?` is false.
+  defp flush(state, held? \\ true) do
+    ready =
+      for {id, %{events: [_ | _]} = buffer} <- state.buffers,
+          held? or not Map.has_key?(buffer, :hold),
+          do: id
 
-    buffers =
-      Map.new(state.buffers, fn {id, buffer} ->
-        {id, Map.merge(buffer, %{events: [], bytes: 0, count: 0})}
-      end)
-
-    {frames, %{state | buffers: buffers}}
+    Enum.flat_map_reduce(ready, state, fn id, state ->
+      {frames, buffer} = release(id, state.buffers[id])
+      {frames, %{state | buffers: Map.put(state.buffers, id, buffer)}}
+    end)
   end
 
   # The flush message lands behind everything already in the mailbox, so each

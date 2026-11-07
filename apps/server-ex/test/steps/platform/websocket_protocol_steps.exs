@@ -7,6 +7,15 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
   alias HalC2.Test.Mc.World
   alias HalC2.Test.WsClient
 
+  @tool_types %{
+    "a command" => "command_execution",
+    "a file change" => "file_change",
+    "a file search" => "file_search",
+    "a web search" => "web_search",
+    "a provider-defined tool" => "dynamic_tool"
+  }
+  @max_held_progress 512
+
   # --- greeting and credentials ---------------------------------------------------------
 
   step "the client opens a socket with a valid credential", context do
@@ -374,6 +383,124 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     text = Enum.map_join(1..10, &"part#{&1} ")
     seq = context.seq
     assert [[^seq, "message", "m1", %{"a" => %{"text" => ^text}}, _]] = frame["events"]
+    World.put_client(context, client)
+  end
+
+  # Progress is held longer here than the MC's 50 ms, so what a step commits in a row
+  # lands in one hold however busy the machine is.
+  step ~r/^the client subscribed to a thread where (?<tool>a command|a file change|a file search|a web search|a provider-defined tool) is running$/,
+       %{args: [tool]} = context do
+    type = Map.fetch!(@tool_types, tool)
+    hold_progress(1_000)
+    follow_tools(context, for(id <- ~w(t1 t2), do: {id, type}))
+  end
+
+  step "the client subscribed to a thread where many tool calls are running", context do
+    hold_progress(60_000)
+    follow_tools(context, for(n <- 1..@max_held_progress, do: {"t#{n}", "dynamic_tool"}))
+  end
+
+  step "that tool call reports progress many times within 50 milliseconds", context do
+    seq = for i <- 1..10, do: report(context, [{"t1", i}])
+
+    # Sent each on its own, nothing has gone out while the socket waits for more.
+    {_pong, frames, client} =
+      World.client(context)
+      |> WsClient.send_json(%{"t" => "ping"})
+      |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    assert event_seqs(frames, 1) == []
+    context |> Map.put(:seq, List.last(seq)) |> World.put_client(client)
+  end
+
+  step "the client receives one update holding its latest state", context do
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+    seq = context.seq
+    assert [[^seq, "turn-item", "t1", %{"s" => %{"detail" => "step 10"}}, _]] = frame["events"]
+    World.put_client(context, client)
+  end
+
+  step "two tool calls running side by side each keep their own update", context do
+    seqs = for i <- 11..14, do: report(context, [{"t1", i}, {"t2", i}])
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+
+    assert [
+             [_, "turn-item", "t1", %{"s" => %{"detail" => "step 14"}}, _],
+             [seq, "turn-item", "t2", %{"s" => %{"detail" => "step 14"}}, _]
+           ] = frame["events"]
+
+    assert seq == List.last(seqs)
+    World.put_client(context, client)
+  end
+
+  # The hold is far longer than the client waits, so it must not be waited for.
+  step "the command reports progress and then finishes, and a message arrives right after",
+       context do
+    hold_progress(60_000)
+    report(context, [{"t1", 1}])
+    report(context, [{"t1", 2}])
+
+    {:ok, _} =
+      HalC2.Streams.commit(context.stream, :thread, [
+        {"turn-item", "t1", %{"s" => %{"status" => "completed"}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit(context.stream, :thread, [
+        {"message", "m1", %{"a" => %{"text" => "done"}}}
+      ])
+
+    context
+  end
+
+  step "the client receives the latest progress, then the finished command, then the message",
+       context do
+    {last, frames, client} =
+      WsClient.recv_until(World.client(context), fn frame ->
+        frame["t"] == "events" and Enum.any?(frame["events"], &match?([_, "message" | _], &1))
+      end)
+
+    events =
+      for(%{"t" => "events", "events" => events} <- frames ++ [last], do: events)
+      |> Enum.concat()
+      |> Enum.map(fn [_seq, kind, id, patch, _at] -> {kind, id, patch} end)
+
+    assert [
+             {"turn-item", "t1", %{"s" => %{"detail" => "step 2"}}},
+             {"turn-item", "t1", %{"s" => %{"status" => "completed"}}},
+             {"message", "m1", %{"a" => %{"text" => "done"}}}
+           ] = events
+
+    World.put_client(context, client)
+  end
+
+  step "nothing waits for the 50 milliseconds to pass once the command has finished", context do
+    # The message came well within `Mc.await/3`'s limit, and the hold is twice that.
+    context
+  end
+
+  step "512 progress updates are waiting to be merged", context do
+    ids = for n <- 1..@max_held_progress, do: "t#{n}"
+    {last, rest} = List.pop_at(ids, -1)
+
+    for chunk <- Enum.chunk_every(rest, 64), do: report(context, Enum.map(chunk, &{&1, 1}))
+
+    {_pong, frames, client} =
+      World.client(context)
+      |> WsClient.send_json(%{"t" => "ping"})
+      |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    assert event_seqs(frames, 1) == []
+    seq = report(context, [{last, 1}])
+    context |> Map.put(:seq, seq) |> World.put_client(client)
+  end
+
+  step "they are merged and sent at once, without waiting for the 50 milliseconds to pass",
+       context do
+    # The hold is a minute, twice what `Mc.await/3` waits.
+    {frame, client} = Mc.await(World.client(context), &(&1["t"] == "events"))
+    assert frame["offset"] == context.seq
+    assert length(frame["events"]) == @max_held_progress
     World.put_client(context, client)
   end
 
@@ -1223,6 +1350,55 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 1))
     [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure(stream)).subscribers)
     context |> Map.merge(%{stream: stream, socket: socket}) |> World.put_client(client)
+  end
+
+  # A thread where each `{id, type}` tool call is running, followed as id 1.
+  defp follow_tools(context, tools) do
+    stream = stream_id()
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        stream,
+        :thread,
+        [
+          {"run", "r1", %{"s" => %{"id" => "r1", "ordinal" => 1, "status" => "running"}}},
+          {"message", "m1",
+           %{"s" => %{"id" => "m1", "role" => "assistant", "text" => "", "streaming" => true}}}
+        ] ++
+          for {id, type} <- tools do
+            {"turn-item", id,
+             %{"s" => %{"id" => id, "runId" => "r1", "type" => type, "status" => "running"}}}
+          end
+      )
+
+    client = World.client(context) |> sub(1, stream)
+    {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 1))
+    [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure(stream)).subscribers)
+    context |> Map.merge(%{stream: stream, socket: socket}) |> World.put_client(client)
+  end
+
+  # One commit of progress, `{id, step}` for each tool call; its seq.
+  defp report(context, steps) do
+    {:ok, seq} =
+      HalC2.Streams.commit(
+        context.stream,
+        :thread,
+        for({id, step} <- steps, do: {"turn-item", id, %{"s" => %{"detail" => "step #{step}"}}})
+      )
+
+    seq
+  end
+
+  defp hold_progress(ms) do
+    previous = Application.fetch_env(:hal_c2, :progress_hold_ms)
+    Application.put_env(:hal_c2, :progress_hold_ms, ms)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:hal_c2, :progress_hold_ms, value)
+        :error -> Application.delete_env(:hal_c2, :progress_hold_ms)
+      end
+    end)
   end
 
   defp keybinding(context, method, rule) do

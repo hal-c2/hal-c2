@@ -134,7 +134,7 @@ Feature: The protocol 3 WebSocket
     When one message changes many times before the socket drains
     Then the client receives the merged change once
 
-  @mc @backlog @priority-high
+  @mc
   Scenario Outline: Rapid progress of one running tool call reaches a subscriber as its latest state
     Given the client subscribed to a thread where <tool> is running
     When that tool call reports progress many times within 50 milliseconds
@@ -149,14 +149,14 @@ Feature: The protocol 3 WebSocket
       | a web search             |
       | a provider-defined tool  |
 
-  @mc @backlog
+  @mc
   Scenario: Merging tool progress never reorders or drops what follows
     Given the client subscribed to a thread where a command is running
     When the command reports progress and then finishes, and a message arrives right after
     Then the client receives the latest progress, then the finished command, then the message
     And nothing waits for the 50 milliseconds to pass once the command has finished
 
-  @mc @backlog
+  @mc
   Scenario: Tool progress held for merging is bounded
     Given the client subscribed to a thread where many tool calls are running
     When 512 progress updates are waiting to be merged

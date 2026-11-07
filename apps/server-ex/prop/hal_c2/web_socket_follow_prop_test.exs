@@ -12,10 +12,11 @@ defmodule HalC2.WebSocketFollowPropTest do
   the socket itself busy while batches of 400 changes are committed (`lag`): past
   1,000 unsent changes the socket drops the subscription with a `resync`, whose offset
   must leave none of the stream's changes after what the client saw, and the client
-  subscribes again from it. After
+  subscribes again from it. Each stream also has a running tool call whose progress
+  the socket holds a moment to send its latest (`progress`). After
   every step the socket must answer a ping, and every subscription to a free stream
-  must have reached its head with nothing sent twice; a subscription to a busy stream,
-  or an id with none, is sent nothing.
+  must have reached its head with nothing sent twice, holding the tool call's latest
+  progress; a subscription to a busy stream, or an id with none, is sent nothing.
   """
 
   use ExUnit.Case, async: false
@@ -88,7 +89,7 @@ defmodule HalC2.WebSocketFollowPropTest do
 
     heads =
       Map.new(@streams, fn stream ->
-        {:ok, seq} = Streams.commit(stream, :thread, [item(0)])
+        {:ok, seq} = Streams.commit(stream, :thread, [item(0), tool("p0", "running")])
         {stream, seq}
       end)
 
@@ -97,7 +98,9 @@ defmodule HalC2.WebSocketFollowPropTest do
 
     put(:client, client)
     put(:heads, heads)
-    put(:log, Map.new(heads, fn {stream, seq} -> {stream, [seq]} end))
+    put(:log, Map.new(heads, fn {stream, seq} -> {stream, [seq, seq - 1]} end))
+    put(:progress, Map.new(heads, fn {stream, seq} -> {stream, {seq, "p0"}} end))
+    put(:shown, %{})
     put(:subs, %{})
     put(:seen, %{})
     put(:busy, MapSet.new())
@@ -109,7 +112,7 @@ defmodule HalC2.WebSocketFollowPropTest do
     for stream <- get(:busy) || [], do: :sys.resume(Streams.ensure(stream))
     for {_, tasks} <- get(:waiting) || %{}, task <- tasks, do: Task.await(task, 10_000)
 
-    for key <- [:client, :heads, :log, :subs, :seen, :busy, :waiting],
+    for key <- [:client, :heads, :log, :progress, :shown, :subs, :seen, :busy, :waiting],
         do: Process.delete({__MODULE__, key})
 
     HalC2.Prop.stop_services()
@@ -128,6 +131,7 @@ defmodule HalC2.WebSocketFollowPropTest do
     frequency(
       [
         {3, {:call, __MODULE__, :commit, [oneof(@streams)]}},
+        {3, {:call, __MODULE__, :progress, [oneof(@streams)]}},
         {2, {:call, __MODULE__, :busy, [oneof(@streams)]}}
       ] ++
         if(lagging(state) != [],
@@ -157,6 +161,7 @@ defmodule HalC2.WebSocketFollowPropTest do
   def precondition(state, {:call, _, :busy, [stream]}), do: stream not in state.busy
   def precondition(state, {:call, _, :free, [stream]}), do: stream in state.busy
   def precondition(_state, {:call, _, :commit, _}), do: true
+  def precondition(_state, {:call, _, :progress, _}), do: true
   def precondition(state, {:call, _, :lag, [stream, _]}), do: stream in lagging(state)
 
   # A followed stream that is free: the socket is found by its subscription.
@@ -175,6 +180,7 @@ defmodule HalC2.WebSocketFollowPropTest do
     do: %{state | busy: List.delete(state.busy, stream)}
 
   def next_state(state, _result, {:call, _, :commit, _}), do: state
+  def next_state(state, _result, {:call, _, :progress, _}), do: state
   def next_state(state, _result, {:call, _, :lag, _}), do: state
 
   def postcondition(_state, _call, result), do: result == :ok
@@ -193,17 +199,26 @@ defmodule HalC2.WebSocketFollowPropTest do
     send_frame(%{"t" => "unsub", "id" => id})
     put(:subs, Map.delete(get(:subs), id))
     put(:seen, Map.delete(get(:seen), id))
+    put(:shown, Map.delete(get(:shown), id))
     settle()
   end
 
   # A commit to a busy stream waits for it, as a caller's would.
-  def commit(stream) do
+  def commit(stream), do: commit(stream, item(:rand.uniform(1000)), nil)
+
+  # The running tool call reports progress.
+  def progress(stream) do
+    detail = "p#{System.unique_integer([:positive])}"
+    commit(stream, tool(detail, "running"), detail)
+  end
+
+  defp commit(stream, change, detail) do
     if busy?(stream) do
-      task = Task.async(fn -> Streams.commit(stream, :thread, [item(:rand.uniform(1000))]) end)
+      task = Task.async(fn -> {Streams.commit(stream, :thread, [change]), detail} end)
       put(:waiting, Map.update(get(:waiting), stream, [task], &[task | &1]))
     else
-      {:ok, seq} = Streams.commit(stream, :thread, [item(:rand.uniform(1000))])
-      committed(stream, [seq])
+      {:ok, seq} = Streams.commit(stream, :thread, [change])
+      committed(stream, [seq], detail)
     end
 
     settle()
@@ -236,8 +251,8 @@ defmodule HalC2.WebSocketFollowPropTest do
     put(:waiting, waiting)
 
     for task <- Enum.reverse(tasks) do
-      {:ok, seq} = Task.await(task, 10_000)
-      committed(stream, [seq])
+      {{:ok, seq}, detail} = Task.await(task, 10_000)
+      committed(stream, [seq], detail)
     end
 
     settle()
@@ -248,7 +263,8 @@ defmodule HalC2.WebSocketFollowPropTest do
   # Takes frames until every subscription to a free stream is at its head, then
   # pings: the pong must come, with nothing more for anyone. :ok or what went wrong.
   defp settle do
-    with :ok <- take_until_heads(System.monotonic_time(:millisecond) + 5_000) do
+    with :ok <- take_until_heads(System.monotonic_time(:millisecond) + 5_000),
+         :ok <- latest_progress() do
       client = WsClient.send_json(get(:client), %{"t" => "ping"})
 
       case recv_until_pong(client, 2_000) do
@@ -294,9 +310,22 @@ defmodule HalC2.WebSocketFollowPropTest do
     end
   end
 
+  # Every subscription at its head holds the tool call as it is now.
+  defp latest_progress do
+    wrong =
+      for {id, stream} <- get(:subs),
+          not busy?(stream),
+          {_seq, detail} <- [get(:progress)[stream]],
+          get(:shown)[id] != detail,
+          do: {id, stream, get(:shown)[id], detail}
+
+    if wrong == [], do: :ok, else: {:not_latest, wrong}
+  end
+
   # A frame for a subscription to a free stream that moves it forward, or what is wrong
   # with it.
   defp check(%{"id" => id} = frame) do
+    show(id, frame)
     stream = get(:subs)[id]
     seen = get(:seen)[id]
 
@@ -330,6 +359,20 @@ defmodule HalC2.WebSocketFollowPropTest do
 
   defp check(frame), do: {:halt, {:unexpected, frame}}
 
+  # The tool call's progress as the client folds it from snapshots and events.
+  defp show(id, %{"t" => "snapshot", "rows" => rows}) do
+    for ["turn-item", "tool", %{"detail" => detail}] <- rows, do: shown(id, detail)
+  end
+
+  defp show(id, %{"t" => "events", "events" => events}) do
+    for [_seq, "turn-item", "tool", %{"s" => %{"detail" => detail}}, _at] <- events,
+        do: shown(id, detail)
+  end
+
+  defp show(_id, _frame), do: :ok
+
+  defp shown(id, detail), do: put(:shown, Map.put(get(:shown), id, detail))
+
   defp advance(id, offset) do
     put(:seen, Map.put(get(:seen), id, offset))
     {:cont, :ok}
@@ -351,13 +394,23 @@ defmodule HalC2.WebSocketFollowPropTest do
 
   defp send_frame(frame), do: put(:client, WsClient.send_json(get(:client), frame))
 
-  defp committed(stream, seqs) do
+  defp committed(stream, seqs, detail \\ nil) do
     put(:heads, Map.update!(get(:heads), stream, &Enum.max([&1 | seqs])))
     put(:log, Map.update!(get(:log), stream, &(seqs ++ &1)))
+
+    with [seq] when detail != nil <- seqs,
+         {at, _} when at < seq <- get(:progress)[stream],
+         do: put(:progress, Map.put(get(:progress), stream, {seq, detail}))
   end
 
   defp busy?(stream), do: MapSet.member?(get(:busy), stream)
   defp item(n, id \\ 1), do: {"turn-item", "i#{id}", %{"s" => %{"text" => "t#{n}"}}}
+
+  defp tool(detail, status),
+    do:
+      {"turn-item", "tool",
+       %{"s" => %{"type" => "command_execution", "status" => status, "detail" => detail}}}
+
   defp get(key), do: Process.get({__MODULE__, key})
   defp put(key, value), do: Process.put({__MODULE__, key}, value)
 end
