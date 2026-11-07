@@ -3576,15 +3576,53 @@ defmodule HalC2.Orchestration do
       thread["activeProviderThreadId"] != nil or
         StreamState.get(state, "provider-thread") != %{}
 
-    if is_binary(target) and target != current and conversation? do
-      case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
-        :ok -> nil
-        {:error, message} -> {:error, message}
-      end
+    cond do
+      not is_binary(target) ->
+        nil
+
+      target == current ->
+        model_switch_refusal(state, thread, command, target)
+
+      not HalC2.Settings.instance_enabled?(target, driver_for(target)) ->
+        {:error, "The target provider instance is unavailable."}
+
+      conversation? ->
+        case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
+          :ok -> nil
+          {:error, message} -> {:error, message}
+        end
+
+      true ->
+        nil
     end
   end
 
   defp refusal(_type, _command, _thread, _state), do: nil
+
+  # An ACP agent's session switches models only when it offers a way to (a `model`
+  # config option or a model list); its runtime records whether it did on the provider
+  # thread (`canSwitchModel`), so the answer holds while the session is stopped.
+  defp model_switch_refusal(state, thread, command, instance) do
+    model = get_in(command, ["modelSelection", "model"])
+
+    provider_thread =
+      StreamState.get(state, "provider-thread")[
+        Entities.provider_thread_id(instance, thread["id"])
+      ]
+
+    if is_binary(model) and model != get_in(thread, ["modelSelection", "model"]) and
+         provider_thread["canSwitchModel"] == false,
+       do: {:error, "The active ACP session does not expose a model-switch capability."}
+  end
+
+  # A message naming another model for the thread's own ACP session, which cannot take it.
+  defp message_model_refusal(state, thread, command) do
+    current = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+
+    if get_in(command, ["modelSelection", "instanceId"]) in [nil, current] do
+      with {:error, reason} <- model_switch_refusal(state, thread, command, current), do: reason
+    end
+  end
 
   defp future?(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
@@ -3981,6 +4019,9 @@ defmodule HalC2.Orchestration do
         {[], {:error, error}}
 
       reason = model_locked(thread, command) ->
+        {[], {:error, reason}}
+
+      reason = message_model_refusal(state, thread, command) ->
         {[], {:error, reason}}
 
       reason = handoff_refusal(state, thread, command) ->
@@ -4551,12 +4592,14 @@ defmodule HalC2.Orchestration do
       end
 
     # Its earlier runs' native turns are in the native thread it no longer has
-    # (`HalC2.Orchestration.Fork`).
+    # (`HalC2.Orchestration.Fork`), and what that thread's session could do is not
+    # known of the new one until it opens.
     taken_over =
       if foreign,
         do: %{
           "providerInstanceId" => instance,
           "nativeThreadRef" => nil,
+          "canSwitchModel" => nil,
           "nativeSinceRunOrdinal" => ordinal
         },
         else: %{}
@@ -4701,17 +4744,18 @@ defmodule HalC2.Orchestration do
     handoff =
       HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
 
+    provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
+
     turn = %{
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
-      text:
-        HalC2.Orchestration.Handoff.prompt(
-          handoff.context,
-          HalC2.ComposerContext.for_provider(text, command["context"])
-        ),
+      text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      # What a new provider conversation gets when the one to resume is gone
+      # (`HalC2.Orchestration.Handoff.opened/2`).
+      fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),
       # A fork's first run continues the source's native thread from the fork point.
       fork: handoff.fork,
       cwd: cwd,

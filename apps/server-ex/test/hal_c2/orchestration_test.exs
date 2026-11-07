@@ -4078,6 +4078,38 @@ defmodule HalC2.OrchestrationTest do
       assert [_] = StreamState.list(state, "provider-session")
     end
 
+    # Stopping the session drops its record; what the agent's session can do outlives it,
+    # and the resumed session, which names no model, does not say it again.
+    test "an ACP session that cannot switch models still refuses after it is stopped" do
+      System.put_env("FAKE_ACP_NO_MODEL_SWITCH", "1")
+      on_exit(fn -> System.delete_env("FAKE_ACP_NO_MODEL_SWITCH") end)
+      thread_id = launch("hello", "grok")
+      await_statuses(thread_id, ["completed"])
+      [session] = StreamState.list(current(thread_id), "provider-session")
+      refused = {:error, "The active ACP session does not expose a model-switch capability."}
+
+      set_model = fn ->
+        Orchestration.dispatch(%{
+          "type" => "thread.model-selection.set",
+          "threadId" => thread_id,
+          "modelSelection" => %{"instanceId" => "grok", "model" => "gpt-4.1"}
+        })
+      end
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "provider-session.detach",
+          "threadId" => thread_id,
+          "providerSessionId" => session["id"]
+        })
+
+      assert set_model.() == refused
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "where are we")
+      await_statuses(thread_id, ["completed", "completed"])
+      assert set_model.() == refused
+    end
+
     test "merging a fork back brings its newer work to the parent's next run" do
       source_id = launch("hello")
       [run] = runs(await_statuses(source_id, ["completed"]))

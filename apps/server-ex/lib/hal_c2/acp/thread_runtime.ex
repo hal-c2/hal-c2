@@ -289,6 +289,9 @@ defmodule HalC2.Acp.ThreadRuntime do
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
          {state, turn} = settle_carried(state, turn),
+         # A session the agent no longer had starts afresh with the whole thread.
+         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
+         state = %{state | turn: turn},
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
@@ -1176,8 +1179,8 @@ defmodule HalC2.Acp.ThreadRuntime do
     cond do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
-          {:ok, result} -> {:ok, native, opened(state, result)}
-          {:error, _} -> new_session(state, turn)
+          {:ok, result} -> {:ok, native, opened(state, result, turn)}
+          {:error, _} -> fresh_session(state, turn)
         end
 
       caps["loadSession"] == true ->
@@ -1186,8 +1189,8 @@ defmodule HalC2.Acp.ThreadRuntime do
         state = %{state | replaying: false}
 
         case result do
-          {:ok, result} -> {:ok, native, opened(state, result || %{})}
-          {:error, _} -> new_session(state, turn)
+          {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
+          {:error, _} -> fresh_session(state, turn)
         end
 
       true ->
@@ -1197,6 +1200,12 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp open_session(state, turn), do: new_session(state, turn)
 
+  # A new session in place of the recorded one the agent could not open.
+  defp fresh_session(state, turn) do
+    with {:ok, id, state} <- new_session(state, turn),
+         do: {:ok, id, Map.put(state, :fresh_start, true)}
+  end
+
   defp new_session(state, turn) do
     case Connection.call(
            state.conn,
@@ -1204,7 +1213,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            %{"cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)},
            60_000
          ) do
-      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result)}
+      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result, turn, true)}
       {:ok, other} -> {:error, {:unexpected, other}, state}
       {:error, reason} -> {:error, reason, state}
     end
@@ -1277,11 +1286,26 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # A session that opens without saying its model gets the turn's model set again.
-  defp opened(state, result) do
+  # Whether it offers a way to switch models is recorded on the provider thread
+  # (`canSwitchModel`), which outlives the process and its session record: a new
+  # session's answer says so, a continued one only when it names its model.
+  defp opened(state, result, turn, new? \\ false) do
     named? =
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
 
+    if named? or new?, do: record_model_switch(state, turn, named?)
     remember_model(if(named?, do: state, else: %{state | model: nil}), result)
+  end
+
+  defp record_model_switch(state, turn, switches?) do
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "provider-thread", turn.ids.provider_thread, fn
+          nil -> nil
+          thread -> Map.put(thread, "canSwitchModel", switches?)
+        end)
+      ]
+    end)
   end
 
   defp remember_model(state, result) do

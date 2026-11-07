@@ -297,6 +297,8 @@ for line in sys.stdin:
         names = json.loads(os.environ.get("FAKE_ACP_MODELS", "null")) or ["Fake/One", "Fake/Two"]
         options = [{"value": n.lower().replace(" ", "-"), "name": n} for n in names]
         result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}
+        # FAKE_ACP_NO_MODEL_SWITCH: the session offers no way to switch models.
+        if os.environ.get("FAKE_ACP_NO_MODEL_SWITCH"): result = {}
         if method == "session/new": result["sessionId"] = sid
         cwds[sid] = params.get("cwd") or os.getcwd()
         # A session in the shared store belongs to the directory it was opened in.
