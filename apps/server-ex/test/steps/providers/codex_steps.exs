@@ -2059,10 +2059,20 @@ Red"} <- StreamState.get(state, "message")[message],
   end
 
   step "the turn fails with {string}", %{args: [message]} = context do
-    state = World.await_runs(context, "Work", ["failed"])
-    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
-    assert error =~ message
-    context
+    if context[:cursor_world] do
+      # A Cursor thread on the AcpFixtures world: its failed run's own reason,
+      # the session's last error and its error item saying the same.
+      alias HalC2.Test.AcpFixtures, as: Acp
+      assert [%{"status" => "failed"}] = Acp.runs(context.threads[context.thread])
+      state = Acp.stream(context.threads[context.thread])
+      assert [%{"lastError" => ^message}] = StreamState.list(state, "provider-session")
+      Map.put(context, :failure_message, message)
+    else
+      state = World.await_runs(context, "Work", ["failed"])
+      assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+      assert error =~ message
+      context
+    end
   end
 
   step "Codex is not started against the shared home instead", context do

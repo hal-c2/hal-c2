@@ -129,7 +129,10 @@ defmodule HalC2.Acp do
         credentials = cursor_credentials(instance)
 
         {:ok, [node_command(), cursor_script(), "--mode", runtime_mode || "approval-required"],
-         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | instance_env(instance)]}
+         [
+           {"HAL_C2_CURSOR_CREDENTIALS", credentials},
+           {"HAL_C2_CURSOR_PLATFORM", cursor_platform()} | instance_env(instance)
+         ]}
 
       {"pi", entry} ->
         {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(instance)}
@@ -328,6 +331,21 @@ defmodule HalC2.Acp do
       Enum.any?(instance_env(id), fn {k, v} ->
         k == "CURSOR_API_KEY" and String.trim(v) != ""
       end)
+
+  # The platform the Cursor sidecar runs for, in Node's words: the MC's own
+  # (`:os_type` stands in for it in tests, as elsewhere). Cursor's sandbox
+  # does not exist on Windows, which the sidecar decides from this.
+  defp cursor_platform do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> "win32"
+      {:unix, :darwin} -> "darwin"
+      _ -> "linux"
+    end
+  end
+
+  @doc "How long a stopped Cursor turn waits for Cursor to confirm before it ends anyway."
+  def cursor_cancel_timeout,
+    do: Application.get_env(:hal_c2, :cursor_cancel_timeout_ms, 10_000)
 
   @doc false
   # Each instance keeps its own Cursor sign-in, owner-only, in the MC's data.

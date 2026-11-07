@@ -42,7 +42,8 @@ function fakeSdk(updates: ReadonlyArray<InteractionUpdate>) {
   const agent = {
     agentId: "agent-1",
     close: () => {},
-    send: async (message: string, options: SendOptions) => {
+    send: async (given: string | { text: string }, options: SendOptions) => {
+      const message = typeof given === "string" ? given : given.text;
       sent.push({ message, options });
       for (const update of updates) await options.onDelta?.({ update });
       return {

@@ -975,4 +975,708 @@ defmodule HalC2.Steps.Providers.Cursor do
     assert Enum.map(entry["models"], & &1["slug"]) == ["default"]
     context
   end
+
+  # --- runs, tools and failures ---------------------------------------------------------
+
+  step "a Cursor turn is running", context do
+    context |> ready_cursor() |> Map.put(:thread, "Cursor")
+  end
+
+  defp ready_cursor(context) do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    # Marks this scenario's world for step texts shared with other providers.
+    Map.put(ctx, :cursor_world, true)
+  end
+
+  defp launch_cursor(context, text, opts \\ []) do
+    ctx = Acp.launch(context, opts[:title] || "Cursor", "cursor", text, opts)
+    ctx |> Map.put(:thread, opts[:title] || "Cursor") |> Map.put(:cursor_world, true)
+  end
+
+  defp items(context, title \\ "Cursor") do
+    context.threads[title]
+    |> Acp.stream()
+    |> HalC2.StreamState.list("turn-item")
+  end
+
+  defp failure_message(context, title \\ "Cursor") do
+    state = Acp.stream(context.threads[title])
+
+    error =
+      state
+      |> HalC2.StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "error"))
+
+    session = HalC2.StreamState.list(state, "provider-session") |> List.first(%{})
+    (error && get_in(error, ["failure", "message"])) || session["lastError"]
+  end
+
+  step "Cursor's catalog marks every variant of a model with a long context as Max Mode",
+       context do
+    sign_in("cursor")
+    ctx = ops(context)
+
+    Acp.control(ctx, "cursor-cursor", %{
+      "parameters" => %{
+        "gpt-5" => [
+          %{
+            "id" => "context",
+            "values" => [%{"value" => "200k"}, %{"value" => "1m", "displayName" => "1M"}]
+          }
+        ]
+      },
+      "variants" => %{
+        "gpt-5" => [
+          %{
+            "isDefault" => true,
+            "params" => [%{"id" => "context", "value" => "200k"}]
+          },
+          %{
+            "params" => [%{"id" => "context", "value" => "1m"}],
+            "isMaxMode" => true
+          }
+        ]
+      }
+    })
+
+    {_entry, ctx} = enabled(ctx)
+    ctx
+  end
+
+  step "the user sends a message on that model with the long context, in a new thread or an existing one",
+       context do
+    ctx = Acp.launch(context, "Cursor", "cursor", "hello", model: "gpt-5")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+
+    ctx =
+      Acp.follow_up(ctx, "Cursor", "hello with room to think", %{
+        "modelSelection" => %{
+          "instanceId" => "cursor",
+          "model" => "gpt-5",
+          "options" => [%{"id" => "contextWindow", "value" => "1m"}]
+        }
+      })
+
+    Acp.await_runs(ctx.threads["Cursor"], 2)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "the turn runs in Max Mode instead of failing with {string}",
+       %{args: [_error]} = context do
+    assert [%{"status" => "completed"}, %{"status" => "completed"}] =
+             Acp.runs(context.threads["Cursor"])
+
+    assert [_first, %{"model" => %{"id" => "gpt-5", "maxMode" => true}}] =
+             Enum.filter(log(context), &(&1["event"] == "send"))
+
+    context
+  end
+
+  step "a Cursor thread set to a model the account's catalog does not include", context do
+    ready_cursor(context)
+  end
+
+  step "the turn fails because Cursor rejects the model", context do
+    ctx = launch_cursor(context, "reject the model", model: "gpt-5")
+    assert [%{"status" => "failed"}] = Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the user is told the model must be one the Cursor account offers", context do
+    assert failure_message(context) =~ "not one this Cursor account offers"
+    Map.put(context, :failure_message, failure_message(context))
+  end
+
+  step "the error does not suggest trying again", context do
+    refute String.downcase(context.failure_message) =~ "try again"
+
+    error =
+      Enum.find(items(context), &(&1["type"] == "error"))
+
+    assert error["failure"]["retryable"] in [nil, false]
+    context
+  end
+
+  step "a Cursor thread with a long conversation", context do
+    ctx = context |> ready_cursor() |> launch_cursor("hello")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx = Acp.follow_up(ctx, "Cursor", "tell me more")
+    Acp.await_runs(ctx.threads["Cursor"], 2)
+    ctx
+  end
+
+  step "the user sends {string} to the Cursor thread", %{args: [text]} = context do
+    ctx = Acp.follow_up(context, "Cursor", text)
+    Acp.await_runs(ctx.threads["Cursor"], 3)
+    ctx
+  end
+
+  step "the thread shows that its context was compacted", context do
+    assert Enum.any?(items(context), &(&1["type"] == "compaction"))
+    context
+  end
+
+  step "Cursor's summary is not shown as a reply in the chat", context do
+    refute Acp.assistant_text(context.threads["Cursor"]) =~ "Summary of everything"
+    context
+  end
+
+  step "Cursor still knows what the conversation covered", context do
+    sends_before = Enum.filter(log(context), &(&1["event"] == "send"))
+    ctx = Acp.follow_up(context, "Cursor", "what were we talking about?")
+    Acp.await_runs(ctx.threads["Cursor"], 4)
+    sends = Enum.filter(log(ctx), &(&1["event"] == "send"))
+    # The same Cursor agent carries the conversation through the compaction.
+    assert Enum.uniq(Enum.map(sends, & &1["agentId"])) ==
+             Enum.uniq(Enum.map(sends_before, & &1["agentId"]))
+
+    ctx
+  end
+
+  step "a Cursor thread with history", context do
+    ctx = context |> ready_cursor() |> launch_cursor("hello")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "Cursor receives {string} as its whole message", %{args: [message]} = context do
+    assert %{"message" => ^message} =
+             log(context) |> Enum.filter(&(&1["event"] == "send")) |> List.last()
+
+    context
+  end
+
+  step "nothing is added to it", context do
+    assert %{"message" => "/compress"} =
+             log(context) |> Enum.filter(&(&1["event"] == "send")) |> List.last()
+
+    context
+  end
+
+  step "Cursor starts reading {string} and never reports a result for it",
+       %{args: [_file]} = context do
+    context |> ready_cursor() |> launch_cursor("start reading secret.txt")
+  end
+
+  step "the Cursor run finishes normally", context do
+    assert [%{"status" => "completed"}] = Acp.await_runs(context.threads["Cursor"], 1)
+    context
+  end
+
+  step "the read of {string} is shown as interrupted", %{args: [file]} = context do
+    read =
+      Enum.find(items(context), fn item ->
+        item["type"] == "file_search" and
+          (item["pattern"] == file or
+             Enum.any?(item["results"] || [], &(&1["fileName"] == file)))
+      end)
+
+    assert read["status"] == "interrupted"
+    Map.put(context, :read_item, read)
+  end
+
+  step "it stays visible in the timeline", context do
+    assert Enum.any?(items(context), &(&1["id"] == context.read_item["id"]))
+    context
+  end
+
+  # --- Windows -------------------------------------------------------------------------
+
+  step ~r/^a Cursor thread in (?<mode>.+) starts its first turn$/, %{args: [mode]} = context do
+    ctx = context |> ready_cursor() |> launch_cursor("hello", mode: Map.fetch!(@modes, mode))
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the turn runs without Cursor's sandbox", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Cursor"])
+    assert %{"sandbox" => false} = List.last(agents(context))
+    context
+  end
+
+  step "the thread warns that Cursor has no sandbox on Windows", context do
+    assert Enum.any?(
+             items(context),
+             &(&1["type"] == "system_notice" and &1["message"] =~ "no sandbox on Windows")
+           )
+
+    context
+  end
+
+  step "the turn fails saying Cursor cannot sandbox on Windows", context do
+    assert [%{"status" => "failed"}] = Acp.runs(context.threads["Cursor"])
+    assert failure_message(context) =~ "cannot sandbox on Windows"
+    context
+  end
+
+  # --- connection errors and run endings ------------------------------------------------
+
+  step ~r/^Cursor's whole reply is a connection error such as .*$/, context do
+    ctx = launch_cursor(context, "reply with a connection error")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the turn fails as a connection problem instead of showing the error as Cursor's answer",
+       context do
+    assert [%{"status" => "failed"}] = Acp.runs(context.threads["Cursor"])
+    assert failure_message(context) == "Provider turn failed."
+    refute Acp.assistant_text(context.threads["Cursor"]) =~ "Something went wrong"
+    context
+  end
+
+  step "a Cursor turn wrote {string} and ran a step", %{args: [_text]} = context do
+    ready_cursor(context)
+  end
+
+  step ~r/^Cursor's next message is only the error .* and the run finishes$/, context do
+    ctx = launch_cursor(context, "comment then a connection error")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+
+    ctx =
+      launch_cursor(ctx, "comment then a connection error then recover", title: "Recover")
+
+    Acp.await_runs(ctx.threads["Recover"], 1)
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  step "a later ordinary message in the same turn lets it complete", context do
+    assert Acp.assistant_text(context.threads["Cursor"]) =~ "Checking the build first."
+    refute Acp.assistant_text(context.threads["Cursor"]) =~ "RetriableError"
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Recover"])
+    assert Acp.assistant_text(context.threads["Recover"]) =~ "All good now."
+    context
+  end
+
+  step "a Cursor turn has answered and Cursor reported the turn ended", context do
+    ready_cursor(context)
+  end
+
+  step ~r/^the connection to Cursor breaks and the run ends with .*$/, context do
+    ctx = launch_cursor(context, "resume gives up after the turn ended")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the turn completes instead of failing", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Cursor"])
+    context
+  end
+
+  step "the failed resume's text is not shown as the answer", context do
+    text = Acp.assistant_text(context.threads["Cursor"])
+    assert text =~ "Here is the answer."
+    refute text =~ "repeated resume"
+    context
+  end
+
+  step ~r/^(the run ends with the no-progress error before Cursor reports the turn ended|Cursor reports the turn ended and the run then ends with "Checkpoint persistence failed"|Cursor continues after the turn ended and stops mid-answer with the no-progress error)$/,
+       %{args: [event]} = context do
+    trigger =
+      cond do
+        event =~ "Checkpoint" -> "resume gives up after the turn ended, checkpoint fails"
+        event =~ "continues after" -> "resume gives up after the turn ended then carry on"
+        true -> "resume gives up"
+      end
+
+    ctx = launch_cursor(context, trigger)
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "Cursor ends the run with the error {string}", %{args: [_error]} = context do
+    ctx = launch_cursor(context, "fail with model blocked")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "a thread that delegated the turn is told the same reason", context do
+    # A delegating thread's result is read from the child's error item
+    # (`HalC2.Orchestration.Delegation.failure_text/3`).
+    error = Enum.find(items(context), &(&1["type"] == "error"))
+    assert error["failure"]["message"] == context.failure_message
+    context
+  end
+
+  step "the user asked Cursor what a connection error means", context do
+    ready_cursor(context)
+  end
+
+  step "Cursor answers and its answer quotes the error text", context do
+    ctx = launch_cursor(context, "quote a connection error")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the turn completes with that answer", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Cursor"])
+
+    assert Acp.assistant_text(context.threads["Cursor"]) =~
+             "Something went wrong communicating with the server."
+
+    context
+  end
+
+  step "Cursor streamed no text during a run", context do
+    ready_cursor(context)
+  end
+
+  step "the run finishes with a result text", context do
+    ctx = launch_cursor(context, "answer only in the result")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the result text is shown as Cursor's answer", context do
+    assert Acp.assistant_text(context.threads["Cursor"]) =~
+             "The answer arrived with the result."
+
+    context
+  end
+
+  # --- stopping, and the sidecar going away ----------------------------------------------
+
+  step "the user stops it and Cursor does not confirm the cancellation within 10 seconds",
+       context do
+    # The deadline the scenario names; the step shortens it to run in a test.
+    assert HalC2.Acp.cursor_cancel_timeout() == 10_000
+    Application.put_env(:hal_c2, :cursor_cancel_timeout_ms, 300)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:hal_c2, :cursor_cancel_timeout_ms)
+    end)
+
+    ctx = launch_cursor(context, "ignore the cancel")
+
+    Acp.await_stream(ctx.threads["Cursor"], fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+    end)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => ctx.threads["Cursor"]
+      })
+
+    ctx
+  end
+
+  step "the turn ends as interrupted anyway", context do
+    assert [%{"status" => "interrupted"}] = Acp.await_runs(context.threads["Cursor"], 1)
+    context
+  end
+
+  step "the Cursor SDK rejects a write because its stream already closed", context do
+    ctx = launch_cursor(context, "die mid-turn")
+    assert [%{"status" => "failed"}] = Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "the Cursor SDK ends the run's request while a write is still in flight", context do
+    ctx = launch_cursor(context, "late write after the end")
+    assert [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx = Acp.follow_up(ctx, "Cursor", "hello again")
+    Acp.await_runs(ctx.threads["Cursor"], 2)
+    ctx
+  end
+
+  step "other threads are unaffected", context do
+    ctx = launch_cursor(context, "hello", title: "Other")
+    assert [%{"status" => "completed"}] = Acp.await_runs(ctx.threads["Other"], 1)
+    assert Acp.assistant_text(ctx.threads["Other"]) =~ "Hello from Cursor"
+    Map.put(ctx, :thread, "Cursor")
+  end
+
+  # --- tool calls shown by kind ----------------------------------------------------------
+
+  defp tour(context, triggers) do
+    ctx = ready_cursor(context)
+    [first | rest] = triggers
+    ctx = launch_cursor(ctx, first)
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+
+    {ctx, _count} =
+      Enum.reduce(rest, {ctx, 1}, fn trigger, {ctx, count} ->
+        ctx = Acp.follow_up(ctx, "Cursor", trigger)
+        Acp.await_runs(ctx.threads["Cursor"], count + 1)
+        {ctx, count + 1}
+      end)
+
+    ctx
+  end
+
+  step ~r/^Cursor (runs a shell command|writes, edits or deletes a file|generates an image|reads a file or lists a folder|searches by name, text or meaning|reads the lint problems of a file)$/,
+       %{args: [does]} = context do
+    triggers =
+      case does do
+        "runs a shell command" -> ["tour: shell"]
+        "writes, edits or deletes a file" -> ["tour: write", "tour: edit", "tour: delete"]
+        "generates an image" -> ["tour: image"]
+        "reads a file or lists a folder" -> ["tour: read", "tour: ls"]
+        "searches by name, text or meaning" -> ["tour: glob", "tour: grep", "tour: semsearch"]
+        "reads the lint problems of a file" -> ["tour: lints"]
+      end
+
+    tour(context, triggers)
+  end
+
+  step ~r/^the thread shows (a file change naming the file|a file change naming the image file|a file search)$/,
+       %{args: [shown]} = context do
+    found = items(context)
+
+    case shown do
+      "a file change naming the file" ->
+        names = for i <- found, i["type"] == "file_change", do: i["fileName"]
+        assert "notes.txt" in names
+        assert "app.ex" in names
+        assert "old.txt" in names
+
+      "a file change naming the image file" ->
+        assert Enum.any?(found, &(&1["type"] == "file_change" and &1["fileName"] == "cat.png"))
+
+      "a file search" ->
+        assert Enum.any?(
+                 found,
+                 &(&1["type"] == "file_search" and is_list(&1["results"]) and
+                     &1["results"] != [])
+               )
+    end
+
+    context
+  end
+
+  step "Cursor calls the tool {string} of the MCP server {string}",
+       %{args: [_tool, _server]} = context do
+    tour(context, ["tour: mcp"])
+  end
+
+  step "the thread shows the tool call as {string}", %{args: [name]} = context do
+    assert Enum.any?(items(context), &(&1["type"] == "dynamic_tool" and &1["toolName"] == name))
+    context
+  end
+
+  step "a result the server marks as an error shows the call as failed", context do
+    tools = Enum.filter(items(context), &(&1["type"] == "dynamic_tool"))
+    assert Enum.any?(tools, &(&1["status"] == "completed"))
+    assert Enum.any?(tools, &(&1["status"] == "failed"))
+    context
+  end
+
+  step "Cursor counts the matches of a text search across files", context do
+    tour(context, ["tour: grep-count"])
+  end
+
+  defp search_result(context, file) do
+    items(context)
+    |> Enum.filter(&(&1["type"] == "file_search"))
+    |> Enum.flat_map(&(&1["results"] || []))
+    |> Enum.find(&(&1["fileName"] == file))
+  end
+
+  step "a file with one match says {string}", %{args: [text]} = context do
+    assert search_result(context, "a.ex")["preview"] == text
+    context
+  end
+
+  step "a file with three matches says {string}", %{args: [text]} = context do
+    assert search_result(context, "b.ex")["preview"] == text
+    context
+  end
+
+  step "Cursor is running a long shell command", context do
+    ctx = context |> ready_cursor() |> launch_cursor("stream a long command")
+
+    Acp.await_stream(ctx.threads["Cursor"], fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["type"] == "command_execution" and &1["status"] == "running")
+      )
+    end)
+
+    ctx
+  end
+
+  step "the command prints output before it finishes", context do
+    shown =
+      Acp.await_stream(context.threads["Cursor"], fn state ->
+        Enum.find(
+          HalC2.StreamState.list(state, "turn-item"),
+          &(&1["type"] == "command_execution" and &1["status"] == "running" and
+              is_binary(&1["output"]) and &1["output"] =~ "compiling")
+        )
+      end)
+
+    Map.put(context, :streamed_command, shown)
+  end
+
+  step "the output appears in the thread while the command is still running", context do
+    assert context.streamed_command["output"] =~ "compiling"
+    assert context.streamed_command["status"] == "running"
+    File.write!(Path.join(Acp.dir(context), "cursor-cursor.release"), "")
+    assert [%{"status" => "completed"}] = Acp.await_runs(context.threads["Cursor"], 1)
+    context
+  end
+
+  step "Cursor edits a file", context do
+    tour(context, ["tour: edit"])
+  end
+
+  step "the file change shows the diff", context do
+    change = Enum.find(items(context), &(&1["type"] == "file_change"))
+    assert change["diffStr"] =~ "+new line"
+    Map.put(context, :change, change)
+  end
+
+  step "it shows how many lines were added and removed", context do
+    assert context.change["additions"] == 2
+    assert context.change["deletions"] == 1
+    context
+  end
+
+  step "Cursor lists a folder with nested folders", context do
+    tour(context, ["tour: ls"])
+  end
+
+  step "every file under it is listed with its path", context do
+    files =
+      items(context)
+      |> Enum.filter(&(&1["type"] == "file_search"))
+      |> Enum.flat_map(&(&1["results"] || []))
+      |> Enum.map(& &1["fileName"])
+
+    assert Enum.sort(files) == ["src/app.ex", "src/web/live.ex", "src/web/router.ex"]
+    context
+  end
+
+  step "each problem is listed with its message, line and column", context do
+    assert %{"fileName" => "app.ex", "line" => 5, "column" => 3, "preview" => "unused variable x"} =
+             search_result(context, "app.ex")
+
+    context
+  end
+
+  step "Cursor updates its to-do list with a cancelled item and an item with no text",
+       context do
+    tour(context, ["tour: todos"])
+  end
+
+  step "neither item appears in the task list", context do
+    plans =
+      context.threads["Cursor"]
+      |> Acp.stream()
+      |> HalC2.StreamState.list("plan")
+      |> Enum.filter(&(&1["kind"] == "todo_list"))
+
+    assert [%{"steps" => [%{"text" => "Keep me"}]}] = plans
+    context
+  end
+
+  # --- subagents --------------------------------------------------------------------------
+
+  defp subagent_of(context, title) do
+    context.threads[title]
+    |> Acp.stream()
+    |> HalC2.StreamState.list("subagent")
+    |> List.first()
+  end
+
+  step "Cursor hands a task to one of its subagents", context do
+    ctx = tour(context, ["hand a task to a subagent"])
+    Map.put(ctx, :sub_parent, "Cursor")
+  end
+
+  step "a child thread opens with the task as its first message", context do
+    sub = subagent_of(context, "Cursor")
+    assert sub["childThreadId"]
+
+    messages =
+      sub["childThreadId"]
+      |> Acp.stream()
+      |> HalC2.StreamState.list("message")
+
+    assert Enum.any?(messages, &(&1["role"] == "user" and &1["text"] == "List the modules"))
+    Map.put(context, :child, sub["childThreadId"])
+  end
+
+  step "the subagent's tool calls appear in the child thread", context do
+    found =
+      context.child
+      |> Acp.stream()
+      |> HalC2.StreamState.list("turn-item")
+
+    assert Enum.any?(
+             found,
+             &(&1["type"] == "file_search" and &1["status"] == "completed")
+           )
+
+    context
+  end
+
+  step "the subagent's result is shown when it finishes", context do
+    sub = subagent_of(context, "Cursor")
+    assert sub["status"] == "completed"
+    assert sub["result"] =~ "There are three modules."
+    context
+  end
+
+  step ~r/^the subagent's (.+) comes back with (.+)$/, %{args: [tool_name, _empty]} = context do
+    variant =
+      case tool_name do
+        "directory listing" -> "empty ls"
+        "lint check" -> "empty lints"
+        "MCP tool call" -> "empty mcp"
+      end
+
+    ctx = launch_cursor(context, "hand a task to a subagent with #{variant}", title: "Variant")
+    Acp.await_runs(ctx.threads["Variant"], 1)
+    Map.merge(ctx, %{sub_parent: "Variant", sub_tool: tool_name})
+  end
+
+  step "the parent run goes on", context do
+    assert [%{"status" => "completed"}] = Acp.runs(context.threads["Variant"])
+    assert Acp.assistant_text(context.threads["Variant"]) =~ "The survey is in."
+    context
+  end
+
+  step ~r/^the child thread shows the (.+)$/, %{args: [tool_name]} = context do
+    sub = subagent_of(context, "Variant")
+
+    found =
+      sub["childThreadId"]
+      |> Acp.stream()
+      |> HalC2.StreamState.list("turn-item")
+
+    type = if tool_name == "MCP tool call", do: "dynamic_tool", else: "file_search"
+    assert Enum.any?(found, &(&1["type"] == type and &1["status"] == "completed"))
+    context
+  end
+
+  # --- images -------------------------------------------------------------------------------
+
+  step "the user sends a Cursor message with a screenshot attached", context do
+    ctx = context |> ready_cursor() |> launch_cursor("hello")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    png = Base.encode64("\x89PNG fake screenshot")
+
+    {:ok, %{"attachments" => stored}} =
+      HalC2.Attachments.persist(%{
+        "threadId" => ctx.threads["Cursor"],
+        "attachments" => [
+          %{"dataUrl" => "data:image/png;base64,#{png}", "name" => "screenshot.png"}
+        ]
+      })
+
+    ctx = Acp.follow_up(ctx, "Cursor", "what is in this screenshot?", %{"attachments" => stored})
+    Acp.await_runs(ctx.threads["Cursor"], 2)
+    ctx
+  end
+
+  step "Cursor receives the screenshot as an image with the message", context do
+    send = log(context) |> Enum.filter(&(&1["event"] == "send")) |> List.last()
+    assert [%{"mimeType" => "image/png", "bytes" => bytes}] = send["images"]
+    assert bytes > 0
+    context
+  end
 end

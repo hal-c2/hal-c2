@@ -181,19 +181,14 @@ Feature: Cursor
     Given the thread runs Cursor in <mode>
     Then Cursor's review is <review> and its sandbox is <sandbox>
 
+    # Upstream #19712: auto turns Cursor's review on too, so escalations are
+    # reviewed instead of denied.
     Examples:
       | mode              | review | sandbox |
       | approval required | on     | on      |
       | auto-accept edits | off    | on      |
-      | auto              | off    | on      |
-      | full access       | off    | off     |
-
-    # Upstream #19712 turned Cursor's review on in auto too, so escalations are reviewed
-    # instead of denied. Replaces the "auto" row above once the MC carries it.
-    @backlog
-    Examples: Not yet on the MC
-      | mode              | review | sandbox |
       | auto              | on     | on      |
+      | full access       | off    | off     |
 
   Scenario: A Cursor sign-in that takes too long expires
     Given Cursor sign-in has been waiting for five minutes
@@ -230,14 +225,13 @@ Feature: Cursor
 
   # Upstream #21074: Cursor rejected its long-context variants ("Invalid parameters for registry
   # model") because the request never asked for Max Mode.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Cursor model variant that only runs in Max Mode runs
     Given Cursor's catalog marks every variant of a model with a long context as Max Mode
     When the user sends a message on that model with the long context, in a new thread or an existing one
     Then the turn runs in Max Mode instead of failing with "Invalid parameters"
 
   # Upstream #19678: a model the account's catalog rejects is explained
-  @backlog
   Scenario: A model the Cursor account does not offer says so
     Given a Cursor thread set to a model the account's catalog does not include
     When the turn fails because Cursor rejects the model
@@ -251,7 +245,6 @@ Feature: Cursor
 
   # Upstream #29398: "/compact" reached Cursor's model as plain text, which either did not know it or
   # replied with a summary, and the context stayed the same size.
-  @backlog
   Scenario: Sending /compact compacts the Cursor conversation
     Given a Cursor thread with a long conversation
     When the user sends "/compact" to the Cursor thread
@@ -366,7 +359,7 @@ Feature: Cursor
 
   # Upstream #21448: a read Cursor never reported back was closed as a successful read with no
   # output when the run finished normally, while the reply said the read failed.
-  @backlog @priority-high
+  @priority-high
   Scenario: A tool call Cursor never finished is not shown as a success
     Given Cursor starts reading "secret.txt" and never reports a result for it
     When the Cursor run finishes normally
@@ -386,7 +379,6 @@ Feature: Cursor
     And its tools still work
 
   # Upstream #20046: Cursor's SDK has no sandbox on Windows, so default threads failed to start.
-  @backlog
   Scenario Outline: A Cursor thread on a Windows MC runs without Cursor's default sandbox
     Given the MC runs on Windows
     When a Cursor thread in <mode> starts its first turn
@@ -399,7 +391,6 @@ Feature: Cursor
       | approval required |
 
   # Upstream #20046: Cursor has no sandbox on Windows, so a mode that needs one is refused.
-  @backlog
   Scenario: A Cursor mode that needs a sandbox is refused on a Windows MC
     Given the MC runs on Windows
     When a Cursor thread in auto-accept edits starts its first turn
@@ -551,14 +542,12 @@ Feature: Cursor
       | the MC cannot open its store of Cursor logins   | Could not open the Cursor credential store.     |
       | Cursor cannot confirm the saved sign-in         | Could not verify the Cursor sign-in. Try again. |
 
-  @backlog
   Scenario: A Cursor reply that is only a connection error fails the turn
     Given a Cursor turn is running
     When Cursor's whole reply is a connection error such as "Something went wrong communicating with the server. Please try again."
     Then the turn fails as a connection problem instead of showing the error as Cursor's answer
 
   # Upstream #23273: commentary earlier in the turn hid a later message that was only the error.
-  @backlog
   Scenario: A Cursor message that is only a connection error fails the turn after commentary
     Given a Cursor turn wrote "Checking the build first." and ran a step
     When Cursor's next message is only the error "Error: RetriableError: WritableIterable is closed" and the run finishes
@@ -569,7 +558,6 @@ Feature: Cursor
   # and an SDK failure names the SDK's reason, code and HTTP status.
   # Upstream #24231: Cursor's SDK resumed a finished turn from an older checkpoint after its
   # connection broke, gave up, and the answered turn read "Provider error".
-  @backlog
   Scenario: A finished Cursor turn whose late resume gives up still completes
     Given a Cursor turn has answered and Cursor reported the turn ended
     When the connection to Cursor breaks and the run ends with "Agent turn stopped after repeated resume attempts made no progress"
@@ -577,7 +565,6 @@ Feature: Cursor
     And the failed resume's text is not shown as the answer
 
   # Upstream #24231: a Cursor turn that had not finished still fails when the run gives up.
-  @backlog
   Scenario Outline: A Cursor run that gives up still fails when the turn had not finished
     Given a Cursor turn is running
     When <event>
@@ -589,28 +576,25 @@ Feature: Cursor
       | Cursor reports the turn ended and the run then ends with "Checkpoint persistence failed"  |
       | Cursor continues after the turn ended and stops mid-answer with the no-progress error     |
 
-  @backlog
   Scenario: A failed Cursor turn shows the reason Cursor gave
     Given a Cursor turn is running
     When Cursor ends the run with the error "Model Blocked Please ask your admin to enable access"
     Then the turn fails with "Model Blocked Please ask your admin to enable access"
     And a thread that delegated the turn is told the same reason
 
-  @backlog @priority-low
+  @priority-low
   Scenario: An answer that quotes a connection error is still an answer
     Given the user asked Cursor what a connection error means
     When Cursor answers and its answer quotes the error text
     Then the turn completes with that answer
 
   # CursorAdapterV2.ts: what the Cursor SDK's run stream becomes in the thread.
-  @backlog
   Scenario: Compacting a Cursor thread uses Cursor's own compress command
     Given a Cursor thread with history
     When the user compacts the thread
     Then Cursor receives "/compress" as its whole message
     And nothing is added to it
 
-  @backlog
   Scenario Outline: Cursor's tool calls are shown by kind
     When Cursor <does>
     Then the thread shows <shown>
@@ -624,49 +608,44 @@ Feature: Cursor
       | searches by name, text or meaning  | a file search with what it looked for   |
       | reads the lint problems of a file  | a file search                           |
 
-  @backlog
   Scenario: A Cursor MCP tool call is named after its server and tool
     When Cursor calls the tool "search" of the MCP server "docs"
     Then the thread shows the tool call as "mcp__docs__search"
     And a result the server marks as an error shows the call as failed
 
   # Upstream #26065: a file with one match in a counting grep said "1 matches".
-  @backlog @shared @priority-low
+  @shared @priority-low @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A counting search says "1 match" for a file with one match
     When Cursor counts the matches of a text search across files
     Then a file with one match says "1 match"
     And a file with three matches says "3 matches"
 
-  @backlog
   Scenario: A Cursor command shows its output while it runs
     Given Cursor is running a long shell command
     When the command prints output before it finishes
     Then the output appears in the thread while the command is still running
 
-  @backlog
   Scenario: A Cursor edit shows its diff and line counts
     When Cursor edits a file
     Then the file change shows the diff
     And it shows how many lines were added and removed
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A folder Cursor lists shows every file under it
     When Cursor lists a folder with nested folders
     Then every file under it is listed with its path
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Lint problems Cursor reads are listed with their position
     When Cursor reads the lint problems of a file
     Then each problem is listed with its message, line and column
 
-  @backlog
   Scenario: A Cursor subagent runs in its own child thread
     When Cursor hands a task to one of its subagents
     Then a child thread opens with the task as its first message
     And the subagent's tool calls appear in the child thread
     And the subagent's result is shown when it finishes
   # Upstream #26592: a subagent's empty directory listing, lint check or MCP result failed the parent run.
-  @backlog
   Scenario Outline: A Cursor subagent's <tool> with nothing in it does not fail the parent run
     Given Cursor hands a task to one of its subagents
     When the subagent's <tool> comes back with <empty>
@@ -700,23 +679,20 @@ Feature: Cursor
       | fails                  | failed      |
       | is stopped by the user | interrupted |
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Cancelled and empty Cursor to-dos are left out of the task list
     When Cursor updates its to-do list with a cancelled item and an item with no text
     Then neither item appears in the task list
 
-  @backlog
   Scenario: A Cursor answer that arrives only with the run's result is still shown
     Given Cursor streamed no text during a run
     When the run finishes with a result text
     Then the result text is shown as Cursor's answer
 
-  @backlog
   Scenario: Images attached to a Cursor message are sent as images
     When the user sends a Cursor message with a screenshot attached
     Then Cursor receives the screenshot as an image with the message
 
-  @backlog
   Scenario: Stopping a Cursor turn does not wait on Cursor for more than 10 seconds
     Given a Cursor turn is running
     When the user stops it and Cursor does not confirm the cancellation within 10 seconds
@@ -792,7 +768,7 @@ Feature: Cursor
     Then Cursor starts as usual, because it has no switch for its subagents
 
   # Upstream #22897: a write to a stream the Cursor SDK already closed took the whole server down.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Cursor stream closing under a write does not stop the MC
     Given a Cursor turn is running
     When the Cursor SDK rejects a write because its stream already closed
@@ -801,7 +777,7 @@ Feature: Cursor
 
   # Upstream #27703: when the Cursor SDK ended a run's request with a write still in flight, as after
   # an account ran out of usage, the rejected write took the whole server down.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Cursor write left over after its request ended does not stop the MC
     Given a Cursor turn is running
     When the Cursor SDK ends the run's request while a write is still in flight

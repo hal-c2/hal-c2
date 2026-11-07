@@ -350,20 +350,29 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
   end
 
   step "the turn fails", context do
-    if context[:batch_pending] do
-      # An Antigravity batch held by its scenario (features/providers):
-      # kill its agent process, so its turn fails around it.
-      [{pid, _}] =
-        Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, context.thread))
+    if context[:cursor_world] do
+      # An ACP provider feature on the AcpFixtures world (Cursor): the run
+      # the scenario started has failed.
+      assert [%{"status" => "failed"}] =
+               HalC2.Test.AcpFixtures.runs(context.threads[context.thread])
 
-      %{conn: conn} = :sys.get_state(pid)
-      if conn, do: Process.exit(conn, :kill)
-      Map.put(context, :run_state, FakeAcp.await_run(context, "failed"))
+      context
     else
-      context = FakeAcp.send_message(context, "survey the code")
-      state = FakeAcp.await_run(context, "failed")
-      assert [subagent] = StreamState.list(state, "subagent")
-      Map.put(context, :subagent, subagent)
+      if context[:batch_pending] do
+        # An Antigravity batch held by its scenario (features/providers):
+        # kill its agent process, so its turn fails around it.
+        [{pid, _}] =
+          Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, context.thread))
+
+        %{conn: conn} = :sys.get_state(pid)
+        if conn, do: Process.exit(conn, :kill)
+        Map.put(context, :run_state, FakeAcp.await_run(context, "failed"))
+      else
+        context = FakeAcp.send_message(context, "survey the code")
+        state = FakeAcp.await_run(context, "failed")
+        assert [subagent] = StreamState.list(state, "subagent")
+        Map.put(context, :subagent, subagent)
+      end
     end
   end
 

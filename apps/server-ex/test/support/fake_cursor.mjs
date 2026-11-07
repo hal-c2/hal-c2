@@ -30,6 +30,11 @@ try {
 
 const log = (entry) =>
   fs.appendFileSync(path.join(dir, `${name}.log`), `${JSON.stringify(entry)}\n`);
+
+// A late SDK rejection is logged, never fatal, as in the sidecar's own main.
+process.on("unhandledRejection", (cause) => {
+  log({ event: "unhandled-rejection-swallowed", message: String(cause?.message ?? cause) });
+});
 log({ event: "launch", mode, env: { CURSOR_API_KEY: process.env.CURSOR_API_KEY ?? null } });
 
 const authError = () => Object.assign(new Error("Unauthorized"), { auth: true });
@@ -82,20 +87,433 @@ const makeAgent = (options, resumed) => {
     agentId,
     close: () => {},
     send: async (message, sendOptions) => {
+      const images = typeof message === "string" ? [] : (message.images ?? []);
+      // What follows reads the message's text; images ride beside it.
+      message = typeof message === "string" ? message : (message.text ?? "");
       log({
         event: "send",
         agentId,
         message,
         model: sendOptions.model,
         mode: sendOptions.mode ?? null,
+        images: images.map((image) => ({
+          mimeType: image.mimeType ?? null,
+          bytes: typeof image.data === "string" ? image.data.length : 0,
+        })),
+        mcpServers: Object.keys(sendOptions.mcpServers ?? {}),
       });
       let cancel;
       const cancelled = new Promise((resolve) => (cancel = resolve));
       const say = (text) => sendOptions.onDelta({ update: { type: "text-delta", text } });
+      const started = (callId, toolCall) =>
+        sendOptions.onDelta({ update: { type: "tool-call-started", callId, toolCall } });
+      const completed = (callId, toolCall, value) =>
+        sendOptions.onDelta({
+          update: {
+            type: "tool-call-completed",
+            callId,
+            toolCall: { ...toolCall, result: { status: "success", value } },
+          },
+        });
+      const tool = (callId, toolCall, value) => {
+        started(callId, toolCall);
+        completed(callId, toolCall, value);
+      };
+      const untilReleased = (file) =>
+        Promise.race([
+          cancelled,
+          new Promise((resolve) => {
+            const timer = setInterval(() => {
+              if (fs.existsSync(path.join(dir, file))) {
+                clearInterval(timer);
+                resolve();
+              }
+            }, 20);
+          }),
+        ]);
       const keys = /Return a JSON object with keys?: ([A-Za-z, ]+)\./.exec(message);
       return {
         cancel: async () => cancel(),
         wait: async () => {
+          if (control.usageLimit === true) {
+            return {
+              status: "error",
+              error: { message: "Cursor SDK request finished with an error: usage limit reached" },
+            };
+          }
+          if (message === "/compress") {
+            say("Summary of everything so far.");
+            return { status: "finished" };
+          }
+          if (message.includes("die mid-turn")) {
+            // The SDK's stream closes under a write and the process goes with it.
+            say("Working on it.");
+            setTimeout(() => process.exit(1), 30);
+            await cancelled;
+            return { status: "cancelled" };
+          }
+          if (message.includes("late write after the end")) {
+            say("All done.");
+            setTimeout(() => {
+              void sendOptions.onDelta({ update: { type: "text-delta", text: "late" } });
+              void Promise.reject(new Error("WritableIterable is closed"));
+            }, 40);
+            return { status: "finished" };
+          }
+          if (message.includes("start reading secret.txt")) {
+            started("read-1", { type: "read", args: { path: "secret.txt" } });
+            say("That read never came back.");
+            return { status: "finished" };
+          }
+          if (message.includes("answer only in the result")) {
+            return { status: "finished", result: "The answer arrived with the result." };
+          }
+          if (message.includes("reply with a connection error")) {
+            say("Something went wrong communicating with the server. Please try again.");
+            return { status: "finished" };
+          }
+          if (message.includes("comment then a connection error")) {
+            say("Checking the build first.");
+            tool(
+              "step-1",
+              { type: "shell", args: { command: "npm run build" } },
+              {
+                stdout: "built",
+                stderr: "",
+                exitCode: 0,
+              },
+            );
+            say("Error: RetriableError: WritableIterable is closed");
+            if (message.includes("then recover")) {
+              tool(
+                "step-2",
+                { type: "shell", args: { command: "npm test" } },
+                {
+                  stdout: "ok",
+                  stderr: "",
+                  exitCode: 0,
+                },
+              );
+              say("All good now.");
+            }
+            return { status: "finished" };
+          }
+          if (message.includes("quote a connection error")) {
+            say(
+              "That message means the stream closed early:\nSomething went wrong communicating with the server. Please try again.\nIt is safe to retry.",
+            );
+            return { status: "finished" };
+          }
+          if (message.includes("fail with model blocked")) {
+            return {
+              status: "error",
+              error: { message: "Model Blocked Please ask your admin to enable access" },
+            };
+          }
+          if (message.includes("reject the model")) {
+            return {
+              status: "error",
+              error: { message: "Invalid parameters for registry model: model not found" },
+            };
+          }
+          if (message.includes("resume gives up")) {
+            const noProgress = {
+              status: "error",
+              error: {
+                message: "Agent turn stopped after repeated resume attempts made no progress",
+              },
+            };
+            if (message.includes("after the turn ended")) {
+              say("Here is the answer.");
+              sendOptions.onDelta({ update: { type: "turn-ended" } });
+              if (message.includes("then carry on")) say("One more thing…");
+              if (message.includes("checkpoint fails")) {
+                return {
+                  status: "error",
+                  error: { message: "Checkpoint persistence failed" },
+                };
+              }
+              return noProgress;
+            }
+            say("Still working…");
+            return noProgress;
+          }
+          if (message.includes("stream a long command")) {
+            const shell = { type: "shell", args: { command: "npm run build --watch" } };
+            started("cmd-long", shell);
+            sendOptions.onDelta({
+              update: { type: "shell-output-delta", event: { text: "compiling…\n" } },
+            });
+            await untilReleased(`${name}.release`);
+            completed("cmd-long", shell, {
+              stdout: "compiling…\ndone\n",
+              stderr: "",
+              exitCode: 0,
+            });
+            say("Build finished.");
+            return { status: "finished" };
+          }
+          if (message.includes("tour:")) {
+            if (message.includes("tour: shell")) {
+              tool(
+                "t-shell",
+                { type: "shell", args: { command: "npm test" } },
+                {
+                  stdout: "4 passing",
+                  stderr: "",
+                  exitCode: 0,
+                },
+              );
+            } else if (message.includes("tour: write")) {
+              tool(
+                "t-write",
+                { type: "write", args: { path: "notes.txt", fileText: "hi\n" } },
+                {
+                  path: "notes.txt",
+                  linesCreated: 1,
+                  fileSize: 3,
+                },
+              );
+            } else if (message.includes("tour: edit")) {
+              tool(
+                "t-edit",
+                { type: "edit", args: { path: "app.ex" } },
+                {
+                  linesAdded: 2,
+                  linesRemoved: 1,
+                  diffString: "-old line\n+new line\n+another line",
+                },
+              );
+            } else if (message.includes("tour: delete")) {
+              tool("t-delete", { type: "delete", args: { path: "old.txt" } }, { fileSize: 12 });
+            } else if (message.includes("tour: image")) {
+              tool(
+                "t-image",
+                { type: "generateImage", args: { description: "a cat", filePath: "cat.png" } },
+                { filePath: "cat.png", imageData: "iVBORw0KGgo=" },
+              );
+            } else if (message.includes("tour: read")) {
+              tool(
+                "t-read",
+                { type: "read", args: { path: "README.md" } },
+                {
+                  content: "# Shop\n",
+                  totalLines: 1,
+                  fileSize: 7,
+                },
+              );
+            } else if (message.includes("tour: ls")) {
+              const leaf = (absPath, names) => ({
+                absPath,
+                childrenDirs: [],
+                childrenFiles: names.map((name) => ({ name })),
+                childrenWereProcessed: true,
+                fullSubtreeExtensionCounts: {},
+                numFiles: names.length,
+              });
+              tool(
+                "t-ls",
+                { type: "ls", args: { path: "src" } },
+                {
+                  directoryTreeRoot: {
+                    ...leaf("src", ["app.ex"]),
+                    childrenDirs: [leaf("src/web", ["router.ex", "live.ex"])],
+                  },
+                },
+              );
+            } else if (message.includes("tour: glob")) {
+              tool(
+                "t-glob",
+                { type: "glob", args: { globPattern: "**/*.ex" } },
+                {
+                  files: ["lib/app.ex", "lib/web.ex"],
+                  totalFiles: 2,
+                  clientTruncated: false,
+                  ripgrepTruncated: false,
+                },
+              );
+            } else if (message.includes("tour: grep-count")) {
+              tool(
+                "t-grep",
+                { type: "grep", args: { pattern: "needle", outputMode: "count" } },
+                {
+                  workspaceResults: {
+                    ws: {
+                      type: "count",
+                      output: {
+                        counts: [
+                          { file: "a.ex", count: 1 },
+                          { file: "b.ex", count: 3 },
+                        ],
+                        total: 4,
+                      },
+                    },
+                  },
+                },
+              );
+            } else if (message.includes("tour: grep")) {
+              tool(
+                "t-grep",
+                { type: "grep", args: { pattern: "needle" } },
+                {
+                  workspaceResults: {
+                    ws: {
+                      type: "content",
+                      output: {
+                        matches: [{ file: "a.ex", lineNumber: 3, line: "a needle here" }],
+                        totalMatches: 1,
+                      },
+                    },
+                  },
+                },
+              );
+            } else if (message.includes("tour: semsearch")) {
+              tool(
+                "t-sem",
+                { type: "semSearch", args: { query: "how auth works" } },
+                {
+                  results: "lib/auth.ex handles it",
+                },
+              );
+            } else if (message.includes("tour: lints")) {
+              tool(
+                "t-lints",
+                { type: "readLints", args: { paths: ["app.ex"] } },
+                {
+                  fileDiagnostics: [
+                    {
+                      path: "app.ex",
+                      diagnosticsCount: 1,
+                      diagnostics: [
+                        {
+                          severity: "warning",
+                          message: "unused variable x",
+                          source: "lint",
+                          code: "W1",
+                          range: { start: { line: 4, character: 2 } },
+                        },
+                      ],
+                    },
+                  ],
+                  totalFiles: 1,
+                  totalDiagnostics: 1,
+                },
+              );
+            } else if (message.includes("tour: mcp")) {
+              const mcp = {
+                type: "mcp",
+                args: { providerIdentifier: "docs", toolName: "search", args: { q: "x" } },
+              };
+              tool("t-mcp", mcp, { content: [{ text: { text: "found it" } }], isError: false });
+              tool("t-mcp2", mcp, { content: [{ text: { text: "boom" } }], isError: true });
+            } else if (message.includes("tour: todos")) {
+              const todos = [
+                { content: "Keep me", status: "inProgress" },
+                { content: "Dropped", status: "cancelled" },
+                { content: "   ", status: "pending" },
+              ];
+              tool("t-todos", { type: "updateTodos", args: { todos } }, { todos });
+            }
+            say("Tour done.");
+            return { status: "finished" };
+          }
+          if (message.includes("hand a task to a subagent")) {
+            const task = {
+              type: "task",
+              args: { description: "Survey the code", prompt: "List the modules" },
+            };
+            started("task-1", task);
+            const nested = (taskUpdate) =>
+              sendOptions.onDelta({
+                update: { type: "tool-call-delta", callId: "task-1", taskUpdate },
+              });
+            nested({ type: "text-delta", text: "Looking around." });
+            if (message.includes("empty ls")) {
+              const ls = { type: "ls", args: { path: "src" } };
+              nested({ type: "tool-call-started", callId: "sub-ls", toolCall: ls });
+              nested({
+                type: "tool-call-completed",
+                callId: "sub-ls",
+                toolCall: {
+                  ...ls,
+                  result: {
+                    status: "success",
+                    value: {
+                      directoryTreeRoot: {
+                        absPath: "src",
+                        childrenDirs: [
+                          {
+                            absPath: "src/web",
+                            childrenDirs: [],
+                            childrenFiles: [],
+                            childrenWereProcessed: true,
+                            fullSubtreeExtensionCounts: {},
+                            numFiles: 0,
+                          },
+                        ],
+                        childrenFiles: [],
+                        childrenWereProcessed: true,
+                        fullSubtreeExtensionCounts: {},
+                        numFiles: 0,
+                      },
+                    },
+                  },
+                },
+              });
+            } else if (message.includes("empty lints")) {
+              const lints = { type: "readLints", args: { paths: ["app.ex"] } };
+              nested({ type: "tool-call-started", callId: "sub-lints", toolCall: lints });
+              nested({
+                type: "tool-call-completed",
+                callId: "sub-lints",
+                toolCall: {
+                  ...lints,
+                  result: {
+                    status: "success",
+                    value: { fileDiagnostics: [], totalFiles: 1, totalDiagnostics: 0 },
+                  },
+                },
+              });
+            } else if (message.includes("empty mcp")) {
+              const mcp = {
+                type: "mcp",
+                args: { providerIdentifier: "docs", toolName: "search", args: {} },
+              };
+              nested({ type: "tool-call-started", callId: "sub-mcp", toolCall: mcp });
+              nested({
+                type: "tool-call-completed",
+                callId: "sub-mcp",
+                toolCall: {
+                  ...mcp,
+                  result: { status: "success", value: { content: [], isError: false } },
+                },
+              });
+            } else {
+              const read = { type: "read", args: { path: "lib/app.ex" } };
+              nested({ type: "tool-call-started", callId: "sub-read", toolCall: read });
+              nested({
+                type: "tool-call-completed",
+                callId: "sub-read",
+                toolCall: {
+                  ...read,
+                  result: {
+                    status: "success",
+                    value: { content: "defmodule App", totalLines: 1, fileSize: 14 },
+                  },
+                },
+              });
+            }
+            completed("task-1", task, {
+              isBackground: false,
+              backgroundReason: "unspecified",
+              conversationSteps: [
+                { type: "assistantMessage", message: { text: "There are three modules." } },
+              ],
+              resultSuffix: "Survey complete.",
+            });
+            say("The survey is in.");
+            return { status: "finished" };
+          }
           if (message.includes("run a command and wait")) {
             // A shell that runs until the run is cancelled; the SDK then reports the
             // killed shell as a finished tool call, like any other.
@@ -115,6 +533,11 @@ const makeAgent = (options, resumed) => {
                 },
               },
             });
+            return { status: "cancelled" };
+          }
+          if (message.includes("ignore the cancel")) {
+            // A run that never confirms a cancellation.
+            await new Promise(() => {});
             return { status: "cancelled" };
           }
           if (message.includes("wait")) {
@@ -204,6 +627,7 @@ const makeAgent = (options, resumed) => {
 
 const acp = makeCursorAcp({
   mode,
+  platform: process.env.HAL_C2_CURSOR_PLATFORM ?? "linux",
   write: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
   sdk: {
     version: "1.0.31",

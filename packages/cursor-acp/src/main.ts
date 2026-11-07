@@ -22,9 +22,26 @@ console.info = console.error;
 const modeIndex = process.argv.indexOf("--mode");
 const mode = (modeIndex >= 0 ? process.argv[modeIndex + 1] : "approval-required") as RuntimeMode;
 
+// A write the SDK rejects after its stream closed (a run that ended with a
+// write in flight, as when an account runs out of usage) must not take this
+// process — or, through it, anything else — down with it.
+process.on("unhandledRejection", (cause) => {
+  console.error("cursor-acp: unhandled rejection", cause);
+});
+process.stdout.on("error", (cause) => {
+  console.error("cursor-acp: stdout closed", cause);
+});
+
 const acp = makeCursorAcp({
   mode,
-  write: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
+  platform: process.env.HAL_C2_CURSOR_PLATFORM || process.platform,
+  write: (message) => {
+    try {
+      process.stdout.write(`${JSON.stringify(message)}\n`);
+    } catch (cause) {
+      console.error("cursor-acp: write failed", cause);
+    }
+  },
   sdk: {
     version: "1.0.31",
     store: new FileCredentialStore(process.env.HAL_C2_CURSOR_CREDENTIALS || undefined),

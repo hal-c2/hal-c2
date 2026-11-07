@@ -1707,11 +1707,28 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "the thread shows a command with its output and exit code", context do
-    assert [command] = tool_items(context, "command_execution")
+    if context[:cursor_world] do
+      # A Cursor thread on the AcpFixtures world shows its command the same way.
+      found =
+        context.threads[context.thread]
+        |> HalC2.Test.AcpFixtures.stream()
+        |> HalC2.StreamState.list("turn-item")
 
-    assert %{"input" => "ls src", "status" => "completed", "exitCode" => 0} = command
-    assert command["output"] =~ "app.ts"
-    context
+      assert Enum.any?(
+               found,
+               &(&1["type"] == "command_execution" and &1["input"] == "npm test" and
+                   &1["output"] =~ "4 passing" and &1["exitCode"] == 0 and
+                   &1["status"] == "completed")
+             )
+
+      context
+    else
+      assert [command] = tool_items(context, "command_execution")
+
+      assert %{"input" => "ls src", "status" => "completed", "exitCode" => 0} = command
+      assert command["output"] =~ "app.ts"
+      context
+    end
   end
 
   step "the thread shows a file change with the file and its diff", context do
@@ -1729,12 +1746,27 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "the thread shows a file search with what it looked for", context do
-    assert [read, grep, lsp] = tool_items(context, "file_search")
-    assert %{"pattern" => "src/app.ts", "results" => [%{"fileName" => "src/app.ts"}]} = read
-    assert grep["pattern"] == "TODO"
-    assert %{"results" => [%{"fileName" => "src/app.ts"}]} = lsp
-    assert tool_items(context, "dynamic_tool") == []
-    context
+    if context[:cursor_world] do
+      # A Cursor thread on the AcpFixtures world names what each search sought.
+      patterns =
+        context.threads[context.thread]
+        |> HalC2.Test.AcpFixtures.stream()
+        |> HalC2.StreamState.list("turn-item")
+        |> Enum.filter(&(&1["type"] == "file_search"))
+        |> Enum.map(& &1["pattern"])
+
+      assert "**/*.ex" in patterns
+      assert "needle" in patterns
+      assert "how auth works" in patterns
+      context
+    else
+      assert [read, grep, lsp] = tool_items(context, "file_search")
+      assert %{"pattern" => "src/app.ts", "results" => [%{"fileName" => "src/app.ts"}]} = read
+      assert grep["pattern"] == "TODO"
+      assert %{"results" => [%{"fileName" => "src/app.ts"}]} = lsp
+      assert tool_items(context, "dynamic_tool") == []
+      context
+    end
   end
 
   step "the thread shows a tool call with its input and output", context do

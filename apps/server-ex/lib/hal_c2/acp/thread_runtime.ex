@@ -252,6 +252,15 @@ defmodule HalC2.Acp.ThreadRuntime do
         )
       end
 
+      if restored.interrupted and restored.turn != nil and
+           HalC2.Acp.driver(restored.agent) == "cursor" do
+        Process.send_after(
+          self(),
+          {:cursor_cancel_timeout, restored.turn.ids.run},
+          HalC2.Acp.cursor_cancel_timeout()
+        )
+      end
+
       {:reply, :ok,
        Durable.restored(
          %{
@@ -365,6 +374,16 @@ defmodule HalC2.Acp.ThreadRuntime do
         self(),
         {:antigravity_cancel_timeout, state.turn.ids.run},
         HalC2.Acp.Antigravity.cancel_timeout()
+      )
+    end
+
+    # Cursor gets ten seconds to confirm the stop; after that the turn ends
+    # as interrupted anyway (`:cursor_cancel_timeout`).
+    if HalC2.Acp.driver(state.agent) == "cursor" and state.answer == nil do
+      Process.send_after(
+        self(),
+        {:cursor_cancel_timeout, state.turn.ids.run},
+        HalC2.Acp.cursor_cancel_timeout()
       )
     end
 
@@ -810,6 +829,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  def handle_info({:cursor_cancel_timeout, run}, state) do
+    if state.turn && state.turn.ids.run == run && state.interrupted && state.conn do
+      Connection.stop(state.conn)
+      state = end_turn(%{state | prompt: nil}, "interrupted", nil)
+
+      {:noreply,
+       released(%{stop_work(state, "interrupted") | conn: nil, session_id: nil, prompt: nil})}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info(:kimi_wire, %{wire: %{} = wire} = state),
     do: {:noreply, read_wire(%{state | wire: %{wire | timer: nil}})}
 
@@ -871,7 +902,7 @@ defmodule HalC2.Acp.ThreadRuntime do
           {"failed", "Grok usage limit reached. Try again later."}
 
         {:error, %{"message" => message} = error} ->
-          {"failed", usage_limit(state, error) || message}
+          {"failed", usage_limit(state, error) || cursor_failure(state, error) || message}
 
         # The agent's process went away before it answered.
         {:error, :closed} ->
@@ -923,6 +954,26 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp usage_limit(_state, _error), do: nil
+
+  # A failed Cursor run fails the turn with Cursor's own message, as an error
+  # item a thread that delegated the turn reads its result from.
+  defp cursor_failure(state, %{"message" => message} = error) when is_binary(message) do
+    if HalC2.Acp.driver(state.agent) == "cursor" do
+      %{
+        "class" => "provider_error",
+        "message" => message,
+        "code" =>
+          case error["code"] do
+            code when is_integer(code) -> "cursor_rpc_#{code}"
+            code when is_binary(code) and code != "" -> code
+            _ -> "cursor_run_failed"
+          end,
+        "retryable" => nil
+      }
+    end
+  end
+
+  defp cursor_failure(_state, _error), do: nil
 
   defp reset_at(message) do
     with [_, at] <- Regex.run(~r/Resets at (\d{4}-\d\d-\d\dT\S+Z)/, message),
@@ -1842,6 +1893,18 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A warning the agent itself announces for the thread (a HAL-C2 update, which
+  # the Cursor agent sends when its sandbox cannot run): a system notice.
+  defp update(%{"sessionUpdate" => "notice", "message" => message}, state)
+       when is_binary(message) do
+    native = "notice:#{state.turn.ids.run}:#{:erlang.phash2(message)}"
+
+    state
+    |> flush()
+    |> ensure_item(native, :notice, %{"title" => message, "message" => message})
+    |> finish_item(native, "completed", & &1)
+  end
+
   # Models the agent adds or drops mid-session reach the picker without a provider refresh.
   defp update(%{"sessionUpdate" => "config_option_update", "configOptions" => options}, state)
        when is_list(options) do
@@ -2171,6 +2234,10 @@ defmodule HalC2.Acp.ThreadRuntime do
             when is_binary(text) ->
               NativeSubagent.append(sub, text)
 
+            %{"sessionUpdate" => kind, "toolCallId" => call_id}
+            when kind in ["tool_call", "tool_call_update"] and is_binary(call_id) ->
+              child_tool(sub, call_id, update, state)
+
             _ ->
               sub
           end
@@ -2180,6 +2247,52 @@ defmodule HalC2.Acp.ThreadRuntime do
       nil ->
         %{state | orphans: Map.update(state.orphans, session, [update], &(&1 ++ [update]))}
     end
+  end
+
+  # A subagent's own tool call, in its child thread, in the same item shapes
+  # the parent thread's calls take.
+  defp child_tool(sub, call_id, call, state) do
+    {kind, fields} = tool_shape(call, state)
+
+    type =
+      case kind do
+        :command -> "command_execution"
+        :file -> "file_change"
+        :search -> "file_search"
+        :web -> "web_search"
+        _ -> "dynamic_tool"
+      end
+
+    status =
+      case call["status"] do
+        "completed" -> "completed"
+        "failed" -> "failed"
+        _ -> "running"
+      end
+
+    output = content_text(call["content"]) || raw_output(call["rawOutput"])
+
+    fields =
+      fields
+      |> then(fn fields ->
+        cond do
+          kind == :command and is_binary(output) -> Map.put(fields, "output", output)
+          kind == :file and is_binary(output) -> Map.put(fields, "diffStr", output)
+          kind == :tool and is_binary(output) -> Map.put(fields, "output", output)
+          true -> fields
+        end
+      end)
+      |> then(fn fields ->
+        case call["rawOutput"] do
+          %{"results" => results} when is_list(results) and kind == :search ->
+            Map.put(fields, "results", results)
+
+          _ ->
+            fields
+        end
+      end)
+
+    NativeSubagent.item(sub, "cursor-task-tool:#{call_id}", type, status, fields)
   end
 
   # Kimi Code creates its Agent call before its input has streamed in, so its subagent
@@ -2251,11 +2364,19 @@ defmodule HalC2.Acp.ThreadRuntime do
               "title" => input["description"],
               "model" => input["model"]
             }),
-          session: nil,
+          # An agent that streams the subagent's own session names it on the
+          # call (Cursor's nested task updates); others name it in the result.
+          session: get_in(call, ["_meta", "childSessionId"]),
           done: false
         }
 
-    fresh = entry.session == nil && child_session(output)
+    fresh =
+      cond do
+        entry.session == nil -> child_session(output)
+        not Map.has_key?(state.subagents, id) -> entry.session
+        true -> nil
+      end
+
     entry = if fresh, do: %{entry | session: fresh}, else: entry
 
     {waiting, orphans} =
@@ -2881,6 +3002,8 @@ defmodule HalC2.Acp.ThreadRuntime do
         # A tool the user's stop cut off was stopped: OpenCode 1 rewrites it as an
         # error, and agents report a stopped command done like any other.
         stopped?(state, call) -> "interrupted"
+        # A tool the agent itself closed as never finished when its run ended.
+        get_in(call, ["_meta", "interrupted"]) == true -> "interrupted"
         call["status"] == "failed" -> "failed"
         kind == :command and state.interrupted -> "interrupted"
         is_integer(exit_code) and exit_code != 0 -> "failed"
@@ -2925,7 +3048,18 @@ defmodule HalC2.Acp.ThreadRuntime do
           end)
 
         :file ->
-          Map.put(entity, "diffStr", output || entity["diffStr"] || "")
+          entity
+          |> Map.put("diffStr", output || entity["diffStr"] || "")
+          |> then(fn entity ->
+            case call["rawOutput"] do
+              %{"linesAdded" => added, "linesRemoved" => removed}
+              when is_integer(added) and is_integer(removed) ->
+                Map.merge(entity, %{"additions" => added, "deletions" => removed})
+
+              _ ->
+                entity
+            end
+          end)
 
         :tool ->
           entity
@@ -2936,8 +3070,23 @@ defmodule HalC2.Acp.ThreadRuntime do
           )
 
         # What the call named when it was announced stays; the end fills in the rest.
+        # Structured results the agent reports at the end (Cursor's searches)
+        # are the results, replacing what the announcement could only name.
         :search ->
-          Map.merge(search_fields(call), entity)
+          case call["rawOutput"] do
+            %{"results" => [_ | _] = results} = raw ->
+              entity
+              |> Map.put("results", results)
+              |> then(
+                &if(is_binary(raw["pattern"]),
+                  do: Map.put(&1, "pattern", raw["pattern"]),
+                  else: &1
+                )
+              )
+
+            _ ->
+              Map.merge(search_fields(call), entity)
+          end
 
         # OpenCode announces a web call before its input.
         :web ->
@@ -2976,6 +3125,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp stopped?(state, call), do: state.interrupted and call["status"] == "failed"
 
   defp reported_exit(%{"metadata" => %{"exit" => code}}) when is_integer(code), do: code
+  defp reported_exit(%{"exitCode" => code}) when is_integer(code), do: code
   defp reported_exit(_), do: nil
 
   defp raw_output(%{"output" => output}) when is_binary(output), do: output
@@ -3246,12 +3396,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
-  # `/compact` alone in an Antigravity or OpenCode 1 thread compacts its conversation,
-  # and neither says so; the work log does, when the turn completes.
+  # `/compact` alone in an Antigravity, OpenCode 1 or Cursor thread compacts its
+  # conversation, and none of them says so; the work log does, when the turn completes.
   defp compacted(state, "completed") do
     turn = state.turn
 
-    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode"] &&
+    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode", "cursor"] &&
          String.trim(turn.text || "") == "/compact" &&
          Map.get(turn, :attachments, []) == [],
        do: compaction(state),
