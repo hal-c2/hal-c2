@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14595
 #   https://github.com/pingdotgg/t3code/pull/13344
 #   https://github.com/pingdotgg/t3code/pull/11580
 #   docs/user/keyboard-focus.md
@@ -91,6 +92,13 @@ Feature: Keyboard focus and keyboard-only use
       When the user types "h"
       Then the composer has keyboard focus
       And the draft reads "h"
+
+    # Upstream #14595: keys typed faster than the focus settled landed ahead of the first one.
+    @backlog @desktop
+    Scenario: Fast typing with nothing focused arrives in order
+      Given the user is looking at a thread and no field has keyboard focus
+      When a dictation tool types "Testing 1, 2, 3." at 4 milliseconds a key
+      Then the draft reads "Testing 1, 2, 3."
 
     @backlog @desktop
     Scenario Outline: Typing is left where it belongs

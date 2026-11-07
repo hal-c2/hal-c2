@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14677
+#   https://github.com/pingdotgg/t3code/pull/19651
 #   https://github.com/pingdotgg/t3code/pull/13217
 #   https://github.com/pingdotgg/t3code/pull/13409
 #   https://github.com/pingdotgg/t3code/pull/13553
@@ -431,6 +433,46 @@ Feature: Editing the draft
       | - [ ] milk    | "milk" as an unchecked task    |
       | - [x] milk    | "milk" as a checked task       |
 
+  # Upstream #14677: blocks, not only words, are styled, and the draft keeps every delimiter.
+  @backlog @desktop
+  Scenario Outline: A Markdown block typed with rich text on is shown as that block
+    Given rich text editing is on
+    When the user starts a line of the draft with "<typed>"
+    Then the draft shows <shown>
+    And the message is sent with the line exactly as typed
+
+    Examples:
+      | typed     | shown                                           |
+      | ```ts     | a code block highlighted as TypeScript          |
+      | 1. step   | a numbered list                                 |
+      | > quoted  | a quote                                         |
+      | ---       | a horizontal rule                               |
+      | ## Plan   | a heading                                       |
+
+  @backlog @desktop
+  Scenario: A "#" followed by a number still offers pull requests, not a heading
+    Given rich text editing is on
+    When the user types "#1234"
+    Then pull request 1234 is offered
+    And no heading is made
+
+  @backlog @desktop
+  Scenario: Typing in a code block keeps the user in it until they leave it
+    Given rich text editing is on and the caret is in a code block
+    When the user presses Enter
+    Then a new line is started in the code block, indented like the one above
+    And nothing is sent
+    When the user presses Enter on two blank lines in a row
+    Then the caret leaves the code block
+    And the send shortcut still sends from inside a code block
+
+  @backlog @desktop
+  Scenario: A code block's language can be chosen from its header
+    Given rich text editing is on and the draft holds a code block
+    When the user picks "Rust" from the code block's language list
+    Then the block is highlighted as Rust
+    And it is sent with "rust" after its opening fence
+
   @backlog @desktop
   Scenario Outline: Markers that do not make a style are left as typed
     Given rich text editing is on
@@ -457,6 +499,13 @@ Feature: Editing the draft
     Then the draft shows "**bold**"
     When the user moves the caret out of it
     Then the draft shows "bold" in bold
+
+  @backlog @desktop
+  Scenario: Up and Down at the draft's edges leave the caret outside styled markers
+    Given rich text editing is on and the draft starts and ends with "bold" in bold
+    When the user presses Up on the first line or Down on the last line
+    Then the caret stops outside the bold markers
+    And text the user types lands outside the bold text
 
   @backlog @desktop
   Scenario: A task in the draft is ticked with the keyboard or the pointer

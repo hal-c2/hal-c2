@@ -1,4 +1,20 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17344
+#   https://github.com/pingdotgg/t3code/pull/19162
+#   https://github.com/pingdotgg/t3code/pull/16162
+#   https://github.com/pingdotgg/t3code/pull/18124
+#   https://github.com/pingdotgg/t3code/pull/18267
+#   https://github.com/pingdotgg/t3code/pull/18455
+#   https://github.com/pingdotgg/t3code/pull/18463
+#   https://github.com/pingdotgg/t3code/pull/19375
+#   https://github.com/pingdotgg/t3code/pull/18451
+#   https://github.com/pingdotgg/t3code/pull/18126
+#   https://github.com/pingdotgg/t3code/pull/18347
+#   https://github.com/pingdotgg/t3code/pull/18608
+#   https://github.com/pingdotgg/t3code/pull/18402
+#   https://github.com/pingdotgg/t3code/pull/18900
+#   https://github.com/pingdotgg/t3code/pull/17667
+#   https://github.com/pingdotgg/t3code/pull/17645
 #   docs/user/source-control.md (Pull requests page, Mark files viewed)
 #   docs/internals/pull-request-file-revisions.md
 #   packages/contracts/src/pullRequest.ts (PullRequestDetail, PullRequestChecks, PullRequestActivity, PullRequestThreadComments, PullRequestSubmitReviewInput, PullRequestReaction, PullRequestFilesViewed, PullRequestDiff)
@@ -467,6 +483,15 @@ Feature: Reviewing a pull request
     And "hubot" is marked as approving and "mona" as requesting changes
     And "octo" has no verdict
 
+  @backlog @mc @desktop
+  Scenario: A team asked to review is a reviewer of its own
+    Given the team "acme/core" was asked to review pull request 42 on GitHub
+    And a user whose login is "core" approved it
+    When the user opens pull request 42
+    Then reviewers lists "acme/core" with its name and avatar, and "core" apart from it
+    And only "core" is marked as approving
+    And the team is listed before the conversation has loaded
+
   @backlog @desktop
   Scenario: Only a reviewer's last word counts
     Given "hubot" approved pull request 42 and later requested changes
@@ -683,6 +708,29 @@ Feature: Reviewing a pull request
       | a comment by "hubot"                             | cannot be edited    |
       | a comment the host attributes to nobody          | cannot be edited    |
       | the summary a review came with, by "octocat"     | cannot be edited    |
+
+  # The host's own answer replaces the guess from authorship and merge access, but never
+  # widens what the host can do at all. Resolve can only be narrowed per conversation.
+  @backlog @desktop
+  Scenario Outline: A host that says per item what the reader may do is believed
+    Given the reader is "octocat" on a host that can rewrite comments and resolve conversations
+    And the host says of <item> that the reader <answer>
+    When the user opens pull request 42
+    Then <item> <result>
+
+    Examples:
+      | item                                  | answer            | result                     |
+      | a comment by "hubot"                  | may edit it       | can be edited              |
+      | a comment by "octocat"                | may not edit it   | cannot be edited           |
+      | the description of pull request 42    | may edit it       | can be edited              |
+      | an unresolved conversation            | may not resolve it | is not offered to resolve |
+
+  @backlog @desktop
+  Scenario: A host's per-conversation answer cannot widen who may resolve
+    Given the reader may not resolve conversations on pull request 42's repository
+    And the host says of an unresolved conversation that the reader may resolve it
+    When the user opens pull request 42
+    Then the conversation is not offered to resolve
 
   # Legacy: apps/web/src/components/pullRequest/PullRequestMarkdownEditor.tsx (Write/Preview)
   @backlog @desktop
@@ -904,18 +952,34 @@ Feature: Reviewing a pull request
     Then 10 more comments are shown
     And the conversation offers "Show only 10 recent comments"
 
+  # Upstream #17645 replaced the folded bot group with a filter whose choice is remembered.
   @backlog @desktop
-  Scenario: Bot comments are kept out of the way
+  Scenario: Bot comments are hidden until the user shows them
     Given pull request 42 has comments by people and 3 comments by bots
     When the user opens pull request 42
     Then the people's comments are listed
-    And the bots' comments are behind "3 bot comments" until the user opens them
+    And the conversation says "3 hidden"
+    When the user chooses to show bot comments
+    Then the bots' comments join the people's in time order
 
   @backlog @desktop
-  Scenario: Many bot comments are also read in pages
-    Given pull request 42 has 25 comments by bots
-    When the user opens the bot comments of pull request 42
-    Then the 10 most recent are shown with "Show 10 older bot comments (15 hidden)"
+  Scenario: Shown bot comments are read in pages with the rest
+    Given pull request 42 has 5 comments by people and 25 comments by bots
+    And the user shows bot comments
+    When the user opens pull request 42
+    Then the 10 most recent comments of either kind are shown with "Show 10 older comments (20 hidden)"
+
+  @backlog @desktop
+  Scenario: The comment filter carries across pull requests
+    Given the user showed bot comments on pull request 42
+    When the user opens pull request 43
+    Then pull request 43 shows its bot comments too
+
+  @backlog @desktop
+  Scenario: A filter that hides every comment says so
+    Given pull request 42 has only comments by bots
+    When the user opens pull request 42
+    Then the conversation says every comment is hidden by the filter
 
   # Legacy: apps/web/src/components/pullRequest/pullRequestDetail.logic.test.ts (drops a body that is nothing but a bot's HTML comment)
   @backlog @desktop
@@ -942,10 +1006,12 @@ Feature: Reviewing a pull request
     And the comment shows "important" emphasised
 
   @backlog @desktop
-  Scenario: Finished conversations are folded
+  Scenario: Finished conversations are hidden until the user shows them
     Given pull request 42 has 2 resolved review threads and a dismissed review
     When the user opens pull request 42
-    Then they are behind "3 resolved or dismissed comments"
+    Then they are not listed and the conversation says "3 hidden"
+    When the user chooses to show resolved or dismissed comments
+    Then they join the conversation in time order, each folded
     And each says "Resolved" or "Review dismissed" when opened
 
   @backlog @desktop
@@ -1201,13 +1267,31 @@ Feature: Reviewing a pull request
     Then submitting as a comment is not possible
     And submitting as an approval is
 
+  @backlog @desktop @mobile
+  Scenario Outline: The review summary says it is optional only when it is
+    Given the user is reviewing pull request 42 as <verdict> with <comments>
+    Then the empty summary reads "<placeholder>"
+
+    Examples:
+      | verdict  | comments            | placeholder                                  |
+      | approve  | no line comments    | Summary (optional)                           |
+      | comment  | one line comment    | Summary (optional)                           |
+      | comment  | no line comments    | Summarize your review or add line comments   |
+
+  @backlog @desktop @mobile
+  Scenario: A single verdict is not offered as a choice
+    Given pull request 42 is the user's own on GitHub, so comment is the only verdict
+    When the user opens the review in the composer
+    Then no verdict picker is shown
+
   @backlog @desktop
   Scenario: A line comment alone is a review
     Given the user left a line comment on pull request 42 and wrote no summary
     When the user opens the review in the composer
     Then the review can be submitted as a comment
 
-  @backlog @desktop
+  # Upstream #18455 brought this to the phone's review sheet.
+  @backlog @desktop @mobile
   Scenario: Forgejo asks for a summary when requesting changes
     Given the open Forgejo pull request 7
     And the user left a line comment on it and wrote no summary
@@ -1261,11 +1345,28 @@ Feature: Reviewing a pull request
     When the user reads the diff of pull request 42
     Then no line can be selected for a comment
 
+  # Upstream #18463: Forgejo's details left out the head commit a line comment is tied to,
+  # so tapping a line on a Forgejo or Gitea pull request did nothing.
+  @backlog @mc
+  Scenario: A Forgejo pull request takes line comments on its latest commit
+    Given the open Forgejo pull request 7 whose latest commit is "abc1234"
+    When a client reads the details of pull request 7
+    Then they name "abc1234" as its head commit
+    And a line comment the user leaves on it is tied to "abc1234"
+
   @backlog @desktop
   Scenario: A whitespace-ignoring diff drops a comment in progress
     Given the user began a line comment on line 12 of "src/cart.ts"
     When the user hides whitespace changes
     Then the line comment in progress is dropped and the selection cleared
+
+  # Upstream #16162: hiding whitespace hides lines, not counts, as on GitHub.
+  @backlog @desktop
+  Scenario: Hiding whitespace changes keeps each file's line counts
+    Given "src/cart.ts" in pull request 42 has +115 −63, some of it only re-indented
+    When the user hides whitespace changes
+    Then the re-indented lines are hidden
+    And "src/cart.ts" still reads +115 −63, matching the pull request's total
 
   @backlog @desktop
   Scenario: A review conversation is open until resolved
@@ -1620,10 +1721,34 @@ Feature: Reviewing a pull request
     When the user reads the code of another pull request
     Then the file tree is open
 
-  @backlog @mobile
+  # Upstream #18126 gives the phone the code, file diffs and line comments as well; see
+  # "The review page" and the scenarios after it, which carry @mobile.
+  @dropped @mobile
   Scenario: The phone reviews without the code
     When the user opens pull request 42 on the phone
     Then the conversation and checks are shown without the diff
+
+  # Upstream #18347. Badges that bots stamp into a description (review buttons, shields,
+  # QR codes) are not attachments. Inline in the description and comments they still show.
+  @backlog @mobile
+  Scenario Outline: Bot badges are left out of a pull request's attachments
+    Given the description of pull request 42 has a screenshot and an image from <bot>
+    When the user opens pull request 42 on the phone
+    Then its attachments show only the screenshot
+    And the description still shows both images where they were written
+
+    Examples:
+      | bot                                     |
+      | static.devin.ai/assets/                 |
+      | cursor.com/assets/images/               |
+      | img.shields.io/                         |
+      | storage.googleapis.com/coderabbit_public_assets/ |
+
+  @backlog @mobile
+  Scenario: A screenshot uploaded to a bot's service is still an attachment
+    Given the description of pull request 42 has an image from "cursor.com/artifacts/"
+    When the user opens pull request 42 on the phone
+    Then its attachments show that image
 
   @mc
   Scenario: Images in a private pull request are fetched by the MC
@@ -1830,11 +1955,32 @@ Feature: Reviewing a pull request
     Then "build" is listed once with the state of the newer run
     And it stays at the position of the first run
 
+  # Upstream #17344: a workflow on push and pull_request runs a check twice on one commit;
+  # the run that finished first hid the one still going, and the watch said all passed.
+  @backlog @mc
+  Scenario Outline: A GitHub check with a run still going is pending
+    Given the check "Checks / check" of pull request 42 has a finished passing run and a run that <live>
+    When the checks of pull request 42 are read, in either order
+    Then "Checks / check" is listed once as pending
+    And a watch on pull request 42 does not wake the agent with "All checks passed"
+
+    Examples:
+      | live                          |
+      | is still running              |
+      | is queued with no start time  |
+
   @backlog @mc
   Scenario: Checks with the same name from different workflows are told apart
     Given the workflows "CI" and "Release" each have a check named "build"
     When the user reads the checks of pull request 42
     Then the checks are listed as "CI / build" and "Release / build"
+
+  @backlog @mc
+  Scenario: Checks whose workflow and job names run together the same way stay apart
+    Given pull request 42 has the check "Linux tests" of workflow "Build", which failed
+    And the check "tests" of workflow "Build Linux", which passed
+    When the user reads the checks of pull request 42
+    Then both checks are listed, and the failure is not hidden by the newer pass
 
   @backlog @mc
   Scenario: Workflows of a fork pull request awaiting approval are shown as needing action
@@ -2260,3 +2406,105 @@ Feature: Reviewing a pull request
       | GitLab    | description |
       | Bitbucket | title       |
       | Forgejo   | description |
+
+  # Upstream review guides (#18124) need the change request's head commit; GitLab and
+  # Bitbucket details dropped it, and Bitbucket reports it as a short hash.
+  @backlog @mc
+  Scenario Outline: A review guide is written at the change request's head commit on every host
+    Given an open change request on <host> whose head commit is "<head>"
+    When the user asks for a review guide of it
+    Then the guide is written against the checkout of "<head>"
+
+    Examples:
+      | host                                        | head                                     |
+      | GitLab                                      | 772a4f2c0d0f4d9e8a6b1c3e5f7a9b0c1d2e3f40 |
+      | GitLab, from a fork                         | afce4da7b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6 |
+      | Bitbucket                                   | 5a3ec8a077d5e1f2a3b4c5d6e7f8a9b0c1d2e3f4 |
+      | Bitbucket, which reports it as 5a3ec8a077d5 | 5a3ec8a077d5e1f2a3b4c5d6e7f8a9b0c1d2e3f4 |
+
+  @backlog @shared @mc
+  Scenario: Review guides are hidden until the beta is turned on
+    Given "Review guides (beta)" is off in Settings → Source Control
+    When the user opens pull request 42
+    Then there is no Guide tab, no "Write guide" in its menu and no notice that a guide is ready
+    When the user turns "Review guides (beta)" on
+    Then pull request 42 has a Guide tab
+    And Settings → Source Control offers the guide model and the guide instructions
+
+  @backlog @shared @mc
+  Scenario: A guide is written on demand and the user hears when it is done
+    Given "Review guides (beta)" is on
+    When the user chooses "Write guide" in the menu of pull request 42 and leaves the page
+    Then the user is told when the guide is ready, or that it failed
+    And the guide is kept for pull request 42 and its menu offers "Rewrite guide"
+    When a new commit is pushed to pull request 42
+    Then the guide is shown as stale
+
+  @backlog @mc
+  Scenario: A guide tours every changed file and notes only changed lines
+    When the MC writes a guide for pull request 42
+    Then the guide is a list of stops in reading order
+    And every changed file is in some stop
+    And every excerpt and note sits on changed lines
+    And the guide's instructions can shape what comes first, but not the format or the coverage
+
+  @backlog @mc
+  Scenario Outline: Which providers can write a guide
+    Given the guide model is from <provider>
+    When the user asks for a guide of pull request 42
+    Then <outcome>
+
+    Examples:
+      | provider | outcome                                         |
+      | Claude   | the guide is written                            |
+      | Codex    | the guide is written                            |
+      | Cursor   | the user is told the provider cannot write one  |
+      | OpenCode | the user is told the provider cannot write one  |
+
+  @backlog @mc
+  Scenario: Each layer of a stack is guided from its parent branch
+    Given pull request 43 is stacked on pull request 42
+    When the MC writes a guide for pull request 43
+    Then the guide covers only the changes since pull request 42's branch
+
+  @backlog @shared
+  Scenario: Comments on a guide's excerpt join the pending review
+    Given the user is reading the guide of pull request 42
+    When the user comments on a line of a stop's excerpt
+    Then the comment joins the pending review the Code tab collects
+    And "Finish review" on the last stop opens the composer with the pending comments
+
+  @backlog @shared
+  Scenario: Asking about a stop opens a thread beside the guide
+    Given the user is reading stop 2 of the guide of pull request 42
+    When the user chooses "Ask about this stop"
+    Then a new thread opens with the pull request and the stop as context
+    And the guide stays open beside it at stop 2
+
+  # Upstream #18267 brought the Guide tab to the phone; the tab itself is @shared above.
+  @backlog @mobile
+  Scenario: A stale guide stays readable on the phone without its code
+    Given the guide of pull request 42 was written before its latest push
+    When the user reads the guide on the phone
+    Then its stops and notes are shown
+    And its code excerpts are hidden until the guide is rewritten
+
+  @backlog @mobile
+  Scenario: Only a user who may write a guide is offered to write one on the phone
+    Given the user may read pull request 42 but not ask for its guide
+    When the user opens its Guide tab on the phone
+    Then the guide is not offered to be written
+
+  @backlog @mobile
+  Scenario: The phone keeps the guide's stop when its layout changes
+    Given the user is reading stop 2 of the guide of pull request 42 on a foldable phone
+    When the user unfolds the phone
+    Then stop 2 is still shown
+    When the user opens the code of a stop's excerpt
+    Then the diff opens at the excerpt's lines
+
+  @backlog @mc
+  Scenario: A watched GitLab merge request is seen to move when its head does
+    Given the user is watching a GitLab merge request
+    When a new commit is pushed to its source branch
+    Then the watch reports that the merge request's head moved

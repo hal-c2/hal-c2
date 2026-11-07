@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/8513
 #   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/keyboard-focus.md
 #   docs/user/appearance.md (Change theme, Change appearance)
@@ -301,6 +302,13 @@ Feature: Command palette
       Given the thread has a linked pull request
       When the user runs "Copy PR link" from the palette
       Then the pull request URL is on the clipboard
+
+    # Upstream #8513: the entry showed chat.new's key, which opens the project picker instead.
+    @backlog @desktop
+    Scenario: The new thread entry shows the key that starts a thread in the current project
+      Given "chat.new" is bound to "mod+shift+o" and "chat.newLocal" to "mod+shift+n"
+      When the user opens the command palette in the project "hal-c2"
+      Then "New thread in hal-c2" shows "mod+shift+n"
 
     @desktop
     Scenario: Linked pull requests are unavailable when the thread has none

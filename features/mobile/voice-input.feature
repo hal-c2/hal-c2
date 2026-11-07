@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17896
 #   apps/mobile/src/features/voice-input/ (on-device dictation states, errors, draft safety)
 #   packages/client-runtime/src/voice-input/controller.ts, transcription.ts (where the transcript goes, spacing)
 # Composer drafting is specified in features/composer/. Dictation is phone-only.
@@ -226,3 +227,17 @@ Feature: Dictating a message
     When they leave that screen
     Then recording continues behind a small pill showing the time and its target
     And finishing returns the transcript to the prompt where it began
+
+  @backlog @mobile
+  Scenario: Dictation records from the first connected microphone in the user's order
+    Given the user ordered the microphones as the built-in microphone, then Bluetooth
+    And Bluetooth earbuds are connected
+    When the user starts dictating
+    Then the phone's own microphone records
+
+  @backlog @mobile
+  Scenario: A new microphone joins the order just above its kind
+    Given the user's microphone order has a row for other Bluetooth microphones
+    When dictation first sees the earbuds "Studio Buds"
+    Then "Studio Buds" is listed by name just above the Bluetooth row
+    And the user can move it anywhere in the order

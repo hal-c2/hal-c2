@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17116
+#   https://github.com/pingdotgg/t3code/pull/17559
 #   https://github.com/pingdotgg/t3code/pull/16551
 #   docs/user/source-control.md (GitHub stacks)
 #   packages/contracts/src/pullRequest.ts (PullRequestStack, expectedStackHeads)
@@ -285,10 +287,18 @@ Feature: Stacked pull requests
     And told that if a layer fails, earlier updates remain
 
   @backlog @desktop
-  Scenario: A stack action that is running cannot be repeated or dismissed
-    Given the user confirmed a stack merge and it is running
-    Then the confirmation button reads "Working…"
-    And it cannot be pressed again, cancelled or closed
+  Scenario: A confirmed stack action runs in the background and cannot be started twice
+    When the user confirms a stack merge
+    Then the confirmation closes at once
+    And the user is told "Merging stack..." until the merge ends, then how it ended
+    And the stack's actions are disabled while it runs
+
+  @backlog @desktop
+  Scenario: A pull request's merge actions stay while its stack is refreshed
+    Given a pull request that is not part of a stack offers "Auto-merge"
+    When its stack is refreshed in the background
+    Then "Auto-merge" stays offered throughout
+    And a stacked pull request keeps offering "Merge stack" throughout
 
   @backlog @desktop
   Scenario Outline: A stack action tells the user how it ended

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19207
+#   https://github.com/pingdotgg/t3code/pull/17711
+#   https://github.com/pingdotgg/t3code/pull/17530
 #   https://github.com/pingdotgg/t3code/pull/16358
 #   https://github.com/pingdotgg/t3code/pull/13118 (Claude banked resets)
 #   https://github.com/pingdotgg/t3code/pull/14209 (OpenCode Go accounts merged by API key fingerprint)
@@ -327,6 +330,53 @@ Feature: Subscription limits
     When the user opens Limits
     Then each account is shown with its own limits
 
+  # Upstream #19207: each machine's sign-in has its own refresh token, so the Google account id
+  # identifies the account; when it cannot be read, the sign-in itself still does.
+  @backlog @mc @desktop @mobile
+  Scenario: One Google account signed in to Antigravity on two environments counts once
+    Given the same Google account is signed in to Antigravity on two environments
+    When the user opens Limits
+    Then the Antigravity account is shown once, with one pooled window for each limit
+
+  # Upstream #17711: one email in two workspaces (a Plus plan and a Business workspace, or
+  # one Claude login in two organizations) has two quotas, and they collapsed into one bar.
+  @backlog @mc @desktop @mobile
+  Scenario Outline: One email in two workspaces is two accounts
+    Given <provider> is signed in as "same@example.com" in the workspaces "Personal" and "Business"
+    When the user opens Limits
+    Then "Personal" and "Business" each show their own limits under their own name
+
+    Examples:
+      | provider |
+      | Codex    |
+      | Claude   |
+
+  @backlog @desktop @mobile
+  Scenario: Weekly limits of two Codex plans share one card
+    Given Codex reports "Business" with its weekly limit first and "Personal" with its weekly limit second
+    When the user opens Limits
+    Then one Weekly card shows both "Personal" and "Business"
+
+  @backlog @mc @desktop @mobile
+  Scenario Outline: A report that names no workspace joins its email's only workspace
+    Given a hub reports "same@example.com" without saying which workspace
+    And "same@example.com" is signed in <workspaces>
+    When the user opens Limits
+    Then the hub's report <result>
+
+    Examples:
+      | workspaces                                                    | result                                                         |
+      | in one workspace                                              | is shown with that workspace                                   |
+      | in two workspaces                                             | keeps its own row and its reset credit goes to neither workspace |
+      | in two workspaces, one of whose limits cannot be read         | keeps its own row and its reset credit goes to neither workspace |
+
+  @backlog @mc
+  Scenario: Last good limits are not kept for a login that switched workspace
+    Given Codex reported the limits of "Personal" a minute ago
+    And the login has since switched to "Business"
+    When the next check of Codex fails
+    Then the limits of "Personal" are not shown for "Business"
+
   @desktop @mobile @backlog-mobile
   Scenario: Automatic checks wait at least five minutes per environment
     Given the user opened Limits two minutes ago
@@ -412,3 +462,12 @@ Feature: Subscription limits
     When the MC reads Claude's limits
     Then the plan's limits are shown without the check failing
     And the check does not scan the transcripts
+
+  # Upstream now reads Antigravity's quota; the /usage-limits scenario above that leaves
+  # Antigravity out predates it.
+  @backlog @mc @shared @mobile @plugin-antigravity
+  Scenario: Antigravity's subscription limits are shown with the other providers'
+    Given an Antigravity instance signed in to a Google account
+    When the user opens the usage limits
+    Then Antigravity shows its 5-hour and weekly windows
+    And the Gemini models' windows are kept apart from those of the Claude and GPT models it shares

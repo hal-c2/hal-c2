@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17749
+#   https://github.com/pingdotgg/t3code/pull/17662
+#   https://github.com/pingdotgg/t3code/pull/11922
+#   https://github.com/pingdotgg/t3code/pull/19078
 #   https://github.com/pingdotgg/t3code/pull/16246
 #   https://github.com/pingdotgg/t3code/pull/7079
 #   https://github.com/pingdotgg/t3code/pull/13669
@@ -52,6 +56,12 @@ Feature: The MC working with its host machine
     When a client reads the MC's server config
     Then the available editors include Cursor
 
+  @backlog @mc
+  Scenario: On a Mac Zed is found by its app before a "zed" on the PATH
+    Given a Mac host with the Zed app installed and another program named "zed" earlier on its PATH
+    When a client opens "src/app.ts" in Zed
+    Then the Zed app opens it
+
   @mc
   Scenario Outline: Opening a location in an editor uses that editor's style
     When a client opens "src/app.ts" at line 12 column 4 in <editor>
@@ -102,6 +112,20 @@ Feature: The MC working with its host machine
     Given the MC runs on Windows and opens text files in Notepad
     When a client opens "src/app.ts" at line 12 column 4 in the default editor
     Then Windows opens "src/app.ts" in Notepad and the MC holds no port for it
+
+  # Upstream #17749: a command shim re-reads its arguments through cmd.exe, which mangles
+  # a line break or a double quote. Neither can be in a Windows file name.
+  @backlog @mc
+  Scenario Outline: On Windows an editor started through a command shim is not given a path it would mangle
+    Given the MC runs on Windows and the chosen editor is the command shim "code.cmd"
+    When a client opens <path> in that editor
+    Then <outcome>
+
+    Examples:
+      | path                                       | outcome                                            |
+      | a path holding a line break                | the editor is not started and the client is told it could not be opened |
+      | a path holding a double quote              | the editor is not started and the client is told it could not be opened |
+      | "C:\work\naïve & (draft) 100%.ts" at 12:4  | the editor opens that file at line 12 column 4     |
 
   @mc
   Scenario: On Windows a text association without a chosen program still names the editor
@@ -668,3 +692,35 @@ Feature: The MC working with its host machine
     When the MC looks for installed editors
     Then IntelliJ IDEA is available
     And "Visual Studio Code - Insiders.app" is not taken for "Visual Studio Code"
+
+  # Upstream #17662: systemd-oomd kills a whole cgroup, so one greedy agent took the server and
+  # every other agent with it. Each agent and terminal now gets its own scope in an agents slice
+  # held below the machine's memory, and the kernel picks agents before the MC.
+  @backlog @mc
+  Scenario: An agent that runs out of memory on Linux is killed without the MC
+    Given the MC runs on Linux under a systemd user manager
+    And two threads each run an agent
+    When one agent uses more memory than the machine can give
+    Then that agent is killed and its turn fails with "Killed: out of memory."
+    And the MC and the other agent keep running
+
+  @backlog @mc
+  Scenario: Where there is no systemd user manager agents start as before
+    Given the MC runs on macOS or in a container without a systemd user manager
+    When a thread starts an agent
+    Then the agent starts directly, with no scope around it
+
+  @backlog @mc
+  Scenario: An out-of-memory kill marks only the session it ended
+    Given a thread's agent was killed for using too much memory
+    When the thread starts a new agent session and that turn fails for another reason
+    Then the failure does not say "Killed: out of memory."
+
+  # Upstream #11922: on macOS a terminal's ssh to a LAN host failed with "No route to host"
+  # until the app declared why it uses the local network.
+  @backlog @desktop
+  Scenario: On macOS terminals and agents reach hosts on the local network
+    Given the packaged desktop app runs on macOS with its MC
+    When the user runs "ssh build-box.local hostname" in a HAL-C2 terminal
+    Then macOS asks once whether HAL-C2 may use the local network, saying it is for remote environments, terminals and agents
+    And once allowed, the command reaches "build-box.local"

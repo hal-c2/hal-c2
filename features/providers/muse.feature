@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19558
+#   https://github.com/pingdotgg/t3code/pull/17082
+#   https://github.com/pingdotgg/t3code/pull/17163
+#   https://github.com/pingdotgg/t3code/pull/17329
+#   https://github.com/pingdotgg/t3code/pull/18353
+#   https://github.com/pingdotgg/t3code/pull/18409
 #   docs/user/providers-muse.md
 #   apps/server-ex/lib/hal_c2/muse.ex, apps/server-ex/lib/hal_c2/muse/thread_runtime.ex
 #   packages/contracts/src/settings.ts (MuseSettings)
@@ -199,6 +205,52 @@ Feature: Muse Code
     When the subagent answers after the turn has ended
     Then the subagent is shown with its answer in its own thread
 
+  # Upstream #18353. Muse child threads have no session of their own to answer through.
+  @backlog
+  Scenario: A Muse Code subagent's approval is asked on the parent thread
+    Given the thread is supervised
+    And Muse Code delegates a review to a subagent that asks to run a command
+    Then the approval is asked on the parent thread
+    And approving it lets the subagent go on
+
+  @backlog
+  Scenario Outline: A Muse Code turn that is <ended> ends its subagents and workflows
+    Given Muse Code delegates a review to a subagent and starts a workflow
+    When the turn is <ended> while both are running
+    Then neither is shown as background work of the thread any longer
+
+    Examples:
+      | ended   |
+      | stopped |
+      | failed  |
+
+  @backlog
+  Scenario: A Muse Code subagent keeps its title across updates
+    Given Muse Code delegates a review titled "Review cart" to a subagent
+    When Muse Code updates the subagent without its title
+    Then the subagent and its thread are still titled "Review cart"
+
+  # Upstream #18409 (Muse Code 1.4.6).
+  @backlog
+  Scenario: A Muse Code web search shows each hit as a link
+    When Muse Code searches the web and finds three pages
+    Then the search shows three results, each with its title, link and snippet
+
+  @backlog
+  Scenario: A Muse Code page fetch links the page it fetched
+    When Muse Code fetches "https://example.com/docs"
+    Then the fetch shows one result linking "https://example.com/docs"
+
+  @backlog
+  Scenario: A finished Muse Code workflow shows its result
+    Given Muse Code runs a workflow that ends with a summary
+    Then the workflow shows that summary rather than its generated label
+
+  @backlog
+  Scenario: A Muse Code workflow agent reported completed with a failure shows as failed
+    Given a Muse Code workflow agent ends as completed with a failure kind and no reason
+    Then the agent is shown as failed with the failure kind as its result
+
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread
     Then supervised and full access are offered
@@ -213,6 +265,21 @@ Feature: Muse Code
       | mode        | outcome                |
       | supervised  | asked for approval     |
       | full access | allowed without asking |
+
+  # Signed in, Muse's own default lets an AI reviewer decide approvals, so the
+  # mode names Muse's profile on every start and resume.
+  @backlog
+  Scenario Outline: A signed-in Muse Code leaves supervised approvals to the user
+    Given the user is signed in to Muse Code
+    And a Muse Code thread in supervised <how>
+    When Muse Code wants to run a command
+    Then the user is asked for approval, not Muse's reviewer
+
+    Examples:
+      | how                                                  |
+      | starts                                               |
+      | resumes after it ran with Muse's reviewer deciding   |
+      | resumes after the user switched it from full access  |
 
   Scenario: Switching a running Muse Code turn to full access stops it asking
     Given Muse Code asked to run the first of two commands
@@ -229,6 +296,22 @@ Feature: Muse Code
     Given the thread runs Muse Code in full access
     When a Muse Code workflow asks to run a command it offers no way to approve
     Then the request is shown to the user
+
+  @backlog
+  Scenario: A workflow subagent's request after its parent turn ended is still answered
+    Given the thread runs Muse Code in supervised
+    And a Muse Code workflow's subagent is still running after the parent turn ended
+    When the subagent asks to run a command
+    Then the request is shown to the user and stays open until answered or Muse Code stops
+    And answering it lets the subagent continue
+
+  @backlog
+  Scenario: A workflow subagent's request is approved for the user in full access
+    Given the thread runs Muse Code in full access
+    And a Muse Code workflow's subagent is still running after the parent turn ended
+    When the subagent asks to run a command
+    Then the request is approved without asking the user
+    And if Muse Code refuses that answer, the request is shown to the user
 
   Scenario: Approving a Muse Code request lets the turn continue
     Given Muse Code asked to edit a file
@@ -313,3 +396,36 @@ Feature: Muse Code
     When the next message goes to "muse-work"
     Then a process of "muse-work" runs that turn in place of the first instance's
     And another message to "muse-work" stays in that process
+
+  @backlog @mc @plugin-muse
+  Scenario: Muse Code runs turns on Windows
+    Given the MC runs on Windows with Muse Code installed by its installer
+    When the user sends a message to Muse Code in a project on "C:\work\shop"
+    Then Muse Code is found and started
+    And it accepts the project folder and runs the turn
+
+  # Upstream #17082 ran Muse against live sessions; these are what the recordings found.
+  @backlog
+  Scenario: A Muse Code turn runs in a project reached through a symbolic link
+    Given the project "shop" is opened through a symbolic link to its folder
+    When the user sends a message to Muse Code
+    Then Muse Code runs the turn in the folder the link points to
+
+  @backlog
+  Scenario: Muse Code's internal reminders are not shown as steps
+    When Muse Code runs a turn that reminds itself of its skills
+    Then the timeline shows no row for that reminder
+
+  @backlog
+  Scenario: A Muse Code workflow's report arrives in the thread after its turn ended
+    Given Muse Code launched a workflow of two agents and ended its turn
+    Then the workflow stays live and is listed as the thread's background work
+    And its agents show as "Agent 1" and "Agent 2" with their status under it
+    When Muse Code starts a turn on its own to report the workflow's result
+    Then the report runs in the thread as a continuation and is not interrupted
+
+  @backlog
+  Scenario: A Muse Code thread saved with a permission mode Muse lacks runs supervised
+    Given a Muse Code thread saved with auto-accept edits
+    When the user sends a message to it
+    Then Muse Code asks first, as in supervised

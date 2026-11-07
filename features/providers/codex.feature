@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15945
+#   https://github.com/pingdotgg/t3code/pull/16236
+#   https://github.com/pingdotgg/t3code/pull/17026
+#   https://github.com/pingdotgg/t3code/pull/17027
+#   https://github.com/pingdotgg/t3code/pull/17040
+#   https://github.com/pingdotgg/t3code/pull/19368
+#   https://github.com/pingdotgg/t3code/pull/17663
+#   https://github.com/pingdotgg/t3code/pull/18200
 #   https://github.com/pingdotgg/t3code/pull/15546
 #   https://github.com/pingdotgg/t3code/pull/15592
 #   https://github.com/pingdotgg/t3code/pull/13547
@@ -323,6 +331,19 @@ Feature: Codex
     When the user opens the provider list
     Then Codex is shown as unavailable with the message "Timed out while checking Codex app-server provider status."
 
+  # Codex's check starts its app server and reads the account, models and skills, so it
+  # gets twice the budget other providers' checks get (pingdotgg/t3code#15945).
+  @backlog
+  Scenario Outline: A slow but healthy Codex is not shown as unavailable
+    Given the Codex command answers its status check after <seconds> seconds
+    When the MC checks Codex
+    Then Codex is shown as <status>
+
+    Examples:
+      | seconds | status                                                                                       |
+      | 15      | available                                                                                    |
+      | 21      | unavailable with the message "Timed out while checking Codex app-server provider status."    |
+
   Scenario: A Codex that has not been checked yet says so
     Given the MC has just started and has not checked Codex yet
     When the user opens the provider list
@@ -360,6 +381,23 @@ Feature: Codex
     Given the selected Codex model lists the "ultrafast" service tier
     When the user opens the service tier choices
     Then "Ultrafast" is offered with the description "Even faster, more expensive"
+
+  # Upstream #18200. Codex shares one model catalog cache between every client on the
+  # machine, and the plain CLI's catalog has no Ultrafast. Codex started by the MC asks for
+  # HAL-C2's own catalog, and the probe waits briefly for that refresh before it lists.
+  @backlog @mc @plugin-codex
+  Scenario: Ultrafast stays offered after another Codex client refreshes the catalog
+    Given the ChatGPT account is entitled to the Ultrafast tier
+    And another Codex client on the machine wrote a model catalog without it
+    When the MC checks Codex's models
+    Then the models still list the Ultrafast tier
+    And a thread set to Ultrafast stays on Ultrafast
+
+  @backlog @mc @plugin-codex
+  Scenario: Ultrafast is no longer offered once the account loses it
+    Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
+    When the MC checks Codex's models
+    Then the models no longer list the Ultrafast tier
 
   Scenario: Codex signed in with an API key says so
     Given Codex is signed in with an OpenAI API key
@@ -574,6 +612,15 @@ Feature: Codex
   Scenario: A failed Codex MCP tool call shows the server's error
     When a tool Codex called on an MCP server fails
     Then the tool call is shown as failed with the error the server gave
+
+  @backlog @mc
+  Scenario: A new Codex thread waits briefly for MCP servers that are still starting
+    Given the user has an MCP server that takes five seconds to start
+    When a new Codex thread starts its first turn
+    Then Codex waits up to ten seconds for it
+    And the server's tools are in the first turn
+    But a server that takes longer is left out of the first turn and joins a later one
+    And the user can still stop the turn while Codex waits
 
   @mc
   Scenario Outline: A Codex web search shows what Codex did on the web
@@ -865,6 +912,15 @@ Feature: Codex
       | a real file sits where a link to the shared home belongs | the entry already exists and is not a link            |
       | the login file is a link                              | the login must be a real file, not a link                |
 
+  # Upstream #17663: Codex 0.160 writes the lock at its home's root; a shadow home used
+  # on its own kept a real one and the instance stayed disabled.
+  @backlog
+  Scenario: A Codex account's own sqlite maintenance lock is replaced by the shared one
+    Given a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file
+    When the instance is prepared
+    Then the lock is replaced by a link to the shared home's lock
+    And the instance is enabled
+
   @mc
   Scenario: Codex skills that cannot be read in 20 seconds are reported
     Given Codex does not answer when asked for the project's skills
@@ -935,3 +991,73 @@ Feature: Codex
       | /goal resume         |
       | /goal clear          |
       | /goal                |
+
+  Rule: An MCP app a Codex tool returns runs inside the thread
+
+    # Upstream #16236: a tool result pointing at a ui:// resource is an MCP app.
+    @backlog @shared
+    Scenario: An MCP app opens inline in the thread
+      Given a Codex tool call returned an MCP app
+      When the user looks at the tool call
+      Then the app is shown and running in the thread
+      And the user can open it full screen and close it again
+
+    @backlog @shared
+    Scenario Outline: An MCP app asks before it does anything that is not reading
+      Given an MCP app is open in a Codex thread
+      When the app <action>
+      Then the user is asked to approve it first
+
+      Examples:
+        | action                                  |
+        | calls a tool that is not read only      |
+        | sends a message to the thread           |
+        | downloads a file                        |
+
+    @backlog @shared
+    Scenario: What an MCP app tells the model goes with the next message
+      Given an MCP app in a Codex thread gave the model some context
+      When the user sends the next message
+      Then that context goes with it, cut to 16 KiB
+      And a fork of the thread keeps it and a rollback past it drops it
+
+    @backlog @shared
+    Scenario: An MCP app in a thread whose session stopped says so
+      Given the Codex session of a thread with an MCP app has stopped
+      When the user opens the app
+      Then the app says the session has stopped
+      And no session is started for it
+
+    @backlog
+    Scenario: Deleting a thread removes its MCP apps' documents
+      Given a Codex thread with an MCP app
+      When the user deletes the thread
+      Then the app's stored documents are removed with it
+
+    # Upstream #17026: a Confluence result's canvas stayed white under dark text.
+    @backlog @shared @mc
+    Scenario: An MCP app follows the app's light or dark appearance
+      Given an MCP app is open in a Codex thread
+      When the user switches the app between light and dark
+      Then the MCP app's page and its text follow the appearance
+      And an MCP app stored in the thread before this works the same
+
+    # Upstream #17027: Jira's app threw on reading cookies in its sandbox and vanished.
+    @backlog @shared @mc
+    Scenario: An MCP app that reads cookies in its sandbox still shows
+      Given a Codex tool call returned an MCP app that reads its cookies while it starts
+      When the user looks at the tool call
+      Then the app is shown with its content
+      And the app sees no cookies and keeps none it sets
+
+    # Upstream #17040: a short card left a large gap under a fixed 420 point frame.
+    @backlog @mobile
+    Scenario Outline: An MCP app in a thread on the phone is as tall as its content
+      Given an MCP app in a Codex thread reports content <height> points tall
+      When the user reads the thread on the phone
+      Then the app's card is <shown> points tall
+
+      Examples:
+        | height | shown                              |
+        | 150    | 150                                |
+        | 900    | 420, and the app scrolls inside it |

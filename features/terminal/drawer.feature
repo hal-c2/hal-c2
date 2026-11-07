@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17658
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the route's thread, drafts too, its project
 #   root, worktree and scripts, from the MC's rows)
@@ -213,3 +214,11 @@ Feature: The desktop's terminal drawer
       Given the user dragged the drawer to 400 pixels with "term-2" active
       When the desktop starts again
       Then the drawer is 400 pixels tall with "term-2" active
+
+    # Upstream #17658: the clamped height used to be saved for good.
+    @backlog @desktop
+    Scenario: A window that shrinks and grows again gives the drawer back its height
+      Given the user dragged the drawer to 750 pixels
+      When the window shrinks so the drawer is held to 420 pixels, then grows back
+      Then the drawer is 750 pixels tall again
+      And it is 750 pixels tall after the desktop starts again

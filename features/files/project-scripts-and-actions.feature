@@ -17,6 +17,7 @@
 #   apps/web/src/components/ChatView.tsx (deleting an action: the confirmation by name, the failure)
 #   https://github.com/pingdotgg/t3code/pull/15394
 #   https://github.com/pingdotgg/t3code/pull/15490
+#   https://github.com/pingdotgg/t3code/pull/16290
 
 Feature: Project actions
   An action is a named command for a project, such as starting the dev server or running
@@ -120,6 +121,36 @@ Feature: Project actions
       When a thread in "shop" starts on a new worktree
       Then the setup script step is skipped
       And the agent starts
+
+  Rule: An action can run when a worktree thread settles
+
+    # Upstream #16290: an opt-in action (a teardown such as "docker compose down") runs in
+    # the thread's worktree when the thread settles, by hand or automatically.
+    @backlog @mc
+    Scenario Outline: The settle action runs in the worktree of a thread that settles
+      Given "Teardown" of "shop" runs in the thread's worktree when the thread settles
+      And a thread in "shop" works on <checkout>
+      When the thread settles <how>
+      Then <outcome>
+
+      Examples:
+        | checkout      | how                | outcome                                         |
+        | a worktree    | by the user's hand | "Teardown" runs in the thread's worktree        |
+        | a worktree    | automatically      | "Teardown" runs in the thread's worktree        |
+        | the main checkout | by the user's hand | nothing runs                                |
+
+    @backlog @mc
+    Scenario: Nothing runs when a thread settles unless an action opts in
+      Given no action of "shop" runs when a thread settles
+      When a thread in "shop" on a worktree settles
+      Then no action runs
+
+    @backlog @desktop @mobile @tui
+    Scenario: Only one action of a project runs when a thread settles
+      Given "Teardown" of "shop" runs in the thread's worktree when the thread settles
+      When the user makes "Stop db" run when a thread settles
+      Then "Stop db" runs when a thread settles
+      And "Teardown" no longer does
 
   Rule: Adding, editing and removing actions
 

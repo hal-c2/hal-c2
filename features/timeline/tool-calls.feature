@@ -1,4 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17561
+#   https://github.com/pingdotgg/t3code/pull/17211
+#   https://github.com/pingdotgg/t3code/pull/17948
+#   https://github.com/pingdotgg/t3code/pull/16284
+#   https://github.com/pingdotgg/t3code/pull/13140
+#   https://github.com/pingdotgg/t3code/pull/15094
+#   https://github.com/pingdotgg/t3code/pull/18761
+#   https://github.com/pingdotgg/t3code/pull/18865
+#   https://github.com/pingdotgg/t3code/pull/18897
+#   https://github.com/pingdotgg/t3code/pull/18898
+#   https://github.com/pingdotgg/t3code/pull/19654
+#   https://github.com/pingdotgg/t3code/pull/20036
 #   https://github.com/pingdotgg/t3code/pull/15475
 #   https://github.com/pingdotgg/t3code/pull/15037
 #   https://github.com/pingdotgg/t3code/pull/16199
@@ -77,6 +89,15 @@ Feature: Tool calls and file changes
     Then the row shows the sixth tool call with "+5 previous tool calls" beside it
     When the user opens the row
     Then all six tool calls are shown
+
+  # Upstream #16284: the live row also says what the agent is thinking about.
+  @backlog @shared
+  Scenario: The live row shows the first sentence of the agent's latest thought
+    Given the agent is running a tool call in the running turn
+    When the agent thinks "Checking the tax tables first. Then the cart."
+    Then the live row shows "Checking the tax tables first." above the running tool call
+    When the turn ends
+    Then the thought folds away with the row
 
   @shared
   Scenario: A group of tool calls reads as a summary of what the agent did
@@ -233,6 +254,33 @@ Feature: Tool calls and file changes
       | hal-c2 · hal_c2_thread_read       |
       | hal_c2_thread_read completed      |
 
+  # Upstream #13140: a thread read names the thread by its title now and links to it.
+  @backlog @shared
+  Scenario Outline: Reading another thread names that thread
+    Given the agent <state> HAL-C2's thread-reading tool on thread "t2"
+    And "t2" is titled "Fix checkout"
+    Then the call reads "<label>"
+    And the call links to "t2"
+
+    Examples:
+      | state             | label                            |
+      | is calling        | Reading thread “Fix checkout”    |
+      | called            | Read thread “Fix checkout”       |
+      | failed to call    | Failed to read thread “Fix checkout” |
+
+  @backlog @shared
+  Scenario Outline: A thread read on a thread the client cannot show stays generic
+    Given the agent called HAL-C2's thread-reading tool on thread "t2"
+    And "t2" is <state>
+    Then the call reads "Read a HAL-C2 thread"
+    And the call links nowhere
+
+    Examples:
+      | state     |
+      | unknown   |
+      | archived  |
+      | deleted   |
+
   # Legacy: packages/shared/src/halC2McpToolPresentation.ts (a tool of another server is not claimed)
   @desktop @mobile @tui
   Scenario: A tool of another server with the same name is not shown as HAL-C2's
@@ -295,6 +343,53 @@ Feature: Tool calls and file changes
     When the user opens the command's details
     Then the details show its input
     And no exit code is shown
+
+  @mc @shared @backlog
+  Scenario: An opened command shows its output while it runs
+    Given the agent's command is still running and printing
+    When the user opens the command's details
+    Then the output printed so far is shown
+    And new output is added as it is printed, at most every 100 ms
+    And once the command ends the output is replaced by the output the thread kept
+
+  @mc @shared @backlog
+  Scenario: A finished command's output is fetched when it is opened
+    Given the agent ran a command that finished
+    When the user opens the command's details
+    Then the command's final output is shown
+
+  @mc @backlog
+  Scenario: Command output does not ride the thread
+    Given the agent's command prints 17 MB of output
+    And no client has opened the command's details
+    Then no client receives any of that output
+    And the thread's history and stream do not grow by it
+
+  @mc @backlog
+  Scenario: A running command keeps only the last 64K characters of output
+    Given the agent's command has printed more than 64K characters
+    When the user opens the command's details
+    Then the last 64K characters are shown
+
+  @mc @backlog
+  Scenario: A client that falls behind is sent the whole tail again
+    Given a client watching a running command falls more than 16 KB behind
+    Then it is sent the whole kept output instead of the missed parts, at most every 500 ms
+    And what it shows afterwards matches what a client that kept up shows
+
+  @mc @shared @backlog
+  Scenario: Progress bars in command output show only their latest frame
+    Given the agent's command draws a progress bar that redraws its line
+    When the user opens the command's details
+    Then the progress bar is shown once, at its latest state
+    And the output's colours are shown
+    And other terminal control codes are not shown
+
+  @shared @backlog
+  Scenario: Coloured command output stays readable
+    Given the agent's command prints dark text on a dark background
+    When the user opens the command's details
+    Then that text is drawn in a colour readable on its background
 
   @desktop
   Scenario: A file search's details list where each match is
@@ -512,6 +607,12 @@ Feature: Tool calls and file changes
       | "src/cart.ts" and "src/checkout.ts" with 5 lines added in all      | 2 changed files +5            |
       | "src/cart.ts" and "src/checkout.ts" with no line counts            | 2 changed files               |
 
+  @backlog @shared @mobile
+  Scenario: Large line counts are grouped the way the user's locale writes numbers
+    Given the user's locale is English
+    And a turn changed files with 85000 lines added and 30000 removed
+    Then every place that shows those counts reads "+85,000 -30,000"
+
   @desktop
   Scenario: A folder of changed files carries the totals of what is inside it
     Given a turn changed "src/cart.ts" with 3 lines added and "src/checkout.ts" with 2 lines added
@@ -657,6 +758,19 @@ Feature: Tool calls and file changes
       | "assets/logo.png" in the thread's workspace | the image is shown                        |
       | "/tmp/outside.png" outside the workspace    | the path is shown and no image is loaded  |
       | "notes.txt" in the thread's workspace       | the path is shown and no image is loaded  |
+
+  @backlog @shared
+  Scenario: A file read that returned only an image shows the image without a placeholder
+    Given Claude read "assets/logo.png" in the thread's workspace and got back only the image
+    When the user opens the call's details
+    Then the image is shown
+    And the details show neither "[image]" nor "No output"
+
+  @backlog @shared
+  Scenario: A computer-use or script call reads as the action the agent named
+    Given the agent ran a computer-use or JavaScript call titled "Open the billing page"
+    When the user looks at the timeline
+    Then the call reads "Open the billing page"
 
   # Legacy: packages/client-runtime/src/work-log/userInput.ts (getQuestionAnswerPreview)
   @desktop @mobile
@@ -811,3 +925,69 @@ Feature: Tool calls and file changes
     When the user scrolls the thread with the pointer over it
     Then the thread scrolls
     And the frame fits the page's reported content height, capped by the agent's height only when that is smaller
+
+  @backlog @mobile
+  Scenario: Dragging over an inline HTML page taller than its frame scrolls the page, then the thread
+    Given an inline page taller than the most its frame can show
+    When the user drags up over the page on the phone
+    Then the page scrolls its hidden part first
+    And once the page is at its end the thread carries on scrolling
+    And a page that is only too wide lets vertical drags scroll the thread and sideways drags pan the page
+
+  @backlog @mc @shared
+  Scenario: An inline HTML page shows the shape of its layout while it loads
+    Given an agent published an HTML page with a heading, an image and a table
+    When the thread is shown before the page has loaded
+    Then the page's frame shows placeholders where its text, image and table will be
+    And the MC described that outline when the page was published, in at most 48 boxes
+    And a page published before outlines existed shows a generic placeholder
+
+  @backlog @mc @shared
+  Scenario: An inline HTML page opened full screen is not downloaded again
+    Given an inline HTML page has loaded in the thread
+    When the user opens it full screen
+    Then it opens from the copy already loaded, as long as its address is valid for more than five more minutes
+    And addresses the MC hands out for that page within the same half hour are the same address
+
+  @backlog @shared
+  Scenario: An inline HTML page opens full screen with zoom
+    Given an agent published an HTML page in the thread
+    Then the page offers "Open full screen" and no longer offers opening it in the side panel
+    When the user opens it full screen
+    Then the page fills the window with a close button and zoom from 50% to 200%
+    When the user closes it
+    Then focus returns to the page in the thread, still loaded
+
+  @backlog @shared
+  Scenario: Clicking an image in an inline HTML page opens it in the image viewer
+    Given an agent published an HTML page with an image
+    When the user clicks the image, inline or full screen
+    Then the image opens in the same viewer chat images use, with its alt text
+    And an image inside a link still follows the link
+    And a click with a modifier key, or one the page itself handled, does not open the viewer
+    And closing the viewer leaves the page open
+
+  @backlog @shared
+  Scenario Outline: A link in an inline HTML page opens the way a chat link does
+    Given an agent published an HTML page linking to <target>
+    When the user <clicks> the link
+    Then <result>
+
+    Examples:
+      | target                                  | clicks                    | result                                                    |
+      | a pull request of the thread's project  | clicks                    | the pull request opens in the thread's side panel          |
+      | "https://example.com/docs"              | clicks                    | it opens where the "Open links in" setting says            |
+      | "https://example.com/docs"              | Cmd- or Ctrl-clicks       | it opens in the system browser                             |
+
+  @backlog @shared
+  Scenario: App shortcuts keep working while an inline HTML page has focus
+    Given the user clicked into an inline HTML page
+    When the user presses the command palette's shortcut
+    Then the command palette opens
+    And the page's own handling of a key, or a key typed into a field in the page, stays with the page
+
+  @backlog @shared
+  Scenario: An inline HTML page cannot press a shortcut that changes a thread
+    Given an inline HTML page sends the app a key it made up itself
+    When that key is the shortcut to settle, steer or undo
+    Then the thread is unchanged

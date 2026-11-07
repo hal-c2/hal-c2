@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18754
 #   docs/user/source-control.md (Commit, push and PR with generated messages)
 #   packages/contracts/src/git.ts (GitStackedAction, GitRunStackedActionInput, GitActionProgressEvent)
 #   packages/contracts/src/rpc.ts (git.runStackedAction)
@@ -176,6 +177,34 @@ Feature: Committing with written or generated messages
       | "feature/tax" tracks a branch of the same name and the host's default is "trunk"       | trunk   |
       | the host cannot be asked and the remote's default branch is "master"                   | master  |
       | nothing records a default branch                                                       | main    |
+
+  @mc @backlog
+  Scenario Outline: A recorded base that is not a branch gives way to the default branch
+    Given "feature/tax" has the recorded merge base <ref> and the host's default is "main"
+    When the user runs "Create PR"
+    Then the pull request targets "main"
+
+    Examples:
+      | ref                     |
+      | the commit "a1b2c3d"    |
+      | the tag "v1.2.0"        |
+      | the revision "HEAD~2"   |
+
+  @mc @backlog
+  Scenario Outline: A recorded base names the branch the pull request targets
+    Given "feature/tax" has the recorded merge base "<ref>"
+    When the user runs "Create PR"
+    Then the pull request targets "<base>"
+
+    Examples:
+      | ref            | base    |
+      | release        | release |
+      | origin/release | release |
+
+  @mc @backlog
+  Scenario: A worktree made from a commit records no pull request base
+    When the user makes a worktree for "feature/tax" from the commit "a1b2c3d"
+    Then "feature/tax" has no recorded merge base
 
   # Legacy: apps/server/src/git/GitManager.ts (resolveBaseRangeRef)
   @mc @backlog

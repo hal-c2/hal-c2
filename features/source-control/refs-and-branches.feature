@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19315
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
 #   packages/contracts/src/rpc.ts (vcs.listRefs, vcs.switchRef, vcs.createRef)
 #   apps/server-ex/lib/hal_c2/vcs.ex (list_refs, switch_ref, create_ref)
@@ -106,6 +107,15 @@ Feature: Picking, switching and creating branches
     Given "feature/old" is checked out in another worktree
     When the user lists branches
     Then "feature/old" is marked with that worktree's path
+
+  # Upstream #19315: "git worktree list -z" needs git 2.36, and older git dropped every path.
+  @backlog @mc
+  Scenario: Worktree paths are found on git older than 2.36
+    Given the machine's git is 2.25
+    And "feature/old" is checked out in another worktree
+    When the user lists branches
+    Then "feature/old" is marked with that worktree's path
+    And an agent can still launch a thread in that worktree
 
   @mc @desktop
   Scenario: Switching to a local branch

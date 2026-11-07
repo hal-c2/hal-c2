@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17161
 #   packages/contracts/src/checkpointDiff.ts (TurnCountRange, getTurnDiff, getFullThreadDiff)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (turn_diff, capture, start_ref)
@@ -54,6 +55,37 @@ Feature: What each turn changed
     Given turn 2 only answered a question
     When the user opens the diff of turn 2
     Then the user is told there are no changes
+
+  # Upstream #17161: one rebase listed 13,434 changed files. A file counts as the turn's
+  # own when it had uncommitted edits at the turn's start or end, a commit made during the
+  # turn touched it (rebased commits too), a conflict resolution touched it, or a commit
+  # that left the branch did. When unsure, the file is kept.
+  @backlog @mc
+  Scenario: A turn's diff leaves out what git brought in
+    Given during turn 2 the agent merged "main", which changed 40 files, and edited "README.md"
+    When the user opens the diff of turn 2
+    Then only "README.md" is shown
+    And the turn's changed files list "README.md" alone, matching the diff
+    But restoring turn 2's checkpoint still restores all 41 files
+
+  @backlog @mc
+  Scenario: A turn that only pulled has no changed files
+    Given turn 2 only pulled new commits from the remote
+    When the user opens the diff of turn 2
+    Then the user is told there are no changes
+
+  @backlog @mc
+  Scenario: A rebased commit of the agent's own stays in its turn's diff
+    Given during turn 2 the agent committed a change to "src/cart.ts" and then rebased it onto "main"
+    When the user opens the diff of turn 2
+    Then the change to "src/cart.ts" is shown
+    And files only "main" changed are not
+
+  @backlog @mc
+  Scenario: A conflict the agent resolved is part of its turn
+    Given during turn 2 the agent merged "main" and resolved a conflict in "src/tax.ts"
+    When the user opens the diff of turn 2
+    Then the resolution in "src/tax.ts" is shown
 
   @mc
   Scenario: A turn without a finished checkpoint

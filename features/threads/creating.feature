@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17959
+#   https://github.com/pingdotgg/t3code/pull/17371
+#   https://github.com/pingdotgg/t3code/pull/17664
+#   https://github.com/pingdotgg/t3code/pull/20442
+#   https://github.com/pingdotgg/t3code/pull/20519
 #   https://github.com/pingdotgg/t3code/pull/16628
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
@@ -96,6 +101,19 @@ Feature: Creating threads
     When the user opens the new thread form
     Then a new worktree is preselected
     And "main" is offered as the base branch
+
+  @backlog @shared @mobile @tui
+  Scenario Outline: A project created from a name starts its first thread in its folder
+    Given new threads default to a new worktree
+    And the project "notes" was created from just a name <override>
+    When the user starts <which> thread in "notes"
+    Then the thread works <where>
+
+    Examples:
+      | override                               | which         | where                  |
+      | and has no thread mode of its own      | its first     | in the project folder  |
+      | and has no thread mode of its own      | a second      | in a new worktree      |
+      | and its own mode is a new worktree     | its first     | in a new worktree      |
 
   @tui
   Scenario: The new thread form inherits the workspace of the selected thread
@@ -395,6 +413,14 @@ Feature: Creating threads
     And the thread has no branch toolbar and no worktree mode
     And the draft reads "What should we work on?" with a project picker to move it into a project
 
+  @backlog @mc
+  Scenario: Threads without a project are offered on a machine without Git
+    Given Git is not installed on the machine
+    And the MC's data folder is not inside a Git checkout
+    When a client asks what new threads the machine offers
+    Then threads without a project are offered
+    And a turn in such a thread runs without checkpoints
+
   @backlog @shared
   Scenario Outline: No project is reachable from every new-thread entry point
     When the user uses "<entry>"
@@ -429,6 +455,22 @@ Feature: Creating threads
     Then the draft moves to that machine's scratch folder, created on first use
     And sending waits for that setup
 
+  # Upstream #20442: leaving the draft abandons the switch.
+  @backlog @shared
+  Scenario: A draft left while it is switching machines stays on its machine
+    Given a new thread without a project is switching to another machine's scratch folder
+    When the user leaves the draft before the scratch folder is ready
+    Then the draft stays on its machine and project
+    And the switch finishing later does not move it
+
+  # Upstream #20519: the abandoned switch still clears its busy state.
+  @backlog @shared
+  Scenario: Coming back to a draft whose machine switch was abandoned finds it ready
+    Given the user left a new thread draft while it was switching machines
+    When the user comes back to that draft
+    Then the draft is not shown preparing a machine
+    And the user can send from it
+
   @backlog @shared
   Scenario: A keybinding steps a new thread to the next machine
     Given a new thread draft and more than one machine
@@ -443,3 +485,25 @@ Feature: Creating threads
     Then "No project" is listed right after the current project
     And it is first when the current thread has no project
     And the current project is still the default choice
+
+  # Upstream #17664: the draft screen's picker searches like the sidebar's project filter.
+  @backlog @shared
+  Scenario: The new thread's project picker can be searched
+    Given the user has many projects and is writing a new thread
+    When the user opens the draft's project picker and types part of a project's name
+    Then only matching projects are listed, with "Add project" last
+    And choosing one moves the draft into that project
+
+  @backlog @shared
+  Scenario: A project search with no match says so
+    Given the user is searching the new thread's project picker
+    When nothing matches the search
+    Then the picker reads "No matching projects."
+    And "Add project" is not listed while searching
+
+  @backlog @shared
+  Scenario: The draft screen leaves a project through its own link
+    Given the user is writing a new thread in a project
+    When the user opens the draft's project picker
+    Then "No project" is not among its rows
+    And "or start without a project" under the headline moves the draft out of the project

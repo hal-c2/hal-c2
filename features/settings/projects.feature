@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18901
+#   https://github.com/pingdotgg/t3code/pull/17860
 #   docs/user/project-settings.md (Project category, mobile Overview, project icons)
 #   apps/web/src/components/settings/ProjectsSettings.tsx
 #   apps/web/src/components/settings/ProjectSettingsPanel.tsx
@@ -162,6 +164,34 @@ Feature: Projects settings panel
     Given GitHub is signed in
     When the user creates a new project with "Create private repository on GitHub" on
     Then the repository is published after the project is created
+
+  @backlog @shared
+  Scenario: mod+Enter creates the new project while an option is highlighted
+    Given the user typed a name in the New project step
+    And "Create private repository on GitHub" is highlighted
+    Then the create button offers mod+Enter
+    When the user presses mod+Enter
+    Then the project is created and the option is left as it was
+    But pressing Enter alone toggles the highlighted option
+
+  @backlog @shared @mobile
+  Scenario: A new project can be published to any ready host
+    Given GitHub and GitLab are both signed in
+    When the user creates a new project with publishing on
+    Then the user can pick GitHub or GitLab, with GitHub first
+    And the repository is published to the chosen host, and the messages name it
+
+  @backlog @shared @mobile
+  Scenario Outline: A host is offered for a new project only when it can say where the repository goes
+    Given <host> is signed in <how>
+    When the user creates a new project with publishing on
+    Then <host> is <offered>
+
+    Examples:
+      | host         | how                                     | offered     |
+      | Forgejo      | with an account                         | offered     |
+      | Bitbucket    | with an API token that names no username | not offered |
+      | Azure DevOps | with an account                         | not offered |
 
   @backlog @mc
   Scenario: A cloned project shows its favicon at once

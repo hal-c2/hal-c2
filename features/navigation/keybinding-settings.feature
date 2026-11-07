@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19400
 #   https://github.com/pingdotgg/t3code/pull/12822
 #   docs/user/keybindings.md (Settings → Keybindings)
 #   apps/web/src/components/settings/KeybindingsSettings.tsx
@@ -237,6 +238,17 @@ Feature: Keybindings settings
         | action  | message                    |
         | saves   | Unable to save keybinding  |
         | removes | Unable to remove keybinding|
+
+    @backlog @desktop
+    Scenario Outline: A locked keybindings page says why it is locked
+      Given <state>
+      Then the bindings cannot be changed
+      And the user is told "<notice>"
+
+      Examples:
+        | state                                                   | notice                                                       |
+        | no environment is connected                             | Connect an environment to change keybindings.                |
+        | the connected environment does not let this client write settings | This connection can view keybindings but cannot change them. |
 
     @desktop
     Scenario: The file opens in the preferred editor

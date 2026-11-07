@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17378
 #   https://github.com/pingdotgg/t3code/pull/11500
 #   apps/server-ex/lib/hal_c2/workspace.ex (index, list_entries)
 #   apps/web/src/components/files/FileBrowserPanel.tsx
@@ -150,6 +151,15 @@ Feature: Exploring project files
   Scenario: Expanding a folder loads its children on demand
     When the user expands "src"
     Then "app.ts" and "lib" are shown under "src"
+
+  @backlog @desktop
+  Scenario: A folder loading its children for the first time shows it on its own row
+    Given listing "src" takes a while
+    When the user expands "src"
+    Then the row "src" shows that it is loading
+    And the rows of the tree do not move until the children arrive
+    When the user refreshes the tree after "src" has loaded
+    Then "src" keeps showing its children while they are listed again
 
   @desktop
   Scenario: Expanding and collapsing every folder at once

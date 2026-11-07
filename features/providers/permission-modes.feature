@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19712 (covered: Cursor's automatic review in auto)
+#   https://github.com/pingdotgg/t3code/pull/19635
 #   https://github.com/pingdotgg/t3code/pull/2829 (Codex interaction mode after resume, Grok permission mode)
 #   docs/user/permission-modes.md
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (runtime mode map, approval decisions, plan capture)
@@ -190,6 +192,21 @@ Feature: Permission modes
     Given the user chose "Always allow this session" for a Grok command
     When a thread in another project asks Grok to run the same command
     Then the user is asked to approve it
+
+  @backlog @plugin-codex
+  Scenario: Codex stops asking for a kind of request the user always allowed this session
+    Given a supervised Codex thread
+    When the user chooses "Always allow this session" for a command
+    Then later commands in that Codex session run without asking
+    But a file change still asks until the user always allows file changes too
+
+  @backlog @plugin-codex
+  Scenario: A Codex session allowance ends with the mode it was given in
+    Given the user always allowed commands in a supervised Codex thread
+    When a turn runs in another access mode and the thread returns to supervised
+    Then the next command asks again
+    And an approval answered after the mode changed does not bring the allowance back
+    And the allowance is forgotten when the thread's Codex session is released
 
   Scenario: Antigravity can still ask in full access
     Given an Antigravity thread in full access

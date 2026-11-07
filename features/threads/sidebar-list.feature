@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17022
+#   https://github.com/pingdotgg/t3code/pull/18368
+#   https://github.com/pingdotgg/t3code/pull/17050
+#   https://github.com/pingdotgg/t3code/pull/18740
+#   https://github.com/pingdotgg/t3code/pull/20522
 #   https://github.com/pingdotgg/t3code/pull/16291
 #   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13759
@@ -326,6 +331,15 @@ Feature: The thread list
     When the user looks at the thread list
     Then the open thread is still listed under the settled section
 
+  @backlog @desktop @tui
+  Scenario: Settling a thread into a collapsed settled shelf keeps the list working
+    Given the user is viewing "Fix login" and "Refactor cart" is active
+    And the settled section is collapsed
+    When the user settles "Refactor cart"
+    Then "Refactor cart" leaves the active threads
+    And the collapsed settled section counts one more thread
+    And the user can still open and switch threads from the list
+
   @backlog @desktop
   Scenario: A settled thread far down a long shelf is shown when it is opened
     Given there are 40 settled threads and the settled section is expanded
@@ -350,6 +364,23 @@ Feature: The thread list
     When the user opens the project filter
     Then "shop" is listed once
     And its entry says it is also on the other environment, with that environment's name
+
+  # Upstream #17050. Each environment's scratch folder is its own project, so each one used
+  # to get its own "No project" entry. A real project named "No project" is not merged in.
+  @backlog @shared
+  Scenario: Threads without a project on every environment share one "No project" filter
+    Given the environments "home" and "work" each have a thread without a project
+    When the user opens the project filter
+    Then "No project" is listed once
+    When the user chooses "No project"
+    Then the list shows the threads without a project from "home" and "work"
+    And no thread of a project is shown
+
+  @backlog @shared
+  Scenario: A chosen "No project" filter survives the environments connecting late
+    Given the user scoped the list to "No project"
+    When the user restarts the app and the environments' settings arrive after their projects
+    Then the list is still scoped to "No project"
 
   @backlog @desktop
   Scenario: Opening a project's settings from the project filter
@@ -405,6 +436,14 @@ Feature: The thread list
     Then the row for "Beta" says "Terminal process running"
     And pointing at the row says "2 terminal processes running"
 
+  @backlog @shared
+  Scenario: The running-terminal mark opens the terminal that is running
+    Given "Beta" has the terminals "term-1" and "term-2" split side by side
+    And only "term-2" is running a process
+    When the user clicks the running-terminal mark on the row for "Beta"
+    Then "Beta" opens with its terminal drawer showing "term-2"
+    And no new terminal is started
+
   @backlog @desktop
   Scenario: A thread row says which worktree and branch it works in
     Given "Beta" works in a worktree on the branch "feature/cart"
@@ -416,6 +455,19 @@ Feature: The thread list
     Given the environment "work" is another machine with the thread "Gamma"
     When the user looks at the thread list
     Then the row for "Gamma" shows the kind of machine and the name "work"
+
+  # Upstream #17022: every machine has its own "No project", so the row says which one.
+  @backlog @desktop
+  Scenario Outline: A thread without a project names its machine where a branch would be
+    Given <environments> connected
+    And "Notes" has no project and runs on "work"
+    When the user looks at the thread list
+    Then the row for "Notes" <shows>
+
+    Examples:
+      | environments                        | shows                                                      |
+      | the environments "home" and "work" are | shows the kind of machine and "work" on its branch line |
+      | only the environment "work" is       | shows no machine name                                     |
 
   @backlog @desktop
   Scenario: A thread row shows the providers it was handed over from
@@ -454,6 +506,14 @@ Feature: The thread list
     Given "Beta" is linked to a stack of 3 pull requests
     When the user points at the pull requests on the row for "Beta"
     Then the user sees each pull request with its state and its place in the stack
+
+  # Upstream #18368: the second pull request arrived while the app was open.
+  @backlog @desktop
+  Scenario: Pointing at a row's pull requests lists them after a second one is linked
+    Given "Beta" is linked to pull request 12
+    When pull request 14 is linked to "Beta" while the user watches the thread list
+    And the user points at the pull requests on the row for "Beta"
+    Then the user sees pull requests 12 and 14 with their states
 
   @backlog @desktop
   Scenario: A thread row keeps a finished pull request after the checkout moves on

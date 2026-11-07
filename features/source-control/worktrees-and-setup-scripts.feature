@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19411
+#   https://github.com/pingdotgg/t3code/pull/14917
+#   https://github.com/pingdotgg/t3code/pull/20079
 #   https://github.com/pingdotgg/t3code/pull/15594
 #   https://github.com/pingdotgg/t3code/pull/16167
 #   https://github.com/pingdotgg/t3code/pull/16220
@@ -65,6 +68,14 @@ Feature: Worktrees and setup scripts
     When the user sends the first message of a thread in a new worktree
     Then the fetch stage runs before the files are checked out
 
+  @backlog @mc
+  Scenario: A fetch that loses a ref race with another fetch is tried again
+    Given the project starts worktrees from origin
+    And a background fetch of "origin" holds "origin/main" while the worktree's fetch runs
+    When git reports it could not update "refs/remotes/origin/main"
+    Then the worktree's fetch is tried once more and the worktree is made
+    And a lock failure that persists tells the user a local reference could not be updated
+
   @mc
   Scenario: Without a remote the fetch stage is skipped
     Given "shop" has no remote
@@ -98,6 +109,26 @@ Feature: Worktrees and setup scripts
     When the user sends "Add tax to the cart" as the first message of a thread in a new worktree
     Then the worktree first sits on the temporary branch "hal-c2/42a5d641"
     And the branch is renamed to a name the writer model derives from the message
+
+  @mc @backlog
+  Scenario: Subagents made before the temporary branch is renamed pick up the new name
+    Given a thread in a new worktree delegated to two subagents while the worktree was on its temporary branch
+    And one of the subagent threads is archived
+    When the temporary branch is renamed to "feature/add-tax"
+    Then the thread and both subagent threads record the branch "feature/add-tax"
+
+  @mc @backlog
+  Scenario: A thread that moved off the worktree keeps its branch when the temporary branch is renamed
+    Given a subagent recorded the new worktree's temporary branch
+    And it was moved to another worktree before the rename
+    When the temporary branch is renamed to "feature/add-tax"
+    Then the subagent keeps the branch of the worktree it moved to
+
+  @mc @backlog
+  Scenario: A provider's own subagent made on the temporary branch records the worktree's current branch
+    Given the temporary branch of a new worktree was renamed to "feature/add-tax"
+    When the provider starts its own subagent carrying the temporary branch from the turn's start
+    Then the subagent thread records the branch "feature/add-tax" read from git
 
   @mc
   Scenario: A branch named "hal-c2" does not stop a new worktree
@@ -152,6 +183,22 @@ Feature: Worktrees and setup scripts
       | action                | duration       | request                                              |
       | checking out files    | 2 minutes      | sends the first message of a thread in a new worktree |
       | removing the worktree | 2 minutes      | removes the worktree                                  |
+
+  # Upstream #14917: Git for Windows refuses paths over 260 characters unless core.longpaths is
+  # set, and a removal that fails partway strands the folder where nothing cleans it up.
+  @backlog @mc
+  Scenario Outline: A worktree with long paths works on Windows whatever Git's long-path setting
+    Given the MC runs on Windows and Git's long-path setting is <setting>
+    And "shop" tracks a file whose path in the worktree is longer than 260 characters
+    When the user <request>
+    Then it succeeds
+    And the user's Git configuration is unchanged
+
+    Examples:
+      | setting       | request                                               |
+      | not set       | sends the first message of a thread in a new worktree |
+      | not set       | removes the worktree                                  |
+      | set to false  | removes the worktree                                  |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: gh-merge-base)
   @mc

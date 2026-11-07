@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16666
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the header and context strip from the MC)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the thread and project rows it reads)
 #   apps/desktop-qt/src/native/DraftController.cpp (the draft a window with no thread lands on)
@@ -25,6 +26,13 @@ Feature: The thread's header on the desktop
     Given the checkout's pull request is "https://github.com/acme/shop/pull/7"
     When the user opens the pull request from the header
     Then the browser opens "https://github.com/acme/shop/pull/7"
+
+  @backlog @desktop
+  Scenario: A child thread's header leads back to its parent
+    Given the thread was started by the thread "Plan checkout"
+    When the user chooses "Plan checkout" in the thread's header
+    Then "Plan checkout" opens
+    And when the header is short of room the parent is shortened to an ellipsis that still opens it and shows its full title on hover
 
   @desktop
   Scenario: Leaving the thread lands on a new draft in the most recent project

@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19849
+#   https://github.com/pingdotgg/t3code/pull/17539
+#   https://github.com/pingdotgg/t3code/pull/17945
+#   https://github.com/pingdotgg/t3code/pull/17761
+#   https://github.com/pingdotgg/t3code/pull/17764
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/composer.md (Queued messages, Follow-up behavior)
 #   docs/user/updating.md (Continue threads after restarts)
@@ -96,6 +101,36 @@ Feature: Runs, interruptions and the queue
       | queued behind the active turn        | Queued behind the active turn                             |
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
+
+  # The marker only shows on a message that has already gone out, so it must
+  # not read as still waiting; messages still waiting stay in the queue above
+  # the composer.
+  @backlog @shared
+  Scenario: A message sent from the queue reads as sent, not as waiting
+    Given the user's message was queued while the agent was busy and has since run
+    Then the message is marked "From queue"
+    And the marker explains "Queued while the agent was busy"
+
+  @backlog @shared
+  Scenario: A reply that finished before a steer stays the turn's answer
+    Given the agent finished its reply
+    When the user's steer restarts the run before the turn closed
+    Then the finished reply stays visible as the turn's answer
+    And it is not folded away as partial output
+
+  @backlog @shared
+  Scenario: A reply cut off by a steer is folded as cut off
+    Given the agent is in the middle of its reply
+    When the user's steer restarts the run
+    Then what the agent had written is folded under "Cut off by a steer"
+
+  @backlog @shared
+  Scenario: A queued run that starts after a steer shows in a thread with only recent history loaded
+    Given a thread with only its recent history loaded has a queued follow-up
+    And a steer sent after it ran first
+    When the queued follow-up starts
+    Then its message and the agent's work appear in the thread
+    And they are still there after a reload
 
   @backlog @mobile
   Scenario: A message the MC has not acknowledged yet is marked as pending
@@ -254,6 +289,18 @@ Feature: Runs, interruptions and the queue
       | of a 200,000 token window | 72% · 144k/200k |
       | of an unknown window      | 144k used       |
 
+  # Upstream #17539: counts just under a million rounded up inside the thousands and read "1000k".
+  @shared @backlog
+  Scenario Outline: A context count that rounds up to a million reads as a million
+    Given the agent has used <tokens> tokens of an unknown window
+    Then the context window reads "<reading>"
+
+    Examples:
+      | tokens    | reading   |
+      | 999,499   | 999k used |
+      | 999,500   | 1m used   |
+      | 1,000,000 | 1m used   |
+
   @backlog @desktop
   Scenario: The context window reading is shown only when its setting is on
     Given the context window meter setting is off
@@ -405,6 +452,27 @@ Feature: Runs, interruptions and the queue
     Given Claude asked whether to compact before resuming and the user answered never to be asked again
     When the user later comes back to a long Claude conversation on that Claude instance
     Then the offer "Resume with less context" is not shown
+
+  @backlog @mc @desktop @mobile @tui @plugin-claude
+  Scenario Outline: The offer to continue with less context follows Claude's prompt cache lifetime
+    Given a Claude thread with 100,000 tokens in its context window
+    And Claude's last reply <cache>
+    When the thread has been idle for <ago>
+    Then the offer "Resume with less context" is <shown>
+
+    Examples:
+      | cache                                 | ago        | shown     |
+      | wrote its prompt cache for 5 minutes  | 6 minutes  | shown     |
+      | wrote its prompt cache for 1 hour     | 59 minutes | not shown |
+      | wrote its prompt cache for 1 hour     | 61 minutes | shown     |
+      | wrote no prompt cache                 | 69 minutes | not shown |
+      | wrote no prompt cache                 | 70 minutes | shown     |
+
+  @backlog @desktop @mobile @tui
+  Scenario: The offer reads the thread's newest usage after a provider handoff
+    Given a thread moved from Codex to Claude
+    When the user reloads the thread
+    Then the offer to continue with less context counts the tokens of Claude's latest turn, not an older one
 
   @desktop @backlog
   Scenario Outline: The thread says when its provider cannot run

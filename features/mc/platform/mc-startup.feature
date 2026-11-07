@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19604
+#   https://github.com/pingdotgg/t3code/pull/16102
+#   https://github.com/pingdotgg/t3code/pull/19340
 #   apps/server-ex/config/config.exs (the hal-c2-dev profile for a dev MC)
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_HOME, HAL_C2_HOME, T3_HOME, T3CODE_HOME, HAL_C2_MC_PORT, HAL_C2_MC_HOST, HAL_C2_HOST)
 #   apps/server-ex/README.md (Run, Release: where the MC keeps its state)
@@ -239,6 +242,28 @@ Feature: Starting the MC
     When the MC starts
     Then that folder is still searched
     And the folders from the login shell are searched as well
+
+  @backlog @mc
+  Scenario: Provider commands behind a mise wrapper start as they do in a terminal
+    Given the user's "claude" and "codex" are wrappers that run the real tool through mise
+    And the user's login shell activates mise
+    When the MC takes its PATH from the login shell
+    Then it also takes mise's record of the folders mise added
+    And Claude and Codex answer their status checks instead of timing out
+
+  @backlog @mc
+  Scenario Outline: Certificate settings from the login shell reach the commands the MC starts
+    Given the MC is started by a desktop launcher without "<variable>"
+    And the user's login shell exports "<variable>"
+    When the MC starts a provider's update command
+    Then the command sees "<variable>" as the login shell sets it
+    But a "<variable>" the MC was started with is kept
+
+    Examples:
+      | variable            |
+      | SSL_CERT_FILE       |
+      | SSL_CERT_DIR        |
+      | NODE_EXTRA_CA_CERTS |
 
   @backlog @mc
   Scenario: A login shell that cannot be read does not stop the MC
