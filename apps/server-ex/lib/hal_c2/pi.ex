@@ -117,9 +117,16 @@ defmodule HalC2.Pi do
       extension = not bare and not ephemeral
       args = if bare, do: without_extensions(args), else: args
 
+      # A short-lived Pi (discovery, text generation, a fork copy) runs offline:
+      # Pi renews expired logins as it starts, and stopping it mid-renewal can
+      # spend a single-use token the user's next Pi turn still needs.
+      offline =
+        if (ephemeral or bare) and "--offline" not in args, do: ["--offline"], else: []
+
       argv =
         [HalC2.Acp.binary_path(instance), "--mode", "rpc"] ++
           if(ephemeral, do: ["--no-session"], else: []) ++
+          offline ++
           args ++
           if(bare, do: ["--no-extensions", "--no-tools"], else: []) ++
           if(extension, do: ["--extension", extension_path()], else: []) ++
@@ -142,18 +149,19 @@ defmodule HalC2.Pi do
     end
   end
 
+  # Drops the user's extension and tool picks (flags and their values), which
+  # the bare process replaces with `--no-extensions --no-tools`.
   defp without_extensions(args) do
     {kept, _skip} =
       Enum.reduce(args, {[], false}, fn
         _arg, {kept, true} -> {kept, false}
-        arg, {kept, false} when arg in ["--extension", "-e"] -> {kept, true}
+        arg, {kept, false} when arg in ["--extension", "-e", "--tools", "-t"] -> {kept, true}
         "--extension=" <> _, acc -> acc
+        "--tools=" <> _, acc -> acc
         arg, {kept, false} -> {[arg | kept], false}
       end)
 
-    kept
-    |> Enum.reverse()
-    |> Enum.reject(&(&1 in ["--tools", "-t"]))
+    Enum.reverse(kept)
   end
 
   @doc "HAL-C2's Pi extension, written to the MC's cache directory where Pi can load it."
@@ -168,7 +176,11 @@ defmodule HalC2.Pi do
 
     if File.read(path) != {:ok, source} do
       File.mkdir_p!(Path.dirname(path))
-      File.write!(path, source)
+      # Written out whole and renamed over the old one, so a Pi session starting
+      # during the write loads the extension whole, before or after the write.
+      tmp = "#{path}.#{System.unique_integer([:positive])}.tmp"
+      File.write!(tmp, source)
+      File.rename!(tmp, path)
     end
 
     path
@@ -184,19 +196,28 @@ defmodule HalC2.Pi do
          {:ok, conn} <-
            Connection.start_link(cmd: argv, handler: self(), cd: cwd, env: env, dialect: :pi) do
       try do
-        with {:ok, state} <- Connection.call(conn, "get_state", %{}, 15_000),
-             {:ok, available} <- Connection.call(conn, "get_available_models", %{}, 15_000) do
+        # Discovery waits up to 30 seconds per read: Pi's extensions can load
+        # slowly, and their models are part of what discovery finds.
+        with {:ok, state} <- Connection.call(conn, "get_state", %{}, 30_000),
+             {:ok, available} <- Connection.call(conn, "get_available_models", %{}, 30_000) do
           commands =
-            case Connection.call(conn, "get_commands", %{}, 15_000) do
+            case Connection.call(conn, "get_commands", %{}, 30_000) do
               {:ok, data} -> data
               {:error, _} -> nil
             end
 
           {slash, skills} = parse_commands(commands)
+          state = state || %{}
+
+          current =
+            case state["model"] do
+              %{"provider" => provider, "id" => id} -> "#{provider}/#{id}"
+              _ -> nil
+            end
 
           {:ok,
            %{
-             models: models(available, (state || %{})["thinkingLevel"]),
+             models: models(available, state["thinkingLevel"], current),
              commands: [@compact | Enum.reject(slash, &(&1["name"] == "compact"))],
              skills: skills
            }}
@@ -209,7 +230,7 @@ defmodule HalC2.Pi do
     :exit, reason -> {:error, reason}
   end
 
-  defp models(data, level) do
+  defp models(data, level, current) do
     for %{"provider" => provider, "id" => id} = model <- (data || %{})["models"] || [],
         is_binary(provider) and is_binary(id),
         uniq: true do
@@ -218,8 +239,14 @@ defmodule HalC2.Pi do
       %{
         "slug" => slug,
         "name" => text(model["name"]) || slug,
+        # A discovered model keeps its underlying provider, so the model
+        # picker can show and search it by that name.
+        "subProvider" => provider,
         "isCustom" => false,
-        "capabilities" => %{"optionDescriptors" => thinking(model, level)}
+        # Only the model Pi is set to marks Pi's thinking level as its default.
+        "capabilities" => %{
+          "optionDescriptors" => thinking(model, if(slug == current, do: level))
+        }
       }
     end
   end

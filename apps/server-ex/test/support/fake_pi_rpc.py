@@ -26,7 +26,7 @@
 # but not answered while the turn waits (its next model call never comes); one saying "decline" is rejected,
 # and one saying "ignore" never answered, only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
-import json, os, sys, time, urllib.request, uuid
+import json, os, sys, threading, time, urllib.request, uuid
 
 DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
@@ -50,9 +50,14 @@ def config():
         return {}
 
 
+SEND_LOCK = threading.Lock()
+
+
 def send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    # Unescaped, as Pi writes UTF-8: a U+2028 in a text travels literally.
+    with SEND_LOCK:
+        sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
 def arg(name):
@@ -91,9 +96,17 @@ def new_path():
     return os.path.join(SESSIONS, "%s.json" % uuid.uuid4().hex[:12])
 
 
+def load_name(path):
+    try:
+        with open(path) as f:
+            return json.load(f).get("name")
+    except (OSError, ValueError):
+        return None
+
+
 class Session:
-    def __init__(self, path, entries):
-        self.path, self.entries = path, entries
+    def __init__(self, path, entries, name=None):
+        self.path, self.entries, self.name = path, entries, name
 
     def save(self):
         if self.path and self.path.endswith(".jsonl"):
@@ -104,7 +117,7 @@ class Session:
                     f.write(json.dumps(line) + "\n")
         elif self.path:
             with open(self.path, "w") as f:
-                json.dump({"entries": self.entries}, f)
+                json.dump({"entries": self.entries, "name": self.name}, f)
 
     def append(self, role, content):
         entry = {"id": uuid.uuid4().hex[:8], "type": "message",
@@ -130,8 +143,10 @@ log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
 cfg = config()
 
 if "--version" in sys.argv:
+    if cfg.get("versionDelaySec"):
+        time.sleep(float(cfg["versionDelaySec"]))
     print(cfg.get("version", "0.80.5"))
-    sys.exit(0)
+    sys.exit(int(cfg.get("versionExit", 0)))
 
 # Pi's own terminal app continuing a session file.
 if "-p" in sys.argv:
@@ -155,6 +170,8 @@ else:
     session = Session(new_path(), [])
 
 state = {"thinking": cfg.get("thinkingLevel", "medium"), "model": None, "usage": None}
+settled_sent = False
+delayed_once = set()
 backlog = []
 ui_answers = {}
 aborted = [False]
@@ -287,12 +304,32 @@ def run_turn(text):
                 result, error = step.get("output", "ok"), False
             else:
                 result, error = "%s was declined in HAL-C2." % tool, True
+            details = dict(step.get("details") or (
+                {"exitCode": 0} if tool == "bash" and "exitCode" not in step else {}))
+            tool_result = {"content": step.get("content") or [{"type": "text", "text": result}],
+                           "details": details}
+            if "exitCode" in step:
+                where = step.get("exitWhere", "details")
+                if where == "structured":
+                    tool_result["structuredContent"] = {"exitCode": step["exitCode"]}
+                elif where == "top":
+                    tool_result["exitCode"] = step["exitCode"]
+                else:
+                    details["exitCode"] = step["exitCode"]
             send({"type": "tool_execution_start", "toolCallId": call_id, "toolName": tool,
                   "args": args})
-            send({"type": "tool_execution_end", "toolCallId": call_id, "toolName": tool,
-                  "result": {"content": [{"type": "text", "text": result}],
-                             "details": {"exitCode": 0} if tool == "bash" else {}},
-                  "isError": error})
+            if step.get("hangInTool"):
+                # The tool is still running when the abort lands; Pi then ends
+                # it as an error, like a command killed mid-run.
+                if not aborted[0]:
+                    wait_for(lambda m: aborted[0])
+                tool_result = {"content": [{"type": "text", "text": "aborted"}], "details": {}}
+                send({"type": "tool_execution_end", "toolCallId": call_id, "toolName": tool,
+                      "result": tool_result, "isError": True})
+            else:
+                send({"type": "tool_execution_end", "toolCallId": call_id, "toolName": tool,
+                      "result": tool_result,
+                      "isError": step.get("isError", error)})
         elif "select" in step:
             answer = dialog("select", step["select"])
             log({"ui_answer": answer})
@@ -301,6 +338,33 @@ def run_turn(text):
                   "assistantMessageEvent": {"type": "text_delta", "delta": said[-1]}})
         elif "event" in step:
             send(step["event"])
+        elif "raw" in step:
+            # Output that is not part of Pi's protocol, on the protocol channel.
+            sys.stdout.write(step["raw"] + "\n")
+            sys.stdout.flush()
+        elif "stderr" in step:
+            sys.stderr.write(step["stderr"] + "\n")
+            sys.stderr.flush()
+        elif "bigText" in step:
+            said.append("x" * int(step["bigText"]))
+            send({"type": "message_update", "message": assistant("".join(said)),
+                  "assistantMessageEvent": {"type": "text_delta", "delta": said[-1]}})
+        elif "uiEmit" in step:
+            # A fire-and-forget extension UI request (notify, terminal dressing):
+            # sent with an id, but Pi does not wait for an answer.
+            request = dict(step["uiEmit"], type="extension_ui_request",
+                           id="ui-%s" % uuid.uuid4().hex[:8])
+            log({"ui": request})
+            send(request)
+        elif "ui" in step:
+            fields = {k: v for k, v in step["ui"].items() if k != "method"}
+            answer = dialog(step["ui"]["method"], fields)
+            log({"ui_answer": answer})
+            if "say" in step:
+                value = answer.get("value", answer.get("confirmed"))
+                said.append("%s%s" % (step["say"], value))
+                send({"type": "message_update", "message": assistant("".join(said)),
+                      "assistantMessageEvent": {"type": "text_delta", "delta": said[-1]}})
         elif "mcp" in step:
             body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                "params": step["mcp"]}).encode()
@@ -331,6 +395,9 @@ def run_turn(text):
             backlog.extend(sorted(steers, key=lambda m: m.get("message", "")))
             if steers:
                 break
+        elif "hang" in step:
+            # Never answers, aborts included, until the process is stopped.
+            time.sleep(3600)
         elif "exit" in step:
             os._exit(step["exit"])
     if aborted[0]:
@@ -341,27 +408,66 @@ def run_turn(text):
     session.append("assistant", "".join(said))
     send({"type": "agent_end"})
     send({"type": "agent_settled"})
+    # Events Pi sends once a turn has settled (an extension waking or failing
+    # between turns), once per process.
+    global settled_sent
+    if not settled_sent:
+        settled_sent = True
+        for event in config().get("settledEvents") or []:
+            send(event)
 
 
 def command(msg):
     kind = msg.get("type")
     cfg = config()
+    delays = cfg.get("commandDelays") or {}
+    if kind in delays and (kind not in (cfg.get("delayOnce") or []) or kind not in delayed_once):
+        delayed_once.add(kind)
+        if kind == "get_commands":
+            # Pi keeps answering other commands while a slow extension holds
+            # this one up.
+            def later():
+                time.sleep(float(delays[kind]))
+                respond(msg, {"commands": config().get("commands", [])})
+
+            threading.Thread(target=later, daemon=True).start()
+            return
+        time.sleep(float(delays[kind]))
+    if kind in (cfg.get("failCommands") or []):
+        respond(msg, error=cfg.get("failMessage", "fake cannot %s" % kind))
+        return
     if kind == "get_state":
         model = current_model()
-        respond(msg, {"sessionFile": session.path, "thinkingLevel": state["thinking"],
+        respond(msg, {"sessionFile": None if cfg.get("noSessionFile") else session.path,
+                      "sessionName": session.name,
+                      "thinkingLevel": state["thinking"],
                       "model": model, "isStreaming": False})
     elif kind == "get_available_models":
         respond(msg, {"models": models()})
     elif kind == "get_commands":
         respond(msg, {"commands": cfg.get("commands", [])})
     elif kind == "switch_session":
-        session.path, session.entries = msg["sessionPath"], load(msg["sessionPath"])
-        respond(msg, {"cancelled": False})
+        if cfg.get("cancelSwitch"):
+            respond(msg, {"cancelled": True})
+        else:
+            session.path, session.entries = msg["sessionPath"], load(msg["sessionPath"])
+            session.name = load_name(msg["sessionPath"])
+            respond(msg, {"cancelled": False})
+    elif kind == "set_session_name":
+        session.name = msg.get("name")
+        session.save()
+        respond(msg, session.name)
     elif kind == "set_model":
         found = [m for m in models() if m["provider"] == msg.get("provider")
                  and m["id"] == msg.get("modelId")]
         if found:
             state["model"] = found[0]
+            # With modelThinking configured, changing model applies that model's
+            # own thinking level, as Pi applies the new model's default.
+            slug = "%s/%s" % (found[0]["provider"], found[0]["id"])
+            if cfg.get("modelThinking") is not None:
+                state["thinking"] = cfg["modelThinking"].get(
+                    slug, cfg.get("thinkingLevel", "medium"))
             respond(msg, found[0])
         else:
             respond(msg, error="Model not found: %s/%s" % (msg.get("provider"), msg.get("modelId")))
@@ -380,6 +486,9 @@ def command(msg):
                       "tokens": {"input": usage.get("input"), "output": usage.get("output"),
                                  "cacheRead": usage.get("cacheRead")}})
     elif kind == "fork":
+        if cfg.get("cancelFork"):
+            respond(msg, {"cancelled": True})
+            return
         ids = [e["id"] for e in session.entries]
         entry = msg.get("entryId")
         if entry not in ids:
@@ -394,7 +503,15 @@ def command(msg):
         said = [e["message"]["content"] for e in session.entries if e["message"]["role"] == "assistant"]
         respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
-        respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+        if "compactError" in cfg:
+            respond(msg, error=cfg["compactError"])
+        else:
+            if cfg.get("compactEvents", True):
+                send({"type": "compaction_start", "reason": "manual"})
+                send({"type": "compaction_end", "aborted": False,
+                      "result": {"summary": "Compacted.", "tokensBefore": 1000,
+                                 "estimatedTokensAfter": 200}})
+            respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
     elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
         # A steer saying "decline" that reaches Pi once its run settled is rejected.
         # One also saying "after stop" is rejected only once the abort reaches Pi.
@@ -404,6 +521,8 @@ def command(msg):
     elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
         # A steer saying "ignore" that reaches Pi once its run settled is never answered.
         pass
+    elif kind == "prompt" and "promptError" in cfg:
+        respond(msg, error=cfg["promptError"])
     elif kind == "prompt":
         respond(msg)
         run_turn(msg.get("message", ""))
