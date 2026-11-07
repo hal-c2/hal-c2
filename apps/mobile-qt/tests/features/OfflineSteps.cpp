@@ -216,7 +216,16 @@ void send(World& world, const QString& title, const QString& text) {
   offline(world).interactionMode = state.value(S("interactionMode")).toString();
   const qsizetype sent = sentTexts(world).size();
   world.tap(S("primaryAction"));
-  world.waitFor([&] { return !waiting(world, text).isEmpty() || sentTexts(world).size() > sent; },
+  // A send the composer itself refuses (a model that has not been set up)
+  // is neither sent nor waiting: its toast is the outcome.
+  const auto refused = [&world] {
+    for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
+      const QString title = toast.toMap().value(S("title")).toString();
+      if (title == QLatin1String("Message not sent") || title == QLatin1String("Antigravity model unavailable")) return true;
+    }
+    return false;
+  };
+  world.waitFor([&] { return !waiting(world, text).isEmpty() || sentTexts(world).size() > sent || refused(); },
                 [&] { return S("%1 to be sent or wait; the composer is %2, the outbox %3").arg(text, show(composerState(world)), show(outbox(world))); });
 }
 

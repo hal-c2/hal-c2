@@ -176,6 +176,8 @@ public:
       {QStringLiteral("pullRequests"), true},
       {QStringLiteral("threadPullRequests"), true},
       {QStringLiteral("threadPullRequestLinking"), true},
+      // As the MC's own descriptor has it (HalC2.Environment).
+      {QStringLiteral("fileAttachments"), QJsonObject{{QStringLiteral("maxUploadBytes"), 50 * 1024 * 1024}}},
   };
   bool holdSnapshot = false;
   // How long the MC takes to build its thread list: a shell `sub` is answered

@@ -529,6 +529,62 @@ Item {
             compare(sent.payload.id, "tc-1");
         }
 
+        // Removing the chip removes the context; the controller strips the
+        // [@title](hal-c2-context://v1/thread/...) link from the draft with it
+        // (tst_ComposerRegression's removingAThreadChipStripsItsLinkFromTheDraft).
+        function test_threadChipNamesTheThreadAndRemovesIt() {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    text: "see [@Fix the login](hal-c2-context://v1/thread/thread_th-1) please",
+                    threadContexts: [{ id: "th-1", label: "Fix the login" }]
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const chip = findChild(composer, "threadContext-th-1");
+            verify(!!chip);
+            compare(chip.text, "Fix the login");
+            // Typed just now (still in the 120 ms debounce): the controller,
+            // which strips the link from its draft, gets these words first.
+            const input = findChild(composer, "input");
+            const typed = "see [@Fix the login](hal-c2-context://v1/thread/thread_th-1) please thanks";
+            input.text = typed;
+            input.cursorPosition = typed.length;
+            const before = Shell.dispatchedActions.length;
+            mouseClick(chip);
+            const sent = Shell.dispatchedActions.slice(before);
+            compare(sent.length, 2);
+            compare(sent[0].action, "composer.text.set");
+            compare(sent[0].payload.text, typed);
+            compare(sent[0].payload.cursor, typed.length);
+            compare(sent[1].action, "composer.terminalContext.remove");
+            compare(sent[1].payload.id, "th-1");
+        }
+
+        // A large paste the controller cannot file is spliced into its
+        // draft, so paste hands it the editor's live words and caret first:
+        // typing still in the debounce and a caret moved without typing.
+        function test_aLargePasteFlushesTheEditorsTextAndCaretFirst() {
+            Shell.clipboard = "a very long paste";
+            Shell.pasteBecomesFile = true;
+            const composer = createTemporaryObject(composerComponent, root);
+            const input = findChild(composer, "input");
+            input.focus = true;
+            const before = Shell.dispatchedActions.length;
+            // Typed just now (still in the 120 ms debounce), caret mid-draft.
+            input.text = "before after";
+            input.cursorPosition = 6;
+            verify(Shell.dispatchedActions.slice(before).every(entry => entry.action !== "composer.text.set"), "the typing is unflushed");
+            verify(composer.paste(false));
+            const sent = Shell.dispatchedActions.slice(before);
+            compare(sent.length, 2);
+            compare(sent[0].action, "composer.text.set");
+            compare(sent[0].payload.text, "before after");
+            compare(sent[0].payload.cursor, 6);
+            compare(sent[1].action, "composer.attach");
+            compare(sent[1].payload.files[0].name, "pasted-text.txt");
+            compare(sent[1].payload.files[0].text, "a very long paste");
+        }
+
         function test_quotedReplyChipTakesACommentAndRemoves() {
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, {

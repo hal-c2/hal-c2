@@ -24,14 +24,15 @@
 
 namespace {
 
-// The entity kinds the timeline reads; the stream's others (nodes, provider
-// sessions, ...) are left out. Plans and the user's messages are kept for the
-// composer (turnChanged), checkpoints for the diff panel (checkpointsChanged)
+// The entity kinds the timeline reads; the stream's others (nodes, ...) are
+// left out. Plans and the user's messages are kept for the composer
+// (turnChanged), provider sessions for what their turns can do (the
+// composer's steering), checkpoints for the diff panel (checkpointsChanged)
 // and a reply's revert (checkpointOf), subagents for the Agents tab
 // (agentsChanged); they draw no rows.
-const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
-                           QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
-                           QStringLiteral("checkpoint"),      QStringLiteral("subagent"),
+const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),           QStringLiteral("run-attempt"),
+                           QStringLiteral("runtime-request"), QStringLiteral("plan"),          QStringLiteral("message"),
+                           QStringLiteral("checkpoint"),      QStringLiteral("subagent"),      QStringLiteral("provider-session"),
                            QStringLiteral("provider-thread")};
 // The kinds a window bounds (HalC2.Streams.View): the client holds those of
 // the runs from its floor on. The rest are held whole.
@@ -1247,7 +1248,7 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
     }
     return false;
   }
-  if (kind == QLatin1String("plan") || kind == QLatin1String("message")) {
+  if (kind == QLatin1String("plan") || kind == QLatin1String("message") || kind == QLatin1String("provider-session")) {
     // The agent's streamed replies are the turn items'; only the user's
     // messages (a queued run's text) are kept.
     if (kind == QLatin1String("message") && text(next ? *next : QJsonObject(), QLatin1String("role")) != QLatin1String("user")) {

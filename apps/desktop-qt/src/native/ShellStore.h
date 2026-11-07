@@ -97,6 +97,9 @@ public:
   // when none does.
   QString mcServing(const QString& environmentId) const;
   sidebar::Capabilities capabilities(const QString& environmentId) const;
+  // Whether the environment takes file attachments at all (its
+  // `fileAttachments` capability); an environment not heard from reads as able.
+  bool acceptsFileAttachments(const QString& environmentId) const;
   // Whether the environment's descriptor turns `capability` on (pullRequests,
   // threadPullRequests, threadPullRequestLinking, ...).
   bool supports(const QString& environmentId, const QString& capability) const;
