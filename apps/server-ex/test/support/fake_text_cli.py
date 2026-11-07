@@ -17,7 +17,8 @@ codex = args[:1] == ["exec"]
 log = os.environ.get("FAKE_TEXT_LOG")
 if log:
     with open(log, "a") as f:
-        f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid()}) + "\n")
+        f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid(),
+                            "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
 
 if codex:
     schema = json.load(open(args[args.index("--output-schema") + 1]))
