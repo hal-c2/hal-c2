@@ -107,9 +107,10 @@ defmodule HalC2.Orchestration.Recovery do
         mc == node(),
         thread_id not in except,
         # `status` is the latest run's, so a cancelled queued run can hide a running
-        # one behind it; `activityRunStatus` is the latest active run's.
+        # one behind it; `activityRunStatus` is the latest active run's. A row stored
+        # before `runningBackgroundTasks` listed all background work as pending.
         row["status"] in @active_runs or row["activityRunStatus"] != nil or
-          (row["pendingBackgroundTasks"] || []) != [],
+          (row["runningBackgroundTasks"] || row["pendingBackgroundTasks"] || []) != [],
         do: thread_id
   end
 

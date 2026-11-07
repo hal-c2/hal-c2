@@ -387,7 +387,9 @@ Item {
             return [
                 { tag: "not published", sidebar: undefined, message: "Waiting for the app…" },
                 { tag: "no projects", sidebar: { projects: [] }, message: "No projects yet" },
-                { tag: "no threads", sidebar: {}, message: "No threads yet" }
+                { tag: "no threads", sidebar: {}, message: "No threads yet" },
+                // Scenario: An empty project is named in the empty list
+                { tag: "scoped, no threads", sidebar: { scopeProjectKey: "project" }, message: "No threads in Project yet" }
             ];
         }
 
@@ -407,6 +409,30 @@ Item {
             compare(empty.visible, true);
             compare(empty.text, data.message);
             compare(list.activeFocusOnTab, false);
+        }
+
+        // Scenario: Adding a project from an empty list (features/threads/sidebar-list.feature)
+        function test_emptyListAddsAProject() {
+            const next = Object.assign(JSON.parse(JSON.stringify(Shell.state.sidebar)), { active: [], projects: [] });
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            tryCompare(findChild(sidebar, "list"), "count", 0);
+            compare(findChild(sidebar, "emptyText").text, "No projects yet");
+            const button = findChild(sidebar, "emptyAddProject");
+            verify(!!button, "Object exists");
+            compare(button.visible, true);
+            Shell.dispatchedActions = [];
+            mouseClick(button);
+            compare(Shell.dispatchedActions.length, 1);
+            compare(Shell.dispatchedActions[0].action, "project.add");
+        }
+
+        function test_emptyListOffersNoProjectWhileThereAreProjects() {
+            const next = Object.assign(JSON.parse(JSON.stringify(Shell.state.sidebar)), { active: [] });
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            tryCompare(findChild(sidebar, "list"), "count", 0);
+            compare(findChild(sidebar, "emptyAddProject").visible, false);
         }
 
         // Scenario: Adding a project from the thread list (features/threads/sidebar-list.feature)

@@ -601,7 +601,9 @@ for line in sys.stdin:
         item_id = steer_item_id()
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
-        send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+        # While FAKE_CODEX_KEEP_TURN's file exists, the turn keeps working after a steer.
+        if not os.path.exists(os.environ.get("FAKE_CODEX_KEEP_TURN", "/nonexistent")):
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
         path = params.get("path") or rollout_find(params["threadId"])

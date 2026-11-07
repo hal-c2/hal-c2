@@ -997,7 +997,7 @@ defmodule HalC2.Steps.Threads do
     :ok =
       Exqlite.Sqlite3.execute(
         db,
-        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_typed'"
+        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_typed_2'"
       )
 
     :ok = Exqlite.Sqlite3.close(db)
@@ -1014,7 +1014,7 @@ defmodule HalC2.Steps.Threads do
   step "the old threads are indexed once and can be searched", context do
     context = search(context, "invoices table")
     assert [_] = matches(context, "Old work")
-    assert HalC2.Store.meta(HalC2.Store.path(), "messages_typed") == "1"
+    assert HalC2.Store.meta(HalC2.Store.path(), "messages_typed_2") == "1"
     context
   end
 
@@ -2069,8 +2069,10 @@ defmodule HalC2.Steps.Threads do
   step "the first request and the newest messages are kept whole", context do
     assert context.where =~ "history True"
 
-    assert [%{"summaryText" => "[earlier messages omitted]\n\n" <> kept}] =
+    assert [%{"summaryText" => summary}] =
              HalC2.StreamState.list(context.fork_state, "context-handoff")
+
+    assert ["[earlier messages omitted" <> _, kept] = String.split(summary, "\n\n", parts: 2)
 
     assert kept =~ ~r/\AUser: hello\n\n/
 
@@ -2525,7 +2527,8 @@ defmodule HalC2.Steps.Threads do
     assert final["phase"] == "done"
     ran = ["checkout", "agent" | if(context.skipped == "fetch", do: ["setup-script"], else: [])]
     assert Map.take(statuses(final), ran) |> Map.values() |> Enum.all?(&(&1 == "done"))
-    World.await_runs(context, World.current(context), ["completed"])
+    # A ceiling for a whole fake turn on a busy machine, not a wait.
+    World.await_runs(context, World.current(context), ["completed"], 30_000)
     context
   end
 
@@ -2543,13 +2546,19 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # Also the source-control scenarios', which follow their setup with `World.await_setup/3`.
   step "the worktree starts from the local {string}", %{args: [branch]} = context do
-    {final, context} = await_setup(context, &(&1["phase"] != "running"))
+    settled = &(&1["phase"] != "running")
+
+    {final, context} =
+      if Map.has_key?(context, :snapshots),
+        do: await_setup(context, settled),
+        else: World.await_setup(context, settled)
+
     assert %{"phase" => "done", "worktreePath" => path} = final
     assert statuses(final)["fetch"] == "done"
     root = World.project(context).root
-    World.git!(root, ~w(commit -q --allow-empty -m local-only))
-    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", "#{branch}~1"])
+    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", branch])
     context
   end
 
@@ -2572,7 +2581,19 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # The Background's script waits for a line once it has printed, so its terminal is
+  # still there to open (a script that went well closes it).
   step "the setup script starts", context do
+    context =
+      if context[:startup_question],
+        do: context,
+        else:
+          put_in(
+            context,
+            [:setup_script, "command"],
+            "echo installing packages && echo linking && read go"
+          )
+
     {snapshot, context} = context |> prepare() |> await_setup(&(&1["setupScript"] != nil))
     Map.merge(context, %{started: snapshot, worktree_path: snapshot["worktreePath"]})
   end
@@ -2616,6 +2637,9 @@ defmodule HalC2.Steps.Threads do
         client
       end
 
+    id = World.thread_id(context, World.current(context))
+    write = %{"threadId" => id, "terminalId" => context.setup_terminal, "data" => "\n"}
+    assert {:ok, _} = HalC2.Terminal.write(write)
     World.put_client(context, client)
   end
 
@@ -2697,6 +2721,315 @@ defmodule HalC2.Steps.Threads do
 
   # Launches the thread in a new worktree once, with the script the Givens chose,
   # watching its setup from the test process.
+  # --- a shell startup that asks something -----------------------------------------
+
+  # `sh -i` reads `$ENV` as it starts: this one asks its question and waits for a line.
+  step "the user's shell startup asks {string}", %{args: [question]} = context do
+    path = Path.join(Mc.tmp_dir(context.mc, "startup"), "env.sh")
+
+    File.write!(path, """
+    printf '%s ' '#{question}'
+    read answer
+    echo "startup read: $answer"
+    """)
+
+    World.put_env("SHELL", "/bin/sh")
+    World.put_env("ENV", path)
+
+    context
+    |> put_in([:setup_script, "command"], "echo ran > setup-ran.txt")
+    |> Map.put(:startup_question, question)
+  end
+
+  step "the setup command is not typed while that question is open", context do
+    {snapshot, context} =
+      await_setup(
+        context,
+        &(script_tail(&1) |> Enum.any?(fn l -> l =~ context.startup_question end))
+      )
+
+    assert snapshot["phase"] == "running"
+    assert statuses(snapshot)["setup-script"] == "running"
+    assert statuses(snapshot)["agent"] == "pending"
+    refute File.exists?(Path.join(context.worktree_path, "setup-ran.txt"))
+    Map.put(context, :asking, snapshot)
+  end
+
+  step "the setup output shows the question, and the user can open the setup terminal to answer it",
+       context do
+    assert List.last(script_tail(context.asking)) =~ context.startup_question
+    id = World.thread_id(context, World.current(context))
+    assert [_] = Registry.lookup(HalC2.Terminal.Registry, {id, "setup"})
+    context
+  end
+
+  step "the user answers the startup question", context do
+    id = World.thread_id(context, World.current(context))
+
+    assert {:ok, _} =
+             HalC2.Terminal.write(%{"threadId" => id, "terminalId" => "setup", "data" => "n\n"})
+
+    context
+  end
+
+  step "the setup script runs and its completion is reported", context do
+    {snapshot, context} = await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    stage = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    assert %{"status" => "done", "detail" => "exited with 0"} = stage
+    # The startup read the user's answer, not the setup command.
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup-ran.txt")) == "ran\n"
+    refute Enum.any?(stage["tail"] || [], &(&1 =~ context.startup_question))
+    World.await_runs(context, World.current(context), ["completed"], 30_000)
+    context
+  end
+
+  # The script waits for a line, so its shell is caught running before it ends.
+  step "the setup script ran in the terminal {string} and exited with 0",
+       %{args: [terminal]} = context do
+    {snapshot, context} =
+      context
+      |> put_in([:setup_script, "command"], "read go && echo went")
+      |> prepare()
+      |> await_setup(&(&1["setupScript"] != nil))
+
+    id = World.thread_id(context, World.current(context))
+    assert snapshot["setupScript"]["terminalId"] == terminal
+    [{shell, _}] = Registry.lookup(HalC2.Terminal.Registry, {id, terminal})
+    write = %{"threadId" => id, "terminalId" => terminal, "data" => "\n"}
+    assert {:ok, _} = HalC2.Terminal.write(write)
+
+    {snapshot, context} = await_setup(context, &(statuses(&1)["setup-script"] in ~w(done failed)))
+    assert statuses(snapshot)["setup-script"] == "done"
+    Map.put(context, :setup_shell, shell)
+  end
+
+  # The script's stage is done only once its shell is gone.
+  step "the {string} terminal is closed", context do
+    refute Process.alive?(context.setup_shell)
+    context
+  end
+
+  step "the setup shell exits before it is ready for a command", context do
+    path = Path.join(Mc.tmp_dir(context.mc, "startup"), "env.sh")
+    File.write!(path, "echo 'startup gave up'\nexit 3\n")
+    World.put_env("SHELL", "/bin/sh")
+    World.put_env("ENV", path)
+    put_in(context, [:setup_script, "command"], "echo ran > setup-ran.txt")
+  end
+
+  step "the setup script was about to start", context do
+    {snapshot, context} = context |> prepare() |> await_setup(&(&1["phase"] != "running"))
+    Map.put(context, :ended, snapshot)
+  end
+
+  step "nothing is typed and the setup reports no exit code", context do
+    stage = Enum.find(context.ended["stages"], &(&1["id"] == "setup-script"))
+    assert %{"status" => "failed", "detail" => "exited with no exit code"} = stage
+    # What the startup said before it exited stays, as the reason.
+    assert stage["tail"] == ["startup gave up"]
+    refute File.exists?(Path.join(context.ended["worktreePath"], "setup-ran.txt"))
+    context
+  end
+
+  # --- the first turn and what is sent while the setup runs ---------------------------
+
+  step "a new worktree thread whose setup script runs alongside the agent", context do
+    put_in(context, [:setup_script, "async"], true)
+  end
+
+  step "the agent starts its first turn", context do
+    {snapshot, context} = context |> prepare() |> await_setup(&(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    Map.put(context, :final, snapshot)
+  end
+
+  step "the thread stays on its worktree and branch", context do
+    title = World.current(context)
+    path = context.final["worktreePath"]
+    World.await_runs(context, title, ["completed"], 30_000)
+    thread = World.thread(context, title)
+    assert thread["worktreePath"] == path and File.dir?(path)
+    assert thread["branch"] == World.git!(path, ~w(branch --show-current))
+    assert List.last(World.codex_requests(context, "thread/start"))["cwd"] == path
+    context
+  end
+
+  step "the first turn completes", context do
+    World.await_runs(context, World.current(context), ["completed"], 30_000)
+    assert [_] = World.codex_requests(context, "turn/start")
+    context
+  end
+
+  # The setup script waits for a line, so the setup is caught before the agent starts.
+  step "a new worktree thread is still checking out its worktree or running a setup script it must wait for",
+       context do
+    {snapshot, context} =
+      context
+      |> put_in([:setup_script, "command"], "read go && echo set up")
+      |> prepare()
+      |> await_setup(&(statuses(&1)["setup-script"] == "running"))
+
+    Map.put(context, :worktree_path, snapshot["worktreePath"])
+  end
+
+  step("the user sends a follow-up", context, do: send_follow_up(context))
+  step("the follow-up is queued", context, do: queued_follow_up(context))
+
+  step "it starts by itself after the first turn finishes", context do
+    id = World.thread_id(context, World.current(context))
+    write = %{"threadId" => id, "terminalId" => "setup", "data" => "\n"}
+    assert {:ok, _} = HalC2.Terminal.write(write)
+    follows_first_turn(context)
+  end
+
+  # The fetch the setup starts with waits on a fifo that `origin`'s upload-pack reads
+  # first, so the follow-up is queued before the worktree is made.
+  step "a follow-up is queued behind a worktree thread's setup", context do
+    root = World.project(context).root
+    dir = Mc.tmp_dir(context.mc, "origin")
+    origin = Path.join(dir, "origin.git")
+    World.git!(dir, ["init", "-q", "--bare", "-b", "main", origin])
+    World.git!(root, ["remote", "add", "origin", origin])
+    World.git!(root, ~w(push -q origin main))
+    gate = Path.join(dir, "gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    pack = Path.join(dir, "upload-pack.sh")
+    File.write!(pack, "#!/bin/sh\nread _ < '#{gate}'\nexec git-upload-pack \"$@\"\n")
+    File.chmod!(pack, 0o755)
+    World.git!(root, ["config", "remote.origin.uploadpack", pack])
+
+    {_snapshot, context} =
+      context
+      |> put_in([:setup, "startFromOrigin"], true)
+      |> prepare()
+      |> await_setup(&(statuses(&1)["fetch"] == "running"))
+
+    context
+    |> Map.put(:gate, gate)
+    |> send_follow_up()
+    |> queued_follow_up()
+  end
+
+  step ~r/^the setup (?<ends>is cancelled|fails) before the worktree exists$/,
+       %{args: [ends]} = context do
+    root = World.project(context).root
+    gate = context.gate
+
+    case ends do
+      "is cancelled" ->
+        id = World.thread_id(context, World.current(context))
+        {reply, context} = World.call(context, "worktreeSetup.cancel", %{"threadId" => id})
+        assert {:ok, %{"cancelled" => true}} = reply
+        # The fetch may be gone with the setup; its gate is opened apart for one that is not.
+        spawn_link(fn -> File.write!(gate, "go\n") end)
+        Map.put(context, :ended, "cancelled")
+
+      "fails" ->
+        File.rename!(Path.join(root, ".git"), Path.join(root, ".git-away"))
+        File.write!(gate, "go\n")
+        {snapshot, context} = await_setup(context, &(&1["phase"] != "running"))
+        assert %{"phase" => "failed", "worktreePath" => nil} = snapshot
+        File.rename!(Path.join(root, ".git-away"), Path.join(root, ".git"))
+        World.git!(root, ~w(config --unset remote.origin.uploadpack))
+        Map.put(context, :ended, "failed")
+    end
+  end
+
+  step "the follow-up is held instead of running in the project's own checkout", context do
+    ended = context.ended
+
+    assert [%{"status" => ^ended}, %{"status" => "queued", "queueHeld" => true}] =
+             World.runs(context, World.current(context))
+
+    assert World.codex_requests(context, "turn/start") == []
+    assert World.codex_requests(context, "thread/start") == []
+    context
+  end
+
+  step "the user retries the setup", context do
+    id = World.thread_id(context, World.current(context))
+    context = %{context | snapshots: []}
+    {reply, context} = World.call(context, "worktreeSetup.retry", %{"threadId" => id})
+    assert {:ok, %{"retried" => true}} = reply
+    {snapshot, context} = await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    Map.put(context, :worktree_path, snapshot["worktreePath"])
+  end
+
+  step("the follow-up goes after the first turn, in the new worktree", context,
+    do: follows_first_turn(context)
+  )
+
+  defp send_follow_up(context) do
+    title = World.current(context)
+    context = World.command(context, World.message_command(context, title, "Also show the tax"))
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  defp queued_follow_up(context) do
+    assert [%{"status" => "preparing"}, %{"status" => "queued"}] =
+             World.runs(context, World.current(context))
+
+    assert World.codex_requests(context, "turn/start") == []
+    context
+  end
+
+  # Both turns ran, the follow-up second, in the worktree.
+  defp follows_first_turn(context) do
+    World.await_runs(context, World.current(context), ["completed", "completed"], 30_000)
+    assert [first, second] = World.codex_requests(context, "turn/start")
+    refute inspect(first) =~ "Also show the tax"
+    assert inspect(second) =~ "Also show the tax"
+    path = context.worktree_path
+    assert Enum.all?(World.codex_requests(context, "thread/start"), &(&1["cwd"] == path))
+    context
+  end
+
+  # --- cancelling while the branch is being named ------------------------------------
+
+  # The writer model never answers, so the rename is still asking for a name while the
+  # setup script runs; `HalC2.WorktreeSetup` holds the rename's process.
+  step "the temporary branch is still being renamed from the first message", context do
+    World.put_env("FAKE_TEXT_HANG", "1")
+
+    {snapshot, context} =
+      context
+      |> put_in([:setup_script, "command"], "echo installing packages && sleep 60")
+      |> prepare()
+      |> await_setup(&(statuses(&1)["setup-script"] == "running"))
+
+    id = World.thread_id(context, World.current(context))
+    naming = :sys.get_state(HalC2.WorktreeSetup).setups[id].naming
+    assert is_pid(naming) and Process.alive?(naming)
+
+    Map.merge(context, %{
+      worktree_path: snapshot["worktreePath"],
+      temporary: snapshot["branch"],
+      naming: {naming, Process.monitor(naming)}
+    })
+  end
+
+  step "the rename is stopped before the worktree is removed", context do
+    assert {:ok, %{"cancelled" => true}} = context.reply
+    {naming, ref} = context.naming
+    # The cancel answers once the worktree is gone, and stops the rename before that.
+    assert_received {:DOWN, ^ref, :process, ^naming, _}
+    refute File.exists?(context.worktree_path)
+    context
+  end
+
+  step "the thread is left with no worktree and no renamed branch", context do
+    World.await_runs(context, World.current(context), ["cancelled"])
+    thread = World.thread(context, World.current(context))
+    assert thread["worktreePath"] == nil
+    assert thread["branch"] == nil
+    root = World.project(context).root
+    assert World.git!(root, ["branch", "--format=%(refname:short)"]) == "main"
+    context
+  end
+
   defp prepare(%{launched: true} = context), do: context
 
   defp prepare(context) do
@@ -2744,6 +3077,9 @@ defmodule HalC2.Steps.Threads do
   end
 
   defp statuses(snapshot), do: Map.new(snapshot["stages"], &{&1["id"], &1["status"]})
+
+  defp script_tail(snapshot),
+    do: Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))["tail"] || []
 
   defp stage_id("fetch"), do: "fetch"
   defp stage_id("setup script"), do: "setup-script"
@@ -3692,7 +4028,7 @@ defmodule HalC2.Steps.Threads do
   step "Claude receives the whole conversation ahead of the message", context do
     prompt = List.last(World.claude_prompts(context))
     assert prompt =~ ~r/^<conversation_history>\n/
-    refute prompt =~ "[earlier messages omitted]"
+    refute prompt =~ "[earlier messages omitted"
 
     for line <- ["User: sum the cart totals", "User: now add the discount", "Assistant: "],
         do: assert(prompt =~ line)
@@ -3782,7 +4118,9 @@ defmodule HalC2.Steps.Threads do
   # The fake Codex names its answer and its command the same in every turn, so only the
   # newest turn has them.
   step "Claude receives the original request, the recent turns and command outcomes", context do
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert ["[earlier messages omitted" <> _, kept] =
+             String.split(handed_history(context), "\n\n", parts: 2)
+
     assert String.length(kept) <= 60_000
 
     assert ["User: the original request", "User: part 2 " <> _, "User: part 3 " <> _ | newest] =
@@ -3813,7 +4151,9 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the agent receives at most 60,000 characters of history", context do
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert ["[earlier messages omitted" <> _, kept] =
+             String.split(handed_history(context), "\n\n", parts: 2)
+
     assert String.length(kept) in 50_000..60_000
 
     assert kept =~
@@ -3845,7 +4185,9 @@ defmodule HalC2.Steps.Threads do
       |> switch_and_ask("Alpha")
 
     # The first request and the newest two fit; the one between them does not.
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
+    assert ["[earlier messages omitted" <> _, kept] =
+             String.split(handed_history(context), "\n\n", parts: 2)
+
     assert kept =~ "part 1 "
     refute kept =~ "part 2 "
     Map.put(context, :left_out, Enum.at(texts, 1))
@@ -3959,7 +4301,7 @@ defmodule HalC2.Steps.Threads do
 
     assert [_, history] =
              Regex.run(
-               ~r/\A<conversation_history>\nThis conversation started in another agent session\. Continue from it\.\n\n(.*)\n<\/conversation_history>\n\nwhere are we\z/s,
+               ~r/\A<conversation_history>\nThis conversation started in another agent session\. Continue from it\.[^\n]*\n\n(.*)\n<\/conversation_history>\n\nwhere are we\z/s,
                prompt
              )
 

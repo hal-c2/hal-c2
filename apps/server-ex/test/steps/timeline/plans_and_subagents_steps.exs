@@ -351,7 +351,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     end)
 
     # The turn is over; the command the subagent started is what is still pending.
-    World.await_row(World.thread_id(context, title), &(&1["pendingBackgroundTasks"] != []))
+    World.await_row(World.thread_id(context, title), &(&1["runningBackgroundTasks"] != []))
     context
   end
 
@@ -408,7 +408,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert context.parent_row["activeRunId"] == nil
 
     assert [%{"taskType" => "command_execution", "description" => "npm run dev"}] =
-             context.parent_row["pendingBackgroundTasks"]
+             context.parent_row["runningBackgroundTasks"]
 
     assert is_binary(item_id)
     context

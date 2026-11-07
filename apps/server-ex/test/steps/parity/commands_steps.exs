@@ -495,6 +495,23 @@ defmodule HalC2.Steps.Parity.Commands do
     }
   end
 
+  # A held queued message on a thread whose turn was stopped: sending it now starts it.
+  defp prepare("queued-run.start", context) do
+    {tid, [active, queued]} = queue(context, 1)
+
+    {:ok, _} =
+      HalC2.Streams.commit(tid, :thread, [{"run", queued["id"], %{"s" => %{"queueHeld" => true}}}])
+
+    setup!(context, "run.interrupt", %{"runId" => active["id"]})
+    await_runs(tid, ["interrupted", "queued"])
+
+    %{
+      command: %{"threadId" => tid, "runId" => queued["id"]},
+      follow: tid,
+      change: &(&1[{"run", queued["id"]}]["status"] not in [nil, "queued"])
+    }
+  end
+
   defp prepare("queued-run.reorder", context) do
     {tid, [_, second, third]} = queue(context, 2)
 

@@ -241,6 +241,16 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### `hal_c2_background_wait`
+
+Marks the caller's own background commands and monitors as work it waits on
+(`waiting: false` clears the mark). Only marked ones, plus subagents and other
+background tasks, hold a finished thread Working (the row's
+`pendingBackgroundTasks`; `runningBackgroundTasks` lists all of it). Unmarked
+work still keeps the provider process and the thread's files alive. Only
+adapters that implement `await_background/3` support it (Claude); the rest
+return `invalid_request`.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress. It does not call provider runtimes directly.

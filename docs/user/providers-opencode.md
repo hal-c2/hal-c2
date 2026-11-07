@@ -7,15 +7,16 @@ OpenCode server.
 
 ## Local or external server
 
-Leave **Server URL** empty to let HAL-C2 start OpenCode locally. A password in
-provider settings applies to both that server and HAL-C2's connection. With no
-password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
-environment.
+Leave **Server URL** empty to let HAL-C2 start OpenCode locally. Each local server
+listens only on this machine, with a password HAL-C2 makes for it; the password
+setting and `OPENCODE_SERVER_PASSWORD` are not used for it.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. HAL-C2 uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
+The password is kept in the environment's secret store, not in the settings file;
+settings show only that one is saved. Clear the field to remove it.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
@@ -47,3 +48,10 @@ restart before HAL-C2 can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## Usage limits
+
+When OpenCode stops a turn because a model's quota, rate limit or plan ran out,
+the thread shows a usage limit rather than a provider error. OpenCode does not
+say when its own limits reset, so no wait is shown for them. A Claude plan used
+through OpenCode shows its reset time when Claude names one.

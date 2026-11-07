@@ -364,6 +364,8 @@ Feature: A thread hears when a pull request it owns needs attention
     When the host answers again and the checks of "acme/app#12" have passed
     Then the agent of "t1" is woken once to say the checks passed
 
+  # Upstream #29450: repeated known permanent failures, such as access refusals, still stop
+  # the watch and notify the agent.
   @backlog @mc @priority-low
   Scenario: A watch the host keeps refusing ends and says so
     Given "t1" watches "acme/app#12"

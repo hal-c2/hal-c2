@@ -152,6 +152,7 @@ defmodule HalC2.Web.Router do
              device_type: params["client_device_type"],
              os: params["client_os"],
              user_agent: conn |> get_req_header("user-agent") |> List.first(),
+             ip: conn.remote_ip,
              scopes: requested,
              proof_jkt: proof[:thumbprint],
              proof: proof
@@ -198,14 +199,11 @@ defmodule HalC2.Web.Router do
     end
   end
 
-  post "/api/auth/websocket-ticket" do
-    with {:ok, session} <- request_session(conn),
-         {:ok, ticket, expires_at} <- HalC2.Auth.issue_ticket(session) do
-      json(conn, 200, %{"ticket" => ticket, "expiresAt" => iso(expires_at)})
-    else
-      {:error, reason, dpop} -> json(conn, 401, auth_invalid(reason, dpop))
-    end
-  end
+  # A socket ticket; one bought on `/rpc` or `/media` opens only that route, one bought
+  # here opens either (`HalC2.Auth.issue_ticket/2`).
+  post "/api/auth/websocket-ticket", do: websocket_ticket(conn, nil)
+  post "/api/auth/websocket-ticket/rpc", do: websocket_ticket(conn, :rpc)
+  post "/api/auth/websocket-ticket/media", do: websocket_ticket(conn, :media)
 
   # Extends the session's expiry, keeping its token (`HalC2.Auth.renew/1`).
   post "/api/auth/session/renew" do
@@ -213,8 +211,8 @@ defmodule HalC2.Web.Router do
          {:ok, expires_at} <- HalC2.Auth.renew(session) do
       json(conn, 200, %{"expiresAt" => iso(expires_at)})
     else
-      {:error, reason, dpop} -> json(conn, 401, auth_invalid(reason, dpop))
-      :error -> json(conn, 401, auth_invalid("invalid_credential", nil))
+      {:error, reason, dpop} -> auth_refused(conn, reason, dpop)
+      :error -> auth_refused(conn, "invalid_credential", nil)
     end
   end
 
@@ -444,11 +442,15 @@ defmodule HalC2.Web.Router do
     conn = fetch_query_params(conn)
 
     with :ok <- compatible_protocol(conn.query_params["protocol"]),
-         {:ok, session} <- socket_session(conn.query_params) do
+         {:ok, session} <- socket_session(conn, conn.query_params) do
       conn
       |> WebSockAdapter.upgrade(
         HalC2.Web.Socket,
-        %{session: session, trace: socket_trace(conn)},
+        %{
+          session: session,
+          client: HalC2.Auth.client_report(conn.query_params),
+          trace: socket_trace(conn)
+        },
         timeout: 60_000
       )
       |> halt()
@@ -531,14 +533,33 @@ defmodule HalC2.Web.Router do
   defp previous_install_answer({:ok, body}), do: {200, body}
   defp previous_install_answer({:error, message}), do: {409, %{"message" => message}}
 
-  # The session a socket opens for, or nil for one opened with the MC's own token.
-  defp socket_session(%{"wsTicket" => ticket}), do: HalC2.Auth.take_ticket(ticket)
+  defp websocket_ticket(conn, use) do
+    with {:ok, session} <- request_session(conn),
+         {:ok, ticket, expires_at} <- HalC2.Auth.issue_ticket(session, use) do
+      json(conn, 200, %{"ticket" => ticket, "expiresAt" => iso(expires_at)})
+    else
+      {:error, reason, dpop} -> auth_refused(conn, reason, dpop)
+    end
+  end
+
+  # The session a socket opens for, or nil for one opened with the MC's own token. A
+  # DPoP session's RPC ticket needs a fresh proof of the upgrade request, in the `DPoP`
+  # header or, since browsers' sockets cannot set headers, the `dpop` query parameter.
+  defp socket_session(conn, %{"wsTicket" => ticket} = params) do
+    proof =
+      case get_req_header(conn, "dpop") do
+        [proof | _] -> proof
+        [] -> params["dpop"]
+      end
+
+    HalC2.Auth.take_ticket(ticket, proof && {proof, conn.method, request_url(conn)})
+  end
 
   # The MC's own access token, for local tools and development.
-  defp socket_session(%{"token" => token}),
+  defp socket_session(_conn, %{"token" => token}),
     do: if(Plug.Crypto.secure_compare(token, HalC2.Web.token()), do: {:ok, nil}, else: :error)
 
-  defp socket_session(_), do: :error
+  defp socket_session(_conn, _), do: :error
 
   # Runs `fun.(session)` for a bearer whose session has every scope in `scopes`; `fun`
   # returns `{status, body}` or `{:error, reason}`.
@@ -582,8 +603,20 @@ defmodule HalC2.Web.Router do
         end
 
       {:error, reason, dpop} ->
-        json(conn, 401, auth_invalid(reason, dpop))
+        auth_refused(conn, reason, dpop)
     end
+  end
+
+  # A refused DPoP request is challenged for DPoP, whatever the scheme's case
+  # (`HalC2.Auth.credential/1` lowercases it, RFC 9110 section 11.1).
+  defp auth_refused(conn, reason, dpop) do
+    conn =
+      case conn |> get_req_header("authorization") |> List.first() |> HalC2.Auth.credential() do
+        {"dpop", _} -> put_resp_header(conn, "www-authenticate", "DPoP")
+        _ -> conn
+      end
+
+    json(conn, 401, auth_invalid(reason, dpop))
   end
 
   defp auth_invalid(reason, dpop) do

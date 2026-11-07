@@ -747,10 +747,11 @@ defmodule HalC2.WorktreeSetupTest do
 
     {_, 0} = System.cmd("git", ~w(branch later), cd: repo)
     assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    # Retrying lets what was held for the worktree follow the first turn again.
+    refute held.()["queueHeld"]
     assert %{"worktreePath" => path} = await_phase(thread_id, "done")
     assert File.dir?(path)
-    # Held until the user sends again: it was queued for a worktree that could not be made.
-    assert %{"status" => "queued", "queueHeld" => true} = held.()
+    assert %{"status" => "completed"} = await_message_run(thread_id, "m2", "completed")
   end
 
   # The thread went on in the project checkout after its worktree failed: from then on
