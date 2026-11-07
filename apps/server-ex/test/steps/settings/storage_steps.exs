@@ -104,6 +104,57 @@ defmodule HalC2.Steps.Settings.Storage do
     context
   end
 
+  # "the default" sets nothing, so the scenario sees what an untouched install keeps.
+  step ~r/^"Keep worktrees with local changes" is set to "(?<choice>[^"]+)"(?<default>, the default)?$/,
+       %{args: [choice | default]} = context do
+    keep_when =
+      case choice do
+        "Any local files" -> "any-local-files"
+        "Uncommitted changes" -> "uncommitted-changes"
+        "Edited tracked files" -> "tracked-changes"
+      end
+
+    if (List.first(default) || "") == "" do
+      World.update_settings(context, %{"storageCleanup" => %{"worktreeKeepWhen" => keep_when}})
+    else
+      {settings, _} = HalC2.Settings.get()
+      refute Map.has_key?(settings["storageCleanup"] || %{}, "worktreeKeepWhen")
+      assert HalC2.StorageCleanup.rules(settings, nil)["worktreeKeepWhen"] == keep_when
+      context
+    end
+  end
+
+  step ~r/^an idle thread's worktree has (?<changes>only an ignored "\.env" file|only "node_modules"|an untracked file|an edited tracked file)$/,
+       %{args: [changes]} = context do
+    context = idle_worktree(context, "idle work")
+    path = context.worktree.path
+
+    if String.starts_with?(changes, "only") do
+      File.write!(Path.join(path, ".gitignore"), ".env\nnode_modules/\n")
+      World.git!(path, ~w(add .gitignore))
+      World.git!(path, ~w(commit -q -m ignore))
+    end
+
+    case changes do
+      ~s(only an ignored ".env" file) ->
+        File.write!(Path.join(path, ".env"), "SECRET=1\n")
+        Map.put(context, :expected_reason, "Has ignored files (.env)")
+
+      ~s(only "node_modules") ->
+        File.mkdir_p!(Path.join(path, "node_modules/left-pad"))
+        File.write!(Path.join(path, "node_modules/left-pad/index.js"), "module.exports = 1\n")
+        context
+
+      "an untracked file" ->
+        File.write!(Path.join(path, "notes.txt"), "draft\n")
+        Map.put(context, :expected_reason, "Has uncommitted changes (1 file)")
+
+      "an edited tracked file" ->
+        File.write!(Path.join(path, "README.md"), "changed\n")
+        Map.put(context, :expected_reason, "Has uncommitted changes (1 file)")
+    end
+  end
+
   step "the thread keeps its branch so it can be checked out again", context do
     %{thread: title, path: path, branch: branch, root: root} = context.worktree
     thread = World.thread(context, title)
@@ -192,6 +243,8 @@ defmodule HalC2.Steps.Settings.Storage do
 
   step "nothing is removed", context do
     rules = HalC2.StorageCleanup.rules(HalC2.Settings.settings(), World.project(context).id)
+    # What keeps a worktree is not a removal rule.
+    {"any-local-files", rules} = Map.pop(rules, "worktreeKeepWhen")
     assert Enum.all?(rules, fn {_rule, on} -> on in [nil, false] end)
 
     assert get_in(HalC2.Settings.settings(), ["storageCleanup", "browserArtifactsAfterDays"]) ==

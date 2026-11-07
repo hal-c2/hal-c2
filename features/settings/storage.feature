@@ -84,10 +84,11 @@ Feature: Storage cleanup
         | is checked out on a different branch    |
         | holds ignored files besides node_modules |
 
-    # Upstream #17563 made what counts as local changes a choice, and its default no longer
-    # keeps a worktree for ignored files such as ".env" alone; the row above is then true
-    # only under "Any local files".
-    @backlog @mc @shared
+    # Upstream #17563 made what counts as local changes a choice. HAL-C2 keeps "Any local files"
+    # as the default on purpose, where upstream's is "Uncommitted changes": ignored files such as
+    # ".env" are often secrets that exist nowhere else, so a worktree holding them is kept unless
+    # the user chooses otherwise (hal-c2#1144). The row above is that default.
+    @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario Outline: The user chooses which local changes keep a worktree
       Given the user turned on deleting worktrees idle for 8 days
       And "Keep worktrees with local changes" is set to <choice>
@@ -96,13 +97,15 @@ Feature: Storage cleanup
       Then the worktree is <outcome>
 
       Examples:
-        | choice                         | changes                     | outcome |
-        | "Uncommitted changes", the default | an untracked file       | kept    |
-        | "Uncommitted changes", the default | only an ignored ".env" file | removed |
-        | "Any local files"              | only an ignored ".env" file | kept    |
-        | "Any local files"              | only "node_modules"         | removed |
-        | "Edited tracked files"         | an untracked file           | removed |
-        | "Edited tracked files"         | an edited tracked file      | kept    |
+        | choice                             | changes                     | outcome |
+        | "Any local files", the default     | only an ignored ".env" file | kept    |
+        | "Any local files", the default     | an untracked file           | kept    |
+        | "Any local files", the default     | only "node_modules"         | removed |
+        | "Uncommitted changes"              | an untracked file           | kept    |
+        | "Uncommitted changes"              | only an ignored ".env" file | removed |
+        | "Edited tracked files"             | an edited tracked file      | kept    |
+        | "Edited tracked files"             | an untracked file           | removed |
+        | "Edited tracked files"             | only an ignored ".env" file | removed |
 
     @backlog @mc @shared
     Scenario: Delete now runs the cleanup rules at once and says what happened

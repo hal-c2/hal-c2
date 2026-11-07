@@ -12,11 +12,15 @@ defmodule HalC2.StorageCleanup do
   deliberately timid: a worktree goes only when one thread owns it (alone, or with
   the subagents it delegated to on its branch), all of them idle, nothing (a
   terminal, a provider session, another project, unpublished submodule work)
-  lives in it, it is a linked checkout on the thread's branch with no changes and
-  no ignored files besides `node_modules`, and all of that still holds, with the
-  same rules, just before removal. The last look and the removal hold the
-  worktree's `HalC2.WorkspaceLease`, which terminals take while they start. The
-  branch and path stay on the thread, so it can check the worktree out again.
+  lives in it, it is a linked checkout on the thread's branch with nothing to lose,
+  and all of that still holds, with the same rules, just before removal. What there
+  is to lose is the rules' `worktreeKeepWhen`: "any-local-files" (the default)
+  counts changed, untracked and ignored files besides `node_modules`;
+  "uncommitted-changes" leaves out ignored files; "tracked-changes" counts only
+  edits to tracked files, and the removal cleans away the untracked ones first.
+  The last look and the removal hold the worktree's `HalC2.WorkspaceLease`, which
+  terminals take while they start. The branch and path stay on the thread, so it
+  can check the worktree out again.
 
   Each sweep's worktree results, removed, kept or failed and why, are its report
   (`report/0`).
@@ -35,6 +39,7 @@ defmodule HalC2.StorageCleanup do
   @report_limit 200
   @idle ~w(idle failed completed interrupted cancelled rolled_back)
   @off %{
+    "worktreeKeepWhen" => "any-local-files",
     "worktreeAfterDays" => nil,
     "worktreeSettledAfterDays" => nil,
     "worktreeOnMerge" => false,
@@ -322,7 +327,7 @@ defmodule HalC2.StorageCleanup do
         reason = checkout(path, context.root, thread["branch"], Map.values(context.projects)) ->
           reason
 
-        reason = local_changes(path) ->
+        reason = local_changes(path, rules["worktreeKeepWhen"]) ->
           reason
 
         settled_moments_ago?(group, context.now) ->
@@ -427,12 +432,14 @@ defmodule HalC2.StorageCleanup do
     end)
   end
 
-  # Why the checkout at `path` has something to lose: changed, staged or untracked
-  # files (whatever the repository's own status settings hide), or ignored files
-  # besides installed dependencies, which can be secrets or local data. Nil when
-  # it has none.
-  defp local_changes(path) do
-    status = ~w(status --porcelain=v1 -z --ignore-submodules=none --untracked-files=all)
+  # Why the checkout at `path` has something to lose under `keep_when`: changed or
+  # staged files, untracked ones (whatever the repository's own status settings
+  # hide) unless only tracked edits count, and, for "any-local-files", ignored
+  # files besides installed dependencies, which can be secrets or local data. Nil
+  # when it has none.
+  defp local_changes(path, keep_when) do
+    untracked = if keep_when == "tracked-changes", do: "no", else: "all"
+    status = ~w(status --porcelain=v1 -z --ignore-submodules=none --untracked-files=#{untracked})
 
     case Git.ok(path, status) do
       {:ok, out} when byte_size(out) > 64 * 1024 ->
@@ -440,7 +447,7 @@ defmodule HalC2.StorageCleanup do
 
       {:ok, out} ->
         case changed_files(String.split(out, <<0>>, trim: true), 0) do
-          0 -> ignored_files(path)
+          0 -> if keep_when in [nil, "any-local-files"], do: ignored_files(path)
           1 -> "Has uncommitted changes (1 file)"
           count -> "Has uncommitted changes (#{count} files)"
         end
@@ -634,15 +641,21 @@ defmodule HalC2.StorageCleanup do
          nil <- changed_since(look),
          nil <-
            if(checkout_head(path, thread["branch"]) != head, do: "Commit changed since check"),
-         nil <- local_changes(path),
+         nil <- local_changes(path, rules["worktreeKeepWhen"]),
          nil <-
            if(rules(HalC2.Settings.settings(), thread["projectId"]) != rules,
              do: "Settings changed since check"
            ),
-         {:ok, force} <- submodules(path),
-         nil <- if(force, do: local_changes(path)),
+         {:ok, force} <- submodules(path, rules["worktreeKeepWhen"]),
+         nil <- if(force, do: local_changes(path, rules["worktreeKeepWhen"])),
          _ = hook(:removing, path) do
       repo = look.project["workspaceRoot"]
+
+      # Untracked files are not worth keeping under this rule, but Git refuses to
+      # remove a worktree that has them; a tracked edit made since the last look
+      # still stops the removal.
+      if rules["worktreeKeepWhen"] == "tracked-changes",
+        do: {:ok, _} = git(path, ~w(clean -ffdxq))
 
       # Git requires force for submodules; the checks above are what keeps them safe.
       case HalC2.Vcs.remove_worktree(%{"cwd" => repo, "path" => path, "force" => force}) do
@@ -745,7 +758,7 @@ defmodule HalC2.StorageCleanup do
   # Whether the worktree's submodules hold work found nowhere else (a commit no
   # remote has, a local change): `{:keep, reason}`; else `{:ok, force?}`, force
   # when it has submodules, which Git will not remove without it.
-  defp submodules(path) do
+  defp submodules(path, keep_when) do
     {:ok, git_dir} = git(path, ~w(rev-parse --absolute-git-dir))
     stored = File.dir?(Path.join(git_dir, "modules"))
 
@@ -756,7 +769,7 @@ defmodule HalC2.StorageCleanup do
         {:ok, out} ->
           paths = String.split(out, <<0>>, trim: true)
 
-          case Enum.find_value(paths, &submodule_loss/1) do
+          case Enum.find_value(paths, &submodule_loss(&1, keep_when)) do
             nil -> {:ok, stored or paths != []}
             reason -> {:keep, reason}
           end
@@ -769,10 +782,10 @@ defmodule HalC2.StorageCleanup do
     end
   end
 
-  defp submodule_loss(path) do
+  defp submodule_loss(path, keep_when) do
     case git(path, ~w(rev-list --max-count=1 HEAD --all --reflog --not --remotes)) do
       {:ok, ""} ->
-        with reason when is_binary(reason) <- local_changes(path),
+        with reason when is_binary(reason) <- local_changes(path, keep_when),
              do:
                "Submodule " <>
                  String.downcase(String.first(reason)) <> String.slice(reason, 1..-1//1)

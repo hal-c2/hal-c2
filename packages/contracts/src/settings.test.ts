@@ -88,6 +88,7 @@ describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
+      worktreeKeepWhen: "any-local-files",
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeOnMerge: false,
@@ -98,6 +99,18 @@ describe("storage cleanup settings", () => {
       threadTempAfterDays: 7,
       temporaryFilesFolder: "",
     });
+  });
+
+  it("keeps worktrees with any local files unless the user chooses less", () => {
+    for (const worktreeKeepWhen of ["uncommitted-changes", "tracked-changes"] as const) {
+      expect(
+        decodeServerSettings({ storageCleanup: { worktreeKeepWhen } }).storageCleanup
+          .worktreeKeepWhen,
+      ).toBe(worktreeKeepWhen);
+    }
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "nothing" } }),
+    ).toThrow();
   });
 
   it("accepts eight-day retention and disabling one rule without resetting others", () => {

@@ -33,6 +33,7 @@ describe("serverSettings helpers", () => {
         storageCleanup: { worktreeAfterDays: null },
       }).storageCleanup,
     ).toEqual({
+      worktreeKeepWhen: "any-local-files",
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeOnMerge: true,
