@@ -19,6 +19,7 @@ defmodule HalC2.Orchestration.TurnWriterTest do
     setup %{tmp_dir: dir} do
       start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
       start_supervised!(HalC2.Streams)
+      start_supervised!(HalC2.Orchestration.CommandTail)
 
       {:ok, _} =
         HalC2.Streams.commit("t1", :thread, [
@@ -54,8 +55,10 @@ defmodule HalC2.Orchestration.TurnWriterTest do
         |> TurnWriter.flush(:timer)
 
       assert text("i1")["text"] == "First\n\n"
-      # Tool output is not held back.
-      assert text("i2")["output"] == "$ ls\n"
+      # Command output is not held back, and does not go to the log.
+      assert HalC2.Orchestration.CommandTail.get("t1", "i2") == "$ ls\n"
+      assert text("i2")["output"] == ""
+      assert text("i2")["outputSize"] == 5
 
       state = state |> TurnWriter.buffer("a", "text", "ond\n\nThi") |> TurnWriter.flush(:timer)
       # Within 400 ms of the last paragraph nothing more is written.
@@ -63,6 +66,48 @@ defmodule HalC2.Orchestration.TurnWriterTest do
 
       _ = TurnWriter.flush(state)
       assert text("i1")["text"] == "First\n\nSecond\n\nThi"
+    end
+
+    test "a running command keeps its last 64K and the thread none of it" do
+      alias HalC2.Orchestration.CommandTail
+      line = String.duplicate("x", 1023) <> "\n"
+      state = state("paragraph")
+
+      for n <- 1..100 do
+        state |> TurnWriter.buffer("c", "output", line) |> TurnWriter.flush(:timer)
+        assert text("i2")["outputSize"] == n * 1024
+      end
+
+      assert byte_size(CommandTail.get("t1", "i2")) == CommandTail.limit()
+      assert text("i2")["output"] == ""
+
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, [{"node", "n2", %{"s" => %{"id" => "n2"}}}])
+      _ = TurnWriter.finish_item(state, "c", "completed", & &1)
+      # The thread keeps what was printed last, and the tail is gone.
+      assert byte_size(text("i2")["output"]) == CommandTail.limit()
+      assert CommandTail.get("t1", "i2") == nil
+    end
+
+    test "a command the turn stopped keeps what it printed and frees its tail" do
+      alias HalC2.Orchestration.CommandTail
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, [{"node", "n2", %{"s" => %{"id" => "n2"}}}])
+
+      {:ok, _} =
+        HalC2.Streams.commit("t1", :thread, [
+          {"turn-item", "i2", %{"s" => %{"status" => "running"}}}
+        ])
+
+      state = state("paragraph")
+      state |> TurnWriter.buffer("c", "output", "partial\n") |> TurnWriter.flush(:timer)
+
+      _ = TurnWriter.close_open_items(state, "interrupted")
+      assert text("i2")["output"] == "partial\n"
+      assert CommandTail.get("t1", "i2") == nil
+
+      # A run that ends with a command still running leaves no tail either.
+      CommandTail.append("t1", "i9", "left")
+      CommandTail.drop_thread("t1")
+      assert CommandTail.get("t1", "i9") == nil
     end
 
     test "turn mode writes assistant text only at a boundary" do
@@ -106,6 +151,7 @@ defmodule HalC2.Orchestration.TurnWriterTest do
     setup %{tmp_dir: dir} do
       start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
       start_supervised!(HalC2.Streams)
+      start_supervised!(HalC2.Orchestration.CommandTail)
 
       {:ok, _} =
         HalC2.Streams.commit("t1", :thread, [
