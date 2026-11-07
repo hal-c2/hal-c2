@@ -7,13 +7,69 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QList>
 #include <QMap>
 #include <QSet>
 #include <QString>
 
+#include <algorithm>
+#include <functional>
+#include <utility>
+
 class FakeMc;
 class World;
+
+// What one follower of a stream holds, and so what it is sent
+// (lib/hal_c2/streams/view.ex): the entity `kinds` its `sub` named, and its
+// window, whose `floor` is the ordinal of its first run (null: it reaches the
+// start of the thread). The desktop harness's Stream.h fakes the same view.
+struct StreamView {
+  QJsonObject kinds;
+  bool windowed = false;
+  QJsonValue floor = QJsonValue::Null;
+};
+
+// Whether the follower holds this entity of `entities` (a thread's).
+inline bool streamHolds(const StreamView& view, const QMap<QString, QJsonObject>& entities, const QString& kind, const QJsonObject& entity) {
+  if (!view.kinds.isEmpty()) {
+    if (!view.kinds.contains(kind)) return false;
+    const QJsonObject where = view.kinds.value(kind).toObject();
+    for (auto it = where.begin(); it != where.end(); ++it) {
+      if (entity.value(it.key()) != it.value()) return false;
+    }
+  }
+  static const QSet<QString> windowed{QStringLiteral("turn-item"), QStringLiteral("message"), QStringLiteral("node")};
+  if (!view.windowed || !windowed.contains(kind)) return true;
+  const QJsonObject run = entities.value(QStringLiteral("run\n") + entity.value(QLatin1String("runId")).toString());
+  if (run.isEmpty()) return true;
+  if (run.value(QLatin1String("status")) == QLatin1String("rolled_back")) return false;
+  if (run.value(QLatin1String("status")) == QLatin1String("queued")) return true;
+  return view.floor.isNull() || run.value(QLatin1String("ordinal")).toInt() >= view.floor.toInt();
+}
+
+// The runs before `before` (null: the newest) that together hold at least
+// `items` turn items, and the floor of a window once it holds them too: null
+// when no run is left before them (HalC2.Streams.View.take_runs).
+inline std::pair<QSet<QString>, QJsonValue> streamTakeRuns(const QMap<QString, QJsonObject>& entities, const QJsonValue& before, int items) {
+  QHash<QString, int> counts;
+  QList<std::pair<int, QString>> runs;
+  for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
+    if (it.key().startsWith(QLatin1String("turn-item\n"))) ++counts[it->value(QLatin1String("runId")).toString()];
+    if (!it.key().startsWith(QLatin1String("run\n")) || it->value(QLatin1String("status")) == QLatin1String("rolled_back")) continue;
+    const int ordinal = it->value(QLatin1String("ordinal")).toInt();
+    if (before.isNull() || ordinal < before.toInt()) runs.append({ordinal, it.key().mid(4)});
+  }
+  std::sort(runs.begin(), runs.end(), std::greater<>());
+  QSet<QString> taken;
+  int count = 0;
+  for (qsizetype i = 0; i < runs.size(); ++i) {
+    taken.insert(runs.at(i).second);
+    count += counts.value(runs.at(i).second);
+    if (count >= items) return {taken, i + 1 < runs.size() ? QJsonValue(runs.at(i).first) : QJsonValue(QJsonValue::Null)};
+  }
+  return {taken, QJsonValue::Null};
+}
 
 struct FakeStreams {
   struct Change {
@@ -53,6 +109,12 @@ struct FakeStreams {
   QSet<QString> offline;
   // How long the MC takes to load a thread for a `sub` (FakeMc::busy()).
   int loadMs = 0;
+  // What each follower holds, by subscription id.
+  QHash<int, StreamView> views;
+  // While set, a `sub` to a stream waits for its answer in `waiting`: the
+  // thread loads slowly, and a step answers it when it chooses.
+  bool slow = false;
+  QList<std::function<void()>> waiting;
 };
 
 // Sets fields of an entity of the thread's stream and tells whoever follows it.

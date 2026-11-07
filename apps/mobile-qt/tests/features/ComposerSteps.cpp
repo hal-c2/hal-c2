@@ -47,17 +47,32 @@ void deliver(FakeMc& mc, const QJsonObject& frame) {
 
 // Answers a `sub` to a thread's stream as the MC does
 // (lib/hal_c2/streams/server.ex): the changes since its offset when it comes
-// back with the MC's handle, else the thread whole; then `live`.
+// back with the MC's handle, else a snapshot of what its view holds — the
+// newest turns only for a windowed `sub`; then `live`.
 void answer(FakeMc& mc, int id, const QJsonObject& shape, const QJsonObject& sub) {
   FakeStreams& fake = mc.part<FakeStreams>();
   const QString thread = shape.value(QLatin1String("stream")).toString();
   fake.asked.append({thread, sub, fake.sent.size(), fake.unfollowed.take(thread)});
+  const QMap<QString, QJsonObject> entities = fake.threads.value(thread);
+  const QJsonObject window = sub.value(QLatin1String("window")).toObject();
+  const bool opens = window.value(QLatin1String("items")).isDouble();
+  StreamView view{shape.value(QLatin1String("kinds")).toObject()};
+  if (opens) {
+    view.windowed = true;
+    view.floor = streamTakeRuns(entities, QJsonValue::Null, window.value(QLatin1String("items")).toInt()).second;
+  } else if (window.contains(QLatin1String("floor"))) {
+    view.windowed = true;
+    view.floor = window.value(QLatin1String("floor"));
+  }
+  fake.views.insert(id, view);
   const QJsonValue offset = sub.value(QLatin1String("offset"));
-  const bool resumes = !fake.handle.isEmpty() && sub.value(QLatin1String("handle")) == fake.handle && offset.isDouble() && offset.toInt() <= fake.seq;
+  const bool resumes = !opens && !fake.handle.isEmpty() && sub.value(QLatin1String("handle")) == fake.handle && offset.isDouble() && offset.toInt() <= fake.seq;
   if (resumes) {
     QJsonArray events;
     for (const FakeStreams::Change& change : fake.log.value(thread)) {
-      if (change.seq > offset.toInt()) events.append(QJsonArray{change.seq, change.kind, change.id, change.patch, kNow});
+      if (change.seq <= offset.toInt()) continue;
+      if (!streamHolds(view, entities, change.kind, entities.value(change.kind + QLatin1Char('\n') + change.id))) continue;
+      events.append(QJsonArray{change.seq, change.kind, change.id, change.patch, kNow});
     }
     if (std::exchange(fake.cutCatchUp, false) && events.size() > 1) {
       // The first part of two carries the offset the client is at; the
@@ -73,19 +88,43 @@ void answer(FakeMc& mc, int id, const QJsonObject& shape, const QJsonObject& sub
     }
   } else {
     QJsonArray rows;
-    const QMap<QString, QJsonObject> entities = fake.threads.value(thread);
     for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
       const QStringList key = it.key().split(QLatin1Char('\n'));
-      rows.append(QJsonArray{key.at(0), key.at(1), *it});
+      if (streamHolds(view, entities, key.at(0), *it)) rows.append(QJsonArray{key.at(0), key.at(1), *it});
     }
     QJsonObject snapshot{{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq},
                          {QStringLiteral("at"), kNow}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}};
     if (!fake.handle.isEmpty()) snapshot.insert(QStringLiteral("handle"), fake.handle);
+    if (view.windowed) snapshot.insert(QStringLiteral("floor"), view.floor);
     deliver(mc, snapshot);
   }
   QJsonObject live{{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq}};
   if (!fake.handle.isEmpty()) live.insert(QStringLiteral("handle"), fake.handle);
   deliver(mc, live);
+}
+
+// Answers `more`: the runs before the follower's window, as a page that
+// moves its floor down. Held while the scenario holds `pages`.
+void sendPage(FakeMc& mc, int id, int items) {
+  FakeStreams& fake = mc.part<FakeStreams>();
+  if (!fake.views.contains(id)) return;
+  StreamView& view = fake.views[id];
+  const QMap<QString, QJsonObject> entities = fake.threads.value(mc.shapeOf(id).value(QLatin1String("stream")).toString());
+  QJsonArray rows;
+  QJsonValue floor = QJsonValue::Null;
+  if (view.windowed && !view.floor.isNull()) {
+    const auto [runs, lower] = streamTakeRuns(entities, view.floor, items);
+    floor = lower;
+    StreamView page{view.kinds};
+    for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
+      const QStringList key = it.key().split(QLatin1Char('\n'));
+      if (key.at(0) != QLatin1String("turn-item") && key.at(0) != QLatin1String("message") && key.at(0) != QLatin1String("node")) continue;
+      if (runs.contains(it->value(QLatin1String("runId")).toString()) && streamHolds(page, entities, key.at(0), *it)) rows.append(QJsonArray{key.at(0), key.at(1), *it});
+    }
+    view.floor = floor;
+  }
+  deliver(mc, {{QStringLiteral("t"), QStringLiteral("page")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq},
+               {QStringLiteral("rows"), rows}, {QStringLiteral("floor"), floor}, {QStringLiteral("done"), true}});
 }
 
 const FakeMc::Extension streams([](FakeMc& mc) {
@@ -96,13 +135,28 @@ const FakeMc::Extension streams([](FakeMc& mc) {
       return;
     }
     const QJsonObject sub = mc.subscriptions.last();
-    if (const int ms = mc.part<FakeStreams>().loadMs; ms > 0) {
+    FakeStreams& fake = mc.part<FakeStreams>();
+    if (fake.slow) {
+      fake.waiting.append([&mc, id, shape, sub] { answer(mc, id, shape, sub); });
+      return;
+    }
+    if (const int ms = fake.loadMs; ms > 0) {
       mc.busy(ms, [&mc, id, shape, sub] {
         if (mc.subscribers(QStringLiteral("stream")).contains(id)) answer(mc, id, shape, sub);
       });
       return;
     }
     answer(mc, id, shape, sub);
+  });
+  mc.onFrame(QStringLiteral("more"), [&mc](const QJsonObject& frame) {
+    const int id = frame.value(QLatin1String("id")).toInt();
+    const int items = frame.value(QLatin1String("items")).toInt();
+    mc.part<FakeStreams>().sent.append(frame);
+    if (mc.holding(QStringLiteral("pages"))) {
+      mc.defer([&mc, id, items] { sendPage(mc, id, items); });
+    } else {
+      sendPage(mc, id, items);
+    }
   });
 });
 
@@ -277,6 +331,8 @@ void changeEntity(FakeMc& mc, const QString& thread, const QString& kind, const 
   // QJsonValue keeps the event nested: Apple clang before 20 reads
   // QJsonArray{QJsonArray{...}} as a copy of the inner array.
   for (const int follower : following) {
+    // A follower is only sent changes to what it holds.
+    if (!streamHolds(fake.views.value(follower), fake.threads.value(thread), kind, entity)) continue;
     deliver(mc, {{QStringLiteral("t"), QStringLiteral("events")},
                  {QStringLiteral("id"), follower},
                  {QStringLiteral("offset"), seq},
