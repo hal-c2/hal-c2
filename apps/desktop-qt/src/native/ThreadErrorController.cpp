@@ -3,7 +3,8 @@
 // not do on the thread (report()), else the thread's last error from its row
 // (`lastError`). A usage limit the thread's failed run stopped on is left to
 // the timeline, whose warning line names when to retry. Dismissing hides that
-// error on that thread until the app restarts; a different one shows.
+// error of that run on that thread until the app restarts; a different one,
+// or the same one from a later run, shows.
 //
 // Publishes `threadError`: null, or {threadKey, message, warning}; warning
 // for a usage limit.
@@ -37,7 +38,7 @@ bool ThreadErrorController::handle(const QString& action, const QVariant&) {
   const Shown error = shown(key);
   if (error.message.isEmpty()) return true;
   m_local.remove(key);
-  m_dismissed.insert(key + QChar(0) + error.message);
+  m_dismissed.insert(dismissal(key, error.message));
   publish();
   return true;
 }
@@ -46,6 +47,11 @@ void ThreadErrorController::report(const QString& threadKey, const QString& mess
   if (threadKey.isEmpty() || message.isEmpty()) return;
   m_local.insert(threadKey, message);
   publish();
+}
+
+QString ThreadErrorController::dismissal(const QString& key, const QString& message) const {
+  const QString run = m_store->threadRow(key).value(QLatin1String("latestRunId")).toString();
+  return key + QChar(0) + run + QChar(0) + message;
 }
 
 QString ThreadErrorController::openKey() const {
@@ -57,7 +63,7 @@ ThreadErrorController::Shown ThreadErrorController::shown(const QString& key) co
   const QJsonObject row = m_store->threadRow(key);
   const QString last = row.value(QLatin1String("lastError")).toString();
   const QString message = m_local.value(key, last);
-  if (message.isEmpty() || m_dismissed.contains(key + QChar(0) + message)) return {};
+  if (message.isEmpty() || m_dismissed.contains(dismissal(key, message))) return {};
   const bool fromRow = !m_local.contains(key);
   const bool limit = fromRow && row.value(QLatin1String("lastErrorClass")).toString() == QLatin1String("usage_limit");
   // The run that stopped on the limit says so in the timeline.

@@ -210,6 +210,8 @@ struct Run {
   // How long before clock() the message asking for it was sent; -1 when the
   // MC says nothing of it.
   int requestedAgo = -1;
+  // A steer ended it (the MC's steeredByRunId).
+  bool steered = false;
   bool operator==(const Run&) const = default;
 };
 
@@ -312,6 +314,7 @@ QString field(const QString& type) {
 QJsonObject json(const Run& run) {
   QJsonObject entity{{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
   if (run.held) entity.insert(QStringLiteral("queueHeld"), true);
+  if (run.steered) entity.insert(QStringLiteral("steeredByRunId"), QStringLiteral("steer"));
   if (run.requestedAgo >= 0) entity.insert(QStringLiteral("requestedAt"), clock().addSecs(-run.requestedAgo).toString(Qt::ISODate));
   if (run.status != QLatin1String("queued") && run.status != QLatin1String("cancelled") && run.status != QLatin1String("starting")) {
     entity.insert(QStringLiteral("startedAt"), clock().toString(Qt::ISODate));
@@ -450,16 +453,17 @@ QString kindOf(const Item& item) {
 // A settled turn folds its calls and commentary behind "Worked" ("You stopped
 // this response" for the latest, interrupted), leaving its last reply and any
 // call still running in view; while one of its replies streams it stays open.
-// A reply a steer cut off (it stopped as interrupted) is none of its turn's:
-// it folds on its own under "Cut off by a steer".
+// A reply a steer cut off (it stopped as interrupted in a run the steer
+// marked) is none of its turn's: it folds on its own under "Cut off by a steer".
 // Consecutive calls of a turn make one group, which a settled turn with
 // several calls summarizes; a group shows its latest call until opened.
 // The phone's also keeps a turn's first reply in view, and leaves a failed
 // turn open with a row per call; a settled turn leaves out the calls that
 // never ended, and a starting or running latest turn ends in "Thinking"
 // unless its last call is running or went well, or its reply is streaming.
-bool cutOff(const Item& item) {
-  return item.type == QLatin1String("assistant_message") && item.status == QLatin1String("interrupted");
+bool cutOff(const Thread& thread, const Item& item) {
+  return item.type == QLatin1String("assistant_message") && item.status == QLatin1String("interrupted") &&
+         thread.runs.value(item.run).steered;
 }
 
 QList<Row> project(const Model& model) {
@@ -491,7 +495,7 @@ QList<Row> project(const Model& model) {
   QHash<QString, QString> first;     // run -> its first item after the user's message
   QHash<QString, QString> firstReply;
   for (const Item& item : std::as_const(shown)) {
-    if (item.opener || cutOff(item)) continue;
+    if (item.opener || cutOff(thread, item)) continue;
     if (!first.contains(item.run)) first.insert(item.run, item.id);
     if (item.type == QLatin1String("assistant_message")) {
       if (!firstReply.contains(item.run)) firstReply.insert(item.run, item.id);
@@ -510,7 +514,7 @@ QList<Row> project(const Model& model) {
     if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id) || failed(run.id)) continue;
     QStringList hidden;
     for (const Item& item : std::as_const(shown)) {
-      if (item.run != run.id || item.opener || cutOff(item) || item.id == terminal.value(run.id)) continue;
+      if (item.run != run.id || item.opener || cutOff(thread, item) || item.id == terminal.value(run.id)) continue;
       if (model.phone && item.id == firstReply.value(run.id)) continue;
       const QString kind = kindOf(item);
       if ((kind == QLatin1String("work") && item.status != QLatin1String("running")) || kind == QLatin1String("message")) {
@@ -536,7 +540,7 @@ QList<Row> project(const Model& model) {
       row.expanded = model.foldsOpen.contains(run.id);
       rows.append(row);
     }
-    if (cutOff(item)) {
+    if (cutOff(thread, item)) {
       const QString fold = QStringLiteral("cut-off:") + item.id;
       Row row{QStringLiteral("fold:") + fold, QStringLiteral("fold")};
       row.title = QStringLiteral("Cut off by a steer");
@@ -1249,10 +1253,11 @@ struct Finish : Change {
   void show(std::ostream& os) const override { os << "Finish(" << item.toStdString() << ", " << status.toStdString() << ")"; }
 };
 
-// A steer restarts the turn while a reply streams: the reply stops as
-// interrupted, with no request to stop its run.
+// A reply streaming stops as interrupted: a steer restarting the turn (which
+// marks its run), or a crash or restart of the MC (which marks nothing).
 struct CutOff : Change {
   QString item;
+  bool steer = *rc::gen::arbitrary<bool>();
   explicit CutOff(const Model& model) {
     const QStringList ids = itemsWhere(model, [](const Item& item) { return item.type == QLatin1String("assistant_message") && item.streaming; });
     RC_PRE(!ids.isEmpty());
@@ -1266,10 +1271,16 @@ struct CutOff : Change {
     Item& target = model.mc.items[item];
     target.streaming = false;
     target.status = QStringLiteral("interrupted");
-    commit(model, {event(model, QStringLiteral("turn-item"), item,
-                         {{QStringLiteral("s"), QJsonObject{{QStringLiteral("streaming"), false}, {QStringLiteral("status"), target.status}}}}, target.run)});
+    QList<Event> events;
+    if (steer && !model.mc.runs.value(target.run).steered) {
+      model.mc.runs[target.run].steered = true;
+      events.append(event(model, QStringLiteral("run"), target.run, {{QStringLiteral("s"), QJsonObject{{QStringLiteral("steeredByRunId"), QStringLiteral("steer")}}}}));
+    }
+    events.append(event(model, QStringLiteral("turn-item"), item,
+                        {{QStringLiteral("s"), QJsonObject{{QStringLiteral("streaming"), false}, {QStringLiteral("status"), target.status}}}}, target.run));
+    commit(model, events);
   }
-  void show(std::ostream& os) const override { os << "CutOff(" << item.toStdString() << ")"; }
+  void show(std::ostream& os) const override { os << "CutOff(" << item.toStdString() << (steer ? ", steer" : ", no steer") << ")"; }
 };
 
 // The MC takes back an item of a running turn.

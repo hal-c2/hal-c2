@@ -1503,13 +1503,17 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     bool streaming = false;
     QDateTime boundary;
   };
-  // A reply a steer cut off mid-way: it stopped as interrupted though nobody
-  // asked to stop its run (a stop leaves an interrupt request behind). It is
-  // never the turn's answer; it folds on its own under "Cut off by a steer".
+  // A reply a steer cut off mid-way: it stopped as interrupted in a run the
+  // MC marks with the steer that ended it (a stop, a crash or a restart of
+  // the MC leaves no mark). It is never the turn's answer; it folds on its
+  // own under "Cut off by a steer".
+  QSet<QString> steered;
+  for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
+    if (!text(*it, QLatin1String("steeredByRunId")).isEmpty()) steered.insert(it.key());
+  }
   const auto cutOff = [&](const QJsonObject& item) {
     return text(item, QLatin1String("type")) == QLatin1String("assistant_message") &&
-           text(item, QLatin1String("status")) == QLatin1String("interrupted") &&
-           !interruptRequested.contains(text(item, QLatin1String("runId")));
+           text(item, QLatin1String("status")) == QLatin1String("interrupted") && steered.contains(text(item, QLatin1String("runId")));
   };
   QList<QJsonObject> shown;
   QHash<QString, Turn> turns;

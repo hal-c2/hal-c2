@@ -3,8 +3,9 @@
 // thread (a refused stop), and the banner's dismiss. The banner speaks for the
 // open thread only: what this client reported on it, else its row's last
 // error; a usage limit the thread's failed run stopped on is left to the
-// timeline. Dismissing hides that error on that thread, and only that error:
-// the same one again stays hidden, a different one shows.
+// timeline. Dismissing hides that error of that run on that thread, and only
+// that error: the same one again stays hidden, a different one, or the same
+// one from a later run, shows.
 
 #include "Prop.h"
 
@@ -37,6 +38,8 @@ struct Row {
   QString lastError;
   bool limit = false;
   bool failed = false;
+  // The thread's latest run, numbered.
+  int run = 1;
 };
 
 struct Model {
@@ -45,7 +48,7 @@ struct Model {
   QMap<QString, Row> rows;
   // What this client reported on each thread.
   QMap<QString, QString> local;
-  // (thread, message) pairs dismissed.
+  // Errors dismissed: thread, its latest run then, NUL, message.
   QSet<QPair<QString, QString>> dismissed;
 };
 
@@ -59,7 +62,7 @@ Shown shown(const Model& model, const QString& thread) {
   const Row row = model.rows.value(thread);
   const bool fromRow = !model.local.contains(thread);
   const QString message = fromRow ? row.lastError : model.local.value(thread);
-  if (message.isEmpty() || model.dismissed.contains({thread, message})) return {};
+  if (message.isEmpty() || model.dismissed.contains({thread, QString::number(row.run) + QChar(0) + message})) return {};
   if (fromRow && row.limit && row.failed) return {};
   return {message, fromRow && row.limit};
 }
@@ -81,6 +84,7 @@ struct Shell {
       mc.threads.insert(kThreads.at(i), QJsonObject{{QStringLiteral("id"), kThreads.at(i)},
                                                     {QStringLiteral("projectId"), QStringLiteral("p1")},
                                                     {QStringLiteral("title"), QStringLiteral("Thread %1").arg(i + 1)},
+                                                    {QStringLiteral("latestRunId"), QStringLiteral("run-1")},
                                                     {QStringLiteral("createdAt"), QStringLiteral("2026-09-01T09:00:00Z")},
                                                     {QStringLiteral("updatedAt"), QStringLiteral("2026-09-0%1T09:00:00Z").arg(2 - i)}});
     }
@@ -102,7 +106,7 @@ struct Shell {
     row.insert(QStringLiteral("lastError"), error.lastError.isEmpty() ? QJsonValue() : QJsonValue(error.lastError));
     row.insert(QStringLiteral("lastErrorClass"), error.limit ? QJsonValue(QStringLiteral("usage_limit")) : QJsonValue());
     row.insert(QStringLiteral("status"), error.failed ? QStringLiteral("failed") : QStringLiteral("completed"));
-    row.insert(QStringLiteral("latestRunId"), QStringLiteral("run-1"));
+    row.insert(QStringLiteral("latestRunId"), QStringLiteral("run-%1").arg(error.run));
     mc.threads.insert(thread, row);
     mc.sendRow(thread, row);
   }
@@ -112,7 +116,8 @@ struct Shell {
     const QJsonObject row = native.store()->threadRow(keyOf(thread));
     return row.value(QLatin1String("lastError")).toString() == error.lastError &&
            (row.value(QLatin1String("lastErrorClass")).toString() == QLatin1String("usage_limit")) == error.limit &&
-           (row.value(QLatin1String("status")).toString() == QLatin1String("failed")) == error.failed;
+           (row.value(QLatin1String("status")).toString() == QLatin1String("failed")) == error.failed &&
+           row.value(QLatin1String("latestRunId")).toString() == QStringLiteral("run-%1").arg(error.run);
   }
 
   QVariant error() const { return bridge.state()->value(QStringLiteral("threadError")); }
@@ -158,13 +163,16 @@ struct Open : Command {
 };
 
 // The MC's row says a thread's last error: none, a usage limit, and whether
-// its latest run failed on it.
+// its latest run, the same or a later one, failed on it.
 struct McError : Command {
   QString thread = *rc::gen::elementOf(std::vector<QString>(kThreads.begin(), kThreads.end()));
   QString message = *rc::gen::elementOf(kMessages);
   bool limit = *rc::gen::arbitrary<bool>();
   bool failed = *rc::gen::arbitrary<bool>();
-  void apply(Model& model) const override { model.rows.insert(thread, {message, limit && !message.isEmpty(), failed}); }
+  bool later = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override {
+    model.rows.insert(thread, {message, limit && !message.isEmpty(), failed, model.rows.value(thread).run + (later ? 1 : 0)});
+  }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
@@ -172,7 +180,7 @@ struct McError : Command {
     check(expected, shell);
   }
   void show(std::ostream& os) const override {
-    os << "McError(" << thread.toStdString() << ", \"" << message.toStdString() << "\"" << (limit ? ", limit" : "") << (failed ? ", failed" : "") << ")";
+    os << "McError(" << thread.toStdString() << ", \"" << message.toStdString() << "\"" << (limit ? ", limit" : "") << (failed ? ", failed" : "") << (later ? ", later run" : "") << ")";
   }
 };
 
@@ -197,7 +205,7 @@ struct Dismiss : Command {
     const Shown error = shown(model, model.open);
     if (error.message.isEmpty()) return;
     model.local.remove(model.open);
-    model.dismissed.insert({model.open, error.message});
+    model.dismissed.insert({model.open, QString::number(model.rows.value(model.open).run) + QChar(0) + error.message});
   }
   void apply(Model& model) const override {
     once(model);

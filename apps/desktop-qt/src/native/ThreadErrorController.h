@@ -31,6 +31,9 @@ private:
     bool warning = false;
   };
   QString openKey() const;
+  // What a dismissal of `message` on the thread `key` hides: that message
+  // while the thread's latest run is the one now.
+  QString dismissal(const QString& key, const QString& message) const;
   Shown shown(const QString& key) const;
   void publish();
 
@@ -39,6 +42,6 @@ private:
   bool m_active = false;
   // This client's own errors, by thread key.
   QHash<QString, QString> m_local;
-  // Errors the user dismissed: thread key, NUL, message.
+  // Errors the user dismissed: thread key, NUL, latest run, NUL, message.
   QSet<QString> m_dismissed;
 };

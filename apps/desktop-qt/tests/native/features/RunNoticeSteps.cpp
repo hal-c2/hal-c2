@@ -14,6 +14,9 @@
 
 #include "Brick.h"
 #include "Harness.h"
+#include "LocalCache.h"
+#include "NativeShell.h"
+#include "NavigationController.h"
 #include "RunNotices.h"
 #include "Stream.h"
 #include "ThreadList.h"
@@ -185,6 +188,36 @@ const Steps steps([] {
     expect(text(threadView(world).find(QStringLiteral("threadNoticeDescription"))) == c[0], seen(world));
   });
 
+  // Work an earlier turn left running, whose run the timeline has not
+  // loaded: the stop names no run, and the notice reads the thread's row.
+  step(QStringLiteral("an earlier turn left the task %1 running").arg(q), [](World& world, const Captures& c, const Table&) {
+    threadView(world);
+    leaveRunning(world, {c[0]});
+    noticeSays(world, QStringLiteral("Waiting on background task"));
+  });
+  step(QStringLiteral("that turn is older than the part of the thread the client has loaded"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.mc.environmentId + QLatin1Char(':') + kThread;
+    world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("home")));
+    store(world)->close(key);
+    world.native().cache()->forgetThread(key);
+    world.sync();
+    // More turns than a client opens a thread with (TimelineModel::windowItems).
+    seedTurns(world, 12, 23);
+    updateThreadRow(world, kThread, [&](QJsonObject& row) { row.insert(QStringLiteral("latestRunId"), world.mc.part<FakeStreams>().run); });
+    look(world, key);
+    TimelineModel& model = timeline(world);
+    expect(model.hasEarlier() && role(model, 0, TimelineModel::TextRole).toString() != QLatin1String("Question 1"),
+           QStringLiteral("the thread opened whole: %1 rows from \"%2\"").arg(model.rowCount()).arg(role(model, 0, TimelineModel::TextRole).toString()));
+    noticeSays(world, QStringLiteral("Waiting on background task"));
+  });
+  // Once the turn settled, the notice's Stop is the thread's.
+  step(QStringLiteral("the user stops the thread"), [](World& world, const Captures&, const Table&) { stopFromNotice(world); });
+  step(QStringLiteral("%1 is stopped").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The MC stops what the provider session has running and its row lists it no more.
+    updateThreadRow(world, kThread, [](QJsonObject& row) { row.insert(QStringLiteral("pendingBackgroundTasks"), QJsonArray()); });
+    world.waitFor([&] { return world.state(QStringLiteral("threadNotice")).isNull(); }, [&] { return QStringLiteral("%1 to stop; %2").arg(c[0], seen(world)); });
+  });
+
   step(QStringLiteral("a turn is running and has started background tasks"), [](World& world, const Captures&, const Table&) {
     threadView(world);
     updateThreadRow(world, kThread, [](QJsonObject& row) {
@@ -224,6 +257,26 @@ const Steps steps([] {
   });
   step(QStringLiteral("a different error on the same thread is still shown"), [](World& world, const Captures&, const Table&) {
     showError(world, QStringLiteral("Provider crashed"));
+  });
+  // A later run: the MC's row names it as the thread's latest; one that
+  // completes clears the thread's error (HalC2.Projection.ThreadError).
+  step(QStringLiteral("a later run of the thread (fails with %1|completes)").arg(q), [](World& world, const Captures& c, const Table&) {
+    updateThreadRow(world, kThread, [&](QJsonObject& row) {
+      const bool failed = !c[1].isEmpty();
+      row.insert(QStringLiteral("latestRunId"), QStringLiteral("run-later"));
+      row.insert(QStringLiteral("status"), failed ? QStringLiteral("failed") : QStringLiteral("completed"));
+      row.insert(QStringLiteral("lastError"), failed ? QJsonValue(c[1]) : QJsonValue());
+    });
+  });
+  step(QStringLiteral("the thread shows %1 as its error").arg(q), [](World& world, const Captures& c, const Table&) { errorShows(world, c[0]); });
+  step(QStringLiteral("the thread shows no error"), [](World& world, const Captures&, const Table&) {
+    Brick& view = threadView(world);
+    world.waitFor(
+        [&] {
+          QQuickItem* banner = view.find(QStringLiteral("threadError"));
+          return world.state(QStringLiteral("threadError")).isNull() && !(banner && banner->isVisible());
+        },
+        [&] { return seen(world); });
   });
 });
 

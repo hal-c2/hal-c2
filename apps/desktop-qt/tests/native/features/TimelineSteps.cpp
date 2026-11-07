@@ -695,8 +695,8 @@ const Steps steps([] {
     expect(marker == c[0], QStringLiteral("the message is marked \"%1\"").arg(marker));
   });
 
-  // A steer restarts the run: the interrupted run ends without a request to
-  // stop, its reply stopping where it was; the steer starts the next run.
+  // A steer restarts the run: the MC marks the run with the steer that ends
+  // it, and its reply stops where it was; the steer starts the next run.
   step(QStringLiteral("the agent finished its reply"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);
     addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("id"), QStringLiteral("reply-1")}, {QStringLiteral("text"), QStringLiteral("The cart total is done.")}});
@@ -707,13 +707,20 @@ const Steps steps([] {
             {{QStringLiteral("id"), QStringLiteral("reply-1")}, {QStringLiteral("text"), QStringLiteral("The cart total is half wri")},
              {QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("streaming"), true}});
   });
-  step(QStringLiteral("the user's steer restarts the run(?: before the turn closed)?"), [](World& world, const Captures&, const Table&) {
+  // The run ends interrupted, its reply stopping where it was if it streamed.
+  const auto interrupt = [](World& world) {
     settleRun(world, QStringLiteral("interrupted"), 5);
     FakeStreams& fake = world.mc.part<FakeStreams>();
     const QJsonObject reply = fake.threads.value(fake.thread).value(QStringLiteral("turn-item\nreply-1"));
     if (reply.value(QLatin1String("status")).toString() == QLatin1String("running")) {
       set(world, QStringLiteral("turn-item"), QStringLiteral("reply-1"), {{QStringLiteral("status"), QStringLiteral("interrupted")}, {QStringLiteral("streaming"), false}});
     }
+  };
+  step(QStringLiteral("the run ends interrupted without a steer"), [interrupt](World& world, const Captures&, const Table&) { interrupt(world); });
+  step(QStringLiteral("the user's steer restarts the run(?: before the turn closed)?"), [interrupt](World& world, const Captures&, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    set(world, QStringLiteral("run"), fake.run, {{QStringLiteral("steeredByRunId"), QStringLiteral("run-%1").arg(fake.ordinal + 1)}});
+    interrupt(world);
     const QString run = startRun(world);
     set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run,
         {{QStringLiteral("text"), QStringLiteral("Add tax to the cart")}, {QStringLiteral("inputIntent"), QStringLiteral("steer")}});
@@ -730,6 +737,14 @@ const Steps steps([] {
     }
     expect(role(model, rowShowing(world, QStringLiteral("reply-1")), TimelineModel::KindRole) == QStringLiteral("message"),
            QStringLiteral("the reply is not its own message; %1").arg(describe(model)));
+  });
+  step(QStringLiteral("what the agent had written is not folded as cut off"), [](World& world, const Captures&, const Table&) {
+    TimelineModel& model = timeline(world);
+    for (const int row : rowsOf(model, QStringLiteral("fold"))) {
+      expect(role(model, row, TimelineModel::TitleRole).toString() != QLatin1String("Cut off by a steer"), QStringLiteral("the reply is folded as cut off; %1").arg(describe(model)));
+    }
+    expect(role(model, rowShowing(world, QStringLiteral("reply-1")), TimelineModel::TextRole).toString() == QLatin1String("The cart total is half wri"),
+           QStringLiteral("the reply is not shown; %1").arg(describe(model)));
   });
   step(QStringLiteral("what the agent had written is folded under %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);

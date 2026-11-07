@@ -155,7 +155,7 @@ Feature: Runs, interruptions and the queue
 
   # Only a steer marks the run it interrupts; a crash, an MC restart or an imported
   # thread that stopped mid-reply leaves the reply interrupted with no mark.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A reply that stopped without a steer is not folded as cut off
     Given the agent is in the middle of its reply
     When the run ends interrupted without a steer
@@ -302,7 +302,7 @@ Feature: Runs, interruptions and the queue
     Then the user can ask to stop it again
 
   # Upstream #22052: a thread can be stopped without knowing which run is active.
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Background work left by a turn that is not loaded can still be stopped
     Given an earlier turn left the task "watch tests" running
     And that turn is older than the part of the thread the client has loaded
@@ -324,7 +324,7 @@ Feature: Runs, interruptions and the queue
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A later run that fails the same way shows its error again
     Given the thread shows the error "Rate limited"
     And the user dismisses the error
@@ -332,7 +332,7 @@ Feature: Runs, interruptions and the queue
     Then the thread shows "Rate limited" as its error
 
   # A failed run's error goes once a later run succeeds.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A later run that succeeds does not bring a dismissed error back
     Given the thread shows the error "Rate limited"
     And the user dismisses the error

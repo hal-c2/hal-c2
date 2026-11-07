@@ -973,8 +973,8 @@ const Steps steps([] {
     onScreen(world, c[0]);
   });
 
-  // A steer restarts the run: the interrupted run ends without a request to
-  // stop, its reply stopping where it was; the steer starts the next run.
+  // A steer restarts the run: the MC marks the run with the steer that ends
+  // it, and its reply stops where it was; the steer starts the next run.
   step(S("the agent finished its reply"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);
     addReply(world, S("reply-1"), S("The cart total is done."));
@@ -984,12 +984,18 @@ const Steps steps([] {
     addItem(world, S("assistant_message"),
             {{S("id"), S("reply-1")}, {S("text"), S("The cart total is half wri")}, {S("status"), S("running")}, {S("streaming"), true}});
   });
-  step(S("the user's steer restarts the run(?: before the turn closed)?"), [](World& world, const Captures&, const Table&) {
+  // The run ends interrupted, its reply stopping where it was if it streamed.
+  const auto interrupt = [](World& world) {
     settleRun(world, S("interrupted"), 5);
     const QJsonObject reply = world.mc.part<FakeStreams>().threads.value(turn(world).thread).value(S("turn-item\nreply-1"));
     if (reply.value(QLatin1String("status")).toString() == QLatin1String("running")) {
       set(world, S("turn-item"), S("reply-1"), {{S("status"), S("interrupted")}, {S("streaming"), false}});
     }
+  };
+  step(S("the run ends interrupted without a steer"), [interrupt](World& world, const Captures&, const Table&) { interrupt(world); });
+  step(S("the user's steer restarts the run(?: before the turn closed)?"), [interrupt](World& world, const Captures&, const Table&) {
+    set(world, S("run"), turn(world).run, {{S("steeredByRunId"), S("run-%1").arg(world.mc.part<FakeStreams>().ordinal + 1)}});
+    interrupt(world);
     const QString run = startRun(world);
     set(world, S("turn-item"), S("message:") + run, {{S("text"), S("Add tax to the cart")}, {S("inputIntent"), S("steer")}});
     addItem(world, S("assistant_message"), {{S("id"), S("reply-2")}, {S("text"), S("Tax added.")}, {S("status"), S("running")}, {S("streaming"), true}});
@@ -1003,6 +1009,10 @@ const Steps steps([] {
     const int row = rowShowing(world, S("reply-1"));
     expect(role(timeline(world), row, TimelineModel::KindRole).toString() == QLatin1String("message"),
            S("the reply is not a message; %1").arg(describe(timeline(world))));
+  });
+  step(S("what the agent had written is not folded as cut off"), [](World& world, const Captures&, const Table&) {
+    expect(noFoldStartingWith(world, S("Cut off by a steer")), S("the reply is folded as cut off; %1").arg(describe(timeline(world))));
+    onScreen(world, S("The cart total is half wri"));
   });
   step(S("what the agent had written is folded under %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
@@ -1054,6 +1064,22 @@ const Steps steps([] {
   });
   step(S("a different error on the same thread is still shown"), [showError](World& world, const Captures&, const Table&) {
     showError(world, S("Provider crashed"));
+  });
+  // A later run: the MC's row names it as the thread's latest; one that
+  // completes clears the thread's error (HalC2.Projection.ThreadError).
+  step(S("a later run of the thread (fails with %1|completes)").arg(q), [](World& world, const Captures& c, const Table&) {
+    const bool failed = !c[1].isEmpty();
+    updateRow(world.mc, world.thread,
+              {{S("latestRunId"), S("run-later")}, {S("status"), failed ? S("failed") : S("completed")}, {S("lastError"), failed ? QJsonValue(c[1]) : QJsonValue()}});
+    world.sync();
+  });
+  step(S("the thread shows %1 as its error").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return visible(world, S("threadError")).size() == 1 && world.texts().contains(c[0]); },
+                  [&] { return S("the error \"%1\" over the conversation; the screen says: %2").arg(c[0], world.texts().join(S(" | "))); });
+  });
+  step(S("the thread shows no error"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return visible(world, S("threadError")).isEmpty(); },
+                  [&] { return S("no error over the conversation; the screen says: %1").arg(world.texts().join(S(" | "))); });
   });
 
   // How full the context window is: the provider thread's latest report,
