@@ -986,14 +986,24 @@ function workGroupLines(
   const { palette } = ctx;
   const hasOverflow = entries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const expanded = ctx.view.expandedGroups.has(id);
-  const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
+  // Folded, the live row is the latest call; a subagent's row never folds, so its
+  // state stays in view.
+  const visible =
+    hasOverflow && !expanded
+      ? entries.filter(
+          (entry, index) =>
+            index >= entries.length - MAX_VISIBLE_WORK_LOG_ENTRIES || entry.childThreadId,
+        )
+      : entries;
   const hidden = entries.length - visible.length;
-  const lines = visible.flatMap((entry) => callLines(entry, toolRow(entry, ctx), ctx));
+  const shown = visible.map((entry) => callLines(entry, toolRow(entry, ctx), ctx));
+  const lines = shown.flat();
   if (hasOverflow && !expanded) {
-    // One live row: the latest call, and how many came before it beside it. It opens
-    // into every call.
-    const [latest, ...output] = lines;
+    // The count of the folded calls sits beside the latest call, which opens every call.
+    if (hidden === 0) return lines;
+    const [latest, ...output] = shown.at(-1)!;
     return [
+      ...shown.slice(0, -1).flat(),
       line(latest!.text, latest!.action, latest!.payload, {
         text: styled(
           chunk(`+${hidden} previous tool call${hidden === 1 ? "" : "s"}`, { fg: palette.dim }),
