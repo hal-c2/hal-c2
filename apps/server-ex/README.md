@@ -13,7 +13,7 @@ the existing client state, so an MC pairs and appears like any other environment
 ```sh
 mix deps.get
 mix hal_c2.import ~/path/to/snapshot/state.sqlite   # optional: a VACUUM INTO copy of an earlier install's state
-mix hal_c2.server                                    # prints ws://127.0.0.1:3780/ws?token=...
+mix hal_c2.server                                    # prints ws://127.0.0.1:3780/ws?protocol=3&token=...
 mix hal_c2.pair                                      # one-time pairing URL for Settings → Connections
 ```
 
