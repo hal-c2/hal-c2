@@ -354,7 +354,7 @@ impl World {
                     id: id.clone(),
                     label: "HAL-C2 copy".to_owned(),
                     dark,
-                    canvas: if dark { "#0a0a0a" } else { "#fcfcfc" },
+                    canvas: if dark { "#0d0e11" } else { "#f7f7f5" },
                 });
                 m.set_choice(Some(id));
             }
@@ -420,7 +420,7 @@ impl World {
                 m.inspecting = inspecting;
             }
             Op::Pick => {
-                themes(hub, |t, e| t.pick(e, "#fcfcfc"));
+                themes(hub, |t, e| t.pick(e, "#f7f7f5"));
                 if m.inspecting {
                     m.inspecting = false;
                     m.picked = true;

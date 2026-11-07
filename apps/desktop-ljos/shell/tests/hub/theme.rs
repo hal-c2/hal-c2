@@ -160,9 +160,11 @@ fn bricks_paint_with_roles_every_theme_has() {
     let mut unknown: Vec<String> = Vec::new();
     for dark in [false, true] {
         system_dark(&hub, dark);
-        let colors = hub.published("theme")["colors"].clone();
         for (file, role) in &roles {
-            let missing = colors.get(role).is_none() && !optional.contains(&role.as_str());
+            // As the bricks draw it: a renamed or derived role reads the
+            // roles the theme names.
+            let missing = hal_c2_shell::theme::drawn_color(&hub.engine, role).is_none()
+                && !optional.contains(&role.as_str());
             let where_ = format!("{file}:{role}");
             if missing && !unknown.contains(&where_) {
                 unknown.push(where_);
@@ -176,9 +178,9 @@ fn bricks_paint_with_roles_every_theme_has() {
 fn nothing_chosen_is_the_standard_look() {
     let (hub, _dir) = hub();
     assert_eq!(hub.published("theme")["id"], "hal-c2");
-    assert_eq!(canvas(&hub), "#fcfcfc");
+    assert_eq!(canvas(&hub), "#f7f7f5");
     system_dark(&hub, true);
-    assert_eq!(canvas(&hub), "#0a0a0a");
+    assert_eq!(canvas(&hub), "#0d0e11");
     // The roles the bricks paint outside theme files come with every theme.
     for role in ["success", "info"] {
         assert!(!color(&hub, role).is_empty(), "{role}");
@@ -216,15 +218,15 @@ fn menus_and_dialogs_are_nearly_opaque_by_default() {
     let (hub, _dir) = hub();
     assert_eq!(color(&hub, "surfaceOverlay"), "#fffffff5");
     system_dark(&hub, true);
-    assert_eq!(color(&hub, "surfaceOverlay"), "#111111f5");
+    assert_eq!(color(&hub, "surfaceOverlay"), "#22262ef5");
     // Fully solid at 100, and never under 40.
     let settings = Settings::of(&hub.engine);
     assert!(settings.write_device(&hub.engine, "glassOpacity", json!(100)));
-    assert_eq!(color(&hub, "surfaceOverlay"), "#111111");
+    assert_eq!(color(&hub, "surfaceOverlay"), "#22262e");
     assert!(settings.write_device(&hub.engine, "glassOpacity", json!(50)));
-    assert_eq!(color(&hub, "surfaceOverlay"), "#11111180");
+    assert_eq!(color(&hub, "surfaceOverlay"), "#22262e80");
     assert!(settings.write_device(&hub.engine, "glassOpacity", json!(10)));
-    assert_eq!(color(&hub, "surfaceOverlay"), "#11111166");
+    assert_eq!(color(&hub, "surfaceOverlay"), "#22262e66");
 }
 
 #[test]
@@ -783,7 +785,7 @@ fn the_editor_keeps_a_draft_while_open() {
     themes(&hub, |t, e| t.set_editor_open(e, true));
     let opened = themes(&hub, |t, _| t.editing());
     assert_eq!(opened["label"], "HAL-C2");
-    assert_eq!(opened["colors"]["canvas"], "#fcfcfc");
+    assert_eq!(opened["colors"]["canvas"], "#f7f7f5");
     let mut changed = opened.clone();
     changed["colors"]["canvas"] = json!("#123456");
     themes(&hub, |t, e| t.set_editing(e, changed.clone()));
@@ -848,13 +850,13 @@ fn picking_a_colour_names_the_roles_drawn_in_it() {
     let (hub, _dir) = hub();
     themes(&hub, |t, e| t.set_editor_open(e, true));
     // Only while inspecting.
-    themes(&hub, |t, e| t.pick(e, "#fcfcfc"));
+    themes(&hub, |t, e| t.pick(e, "#f7f7f5"));
     assert!(themes(&hub, |t, _| t.picked()).is_empty());
     themes(&hub, |t, e| t.set_inspecting(e, true));
-    themes(&hub, |t, e| t.pick(e, "#FCFCFC"));
+    themes(&hub, |t, e| t.pick(e, "#F7F7F5"));
     let picked = themes(&hub, |t, _| t.picked());
     assert!(!themes(&hub, |t, _| t.inspecting()));
-    assert_eq!(picked["color"], "#fcfcfc");
+    assert_eq!(picked["color"], "#f7f7f5");
     let roles = picked["roles"].as_array().unwrap();
     assert!(roles.contains(&json!("canvas")), "{picked:?}");
     assert_eq!(picked["count"], roles.len());
@@ -1088,7 +1090,7 @@ fn the_themes_singleton_shows_and_changes_the_choice() {
     assert_eq!(shown(&hub, "mode"), "system");
     assert_eq!(shown(&hub, "appearance"), "light");
     assert_eq!(shown(&hub, "resolvedId"), "hal-c2");
-    assert_eq!(shown(&hub, "standardSwatch")[0], "#fcfcfc");
+    assert_eq!(shown(&hub, "standardSwatch")[0], "#f7f7f5");
     assert!(
         shown(&hub, "roles")
             .as_array()

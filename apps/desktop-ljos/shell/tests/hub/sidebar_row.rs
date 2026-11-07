@@ -97,26 +97,21 @@ fn hover(hub: &Hub, window: &Window, over: bool) {
     hub.advance(0);
 }
 
-/// Hovering a card row shows its snooze and settle buttons (22 px) where
-/// its age was. The header asks for 22 px either way, so the project line,
-/// title and branch stay where they were, level with the jump hint.
+/// Hovering a card row shows its snooze and settle buttons in its status
+/// slot, where its age was: the project mark, title and "project · branch"
+/// line stay where they were, the mark centred on the title's line.
 #[test]
 fn a_card_row_keeps_its_lines_when_hover_shows_its_actions() {
     let hub = Hub::new();
     let (root, window) = probe(&hub);
     hub.advance(0);
     let row = row_of(&hub, root);
-    let mark = named(&hub, row, "cardProjectMark").expect("the card's project mark");
-    let header = hub.engine.owner(mark).expect("the card's header");
+    let mark = named(&hub, row, "projectMark").expect("the card's project mark");
     let title = named(&hub, row, "cardTitle").expect("the card's title");
-    let card = hub.engine.owner(title).expect("the card");
-    let branch = {
-        let lines = hub.engine.children(card);
-        let at = lines.iter().position(|c| *c == title).expect("the title");
-        lines[at + 1]
-    };
-    let snooze = named(&hub, header, "snoozeAction").expect("the card's snooze button");
-    let lines = || [header, title, branch].map(|l| placed(&hub, root, l));
+    let detail = named(&hub, row, "rowDetail").expect("the card's project and branch");
+    let snooze = named(&hub, row, "snoozeAction").expect("the card's snooze button");
+    assert!(shows(&hub, detail), "a card has its second line");
+    let lines = || [mark, title, detail].map(|l| placed(&hub, root, l));
 
     let resting = lines();
     hover(&hub, &window, true);
@@ -125,7 +120,11 @@ fn a_card_row_keeps_its_lines_when_hover_shows_its_actions() {
     hover(&hub, &window, false);
     assert!(!shows(&hub, snooze));
 
-    assert_eq!(resting[0].1, 22.0, "the header asks for 22 px");
+    let middle = |(y, height): (f64, f64)| y + height / 2.0;
+    assert!(
+        (middle(resting[0]) - middle(resting[1])).abs() <= 1.0,
+        "the mark is centred on the title's line: {resting:?}"
+    );
     assert_eq!(hovered, resting, "hover moves the card's lines");
     assert_eq!(lines(), resting);
 }

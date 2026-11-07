@@ -254,7 +254,7 @@ fn the_folders_example_puts_its_explorer_beside_or_under_the_threads() {
         let mut example = Example::install("folders", width);
         fits(&example, width);
         let explorer = example.item("folderExplorer");
-        let centre = example.item("centreHost");
+        let centre = example.centre();
         let threads = example.item("threadSidebar");
         // Under 768 the list and the explorer beside it are an overlay,
         // shown over the centre when called for.
