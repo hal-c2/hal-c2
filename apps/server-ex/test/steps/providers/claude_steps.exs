@@ -350,10 +350,20 @@ defmodule HalC2.Steps.Providers.Claude do
     }
   ]
 
+  # `@listed` with its Claude 5 aliases (`opus`, `sonnet`) listed by their own ids: an
+  # alias keeps its profile's context window choice, a Claude 5 id has none.
+  defp listed_by_id do
+    for row <- @listed do
+      if row["value"] in ["opus", "sonnet"],
+        do: %{row | "value" => row["resolvedModel"]},
+        else: row
+    end
+  end
+
   step ~r/^the user opens the options for (?<name>(?:Opus|Sonnet|Haiku) [\d.]+)$/,
        %{args: [name]} = context do
     context = World.fake_providers(context, claude_version: "999.0.0")
-    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed ++ @listed_older))
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(listed_by_id() ++ @listed_older))
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_MODELS") end)
     :ok = HalC2.Claude.Provider.load()
     {providers, context} = World.provider_list(context)
@@ -380,13 +390,13 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "a thread on Opus 5.5 that saved a 200k context window", context do
     context = World.providers(context)
-    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed))
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(listed_by_id()))
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_MODELS") end)
     :ok = HalC2.Claude.Provider.load()
 
     selection = %{
       "instanceId" => "claudeAgent",
-      "model" => "opus",
+      "model" => "claude-opus-5-5",
       "options" => [%{"id" => "contextWindow", "value" => "200k"}]
     }
 
@@ -403,7 +413,7 @@ defmodule HalC2.Steps.Providers.Claude do
     # The saved 200k is not applied: the model runs under its 1M suffix.
     assert ["--model", "claude-opus-5-5[1m]"] in pairs(argv)
 
-    assert HalC2.Claude.Provider.launch("opus", %{"contextWindow" => "200k"}).context_window ==
+    assert HalC2.Claude.Provider.launch("claude-opus-5-5", %{"contextWindow" => "200k"}).context_window ==
              1_000_000
 
     context
@@ -442,8 +452,8 @@ defmodule HalC2.Steps.Providers.Claude do
              choices(listed_model(context, "opus"), "effort")
 
     assert descriptor(listed_model(context, "opus"), "fastMode")
-    # Opus 5.5 always runs 1M; Sonnet 4.6 lets the user choose.
-    refute descriptor(listed_model(context, "opus"), "contextWindow")
+    # The CLI's `opus` alias keeps the manifest's context window choice.
+    assert descriptor(listed_model(context, "opus"), "contextWindow")
     assert descriptor(listed_model(context, "claude-sonnet-4-6"), "contextWindow")
     context
   end
@@ -2726,15 +2736,226 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- background work and a change of selection ---------------------------------------
+  # The fake's "in the background" turn ends with a subagent (agent-1) and a command
+  # (bash-1) still running. The thread runs on Opus 4.6, whose fast mode it left unset.
+  defp left_running(context) do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background", %{
+        "model" => "claude-opus-4-6"
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert background_running?(context)
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    Map.merge(context, %{runtime: runtime, first_session: :sys.get_state(runtime).session})
+  end
+
+  defp background_running?(context) do
+    state = World.stream(context, @thread)
+
+    match?([%{"status" => "running"}], StreamState.list(state, "subagent")) and
+      Enum.any?(
+        command_items(context),
+        &(&1["nativeItemRef"]["nativeId"] == "bash-1" and &1["status"] == "running")
+      )
+  end
+
+  defp send_on(context, options, statuses) do
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => "claude-opus-4-6",
+      "options" => options
+    }
+
+    context = World.post_message(context, @thread, "and now?", %{"modelSelection" => selection})
+    World.await_runs(context, @thread, statuses)
+    context
+  end
+
+  defp refused?(context) do
+    [session] = StreamState.list(World.stream(context, @thread), "provider-session")
+    String.starts_with?(session["lastError"] || "", "Claude is still running background work")
+  end
+
+  defp untouched?(context) do
+    background_running?(context) and
+      :sys.get_state(context.runtime).session == context.first_session and
+      Process.alive?(context.first_session)
+  end
+
+  step "Claude has a background agent or shell still running", context do
+    left_running(context)
+  end
+
+  step "the user sends a message on a different model or option", context do
+    send_on(context, [%{"id" => "fastMode", "value" => true}], ["completed", "failed"])
+  end
+
+  step "the send fails with a visible reason", context do
+    assert refused?(context)
+    # The message never reached Claude.
+    refute Enum.any?(
+             World.provider_log(context, "claude"),
+             &(get_in(&1, ["in", "message", "content"]) == "and now?")
+           )
+
+    context
+  end
+
+  step "the running background work is untouched", context do
+    assert untouched?(context)
+    context
+  end
+
+  step "Stop still allows the change", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    World.await_value(context, @thread, fn state ->
+      match?(
+        [%{"status" => status}] when status != "running",
+        StreamState.list(state, "subagent")
+      )
+    end)
+
+    context =
+      send_on(
+        context,
+        [%{"id" => "fastMode", "value" => true}],
+        ["completed", "failed", "completed"]
+      )
+
+    assert ["--settings", settings] =
+             context
+             |> World.provider_log("claude")
+             |> Enum.filter(&Map.has_key?(&1, "argv"))
+             |> List.last()
+             |> Map.fetch!("argv")
+             |> pairs()
+             |> Enum.find(&match?(["--settings", _], &1))
+
+    assert JSON.decode!(settings)["fastMode"] == true
+    context
+  end
+
+  step "a Claude thread has a command running in the background", context do
+    left_running(context)
+  end
+
+  step "a follow-up arrives with fast mode off where the first turn left it unset", context do
+    send_on(context, [%{"id" => "fastMode", "value" => false}], ["completed", "completed"])
+  end
+
+  step "the follow-up is accepted and the background command keeps running", context do
+    assert "Hello from claude" in World.replies(context, @thread)
+    assert untouched?(context)
+    context
+  end
+
+  step "a real model or settings change is still refused while that command runs", context do
+    context =
+      send_on(
+        context,
+        [%{"id" => "fastMode", "value" => true}],
+        ["completed", "completed", "failed"]
+      )
+
+    assert refused?(context)
+    assert untouched?(context)
+    context
+  end
+
+  step "Claude calls EnterPlanMode during a turn on a thread whose mode is not plan", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "enter plan mode yourself")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the user sends the next turn", context do
+    context = World.post_message(context, @thread, "which mode")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "Claude can edit again and the subagents it starts do not inherit plan mode", context do
+    # The session runs in the thread's own mode again, which its subagents start in.
+    assert "mode bypassPermissions" in World.replies(context, @thread)
+    refute "mode plan" in World.replies(context, @thread)
+    context
+  end
+
+  step "ExitPlanMode still captures the plan as a proposed plan and denies the tool", context do
+    context = World.post_message(context, @thread, "make a plan")
+    state = World.await_runs(context, @thread, ["completed", "completed", "completed"])
+
+    assert [%{"markdown" => "# Plan\n- do it"}] =
+             Enum.filter(StreamState.list(state, "plan"), &(&1["kind"] == "proposed_plan"))
+
+    refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["toolName"] == "ExitPlanMode"))
+
+    assert Enum.any?(
+             World.provider_log(context, "claude"),
+             &match?(
+               %{"in" => %{"response" => %{"response" => %{"behavior" => "deny"}}}},
+               &1
+             )
+           )
+
+    context
+  end
+
   step "the user stopped a running Claude turn", context do
-    World.put_app_env(:claude_interrupt_timeout_ms, 300)
     stop_turn(context)
   end
 
   step "Claude has not ended the turn after 10 seconds", context do
-    # The settle deadline is shortened for the scenario; Claude never answers.
+    # Claude never answers the stop; the runtime's settle deadline is reached at once.
     assert [%{"status" => active}] = World.runs(context, @thread)
     assert active in ["running", "interrupted"]
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    send(runtime, {:settle_interrupt, :sys.get_state(runtime).turn.ids.run})
+    context
+  end
+
+  step "Claude records the interrupted turn within three seconds", context do
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    session = :sys.get_state(runtime).session
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "error_during_execution",
+      "is_error" => true,
+      "terminal_reason" => "aborted_streaming",
+      "session_id" => "fake-session-1"
+    })
+
+    Map.merge(context, %{runtime: runtime, stopped_session: session})
+  end
+
+  step "the session closes only after that record", context do
+    World.await_runs(context, @thread, ["interrupted"])
+    # Claude's own record settled the run, so its session was never closed under it.
+    assert Process.alive?(context.stopped_session)
+    assert :sys.get_state(context.runtime).session == context.stopped_session
+    context
+  end
+
+  step "the thread's next message continues the same conversation", context do
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["interrupted", "completed"], 10_000)
+    assert "Hello from claude" in World.replies(context, @thread)
+    # The same Claude process, and so the same conversation, answered it.
+    assert :sys.get_state(context.runtime).session == context.stopped_session
     context
   end
 
@@ -4231,6 +4452,76 @@ defmodule HalC2.Steps.Providers.Claude do
     context
     |> Map.put(:providers, providers)
     |> Map.put(:skills, (snapshot && snapshot["skills"]) || [])
+    |> Map.put(:slash_commands, (snapshot && snapshot["slashCommands"]) || [])
+  end
+
+  step ~r/^a project with commands under its "\.claude\/commands"$/, context do
+    root = World.project(context).root
+    dir = Path.join([root, ".claude", "commands"])
+    File.mkdir_p!(Path.join(dir, "db"))
+
+    File.write!(
+      Path.join(dir, "deploy.md"),
+      "---\ndescription: Ships the app\nargument-hint: [env]\n---\nDeploy to $ARGUMENTS.\n"
+    )
+
+    File.write!(Path.join([dir, "db", "migrate.md"]), "\nRuns the migrations\n")
+    project_skill(context, "review")
+  end
+
+  step ~r/^a Claude skill whose frontmatter description contains an unquoted ": "$/, context do
+    project_skill(
+      context,
+      "triage",
+      "---\ndescription: Sorts issues: bugs first\ndisable-model-invocation: true\n---\nSort.\n"
+    )
+
+    project_skill(context, "broken", "---\ndescription: [never closed\n---\nBody.\n")
+  end
+
+  step "the skill picker is opened", context do
+    context = World.fake_providers(context)
+    open_skill_list(context)
+  end
+
+  step "the skill is listed with its invocation metadata", context do
+    assert %{"description" => "Sorts issues: bugs first", "userInvocationOnly" => true} =
+             offered(context, "triage")
+
+    context
+  end
+
+  step "a skill with malformed structure is still left out", context do
+    refute offered(context, "broken")
+    context
+  end
+
+  step "the user opens the slash menu in a thread of that project", context do
+    context = World.fake_providers(context)
+    open_skill_list(context)
+  end
+
+  step "those commands are listed, not only the ones found in the MC's directory", context do
+    commands = Map.new(context.slash_commands, &{&1["name"], &1})
+
+    assert %{"description" => "Ships the app", "input" => %{"hint" => "[env]"}} =
+             commands["deploy"]
+
+    assert %{"description" => "Runs the migrations"} = commands["migrate"]
+    assert commands["compact"]
+    context
+  end
+
+  step "if command discovery fails the workspace's skills are still listed", context do
+    dir = Path.join([World.project(context).root, ".claude", "commands"])
+    File.chmod!(dir, 0o000)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dir, 0o755) end)
+    context = open_skill_list(context)
+    File.chmod!(dir, 0o755)
+
+    assert Enum.map(context.slash_commands, & &1["name"]) == ["compact"]
+    assert offered(context, "review")
+    context
   end
 
   defp offered(context, name),

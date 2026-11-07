@@ -336,6 +336,18 @@ for line in sys.stdin:
             {"question": "Which color?", "header": "Color", "multiSelect": False,
              "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]}]}}})
         continue
+    # "enter plan mode yourself": Claude calls EnterPlanMode, which puts its session in
+    # plan mode; "which mode" says the mode the session runs in.
+    if "enter plan mode yourself" in text:
+        mode = "plan"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}p", "role": "assistant", "content": [{"type": "tool_use", "id": f"enter-plan-{turn}", "name": "EnterPlanMode", "input": {}}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"enter-plan-{turn}", "content": "Entered plan mode."}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "planning", "session_id": session})
+        continue
+    if "which mode" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}m", "role": "assistant", "content": [{"type": "text", "text": f"mode {mode}"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": f"mode {mode}", "session_id": session})
+        continue
     if "plan" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "# Plan\n- do it"}}})
         continue

@@ -129,10 +129,18 @@ defmodule HalC2.Claude.Provider do
     snapshot = %{
       "cwd" => cwd,
       "checkedAt" => HalC2.Orchestration.Entities.now(),
+      # Claude reports its commands for the MC's own folder; the thread's project adds
+      # those under its `.claude/commands`.
       "slashCommands" =>
         case executable(id) do
-          nil -> []
-          path -> slash_commands(id, path)
+          nil ->
+            []
+
+          path ->
+            Enum.uniq_by(
+              slash_commands(id, path) ++ HalC2.Claude.Skills.commands(cwd),
+              & &1["name"]
+            )
         end,
       "skills" => skills
     }
@@ -549,7 +557,7 @@ defmodule HalC2.Claude.Provider do
     others =
       for %{"id" => id} = descriptor <- known,
           id not in ["effort", "fastMode"],
-          not (id == "contextWindow" and suffixed?(row["value"])),
+          not (id == "contextWindow" and (suffixed?(row["value"]) or claude_5?(row["value"]))),
           do: descriptor
 
     case Enum.reject(
@@ -605,20 +613,43 @@ defmodule HalC2.Claude.Provider do
     )
     |> Map.update("effortMap", %{}, &Map.drop(&1, levels))
     |> then(&if suffixed?(row["value"]), do: Map.delete(&1, "modelSuffixes"), else: &1)
-    |> then(&claude_5_window(&1, &1["modelId"]))
+    |> then(&claude_5_window(&1, row["value"]))
   end
 
-  # The Claude 5 models always run with a 1M context window, whatever a listed row's
-  # profile says, so there is nothing to choose. They still launch as `<id>[1m]`: Claude
-  # Code treats the two spellings as one 1M model, and the suffix keeps a CLI that predates
-  # a model's native 1M window from starting it at 200k.
-  defp claude_5_window(adapter, model) do
-    if model =~ ~r/^claude-[a-z]+-5(-|$)/,
+  # A Claude 5 model picked by its own id (`claude-opus-5-5`, not the CLI's `opus`)
+  # always runs with a 1M context window, so there is nothing to choose. It still
+  # launches as `<id>[1m]`: Claude Code treats the two spellings as one 1M model, and the
+  # suffix keeps a CLI that predates a model's native 1M window from starting it at
+  # 200k. An alias keeps its profile's context window choice and runs under its name.
+  defp claude_5?(id), do: is_binary(id) and id =~ ~r/^claude-[a-z]+-5(-|\[|$)/
+
+  defp claude_5_window(adapter, id) do
+    if claude_5?(id),
       do:
         adapter
         |> Map.drop(["modelSuffixes", "contextWindowTokens"])
         |> Map.merge(%{"fixedContextWindowTokens" => 1_000_000, "fixedModelSuffix" => "[1m]"}),
       else: adapter
+  end
+
+  # A manifest entry's profile, with a Claude 5 model's fixed window (`claude_5_window/2`).
+  defp manifest_profile(%{"slug" => slug} = entry) do
+    profile = profile(entry)
+
+    if claude_5?(slug) do
+      descriptors =
+        for descriptor <- get_in(profile, ["capabilities", "optionDescriptors"]) || [],
+            descriptor["id"] != "contextWindow",
+            do: descriptor
+
+      adapter = claude_5_window(get_in(profile, ["adapter", "claudeCode"]) || %{}, slug)
+
+      profile
+      |> Map.update("capabilities", %{}, &Map.put(&1 || %{}, "optionDescriptors", descriptors))
+      |> Map.put("adapter", %{"claudeCode" => adapter})
+    else
+      profile
+    end
   end
 
   defp suffixed?(value), do: String.ends_with?(value, "]")
@@ -638,7 +669,7 @@ defmodule HalC2.Claude.Provider do
         "isCustom" => false,
         "isDefault" => model["slug"] == get_in(catalog, ["defaults", "chat"]),
         "isLegacy" => model["status"] == "legacy",
-        "capabilities" => profile(model)["capabilities"]
+        "capabilities" => manifest_profile(model)["capabilities"]
       }
       |> then(&if model["badge"], do: Map.put(&1, "badge", model["badge"]), else: &1)
     end
@@ -799,7 +830,7 @@ defmodule HalC2.Claude.Provider do
     case listed(model, instance) do
       nil ->
         with %{} = entry <- find(model) do
-          profile = profile(entry)
+          profile = manifest_profile(entry)
 
           %{
             "slug" => entry["slug"],

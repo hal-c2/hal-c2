@@ -824,7 +824,7 @@ Feature: Claude
 
   # Upstream #13999: Claude gets a few seconds to record an interrupted turn before its session
   # closes, so the conversation it saved can be continued.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A stopped Claude turn is recorded before its session closes
     Given the user stopped a running Claude turn
     When Claude records the interrupted turn within three seconds
@@ -1106,7 +1106,7 @@ Feature: Claude
     Then the item is titled with the tool's display name and server, with its icon
     And the raw name like "Mcp__server__tool" is not shown
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A model change that would kill background agents is refused
     Given Claude has a background agent or shell still running
     When the user sends a message on a different model or option
@@ -1200,28 +1200,28 @@ Feature: Claude
     Then the command is recorded as interrupted, as Codex and Cursor record it
     And agents reading the thread are told it was interrupted, not that it failed
 
-  @backlog @priority-high
+  @priority-high
   Scenario: A thread stays out of plan mode that Claude entered itself
     Given Claude calls EnterPlanMode during a turn on a thread whose mode is not plan
     When the user sends the next turn
     Then Claude can edit again and the subagents it starts do not inherit plan mode
     And ExitPlanMode still captures the plan as a proposed plan and denies the tool
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A skill whose description holds a colon is still listed
     Given a Claude skill whose frontmatter description contains an unquoted ": "
     When the skill picker is opened
     Then the skill is listed with its invocation metadata
     And a skill with malformed structure is still left out
 
-  @backlog @priority-high
+  @priority-high
   Scenario: Slash commands are discovered in the thread's own workspace
     Given a project with commands under its ".claude/commands"
     When the user opens the slash menu in a thread of that project
     Then those commands are listed, not only the ones found in the MC's directory
     And if command discovery fails the workspace's skills are still listed
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Normal and unset fast mode count as the same selection
     Given a Claude thread has a command running in the background
     When a follow-up arrives with fast mode off where the first turn left it unset

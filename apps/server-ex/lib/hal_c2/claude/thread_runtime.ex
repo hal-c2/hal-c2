@@ -381,6 +381,9 @@ defmodule HalC2.Claude.ThreadRuntime do
         message = Provider.too_old(turn.model, Entities.instance(ids)) ->
           {:error, {:refused, message}}
 
+        message = background_change(state, turn) ->
+          {:error, {:refused, message}}
+
         true ->
           open_session(state, turn)
       end
@@ -1106,23 +1109,44 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp semver(_text), do: nil
 
-  # The CLI takes its model, options and MCP server at launch, so a turn on others
-  # resumes the conversation in a new process.
-  defp ensure_session(%{session: session} = state, turn)
-       when session != nil and state.launch != turn.launch do
-    state = end_work(state, "interrupted")
-    GenServer.stop(session)
-    ensure_session(%{state | session: nil}, turn)
+  # Fast mode left off launches as it does unset.
+  defp same_launch?(launch, other), do: plain_launch(launch) == plain_launch(other)
+
+  defp plain_launch(%{settings: %{"fastMode" => false} = settings} = launch),
+    do: %{launch | settings: Map.delete(settings, "fastMode")}
+
+  defp plain_launch(launch), do: launch
+
+  # A new process would end the background work Claude runs, so a turn on another model
+  # or other options waits until the user stops that work. Only what the user picks
+  # counts: a turn that needs a new process for anything else still gets one.
+  defp background_change(%{session: session} = state, turn) when session != nil do
+    picked = &Map.take(plain_launch(&1), [:model, :effort, :settings, :context_window])
+
+    if picked.(state.launch) != picked.(turn.launch) and
+         Enum.any?(state.work, fn {_, work} -> work.background end),
+       do:
+         "Claude is still running background work, which a change of model or options would end. Stop it first, or send the message with the current selection."
   end
 
+  defp background_change(_state, _turn), do: nil
+
+  # The CLI takes its model, options and MCP server at launch, so a turn on others
+  # resumes the conversation in a new process.
   defp ensure_session(%{session: session} = state, turn) when session != nil do
-    mode = permission_mode(turn)
+    if same_launch?(state.launch, turn.launch) do
+      mode = permission_mode(turn)
 
-    if state.permission_mode != mode do
-      _ = Session.control(session, "set_permission_mode", %{"mode" => mode})
+      if state.permission_mode != mode do
+        _ = Session.control(session, "set_permission_mode", %{"mode" => mode})
+      end
+
+      {:ok, %{state | permission_mode: mode}}
+    else
+      state = end_work(state, "interrupted")
+      GenServer.stop(session)
+      ensure_session(%{state | session: nil}, turn)
     end
-
-    {:ok, %{state | permission_mode: mode}}
   end
 
   defp ensure_session(state, turn) do
@@ -2208,6 +2232,11 @@ defmodule HalC2.Claude.ThreadRuntime do
         tool_block(block, state)
     end
   end
+
+  # Claude put its own session in plan mode: the next turn sets the thread's mode back
+  # (`ensure_session/2`), so Claude and the subagents it starts can edit again.
+  defp assistant_block(%{"type" => "tool_use", "name" => "EnterPlanMode"} = block, _, _, state),
+    do: tool_block(block, %{state | permission_mode: "plan"})
 
   defp assistant_block(%{"type" => "tool_use"} = block, _id, _index, state),
     do: tool_block(block, state)

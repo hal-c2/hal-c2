@@ -80,6 +80,22 @@
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "200k",
+                    "label": "200k"
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M",
+                    "isDefault": true
+                  }
+                ]
               }
             ]
           },
@@ -89,8 +105,15 @@
                 "ultracode": "xhigh",
                 "ultrathink": null
               },
-              "fixedContextWindowTokens": 1000000,
-              "fixedModelSuffix": "[1m]"
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
@@ -116,14 +139,23 @@
                 ],
                 "promptInjectedValues": ["ultrathink"]
               },
-              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" }
+              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [
+                  { "id": "200k", "label": "200k" },
+                  { "id": "1m", "label": "1M", "isDefault": true }
+                ]
+              }
             ]
           },
           "adapter": {
             "claudeCode": {
               "effortMap": { "ultracode": "xhigh", "ultrathink": null },
-              "fixedContextWindowTokens": 1000000,
-              "fixedModelSuffix": "[1m]"
+              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
+              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
             }
           }
         },
@@ -172,6 +204,22 @@
                 "id": "fastMode",
                 "label": "Fast Mode",
                 "type": "boolean"
+              },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "200k",
+                    "label": "200k"
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M",
+                    "isDefault": true
+                  }
+                ]
               }
             ]
           },
@@ -181,8 +229,15 @@
                 "ultracode": "xhigh",
                 "ultrathink": null
               },
-              "fixedContextWindowTokens": 1000000,
-              "fixedModelSuffix": "[1m]"
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
@@ -442,6 +497,22 @@
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "200k",
+                    "label": "200k",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M"
+                  }
+                ]
               }
             ]
           },
@@ -450,8 +521,15 @@
               "effortMap": {
                 "ultrathink": null
               },
-              "fixedContextWindowTokens": 1000000,
-              "fixedModelSuffix": "[1m]"
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
             }
           }
         },
