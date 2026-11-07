@@ -680,6 +680,15 @@ const Steps steps([] {
 
   // Alerts on the phone.
 
+  // A machine that joins the cluster with no threads has nothing the phone could
+  // alert about yet; its first thread is the news. The MC's side (not alerting
+  // about what a joining machine already had) is under features/mc.
+  step(S("%1 joins the cluster with no threads").arg(kQuoted), [](World&, const Captures&, const Table&) {});
+
+  step(S("the first thread on %1 finishes its turn").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    awayEvent(world, S("First on ") + c[0], S("finishes its turn"));
+  });
+
   step(S("the phone shows an alert for %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     if (!world.checking) {
       if (world.isOpen()) turnOn(world);
