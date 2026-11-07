@@ -83,6 +83,18 @@ defmodule HalC2.Steps.Threads.SidebarListWaitMarks do
     context
   end
 
+  step "{string} holds {string}", %{args: [name, title]} = context do
+    task = context.tasks[name]
+
+    await_settled(
+      context,
+      title,
+      &Enum.any?(&1["pendingBackgroundTasks"], fn t -> t["taskId"] == task end)
+    )
+
+    context
+  end
+
   step "{string} no longer holds {string}", %{args: [name, title]} = context do
     task = context.tasks[name]
 

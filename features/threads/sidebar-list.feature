@@ -1040,7 +1040,8 @@ Feature: The thread list
     Then "Fix login" stays Working until "tests" ends
     And marking a command that is not running reports it as unmatched and changes nothing
     When Claude marks "dev server" as work it waits on
-    And Claude clears the mark on "dev server"
+    Then "dev server" holds "Fix login"
+    When Claude clears the mark on "dev server"
     Then "dev server" no longer holds "Fix login"
 
   # Upstream #24610: other providers return "unsupported" for the wait mark and keep today's behaviour.
