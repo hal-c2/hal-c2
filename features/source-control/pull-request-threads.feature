@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23848
+#   https://github.com/pingdotgg/t3code/pull/25052
 #   https://github.com/pingdotgg/t3code/pull/24738
 #   https://github.com/pingdotgg/t3code/pull/18823
 #   https://github.com/pingdotgg/t3code/pull/19801
@@ -63,6 +65,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15057
 #   https://github.com/pingdotgg/t3code/pull/15061
 #   https://github.com/pingdotgg/t3code/pull/14242
+#   https://github.com/pingdotgg/t3code/pull/22022
 
 Feature: Threads that work on or link pull requests
   A thread can start from a pull request, checked out locally or in its own worktree,
@@ -81,6 +84,14 @@ Feature: Threads that work on or link pull requests
       | 42                                        |
       | #42                                       |
       | https://github.com/acme/shop/pull/42      |
+
+  # Upstream #25052: a Bitbucket pull request link was looked up in the checkout's repository, not the link's.
+  @backlog @mc
+  Scenario: A Bitbucket pull request link names the repository it is looked up in
+    Given the project's checkout is the Bitbucket repository "acme/shop"
+    When the user asks to work on the pull request "https://bitbucket.org/acme/other/pull-requests/42"
+    Then pull request 42 of "acme/other" is resolved, not pull request 42 of "acme/shop"
+    And checking it out fetches it from "acme/other"
 
   @mc
   Scenario: A pull request that does not exist
@@ -384,6 +395,20 @@ Feature: Threads that work on or link pull requests
       | glab mr checkout 7                                            | 7      |
       | tea pr checkout 7                                             | 7      |
       | az repos pr checkout --id 7                                   | 7      |
+  # Upstream #23848: self-hosted GitLab links were refused unless the host said "gitlab" and used https
+  @backlog @desktop
+  Scenario Outline: A self-hosted GitLab merge request link can be checked out
+    Given the project is hosted on a self-hosted GitLab
+    When the user <action> "<reference>"
+    Then merge request 42 can be checked out
+
+    Examples:
+      | action                                    | reference                                                   |
+      | pastes to start a pull request thread     | https://code.example.com/group/project/-/merge_requests/42  |
+      | pastes to start a pull request thread     | http://git.internal/group/project/-/merge_requests/42       |
+      | searches the branch list for              | https://code.example.com/group/project/-/merge_requests/42  |
+      | searches the branch list for              | http://git.internal/group/project/-/merge_requests/42       |
+
 
   @desktop
   Scenario: A pull request reference nobody can read is refused
@@ -1010,6 +1035,15 @@ Feature: Threads that work on or link pull requests
     Given two threads in one project watch the same pull request
     When the watches are checked
     Then the pull request is read once for both
+
+  # Upstream #22022: GitHub answers "unknown" while it recomputes mergeability, so an unchanged
+  # pull request was recorded twice as it went unknown and back.
+  @backlog @mc @priority-low
+  Scenario: GitHub recomputing mergeability is not a change to the pull request
+    Given a watched open GitHub pull request is mergeable
+    When GitHub reports its mergeability as unknown and then mergeable again, and the pull request was not updated
+    Then the pull request is still shown as mergeable
+    And no change to it is recorded
 
   @backlog @mc @priority-low
   Scenario: A pull request with nothing in flight is read only when it changed

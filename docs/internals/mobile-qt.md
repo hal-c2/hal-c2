@@ -60,12 +60,22 @@ it spends a pairing link's token on a session, keeps that session in the app's p
 and opens the shell's connection with it. The exchange itself is shared with the desktop's
 `connection.pair` ([`PairingExchange`](../../apps/desktop-qt/src/native/PairingExchange.h)).
 
-It remembers one environment. MCs cluster and share one sidebar, so one pairing already
-shows every machine in the cluster, and `NativeShell`, `McClient` and `ShellStore` were written for
-one MC per process. Pairing with another MC replaces the one remembered, so the pairing screen a
-paired device opens from Settings says which environment that is before anything is spent, and
-has a way back. The scenarios in `features/mobile/` that speak of several paired environments
-stay in the backlog until that changes.
+Several environments are the desktop's model, not a second one. The first environment the phone
+pairs with is the shell's own connection, kept by `Pairing` in `pairing.json`. Every other one is
+handed to the desktop's
+[`SavedEnvironmentsController`](../../apps/desktop-qt/src/native/SavedEnvironmentsController.h),
+which keeps it in the catalog (credentials in the app's private storage on Android), gives it a
+connection of its own, and folds its `shell` shape into the shell's lists, as the desktop does for
+machines paired beside its own MC. So each environment costs one connection and the desktop's
+traffic, no more. `Pairing` still spends the link itself, because a link from outside the app must
+never be spent unasked (below), and then decides where the session goes: the shell's own again
+when it is the same environment, beside it when it is another.
+
+The shell's connection carries everything that names no environment, so the phone always has one
+while it has any environment. Forgetting the shell's own environment puts the first one paired
+beside it in its place: its session moves to `pairing.json`, it leaves the catalog, and the
+remaining ones connect again, because opening another origin empties the shell's rows, theirs
+included.
 
 The first product reaches an MC over Tailscale: `mise run mc:pair --tailscale` publishes the MC
 through Tailscale Serve and prints an `https://` link. That is why the Android package carries
@@ -86,10 +96,11 @@ A pairing link reaches the pairing screen in three ways, and all three end in th
 
 The third is the one nobody vouches for. Any web page, message or printed code can hold a
 `hal-c2://pair` link, and following it takes one tap in another app. If it paired, that tap would
-sign the device out of its environment and into a stranger's, whose threads the user would then
-type into. So a link from outside is only ever shown: it fills the pairing screen's field, the
-address it leads to is said in words (`pairing.offered`), a paired device is told which
-environment it would give up, and nothing is sent anywhere until the user presses Pair. A link
+sign the device into a stranger's environment, whose threads would sit in the user's list
+beside their own and take what they type. So a link from outside is only ever shown: it fills the
+pairing screen's field, the address it leads to is said in words (`pairing.offered`), a paired
+device is told it would add an environment beside the one it has, and nothing is sent anywhere
+until the user presses Pair. A link
 that is not a pairing link changes nothing and says so.
 
 What was scanned or handed over is read by `pairing::readInvitation`, which is stricter than

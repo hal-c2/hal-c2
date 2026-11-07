@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24090
 #   https://github.com/pingdotgg/t3code/pull/19686
 #   https://github.com/pingdotgg/t3code/pull/15864
 #   https://github.com/pingdotgg/t3code/pull/14912 (automatic pull no longer holds readiness)
@@ -13,6 +14,7 @@
 #   packages/contracts/src/rpc.ts (projects.mutate; projects.list and projects.remove are
 #     unrouted names, dropped in parity/rpc.feature)
 #   apps/server/src/cli/project.ts (hal-c2 project add, remove, rename; live server or stored state)
+#   https://github.com/pingdotgg/t3code/pull/22867
 
 Feature: Removing and updating projects
   A project entry can be renamed, changed, and removed. Removing a project clears its
@@ -45,6 +47,14 @@ Feature: Removing and updating projects
     When the user asks to remove "shop"
     Then the user is told 4 threads and their conversation history will be cleared
     And the user is told the files on disk are kept
+
+  # Upstream #22867: the removal warning left unclear whether the provider's own sessions went too.
+  @backlog @desktop @mobile @tui
+  Scenario: Removing a project says the provider's own sessions are kept
+    Given "shop" has threads whose provider kept its own session files
+    When the user asks to remove "shop"
+    Then the user is told the threads are deleted from HAL-C2
+    And the user is told the provider's sessions are kept
 
   @desktop @mobile @tui @backlog-mobile @priority-high
   Scenario: Confirming removal clears the project and its drafts
@@ -213,6 +223,14 @@ Feature: Removing and updating projects
       Given a client is watching the project list
       When the operator runs "hal-c2 project add ~/code/api"
       Then the client sees "api" appear without reloading
+
+    # Upstream #24090: only the probe for a running server is short; the command itself waits up to ten seconds.
+    @backlog @mc @priority-low
+    Scenario: A project command waits for a busy MC to reply
+      Given the MC is running but takes a few seconds to apply a change
+      When the operator runs "hal-c2 project add ~/code/api"
+      Then the command waits for the MC's reply and reports "api" added
+      And it does not report a failure for a project that was added
 
     @backlog @mc
     Scenario: With the MC stopped a project command changes the stored projects

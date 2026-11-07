@@ -5,6 +5,9 @@
 #   https://github.com/pingdotgg/t3code/pull/16019
 #   https://github.com/pingdotgg/t3code/pull/19331
 #   https://github.com/pingdotgg/t3code/pull/19354
+#   https://github.com/pingdotgg/t3code/pull/25859
+#   https://github.com/pingdotgg/t3code/pull/26052
+#   https://github.com/pingdotgg/t3code/pull/25730
 #   apps/mobile/src/features/connection/pairing.ts (host + token, QR payload, scheme defaults)
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx (Scan QR Code, pairing code)
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx
@@ -25,9 +28,10 @@
 #   apps/mobile/src/lib/storage.test.ts, connection.ts (what the phone keeps of an environment, unreadable saved lists)
 #   apps/mobile/src/lib/authClientMetadata.ts (how the phone presents itself when it pairs)
 #   apps/mobile/app.config.ts (local network usage, camera)
-#   apps/mobile-qt/src/Pairing.cpp (one environment at a time: pairing.pair, pairing.forget; pairing with
-#     another: pairing.add, pairing.cancel; a link from outside the app is shown and never spent: openLink;
-#     a session is saved before it is paired with)
+#   apps/mobile-qt/src/Pairing.cpp (pairing.pair, pairing.forget; pairing with another beside the first:
+#     pairing.add, pairing.cancel, SavedEnvironmentsController; a link from outside the app is shown and never
+#     spent: openLink; a session is saved before it is paired with)
+#   https://github.com/hal-c2/hal-c2/issues/1092 (several environments at once)
 #   apps/mobile-qt/src/Scanner.cpp (the camera while the scanner shows, camera access, a code that is not a pairing
 #     code, a camera that gives no picture: scanner.retry)
 #   apps/mobile-qt/src/ScanCamera.cpp (a camera that does not start or stops, a device with none)
@@ -232,6 +236,15 @@ Feature: Pairing a phone with environments
     When the user edits the pairing code
     Then the failure is no longer shown
 
+  # Upstream #25859: an error another feature reported (a failed send, a failed branch refresh)
+  # showed under the Address and Code fields as if pairing had failed.
+  @backlog @mobile
+  Scenario: The pairing form shows only its own pairing failures
+    Given a message failed to send in a thread
+    When the user opens the screen to add an environment
+    Then the pairing form shows no failure
+    And closing the form leaves the failed message's error where it was
+
   @backlog @mobile @priority-low
   Scenario: Adding an environment asks for the camera only when the user chooses to scan
     Given the app has not been granted camera access
@@ -252,6 +265,15 @@ Feature: Pairing a phone with environments
     Then the user is told to allow local network access for HAL-C2 in the system settings
     And no environment is added
 
+  # Upstream #25730: Android refused an environment whose certificate came from a CA the user
+  # installed on the phone, though the phone's browser trusted it.
+  @backlog @mobile @priority-high
+  Scenario: An Android phone trusts a certificate authority the user installed
+    Given the environment serves HTTPS with a certificate from a CA the user installed on their Android phone
+    When the user pairs the phone with it
+    Then the environment is added and connects
+    And environments on plain HTTP still connect as before
+
   # New behaviour, the next two: the session a link buys is saved on the phone before the phone
   # pairs with it. The link is spent by then, so the user is told to ask for a fresh one.
   @mobile
@@ -264,10 +286,10 @@ Feature: Pairing a phone with environments
     And no environment is added
 
   @mobile
-  Scenario: A session the phone cannot save does not replace the environment it has
+  Scenario: A session the phone cannot save adds no environment beside the one it has
     Given the phone is paired with "My MacBook"
     And the phone has no room to save a session
-    When the user tries to pair with the environment "Office Mac" instead
+    When the user tries to pair with the environment "Office Mac" too
     Then the user is told the session could not be saved
     And the pairing form keeps what the user entered
     And the phone is still paired with "My MacBook" and connected
@@ -278,13 +300,13 @@ Feature: Pairing a phone with environments
     When the user pairs with "My MacBook" again
     Then "My MacBook" is listed once
 
-  # New behaviour, from here to the links: the phone keeps one environment (apps/mobile-qt Pairing),
-  # so pairing with another gives up the one it has, and the user is told before it does.
+  # From here to the links: the first environment is the phone's own connection, and every other
+  # one is paired beside it on a connection of its own (apps/mobile-qt Pairing).
   @mobile
-  Scenario: A paired phone is told what pairing with another environment replaces
+  Scenario: A paired phone is told pairing with another environment adds it beside the first
     Given the phone is paired with "My MacBook"
     When the user chooses to pair with another environment
-    Then the user is told that pairing replaces "My MacBook"
+    Then the user is told that pairing adds an environment beside "My MacBook"
 
   @mobile
   Scenario: Backing out of pairing with another environment keeps the current one
@@ -293,10 +315,10 @@ Feature: Pairing a phone with environments
     Then "My MacBook" is still listed
 
   @mobile
-  Scenario: Pairing a paired phone with another environment replaces the first
+  Scenario: Pairing a paired phone with another environment lists both
     Given the phone is paired with "My MacBook"
-    When the user pairs with the environment "Office Mac" instead
-    Then "Office Mac" is listed in place of "My MacBook"
+    When the user pairs with the environment "Office Mac" too
+    Then "My MacBook" and "Office Mac" are both listed
 
   # New behaviour: a link that pairs, which the environment's pairing page offers a phone whose own
   # camera read the code. Anyone can write such a link, so it is never paired with by itself.
@@ -322,12 +344,20 @@ Feature: Pairing a phone with environments
     And the pairing form holds the link
     And no environment is added
 
+  # Upstream #26052: a link opened with the Settings form open stacked a second form on top.
+  @backlog @mobile
+  Scenario: A pairing link opened while the pairing form is open fills that form
+    Given the user has the screen to add an environment open from Settings
+    When the user follows a pairing link from outside the app
+    Then the open pairing form holds the link
+    And no second pairing form is opened
+
   @mobile
-  Scenario: A pairing link opened from outside a paired app names the environment it would replace
+  Scenario: A pairing link opened from outside a paired app says it would add an environment
     Given the phone is paired with "My MacBook"
     When the user follows a pairing link to another environment from outside the app
     Then the user is told which address the link would pair with
-    And the user is told that pairing replaces "My MacBook"
+    And the user is told that pairing adds an environment beside "My MacBook"
     And the phone stays paired with "My MacBook"
 
   @mobile
@@ -376,6 +406,20 @@ Feature: Pairing a phone with environments
     When the user removes "My MacBook" and confirms
     Then "My MacBook" is no longer listed
     And its cached threads are removed from the phone
+
+  @mobile
+  Scenario: The user removes one of two environments from the phone
+    Given the phone is paired with "My MacBook" and "Office Mac"
+    When the user removes "Office Mac" and confirms
+    Then "Office Mac" is no longer listed
+    And "My MacBook" is still listed
+
+  @mobile
+  Scenario: Removing the first of two environments keeps the other
+    Given the phone is paired with "My MacBook" and "Office Mac"
+    When the user removes "My MacBook" and confirms
+    Then "My MacBook" is no longer listed
+    And "Office Mac" is still listed
 
   @mobile
   Scenario: Cancelling removal keeps the environment

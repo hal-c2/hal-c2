@@ -24,6 +24,9 @@ Item {
     readonly property var plan: shown ? turn.plan ?? null : null
     readonly property var queue: shown ? turn.queue : []
     readonly property var waiting: shown ? turn.waiting ?? [] : []
+    // The messages this device keeps until it can send them (the phone's
+    // outbox): the route thread's, known or not to a store that has not loaded.
+    readonly property var outbox: turn !== null && turn.kind === "thread" ? turn.outbox ?? [] : []
     // The running turn's task list, summed up; `tasksOpen` lists every step.
     // It closes on another thread, and when the list goes (an approval or a
     // question takes its place, or the turn ends).
@@ -39,11 +42,25 @@ Item {
     property int approvalIndex: 0
     readonly property var approval: approvals.length > 0 ? approvals[Math.min(approvalIndex, approvals.length - 1)] : null
     readonly property var question: questions.length > 0 ? questions[0] : null
+    // The questions of `question`, answered one at a time: `current` is the
+    // one shown, and `folded` leaves only its title above the composer.
+    readonly property var asked: question?.questions ?? []
+    property int questionIndex: 0
+    readonly property var current: asked.length > 0 ? asked[Math.min(questionIndex, asked.length - 1)] : null
+    property bool folded: false
     // The options picked for each question of `question`, by question id, and
     // what the user typed instead.
     property var picks: ({})
     property var typed: ({})
     property string answering: ""
+    property string answeringThread: ""
+    // What the user answered to requests still pending on other threads, by
+    // request id ({thread, picks, typed}), restored when one is shown again.
+    property var kept: ({})
+    // Threads the card does not show cannot be checked, so the oldest kept
+    // answers go past this many.
+    readonly property int keptMost: 50
+    readonly property bool answerable: question !== null && question.canRespond && !question.responding
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -54,7 +71,7 @@ Item {
 
     // Whether the turn waits on anything. The height follows this and not
     // `visible`, which a host may bind to more than this.
-    readonly property bool pending: approval !== null || question !== null || plan !== null || tasks !== null || queue.length > 0 || waiting.length > 0
+    readonly property bool pending: approval !== null || question !== null || plan !== null || tasks !== null || queue.length > 0 || waiting.length > 0 || outbox.length > 0
 
     visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
@@ -62,9 +79,64 @@ Item {
     onQuestionChanged: {
         const id = question?.requestId ?? "";
         if (id === answering) return;
+        advance.stop();
+        const thread = shown ? turn.threadKey : "";
+        const pendingHere = questions.map(item => item.requestId);
+        const next = {};
+        for (const key of Object.keys(kept)) {
+            // A request the shown thread no longer waits on was answered or withdrawn.
+            if (kept[key].thread === thread && pendingHere.length > 0 && !pendingHere.includes(key)) continue;
+            next[key] = kept[key];
+        }
+        // The request left behind is kept while it may still wait: on a
+        // thread no longer shown, or still pending on this one.
+        if (answering.length > 0 && (answeringThread !== thread || pendingHere.includes(answering)))
+            next[answering] = { thread: answeringThread, picks: picks, typed: typed };
+        const restored = next[id] ?? null;
+        delete next[id];
+        const keys = Object.keys(next);
+        for (let index = 0; index < keys.length - keptMost; ++index) delete next[keys[index]];
+        kept = next;
         answering = id;
-        picks = {};
-        typed = {};
+        answeringThread = id.length > 0 ? thread : "";
+        picks = restored?.picks ?? {};
+        typed = restored?.typed ?? {};
+        folded = false;
+        questionIndex = firstUnanswered();
+    }
+
+    // Moving on after the user picks the one answer a question takes waits a
+    // moment, so the pick is seen; moving by hand in that moment cancels it.
+    // Past the last question, moving on sends the answers, or goes back to
+    // one still unanswered.
+    Timer {
+        id: advance
+
+        interval: 200
+        onTriggered: {
+            if (requests.questionIndex < requests.asked.length - 1)
+                requests.questionIndex += 1;
+            else if (requests.answers() === null)
+                requests.questionIndex = requests.firstUnanswered();  // one was skipped
+            else
+                requests.submit();
+        }
+    }
+    readonly property bool advancing: advance.running
+
+    function moveTo(index) {
+        advance.stop();
+        questionIndex = Math.max(0, Math.min(index, asked.length - 1));
+    }
+
+    function submit() {
+        advance.stop();
+        const answered = answers();
+        if (!answerable || answered === null) return;
+        Shell.dispatch("composer.question.answer", {
+            requestId: question.requestId,
+            answers: answered
+        });
     }
 
     // Files for the answer to one question go to the MC with it.
@@ -78,38 +150,92 @@ Item {
         });
     }
 
+    // A pick lets go of what was typed, and a typed answer of the picks.
     function pick(item, label) {
         const next = Object.assign({}, picks);
+        let chosen = false;
         if (item.multiSelect) {
-            const chosen = next[item.id] ?? [];
-            next[item.id] = chosen.includes(label) ? chosen.filter(value => value !== label) : chosen.concat([label]);
+            const was = next[item.id] ?? [];
+            next[item.id] = was.includes(label) ? was.filter(value => value !== label) : was.concat([label]);
         } else {
-            next[item.id] = next[item.id] === label ? undefined : label;
+            chosen = next[item.id] !== label;
+            next[item.id] = chosen ? label : undefined;
         }
         picks = next;
+        if ((typed[item.id] ?? "").length > 0) type(item, "");
+        if (chosen && item.id === current?.id) advance.restart();
+        else advance.stop();
     }
 
     function type(item, text) {
         typed = Object.assign({}, typed, {
             [item.id]: text
         });
+        if (text.trim().length > 0 && picks[item.id] !== undefined) {
+            const next = Object.assign({}, picks);
+            delete next[item.id];
+            picks = next;
+        }
+    }
+
+    function answerOf(item) {
+        const text = (typed[item.id] ?? "").trim();
+        const picked = picks[item.id];
+        if (text.length > 0) return text;
+        if (Array.isArray(picked) ? picked.length > 0 : picked !== undefined) return picked;
+        return null;
+    }
+
+    // Reads the request itself: `asked` may not have caught up with it yet
+    // when a new request arrives.
+    function firstUnanswered() {
+        const items = question?.questions ?? [];
+        for (let index = 0; index < items.length; ++index) {
+            if (answerOf(items[index]) === null) return index;
+        }
+        return Math.max(0, items.length - 1);
     }
 
     // What the agent receives for each question: typed text wins over picks.
     function answers() {
         const result = {};
         for (const item of question?.questions ?? []) {
-            const text = (typed[item.id] ?? "").trim();
-            const picked = picks[item.id];
-            if (text.length > 0) {
-                result[item.id] = text;
-            } else if (Array.isArray(picked) ? picked.length > 0 : picked !== undefined) {
-                result[item.id] = picked;
-            } else {
-                return null;
-            }
+            const answer = answerOf(item);
+            if (answer === null) return null;
+            result[item.id] = answer;
         }
         return result;
+    }
+
+    // A number key picks the option in that place while the keyboard is on
+    // the card (a click on it puts it there) or on nothing, so the editor, a
+    // field or the terminal drawer keeps its digits. Not while folded away.
+    readonly property var focused: Window.activeFocusItem
+    readonly property bool digitsPick: shown && current !== null && !folded && answerable
+                                       && (focused === null || focused === Window.contentItem || isInside(focused, questionCard) && focused.cursorPosition === undefined)
+
+    function isInside(item, ancestor) {
+        for (let at = item; at !== null; at = at.parent) {
+            if (at === ancestor) return true;
+        }
+        return false;
+    }
+
+    // Each Shortcut sits in an Item so it finds the window it listens to.
+    Repeater {
+        model: 9
+
+        delegate: Item {
+            id: digit
+
+            required property int index
+
+            Shortcut {
+                sequence: String(digit.index + 1)
+                enabled: requests.digitsPick && digit.index < (requests.current?.options ?? []).length
+                onActivated: requests.pick(requests.current, requests.current.options[digit.index].label)
+            }
+        }
     }
 
     ColumnLayout {
@@ -355,11 +481,21 @@ Item {
             }
         }
 
-        // The agent's question.
+        // The agent's question, one of its questions at a time.
         ShellCard {
+            id: questionCard
+
+            objectName: "questionCard"
             Layout.fillWidth: true
             visible: requests.question !== null
             implicitHeight: questionColumn.implicitHeight + 24
+
+            // A click on the card, off its controls, takes the keyboard to it.
+            // Beneath them, so a button or field keeps its own clicks.
+            MouseArea {
+                anchors.fill: parent
+                onPressed: questionCard.forceActiveFocus(Qt.MouseFocusReason)
+            }
 
             ColumnLayout {
                 id: questionColumn
@@ -368,24 +504,85 @@ Item {
                 anchors.margins: 12
                 spacing: 8
 
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Text {
+                        objectName: "questionTitle"
+                        Layout.fillWidth: true
+                        text: requests.current?.question ?? ""
+                        color: requests.foreground
+                        font.family: requests.uiFont
+                        font.pixelSize: Theme.type.body.size
+                        font.weight: Font.DemiBold
+                        wrapMode: Text.Wrap
+                    }
+
+                    ShellButton {
+                        objectName: "questionPrevious"
+                        visible: requests.asked.length > 1 && !requests.folded
+                        implicitHeight: 22
+                        subtle: true
+                        iconName: "chevron-left"
+                        implicitWidth: implicitHeight
+                        enabled: requests.questionIndex > 0
+                        Accessible.name: qsTr("Previous question")
+                        onClicked: requests.moveTo(requests.questionIndex - 1)
+                    }
+
+                    Text {
+                        objectName: "questionPosition"
+                        visible: requests.asked.length > 1
+                        text: qsTr("%1/%2").arg(Math.min(requests.questionIndex, requests.asked.length - 1) + 1).arg(requests.asked.length)
+                        color: requests.muted
+                        font.family: requests.uiFont
+                        font.pixelSize: Theme.type.meta.size
+                    }
+
+                    ShellButton {
+                        objectName: "questionNext"
+                        visible: requests.asked.length > 1 && !requests.folded
+                        implicitHeight: 22
+                        subtle: true
+                        iconName: "chevron-right"
+                        implicitWidth: implicitHeight
+                        enabled: requests.questionIndex < requests.asked.length - 1
+                        Accessible.name: qsTr("Next question")
+                        onClicked: requests.moveTo(requests.questionIndex + 1)
+                    }
+
+                    ShellButton {
+                        objectName: "questionFold"
+                        implicitHeight: 22
+                        subtle: true
+                        iconName: requests.folded ? "chevron-up" : "chevron-down"
+                        implicitWidth: implicitHeight
+                        Accessible.name: requests.folded ? qsTr("Show the question") : qsTr("Hide the question")
+                        onClicked: requests.folded = !requests.folded
+                    }
+                }
+
                 Repeater {
-                    model: requests.question?.questions ?? []
+                    model: requests.asked
 
                     delegate: ColumnLayout {
                         id: questionItem
 
                         required property var modelData
+                        required property int index
 
                         Layout.fillWidth: true
+                        visible: index === Math.min(requests.questionIndex, requests.asked.length - 1) && !requests.folded
                         spacing: Theme.space.sm
 
                         Text {
+                            objectName: "questionHint"
                             Layout.fillWidth: true
-                            text: questionItem.modelData.question
-                            color: requests.foreground
+                            visible: questionItem.modelData.multiSelect === true
+                            text: qsTr("Select one or more options.")
+                            color: requests.muted
                             font.family: requests.uiFont
-                            font.pixelSize: Theme.type.body.size
-                            font.weight: Font.DemiBold
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.Wrap
                         }
 
@@ -398,15 +595,19 @@ Item {
 
                                 delegate: ShellButton {
                                     required property var modelData
+                                    required property int index
 
                                     readonly property var picked: requests.picks[questionItem.modelData.id]
 
                                     objectName: "questionOption-" + modelData.label
                                     implicitHeight: 28
                                     checkable: true
+                                    enabled: requests.answerable
                                     checked: Array.isArray(picked) ? picked.includes(modelData.label) : picked === modelData.label
                                     primary: checked
-                                    text: modelData.label
+                                    // The number key that picks it.
+                                    text: index < 9 ? qsTr("%1. %2").arg(index + 1).arg(modelData.label) : modelData.label
+                                    Accessible.name: modelData.label
                                     ToolTip.visible: hovered && (modelData.description ?? "").length > 0
                                     ToolTip.text: modelData.description ?? ""
                                     onClicked: requests.pick(questionItem.modelData, modelData.label)
@@ -423,6 +624,7 @@ Item {
                                 objectName: "questionAnswer-" + questionItem.modelData.id
                                 Layout.fillWidth: true
                                 placeholderText: qsTr("Or type your own answer")
+                                enabled: requests.answerable
                                 Accessible.name: qsTr("Or type your own answer")
                                 text: requests.typed[questionItem.modelData.id] ?? ""
                                 onTextEdited: requests.type(questionItem.modelData, text)
@@ -433,6 +635,7 @@ Item {
                                 implicitHeight: 28
                                 subtle: true
                                 iconName: "paperclip"
+                                enabled: requests.answerable
                                 Accessible.name: qsTr("Attach files")
                                 onClicked: answerFiles.open()
 
@@ -458,6 +661,8 @@ Item {
                                     required property var modelData
 
                                     attachment: modelData
+                                    // An answer on its way keeps its files.
+                                    removable: !(requests.question?.responding ?? false)
                                     onRemoveRequested: Shell.dispatch("composer.question.attachment.remove", {
                                         id: modelData.id
                                     })
@@ -472,7 +677,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    visible: text.length > 0
+                    visible: text.length > 0 && !requests.folded
                     text: requests.question?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
@@ -482,6 +687,7 @@ Item {
 
                 RowLayout {
                     Layout.fillWidth: true
+                    visible: !requests.folded
 
                     Item {
                         Layout.fillWidth: true
@@ -492,7 +698,7 @@ Item {
                         implicitHeight: 28
                         subtle: true
                         text: qsTr("Dismiss")
-                        enabled: requests.question !== null && requests.question.canRespond && !requests.question.responding
+                        enabled: requests.answerable
                         onClicked: Shell.dispatch("composer.question.dismiss", {
                             requestId: requests.question.requestId
                         })
@@ -503,11 +709,8 @@ Item {
                         implicitHeight: 28
                         primary: true
                         text: qsTr("Answer")
-                        enabled: requests.question !== null && requests.question.canRespond && !requests.question.responding && requests.answers() !== null
-                        onClicked: Shell.dispatch("composer.question.answer", {
-                            requestId: requests.question.requestId,
-                            answers: requests.answers()
-                        })
+                        enabled: requests.answerable && requests.answers() !== null
+                        onClicked: requests.submit()
                     }
                 }
             }
@@ -616,6 +819,75 @@ Item {
                     primary: true
                     text: refine ? qsTr("Refine") : qsTr("Implement")
                     onClicked: refine ? Shell.dispatch("composer.submit", {}) : Shell.dispatch("composer.plan.implement", {})
+                }
+            }
+        }
+
+        // The messages written with no connection, in the order they go once
+        // it returns. One still waiting can be pulled back into the composer.
+        ShellCard {
+            objectName: "outboxCard"
+            visible: requests.outbox.length > 0
+            Layout.fillWidth: true
+            implicitHeight: outboxColumn.implicitHeight
+
+            ColumnLayout {
+                id: outboxColumn
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                spacing: 0
+
+                Repeater {
+                    model: requests.outbox
+
+                    delegate: RowLayout {
+                        id: waitingRow
+
+                        required property var modelData
+                        readonly property var attachments: modelData.attachments ?? []
+
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 32
+                        Layout.leftMargin: 12
+                        Layout.rightMargin: Theme.space.sm
+                        spacing: Theme.space.sm
+
+                        ShellIcon {
+                            name: "clock"
+                            size: 13
+                            color: requests.muted
+                        }
+                        Text {
+                            objectName: "outboxText-" + waitingRow.modelData.messageId
+                            Layout.fillWidth: true
+                            text: waitingRow.modelData.text.length > 0 || waitingRow.attachments.length === 0 ? waitingRow.modelData.text : qsTr("%n attachment(s)", "", waitingRow.attachments.length)
+                            textFormat: Text.PlainText
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                        }
+                        Text {
+                            objectName: "outboxStatus-" + waitingRow.modelData.messageId
+                            text: waitingRow.modelData.sending ? qsTr("Sending…") : qsTr("Waiting to send")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                        ShellButton {
+                            objectName: "outboxEdit-" + waitingRow.modelData.messageId
+                            implicitHeight: 24
+                            subtle: true
+                            text: qsTr("Edit")
+                            // On its way, the environment may already have it.
+                            enabled: !waitingRow.modelData.sending
+                            onClicked: Shell.dispatch("composer.outbox.edit", {
+                                messageId: waitingRow.modelData.messageId
+                            })
+                        }
+                    }
                 }
             }
         }

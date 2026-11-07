@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26823
+#   https://github.com/pingdotgg/t3code/pull/23183
 #   https://github.com/pingdotgg/t3code/pull/20446
 #   https://github.com/pingdotgg/t3code/pull/17676
 #   https://github.com/pingdotgg/t3code/pull/19145
@@ -38,6 +40,7 @@
 #   https://github.com/pingdotgg/t3code/pull/25753
 #   https://github.com/pingdotgg/t3code/pull/25475
 #   https://github.com/pingdotgg/t3code/pull/21402
+#   https://github.com/pingdotgg/t3code/pull/27891
 
 Feature: Providers settings panel
   The Providers page lists the agent providers configured on one environment. The user adds
@@ -1111,6 +1114,13 @@ Feature: Providers settings panel
       Then clients are sent its newest line at most once a second
       And the line has no colour codes and is cut to 200 characters
 
+    # Upstream #26823: an updater redrawing its spinner in place had every frame joined into one long line.
+    @backlog @mc @priority-low
+    Scenario: An updater that redraws its line in place shows only the latest frame
+      Given a provider updater redraws "Upgrading" with a spinner by moving back to the start of the line
+      When the user updates that provider
+      Then the update shows only the latest frame, such as "Updating · Upgrading ⠋"
+
     @backlog @desktop @mobile
     Scenario: A failed provider update says why where the user started it
       Given updating "Claude" fails with "npm exited with status 1"
@@ -1208,6 +1218,20 @@ Feature: Providers settings panel
       Given Claude reports a model with fast mode, thinking and reasoning options
       When the user opens Claude's models
       Then that model is labelled "Fast mode", "Thinking" and "Reasoning"
+
+    # Upstream #27891: with nearly every model reasoning, the list labels the exception instead.
+    # Replaces the labels of the scenario above once the desktop carries it.
+    @backlog @desktop
+    Scenario Outline: Only a model without reasoning is labelled for it
+      Given Codex reports <model>
+      When the user opens Codex's models
+      Then <label>
+
+      Examples:
+        | model                                                                | label                                 |
+        | a built-in model with no reasoning levels beside ones that have them | that model is labelled "No reasoning" |
+        | a built-in model with reasoning levels                               | it has no reasoning label             |
+        | a custom model, or the provider's own default alias                  | it has no reasoning label             |
 
     @desktop
     Scenario: A long models list can be filtered and counted
@@ -1377,3 +1401,13 @@ Feature: Providers settings panel
     When the user presses Update all next to Refresh
     Then each outdated provider is updated on each connected environment
     And a machine that refuses shows as a failure line without stopping the rest
+
+  # Upstream #23183: Update all and the sidebar's update summary counted environments whose
+  # session may not manage providers, and the update then failed for a missing scope.
+  @backlog @shared
+  Scenario: Update all leaves out environments the user may not manage providers on
+    Given "laptop" and "server" both have an outdated Codex
+    And the user's session on "server" may not manage providers
+    Then Update all and the update summary count only the Codex on "laptop"
+    When the user presses Update all next to Refresh
+    Then only "laptop" is asked to update Codex

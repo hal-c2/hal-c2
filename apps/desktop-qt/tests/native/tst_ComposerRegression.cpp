@@ -202,9 +202,63 @@ private slots:
     QCOMPARE(slash->end, 3);
   }
 
+  // A slash after other text opened the menu for any word, matched fuzzily and
+  // against descriptions, so Enter after "summarise /thread" took /model (its
+  // description says "this thread") and the message was not sent. Mid-line a
+  // word must start a name, and one that starts none opens no menu; spaces
+  // before a line's slash still make it the line's command.
+  void aSlashWordInASentenceThatStartsNoNameIsProse() {
+    const composer::Trigger thread{QStringLiteral("slash-command"), QStringLiteral("thread"), 10, 17, true};
+    QVERIFY(composer::slashItems(nullptr, thread, true, true, false).isEmpty());
+    QVERIFY(!composer::slashItems(nullptr, {thread.kind, thread.query, 0, 7, false}, true, true, false).isEmpty());
+    QCOMPARE(composer::slashItems(nullptr, {thread.kind, QStringLiteral("pl"), 4, 7, true}, true, true, false).size(), 1);
+
+    const auto spaced = composer::trigger(QStringLiteral("  /compact"), 10);
+    QVERIFY(spaced);
+    QCOMPARE(spaced->start, 0);
+    QCOMPARE(spaced->midLine, false);
+
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto shown = [&shell] { return shell.bridge->state()->value(QStringLiteral("composer")).toMap(); };
+    shell.type(QStringLiteral("summarise /thread"));
+    QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("summarise /thread"));
+    QVERIFY(shown().value(QStringLiteral("triggerKind")).toString().isEmpty());
+    QVERIFY(shown().value(QStringLiteral("suggestions")).toList().isEmpty());
+    shell.type(QStringLiteral("summarise /mo"));
+    QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("summarise /mo"));
+    QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("slash-command"));
+    QCOMPARE(shown().value(QStringLiteral("suggestions")).toList().value(0).toMap().value(QStringLiteral("id")).toString(),
+             QStringLiteral("slash:model"));
+  }
+
+  // The menu labels skills "/skill:<name>", so a word typed toward that label
+  // keeps the mid-line menu open rather than closing it mid-word.
+  void aSlashWordTypedTowardTheSkillLabelKeepsTheMenuOpen() {
+    const QJsonObject review{{QStringLiteral("name"), QStringLiteral("review")}, {QStringLiteral("enabled"), true}};
+    composer::Instance instance;
+    instance.driver = QStringLiteral("claudeAgent");
+    instance.skills = QJsonArray{review};
+    for (const char* word : {"ski", "skill", "skill:", "skill:rev"}) {
+      const composer::Trigger t{QStringLiteral("slash-command"), QString::fromLatin1(word), 10, 10 + 1 + int(strlen(word)), true};
+      bool offersReview = false;
+      for (const auto& s : composer::slashItems(&instance, t, true, true, false)) offersReview |= s.label == QLatin1String("/skill:review");
+      QVERIFY2(offersReview, word);
+    }
+    // Too short to be heading for the label: "/s" ends a sentence.
+    for (const char* word : {"s", "sk"}) {
+      const composer::Trigger t{QStringLiteral("slash-command"), QString::fromLatin1(word), 10, 10 + 1 + int(strlen(word)), true};
+      QVERIFY2(composer::slashItems(&instance, t, true, true, false).isEmpty(), word);
+    }
+    const composer::Trigger other{QStringLiteral("slash-command"), QStringLiteral("skx"), 10, 14, true};
+    QVERIFY(composer::slashItems(&instance, other, true, true, false).isEmpty());
+  }
+
   // A bare `@` opened no menu. It is never searched, so the menu opens at
-  // once and says nothing matches, as the web's did; a word after it waits for
-  // its search to answer before saying so.
+  // once and says nothing matches, as the web's did; a word after it says it
+  // is searching until its search answers.
   void aBareAtOpensTheMenuSayingNothingMatches() {
     QTemporaryDir home;
     Shell shell(home.path());
@@ -223,7 +277,7 @@ private slots:
     shell.type(QStringLiteral("@src"));
     QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("@src"));
     QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("path"));
-    QVERIFY(shown().value(QStringLiteral("suggestionsEmptyText")).isNull());
+    QCOMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("Searching workspace files..."));
     shell.mc.answerHeld();
     QTRY_COMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
   }

@@ -5,7 +5,9 @@ defmodule HalC2.HomeLockPropTest do
   taking the lock as an MC does. This MC acquires, activates the lock as a service
   (boot, or a hot update), and waits out a holder that then dies; the others take a
   home and are killed. At most one of them owns a home at any time, this MC taking
-  its own home again is a no-op, and a home is free once its holder is gone.
+  its own home again is a no-op, and a home is free once its holder is gone. The
+  doctor (`HomeLock.with_lock/2`) gets only a free home, which no MC can take while
+  it runs, and leaves it as it found it.
   """
 
   use ExUnit.Case, async: false
@@ -72,7 +74,8 @@ defmodule HalC2.HomeLockPropTest do
         {4, {:call, __MODULE__, :acquire, [oneof(@homes)]}},
         {3, {:call, __MODULE__, :activate, [oneof(@homes)]}},
         {4, {:call, __MODULE__, :other_takes, [oneof(@others), oneof(@homes)]}},
-        {3, {:call, __MODULE__, :other_dies, [oneof(@others)]}}
+        {3, {:call, __MODULE__, :other_dies, [oneof(@others)]}},
+        {2, {:call, __MODULE__, :doctor, [oneof(@homes)]}}
       ] ++
         if(held_by_others == [],
           do: [],
@@ -110,6 +113,9 @@ defmodule HalC2.HomeLockPropTest do
     %{state | owners: Map.delete(state.owners, home), held: held}
   end
 
+  # The doctor lets go of the home when it is done.
+  def next_state(state, _result, {:call, _, :doctor, [_home]}), do: state
+
   def next_state(state, _result, {:call, _, :wait_out, [home]}) do
     other = state.owners[home]
     %{state | owners: Map.put(state.owners, home, :mc), held: Map.delete(state.held, other)}
@@ -123,6 +129,10 @@ defmodule HalC2.HomeLockPropTest do
 
   def postcondition(state, {:call, _, :other_takes, [_other, home]}, result),
     do: result == if(state.owners[home] == nil, do: :took, else: :refused)
+
+  # While the doctor holds a home, another MC is refused it.
+  def postcondition(state, {:call, _, :doctor, [home]}, result),
+    do: result == if(state.owners[home] == nil, do: :refused, else: {:error, :held})
 
   def postcondition(_state, {:call, _, cmd, _}, result) when cmd in [:other_dies, :wait_out],
     do: result == :ok
@@ -171,6 +181,8 @@ defmodule HalC2.HomeLockPropTest do
     kill(port)
     :ok
   end
+
+  def doctor(home), do: HomeLock.with_lock(path(home), fn -> other_takes(:during, home) end)
 
   # The background service: waits on a home another MC holds, which then dies.
   def wait_out(home) do

@@ -4,6 +4,15 @@
 #   shell's links form and the desktop's link settings were removed with this decision.
 #   Shared domain: cluster.feature holds how two MCs connect; pairing.feature holds the
 #   pairing links a client or a joining MC uses.
+#   Upstream's cross-environment orchestration, dropped with it:
+#   https://github.com/pingdotgg/t3code/pull/16653
+#   https://github.com/pingdotgg/t3code/pull/16655
+#   https://github.com/pingdotgg/t3code/pull/16684
+#   https://github.com/pingdotgg/t3code/pull/16695
+#   https://github.com/pingdotgg/t3code/pull/16698
+#   https://github.com/pingdotgg/t3code/pull/16719
+#   https://github.com/pingdotgg/t3code/pull/17129
+#   https://github.com/pingdotgg/t3code/pull/17130
 #
 # Dropped, every scenario: two MCs connect only by clustering (Erlang distribution over
 # mutual TLS, cluster.feature). A websocket is how a client talks to its MC, never how one
@@ -296,3 +305,63 @@ Feature: Linking an MC to environments outside its cluster
     And a client of the MC follows the shell with its links' rows
     When the client stops following the shell
     Then the MC no longer follows the shell of "beast"
+
+  # Upstream #16655: an environment linked to another called the other's MCP tools as its outside
+  # agent. Machines in the cluster reach each other's threads without a link.
+  @dropped @mc
+  Scenario: The MC links to another environment's agent tools
+    When the user links the MC to "beast" with a pairing code and an access level
+    Then the MC can call the agent tools of "beast" as an outside agent
+    And "beast" lists the link among its connections, where it can be revoked
+
+  # Upstream #16653: a link's calls carried the calling agent's own limits in a header.
+  @dropped @mc
+  Scenario: Work a link starts runs within the calling agent's modes
+    Given the MC is linked to "beast" at full access
+    When an agent in plan mode on the MC launches work on "beast" through the link
+    Then the work on "beast" runs in plan mode or narrower
+
+  # Upstream #16684: every agent tool that named a thread, project or queue took an environment.
+  @dropped @mc
+  Scenario: An agent works on a linked environment's threads through its usual tools
+    Given the MC is linked to "beast"
+    When an agent on the MC reads a thread of "beast" by naming "beast"
+    Then the call is forwarded to "beast" and answered from there
+
+  # Upstream #16695: work a link started below full access could not steer the user's own threads
+  # or change the other environment's projects and settings.
+  @dropped @mc
+  Scenario: Work a link starts stays within its link
+    Given the MC is linked to "beast" below full access
+    When work the link started tries to steer a thread the user started on "beast"
+    Then it is refused
+
+  # Upstream #16698: Connections listed linked environments, and threads named the environment
+  # that started them.
+  @dropped @shared
+  Scenario: Linked environments are listed in Connections
+    Given the MC is linked to "beast"
+    When the user opens Connections
+    Then "beast" is listed as a linked environment that can be forgotten
+    And threads a link started name the environment that started them
+
+  # Upstream #16719: a linked environment ran a delegated task; machines in the cluster need no link.
+  @dropped @mc
+  Scenario: A task is delegated to a linked environment
+    Given the MC is linked to "beast" and both have a project of github.com/acme/shop
+    When an agent delegates a task to "beast"
+    Then the task runs in "beast"'s copy of the project
+    And the agent is woken by its result as for a local task
+
+  # Upstream #17129: the agent set up a link itself, asking with a card for the machine and access.
+  @dropped @mc @shared
+  Scenario: An agent asks to link to another environment
+    When the user asks the agent to delegate the work to "my box"
+    Then the thread shows a card asking which machine to link and with what access
+    And the agent goes on once the user approves the link
+
+  # Upstream #17130: a machine could be @-mentioned so the agent could link to it and delegate there.
+  @dropped @shared
+  Scenario: The user mentions a machine to link it
+    When the user writes "hand this off to my @beast" and chooses the machine "beast"
+    Then the agent is told which environment "beast" is, so it can link to it and delegate there

@@ -159,8 +159,23 @@ public:
   // The model the window's thread or draft will send with: {instanceId, model}, empty with none ready.
   QJsonObject currentSelection() const { return selection(target()); }
   void activate() override;
+  void preview() override;
   bool isActive() const { return m_active; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // A message sent with no connection waits on this machine to be sent, in
+  // order, once its environment is connected again, instead of staying in the
+  // draft behind a "Not connected" toast; and one a dropped connection left
+  // unanswered is sent again (the MC carries a message id out once) rather
+  // than given back. The phone's outbox (MobileApp); off on the desktop.
+  // A waiting message shows in its thread's `turn.outbox`
+  // ({messageId, text, attachments, sending}), and `composer.outbox.edit
+  // {messageId}` pulls one back into the composer.
+  void setWaitsOffline(bool on);
+  // How long the outbox waits after a send the connection dropped before it
+  // tries that thread again: each delay in turn, then the last one over and
+  // over (1, 2, 4, 8, then 16 s).
+  void setOutboxRetryDelays(const QList<int>& delays) { m_outboxDelays = delays; }
+  QList<int> outboxRetryDelays() const { return m_outboxDelays; }
 
   bool handle(const QString& action, const QVariant& payload) override;
   void adopt(const QString& draftId, const QString& threadKey, const QString& text);
@@ -197,6 +212,10 @@ public:
   // mimeType, url (an image's bytes as a data URL), text (a file's as captured,
   // when it is text this machine can read), truncated}; empty when it is gone.
   QVariantMap attachmentPreview(const QString& id);
+
+signals:
+  // The outbox will try `target` again in `delayMs`.
+  void outboxRetryScheduled(const QString& target, int delayMs);
 
 private:
   struct Attachment {
@@ -331,6 +350,16 @@ private:
     // its command id, which the MC carries out once, if the shell after the
     // drop has no thread for it. Not kept across a restart.
     QJsonObject launch;
+    // The outbox's (setWaitsOffline): the commands as they were written, the
+    // mode changes ahead of the message, sent once the thread's environment
+    // is connected, less those the MC has answered; and the draft's model and
+    // modes, which a refusal gives back with the prompt.
+    QList<QJsonObject> commands;
+    QJsonObject choices;
+    // Waiting its turn to be sent rather than on its way, and whether it ever
+    // waited, which is what shows it in the thread's outbox.
+    bool waiting = false;
+    bool waited = false;
   };
 
   bool interrupt();
@@ -405,10 +434,28 @@ private:
   // whether its thread exists. Sends still on their way take the open
   // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
+  // Sends the outbox's waiting messages of each thread whose environment is
+  // connected, in the order they were written; drops those of a thread the
+  // environment no longer has. One window drains it.
+  void drainOutbox();
+  // A send the connection dropped, or the MC is still sending: it and the ones
+  // behind it wait again, with what the MC has not answered of them, and the
+  // thread is tried again after the next delay.
+  void waitAgain(const QString& target, const QList<Send>& sends);
+  void forgetAnswered(const QString& messageId, const QJsonObject& command);
+  // The outbox's messages of the route thread, for `turn.outbox`.
+  QVariantList outboxState(const QString& target) const;
+  // Pulls a waiting message back into the composer.
+  bool editWaiting(const QString& target, const QString& messageId);
+  // A refused outbox send: its prompt ahead of what was typed since, with the
+  // model and modes it was written with.
+  void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error);
   std::optional<QString> newestBefore(const QString& thread) const;
   static QJsonObject excerptJson(const Excerpt& excerpt);
   static Excerpt excerptOf(const QJsonObject& kept);
-  void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);
+  // The send's commands in order; `done` has the first error and its detail.
+  using Dispatched = std::function<void(const std::optional<QString>& error, const QJsonValue& detail)>;
+  void dispatchAll(const Send& send, qsizetype index, Dispatched done);
   bool attach(const QVariantList& files);
   static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.
@@ -501,6 +548,7 @@ private:
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();
+  void previewTurn();
   // publish() in every window's composer: what one window changed in the
   // shared state (Kept) the others show too.
   static void publishEverywhere(NativeShell* shell);
@@ -518,6 +566,7 @@ private:
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
+  bool m_previewing = false;
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;
@@ -549,6 +598,15 @@ private:
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.
   QHash<QString, QList<Send>> m_queues;
+  // The outbox (setWaitsOffline): on, its retry delays, how many sends in a
+  // row the connection dropped for each thread, and the threads waiting out
+  // their delay; and the shell frame it waits for after a drop, which says
+  // which threads are still there.
+  bool m_waitsOffline = false;
+  quint64 m_outboxSince = 0;
+  QList<int> m_outboxDelays{1000, 2000, 4000, 8000, 16000};
+  QHash<QString, int> m_outboxFailures;
+  QSet<QString> m_outboxHeld;
   // The route thread (or draft) and its stream.
   QString m_thread;
   QString m_draftId;

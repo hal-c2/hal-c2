@@ -222,6 +222,25 @@ defmodule HalC2.CheckpointTest do
     assert Checkpoint.capture_run(outside, scope, 1, "r", "n", "t", nil)["status"] == "missing"
   end
 
+  test "a capture is tried again for the lines git prints for a lock or a vanished file" do
+    for message <- [
+          "fatal: Unable to create '/r/.git/index.lock': File exists.",
+          "fatal: Another git process seems to be running in this repository",
+          ~s{error: open("f"): No such file or directory\nerror: unable to index file 'f'\nfatal: adding files failed},
+          "error: unable to stat 'f': No such file or directory",
+          "error: failed to insert into database"
+        ] do
+      assert Checkpoint.transient?(message), message
+    end
+
+    refute Checkpoint.transient?(
+             "error: 'nested/' does not have a commit checked out\nerror: unable to index file 'nested/'"
+           )
+
+    refute Checkpoint.transient?("fatal: not a git repository (or any of the parent directories)")
+    refute Checkpoint.transient?("fatal: cannot change to '/gone': No such file or directory")
+  end
+
   test "parses renames in numstat" do
     numstat = "3\t1\tsrc.ex\u00000\t0\t\u0000old.ex\u0000new.ex\u0000-\t-\timg.png\u0000"
 

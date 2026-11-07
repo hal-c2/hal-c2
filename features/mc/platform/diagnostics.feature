@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23274
+#   https://github.com/pingdotgg/t3code/pull/24556
 #   https://github.com/pingdotgg/t3code/pull/19789
 #   https://github.com/pingdotgg/t3code/pull/13697
 #   https://github.com/pingdotgg/t3code/pull/13355
+#   https://github.com/pingdotgg/t3code/pull/22753
+#   https://github.com/pingdotgg/t3code/pull/27904
+#   https://github.com/pingdotgg/t3code/pull/27986
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
 #   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry shape)
@@ -112,6 +117,29 @@ Feature: MC diagnostics
     When a turn runs
     Then trace diagnostics list the turn's spans
 
+  # Upstream #27904: traces and logged failures kept the connection ticket and proof in request URLs,
+  # and the state folder was readable by everyone.
+  # Upstream #27986: pairing tokens and OAuth codes, states and challenges are redacted the same way.
+  @backlog @mc @priority-high
+  Scenario Outline: Credentials in a request's address never reach a trace or a log
+    Given tracing is enabled on the MC
+    When a request arrives whose address carries <credential>
+    Then its traces, exported spans and logged failures show the value replaced by a redaction marker
+    And the rest of the request is still traced
+
+    Examples:
+      | credential                                  |
+      | the ticket that opens a connection          |
+      | the proof that binds a request to a device  |
+      | a pairing token or pairing link             |
+      | an OAuth code, state or challenge           |
+
+  # Upstream #27904: the state folder was readable by everyone.
+  @backlog @mc @priority-low
+  Scenario: The MC's state folder is readable only by its owner
+    When the MC starts
+    Then its state folder can be read only by the user the MC runs as
+
   # Upstream #13697 times Node's event loop. The MC runs on the BEAM, which has no single loop
   # to time, so a stall recorder is not carried.
   @dropped @mc
@@ -164,8 +192,7 @@ Feature: MC diagnostics
       | grok-build         | other  |
 
   # Legacy: apps/server/src/resourceTelemetry/HostResources.ts (sample: two readings 200 ms apart)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (host CPU use)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: Host CPU use is measured over a short interval or left blank
     Given the host's CPU counters <state>
     When a client asks for the host's resources
@@ -191,8 +218,7 @@ Feature: MC diagnostics
     Then the host is read once and all three get that reading
 
   # Legacy: apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts (normalizeResourceTelemetryHistoryInput)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (history)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A history request is held to what the MC keeps
     When a client asks for resource history over <window> in buckets of <bucket>
     Then the history covers <window used> in buckets of <bucket used>
@@ -205,8 +231,7 @@ Feature: MC diagnostics
       | 10 minutes | 10 ms      | 10 minutes  | 1 second    |
 
   # Legacy: apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts (observed RSS, "uses observed RSS for the history-window peak")
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (peak)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A process's peak memory in a history window is what was seen in that window
     Given a process whose memory reached 2 GiB an hour ago and has been 300 MiB since
     When a client asks for the last ten minutes of resource history
@@ -227,8 +252,7 @@ Feature: MC diagnostics
       | a process missing from one sample keeps its earlier reading as its baseline for the next     |
 
   # Legacy: apps/server/src/resourceTelemetry/Model.ts (delta, MAX_DELTA_INTERVAL_MS)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (rates)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A process's CPU time and I/O are counted as differences between samples
     Given a process with a reading of <earlier> and then a reading of <later> taken <apart>
     Then the interval adds <added>
@@ -240,8 +264,7 @@ Feature: MC diagnostics
       | 100     | 160   | 90 seconds  | nothing     |
 
   # Legacy: apps/server/src/resourceTelemetry/Model.ts (processIdentityKey: pid and start time)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (identity)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A process that reuses an id is a new process
     Given a process was sampled and then exited
     And a new process took the same id with a different start time
@@ -266,8 +289,7 @@ Feature: MC diagnostics
     And a process's children are ordered by id
     And a process whose parent is not in the list is placed after the trees that are
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (@max_bytes, @max_files)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: The trace file rolls over at 10 MiB and keeps ten older files
     Given tracing is enabled on the MC
     When the trace file reaches 10 MiB
@@ -382,6 +404,15 @@ Feature: MC diagnostics
     And the oldest files are removed until the logs fit in 512 MiB
     And the file a thread is still writing to is kept
 
+  # Upstream #23274: a running server held every finished thread's current log as in use, so neither limit reclaimed it.
+  @backlog @mc @priority-low
+  Scenario: A finished thread's provider log falls under the limits while the MC keeps running
+    Given provider event logging is on
+    And a thread wrote its provider log and has written nothing since the last check
+    When the MC checks the provider logs again without restarting
+    Then that thread's log is removed like any other once it is older than 14 days
+    And it counts as removable when the logs pass 512 MiB
+
   @backlog @mc @priority-low
   Scenario: Provider events outside any thread share one log
     Given provider event logging is on
@@ -427,7 +458,7 @@ Feature: MC diagnostics
 
   # CodexAdapterV2.ts redactCodexProtocolValue, ClaudeAdapterV2.ts (query options logged
   # without env, MCP server headers or callbacks).
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: Codex protocol logs never hold credentials
     Given provider event logging is on
     When a Codex protocol message carries <content>
@@ -438,13 +469,28 @@ Feature: MC diagnostics
       | a value that starts with "Bearer "                                          |
       | a field whose name ends in authorization, apikey, token, password or secret |
       | either of those inside JSON carried as text                                 |
+      | a credential field that holds an object rather than text                    |
+      | a bearer token in the middle of a command line or tool output               |
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude's logged start-up options leave out its environment and credentials
     Given provider event logging is on
     When a Claude session starts with the "hal-c2" server attached
     Then the logged options name the model, mode and working folder
     And they hold no environment values and no credential for the "hal-c2" server
+
+  # Upstream #24556: signed asset and upload URLs carry their token in the path, so they get no HTTP span.
+  @backlog @mc @priority-high
+  Scenario Outline: Traces never record a signed URL's token
+    Given tracing is enabled on the MC
+    When a client uses <url>
+    Then no recorded trace holds that URL's token
+
+    Examples:
+      | url                      |
+      | a signed asset URL       |
+      | an attachment upload URL |
+      | a webhook URL            |
 
   # The triage command is run by an operator next to an installed HAL-C2, with or without an
   # MC running.
@@ -488,6 +534,29 @@ Feature: MC diagnostics
     Given Codex is not installed
     When the operator runs "hal-c2 triage --agent codex"
     Then the command fails saying "codex" is not installed or was not found on the path
+
+  # Upstream #22753: triage ran only from a terminal, out of reach from the apps.
+  @backlog @mc @desktop @mobile
+  Scenario: The user starts triage from the command palette
+    When the user chooses "Triage an issue" in the command palette
+    Then a thread under "No project" opens on the machine on screen, asking "What went wrong?"
+    And its draft links the triage playbook
+    And the user can pick any provider, describe the problem and send it
+
+  # Upstream #22753: the source of the running version is fetched while the user writes.
+  @backlog @mc @priority-low
+  Scenario: Triage from the app fetches the source of the version the MC runs
+    When a client asks the MC to prepare triage
+    Then the context file and the prompt are written as "hal-c2 triage" writes them
+    And the source of the MC's version is fetched into the triage source checkouts in the background
+    And the context tells the agent it runs inside the MC it checks, so it gives restart steps instead of restarting
+
+  # Upstream #22753
+  @backlog @desktop @mobile @priority-low
+  Scenario: Triage that cannot start points to the command
+    Given the machine on screen cannot start threads under "No project"
+    When the user chooses "Triage an issue"
+    Then the user is told triage could not start and to run "hal-c2 triage" instead
 
   @backlog @mc @priority-low
   Scenario: With no agent installed the triage files are left to paste into any agent

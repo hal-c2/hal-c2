@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/19326
+#   https://github.com/pingdotgg/t3code/pull/26042
 #   https://github.com/pingdotgg/t3code/pull/18454 (prompt links: parser in packages/shared/promptLinks,
 #     resolvers in packages/client-runtime/prompt-links, docs/user/prompt-links.md)
 #   Cross-domain: mobile/navigation-and-deep-links.feature owns the phone's link schemes;
@@ -49,6 +50,19 @@ Feature: Sharing a prompt as a link
     Then the draft is in "shop-fork"
     When the user opens a prompt link for "bob/shop"
     Then no project is matched
+
+  # Upstream #26042: git.cafe mirrors GitHub under the same path, but a project cloned from it
+  # was "not found" by a prompt link for the GitHub repository.
+  @backlog @desktop @mobile
+  Scenario Outline: A prompt link matches a project cloned from the repository's GitCafe mirror
+    Given "Office Mac" has the project "t3" from the repository <remote>
+    When the user opens a prompt link for "acme/t3"
+    Then <result>
+
+    Examples:
+      | remote             | result                |
+      | git.cafe/acme/t3   | the draft is in "t3"  |
+      | gitlab.com/acme/t3 | no project is matched |
 
   @backlog @desktop @mobile
   Scenario Outline: A prompt link for a repository the user does not have keeps the prompt

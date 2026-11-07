@@ -574,6 +574,48 @@ const Steps steps([] {
     expect(shown && shown->isVisible(), QStringLiteral("the answer does not show %1").arg(c[1]));
   });
   step(QStringLiteral("submits the answer"), [submit](World& world, const Captures&, const Table&) { submit(world); });
+  const auto attachToAnswer = [answerFiles](World& world, const QString& name) {
+    QQuickItem* requests = composerPart(world, QStringLiteral("turnRequests"));
+    QMetaObject::invokeMethod(requests, "attachTo", Q_ARG(QVariant, QStringLiteral("database")), Q_ARG(QVariant, QVariant(QVariantList{plainFile(world, name)})));
+    world.waitFor([&] { return answerFiles(world).size() == 1; }, [&] { return QStringLiteral("%1 to be attached; the answer carries %2").arg(name, show(answerFiles(world))); });
+  };
+  step(QStringLiteral("the answer to %1 has a file that has not finished uploading").arg(q), [typeAnswer, attachToAnswer, answerFiles](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("uploads"));
+    typeAnswer(world, QStringLiteral("use this schema"));
+    attachToAnswer(world, QStringLiteral("schema.sql"));
+    expect(answerFiles(world).first().toMap().value(QStringLiteral("status")) == QLatin1String("uploading"), QStringLiteral("the answer carries %1").arg(show(answerFiles(world))));
+  });
+  step(QStringLiteral("the user submits the answers"), [submit](World& world, const Captures&, const Table&) { submit(world); });
+  step(QStringLiteral("the question stays open with what the user wrote"), [answerFiles](World& world, const Captures&, const Table&) {
+    expect(commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(), QStringLiteral("the answer was sent: %1").arg(world.describeCommands()));
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-database"));
+    expect(field && field->isVisible() && field->property("text") == QLatin1String("use this schema") && answerFiles(world).size() == 1,
+           QStringLiteral("the answer reads \"%1\" with %2").arg(field ? field->property("text").toString() : QString(), show(answerFiles(world))));
+  });
+  step(QStringLiteral("the user typed %1 and attached %1").arg(q), [typeAnswer, attachToAnswer, answerFiles](World& world, const Captures& c, const Table&) {
+    typeAnswer(world, c[0]);
+    attachToAnswer(world, c[1]);
+    world.waitFor([&] { return answerFiles(world).first().toMap().value(QStringLiteral("status")).toString().isEmpty(); },
+                  [&] { return QStringLiteral("%1 to upload; the answer carries %2").arg(c[1], show(answerFiles(world))); });
+  });
+  step(QStringLiteral("the user submits the answer and the agent has not taken it yet"), [submit](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("answers"));
+    submit(world);
+    world.waitFor([&] { return !commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(); }, QStringLiteral("the answer to be on its way"));
+  });
+  step(QStringLiteral("%1 cannot be removed from the answer").arg(q), [answerFiles](World& world, const Captures& c, const Table&) {
+    Brick& brick = composerBrick(world);
+    QQuickItem* chip = composerPart(world, QStringLiteral("attachment:") + c[0]);
+    expect(chip && chip->isVisible(), QStringLiteral("the answer does not show %1").arg(c[0]));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(chip));
+    world.sync();
+    expect(answerFiles(world).size() == 1, QStringLiteral("the answer carries %1").arg(show(answerFiles(world))));
+  });
+  step(QStringLiteral("the question cannot be dismissed"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* dismiss = composerPart(world, QStringLiteral("questionDismiss"));
+    expect(dismiss && !dismiss->isEnabled(), QStringLiteral("the question can still be dismissed"));
+    world.mc.dropHeld();
+  });
   step(QStringLiteral("the agent receives %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QList<QJsonObject> answers = commandsOf(world, QStringLiteral("runtime-request.respond"));
     expect(answers.size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));

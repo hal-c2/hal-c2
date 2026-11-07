@@ -19,6 +19,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/WelcomeWizard.qml
 #   apps/desktop-qt/tests/native/features/OnboardingSteps.cpp (the @desktop steps)
 #   apps/server-ex/lib/hal_c2/terminal.ex (the setup terminal as the provider instance)
+#   https://github.com/pingdotgg/t3code/pull/24719
 
 Feature: Welcome wizard
   A new installation, or a first visit to the hosted app, walks the user through connecting
@@ -60,6 +61,13 @@ Feature: Welcome wizard
       Given the settings cannot be saved
       When the user finishes the wizard
       Then the user is told "Could not finish setup"
+
+    # Upstream #24719: going back to an earlier stage from Projects ticked the default projects again.
+    @backlog @desktop
+    Scenario: Going back a stage keeps the projects the user picked
+      Given the user picked one project to import on the Projects stage
+      When the user goes back to the Agents stage and continues to Projects again
+      Then only that project is picked
 
     # Upstream #13935: one history that cannot be imported does not keep the wizard open.
     @backlog @desktop

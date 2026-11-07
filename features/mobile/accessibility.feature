@@ -1,8 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21757
+#   https://github.com/pingdotgg/t3code/pull/27249
+#   https://github.com/pingdotgg/t3code/pull/23348
+#   https://github.com/pingdotgg/t3code/pull/23230
 #   https://github.com/pingdotgg/t3code/pull/24273
 #   https://github.com/pingdotgg/t3code/pull/19239
 #   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13356
+#   https://github.com/pingdotgg/t3code/pull/23888
+#   https://github.com/pingdotgg/t3code/pull/23740
+#   https://github.com/pingdotgg/t3code/pull/27020
+#   https://github.com/pingdotgg/t3code/pull/24088
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe accessibility hint)
 #   apps/mobile/src/features/threads/ThreadArrangementSheet.tsx (Move up and Move down actions)
 #   apps/mobile/src/features/home/thread-swipe-actions.tsx
@@ -57,6 +65,26 @@ Feature: Accessibility on phones and tablets
     When a screen reader user opens the actions for the second queued message
     Then the user is offered to move it, steer with it or remove it
 
+  # Upstream #23740: iOS read an environment's two actions as "refresh" and "trash", not as buttons.
+  @backlog @mobile @priority-low
+  Scenario: An environment's actions are announced as named buttons
+    When a screen reader user expands the environment "Office Mac" in the environment list
+    Then its actions are announced as the buttons "Reconnect environment" and "Remove environment"
+
+  # Upstream #27020: Copy and Fork under a reply were 28dp on Android.
+  @backlog @mobile @priority-low
+  Scenario: A reply's actions are large enough to tap
+    Given an agent reply in the thread
+    Then its Copy and Fork actions are each at least 48dp on Android
+    And they grow with the app's text size
+
+  # Upstream #24088: iOS header controls the app turned off still looked usable.
+  @backlog @mobile @priority-low
+  Scenario: Header controls that cannot be used look and read as unavailable
+    Given a draft thread with no working folder
+    When the user looks at the thread's header
+    Then Terminal and Files are shown and announced as unavailable
+
   @backlog @mobile
   Scenario Outline: Controls read their full meaning, not their short label
     When a screen reader focuses the usage range "<short>"
@@ -86,6 +114,19 @@ Feature: Accessibility on phones and tablets
     When a screen reader moves through the composer
     Then each reference is focused on its own as a button named by its label
     And activating a reference opens its details
+
+  # Upstream #27249: TalkBack read Add attachment, Model and Send before the message field.
+  @backlog @mobile
+  Scenario Outline: A screen reader reaches the message field before Send
+    Given the composer is <state>
+    When a screen reader moves through the composer
+    Then it reads <order>
+
+    Examples:
+      | state                              | order                                           |
+      | one line and empty                 | Add attachment, the message field, Model, Send  |
+      | expanded with a multi-line draft   | the message field, Add attachment, Model, Send  |
+      | holding an attached image          | the message field, Add attachment, the image, Model, Send |
 
   @backlog @mobile @priority-low
   Scenario: Dictation state is announced
@@ -136,11 +177,40 @@ Feature: Accessibility on phones and tablets
     Then its status shows it is reconnecting without continuous animation
 
   # Upstream #19239: with Remove animations on, the toolbar stayed at its animation's zero opacity.
+  # Upstream #23230: with reduced motion the composer's model name could stay transparent, and a
+  # settled thread's status label overlapped its Un-settle action.
   @backlog @mobile @priority-low
   Scenario: The composer's buttons show with reduced motion
     Given the user turned on reduced motion
     When the user opens a thread
     Then the composer's buttons are visible
+
+  # Upstream #23888: with Android animations removed, the model picker's rows faded to invisible
+  # and still answered taps.
+  @backlog @mobile @priority-low
+  Scenario: The model picker's choices show with reduced motion
+    Given the user turned on reduced motion
+    When the user opens the model picker in a thread's settings
+    Then every model and option it lists is visible
+
+  # Upstream #21757: with Android's Remove animations on, a thread's settings rows could stay
+  # invisible because the first frame of their fade was dropped.
+  @backlog @mobile @priority-low
+  Scenario: A thread's settings rows show with reduced motion
+    Given the user turned on reduced motion
+    When the user opens a thread's settings
+    Then every row shows at once without fading in
+    And closing the settings does not fade them out
+
+  # Upstream #23348: picking a file in Review changes, or going back to the top, still glided with
+  # system animations off.
+  @backlog @mobile @priority-low
+  Scenario: Jumping between reviewed files does not glide with reduced motion
+    Given the user turned on reduced motion
+    And the user is reviewing the changes of "Fix checkout"
+    When the user picks another changed file
+    Then the review jumps straight to that file
+    And going back to the top jumps straight there too
 
   @backlog @mobile
   Scenario: Collapsible sections announce whether they are expanded

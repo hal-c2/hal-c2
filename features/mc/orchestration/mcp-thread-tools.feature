@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26718
+#   https://github.com/pingdotgg/t3code/pull/26642
 #   https://github.com/pingdotgg/t3code/pull/18194
 #   https://github.com/pingdotgg/t3code/pull/18360
 #   https://github.com/pingdotgg/t3code/pull/17454
@@ -14,6 +16,9 @@
 #   https://github.com/pingdotgg/t3code/pull/22732
 #   https://github.com/pingdotgg/t3code/pull/22901
 #   https://github.com/pingdotgg/t3code/pull/22452
+#   https://github.com/pingdotgg/t3code/pull/25306
+#   https://github.com/pingdotgg/t3code/pull/16654
+#   https://github.com/pingdotgg/t3code/pull/26442
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
 #     hal_c2_environment_preferences_update)
@@ -55,6 +60,12 @@ Feature: Agents working with threads through MCP tools
       | whose title contains "Fix" in any case |
       | leaving out subagent threads           |
       | with a limit of 1                      |
+
+  # Upstream #25306: an empty status list returned no threads at all.
+  @mc @backlog
+  Scenario: An empty status filter lists threads as if no status were asked for
+    When the agent of "caller" lists threads with an empty list of statuses
+    Then it receives "caller" and "t2" with a total of 2
 
   @mc
   Scenario: Reading a thread returns its messages incrementally
@@ -334,6 +345,30 @@ Feature: Agents working with threads through MCP tools
       | "demo" is a repository with no commit yet                               |
       | "demo"'s folder is not a repository                                     |
 
+  # Upstream #16654: an agent whose launch reply was lost could only launch again and make a
+  # second thread; the launch tool takes a request key, and a retry returns the same thread.
+  @backlog @mc @priority-high
+  Scenario: Repeating a thread launch with the same request key returns the same thread
+    Given the agent of "caller" launched a thread in "demo" with request key "k1" and message "Hello"
+    When it repeats the launch with request key "k1"
+    Then it is answered with the thread the first launch created
+    And that thread has one user message
+    And no extra thread is created
+
+  # Upstream #16654: a replayed launch keeps its first model and skips the checks only a new
+  # launch needs, which the project may no longer pass.
+  @backlog @mc
+  Scenario Outline: A repeated launch is answered even when a new one would now be refused
+    Given the agent of "caller" launched a thread in "demo" with request key "k1"
+    And <change>
+    When it repeats the launch with request key "k1"
+    Then it is answered with the thread the first launch created
+
+    Examples:
+      | change                                           |
+      | "demo" no longer has a default model             |
+      | the base branch of the launch's worktree is gone |
+
   @mc
   Scenario: Creating threads in a batch puts them beside the caller
     When the agent of "caller" creates 3 threads with prompts
@@ -487,6 +522,14 @@ Feature: Agents working with threads through MCP tools
       | true   | "t2" and not "t3"           |
       | false  | "t3" and not "t2"           |
 
+  # Upstream #26442: going through the user's snoozed threads took one call per project.
+  @backlog @mc
+  Scenario: An agent lists the threads of every project in one call
+    Given thread "t2" in "shop" and thread "t3" in "demo" are snoozed
+    When the agent of "caller" lists threads of all projects with snoozed true
+    Then the list holds "t2" and "t3", each naming its project
+    And the list names no single project
+
   @backlog @mc
   Scenario: Agents are told how to link to a thread in their answers
     When an agent reads the orchestration instructions
@@ -507,6 +550,25 @@ Feature: Agents working with threads through MCP tools
       | launches a thread                      |
       | sends "go on" to "t2"                  |
       | delegates a task and checks its status |
+  # Upstream #26642: an agent outside the app got a thread token only the app could draw; it now
+  # gets a link it can open. Upstream's is a web URL; HAL-C2 has no web client, so the link opens
+  # the thread in a HAL-C2 client. Agents inside HAL-C2 keep the thread link the clients draw.
+  @backlog @mc
+  Scenario Outline: An agent outside HAL-C2 gets thread links it can open
+    Given an agent outside HAL-C2 is signed in to the MC's server
+    When it <calls>
+    Then each thread in the result carries a link that opens that thread in a HAL-C2 client
+    And an agent inside HAL-C2 calling the same tool still gets the thread link the clients draw
+
+    Examples:
+      | calls                               |
+      | launches a thread                   |
+      | lists threads                       |
+      | reads "t2"                          |
+      | searches threads for "tax"          |
+      | sends "go on" to "t2"               |
+      | runs a scheduled task now           |
+
 
   @mc
   Scenario Outline: Organizing a thread
@@ -529,6 +591,14 @@ Feature: Agents working with threads through MCP tools
   Scenario: Snoozing needs a time
     When the agent of "caller" snoozes "t2" without a time
     Then it fails with code "invalid_request" and "snooze requires snoozedUntil."
+
+  # Upstream #26718: an agent that named its threads under an undeclared "threadIds" lost them,
+  # so organizing fell back to the calling thread and the orchestrator archived itself.
+  @backlog @mc @priority-high
+  Scenario: Organizing with an argument the tool does not take fails without touching the caller
+    When the agent of "caller" asks to archive with "threadIds" ["t2", "t3"] instead of a thread id
+    Then it fails as invalid arguments naming "threadIds"
+    And "caller", "t2" and "t3" are not archived
 
   @mc
   Scenario: Listing a thread's context transfers

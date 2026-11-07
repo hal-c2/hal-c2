@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27465
+#   https://github.com/pingdotgg/t3code/pull/21913
+#   https://github.com/pingdotgg/t3code/pull/27239
+#   https://github.com/pingdotgg/t3code/pull/21886
 #   https://github.com/pingdotgg/t3code/pull/19715
 #   https://github.com/pingdotgg/t3code/pull/7894
 #   https://github.com/pingdotgg/t3code/pull/12199
@@ -37,6 +41,7 @@
 #   docs/operations/development.md (state and ports)
 #   https://github.com/pingdotgg/t3code/pull/15795
 #   https://github.com/pingdotgg/t3code/pull/22559
+#   https://github.com/pingdotgg/t3code/pull/7295
 
 Feature: Starting the MC
   An MC is one Elixir release that keeps its files in the user's XDG directories, or under
@@ -284,6 +289,24 @@ Feature: Starting the MC
     Then that folder is still searched
     And the folders from the login shell are searched as well
 
+  # Upstream #7295: a login shell whose startup ignored the stop signal held server startup past
+  # the probe's 5-second limit.
+  @backlog @mc
+  Scenario: A login shell that will not stop does not hold up the MC
+    Given the user's login shell startup ignores being asked to stop and never finishes
+    When the MC starts with a short PATH
+    Then the MC gives up on the login shell after 5 seconds and starts
+    And the login shell it started is not left running
+
+  # Upstream #21913: a login shell that printed a lot of startup messages filled the unread error
+  # pipe and stalled until the time limit, so its PATH was missed.
+  @backlog @mc @priority-low
+  Scenario: A login shell that prints a lot while starting still gives its search path
+    Given the user's login shell startup prints two megabytes of messages
+    When the MC starts with a short PATH
+    Then the folders from the login shell are on the MC's search path
+    And the MC does not wait for the 5-second limit
+
   # Upstream #7894: Nushell rejected the POSIX login-shell probe, so its PATH was missed.
   @backlog @mc
   Scenario: The search path comes from a Nushell login shell too
@@ -435,6 +458,15 @@ Feature: Starting the MC
     When another MC starts on that home
     Then it takes the home
 
+  # Upstream #21886: a deleted or replaced ownership lock let a second server share the home in silence.
+  @mc @backlog @priority-low
+  Scenario: An MC whose ownership lock is deleted or replaced says so
+    Given an MC holds its HAL-C2 home
+    When its ownership lock file is deleted or replaced while it runs
+    Then within seconds the MC logs one error naming the lock file
+    And the error says to stop any other MC on that home and restart this one
+    And the MC keeps running its agents
+
   @mc
   Scenario: A user installs the MC as a background service with one command
     When a user asks to install the background service
@@ -450,6 +482,36 @@ Feature: Starting the MC
     When a user asks to install the background service again
     Then the service status says it needs repair
     And the install starts it again
+
+  # Upstream #27239: the server's memory protection only works when root grants it on every
+  # cgroup above the service; one command now asks for it, shows it, and undoes it.
+  @mc @backlog @priority-low
+  Scenario: A user can protect the MC from running out of memory on Linux and undo it
+    Given the MC runs as a background service under a systemd user manager
+    When the user asks to protect the service and confirms the settings it lists
+    Then the MC's memory is kept from reclaim and it is among the last processes the kernel kills
+    And the service status says memory protection is on
+    When the user asks to undo the protection
+    Then only the settings it wrote are removed
+    And the service status says memory protection is off and how to turn it on
+
+  # Upstream #27239
+  @mc @backlog @priority-low
+  Scenario: Protecting the MC can also keep remote access to the machine alive
+    Given the machine runs Tailscale and SSH
+    When the user asks to protect the service and agrees to protect remote access too
+    Then Tailscale and SSH are protected from running out of memory as well
+    And they are left as they are when the user declines
+
+  # Upstream #27465: protecting the service failed wherever sudo asks for a password, since sudo ran
+  # with no terminal to ask on; it also now says what protecting does before it asks.
+  @mc @backlog @priority-low
+  Scenario: Protecting the MC asks for the sudo password in the terminal
+    Given sudo on the machine asks for a password
+    When the user asks to protect the service
+    Then it first says in plain words what protecting does and how to undo it
+    And sudo asks for the password in the user's terminal
+    And the protection is applied once the password is given
 
   @mc
   Scenario: A user starts the MC from one downloaded file without installing Elixir

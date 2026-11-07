@@ -1,9 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21606
+#   https://github.com/pingdotgg/t3code/pull/27102
 #   https://github.com/pingdotgg/t3code/pull/13253
 #   https://github.com/pingdotgg/t3code/pull/17901
 #   https://github.com/pingdotgg/t3code/pull/16322
 #   https://github.com/pingdotgg/t3code/pull/14103
 #   https://github.com/pingdotgg/t3code/pull/22495
+#   https://github.com/pingdotgg/t3code/pull/27746
+#   https://github.com/pingdotgg/t3code/pull/22778
+#   https://github.com/pingdotgg/t3code/pull/26245
 #   docs/user/source-control.md (providers, rescan)
 #   apps/web/src/components/settings/SourceControlSettings.tsx
 #   packages/contracts/src/rpc.ts (server.discoverSourceControl)
@@ -43,6 +48,14 @@ Feature: Source Control settings
     Given the GitHub CLI is installed but not signed in
     When the panel loads
     Then GitHub reads "Not authenticated" with how to sign in
+
+  # Upstream #22778: hosting tools the user never set up showed warning marks, as if broken.
+  @backlog @desktop @priority-low
+  Scenario: A hosting tool that is not set up is shown as unused, not as a problem
+    Given the GitLab CLI is not installed and the GitHub CLI is installed but not signed in
+    When the panel loads
+    Then neither is marked as a warning
+    And a tool that is installed and signed in is marked ready
 
   @desktop @mobile @backlog-mobile
   Scenario: A missing tool shows how to install it
@@ -123,6 +136,24 @@ Feature: Source Control settings
     Then placeholders stand in for the tools
     And rescanning is not possible until the scan ends
 
+  # Upstream #27102: the scan waited on the slowest host; Bitbucket's account check took over
+  # ten seconds even with no Bitbucket credential.
+  @backlog @mc @priority-high
+  Scenario: A host that does not answer does not hold up the scan
+    Given Bitbucket has a saved token but its server never answers
+    When the user rescans Git and hosting integrations
+    Then the scan finishes within 5 seconds
+    And Bitbucket's sign-in is shown as unknown after 3 seconds
+    And the other tools are listed as usual
+
+  # Upstream #27102
+  @backlog @mc
+  Scenario: A host with no credential is not contacted by the scan
+    Given no Bitbucket credential is saved
+    When the user rescans Git and hosting integrations
+    Then no request is made to Bitbucket
+    And Bitbucket is shown as not signed in
+
   @backlog @desktop @priority-low
   Scenario Outline: A hosting tool says why it cannot be used yet
     Given the hosting tool "GitLab" <state>
@@ -136,6 +167,17 @@ Feature: Source Control settings
       | is available without a command line tool to sign in with | Available, with its install hint                                           |
       | is installed but its sign-in could not be checked        | Could not verify GitLab, with the reason or the install hint               |
       | is not on this server                                    | Not available on this server, with its install hint                         |
+
+  # Upstream #21606: on an Apple Silicon Mac without Rosetta, an Intel-only gh read as not
+  # installed and the user was told to install what they had.
+  @backlog @mc @desktop @priority-low
+  Scenario: A tool built for another processor says which file to replace
+    Given the first "gh" on the server's path is "/usr/local/bin/gh", built only for Intel
+    And the server is an Apple Silicon Mac that cannot run it
+    When the panel loads
+    Then GitHub is not available
+    And its hint says "/usr/local/bin/gh" is built for another processor and should be removed or replaced
+    And the same holds for a "git" or "jj" built for another processor
 
   @backlog @desktop @priority-low
   Scenario: A tool's availability is shown, not changed
@@ -215,6 +257,27 @@ Feature: Source Control settings
     Then the client learns only that a token is set
     And the token is not written to the settings file
 
+  # Upstream #27746: Bitbucket and GitCafe credentials can name a secret in a secret provider.
+  @backlog @shared @mc
+  Scenario Outline: A <host> credential can be a reference to a secret provider
+    When the user sets the <host> <credential> to the reference "op://Work/<host>/token"
+    Then the reference is saved and shown as written, not copied into the secret store
+    And the MC reads the secret through the reference when it talks to <host>
+
+    Examples:
+      | host      | credential   |
+      | Bitbucket | access token |
+      | Bitbucket | API token    |
+      | GitCafe   | token        |
+
+  # Upstream #27746
+  @backlog @mc
+  Scenario: A secret reference that cannot be read counts as no credential
+    Given the Bitbucket access token is a reference the secret provider cannot read
+    When the MC starts or talks to Bitbucket
+    Then Bitbucket falls back as if no token were set
+    And startup and the other hosts are unaffected
+
   # Upstream #16322: choose the GitHub account per host
   @backlog @shared
   Scenario: The user chooses which GitHub account an MC uses for each host
@@ -229,6 +292,37 @@ Feature: Source Control settings
     Given the user saved a GitHub token
     When the MC talks to GitHub
     Then it uses the token and does not need the GitHub CLI
+
+  # Upstream #26245: GitHub requests shared the user's personal API limit, so busy days stalled
+  # pull request status. Signing in through an app owned by an organisation gets a higher limit.
+  @backlog @mc @shared
+  Scenario: Signing in to GitHub through the app shows a code to approve in a browser
+    Given the MC is not signed in to GitHub through the app
+    When the user chooses "Sign in with GitHub" in Source Control settings
+    Then the client shows a code and where to enter it
+    When the user approves the code in a browser
+    Then GitHub shows as signed in through the app, and signing out falls back to the other credentials
+
+  # Upstream #26245: the credential order, and a retry with the user's own for a repository the
+  # app is not installed on.
+  @backlog @mc
+  Scenario Outline: A GitHub request uses the app sign-in after a saved token and before the others
+    Given the MC is signed in to GitHub through the app and <other> is available
+    When the MC asks GitHub about "acme/shop"
+    Then <outcome>
+
+    Examples:
+      | other                                                      | outcome                                       |
+      | a saved GitHub token                                       | it uses the saved token                       |
+      | the GitHub CLI's login                                     | it uses the app sign-in                       |
+      | the GitHub CLI's login, and the app cannot see "acme/shop" | it asks once more with the GitHub CLI's login |
+
+  # Upstream #26245: a refresh token GitHub rejects signs the app out.
+  @backlog @mc
+  Scenario: An app sign-in GitHub no longer accepts signs out
+    Given the MC is signed in to GitHub through the app
+    When GitHub rejects the sign-in's refresh token
+    Then the MC is signed out of the app and uses the environment token or the GitHub CLI's login
 
   # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @shared

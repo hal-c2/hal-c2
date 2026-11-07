@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24148
+#   https://github.com/pingdotgg/t3code/pull/24788
 #   https://github.com/pingdotgg/t3code/pull/24718
 #   https://github.com/pingdotgg/t3code/pull/13608
 #   https://github.com/pingdotgg/t3code/pull/21682
@@ -7,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14642
 #   https://github.com/pingdotgg/t3code/pull/19722
 #   https://github.com/pingdotgg/t3code/pull/22857
+#   https://github.com/pingdotgg/t3code/pull/25869
 #   apps/web/src/components/settings/SettingsPanels.tsx (GeneralSettingsPanel, LegacyFeaturesSection, AboutVersionTitle, update track)
 #   apps/web/src/components/settings/ScopedSwitch.tsx
 #   apps/web/src/components/ui/draft-input.tsx, apps/web/src/hooks/useCommitOnBlur.ts (typed text settings)
@@ -27,6 +30,7 @@
 #   apps/mobile/src/features/settings/autoSettleSettingsSync.ts
 #   Cross-domain: the General row enableProviderUpdateChecks is specified in settings/updates.feature.
 #   Cross-domain: the General row sidebarShowSettledPluginThreads ("Show plugin threads in Settled") is specified in threads/sidebar-list.feature.
+#   https://github.com/pingdotgg/t3code/pull/22459
 
 Feature: General settings
   The General section holds the everyday behaviour of threads, the composer, diffs and
@@ -60,6 +64,12 @@ Feature: General settings
         | setting                     | result                            |
         | Auto-resume limited threads | is scheduled to continue          |
         | Snooze limited threads      | is snoozed until it wakes         |
+
+    # Upstream #24148: the phone showed the usage-limit switches without the desktop's help text.
+    @backlog @mobile @priority-low
+    Scenario: The phone explains the usage-limit settings as the desktop does
+      When the user looks at "Auto-resume limited threads" and "Snooze limited threads" on the phone
+      Then each says what it does, in the same words as on the desktop
 
     @desktop
     Scenario: A scheduled continuation can be cancelled from the thread
@@ -166,6 +176,20 @@ Feature: General settings
         | System default | the way the system clock is configured  |
         | 12-hour        | with AM and PM                          |
         | 24-hour        | on a 24-hour clock                      |
+
+    # Upstream #22459: "System default" ignored a macOS region format or Linux LC_TIME that
+    # differed from the display language.
+    @backlog @desktop
+    Scenario Outline: The system's own time format is followed
+      Given the display language is English (US)
+      And <setting> asks for a 24-hour clock
+      When the user's time format is "System default"
+      Then timestamps are shown on a 24-hour clock
+
+      Examples:
+        | setting                     |
+        | the macOS region format     |
+        | LC_TIME on Linux            |
 
     @mc
     Scenario Outline: The MC streams replies as the chosen mode says
@@ -314,6 +338,14 @@ Feature: General settings
         | Rich text composer          | off   | the composer shows plain text                                      |
         | Collapse composer on scroll | on    | the composer of an existing thread shrinks to one line while scrolling |
         | Collapse composer on scroll | off   | the composer keeps its size while scrolling                        |
+
+    # Upstream #25869: the desktop composer no longer collapses on scroll, and the setting is gone.
+    # This replaces the passing "Collapse composer on scroll" rows above once the desktop follows.
+    @backlog @desktop @priority-low
+    Scenario: Composer preferences have no collapse-on-scroll setting
+      When the user opens the composer preferences
+      Then there is no "Collapse composer on scroll" setting
+      And scrolling a long conversation leaves the composer at its size
 
     @desktop
     Scenario Outline: The send shortcut decides what Enter does
@@ -525,6 +557,13 @@ Feature: General settings
     Scenario: About shows the app version and checks for updates
       When the user checks for updates from About
       Then the row shows it is checking and then "Up to Date" or the update to download
+
+    # Upstream #24788: sharing the exact version meant selecting the text by hand.
+    @backlog @desktop @priority-low
+    Scenario: The app version in About can be copied
+      When the user activates the app version in About, with the pointer or the keyboard
+      Then the exact version is copied and "Copied!" is shown
+      And a copy that fails says so
 
     @backlog @desktop
     Scenario: A failed update check is reported

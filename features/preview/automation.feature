@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22062
+#   https://github.com/pingdotgg/t3code/pull/22302
+#   https://github.com/pingdotgg/t3code/pull/25436
+#   https://github.com/pingdotgg/t3code/pull/27456
 #   https://github.com/pingdotgg/t3code/pull/16941
 #   https://github.com/pingdotgg/t3code/pull/19931
 #   https://github.com/pingdotgg/t3code/pull/19913
+#   https://github.com/pingdotgg/t3code/pull/22877
 #   https://github.com/pingdotgg/t3code/pull/20994
 #   https://github.com/pingdotgg/t3code/pull/24056
 #   https://github.com/pingdotgg/t3code/pull/24356
@@ -44,6 +49,11 @@
 #   https://github.com/pingdotgg/t3code/pull/25184
 #   https://github.com/pingdotgg/t3code/pull/24618
 #   https://github.com/pingdotgg/t3code/pull/22156
+#   https://github.com/pingdotgg/t3code/pull/25028
+#   https://github.com/pingdotgg/t3code/pull/28027
+#   https://github.com/pingdotgg/t3code/pull/28549
+#   https://github.com/pingdotgg/t3code/pull/21745
+#   https://github.com/pingdotgg/t3code/pull/23461
 
 Feature: Agents drive the preview browser
   An agent can open, read and operate the thread's browser tabs through its preview tools. The
@@ -188,12 +198,46 @@ Feature: Agents drive the preview browser
       When an agent opens a preview and asks to show it
       Then the browser comes to the front with the page
 
+    # Upstream #28027: preview_open dropped a dev-server target and opened a blank tab, so agents
+    # needed a second preview_navigate.
+    @backlog @mc
+    Scenario: An agent opens a dev server's port in one step
+      When an agent opens a preview of port 6381 in its environment
+      Then the tab opens on that environment's port 6381
+      And the agent did not have to navigate the tab afterwards
+
+    # Upstream #28027: a dev-server target knows the environment, so it wins over an address.
+    @backlog @mc
+    Scenario: A dev-server port wins over an address given with it
+      When an agent opens a preview of port 6381 in its environment and also gives the address "http://localhost:3000"
+      Then the tab opens on that environment's port 6381
+
     # Upstream #16956: agents saw only the tabs they opened, so "what is on this page?" failed.
     @backlog @mc
     Scenario: An agent sees every browser tab of its thread and who has each
       Given the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened
       When the agent asks for the preview status
       Then every tab is listed with whether a person, an agent or nobody has it, whether it is this agent's, whether it is shown and its profile
+
+    # Upstream #27456: a desktop tab whose page loaded before the server attached stayed
+    # "Loading" with no title in the tab list, while its status said it had loaded.
+    @backlog @mc @desktop
+    Scenario: A desktop tab that loaded before the MC attached is listed as loaded
+      Given an agent opens a tab that the desktop shows
+      And the page finishes loading before the MC is attached to it
+      When the agent lists the thread's tabs
+      Then the tab is listed with the page's title and as loaded
+      And the list agrees with the tab's own status
+
+    # Upstream #22877: the MC waits 10 seconds for the desktop to attach a tab's page, then opens its
+    # own; a desktop that attached later showed a second page the agent did not drive.
+    @backlog @mc @desktop @priority-high
+    Scenario: A desktop that attaches late shows the page the agent drives
+      Given an agent opens a tab that the desktop shows
+      And the desktop has not attached the page within 10 seconds
+      When the desktop attaches
+      Then the desktop shows the MC's own page for that tab
+      And the agent and the user see the same page
 
     # Upstream #18146: threads that share a provider session keep their browser tabs apart.
     @backlog @mc
@@ -256,6 +300,30 @@ Feature: Agents drive the preview browser
         | named    | outcome                                                          |
         | work     | the tab opens in the profile "Work"                              |
         | personal | the tool fails and lists "Default" and "Work" as the profiles to use |
+
+    # Upstream #21745: the MC kept only the last client's profiles, so other clients' profiles vanished.
+    @backlog @mc
+    Scenario: Browser profiles reported by several clients are all offered to agents
+      Given one desktop reports the profiles "Default" and "Work"
+      And another desktop connected to the same MC reports only "Default"
+      When an agent opens a preview in the profile "Work"
+      Then the tab opens in the profile "Work"
+
+    # Upstream #23461: one oversized page event took down the whole desktop app.
+    @backlog @desktop @priority-high
+    Scenario: A page that sends an agent an oversized event loses only its own tab
+      Given an agent is driving a browser tab
+      When the page sends the agent an event too large to pass on
+      Then the agent loses control of that tab until it is opened again
+      And the app, its other tabs and its threads keep running
+
+    # Upstream #23461: an oversized reply fails only the command that asked for it.
+    @backlog @desktop
+    Scenario: An oversized reply to an agent's browser command fails only that command
+      Given an agent is driving a browser tab
+      When the reply to one of its commands is too large to pass on
+      Then that command fails saying the reply is too large
+      And the agent's next command on the tab works
 
     @backlog @mc @priority-low
     Scenario Outline: An agent's instructions let it use another browser only when the preview cannot do the job
@@ -552,6 +620,21 @@ Feature: Agents drive the preview browser
       When the user closes the developer tools
       Then the agent's next action on that tab goes through
 
+    # Upstream #28549: agent clicks could move the keyboard focus out of the composer, even when the
+    # preview floated over the chat or was hidden.
+    @backlog @desktop
+    Scenario Outline: An agent's click in the preview leaves the user's typing where it was
+      Given the user is typing in the composer and the preview is <shown>
+      When an agent clicks and types in the preview
+      Then the composer still has the focus
+      And the agent's clicks reach the page in the order it made them
+
+      Examples:
+        | shown                  |
+        | beside the chat        |
+        | floating over the chat |
+        | hidden                 |
+
     @backlog @desktop @priority-low
     Scenario: A click outside the page is refused with the page's size
       Given an agent's current tab is rendered at 1280 by 800
@@ -668,6 +751,21 @@ Feature: Agents drive the preview browser
       When the agent closes that tab
       Then the tab is gone for every client
 
+    # Upstream #25028: concurrent opens could pass the tab limits, and a failed launch left a session behind.
+    @backlog @mc @priority-low
+    Scenario: Opens racing each other stay within the agent's tab limit
+      Given an agent has 7 browser tabs open
+      When the agent opens two more tabs at the same moment
+      Then one tab opens and the other is refused for the tab limit
+      And no more than 32 agent tabs are open across the MC
+
+    # Upstream #25028
+    @backlog @mc @priority-low
+    Scenario: A browser tab that fails to launch leaves nothing behind
+      When an agent opens a tab and the browser fails to launch it
+      Then the open fails
+      And the tab is not listed and does not count toward the tab limit
+
     # Upstream #20994: file requests are intercepted only while an agent acts or a streamed
     # controller drives the tab; otherwise the desktop opens the system file picker.
     @backlog @desktop
@@ -676,6 +774,14 @@ Feature: Agents drive the preview browser
       And no agent action is running on "Upload"
       When the user clicks a file input on "Upload"
       Then the system file picker opens
+
+    # Upstream #22062: a page's file request outlived the page, so the next page still asked for a file.
+    @backlog @mc
+    Scenario: A file request ends when its page is replaced
+      Given a page on the preview tab "Upload" is asking for a file
+      When the tab navigates to another page before the request is answered
+      Then the tab no longer asks for a file
+      And an agent that uploads a file there is told no file picker is open
 
   Rule: The desktop hosts the agent's browser
 
@@ -965,6 +1071,14 @@ Feature: Agents drive the preview browser
     Then it is saved to the browser artifacts folder with no Save dialog
     And once the user clicks, types or navigates, downloads show the Save dialog again
 
+  # Upstream #25436: downloads saved by tabs still open when the server stopped stayed on disk with no way to reach them.
+  @backlog @mc @priority-low
+  Scenario: Downloads no tab can reach are cleared when the MC starts
+    Given a browser tab the MC runs saved a download
+    And the MC stopped while that tab was open
+    When the MC starts again
+    Then the saved download is removed before any tab opens
+
   # Upstream #22156: a data: address is the file's contents, so reporting it echoed the whole
   # file into every later tool result and the event log.
   @backlog @desktop
@@ -973,6 +1087,14 @@ Feature: Agents drive the preview browser
     When the agent reads the browser's status, navigates or takes a snapshot
     Then the download, navigation reports, network entries and link targets show "data:text/plain,…"
     And none of them holds the file's contents
+
+  # Upstream #22302: a tab showing a data: page echoed the page through its address.
+  @backlog @desktop
+  Scenario: A tab showing a data page is reported by its media type alone
+    Given a browser tab shows a page loaded from a "data:text/html" address
+    When the agent reads the browser's status, its load reports or a snapshot
+    Then the tab's address reads "data:text/html,…"
+    And a crashed tab on that page reopens at that address
 
   # Upstream #22156: only messages the browser writes itself are redacted; the page's own logs stay.
   @backlog @desktop @priority-low

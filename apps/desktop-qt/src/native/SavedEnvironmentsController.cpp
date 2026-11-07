@@ -149,14 +149,24 @@ void SavedEnvironmentsController::pair(const QString& link, std::function<void(c
   pairing::exchange(m_http, this, *read, m_device, [this, attempt, finish](const pairing::Result& result) {
     if (attempt != m_attempt) return;
     if (result.outcome != pairing::Outcome::Paired) return finish(pairing::explain(result));
-    const QString id = result.descriptor.value(QLatin1String("environmentId")).toString();
-    QString label = result.descriptor.value(QLatin1String("label")).toString();
-    if (label.isEmpty()) label = result.origin.host();
-    const SavedEnvironment environment{id, label, result.origin, result.expiresAt};
-    if (const auto refused = m_catalog->save(environment, result.token)) return finish(*refused);
-    connectTo(id);
-    finish({});
+    finish(add(result).value_or(QString()));
   });
+}
+
+std::optional<QString> SavedEnvironmentsController::add(const pairing::Result& result) {
+  if (!m_catalog) return QStringLiteral("Saved environments are not available yet.");
+  const QString id = result.descriptor.value(QLatin1String("environmentId")).toString();
+  QString label = result.descriptor.value(QLatin1String("label")).toString();
+  if (label.isEmpty()) label = result.origin.host();
+  const SavedEnvironment environment{id, label, result.origin, result.expiresAt};
+  if (auto refused = m_catalog->save(environment, result.token)) return refused;
+  connectTo(id);
+  return std::nullopt;
+}
+
+void SavedEnvironmentsController::reconnect() {
+  if (!m_catalog) return;
+  for (const SavedEnvironment& environment : m_catalog->environments()) connectTo(environment.id);
 }
 
 void SavedEnvironmentsController::remove(const QString& id) {

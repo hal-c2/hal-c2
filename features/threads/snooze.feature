@@ -3,10 +3,13 @@
 #   https://github.com/pingdotgg/t3code/pull/21019
 #   https://github.com/pingdotgg/t3code/pull/21026
 #   https://github.com/pingdotgg/t3code/pull/14887
+#   https://github.com/pingdotgg/t3code/pull/26043
 #   https://github.com/pingdotgg/t3code/pull/16517
 #   https://github.com/pingdotgg/t3code/pull/19099
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/22202
+#   https://github.com/pingdotgg/t3code/pull/26208
+#   https://github.com/pingdotgg/t3code/pull/26427
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   packages/client-runtime/src/state/threadSnoozed.test.ts (early wake rules, a queued turn start expiring after two minutes)
@@ -86,11 +89,77 @@ Feature: Snoozing threads
     When the user opens the snooze choices
     Then "This evening" is not offered
 
+  # Upstream #26043: on the phone a row's snooze choices kept the times from when the row first
+  # showed, so after hours "In 1 hour" offered a time already past.
+  @backlog @mobile
+  Scenario: Snooze choices follow the clock while the app stays open
+    Given the thread list opened on Wednesday at 10:00
+    When the user opens the snooze choices of "Refactor cart" at 17:30
+    Then "In 1 hour" reads 18:30
+    And "This evening" is not offered
+
   @desktop @mobile @backlog-mobile
   Scenario: On Sunday "next week" and "tomorrow" are the same choice
     Given the local time is Sunday 10:00
     When the user opens the snooze choices
     Then only one choice wakes the thread on Monday at 09:00
+
+  # Upstream #26208: the snooze choices are the user's own, a setting of up to 8 options shared
+  # by every client of the environment; the defaults are the five fixed choices.
+  @backlog @mc @shared
+  Scenario: The user chooses their own snooze options
+    When the user sets the snooze options to "In 2 hours", "Tomorrow at 21:00" and "Monday at 18:00"
+    And the user opens the snooze choices for "Refactor cart" on any device
+    Then the choices offered are exactly those three, soonest first
+    When the user resets the snooze options
+    Then the five default choices are offered again
+
+  # Upstream #26208
+  @backlog @shared @priority-low
+  Scenario: No more than eight snooze options can be added
+    Given the user has 8 snooze options
+    When the user tries to add another snooze option
+    Then the option is not added
+
+  # Upstream #26208: labels follow the real day gap; a choice for later today is hidden once its time
+  # has passed, and choices that wake at the same minute are offered once.
+  @backlog @shared
+  Scenario Outline: Snooze options are named for when they wake
+    Given the local time is <now>
+    And the snooze options include "<option>"
+    When the user opens the snooze choices
+    Then <offered>
+
+    Examples:
+      | now              | option             | offered                                        |
+      | Sunday 10:00     | Monday at 18:00    | the choice reads "Tomorrow"                    |
+      | Wednesday 19:00  | Today at 18:00     | the choice is not offered                      |
+      | Wednesday 10:00  | In 8 hours         | only one choice wakes the thread at 18:00      |
+
+  # Upstream #26208: a duration counts from the moment it is chosen, so a menu left open does
+  # not shorten it; a set time wakes when the menu said.
+  @backlog @shared @priority-low
+  Scenario: A snooze choice left open counts from when it is chosen
+    Given the user opened the snooze choices at 10:00
+    When the user chooses "In 3 hours" at 10:20
+    Then "Refactor cart" wakes at 13:20
+
+  # Upstream #26427: the options in settings are listed soonest first, like the menu, and re-sort
+  # only once the user leaves the list, so a row never moves while it is edited.
+  @backlog @shared @priority-low
+  Scenario: Snooze options are kept soonest first without moving while edited
+    Given the snooze options are "In 1 hour" and "Tomorrow at 09:00"
+    When the user changes "In 1 hour" to "In 20 hours"
+    Then the option still reads "In 20 hours" in the same place while the user edits
+    When the user leaves the list
+    Then "Tomorrow at 09:00" is listed above "In 20 hours"
+
+  # Upstream #26427: the custom snooze choice links to the snooze options.
+  @backlog @desktop @tui @priority-low
+  Scenario: The custom snooze choice leads to the snooze options
+    When the user opens the custom snooze choice for "Refactor cart"
+    And the user asks to edit the snooze options
+    Then the snooze options in settings are shown
 
   @desktop @mobile @backlog-mobile
   Scenario Outline: Snoozing until a custom time

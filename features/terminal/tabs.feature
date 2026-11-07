@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22106
+#   https://github.com/pingdotgg/t3code/pull/24020
 #   docs/user/terminal.md
 #   apps/tui/src/terminalTabs.ts (addTab, closeTab, cycleActiveId, tabsWithDiscovered, reduceKnownTerminals)
 #   apps/tui/src/terminalTabs.test.ts
@@ -142,6 +144,15 @@ Feature: Terminal tabs and splits
       When the user closes it and declines the confirmation
       Then "Terminal 2" keeps running with its history
 
+    # Upstream #24020: terminal ids repeat across threads, so confirming after switching threads closed the other thread's terminal.
+    @backlog @desktop @priority-high
+    Scenario: A close confirmed after switching threads closes the terminal it was asked about
+      Given threads "A" and "B" each have a running terminal "Terminal 1"
+      And the user closes "Terminal 1" of "A"
+      When the user switches to "B" and confirms the close
+      Then the terminal of "A" stops and its history is deleted
+      And the terminal of "B" keeps running with its history
+
     @desktop
     Scenario: Closing several terminals asks once for all of them
       When the user closes a split group of three terminals
@@ -159,6 +170,19 @@ Feature: Terminal tabs and splits
       When the user closes terminal 1
       Then terminal 3 is still active
       And its group and place in the row are unchanged
+    # Upstream #22106: closing a pane of a split switched the drawer to another tab's terminal.
+    @backlog @desktop
+    Scenario Outline: Closing the active pane of a split keeps its split in view
+      Given terminal 1 and terminal 3 are split in one tab and terminal 2 has a tab of its own
+      And terminal <closed> is active
+      When the user closes terminal <closed>, or it exits
+      Then terminal <left> is active and its tab is still shown
+
+      Examples:
+        | closed | left |
+        | 3      | 1    |
+        | 1      | 3    |
+
 
     @desktop
     Scenario: The terminal list names each group and how many terminals it holds
