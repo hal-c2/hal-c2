@@ -275,7 +275,7 @@ Feature: Pi
     Then Pi runs with every tool and extension turned off
     And no Pi session file is left behind
 
-  @backlog
+  @backlog @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
     Given the MC itself was started by an agent that holds a HAL-C2 tools credential
     When a Pi thread starts
