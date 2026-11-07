@@ -3,7 +3,8 @@ defmodule HalC2.SubprocessDurablePropTest do
   `HalC2.Subprocess.Durable` against its lifecycle promises: whichever order lines
   are sent, read, and the MC leaves and comes back in, the program stays the same one
   and every line it wrote reaches the MC once, in order, from the last checkpoint.
-  Files made in its launch directory survive those same restarts and go with its final stop.
+  Files made in its launch directory survive those same restarts and go with its final
+  stop, or with the uninstall that stops what a leaving MC kept.
   """
 
   use ExUnit.Case, async: false
@@ -11,14 +12,16 @@ defmodule HalC2.SubprocessDurablePropTest do
 
   alias HalC2.Orchestration.Recovery
   alias HalC2.Subprocess
+  alias HalC2.Subprocess.Durable
+  alias HalC2.Subprocess.Orphans
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
   @echo ["sh", "-c", ~s(while read l; do echo "$l"; done)]
 
-  property "lines and launch files survive restarts, and final stop removes them",
+  property "lines and launch files survive restarts, and final stop or uninstall removes them",
     numtests: HalC2.Prop.numtests(15) do
-    forall ops <- list(oneof([:send, :drain, :restart])) do
+    forall {ops, ending} <- {list(oneof([:send, :drain, :restart])), oneof([:stop, :uninstall])} do
       HalC2.Prop.scratch_home("durable")
       flush()
       Application.put_env(:hal_c2, :durable_programs, true)
@@ -38,15 +41,15 @@ defmodule HalC2.SubprocessDurablePropTest do
       world = Enum.reduce(ops ++ [:drain], world, &step/2)
       same = Subprocess.os_pid(world.sub) == pid
       kept = File.read!(config) == "secret"
-      Subprocess.stop(world.sub)
-      removed = not File.exists?(dir)
+      finish(ending, world.sub)
+      removed = not File.exists?(dir) and Orphans.gone?(pid)
       Application.put_env(:hal_c2, :durable_programs, false)
       expected = Enum.map(1..world.n//1, &"#{&1}")
 
       (same and kept and removed and world.read == expected)
       |> when_fail(
         IO.puts(
-          "same program: #{same}, config kept: #{kept}, removed: #{removed}, " <>
+          "ending: #{ending}, same program: #{same}, config kept: #{kept}, removed: #{removed}, " <>
             "read #{inspect(world.read)}, sent #{world.n}"
         )
       )
@@ -84,8 +87,20 @@ defmodule HalC2.SubprocessDurablePropTest do
     :detached = Subprocess.stop(world.sub)
     Recovery.leaving(false)
     flush()
+    true = Durable.attachable?(world.sub.durable.dir)
     {:ok, sub} = Subprocess.adopt(world.sub.durable.dir, world.offset)
     %{world | sub: sub}
+  end
+
+  defp finish(:stop, sub), do: Subprocess.stop(sub)
+
+  # The MC leaves the program running, then its service is removed for good.
+  defp finish(:uninstall, sub) do
+    Recovery.leaving(true)
+    :detached = Subprocess.stop(sub)
+    Recovery.leaving(false)
+    flush()
+    Durable.stop_all()
   end
 
   defp settle(%{sub: %{reader: reader}} = world) do

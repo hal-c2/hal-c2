@@ -29,8 +29,10 @@ A new service uses the [usual directories](./install.md#where-hal-c2-keeps-its-f
 and names `HAL_C2_MC_HOME` or `HAL_C2_HOME` only if one was set when you installed the service.
 
 An MC moves to a newer version from the client's update notice, which installs it
-and restarts the service when it has to. Restarting interrupts running agent
-turns, terminals, and remote clients. Follow [Updating HAL-C2](./updating.md) to
+and restarts the service when it has to. Agents keep working through a restart and
+the MC picks them up again when it is back; an agent it cannot reconnect to has its
+turn interrupted. A restart does interrupt terminals and remote clients, and
+`<mc> uninstall` stops the agents too. Follow [Updating HAL-C2](./updating.md) to
 match a remote client's version.
 
 ## Platform support

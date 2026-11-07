@@ -116,6 +116,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     context =
       context
       |> Map.put(:thread, thread)
+      |> Map.put(:provider, provider)
       |> Map.put(:running, run["id"])
       |> Map.put(:cut_off, run["id"])
 
@@ -624,16 +625,312 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     context
   end
 
+  # Codex leaves a dev server in a unified exec terminal; Claude a build and a subagent;
+  # Grok a shell task and a subagent.
+  # The turn ended, so nothing was cut off: only the background work could be.
+  step "thread {string} left a command running in the background on {string}",
+       %{args: [thread, provider]} = context do
+    text =
+      if provider == "codex",
+        do: "Start the dev server in the background",
+        else: "Work in the background"
+
+    context = turn_on(context, thread, provider, text)
+
+    row =
+      World.await_row(
+        World.thread_id(context, thread),
+        &Enum.any?(&1["pendingBackgroundTasks"] || [], fn task ->
+          task["taskType"] not in ~w(local_agent subagent)
+        end)
+      )
+
+    command =
+      Enum.find(row["pendingBackgroundTasks"], &(&1["taskType"] not in ~w(local_agent subagent)))
+
+    context
+    |> Map.delete(:cut_off)
+    |> Map.put(:background, command["taskId"])
+  end
+
+  step "thread {string} left a Claude subagent running in the background",
+       %{args: [thread]} = context do
+    context = turn_on(context, thread, "claudeAgent", "Work in the background")
+
+    row =
+      World.await_row(
+        World.thread_id(context, thread),
+        &Enum.any?(&1["pendingBackgroundTasks"] || [], fn t ->
+          t["taskType"] in ~w(local_agent subagent)
+        end)
+      )
+
+    task = Enum.find(row["pendingBackgroundTasks"], &(&1["taskType"] in ~w(local_agent subagent)))
+
+    context
+    |> Map.delete(:cut_off)
+    |> Map.put(:background, task["taskId"])
+  end
+
+  step "{string} lists the subagent as background work", %{args: [thread]} = context do
+    task = context.background
+
+    World.await_row(
+      World.thread_id(context, thread),
+      &Enum.any?(&1["pendingBackgroundTasks"] || [], fn t -> t["taskId"] == task end)
+    )
+
+    context
+  end
+
+  # Claude says it on its output, which the reattached MC reads.
+  step "Claude reports the subagent completed with {string}", %{args: [summary]} = context do
+    settled(context, context.thread)
+    # The fake Claude names a task after its tool call: task-agent-1 for agent-1.
+    tool = String.replace_prefix(context.background, "task-", "")
+
+    notification = %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-" <> tool,
+      "tool_use_id" => tool,
+      "status" => "completed",
+      "summary" => summary
+    }
+
+    write_out(context, JSON.encode!(notification) <> "\n")
+
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "subagent"), &(&1["status"] == "completed"))
+    end)
+
+    context
+  end
+
+  step "the command is still running", context do
+    settled(context, context.thread)
+    assert program(context, context.thread) == context.program
+    assert alive?(context.program)
+
+    assert Enum.any?(
+             World.entities(context, context.thread, "turn-item"),
+             &(&1["type"] == "command_execution" and &1["status"] in ~w(pending running))
+           )
+
+    context
+  end
+
+  step "{string} lists the command as background work", %{args: [thread]} = context do
+    task = context.background
+
+    World.await_row(
+      World.thread_id(context, thread),
+      &Enum.any?(&1["pendingBackgroundTasks"] || [], fn t -> t["taskId"] == task end)
+    )
+
+    context
+  end
+
+  # The provider's output is the program's `out` file, so the test writes there as the
+  # provider would: one update and half the next while the MC reads, the rest after it went.
+  step "the MC dies partway through reading a line from the provider", context do
+    {prelude, [first, second | rest]} = updates(context)
+    {head, tail} = String.split_at(second, div(String.length(second), 2))
+    write_out(context, Enum.map_join(prelude ++ [first], &(&1 <> "\n")) <> head)
+    await_said(context, "u0.")
+    context |> stop_mc() |> Map.put(:later, [tail | rest])
+  end
+
+  step "the provider writes three more updates", context do
+    write_out(context, Enum.map_join(context.later, &(&1 <> "\n")))
+    context
+  end
+
+  step "{string} shows every update once, in the order the provider wrote them",
+       %{args: [thread]} = context do
+    settled(context, thread)
+    said = await_said(context, "u3.")
+    assert said =~ "u0.\n\nu1.\n\nu2.\n\nu3."
+    for n <- 0..3, do: assert(length(String.split(said, "u#{n}.")) == 2, said)
+    context
+  end
+
+  defp write_out(context, text) do
+    %{dir: dir} = Durable.survivors_peek()[World.thread_id(context, context.thread)]
+    File.write!(Path.join(dir, "out"), text, [:append])
+  end
+
+  # What the agent said in the run, its messages in the order they were made.
+  defp await_said(context, text) do
+    said = fn state ->
+      for %{"role" => "assistant", "runId" => run, "text" => said} <-
+            HalC2.StreamState.list(state, "message"),
+          run == context.running,
+          into: "",
+          do: said
+    end
+
+    state = World.await_state(context, context.thread, &(said.(&1) =~ text), 10_000)
+    said.(state)
+  end
+
+  # Lines the provider writes before its updates, then four text updates, "u0." to "u3.",
+  # in its own protocol on the turn it is running. Each ends a paragraph, which the MC
+  # writes to the thread as it comes rather than holding it in its buffer.
+  defp updates(context) do
+    lines = out_lines(context)
+    texts = for n <- 0..3, do: "u#{n}.\n\n"
+    encode = &Enum.map(&1, fn line -> JSON.encode!(line) end)
+
+    {prelude, updates} =
+      case context.provider do
+        "codex" ->
+          %{"params" => %{"threadId" => thread, "turn" => %{"id" => turn}}} =
+            List.last(for %{"method" => "turn/started"} = line <- lines, do: line)
+
+          ctx = %{"threadId" => thread, "turnId" => turn}
+
+          {[
+             %{
+               "method" => "item/started",
+               "params" =>
+                 Map.put(ctx, "item", %{
+                   "type" => "agentMessage",
+                   "id" => "msg-down",
+                   "text" => ""
+                 })
+             }
+           ],
+           for text <- texts do
+             %{
+               "method" => "item/agentMessage/delta",
+               "params" => Map.merge(ctx, %{"itemId" => "msg-down", "delta" => text})
+             }
+           end}
+
+        "claudeAgent" ->
+          session = Enum.find_value(lines, & &1["session_id"])
+
+          {[],
+           for {text, n} <- Enum.with_index(texts) do
+             %{
+               "type" => "assistant",
+               "session_id" => session,
+               "message" => %{
+                 "id" => "m-down-#{n}",
+                 "role" => "assistant",
+                 "content" => [%{"type" => "text", "text" => text}]
+               }
+             }
+           end}
+
+        "pi" ->
+          {[%{"type" => "message_start", "message" => %{"role" => "assistant"}}],
+           for text <- texts do
+             %{
+               "type" => "message_update",
+               "assistantMessageEvent" => %{"type" => "text_delta", "delta" => text}
+             }
+           end}
+
+        "muse" ->
+          %{"params" => %{"sessionId" => session, "turnId" => turn}} =
+            List.last(for %{"method" => "turn/started"} = line <- lines, do: line)
+
+          item = %{
+            "itemId" => "item-down",
+            "turnId" => turn,
+            "kind" => "agentMessage",
+            "status" => "inProgress",
+            "revision" => 1,
+            "text" => ""
+          }
+
+          {[%{"method" => "item/started", "params" => %{"sessionId" => session, "item" => item}}],
+           for text <- texts do
+             %{
+               "method" => "item/delta",
+               "params" => %{
+                 "sessionId" => session,
+                 "itemId" => "item-down",
+                 "field" => "text",
+                 "delta" => text
+               }
+             }
+           end}
+
+        _acp ->
+          session = Enum.find_value(lines, &get_in(&1, ["result", "sessionId"]))
+
+          {[],
+           for text <- texts do
+             %{
+               "method" => "session/update",
+               "params" => %{
+                 "sessionId" => session,
+                 "update" => %{
+                   "sessionUpdate" => "agent_message_chunk",
+                   "content" => %{"type" => "text", "text" => text}
+                 }
+               }
+             }
+           end}
+      end
+
+    jsonrpc? = context.provider not in ~w(claudeAgent pi)
+
+    rpc =
+      &if(jsonrpc?, do: Enum.map(&1, fn line -> Map.put(line, "jsonrpc", "2.0") end), else: &1)
+
+    {encode.(rpc.(prelude)), encode.(rpc.(updates))}
+  end
+
+  defp out_lines(context) do
+    %{dir: dir} = Durable.survivors_peek()[World.thread_id(context, context.thread)]
+
+    for line <- String.split(File.read!(Path.join(dir, "out")), "\n"),
+        {:ok, %{} = json} <- [JSON.decode(line)],
+        do: json
+  end
+
   # As `<mc> uninstall` does it, on a service manager that only records what it is told.
   step "the user stops the MC without restarting it", context do
+    context = context |> stop_mc() |> service_manager()
+    assert {:ok, _} = HalC2.Service.command(["uninstall"])
+    context
+  end
+
+  step "the MC runs as a service", context do
+    context = service_manager(context)
+    assert {:ok, _} = HalC2.Service.command(["install"])
+    context
+  end
+
+  # The manager as the installed unit tells it: one that stops a unit's every process
+  # (systemd's default, KillMode=control-group, or mixed) takes the program down too.
+  step "the service restarts", context do
+    [unit] = Path.wildcard(Path.join(context.service_home, "**/*.service"), match_dot: true)
+    kill_mode = Regex.run(~r/^KillMode=(\S+)/m, File.read!(unit), capture: :all_but_first)
+
+    if kill_mode != ["process"] do
+      {_path, %{"group" => group}} = meta(context)
+      System.cmd("kill", ["-TERM", "--", "-#{group}"])
+    end
+
     context = stop_mc(context)
+    %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
+  end
+
+  # A systemd user manager that only records what it is told (HalC2.Test.Storage).
+  defp service_manager(context) do
     bin = HalC2.Test.Mc.tmp_dir(context.mc, "service-bin")
+    home = HalC2.Test.Mc.tmp_dir(context.mc, "service-home")
     File.mkdir_p!(bin)
     HalC2.Test.Storage.fake_service_manager(bin)
 
     env = [
       service_platform: {:unix, :linux},
-      service_user_home: HalC2.Test.Mc.tmp_dir(context.mc, "service-home"),
+      service_user_home: home,
       systemctl_command: Path.join(bin, "systemctl"),
       loginctl_command: Path.join(bin, "loginctl")
     ]
@@ -644,7 +941,6 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
       for {key, _} <- env, do: Application.delete_env(:hal_c2, key)
     end)
 
-    assert {:ok, _} = HalC2.Service.command(["uninstall"])
-    context
+    Map.put(context, :service_home, home)
   end
 end

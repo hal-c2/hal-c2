@@ -387,8 +387,17 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   step "no continuation message is sent to {string}", %{args: [thread]} = context do
     refute Enum.any?(World.entities(context, thread, "message"), &(&1["text"] == @continuation))
 
-    assert World.state(context, thread).entities["run"][context.cut_off]["status"] ==
-             "interrupted"
+    # A turn that had ended was cut off by nothing; what went on in the background
+    # was not ended either, so nothing asks the agent to start it again.
+    if context[:cut_off] do
+      assert World.state(context, thread).entities["run"][context.cut_off]["status"] ==
+               "interrupted"
+    else
+      refute Enum.any?(
+               World.entities(context, thread, "message"),
+               &(&1["creationSource"] == "server" and &1["role"] == "user")
+             )
+    end
 
     context
   end

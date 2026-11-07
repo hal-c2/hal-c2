@@ -72,6 +72,43 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
+    Scenario Outline: Background work goes on through a restart
+      Given thread "t1" left a command running in the background on "<provider>"
+      When the MC dies
+      And the MC restarts
+      Then the command is still running
+      And "t1" lists the command as background work
+      And no continuation message is sent to "t1"
+
+      Examples:
+        | provider    |
+        | codex       |
+        | claudeAgent |
+        | grok        |
+
+      # The MC does not list Antigravity's background commands yet
+      # (features/providers/antigravity.feature, "Stop ends a command Antigravity left running").
+      @backlog @priority-high
+      Examples:
+        | provider    |
+        | antigravity |
+
+    Scenario: A Claude background subagent goes on through a restart
+      Given thread "t1" left a Claude subagent running in the background
+      When the MC dies
+      And the MC restarts
+      Then "t1" lists the subagent as background work
+      When Claude reports the subagent completed with "3 files"
+      Then the subagent of "t1" is completed with "3 files"
+
+    # A service manager that kills a unit's processes when it stops (systemd's
+    # KillMode=mixed) would end them before the next MC starts, so the units say otherwise.
+    Scenario: A restart by the service manager keeps the programs
+      Given the MC runs as a service
+      And thread "t1" has a running turn on "codex"
+      When the service restarts
+      Then the provider process of "t1" is the one that was running
+
   Rule: A program that cannot be reattached falls back to the kill
 
     Scenario Outline: A program with no usable checkpoint is killed before anything resumes
@@ -304,9 +341,6 @@ Feature: Reattaching to provider programs after a restart
       When the user stops the MC without restarting it
       Then no program of "t1" is left running
 
-  Rule: Still to come
-
-    @backlog @priority-high
     Scenario Outline: What a provider wrote while the MC was down reaches the thread once, in order
       Given thread "t1" has a running turn on "<provider>"
       When the MC dies partway through reading a line from the provider
@@ -325,6 +359,8 @@ Feature: Reattaching to provider programs after a restart
         | pi          |
         | muse        |
         | acpRegistry |
+
+  Rule: Still to come
 
     @backlog @priority-high
     Scenario Outline: A HAL-C2 tool call the restart cut off does not end the turn
@@ -346,30 +382,6 @@ Feature: Reattaching to provider programs after a restart
         | muse        |
         | acpRegistry |
 
-    @backlog @priority-high
-    Scenario Outline: Background work goes on through a restart
-      Given thread "t1" left a command running in the background on "<provider>"
-      When the MC dies
-      And the MC restarts
-      Then the command is still running
-      And "t1" lists the command as background work
-      And no continuation message is sent to "t1"
-
-      Examples:
-        | provider    |
-        | codex       |
-        | claudeAgent |
-        | antigravity |
-
-    @backlog
-    Scenario: A Claude background subagent goes on through a restart
-      Given thread "t1" left a Claude subagent running in the background
-      When the MC dies
-      And the MC restarts
-      Then "t1" lists the subagent as background work
-      When Claude reports the subagent completed with "3 files"
-      Then the subagent of "t1" is completed with "3 files"
-
     # Windows has no named pipe that outlives its owner this way, and tracks no programs.
     @backlog @priority-low
     Scenario: On Windows a restart still interrupts the turn
@@ -377,15 +389,6 @@ Feature: Reattaching to provider programs after a restart
       And thread "t1" has a running turn on "codex"
       When the MC restarts
       Then the run of "t1" is interrupted
-
-    # A service manager that kills a unit's processes when it stops (systemd's
-    # KillMode=mixed) would end them before the next MC starts, so the units say otherwise.
-    @backlog
-    Scenario: A restart by the service manager keeps the programs
-      Given the MC runs as a service
-      And thread "t1" has a running turn on "codex"
-      When the service restarts
-      Then the provider process of "t1" is the one that was running
 
     # The shim gives an MC ten minutes (HalC2.Subprocess.Durable). What runs here is the
     # program going on in the meantime; waiting that out is not a test worth its time.
