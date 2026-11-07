@@ -1603,6 +1603,16 @@
               "returnType": "void"
             },
             {
+              "name": "setOrientation",
+              "parameters": [
+                {
+                  "name": "orientation",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
               "name": "rotate",
               "parameters": [],
               "returnType": "void"
@@ -1633,7 +1643,7 @@
               "notify": "viewChanged"
             },
             {
-              "name": "stream",
+              "name": "tabs",
               "type": "var",
               "kind": "value",
               "list": false,
@@ -1642,7 +1652,7 @@
               "required": false,
               "constant": false,
               "group": false,
-              "notify": "streamChanged"
+              "notify": "tabsChanged"
             }
           ],
           "signals": [],
@@ -1663,12 +1673,22 @@
             },
             {
               "name": "powerOff",
-              "parameters": [],
+              "parameters": [
+                {
+                  "name": "tab",
+                  "type": "string"
+                }
+              ],
               "returnType": "void"
             },
             {
               "name": "close",
-              "parameters": [],
+              "parameters": [
+                {
+                  "name": "tab",
+                  "type": "string"
+                }
+              ],
               "returnType": "void"
             },
             {
@@ -1679,6 +1699,338 @@
             {
               "name": "dismissError",
               "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "retryHost",
+              "parameters": [
+                {
+                  "name": "hostId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "wizardSetHub",
+              "parameters": [
+                {
+                  "name": "on",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "wizardSetAgent",
+              "parameters": [
+                {
+                  "name": "on",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "wizardCheck",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "wizardDone",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "wizardCancel",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "floatDevice",
+              "parameters": [
+                {
+                  "name": "tab",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "DeviceTab",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "tabId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "screen",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "screenChanged"
+            },
+            {
+              "name": "shown",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "shownChanged"
+            },
+            {
+              "name": "stream",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "tools",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "show3d",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "show3dChanged"
+            },
+            {
+              "name": "keyboardAttached",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "keyboardAttachedChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "toggleKeyboard",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "DeviceTools",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "view",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "setOpen",
+              "parameters": [
+                {
+                  "name": "open",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "choose",
+              "parameters": [
+                {
+                  "name": "control",
+                  "type": "string"
+                },
+                {
+                  "name": "choice",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setSwitch",
+              "parameters": [
+                {
+                  "name": "setting",
+                  "type": "string"
+                },
+                {
+                  "name": "on",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "submit",
+              "parameters": [
+                {
+                  "name": "field",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "terminate",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "relaunch",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "setLocationText",
+              "parameters": [
+                {
+                  "name": "latitude",
+                  "type": "string"
+                },
+                {
+                  "name": "longitude",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "applyLocation",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "applyPreset",
+              "parameters": [
+                {
+                  "name": "city",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "clearLocation",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "decide",
+              "parameters": [
+                {
+                  "name": "appId",
+                  "type": "string"
+                },
+                {
+                  "name": "permission",
+                  "type": "string"
+                },
+                {
+                  "name": "decision",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "sendPush",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setEventLogOpen",
+              "parameters": [
+                {
+                  "name": "open",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setAxOverlay",
+              "parameters": [
+                {
+                  "name": "on",
+                  "type": "bool"
+                }
+              ],
               "returnType": "void"
             }
           ]

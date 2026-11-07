@@ -604,6 +604,10 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("{Q} cannot be chosen"), |world, c, _| {
+        // The Device tab's Tools drawer.
+        if super::device::device_cannot_choose(world, &c[0])? {
+            return Ok(());
+        }
         let before = composer(world)["selectedModel"].clone();
         let row = row_of(world, &c[0])?;
         click(world, row)?;

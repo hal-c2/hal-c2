@@ -15,6 +15,7 @@ use ljos::prelude::{Engine, ObjectId};
 pub mod decoder;
 pub mod devices;
 pub mod stream;
+pub mod tools;
 
 use decoder::{Decode, Decoder, Notify};
 
@@ -36,11 +37,13 @@ impl Hub {
     }
 }
 
-/// Adds `DeviceStream` and `ThreadDevices` to the `HalC2.Shell` module.
+/// Adds the Device tab's types to the `HalC2.Shell` module.
 pub fn register(engine: &Engine) {
     engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [
         stream::DeviceStream,
         devices::ThreadDevices,
+        devices::DeviceTab,
+        tools::DeviceTools,
     ]));
 }
 

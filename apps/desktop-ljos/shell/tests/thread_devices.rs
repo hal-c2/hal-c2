@@ -33,8 +33,10 @@ Item {
     width: 400
     height: 800
     property var devices: null
+    property string tabId: ""
     readonly property var view: devices ? devices.view : null
-    readonly property var stream: devices ? devices.stream : null
+    readonly property var deviceTab: devices && tabId.length > 0 ? devices.tabs[tabId] ?? null : null
+    readonly property var stream: deviceTab ? deviceTab.stream : null
     readonly property string status: stream ? stream.status : "none"
     readonly property string detail: stream ? stream.detail : ""
     readonly property bool input: stream ? stream.inputConnected : false
@@ -51,7 +53,7 @@ Item {
         return root.view.groups.map(g => g.title + ": " + g.devices.map(d => d.name + " " + d.action).join(", ")).join("; ");
     }
     function field(name) { return String(root.view[name]) }
-    function screenName() { return root.view.screen ? root.view.screen.name : "" }
+    function screenName() { return root.deviceTab && root.deviceTab.screen ? root.deviceTab.screen.name : "" }
 }
 "#;
 
@@ -63,7 +65,8 @@ struct Tab {
     engine: Engine,
     root: ObjectId,
     devices: ObjectId,
-    stream: ObjectId,
+    /// The panel's device tabs, in the order the user opened them.
+    tabs: RefCell<Vec<String>>,
     mc: Rc<DeviceMc>,
     script: Rc<RefCell<Script>>,
     window: RefCell<TestWindow>,
@@ -136,7 +139,6 @@ fn tab_with(real_decoder: bool) -> Tab {
     engine
         .write_by_name(root, "devices", Value::Object(devices))
         .unwrap();
-    let stream = ThreadDevices::stream(&engine, devices).expect("its stream");
     let opened = Rc::new(RefCell::new(Vec::new()));
     let closed = Rc::new(RefCell::new(Vec::new()));
     let names = Rc::new(RefCell::new(0));
@@ -155,7 +157,7 @@ fn tab_with(real_decoder: bool) -> Tab {
         engine,
         root,
         devices,
-        stream,
+        tabs: RefCell::new(Vec::new()),
         mc,
         script,
         window,
@@ -198,14 +200,38 @@ impl Tab {
     fn devices_are(&self, state: Json) {
         self.mc.devices(&self.engine, state);
     }
+    /// The panel shows `tab` ("" for a tab that is not the Device tab's),
+    /// a device tab joining the panel's tabs. The screen keeps following the
+    /// last device tab shown, as a tab in the background still has one.
     fn show(&self, tab: &str) {
-        ThreadDevices::set_tab(&self.engine, self.devices, tab);
+        if tab.starts_with("device:") && !self.tabs.borrow().iter().any(|t| t == tab) {
+            self.tabs.borrow_mut().push(tab.to_owned());
+        }
+        let tabs = self.tabs.borrow().clone();
+        ThreadDevices::set_tabs(&self.engine, self.devices, &tabs);
+        let shown: Vec<String> = if tab.is_empty() {
+            Vec::new()
+        } else {
+            vec![tab.to_owned()]
+        };
+        ThreadDevices::set_shown(&self.engine, self.devices, &shown);
+        if tab.starts_with("device:") {
+            self.engine
+                .write_by_name(self.root, "tabId", Value::from(tab))
+                .unwrap();
+        }
+    }
+    /// The shown device tab's stream.
+    fn stream(&self) -> ObjectId {
+        read(&self.engine, self.root, "stream")
+            .as_object()
+            .expect("a device tab's stream")
     }
     fn invoke(&self, name: &str, args: &[Value]) -> Value {
         call(&self.engine, self.devices, name, args)
     }
     fn on_stream(&self, name: &str, args: &[Value]) -> Value {
-        call(&self.engine, self.stream, name, args)
+        call(&self.engine, self.stream(), name, args)
     }
     /// `ms` pass on the engine's timers.
     fn pass(&self, ms: i32) {
@@ -567,7 +593,7 @@ fn a_decoder_that_cannot_start_says_why() {
     t.watching(&[PIXEL_9], &[PIXEL], PIXEL);
     t.emit("/serve-emu/ws", StreamEvent::Opened { status: 101 });
     t.engine.batch(|| {
-        DeviceStream::update(&t.engine, t.stream, |c| {
+        DeviceStream::update(&t.engine, t.stream(), |c| {
             c.on_decoded(hal_c2_shell::device::decoder::Decoded::Unsupported(
                 "No H.264 decoder.".into(),
             ))
@@ -745,7 +771,10 @@ fn powering_off_closes_the_tab_in_the_thread_it_was_asked_from() {
     let t = tab();
     t.watching(&[IPHONE_17], &[IPHONE], IPHONE);
     let tab = tab_id_of("host-1", IPHONE);
-    t.invoke("powerOff", &[]);
+    t.invoke(
+        "powerOff",
+        &[Value::from(tab_id_of("host-1", IPHONE).as_str())],
+    );
     // Before the MC answers, the user switches to another thread.
     ThreadDevices::set_thread(&t.engine, t.devices, "env-1", "thread-2", "mc-1");
     let payload = t.mc.answer(&t.engine, "device.close", Ok(json!({})));
@@ -763,11 +792,17 @@ fn powering_off_closes_the_tab_in_the_thread_it_was_asked_from() {
 fn a_failed_power_off_is_shown_only_in_its_thread() {
     let t = tab();
     t.watching(&[IPHONE_17], &[IPHONE], IPHONE);
-    t.invoke("powerOff", &[]);
+    t.invoke(
+        "powerOff",
+        &[Value::from(tab_id_of("host-1", IPHONE).as_str())],
+    );
     t.mc.answer(&t.engine, "device.close", Err("Busy"));
     assert_eq!(t.view("error"), "Busy");
     t.invoke("dismissError", &[]);
-    t.invoke("powerOff", &[]);
+    t.invoke(
+        "powerOff",
+        &[Value::from(tab_id_of("host-1", IPHONE).as_str())],
+    );
     ThreadDevices::set_thread(&t.engine, t.devices, "env-1", "thread-2", "mc-1");
     t.mc.answer(&t.engine, "device.close", Err("Busy"));
     assert_eq!(t.view("error"), "");
@@ -778,7 +813,10 @@ fn a_failed_power_off_is_shown_only_in_its_thread() {
 fn closing_a_tab_leaves_the_device_open() {
     let t = tab();
     t.watching(&[IPHONE_17], &[IPHONE], IPHONE);
-    t.invoke("close", &[]);
+    t.invoke(
+        "close",
+        &[Value::from(tab_id_of("host-1", IPHONE).as_str())],
+    );
     assert_eq!(
         *t.closed.borrow(),
         [("env-1:thread-1".to_owned(), tab_id_of("host-1", IPHONE))]

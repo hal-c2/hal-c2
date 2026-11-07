@@ -700,6 +700,10 @@ pub fn register(steps: &mut Steps) {
         world.sync()
     });
     steps.step("the user can continue", |world, _, _| {
+        // The Device tab's setup wizard.
+        if super::device::device_can_continue(world)? {
+            return Ok(());
+        }
         world.wait_for_with(
             |w| flag(&onboarding(w), "canContinue"),
             |w| {

@@ -1069,6 +1069,17 @@ impl Core {
         }
     }
 
+    /// iOS: turns the device to `orientation`, one of [`ORIENTATIONS`].
+    pub fn set_orientation(&mut self, orientation: &str) {
+        if !self.ios() || !ORIENTATIONS.contains(&orientation) {
+            return;
+        }
+        self.send(
+            tagged(IOS_ORIENTATION, json!({"orientation": orientation})),
+            true,
+        );
+    }
+
     /// iOS: the next orientation, clockwise from portrait.
     pub fn rotate(&mut self) {
         if !self.ios() {
@@ -1506,6 +1517,12 @@ impl DeviceStream {
     #[qml(invokable)]
     fn press_button(cx: &Cx, button: Atom) {
         DeviceStream::update(cx.engine, cx.this, |c| c.press_button(&button));
+    }
+
+    /// iOS: turns the device to `orientation`.
+    #[qml(invokable)]
+    fn set_orientation(cx: &Cx, orientation: Atom) {
+        DeviceStream::update(cx.engine, cx.this, |c| c.set_orientation(&orientation));
     }
 
     /// iOS: the next orientation, clockwise from portrait.

@@ -1,7 +1,10 @@
 //! desktop-qt's ThreadDevices: the Device tabs of a thread's right panel.
 //! The picker (`device`) lists the thread's environment's simulators and
 //! emulators, and a device tab (`device:<host>:<device>`, both
-//! percent-encoded) streams one the thread has open. The environment's
+//! percent-encoded) streams one the thread has open. Each device tab the
+//! panel has is a [`DeviceTab`] (`tabs`, by tab id) with its own stream and
+//! view choices; it streams only while shown (`set_shown`) and its device is
+//! open for the thread. The environment's
 //! DeviceServiceState is followed through the MC's `devices` shape when a
 //! cluster MC serves it, and read with `device.list` otherwise (and each
 //! time a Device tab shows).
@@ -25,13 +28,14 @@
 //!    <names>… This can take a minute." or ""), noAndroid (no Android virtual
 //!    device and none missing), canRefresh, error ("" or why the last open or
 //!    power off failed), pendingKey, groups: [{title, devices: [{key, hostId,
-//!    id, name, platform, detail, action ("Open" | "Start")}]}], screen:
-//!    null, or the shown tab's device {hostId, id, name, platform,
-//!    description}}.
+//!    id, name, platform, detail, action ("Open" | "Start")}]}]}.
+//!
+//! A DeviceTab's `screen` is null, or its device while the thread has it
+//! open {hostId, id, name, platform, description}.
 //!
 //! [`Devices`] is that without the engine; [`ThreadDevices`] is the object
 //! the panel hands QML, which runs what it asks for on the shell's MC and
-//! its [`DeviceStream`].
+//! its tabs' [`DeviceStream`]s.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -44,6 +48,7 @@ use serde_json::json;
 
 use super::percent;
 use super::stream::DeviceStream;
+use super::tools::DeviceTools;
 use crate::bridge::percent_decode;
 use crate::json::Json;
 use crate::mc::{Mc, McError, SubId};
@@ -115,6 +120,9 @@ pub enum Then {
         thread: String,
         tab: String,
     },
+    /// The setup wizard's `device.configure` (`pending` is "hub", "agent"
+    /// or "complete") or its `device.list` ("check").
+    Wizard { generation: u64, pending: String },
 }
 
 /// What the devices ask of their host.
@@ -129,9 +137,15 @@ pub enum Effect {
         payload: Json,
         then: Then,
     },
-    /// The stream shows this device (all empty: none), streaming while
+    /// The panel has a device tab `tab`: it gets a DeviceTab.
+    AddTab(String),
+    /// The device tab `tab` is gone: its stream stops and its DeviceTab goes.
+    DropTab(String),
+    /// `tab`'s stream shows this device (all empty: none), streaming while
     /// `active`.
     Stream {
+        tab: String,
+        environment: String,
         hub_base: String,
         platform: String,
         device: String,
@@ -148,8 +162,22 @@ pub enum Effect {
         thread_key: String,
         tab: String,
     },
+    /// `tab`'s device (null: none open) and whether the tab is shown.
+    Screen {
+        tab: String,
+        screen: Json,
+        shown: bool,
+    },
     /// A device's name became known or changed: tab titles follow.
     NamesChanged,
+}
+
+/// What a device tab was last told: its stream's target and its screen.
+#[derive(Debug, Default, PartialEq)]
+struct Told {
+    target: (String, String, String, bool),
+    screen: Json,
+    shown: bool,
 }
 
 /// A thread's Device tabs, without the engine.
@@ -158,7 +186,11 @@ pub struct Devices {
     environment: String,
     thread: String,
     mc: String,
-    tab: String,
+    /// The panel's device tabs, each with a DeviceTab, and what each was
+    /// last told.
+    tabs: Vec<(String, Told)>,
+    /// The Device tabs shown (the picker and device tabs).
+    shown: HashSet<String>,
     following: bool,
     /// Replies for another environment are dropped.
     generation: u64,
@@ -171,10 +203,17 @@ pub struct Devices {
     /// Each thread's sessions (with a known device) as last seen: a session
     /// missing there is new. Absent until the first state, the baseline.
     sessions_seen: HashMap<String, HashSet<String>>,
+    /// The machine whose start is being retried.
+    retrying: String,
+    /// The setup wizard's request in flight ("hub", "check", "agent",
+    /// "complete"), and what the last one failed with.
+    wizard_pending: String,
+    wizard_error: String,
+    /// The user cancelled or finished the wizard; showing a Device tab again
+    /// brings it back while setup is not done.
+    wizard_dismissed: bool,
     view: Json,
     view_changed: bool,
-    /// What the stream was last told.
-    target: Option<(String, String, String, bool)>,
     effects: Vec<Effect>,
 }
 
@@ -184,7 +223,6 @@ impl Devices {
             state: json!({}),
             ..Devices::default()
         };
-        devices.retarget();
         devices.publish();
         devices
     }
@@ -192,8 +230,13 @@ impl Devices {
     pub fn view(&self) -> &Json {
         &self.view
     }
-    pub fn tab(&self) -> &str {
-        &self.tab
+    /// The panel's device tabs.
+    pub fn tabs(&self) -> Vec<String> {
+        self.tabs.iter().map(|(id, _)| id.clone()).collect()
+    }
+    /// Whether the Device tab `tab` is shown.
+    pub fn is_shown(&self, tab: &str) -> bool {
+        self.shown.contains(tab)
     }
     pub fn take_effects(&mut self) -> Vec<Effect> {
         std::mem::take(&mut self.effects)
@@ -222,6 +265,9 @@ impl Devices {
             self.environment = environment.into();
             self.mc = mc.into();
             self.generation += 1;
+            self.wizard_pending.clear();
+            self.wizard_error.clear();
+            self.retrying.clear();
             self.state = json!({});
             self.loaded = false;
             self.follow();
@@ -232,16 +278,42 @@ impl Devices {
         self.publish();
     }
 
-    /// The panel's active tab while it shows a Device tab (`device` or a
-    /// device tab), else empty: a device tab streams only while shown.
-    pub fn set_tab(&mut self, tab: &str) {
-        if tab == self.tab {
+    /// The thread's device tabs: each has a DeviceTab while it is listed.
+    pub fn set_tabs(&mut self, tabs: &[String]) {
+        let before = std::mem::take(&mut self.tabs);
+        let mut kept = Vec::new();
+        for (id, told) in before {
+            if tabs.contains(&id) {
+                kept.push((id, told));
+            } else {
+                // A closed tab's stream goes with it.
+                self.effects.push(Effect::DropTab(id));
+            }
+        }
+        self.tabs = kept;
+        for id in tabs {
+            if target_of(id).is_none() || self.tabs.iter().any(|(t, _)| t == id) {
+                continue;
+            }
+            self.effects.push(Effect::AddTab(id.clone()));
+            self.tabs.push((id.clone(), Told::default()));
+        }
+        self.retarget();
+    }
+
+    /// The Device tabs shown anywhere (`device` and device tabs): a device
+    /// tab streams only while shown, and showing a Device tab lists again.
+    pub fn set_shown(&mut self, tabs: &[String]) {
+        let shown: HashSet<String> = tabs.iter().filter(|t| is_device_tab(t)).cloned().collect();
+        if shown == self.shown {
             return;
         }
-        let shown = self.tab.is_empty() && !tab.is_empty();
-        self.tab = tab.into();
-        // Showing the tab lists again.
-        if shown && self.loaded && text(&self.state, "hostStatus") != "disabled" {
+        let first = self.shown.is_empty() && !shown.is_empty();
+        if first {
+            self.wizard_dismissed = false;
+        }
+        self.shown = shown;
+        if first && self.loaded && text(&self.state, "hostStatus") != "disabled" {
             self.list(json!({}));
         }
         self.retarget();
@@ -279,9 +351,10 @@ impl Devices {
     /// A `devices` frame's state.
     pub fn take(&mut self, state: Json) {
         self.state = state;
+        self.retrying.clear();
         let first = !self.loaded;
         self.loaded = true;
-        if first && !self.tab.is_empty() && text(&self.state, "hostStatus") != "disabled" {
+        if first && !self.shown.is_empty() && text(&self.state, "hostStatus") != "disabled" {
             self.list(json!({}));
         }
         self.watch_sessions();
@@ -349,31 +422,78 @@ impl Devices {
         }
     }
 
-    /// The shown device tab streams its device while the thread has it open.
+    /// A device tab shows its device while the thread has it open, and
+    /// streams it only while shown.
     fn retarget(&mut self) {
-        let shown = target_of(&self.tab).and_then(|(host_id, device_id)| {
-            let device = self.device_of(&host_id, &device_id)?;
-            self.has_session(&host_id, &device_id).then(|| {
-                (
-                    text(&self.state, "hubBasePath"),
-                    text(device, "platform"),
-                    device_id.clone(),
-                    true,
-                )
-            })
-        });
-        let target = shown.unwrap_or_default();
-        if self.target.as_ref() == Some(&target) {
-            return;
+        let mut tabs = std::mem::take(&mut self.tabs);
+        for (tab, told) in &mut tabs {
+            let now = self.told(tab);
+            if now.target != told.target {
+                let (hub_base, platform, device, active) = now.target.clone();
+                self.effects.push(Effect::Stream {
+                    tab: tab.clone(),
+                    environment: self.environment.clone(),
+                    hub_base,
+                    platform,
+                    device,
+                    active,
+                });
+            }
+            if now.screen != told.screen || now.shown != told.shown {
+                self.effects.push(Effect::Screen {
+                    tab: tab.clone(),
+                    screen: now.screen.clone(),
+                    shown: now.shown,
+                });
+            }
+            *told = now;
         }
-        let (hub_base, platform, device, active) = target.clone();
-        self.target = Some(target);
-        self.effects.push(Effect::Stream {
-            hub_base,
-            platform,
-            device,
-            active,
+        self.tabs = tabs;
+    }
+
+    /// What the device tab `tab` shows and streams now.
+    fn told(&self, tab: &str) -> Told {
+        let shown = self.shown.contains(tab);
+        let open = target_of(tab).and_then(|(host_id, device_id)| {
+            let device = self.device_of(&host_id, &device_id)?;
+            self.has_session(&host_id, &device_id)
+                .then_some((host_id, device_id, device))
         });
+        let Some((host_id, device_id, device)) = open else {
+            return Told {
+                screen: Json::Null,
+                shown,
+                ..Told::default()
+            };
+        };
+        let label = array(&self.state, "hosts")
+            .iter()
+            .find(|h| text(h, "id") == host_id)
+            .map(|h| text(h, "label"))
+            .unwrap_or_default();
+        let label = if label.is_empty() {
+            "Device host".to_owned()
+        } else {
+            label
+        };
+        let platform = text(device, "platform");
+        let screen = json!({
+            "description": format!("{label} · {}", text(device, "version")),
+            "hostId": host_id,
+            "id": device_id,
+            "name": text(device, "name"),
+            "platform": platform,
+        });
+        let target = if shown {
+            (text(&self.state, "hubBasePath"), platform, device_id, true)
+        } else {
+            Default::default()
+        };
+        Told {
+            target,
+            screen,
+            shown,
+        }
     }
 
     /// A device tab's title: its device's name, else "Device".
@@ -423,9 +543,9 @@ impl Devices {
         });
     }
 
-    /// Shuts the shown tab's device down and closes the tab.
-    pub fn power_off(&mut self) {
-        let tab = self.tab.clone();
+    /// Shuts the tab's device down and closes the tab.
+    pub fn power_off(&mut self, tab: &str) {
+        let tab = tab.to_owned();
         let Some((host_id, device_id)) = target_of(&tab) else {
             return;
         };
@@ -451,18 +571,78 @@ impl Devices {
         });
     }
 
-    /// Closes the shown device tab; the device stays open for the thread.
-    pub fn close(&mut self) {
-        if !self.tab.is_empty() {
+    /// Closes the device tab; the device stays open for the thread.
+    pub fn close(&mut self, tab: &str) {
+        if !tab.is_empty() {
             self.effects.push(Effect::Closed {
                 thread_key: self.thread_key(),
-                tab: self.tab.clone(),
+                tab: tab.to_owned(),
             });
         }
     }
 
     pub fn refresh(&mut self) {
         self.list(json!({}));
+    }
+
+    /// Tries starting a machine's device tools again.
+    pub fn retry_host(&mut self, host_id: &str) {
+        if host_id.is_empty() || !self.retrying.is_empty() {
+            return;
+        }
+        self.retrying = host_id.into();
+        self.publish();
+        self.list(json!({"retryHostId": host_id}));
+    }
+
+    fn configure(&mut self, pending: &str, change: Json) {
+        if !self.wizard_pending.is_empty() || self.environment.is_empty() {
+            return;
+        }
+        self.wizard_pending = pending.into();
+        self.wizard_error.clear();
+        self.publish();
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: if pending == "check" {
+                "device.list"
+            } else {
+                "device.configure"
+            },
+            payload: change,
+            then: Then::Wizard {
+                generation: self.generation,
+                pending: pending.into(),
+            },
+        });
+    }
+
+    /// The wizard's "Enable device hub": off turns agent access off too.
+    pub fn wizard_set_hub(&mut self, on: bool) {
+        let change = if on {
+            json!({"enabled": true})
+        } else {
+            json!({"enabled": false, "agentAccessEnabled": false})
+        };
+        self.configure("hub", change);
+    }
+
+    pub fn wizard_set_agent(&mut self, on: bool) {
+        self.configure("agent", json!({"agentAccessEnabled": on}));
+    }
+
+    /// "Check again": the platforms are read again.
+    pub fn wizard_check(&mut self) {
+        self.configure("check", json!({}));
+    }
+
+    pub fn wizard_done(&mut self) {
+        self.configure("complete", json!({"onboardingCompleted": true}));
+    }
+
+    pub fn wizard_cancel(&mut self) {
+        self.wizard_dismissed = true;
+        self.publish();
     }
 
     pub fn dismiss_error(&mut self) {
@@ -479,9 +659,33 @@ impl Devices {
                 if generation != self.generation {
                     return;
                 }
-                if let Ok(state) = result {
-                    self.take(state);
+                match result {
+                    Ok(state) => self.take(state),
+                    Err(_) => {
+                        self.retrying.clear();
+                        self.publish();
+                    }
                 }
+            }
+            Then::Wizard {
+                generation,
+                pending,
+            } => {
+                if generation != self.generation {
+                    return;
+                }
+                self.wizard_pending.clear();
+                match result {
+                    Ok(state) => {
+                        self.wizard_error.clear();
+                        if pending == "complete" {
+                            self.wizard_dismissed = true;
+                        }
+                        self.take(state);
+                    }
+                    Err(error) => self.wizard_error = error,
+                }
+                self.publish();
             }
             Then::Open {
                 generation,
@@ -615,6 +819,7 @@ impl Devices {
                         "key": key_of(&host_id, &id),
                         "name": text(device, "name"),
                         "platform": platform,
+                        "tab": tab_id_of(&host_id, &id),
                     })
                 })
                 .collect();
@@ -631,21 +836,6 @@ impl Devices {
             .filter(|d| text(d, "threadId") == self.thread)
             .map(|d| text(d, "name"))
             .collect();
-
-        let screen = target_of(&self.tab)
-            .and_then(|(host_id, device_id)| {
-                let device = self.device_of(&host_id, &device_id)?;
-                self.has_session(&host_id, &device_id).then(|| {
-                    json!({
-                        "description": format!("{} · {}", host_label(&host_id), text(device, "version")),
-                        "hostId": host_id,
-                        "id": device_id,
-                        "name": text(device, "name"),
-                        "platform": text(device, "platform"),
-                    })
-                })
-            })
-            .unwrap_or(Json::Null);
 
         let loading = if let Some(device) = pending_device {
             if flag(device, "booted") {
@@ -683,7 +873,16 @@ impl Devices {
             format!("Starting {}… This can take a minute.", booting.join(", "))
         };
 
+        let wizard = if self.loaded
+            && !self.wizard_dismissed
+            && (!flag(state, "onboardingCompleted") || host_status == "disabled")
+        {
+            self.wizard_view()
+        } else {
+            Json::Null
+        };
         let view = json!({
+            "banners": self.banners(),
             "canRefresh": self.loaded && !host_busy,
             "empty": empty,
             "error": self.error,
@@ -693,14 +892,159 @@ impl Devices {
             "loading": loading,
             "noAndroid": host_ready && !any_android && !android_missing,
             "pendingKey": self.pending,
-            "screen": screen,
             "setup": self.loaded && (host_status == "disabled" || !flag(state, "onboardingCompleted")),
             "starting": starting,
+            "wizard": wizard,
         });
         if view != self.view {
             self.view = view;
             self.view_changed = true;
         }
+    }
+}
+
+impl Devices {
+    /// The machines installing, starting or failing to start their device
+    /// tools, while device support is on.
+    fn banners(&self) -> Json {
+        let state = &self.state;
+        if text(state, "hostStatus") == "disabled" {
+            return json!([]);
+        }
+        let mut rows = Vec::new();
+        for host in array(state, "hosts") {
+            let id = text(host, "id");
+            let status = state
+                .get("hostStatuses")
+                .and_then(|s| s.get(&id))
+                .cloned()
+                .unwrap_or(Json::Null);
+            let now = text(&status, "status");
+            if !matches!(now.as_str(), "installing" | "starting" | "failed") {
+                continue;
+            }
+            let failed = now == "failed";
+            let fallback = match now.as_str() {
+                "failed" => "Device support could not start.",
+                "installing" => "Installing device tools…",
+                _ => "Starting device tools…",
+            };
+            let message = status
+                .get("detail")
+                .and_then(Json::as_str)
+                .unwrap_or(fallback);
+            rows.push(json!({
+                "advice": if failed {
+                    "Check the host connection and network access, then retry. Your device settings are saved."
+                } else {
+                    ""
+                },
+                "canRetry": failed && flag(state, "supportsHostRetry"),
+                "failed": failed,
+                "hostId": id,
+                "label": text(host, "label"),
+                "message": message,
+                "retrying": self.retrying == id,
+            }));
+        }
+        Json::Array(rows)
+    }
+
+    /// The first-use setup's state.
+    fn wizard_view(&self) -> Json {
+        let state = &self.state;
+        let host_status = text(state, "hostStatus");
+        let busy = host_status == "installing" || host_status == "starting";
+        let ready = host_status == "ready";
+        let pending = self.wizard_pending.as_str();
+
+        let hub_pending = pending == "hub" || (busy && pending != "agent");
+        let hub_status = if hub_pending {
+            match host_status.as_str() {
+                "installing" => "Installing device hub…",
+                "starting" => "Starting device hub…",
+                _ => "Updating device hub…",
+            }
+        } else if ready {
+            "Device hub is ready."
+        } else {
+            ""
+        };
+
+        let agent_on = flag(state, "agentAccessEnabled");
+        let agent_status = if pending == "agent" {
+            match host_status.as_str() {
+                "installing" => "Installing agent tools…",
+                "starting" => "Starting agent tools…",
+                _ => "Updating agent access…",
+            }
+        } else if agent_on
+            && ready
+            && array(state, "hosts")
+                .iter()
+                .any(|h| flag(h, "agentDeviceInstalled"))
+        {
+            "Agent tools are ready."
+        } else {
+            ""
+        };
+
+        let platform = |wanted: &str| {
+            let availability = array(state, "hosts")
+                .iter()
+                .flat_map(|h| array(h, "platforms"))
+                .find(|p| text(p, "platform") == wanted)
+                .cloned()
+                .unwrap_or(Json::Null);
+            let name = if wanted == "ios" { "iOS" } else { "Android" };
+            if !flag(&availability, "available") {
+                let reason = availability
+                    .get("reason")
+                    .and_then(Json::as_str)
+                    .map_or_else(
+                        || format!("{name} support was not detected."),
+                        str::to_owned,
+                    );
+                return json!({"message": reason, "platform": name, "ready": false});
+            }
+            let any = array(state, "devices")
+                .iter()
+                .any(|d| text(d, "platform") == wanted);
+            if ready && !any {
+                let message = if wanted == "ios" {
+                    "Xcode is installed, but no iOS Simulator is available. Install a runtime in Xcode Settings → Components."
+                } else {
+                    "The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager."
+                };
+                return json!({"message": message, "platform": name, "ready": false});
+            }
+            let message = if wanted == "ios" {
+                "Xcode and iOS Simulator are available."
+            } else {
+                "The Android SDK and Emulator are available."
+            };
+            json!({"message": message, "platform": name, "ready": true})
+        };
+
+        let error = if !self.wizard_error.is_empty() {
+            self.wizard_error.clone()
+        } else if host_status == "failed" {
+            text(state, "hostStatusDetail")
+        } else {
+            String::new()
+        };
+        json!({
+            "agentOn": agent_on,
+            "agentStatus": agent_status,
+            "busy": busy,
+            "canContinue": ready && pending.is_empty(),
+            "error": error,
+            "hubOn": host_status != "disabled",
+            "hubReady": ready,
+            "hubStatus": hub_status,
+            "pending": pending,
+            "platforms": [platform("ios"), platform("android")],
+        })
     }
 }
 
@@ -720,7 +1064,10 @@ struct Hooks {
 struct Inner {
     core: RefCell<Devices>,
     mc: Rc<dyn Mc>,
-    stream: ObjectId,
+    /// Each device tab's DeviceTab, in the order the panel has them.
+    tabs: RefCell<Vec<(String, ObjectId)>>,
+    /// The streams' first-picture and retry timeouts, when a test set them.
+    timeouts: RefCell<Option<(i32, i32)>>,
     subscription: RefCell<Option<SubId>>,
     hooks: RefCell<Hooks>,
 }
@@ -730,6 +1077,16 @@ impl Drop for Inner {
         if let Some(id) = self.subscription.get_mut().take() {
             self.mc.unsubscribe(id);
         }
+    }
+}
+
+impl Inner {
+    fn tab(&self, tab: &str) -> Option<ObjectId> {
+        self.tabs
+            .borrow()
+            .iter()
+            .find(|(id, _)| id == tab)
+            .map(|(_, obj)| *obj)
     }
 }
 
@@ -749,9 +1106,9 @@ pub struct ThreadDevices {
     /// See the module doc.
     #[qml(readonly, notify)]
     view: Value,
-    /// The shown device tab's `DeviceStream`; set once, when made.
+    /// Tab id → `DeviceTab`, for every device tab the thread's panel has.
     #[qml(readonly, notify)]
-    stream: Value,
+    tabs: Value,
     #[qml(skip)]
     inner: Rc<Inner>,
 }
@@ -779,32 +1136,22 @@ impl ThreadDevices {
         owner: Option<ObjectId>,
         mc: Rc<dyn Mc>,
     ) -> Result<ObjectId, EngineError> {
-        // The stream is the devices' own; it is made first so the devices
-        // never point at none, and handed to them.
-        let stream = DeviceStream::create(engine, None, mc.clone())?;
         let core = Devices::new();
         let view = core.view().to_value();
         let inner = Rc::new(Inner {
             core: RefCell::new(core),
             mc,
-            stream,
+            tabs: RefCell::default(),
+            timeouts: RefCell::default(),
             subscription: RefCell::new(None),
             hooks: RefCell::default(),
         });
         let devices = ThreadDevices {
             view,
-            stream: Value::Object(stream),
+            tabs: Value::map(Vec::<(Atom, Value)>::new()),
             inner,
         };
-        let obj = match engine.create_native(devices, owner) {
-            Ok(obj) => obj,
-            Err(e) => {
-                engine.destroy(stream);
-                return Err(e);
-            }
-        };
-        warn(engine, engine.set_owner(stream, Some(obj)));
-        Ok(obj)
+        engine.create_native(devices, owner)
     }
 
     /// The thread shown, and the MC whose events carry its environment's
@@ -813,9 +1160,14 @@ impl ThreadDevices {
         Self::update(engine, obj, |d| d.set_thread(environment, thread, mc));
     }
 
-    /// The panel's active tab while it shows a Device tab, else empty.
-    pub fn set_tab(engine: &Engine, obj: ObjectId, tab: &str) {
-        Self::update(engine, obj, |d| d.set_tab(tab));
+    /// The thread's device tabs: each has a DeviceTab while listed.
+    pub fn set_tabs(engine: &Engine, obj: ObjectId, tabs: &[String]) {
+        Self::update(engine, obj, |d| d.set_tabs(tabs));
+    }
+
+    /// The Device tabs shown anywhere; a device tab streams only while shown.
+    pub fn set_shown(engine: &Engine, obj: ObjectId, tabs: &[String]) {
+        Self::update(engine, obj, |d| d.set_shown(tabs));
     }
 
     /// A device tab's title: its device's name, else "Device".
@@ -823,9 +1175,29 @@ impl ThreadDevices {
         Self::read(engine, obj, |d| d.title_of(tab)).unwrap_or_else(|| "Device".into())
     }
 
-    /// The `DeviceStream` the shown device tab streams on.
-    pub fn stream(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
-        Some(inner_of(engine, obj)?.stream)
+    /// The device tab `tab`'s DeviceTab; None when the panel has no such tab.
+    pub fn tab(engine: &Engine, obj: ObjectId, tab: &str) -> Option<ObjectId> {
+        inner_of(engine, obj)?.tab(tab)
+    }
+
+    /// The `DeviceStream` the device tab `tab` streams on.
+    pub fn stream(engine: &Engine, obj: ObjectId, tab: &str) -> Option<ObjectId> {
+        DeviceTab::stream(engine, Self::tab(engine, obj, tab)?)
+    }
+
+    /// Tests: every tab's stream waits `first_frame_ms` for a first picture
+    /// and `retry_ms` before connecting again, from now on.
+    pub fn set_timeouts(engine: &Engine, obj: ObjectId, first_frame_ms: i32, retry_ms: i32) {
+        let Some(inner) = inner_of(engine, obj) else {
+            return;
+        };
+        *inner.timeouts.borrow_mut() = Some((first_frame_ms, retry_ms));
+        let tabs = inner.tabs.borrow().clone();
+        for (_, tab) in tabs {
+            if let Some(stream) = DeviceTab::stream(engine, tab) {
+                DeviceStream::set_timeouts(engine, stream, first_frame_ms, retry_ms);
+            }
+        }
     }
 
     /// The panel shows `tab` in place of the picker (`automatic`: an agent
@@ -924,18 +1296,72 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
                 ThreadDevices::update(engine, obj, |d| d.answer(then, result));
             }),
         ),
+        Effect::AddTab(tab) => {
+            match DeviceTab::create(engine, obj, inner, &tab) {
+                Ok(made) => inner.tabs.borrow_mut().push((tab, made)),
+                Err(e) => warn(engine, Err(e)),
+            }
+            publish_tabs(engine, obj, inner);
+        }
+        Effect::DropTab(tab) => {
+            let gone = {
+                let mut tabs = inner.tabs.borrow_mut();
+                let at = tabs.iter().position(|(id, _)| *id == tab);
+                at.map(|at| tabs.remove(at).1)
+            };
+            if let Some(gone) = gone {
+                if let Some(stream) = DeviceTab::stream(engine, gone) {
+                    DeviceStream::set_active(engine, stream, false);
+                }
+                publish_tabs(engine, obj, inner);
+                engine.destroy(gone);
+            }
+        }
         Effect::Stream {
+            tab,
+            environment,
             hub_base,
             platform,
             device,
             active,
         } => {
+            let Some(shown) = inner.tab(&tab) else {
+                return;
+            };
+            let host = target_of(&tab).map(|(host, _)| host).unwrap_or_default();
+            if let Some(tools) = DeviceTab::tools(engine, shown) {
+                if active {
+                    DeviceTools::set_target(
+                        engine,
+                        tools,
+                        &environment,
+                        &hub_base,
+                        &host,
+                        &device,
+                        &platform,
+                    );
+                } else {
+                    DeviceTools::set_target(engine, tools, &environment, "", "", "", "");
+                }
+            }
+            let Some(stream) = DeviceTab::stream(engine, shown) else {
+                return;
+            };
             if active {
-                DeviceStream::set_target(engine, inner.stream, &hub_base, &platform, &device);
-                DeviceStream::set_active(engine, inner.stream, true);
+                DeviceStream::set_target(engine, stream, &hub_base, &platform, &device);
+                DeviceStream::set_active(engine, stream, true);
             } else {
-                DeviceStream::set_active(engine, inner.stream, false);
-                DeviceStream::set_target(engine, inner.stream, "", "", "");
+                DeviceStream::set_active(engine, stream, false);
+                DeviceStream::set_target(engine, stream, "", "", "");
+            }
+        }
+        Effect::Screen { tab, screen, shown } => {
+            if let Some(tab) = inner.tab(&tab) {
+                warn(
+                    engine,
+                    engine.set_internal(tab, DeviceTab::SCREEN, screen.to_value()),
+                );
+                warn(engine, engine.set_internal(tab, DeviceTab::SHOWN, shown));
             }
         }
         Effect::Opened { tab, automatic } => {
@@ -967,16 +1393,16 @@ impl ThreadDevices {
         ThreadDevices::update(cx.engine, cx.this, |d| d.open(&host_id, &device_id));
     }
 
-    /// Shuts the shown tab's device down and closes the tab.
+    /// Shuts the tab's device down and closes the tab.
     #[qml(invokable)]
-    fn power_off(cx: &Cx) {
-        ThreadDevices::update(cx.engine, cx.this, Devices::power_off);
+    fn power_off(cx: &Cx, tab: Atom) {
+        ThreadDevices::update(cx.engine, cx.this, |d| d.power_off(&tab));
     }
 
-    /// Closes the shown device tab; the device stays open for the thread.
+    /// Closes the device tab; the device stays open for the thread.
     #[qml(invokable)]
-    fn close(cx: &Cx) {
-        ThreadDevices::update(cx.engine, cx.this, Devices::close);
+    fn close(cx: &Cx, tab: Atom) {
+        ThreadDevices::update(cx.engine, cx.this, |d| d.close(&tab));
     }
 
     #[qml(invokable)]
@@ -987,6 +1413,183 @@ impl ThreadDevices {
     #[qml(invokable)]
     fn dismiss_error(cx: &Cx) {
         ThreadDevices::update(cx.engine, cx.this, Devices::dismiss_error);
+    }
+
+    /// A machine banner's Retry.
+    #[qml(invokable)]
+    fn retry_host(cx: &Cx, host_id: Atom) {
+        ThreadDevices::update(cx.engine, cx.this, |d| d.retry_host(&host_id));
+    }
+
+    /// The setup wizard's switches and buttons.
+    #[qml(invokable)]
+    fn wizard_set_hub(cx: &Cx, on: bool) {
+        ThreadDevices::update(cx.engine, cx.this, |d| d.wizard_set_hub(on));
+    }
+
+    #[qml(invokable)]
+    fn wizard_set_agent(cx: &Cx, on: bool) {
+        ThreadDevices::update(cx.engine, cx.this, |d| d.wizard_set_agent(on));
+    }
+
+    #[qml(invokable)]
+    fn wizard_check(cx: &Cx) {
+        ThreadDevices::update(cx.engine, cx.this, Devices::wizard_check);
+    }
+
+    #[qml(invokable)]
+    fn wizard_done(cx: &Cx) {
+        ThreadDevices::update(cx.engine, cx.this, Devices::wizard_done);
+    }
+
+    #[qml(invokable)]
+    fn wizard_cancel(cx: &Cx) {
+        ThreadDevices::update(cx.engine, cx.this, Devices::wizard_cancel);
+    }
+
+    /// The device tab's Float. The Ljós panel has no floating devices yet,
+    /// so the tab stays where it is.
+    #[qml(invokable)]
+    fn float_device(cx: &Cx, tab: Atom) {
+        let _ = (cx, tab);
+    }
+}
+
+/// ThreadDevices' `tabs`, after a tab came or went.
+fn publish_tabs(engine: &Engine, obj: ObjectId, inner: &Inner) {
+    let tabs: Vec<(Atom, Value)> = inner
+        .tabs
+        .borrow()
+        .iter()
+        .map(|(id, tab)| (Atom::new(id), Value::Object(*tab)))
+        .collect();
+    warn(
+        engine,
+        engine.set_internal(obj, ThreadDevices::TABS, Value::map(tabs)),
+    );
+}
+
+/// One device tab (ThreadDevices' `tabs`): the device's stream and the
+/// tab's own view choices, which survive switching views. Its body
+/// (DevicePanel) binds to it, and its Tools drawer to `tools`.
+/// desktop-qt's DeviceTab.
+#[derive(Debug, QmlObject)]
+#[qml(module = "HalC2.Shell", name = "DeviceTab", uncreatable)]
+pub struct DeviceTab {
+    #[qml(readonly)]
+    tab_id: Atom,
+    /// null, or the device while the thread has it open (see the module
+    /// doc): null shows the picker.
+    #[qml(readonly, notify)]
+    screen: Value,
+    /// Shown in the panel.
+    #[qml(readonly, notify)]
+    shown: bool,
+    #[qml(readonly)]
+    stream: Value,
+    #[qml(readonly)]
+    tools: Value,
+    /// The 3D body view.
+    #[qml(notify)]
+    show3d: bool,
+    /// An iPad's Magic Keyboard.
+    #[qml(notify)]
+    keyboard_attached: bool,
+}
+
+impl DeviceTab {
+    fn create(
+        engine: &Engine,
+        owner: ObjectId,
+        inner: &Inner,
+        tab: &str,
+    ) -> Result<ObjectId, EngineError> {
+        let stream = DeviceStream::create(engine, None, inner.mc.clone())?;
+        if let Some((first, retry)) = *inner.timeouts.borrow() {
+            DeviceStream::set_timeouts(engine, stream, first, retry);
+        }
+        let tools = match DeviceTools::create(engine, None, inner.mc.clone()) {
+            Ok(tools) => tools,
+            Err(e) => {
+                engine.destroy(stream);
+                return Err(e);
+            }
+        };
+        let made = engine.create_native(
+            DeviceTab {
+                tab_id: Atom::new(tab),
+                screen: Value::Null,
+                shown: false,
+                stream: Value::Object(stream),
+                tools: Value::Object(tools),
+                show3d: false,
+                keyboard_attached: false,
+            },
+            Some(owner),
+        );
+        match made {
+            Ok(made) => {
+                warn(engine, engine.set_owner(stream, Some(made)));
+                warn(engine, engine.set_owner(tools, Some(made)));
+                Ok(made)
+            }
+            Err(e) => {
+                engine.destroy(stream);
+                engine.destroy(tools);
+                Err(e)
+            }
+        }
+    }
+
+    /// The tab's `DeviceStream`.
+    pub fn stream(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
+        match engine
+            .with::<DeviceTab, _>(obj, |t| t.stream.clone())
+            .ok()?
+        {
+            Value::Object(stream) => Some(stream),
+            _ => None,
+        }
+    }
+
+    /// The tab's `DeviceTools`, its Tools drawer.
+    pub fn tools(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
+        match engine.with::<DeviceTab, _>(obj, |t| t.tools.clone()).ok()? {
+            Value::Object(tools) => Some(tools),
+            _ => None,
+        }
+    }
+
+    /// Whether the Magic Keyboard is attached.
+    pub fn keyboard_attached(engine: &Engine, obj: ObjectId) -> bool {
+        engine
+            .with::<DeviceTab, _>(obj, |t| t.keyboard_attached)
+            .unwrap_or(false)
+    }
+}
+
+#[qml_impl]
+impl DeviceTab {
+    /// A Magic Keyboard is a landscape thing: attaching one this way turns a
+    /// portrait iPad.
+    #[qml(invokable)]
+    fn toggle_keyboard(cx: &Cx) {
+        let on = !DeviceTab::keyboard_attached(cx.engine, cx.this);
+        warn(
+            cx.engine,
+            cx.engine
+                .set_internal(cx.this, DeviceTab::KEYBOARD_ATTACHED, on),
+        );
+        let Some(stream) = DeviceTab::stream(cx.engine, cx.this) else {
+            return;
+        };
+        if on {
+            DeviceStream::update(cx.engine, stream, |s| {
+                if s.orientation().starts_with("portrait") {
+                    s.set_orientation("landscape_left");
+                }
+            });
+        }
     }
 }
 

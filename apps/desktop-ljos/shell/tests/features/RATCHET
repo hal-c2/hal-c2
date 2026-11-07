@@ -1050,27 +1050,110 @@ plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
 plugins/ui-plugins.feature: A slot a surface does not have is skipped quietly
 plugins/ui-plugins.feature: Plugin errors are visible to the user
 preview/devices.feature: A Device tab in the background streams nothing
+preview/devices.feature: A choice in the tools is applied by the device [the Android Emulator "Pixel 9", Orientation, Landscape left]
+preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Appearance, Dark]
+preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Color filter, Red / green (protanopia)]
+preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Liquid Glass, Tinted]
+preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Text size, Extra large]
+preview/devices.feature: A closed event log stops listening
 preview/devices.feature: A device an agent opens shows as a side panel tab
+preview/devices.feature: A device hub that fails to start says why in the wizard
 preview/devices.feature: A device powered off from a thread the user left closes that thread's tab
 preview/devices.feature: A device tab the user closed does not come back on its own
 preview/devices.feature: A device that sends nothing is an error the user can retry
 preview/devices.feature: A device the MC cannot open says why
+preview/devices.feature: A failed machine can be retried
+preview/devices.feature: A failed machine offers no retry when the MC cannot retry one
+preview/devices.feature: A first visit to the Device tab opens a setup wizard
+preview/devices.feature: A later step cannot be jumped to
+preview/devices.feature: A location preset places the device at once [London]
+preview/devices.feature: A location preset places the device at once [New York]
+preview/devices.feature: A location preset places the device at once [San Francisco]
+preview/devices.feature: A location preset places the device at once [Stockholm]
+preview/devices.feature: A location preset places the device at once [Tokyo]
+preview/devices.feature: A machine installing or starting its tools shows a banner [installing and says "Downloading serve-sim", Downloading serve-sim]
+preview/devices.feature: A machine installing or starting its tools shows a banner [installing its device tools, Installing device tools…]
+preview/devices.feature: A machine installing or starting its tools shows a banner [starting its device tools, Starting device tools…]
+preview/devices.feature: A machine that could not start says what to do
+preview/devices.feature: A permission can be set for an app that is not in front
+preview/devices.feature: A push notification needs an app in front
+preview/devices.feature: A setting the device does not report cannot be changed
+preview/devices.feature: A setting the device refused is not shown as changed
+preview/devices.feature: A simulator is sent a push notification for the app in front
+preview/devices.feature: A simulator's event log follows the device live
+preview/devices.feature: A simulator's location can be cleared but an emulator's cannot
+preview/devices.feature: A stalled accessibility read is not asked again
 preview/devices.feature: A stopped device is offered to start
 preview/devices.feature: A stream that ends connects again
 preview/devices.feature: A stream the MC refuses is an error
 preview/devices.feature: A tab turned to another device never shows the last one's picture
 preview/devices.feature: A touch taken away mid-drag ends where it was
+preview/devices.feature: Agent access can stay off
 preview/devices.feature: An Android emulator that rotates starts its video over
+preview/devices.feature: An empty address or app name cannot be sent
+preview/devices.feature: An emulator has no push notification section
 preview/devices.feature: An environment without devices says so
+preview/devices.feature: Another device's tools start fresh
+preview/devices.feature: Back goes to the step before
+preview/devices.feature: Banners are not shown while device support is off
+preview/devices.feature: Cancelling the wizard leaves device support as it is
 preview/devices.feature: Closing a device tab stops watching but leaves the device open
 preview/devices.feature: Device support that is off points to its settings
+preview/devices.feature: Enabling the device hub says what it is doing until it is ready
+preview/devices.feature: Finishing the wizard shows the device list
 preview/devices.feature: Following the pointer opens the Integrations settings
+preview/devices.feature: No app in front is shown as a dash
+preview/devices.feature: One platform missing does not block the other
+preview/devices.feature: Overlaying accessibility elements needs device access
+preview/devices.feature: Permissions need an app
 preview/devices.feature: Picking a device shows its screen
 preview/devices.feature: Powering a device off closes it and its tab
 preview/devices.feature: Rotating a simulator turns its screen
+preview/devices.feature: Switches show and change the device's accessibility settings
+preview/devices.feature: The Agent access step says what it is doing [installing agent tools, Installing agent tools…]
+preview/devices.feature: The Agent access step says what it is doing [ready with agent tools, Agent tools are ready.]
+preview/devices.feature: The Agent access step says what it is doing [starting agent tools, Starting agent tools…]
+preview/devices.feature: The Agent access step says what it is doing [updating, Updating agent access…]
+preview/devices.feature: The Simulators step says what each platform needs [Android is not detected and the machine gives no reason, Android, Android support was not detected.]
+preview/devices.feature: The Simulators step says what each platform needs [Xcode has an iOS Simulator, iOS, Xcode and iOS Simulator are available.]
+preview/devices.feature: The Simulators step says what each platform needs [Xcode is installed with no iOS Simulator runtime, iOS, Xcode is installed, but no iOS Simulator is available. Install a runtime in Xcode Settings → Components.]
+preview/devices.feature: The Simulators step says what each platform needs [iOS is not detected and the machine gives no reason, iOS, iOS support was not detected.]
+preview/devices.feature: The Simulators step says what each platform needs [iOS is unavailable because "Xcode is not installed", iOS, Xcode is not installed]
+preview/devices.feature: The Simulators step says what each platform needs [the Android SDK has an emulator, Android, The Android SDK and Emulator are available.]
+preview/devices.feature: The Simulators step says what each platform needs [the Android SDK is installed with no virtual device, Android, The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.]
+preview/devices.feature: The event log needs device access and an iOS Simulator
+preview/devices.feature: The foreground app changes as the user uses the device
+preview/devices.feature: The foreground follows the device again after its feed ends
+preview/devices.feature: The overlay outlines a crowded Android screen only so far
+preview/devices.feature: The permissions offered depend on the platform [the Android Emulator "Pixel 9", has none of those, calls Motion "Physical activity" and offers no "Reset"]
+preview/devices.feature: The permissions offered depend on the platform [the iOS Simulator "iPhone 17", includes Reminders, Media library and Face ID, and offers "Reset"]
 preview/devices.feature: The tab says it is connecting until the first picture
+preview/devices.feature: The tools offer the settings the platform has [the Android Emulator "Pixel 9", Emulator, Appearance, Text size, Orientation, Reduce Motion and Network]
+preview/devices.feature: The tools offer the settings the platform has [the iOS Simulator "iPhone 17", Simulator, Appearance, Text size, Liquid Glass, Color filter, Reduce Motion, Increase Contrast, Reduce Transparency, Show Borders and VoiceOver]
+preview/devices.feature: The tools show the app in front and can stop or restart it
+preview/devices.feature: The tools stay busy while a change is running
+preview/devices.feature: The tools wait for the device's own settings
+preview/devices.feature: The user checks the platforms again after installing something
+preview/devices.feature: The user grants or revokes an app's permission [the Android Emulator "Pixel 9", Motion, grant]
+preview/devices.feature: The user grants or revokes an app's permission [the iOS Simulator "iPhone 17", Camera, grant]
+preview/devices.feature: The user grants or revokes an app's permission [the iOS Simulator "iPhone 17", Face ID, revoke]
+preview/devices.feature: The user grants or revokes an app's permission [the iOS Simulator "iPhone 17", Photos, reset]
+preview/devices.feature: The user opens a device's tools beside its screen
+preview/devices.feature: The user opens an address or launches an app by name [the Android Emulator "Pixel 9", Package name to launch, com.example.shop, Launch, launch "com.example.shop"]
+preview/devices.feature: The user opens an address or launches an app by name [the iOS Simulator "iPhone 17", Bundle ID to launch, com.example.shop, Launch, launch "com.example.shop"]
+preview/devices.feature: The user opens an address or launches an app by name [the iOS Simulator "iPhone 17", https:// or myapp://, myapp://cart, Open, open "myapp://cart"]
+preview/devices.feature: The user overlays the device's accessibility elements
+preview/devices.feature: The user places the device somewhere [the iOS Simulator "iPhone 17", 59.33, , "Set" could not be chosen]
+preview/devices.feature: The user places the device somewhere [the iOS Simulator "iPhone 17", 59.33, 18.07, the device is placed there]
+preview/devices.feature: The user places the device somewhere [the iOS Simulator "iPhone 17", 59.33, 181, "Set" could not be chosen]
+preview/devices.feature: The user places the device somewhere [the iOS Simulator "iPhone 17", 91, 18.07, "Set" could not be chosen]
+preview/devices.feature: The wizard and the Device tab show the same banners
+preview/devices.feature: The wizard cannot go on until the device hub is ready
+preview/devices.feature: The wizard's switches wait while the hub installs or starts
 preview/devices.feature: Touches and keys reach a simulator through the MC
 preview/devices.feature: Touches, keys and buttons reach an emulator through the MC
+preview/devices.feature: Turning device support off brings the wizard back
+preview/devices.feature: Turning the device hub off also turns agent access off
 preview/devices.feature: Video that arrives in pieces still shows the screen
 preview/devices.feature: Video the desktop cannot decode is an error, not endless reconnecting
 preview/remote.feature: A client drops its old tabs after the MC restarts

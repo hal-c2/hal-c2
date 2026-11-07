@@ -696,6 +696,10 @@ pub fn register(steps: &mut Steps) {
         if super::onboarding::onboarding_chooses(world, &c[0])? {
             return Ok(());
         }
+        // The Device tab's setup wizard and Tools drawer.
+        if super::device::device_chooses(world, &c[0])? {
+            return Ok(());
+        }
         // From an open command palette (its Change theme submenu among them):
         // its entry of that title.
         if add_project::is_open(world) {

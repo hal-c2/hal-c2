@@ -21,8 +21,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use hal_c2_shell::controllers::panel::RightPanel;
-use hal_c2_shell::device::devices::{ThreadDevices, tab_id_of};
+use hal_c2_shell::device::devices::{DeviceTab, ThreadDevices, tab_id_of};
 use hal_c2_shell::device::stream::DeviceStream;
+use hal_c2_shell::device::tools::{DeviceTools, PRESETS};
 use ljos::item::{DrawOp, KeyEvent, PointerEvent};
 use ljos::prelude::{ObjectId, Value as QmlValue};
 use serde_json::{Value, json};
@@ -91,6 +92,18 @@ struct FakeHub {
     devices: Vec<Value>,
     sessions: Vec<Value>,
     host_status: String,
+    /// The local host's own status and detail, when they differ from the whole.
+    local_status: String,
+    banner_detail: String,
+    host_label: String,
+    host_detail: String,
+    onboarding: bool,
+    agent_access: bool,
+    supports_retry: bool,
+    /// Platform availability by platform, when a scenario sets it.
+    availability: Vec<(String, Value)>,
+    configures: Vec<Value>,
+    lists: Vec<Value>,
     revision: i64,
     /// Why the MC fails `device.open`, when it does.
     refuse_open: String,
@@ -105,6 +118,27 @@ struct FakeHub {
     videos: Vec<TcpStream>,
     kept: Vec<TcpStream>,
     inputs: Vec<Input>,
+    /// The Tools drawer's device: its settings, the app in front (null:
+    /// none), and every `device.action` it was asked.
+    settings: Value,
+    foreground_app: Value,
+    actions: Vec<Value>,
+    /// Why the device refuses every change, when it does.
+    refuse_action: String,
+    /// The accessibility requests served, and whether they get an answer.
+    ax_requests: usize,
+    stall_ax: bool,
+    android_ax: Value,
+    /// The iOS accessibility tree the hub answers.
+    ax_tree: Value,
+    /// The tools' server-sent event feeds, by path, held open.
+    feeds: Vec<(String, TcpStream)>,
+    feed_requests: usize,
+    /// What the tools steps typed last, and where they mean the device to be.
+    last_field: String,
+    wanted_location: (f64, f64),
+    /// No hub base path: the client was given no device access.
+    no_access: bool,
 }
 
 impl Default for FakeHub {
@@ -113,6 +147,16 @@ impl Default for FakeHub {
             devices: Vec::new(),
             sessions: Vec::new(),
             host_status: "ready".into(),
+            local_status: String::new(),
+            banner_detail: String::new(),
+            host_label: "This Mac".into(),
+            host_detail: String::new(),
+            onboarding: true,
+            agent_access: false,
+            supports_retry: false,
+            availability: Vec::new(),
+            configures: Vec::new(),
+            lists: Vec::new(),
             revision: 0,
             refuse_open: String::new(),
             closes: Vec::new(),
@@ -124,6 +168,30 @@ impl Default for FakeHub {
             videos: Vec::new(),
             kept: Vec::new(),
             inputs: Vec::new(),
+            settings: json!({
+                "appearance": "light",
+                "textSize": "default",
+                "liquidGlass": "clear",
+                "colorFilter": "none",
+                "reduceMotion": false,
+                "increaseContrast": false,
+                "reduceTransparency": false,
+                "showBorders": false,
+                "voiceOver": false,
+                "networkEnabled": true,
+            }),
+            foreground_app: Value::Null,
+            actions: Vec::new(),
+            refuse_action: String::new(),
+            ax_requests: 0,
+            stall_ax: false,
+            android_ax: Value::Null,
+            ax_tree: json!([]),
+            feeds: Vec::new(),
+            feed_requests: 0,
+            last_field: String::new(),
+            wanted_location: (0.0, 0.0),
+            no_access: false,
         }
     }
 }
@@ -141,28 +209,75 @@ struct Panel(Option<Brick>);
 fn state_of(mc: &mut FakeMc) -> Value {
     let name = mc.name.clone();
     let hub = mc.part::<FakeHub>();
-    let platforms = json!([
-        {"platform": "ios", "available": true},
-        {"platform": "android", "available": true},
-    ]);
-    json!({
+    let availability = |platform: &str| {
+        hub.availability
+            .iter()
+            .find(|(p, _)| p == platform)
+            .map_or_else(
+                || json!({"platform": platform, "available": true}),
+                |(_, a)| a.clone(),
+            )
+    };
+    let platforms = json!([availability("ios"), availability("android")]);
+    let local = if hub.local_status.is_empty() {
+        &hub.host_status
+    } else {
+        &hub.local_status
+    };
+    let mut local_status = json!({"status": local});
+    if !hub.banner_detail.is_empty() {
+        local_status["detail"] = json!(hub.banner_detail);
+    }
+    let mut state = json!({
         "hosts": [{
             "id": HOST,
             "kind": "local",
-            "label": "This Mac",
+            "label": hub.host_label,
             "platforms": platforms,
             "hubInstalled": true,
             "agentDeviceInstalled": true,
         }],
         "hostStatus": hub.host_status,
-        "hostStatuses": {HOST: {"status": hub.host_status}},
+        "hostStatuses": {HOST: local_status},
         "devices": hub.devices,
         "sessions": hub.sessions,
-        "onboardingCompleted": hub.host_status != "disabled",
-        "agentAccessEnabled": false,
-        "hubBasePath": format!("/api/device-hub/mcs/{}", hal_c2_shell::device::percent(&name)),
+        "onboardingCompleted": hub.onboarding,
+        "agentAccessEnabled": hub.agent_access,
+        "supportsHostRetry": hub.supports_retry,
+        "hubBasePath": if hub.no_access {
+            String::new()
+        } else {
+            format!("/api/device-hub/mcs/{}", hal_c2_shell::device::percent(&name))
+        },
         "revision": hub.revision,
-    })
+    });
+    if !hub.host_detail.is_empty() {
+        state["hostStatusDetail"] = json!(hub.host_detail);
+    }
+    state
+}
+
+/// The MC's `device.configure`: turns the hub and agent access on or off and
+/// records setup as done, then tells every watcher.
+fn configure(mc: &mut FakeMc, rpc: &crate::fake_mc::Rpc) {
+    let hub = mc.part::<FakeHub>();
+    hub.configures.push(rpc.payload.clone());
+    if let Some(enabled) = rpc.payload["enabled"].as_bool() {
+        if !enabled {
+            hub.host_status = "disabled".into();
+        } else if hub.host_status == "disabled" {
+            hub.host_status = "installing".into();
+        }
+    }
+    if let Some(on) = rpc.payload["agentAccessEnabled"].as_bool() {
+        hub.agent_access = on;
+    }
+    if let Some(done) = rpc.payload["onboardingCompleted"].as_bool() {
+        hub.onboarding = done;
+    }
+    announce(mc);
+    let state = state_of(mc);
+    mc.reply(rpc, state);
 }
 
 /// The MC tells every watcher, as devices.ex does on each change.
@@ -172,6 +287,52 @@ fn announce(mc: &mut FakeMc) {
     for id in mc.subscribers("devices") {
         mc.send(&json!({"t": "devices", "id": id, "state": state}));
     }
+}
+
+/// What `device.detail` and `device.action` answer: the device as it is now.
+fn detail_of(hub: &FakeHub, rpc: &crate::fake_mc::Rpc) -> Value {
+    json!({
+        "hostId": rpc.payload.get("hostId").cloned().unwrap_or_else(|| json!(HOST)),
+        "deviceId": rpc.payload["deviceId"],
+        "settings": hub.settings,
+        "foregroundApp": hub.foreground_app,
+        "readAt": "2026-09-23T10:00:00Z",
+    })
+}
+
+/// The MC's `device.action`: the device applies the change, or refuses it.
+fn act(mc: &mut FakeMc, rpc: &crate::fake_mc::Rpc) {
+    let hub = mc.part::<FakeHub>();
+    let payload = &rpc.payload;
+    hub.actions.push(payload.clone());
+    if !hub.refuse_action.is_empty() {
+        let refusal = hub.refuse_action.clone();
+        mc.refuse(rpc, &refusal);
+        return;
+    }
+    let setting = match payload["type"].as_str().unwrap_or_default() {
+        "setAppearance" => Some("appearance".to_owned()),
+        "setTextSize" => Some("textSize".to_owned()),
+        "setLiquidGlass" => Some("liquidGlass".to_owned()),
+        "setColorFilter" => Some("colorFilter".to_owned()),
+        "setToggle" => Some(text(&payload["setting"])),
+        _ => None,
+    };
+    if let Some(setting) = setting {
+        hub.settings[setting] = payload["value"].clone();
+    }
+    match payload["type"].as_str().unwrap_or_default() {
+        "setLocation" => {
+            hub.settings["location"] =
+                json!({"latitude": payload["latitude"], "longitude": payload["longitude"]});
+        }
+        "clearLocation" => hub.settings["location"] = Value::Null,
+        "terminateApp" => hub.foreground_app = Value::Null,
+        "launchApp" => hub.foreground_app = json!({"id": payload["appId"]}),
+        _ => {}
+    }
+    let detail = detail_of(hub, rpc);
+    mc.reply(rpc, detail);
 }
 
 fn session_of(hub: &FakeHub, device_id: &str, thread: &str) -> Option<usize> {
@@ -369,6 +530,35 @@ fn proxy(mc: &mut FakeMc, mut stream: TcpStream, head: &str) -> Outcome {
         hub.kept.push(stream);
         return Ok(());
     }
+    // The tools' read-only feeds: server-sent events, held open.
+    if path.ends_with("/appstate") || path.ends_with("/api/event-log/events") {
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+        );
+        hub.feeds.push((path.to_owned(), stream));
+        hub.feed_requests += 1;
+        return Ok(());
+    }
+    if path.ends_with("/ax") || path.ends_with("/api/accessibility") {
+        hub.ax_requests += 1;
+        if hub.stall_ax {
+            hub.kept.push(stream);
+            return Ok(());
+        }
+        let tree = if hub.android_ax.is_null() {
+            &hub.ax_tree
+        } else {
+            &hub.android_ax
+        };
+        let body = tree.to_string();
+        let _ = write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.shutdown(Shutdown::Both);
+        return Ok(());
+    }
     if path.ends_with("/stream.avcc") {
         let _ = stream.write_all(
             b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
@@ -422,8 +612,26 @@ fn fake_hub(world: &mut World) -> &mut FakeHub {
             Ok(())
         });
         world.mc.on_rpc("device.list", |mc, rpc| {
+            mc.part::<FakeHub>().lists.push(rpc.payload.clone());
+            if mc.holding("device.list") {
+                let rpc = rpc.clone();
+                mc.defer(move |mc| {
+                    let state = state_of(mc);
+                    mc.reply(&rpc, state);
+                });
+                return Ok(());
+            }
             let state = state_of(mc);
             mc.reply(rpc, state);
+            Ok(())
+        });
+        world.mc.on_rpc("device.configure", |mc, rpc| {
+            if mc.holding("device.configure") {
+                let rpc = rpc.clone();
+                mc.defer(move |mc| configure(mc, &rpc));
+                return Ok(());
+            }
+            configure(mc, rpc);
             Ok(())
         });
         world.mc.on_rpc("device.open", |mc, rpc| {
@@ -452,6 +660,28 @@ fn fake_hub(world: &mut World) -> &mut FakeHub {
             mc.reply(rpc, session);
             Ok(())
         });
+        world.mc.on_rpc("device.detail", |mc, rpc| {
+            if mc.holding("device.detail") {
+                let rpc = rpc.clone();
+                mc.defer(move |mc| {
+                    let detail = detail_of(mc.part::<FakeHub>(), &rpc);
+                    mc.reply(&rpc, detail);
+                });
+                return Ok(());
+            }
+            let detail = detail_of(mc.part::<FakeHub>(), rpc);
+            mc.reply(rpc, detail);
+            Ok(())
+        });
+        world.mc.on_rpc("device.action", |mc, rpc| {
+            if mc.holding("device.action") {
+                let rpc = rpc.clone();
+                mc.defer(move |mc| act(mc, &rpc));
+                return Ok(());
+            }
+            act(mc, rpc);
+            Ok(())
+        });
         world.mc.on_rpc("device.close", |mc, rpc| {
             if mc.holding("device.close") {
                 let rpc = rpc.clone();
@@ -478,9 +708,33 @@ fn devices_object(world: &World) -> Outcome<ObjectId> {
         .ok_or_else(|| Failure("the panel has no Device tabs".into()))
 }
 
+/// The device tab the steps look at: the panel's active one, else any
+/// device tab the panel has (DeviceSteps' shownTab).
+fn shown_tab(world: &World) -> Outcome<ObjectId> {
+    let devices = devices_object(world)?;
+    let engine = world.engine();
+    if let Some(tab) = ThreadDevices::tab(engine, devices, &active_tab(world)) {
+        return Ok(tab);
+    }
+    ThreadDevices::read(engine, devices, |d| d.tabs())
+        .unwrap_or_default()
+        .iter()
+        .find_map(|id| ThreadDevices::tab(engine, devices, id))
+        .ok_or_else(|| Failure("the panel has no device tab".into()))
+}
+
+/// The shown device tab's stream.
 fn stream_object(world: &World) -> Outcome<ObjectId> {
-    ThreadDevices::stream(world.engine(), devices_object(world)?)
-        .ok_or_else(|| Failure("the Device tabs have no stream".into()))
+    DeviceTab::stream(world.engine(), shown_tab(world)?)
+        .ok_or_else(|| Failure("the device tab has no stream".into()))
+}
+
+/// The shown device tab's device, or null.
+fn screen_of(world: &World) -> Value {
+    shown_tab(world).ok().map_or(Value::Null, |tab| {
+        let screen = world.engine().read_by_name(tab, "screen");
+        hal_c2_shell::json::from_value(world.engine(), &screen)
+    })
 }
 
 fn view(world: &World) -> Value {
@@ -545,9 +799,11 @@ fn device_panel(world: &mut World) -> Outcome<Brick> {
     if let Some(brick) = world.part::<Panel>().0 {
         return Ok(brick);
     }
+    // The body of the tab the panel shows, as RightPanel gives it.
     let brick = Brick::new(
         world,
-        "import QtQuick\nimport HalC2.Bricks\nDevicePanel { anchors.fill: parent }\n",
+        "import QtQuick\nimport HalC2.Bricks\nimport HalC2.Shell\n\
+         DevicePanel { anchors.fill: parent; tabId: Shell.state.panel?.activeId ?? \"\" }\n",
         420.0,
         900.0,
     )?;
@@ -573,9 +829,9 @@ fn look(world: &mut World) -> Outcome {
     world.connect()?;
     world.sync()?;
     look_at_thread(world, PROJECT)?;
-    DeviceStream::set_timeouts(
+    ThreadDevices::set_timeouts(
         world.engine(),
-        stream_object(world)?,
+        devices_object(world)?,
         FIRST_FRAME_MS,
         RETRY_MS,
     );
@@ -639,7 +895,7 @@ fn row_of(world: &World, name: &str, group: &str) -> Value {
 fn open_from_picker(world: &mut World, name: &str) -> Outcome {
     let wanted = name.to_owned();
     world.wait_for_with(|w| !row_of(w, &wanted, "").is_null(), describe_ref)?;
-    let row = format!("deviceRow-{}", text(&row_of(world, name, "")["id"]));
+    let row = format!("deviceRow-{}", text(&row_of(world, name, "")["tab"]));
     let panel = device_panel(world)?;
     world.wait_for_with(
         |w| {
@@ -778,7 +1034,8 @@ fn stream_closed(world: &mut World) -> bool {
             .inputs
             .iter()
             .any(|input| !input.closed.load(Ordering::SeqCst));
-    !open && stream_of(world).0 == "idle"
+    // A closed tab has no stream left to be anything but idle.
+    !open && matches!(stream_of(world).0.as_str(), "idle" | "")
 }
 
 fn video_requests(world: &mut World) -> usize {
@@ -825,6 +1082,8 @@ fn open_video(hub: &FakeHub) -> Option<TcpStream> {
 
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
+    register_setup(steps);
+    register_tools(steps);
 
     // The environment's devices.
     steps.step(
@@ -1030,6 +1289,12 @@ pub fn register(steps: &mut Steps) {
     steps.step("the user follows the tab to its settings", |world, _, _| {
         world.wait_for_with(|w| view(w)["setup"] == true, describe_ref)?;
         let panel = device_panel(world)?;
+        // The setup wizard sits in front of the tab; putting it away leaves
+        // the tab's own pointer to the settings.
+        if !view(world)["wizard"].is_null() {
+            panel.click(world, "wizardCancel")?;
+            world.sync()?;
+        }
         panel.click(world, "deviceOpenSettings")?;
         world.sync()
     });
@@ -1070,7 +1335,7 @@ pub fn register(steps: &mut Steps) {
             let status = panel.item(world, "deviceStatus")?;
             expect!(
                 stream_of(world).0 == "connecting"
-                    && !view(world)["screen"].is_null()
+                    && !screen_of(world).is_null()
                     && panel.flag(world, status, "visible"),
                 "{}",
                 describe(world)
@@ -1155,7 +1420,7 @@ pub fn register(steps: &mut Steps) {
                 hub.is_none_or(|h| {
                     !h.videos.iter().any(connected)
                         && !h.inputs.iter().any(|i| !i.closed.load(Ordering::SeqCst))
-                }) && stream_of(w).0 == "idle"
+                }) && matches!(stream_of(w).0.as_str(), "idle" | "")
             },
             describe_ref,
         )?;
@@ -1589,4 +1854,1977 @@ fn open_video_in(world: &World) -> bool {
         .mc
         .peek::<FakeHub>()
         .is_some_and(|hub| hub.videos.iter().any(connected))
+}
+
+fn wizard_view(world: &World) -> Value {
+    view(world)["wizard"].clone()
+}
+
+fn wizard_step(world: &World) -> i64 {
+    let Some(brick) = world.peek_part::<Panel>().and_then(|p| p.0) else {
+        return -1;
+    };
+    let Ok(wizard) = brick.item(world, "deviceWizard") else {
+        return -1;
+    };
+    match brick.read(world, wizard, "step") {
+        QmlValue::Int(n) => i64::from(n),
+        QmlValue::Real(n) => n as i64,
+        _ => -1,
+    }
+}
+
+/// Waits for the wizard, then puts it at `step` as a user who got there.
+fn open_wizard(world: &mut World, step: i32) -> Outcome {
+    world.wait_for_with(|w| !wizard_view(w).is_null(), describe_ref)?;
+    if step > 0 {
+        let panel = device_panel(world)?;
+        let wizard = panel.item(world, "deviceWizard")?;
+        panel.write(world, wizard, "step", QmlValue::Int(step))?;
+        panel.write(world, wizard, "furthest", QmlValue::Int(step))?;
+        world.sync()?;
+    }
+    Ok(())
+}
+
+/// A first visit to the Device tab: the wizard at `step`.
+fn wizard_at(world: &mut World, step: i32) -> Outcome {
+    fake_hub(world).onboarding = false;
+    add_device_tab(world)?;
+    open_wizard(world, step)
+}
+
+/// The hub's state changes and every watcher is told, as devices.ex does.
+fn set_hub_status(world: &mut World, status: &str) -> Outcome {
+    fake_hub(world).host_status = status.into();
+    announce(&mut world.mc);
+    world.sync()
+}
+
+/// The words the Device tab shows anywhere: its view's notes, banners and wizard.
+fn tab_words(world: &World) -> Vec<String> {
+    let shown = view(world);
+    let mut words: Vec<String> = ["loading", "empty", "error", "hostDetail", "starting"]
+        .iter()
+        .map(|field| text(&shown[*field]))
+        .collect();
+    for banner in shown["banners"].as_array().into_iter().flatten() {
+        words.push(text(&banner["message"]));
+        words.push(text(&banner["advice"]));
+    }
+    let wizard = &shown["wizard"];
+    for field in ["hubStatus", "agentStatus", "error"] {
+        words.push(text(&wizard[field]));
+    }
+    words.retain(|w| !w.is_empty());
+    words
+}
+
+fn panel_shows(world: &World, words: &str) -> bool {
+    world
+        .peek_part::<Panel>()
+        .and_then(|p| p.0)
+        .is_some_and(|panel| panel.shows(world, words).unwrap_or(false))
+}
+
+fn tab_says(world: &World, words: &str) -> bool {
+    tab_words(world).iter().any(|w| w == words) || panel_shows(world, words)
+}
+
+fn describe_words(world: &World) -> String {
+    format!("{} | {}", tab_words(world).join(" | "), describe_ref(world))
+}
+
+fn describe_wizard(world: &World) -> String {
+    format!(
+        "{}; the wizard is {}",
+        describe_ref(world),
+        show(&wizard_view(world))
+    )
+}
+
+fn item_flag(world: &mut World, name: &str, flag: &str) -> Outcome<bool> {
+    let panel = device_panel(world)?;
+    let item = panel.item(world, name)?;
+    Ok(panel.flag(world, item, flag))
+}
+
+fn item_text(world: &mut World, name: &str) -> Outcome<String> {
+    let panel = device_panel(world)?;
+    let item = panel.item(world, name)?;
+    Ok(panel.text_of(world, item, "text"))
+}
+
+fn click(world: &mut World, name: &str) -> Outcome {
+    device_panel(world)?.click(world, name)?;
+    world.sync()
+}
+
+fn banner_of(world: &World, label: &str) -> Value {
+    view(world)["banners"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|b| text(&b["label"]) == label)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+fn set_machine(world: &mut World, label: &str, status: &str, detail: &str) {
+    let hub = fake_hub(world);
+    hub.host_label = label.into();
+    hub.local_status = status.into();
+    hub.host_status = status.into();
+    hub.banner_detail = detail.into();
+}
+
+fn set_availability(world: &mut World, platform: &str, availability: Value) {
+    let hub = fake_hub(world);
+    hub.onboarding = false;
+    hub.availability.retain(|(p, _)| p != platform);
+    hub.availability.push((platform.into(), availability));
+}
+
+/// The setup wizard's and the banners' "the user chooses …" (ThemeSteps' own
+/// step hands them here): false when no wizard is open to take it.
+pub fn device_chooses(world: &mut World, what: &str) -> Outcome<bool> {
+    if tools_chooses(world, what)? {
+        return Ok(true);
+    }
+    let Some(name) = (match what {
+        "Done" => Some("wizardDone"),
+        "Cancel" => Some("wizardCancel"),
+        "Back" => Some("wizardBack"),
+        _ => None,
+    }) else {
+        return Ok(false);
+    };
+    if world.peek_part::<Panel>().and_then(|p| p.0).is_none() || wizard_view(world).is_null() {
+        return Ok(false);
+    }
+    // The wizard's finish, held so its Saving… can be seen.
+    if what == "Done" {
+        world.mc.hold("device.configure");
+    }
+    click(world, name)?;
+    Ok(true)
+}
+
+fn wizard_can_continue(world: &mut World) -> Outcome {
+    let panel = device_panel(world)?;
+    world.wait_for_with(
+        |w| {
+            panel
+                .find(w, "wizardContinue")
+                .ok()
+                .flatten()
+                .is_some_and(|item| panel.flag(w, item, "enabled"))
+        },
+        describe_wizard,
+    )
+}
+
+/// The setup wizard's "the user can continue" (OnboardingSteps' own step
+/// hands it here): false when no Device tab wizard is open.
+pub fn device_can_continue(world: &mut World) -> Outcome<bool> {
+    if world.peek_part::<Panel>().and_then(|p| p.0).is_none() || wizard_view(world).is_null() {
+        return Ok(false);
+    }
+    wizard_can_continue(world)?;
+    Ok(true)
+}
+
+fn register_setup(steps: &mut Steps) {
+    steps.step("the user shows the Device tab", |world, _, _| {
+        look(world)?;
+        world.dispatch("rightPanel.activate", json!({"id": "device"}))?;
+        world.sync()
+    });
+    steps.step(
+        "device support has never been set up on the thread's environment",
+        |world, _, _| {
+            let hub = fake_hub(world);
+            hub.onboarding = false;
+            hub.host_status = "disabled".into();
+            Ok(())
+        },
+    );
+    steps.step(
+        "a \"Set up devices\" wizard opens with the steps \"Device hub\", \"Simulators\" and \"Agent access\"",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                |w| {
+                    !wizard_view(w).is_null()
+                        && panel
+                            .find(w, "deviceWizard")
+                            .ok()
+                            .flatten()
+                            .is_some_and(|item| panel.flag(w, item, "visible"))
+                        && ["Set up devices", "Device hub", "Simulators", "Agent access"]
+                            .iter()
+                            .all(|t| panel_shows(w, t))
+                },
+                describe_wizard,
+            )
+        },
+    );
+    steps.step("the user finished setting devices up", |world, _, _| {
+        fake_hub(world).onboarding = true;
+        Ok(())
+    });
+    steps.step("later turned device support off", |world, _, _| {
+        fake_hub(world).host_status = "disabled".into();
+        Ok(())
+    });
+    steps.step("the wizard opens at its first step", |world, _, _| {
+        device_panel(world)?;
+        world.wait_for_with(
+            |w| !wizard_view(w).is_null() && wizard_step(w) == 0,
+            describe_wizard,
+        )?;
+        expect!(
+            item_flag(world, "deviceWizard", "visible")?,
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        "the wizard is at \"Device hub\" (?:with|and) the hub (?:is )?off",
+        |world, _, _| {
+            fake_hub(world).host_status = "disabled".into();
+            wizard_at(world, 0)
+        },
+    );
+    steps.step(
+        "the wizard is at (?:\"Device hub\" with the hub ready|its first step)",
+        |world, _, _| wizard_at(world, 0),
+    );
+    steps.step(
+        "(?:the wizard is at|the user is at) the \"Simulators\" step(?: and iOS has no simulator runtime)?",
+        |world, _, _| wizard_at(world, 1),
+    );
+    steps.step("the user is at the \"Agent access\" step", |world, _, _| {
+        wizard_at(world, 2)
+    });
+    steps.step(
+        "the user is at the \"Agent access\" step with the hub ready",
+        |world, _, _| {
+            add_device(world, "ios", "iPhone 17", true);
+            wizard_at(world, 2)
+        },
+    );
+    steps.step(
+        "the user turns (?:on|off) \"Enable device hub\"(?: in the wizard)?",
+        |world, _, _| click(world, "wizardHubSwitch"),
+    );
+    steps.step("the user turned on \"Enable device hub\"", |world, _, _| {
+        fake_hub(world).host_status = "disabled".into();
+        wizard_at(world, 0)?;
+        click(world, "wizardHubSwitch")
+    });
+    steps.step(
+        "the wizard says \"Installing device hub…\", then \"Starting device hub…\"",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| text(&wizard_view(w)["hubStatus"]) == "Installing device hub…",
+                describe_wizard,
+            )?;
+            set_hub_status(world, "starting")?;
+            world.wait_for_with(
+                |w| text(&wizard_view(w)["hubStatus"]) == "Starting device hub…",
+                describe_wizard,
+            )?;
+            set_hub_status(world, "ready")
+        },
+    );
+    steps.step(
+        "when the hub is up it says \"Device hub is ready.\"",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| text(&wizard_view(w)["hubStatus"]) == "Device hub is ready.",
+                describe_wizard,
+            )
+        },
+    );
+    steps.step("the user can continue to the next step", |world, _, _| {
+        wizard_can_continue(world)
+    });
+    steps.step("the user cannot continue", |world, _, _| {
+        world.sync()?;
+        let next = item_flag(world, "wizardContinue", "enabled")?;
+        let done = item_flag(world, "wizardDone", "visible")?
+            && item_flag(world, "wizardDone", "enabled")?;
+        expect!(!next && !done, "{}", describe_wizard(world));
+        Ok(())
+    });
+    steps.step(
+        "the hub is on and agents may control devices",
+        |world, _, _| {
+            fake_hub(world).agent_access = true;
+            wizard_at(world, 0)
+        },
+    );
+    steps.step("agent access is off as well", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                let configures = &w
+                    .mc
+                    .peek::<FakeHub>()
+                    .map(|h| h.configures.clone())
+                    .unwrap_or_default();
+                configures
+                    .last()
+                    .is_some_and(|c| c["enabled"] == false && c["agentAccessEnabled"] == false)
+                    && wizard_view(w)["agentOn"] != true
+            },
+            describe_wizard,
+        )
+    });
+    steps.step("the device hub is installing", |world, _, _| {
+        fake_hub(world).host_status = "installing".into();
+        wizard_at(world, 0)
+    });
+    steps.step("\"Enable device hub\" cannot be changed", |world, _, _| {
+        expect!(
+            !item_flag(world, "wizardHubSwitch", "enabled")?,
+            "{}",
+            describe_wizard(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        "the user cannot go back or choose another step until it is done",
+        |world, _, _| {
+            let other = item_flag(world, "wizardStep-Simulators", "enabled")?;
+            let back = item_flag(world, "wizardBack", "enabled")?;
+            expect!(!other && !back, "{}", describe_wizard(world));
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user chooses the step \"Agent access\" directly",
+        |world, _, _| {
+            expect!(
+                !item_flag(world, "wizardStep-Agent access", "enabled")?,
+                "the later step can be chosen; {}",
+                describe_wizard(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the wizard (?:stays at|returns to|shows) (?:the )?\"Device hub\"(?: step)?",
+        |world, _, _| {
+            world.sync()?;
+            expect!(
+                wizard_step(world) == 0,
+                "the wizard is at step {}",
+                wizard_step(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user continues twice and then chooses \"Device hub\"",
+        |world, _, _| {
+            click(world, "wizardContinue")?;
+            click(world, "wizardContinue")?;
+            click(world, "wizardStep-Device hub")
+        },
+    );
+
+    // The Simulators step's platform situations.
+    steps.step(
+        "the hub is ready and (iOS|Android) is not detected and the machine gives no reason",
+        |world, c, _| {
+            let platform = c[0].to_lowercase();
+            set_availability(
+                world,
+                &platform.clone(),
+                json!({"platform": platform, "available": false}),
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the hub is ready and iOS is unavailable because {Q}"),
+        |world, c, _| {
+            set_availability(
+                world,
+                "ios",
+                json!({"platform": "ios", "available": false, "reason": c[0]}),
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the hub is ready and (?:Xcode is installed with no iOS Simulator runtime|the Android SDK is installed with no virtual device)",
+        |world, _, _| {
+            fake_hub(world).onboarding = false;
+            Ok(())
+        },
+    );
+    steps.step(
+        "the hub is ready and Xcode has an iOS Simulator",
+        |world, _, _| {
+            fake_hub(world).onboarding = false;
+            add_device(world, "ios", "iPhone 17", true);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the hub is ready and (?:the Android SDK has an emulator|only Android has an emulator)",
+        |world, _, _| {
+            fake_hub(world).onboarding = false;
+            add_device(world, "android", "Pixel 9", true);
+            Ok(())
+        },
+    );
+    steps.step(&format!("(iOS|Android) reads {Q}"), |world, c, _| {
+        let (platform, wanted) = (c[0].clone(), c[1].clone());
+        world.wait_for_with(
+            |w| {
+                wizard_view(w)["platforms"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|p| text(&p["platform"]) == platform)
+                    .is_some_and(|p| text(&p["message"]) == wanted)
+            },
+            describe_wizard,
+        )
+    });
+    steps.step(&format!("the wizard says {Q}"), |world, c, _| {
+        let wanted = c[0].clone();
+        world.wait_for_with(|w| tab_says(w, &wanted), describe_words)
+    });
+    steps.step(
+        "the user installs a runtime and chooses \"Check again\"",
+        |world, _, _| {
+            add_device(world, "ios", "iPhone 17", true);
+            world.mc.hold("device.list");
+            click(world, "wizardCheckAgain")
+        },
+    );
+    steps.step(
+        "the button says \"Checking…\" until the answer arrives",
+        |world, _, _| {
+            let label = item_text(world, "wizardCheckAgain")?;
+            expect!(
+                text(&wizard_view(world)["pending"]) == "check" && label == "Checking…",
+                "the button says {label}; {}",
+                describe_wizard(world)
+            );
+            world.mc.answer_held();
+            world.sync()
+        },
+    );
+    steps.step(
+        "the user turns on \"Allow agents to control devices\" and the hub is (installing agent tools|starting agent tools|updating|ready with agent tools)",
+        |world, c, _| {
+            // The switch is turned while the hub is ready; installing the
+            // agent tools is what the hub then reports, held mid-answer.
+            if c[0] != "ready with agent tools" {
+                world.mc.hold("device.configure");
+            }
+            click(world, "wizardAgentSwitch")?;
+            let status = match c[0].as_str() {
+                "installing agent tools" => "installing",
+                "starting agent tools" => "starting",
+                _ => return Ok(()),
+            };
+            set_hub_status(world, status)
+        },
+    );
+    steps.step(
+        "\"Allow agents to control devices\" cannot be turned on while the hub is off",
+        |world, _, _| {
+            set_hub_status(world, "disabled")?;
+            expect!(
+                !item_flag(world, "wizardAgentSwitch", "enabled")?,
+                "{}",
+                describe_wizard(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the button says \"Saving…\" until the answer arrives",
+        |world, _, _| {
+            let label = item_text(world, "wizardDone")?;
+            expect!(
+                label == "Saving…",
+                "the button says {label}; {}",
+                describe_wizard(world)
+            );
+            world.mc.answer_held();
+            world.sync()
+        },
+    );
+    steps.step("the wizard closes", |world, _, _| {
+        world.wait_for_with(|w| wizard_view(w).is_null(), describe_wizard)
+    });
+    steps.step(
+        "the Device tab lists the environment's devices",
+        |world, _, _| world.wait_for_with(|w| !row_of(w, "iPhone 17", "").is_null(), describe_ref),
+    );
+    steps.step(
+        "the user shows the Device tab in another thread",
+        |world, _, _| {
+            let other = "thread-2";
+            let row = json!({"id": other, "title": "Other", "projectId": PROJECT,
+                             "createdAt": "2026-09-23T09:00:00Z", "updatedAt": "2026-09-23T09:00:00Z"});
+            world.mc.threads.insert(other.into(), row.clone());
+            world.mc.send_row(other, &row);
+            world.sync()?;
+            let key = format!("{}:{other}", world.mc.environment_id);
+            look_stream(world, &key, true)?;
+            world.dispatch("rightPanel.add", json!({"kind": "device"}))?;
+            world.sync()
+        },
+    );
+    steps.step("no wizard opens", |world, _, _| {
+        world.sync()?;
+        expect!(wizard_view(world).is_null(), "{}", describe_wizard(world));
+        Ok(())
+    });
+    steps.step("device support stays as the user left it", |world, _, _| {
+        expect!(fake_hub(world).configures.is_empty(), "{}", describe(world));
+        Ok(())
+    });
+    steps.step(&format!("the hub fails with {Q}"), |world, c, _| {
+        fake_hub(world).host_detail = c[0].clone();
+        set_hub_status(world, "failed")
+    });
+    steps.step(
+        &format!("the wizard shows {Q} as an error"),
+        |world, c, _| {
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                |w| text(&wizard_view(w)["error"]) == wanted && panel_shows(w, &wanted),
+                describe_wizard,
+            )
+        },
+    );
+
+    // Banners.
+    steps.step(
+        &format!("the machine {Q} is (installing|starting) its device tools"),
+        |world, c, _| {
+            set_machine(world, &c[0], &c[1], "");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the machine {Q} is installing and says {Q}"),
+        |world, c, _| {
+            set_machine(world, &c[0], "installing", &c[1]);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the machine {Q} failed to start its device tools(?: without saying why)?"),
+        |world, c, _| {
+            set_machine(world, &c[0], "failed", "");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the tab shows a banner for {Q} saying {Q}"),
+        |world, c, _| {
+            let (label, wanted) = (c[0].clone(), c[1].clone());
+            world.wait_for_with(
+                |w| text(&banner_of(w, &label)["message"]) == wanted && panel_shows(w, &wanted),
+                describe_words,
+            )
+        },
+    );
+    steps.step(&format!("the banner for {Q} says {Q}"), |world, c, _| {
+        let (label, wanted) = (c[0].clone(), c[1].clone());
+        world.wait_for_with(
+            |w| text(&banner_of(w, &label)["message"]) == wanted && panel_shows(w, &wanted),
+            describe_words,
+        )
+    });
+    steps.step(&format!("it says {Q}"), |world, c, _| {
+        let wanted = c[0].clone();
+        world.wait_for_with(|w| tab_says(w, &wanted), describe_words)
+    });
+    steps.step(
+        "the MC (can|cannot) retry a single machine",
+        |world, c, _| {
+            fake_hub(world).supports_retry = c[0] == "can";
+            Ok(())
+        },
+    );
+    steps.step("the user chooses \"Retry\" on its banner", |world, _, _| {
+        add_device_tab(world)?;
+        world.mc.hold("device.list");
+        click(world, &format!("deviceBannerRetry-{HOST}"))
+    });
+    steps.step(
+        &format!("the banner for {Q} offers no \"Retry\""),
+        |world, c, _| {
+            let label = c[0].clone();
+            world.wait_for_with(|w| !banner_of(w, &label).is_null(), describe_words)?;
+            expect!(
+                !item_flag(world, &format!("deviceBannerRetry-{HOST}"), "visible")?,
+                "{}",
+                describe(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the button says \"Retrying…\" until the answer arrives",
+        |world, _, _| {
+            let label = item_text(world, &format!("deviceBannerRetry-{HOST}"))?;
+            expect!(
+                label == "Retrying…",
+                "the button says {label}; {}",
+                describe(world)
+            );
+            world.mc.answer_held();
+            world.sync()
+        },
+    );
+    steps.step(&format!("only {Q} is retried"), |world, _, _| {
+        let lists = fake_hub(world).lists.clone();
+        expect!(
+            lists
+                .last()
+                .is_some_and(|l| text(&l["retryHostId"]) == HOST),
+            "the MC was asked {}",
+            show(&Value::Array(lists))
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("device support is off and the machine {Q} failed earlier"),
+        |world, c, _| {
+            set_machine(world, &c[0], "failed", "");
+            fake_hub(world).host_status = "disabled".into();
+            look(world)
+        },
+    );
+    steps.step(&format!("no banner is shown for {Q}"), |world, _, _| {
+        world.sync()?;
+        let banners = view(world)["banners"].clone();
+        expect!(
+            banners.as_array().is_none_or(Vec::is_empty),
+            "the banners are {}",
+            show(&banners)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the setup wizard shows the banner for {Q}"),
+        |world, c, _| {
+            wizard_at(world, 0)?;
+            let label = c[0].clone();
+            world.wait_for_with(
+                |w| {
+                    let banner = banner_of(w, &label);
+                    !banner.is_null() && panel_shows(w, &text(&banner["message"]))
+                },
+                describe_words,
+            )
+        },
+    );
+    steps.step(
+        "so does the Device tab once setup is done",
+        |world, _, _| {
+            click(world, "wizardCancel")?;
+            let banners = view(world)["banners"].clone();
+            let first = text(&banners[0]["message"]);
+            expect!(
+                !first.is_empty() && panel_shows(world, &first),
+                "the banners are {}",
+                show(&banners)
+            );
+            Ok(())
+        },
+    );
+}
+
+// --- The Tools drawer ---------------------------------------------------
+
+/// The shown device tab's Tools drawer.
+fn tools_object(world: &World) -> Option<ObjectId> {
+    shown_tab(world)
+        .ok()
+        .and_then(|tab| DeviceTab::tools(world.engine(), tab))
+}
+
+/// The drawer's `view`, or null when no device tab shows.
+fn tools_view(world: &World) -> Value {
+    tools_object(world)
+        .and_then(|t| DeviceTools::read(world.engine(), t, |t| t.view().clone()))
+        .unwrap_or(Value::Null)
+}
+
+fn describe_tools(world: &World) -> String {
+    format!(
+        "the tools are {}; {}",
+        show(&tools_view(world)),
+        describe_ref(world)
+    )
+}
+
+/// Lays the Device tab out at `width` by `height`, its window with it.
+fn size_panel(world: &mut World, width: f64, height: f64) -> Outcome {
+    let panel = device_panel(world)?;
+    let Some(root) = panel.root(world) else {
+        fail!("the Device tab did not load");
+    };
+    if let QmlValue::Object(probe) = panel.read(world, root, "parent") {
+        panel.write(world, probe, "width", QmlValue::from(width))?;
+        panel.write(world, probe, "height", QmlValue::from(height))?;
+    }
+    panel.write(world, root, "width", QmlValue::from(width))?;
+    panel.write(world, root, "height", QmlValue::from(height))?;
+    world.resize(width, height)?;
+    world.sync()
+}
+
+/// On the wide panel the drawer sits beside the screen, and every control
+/// can be clicked.
+fn wide_panel(world: &mut World) -> Outcome {
+    size_panel(world, 900.0, 1100.0)
+}
+
+/// The drawer is open; waits for its settings to have landed.
+fn open_tools_ready(world: &mut World) -> Outcome {
+    world.wait_for_with(
+        |w| {
+            let tools = tools_view(w);
+            tools["open"] == true && tools["loaded"] == true
+        },
+        describe_tools,
+    )
+}
+
+/// Opens the Tools drawer for the device shown and waits for its settings.
+fn open_tools(world: &mut World) -> Outcome {
+    if tools_view(world)["open"] != true {
+        click(world, "deviceTools")?;
+    }
+    open_tools_ready(world)
+}
+
+/// Types into a tools field the way a user does: click it, then keys.
+fn type_into(world: &mut World, name: &str, typed: &str) -> Outcome {
+    click(world, name)?;
+    world.type_text(typed)?;
+    world.sync()
+}
+
+fn combo_model(world: &mut World, name: &str) -> Outcome<(ObjectId, Vec<String>)> {
+    let panel = device_panel(world)?;
+    let combo = panel.item(world, name)?;
+    let model = hal_c2_shell::json::from_value(world.engine(), &panel.read(world, combo, "model"));
+    let labels = model
+        .as_array()
+        .map(|m| m.iter().map(text).collect())
+        .unwrap_or_default();
+    Ok((combo, labels))
+}
+
+/// Chooses `label` in the combo box `name`, as the user picking it does.
+fn activate(world: &mut World, name: &str, label: &str) -> Outcome {
+    let (combo, model) = combo_model(world, name)?;
+    let Some(index) = model.iter().position(|m| m == label) else {
+        fail!("no choice {label} among {}", model.join(", "));
+    };
+    expect!(
+        world
+            .engine()
+            .emit_by_name(combo, "activated", &[QmlValue::Int(index as i32)])
+            .is_ok(),
+        "{name} cannot be chosen from"
+    );
+    world.sync()
+}
+
+/// Whether the drawer's device was asked a `device.action` like `wanted`.
+fn asked(world: &mut World, wanted: impl Fn(&Value) -> bool) -> Outcome {
+    world.wait_for_with(
+        |w| {
+            w.mc.peek::<FakeHub>()
+                .is_some_and(|hub| hub.actions.iter().any(&wanted))
+        },
+        |w| {
+            let actions =
+                w.mc.peek::<FakeHub>()
+                    .map(|hub| show(&Value::Array(hub.actions.clone())))
+                    .unwrap_or_default();
+            format!("{}; the device was asked {actions}", describe_ref(w))
+        },
+    )
+}
+
+fn has_device(world: &mut World, name: &str) -> bool {
+    fake_hub(world)
+        .devices
+        .iter()
+        .any(|d| text(&d["name"]) == name)
+}
+
+/// The thread has `name` open, on its tab.
+fn open_device(world: &mut World, platform: &str, name: &str) -> Outcome {
+    if !has_device(world, name) {
+        add_device(world, platform, name, true);
+    }
+    let device = device_named(fake_hub(world), name)?;
+    open_session(&mut world.mc, &device, THREAD);
+    announce(&mut world.mc);
+    // The session opens the device's own tab; a picker added before it
+    // lands would be replaced by it.
+    if fake_hub(world).looking {
+        let title = name.to_owned();
+        world.wait_for_with(|w| tab_titles(w).contains(&title), describe_ref)?;
+    }
+    show_device_tab(world, name)
+}
+
+/// A device with a full set of reported settings, open on its tab.
+fn tool_device(world: &mut World, platform: &str, name: &str) -> Outcome {
+    let hub = fake_hub(world);
+    hub.settings = if platform == "ios" {
+        json!({
+            "appearance": "light",
+            "textSize": "default",
+            "liquidGlass": "clear",
+            "colorFilter": "none",
+            "reduceMotion": false,
+            "increaseContrast": false,
+            "reduceTransparency": false,
+            "showBorders": false,
+            "voiceOver": false,
+        })
+    } else {
+        json!({
+            "appearance": "light",
+            "textSize": "default",
+            "reduceMotion": false,
+            "networkEnabled": true,
+        })
+    };
+    hub.foreground_app = json!({"id": "com.example.shop"});
+    open_device(world, platform, name)
+}
+
+fn tools_open_for(world: &mut World, platform: &str, name: &str) -> Outcome {
+    tool_device(world, platform, name)?;
+    wide_panel(world)?;
+    open_tools(world)
+}
+
+fn platform_of(which: &str) -> &'static str {
+    if which == "iOS Simulator" {
+        "ios"
+    } else {
+        "android"
+    }
+}
+
+/// The feeds the drawer follows whose path ends with `suffix`.
+fn feeds(world: &mut World, suffix: &str) -> Vec<TcpStream> {
+    fake_hub(world)
+        .feeds
+        .iter()
+        .filter(|(path, feed)| path.ends_with(suffix) && connected(feed))
+        .filter_map(|(_, feed)| feed.try_clone().ok())
+        .collect()
+}
+
+/// The device says `data` on every feed of `suffix`, as one event.
+fn report(world: &mut World, suffix: &str, data: &str) -> Outcome {
+    let wanted = suffix.to_owned();
+    world.wait_for_with(
+        |w| {
+            w.mc.peek::<FakeHub>().is_some_and(|hub| {
+                hub.feeds
+                    .iter()
+                    .any(|(path, feed)| path.ends_with(&wanted) && connected(feed))
+            })
+        },
+        |w| format!("no {wanted} feed; {}", describe_ref(w)),
+    )?;
+    for mut feed in feeds(world, suffix) {
+        let _ = feed.write_all(format!("data: {data}\n\n").as_bytes());
+        let _ = feed.flush();
+    }
+    world.sync()
+}
+
+fn drawer_and_screen(world: &mut World) -> Outcome<((f64, f64), f64, bool, bool)> {
+    let panel = device_panel(world)?;
+    let drawer = panel.item(world, "deviceToolsPanel")?;
+    let screen = panel.item(world, "deviceScreen")?;
+    let drawer_at = panel.at(world, drawer, 0.0, 0.0)?;
+    let screen_right = panel.at(world, screen, 1.0, 0.0)?.0;
+    Ok((
+        drawer_at,
+        screen_right,
+        panel.flag(world, drawer, "visible"),
+        panel.flag(world, screen, "visible"),
+    ))
+}
+
+/// The iOS accessibility tree of a screen with one button, "Buy".
+fn ax_screen(world: &mut World) {
+    fake_hub(world).ax_tree = json!([{
+        "AXLabel": "",
+        "frame": {"x": 0, "y": 0, "width": 390, "height": 844},
+        "children": [{
+            "AXLabel": "Buy",
+            "frame": {"x": 39, "y": 84, "width": 78, "height": 42},
+        }],
+    }]);
+}
+
+/// Lets the drawer's refreshes run until `done`: the overlay reads the
+/// device again every half second.
+fn refresh_until(world: &mut World, done: impl Fn(&World) -> bool) -> Outcome {
+    for _ in 0..20 {
+        world.sync()?;
+        if done(world) {
+            return Ok(());
+        }
+        world.advance(500)?;
+    }
+    fail!("{}", describe_tools(world))
+}
+
+fn no_access(world: &mut World) -> Outcome {
+    fake_hub(world).no_access = true;
+    announce(&mut world.mc);
+    world.sync()?;
+    // The tools read their target again from the announcement.
+    world.wait_for_with(|w| tools_view(w)["axOffered"] != true, describe_tools)
+}
+
+/// The tools' value of a choice the steps name.
+fn value_of(choice: &str) -> &'static str {
+    match choice {
+        "Dark" => "dark",
+        "Extra large" => "extra-large",
+        "Tinted" => "tinted",
+        "Red / green (protanopia)" => "red-green",
+        "Landscape left" => "landscape_left",
+        _ => "",
+    }
+}
+
+fn field_text(world: &mut World, name: &str) -> String {
+    item_text(world, name).unwrap_or_default()
+}
+
+/// The steps that open the drawer and check what it shows.
+fn register_tools(steps: &mut Steps) {
+    steps.step(
+        &format!("the user has the tools open for the (iOS Simulator|Android Emulator) {Q}"),
+        |world, c, _| tools_open_for(world, platform_of(&c[0]), &c[1]),
+    );
+    steps.step(
+        &format!(
+            "the user has the tools open for the (iOS Simulator|Android Emulator) {Q} with \"com.example.shop\" in front"
+        ),
+        |world, c, _| tools_open_for(world, platform_of(&c[0]), &c[1]),
+    );
+    steps.step(
+        &format!("the user has the tools open for the iOS Simulator {Q} with Reduce Motion off"),
+        |world, c, _| tools_open_for(world, "ios", &c[0]),
+    );
+    steps.step(
+        "the user has the tools open with \"com.example.shop\" in front",
+        |world, _, _| tools_open_for(world, "ios", "iPhone 17"),
+    );
+    steps.step(
+        &format!("the user has the tools open for {Q} with {Q} in front"),
+        |world, c, _| {
+            tool_device(world, "ios", &c[0])?;
+            fake_hub(world).foreground_app = json!({"id": c[1]});
+            wide_panel(world)?;
+            open_tools(world)
+        },
+    );
+    steps.step(
+        &format!("the user has the tools open for the iOS Simulator {Q} with no app in front"),
+        |world, c, _| {
+            fake_hub(world).foreground_app = Value::Null;
+            open_device(world, "ios", &c[0])?;
+            wide_panel(world)?;
+            open_tools(world)
+        },
+    );
+    steps.step(
+        &format!("the user has the tools open for the iOS Simulator {Q} placed in Tokyo"),
+        |world, c, _| {
+            tools_open_for(world, "ios", &c[0])?;
+            activate(world, "toolsLocationPreset", "Tokyo")
+        },
+    );
+    steps.step("the user has the tools open", |world, _, _| {
+        if !has_device(world, "iPhone 17") {
+            open_device(world, "ios", "iPhone 17")?;
+        }
+        wide_panel(world)?;
+        open_tools(world)
+    });
+    steps.step(
+        &format!("the thread has the iOS Simulator {Q} open in light appearance"),
+        |world, c, _| {
+            fake_hub(world).settings["appearance"] = json!("light");
+            open_device(world, "ios", &c[0])
+        },
+    );
+
+    // Opening and closing.
+    steps.step(
+        "the tools open beside the screen when the panel is wide enough",
+        |world, _, _| {
+            wide_panel(world)?;
+            world.wait_for_with(|w| tools_view(w)["open"] == true, describe_tools)?;
+            let ((drawer_x, _), screen_right, drawer, screen) = drawer_and_screen(world)?;
+            expect!(
+                drawer && screen && screen_right <= drawer_x + 1.0,
+                "the drawer is at {drawer_x} (shown {drawer}), the screen ends at {screen_right} (shown {screen}); {}",
+                describe_screen(world)
+            );
+            world.mc.answer_held();
+            world.sync()
+        },
+    );
+    steps.step("over the screen when it is narrow", |world, _, _| {
+        size_panel(world, 420.0, 900.0)?;
+        let ((drawer_x, _), screen_right, drawer, _) = drawer_and_screen(world)?;
+        expect!(
+            drawer && drawer_x < screen_right,
+            "the drawer is at {drawer_x} (shown {drawer}), the screen ends at {screen_right}; {}",
+            describe_screen(world)
+        );
+        Ok(())
+    });
+    steps.step("the tools close", |world, _, _| {
+        world.wait_for_with(|w| tools_view(w)["open"] != true, describe_tools)
+    });
+    steps.step(
+        "the tools say \"Reading device settings…\" and no control can be changed",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                |w| {
+                    tools_view(w)["loaded"] != true
+                        && panel.shows(w, "Reading device settings…").unwrap_or(false)
+                        && panel
+                            .find(w, "toolsChoice-Appearance-Dark")
+                            .ok()
+                            .flatten()
+                            .is_some_and(|dark| !panel.flag(w, dark, "enabled"))
+                },
+                describe_tools,
+            )
+        },
+    );
+    steps.step("the device's settings arrive", |world, _, _| {
+        world.mc.answer_held();
+        world.sync()
+    });
+    steps.step(
+        "the controls show what the device reports",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                |w| {
+                    let tools = tools_view(w);
+                    tools["loaded"] == true
+                        && tools["settings"]["appearance"] == "light"
+                        && panel
+                            .find(w, "toolsChoice-Appearance-Dark")
+                            .ok()
+                            .flatten()
+                            .is_some_and(|dark| panel.flag(w, dark, "enabled"))
+                },
+                describe_tools,
+            )
+        },
+    );
+
+    // What the drawer says.
+    steps.step(&format!("the tools say {Q}"), |world, c, _| {
+        let (wanted, panel) = (c[0].clone(), device_panel(world)?);
+        world.wait_for_with(
+            |w| tools_view(w)["error"] == *wanted || panel.shows(w, &wanted).unwrap_or(false),
+            describe_tools,
+        )
+    });
+    steps.step(&format!("the tools show {Q}"), |world, c, _| {
+        let (wanted, panel) = (c[0].clone(), device_panel(world)?);
+        world.wait_for_with(
+            |w| tools_view(w)["error"] == *wanted && panel.shows(w, &wanted).unwrap_or(false),
+            describe_tools,
+        )
+    });
+    steps.step("the tools have no \"(.+)\"", |world, c, _| {
+        let panel = device_panel(world)?;
+        expect!(!panel.shows(world, &c[0])?, "the tools show {}", c[0]);
+        Ok(())
+    });
+    steps.step(
+        "the tools have no \"Push notification\" section",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            expect!(
+                !panel.shows(world, "Push notification")?,
+                "{}",
+                describe_tools(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("the tools list (.+) under {Q}"), |world, c, _| {
+        world.mc.answer_held();
+        open_tools_ready(world)?;
+        let panel = device_panel(world)?;
+        expect!(panel.shows(world, &c[1])?, "{}", describe_tools(world));
+        for label in c[0].split(", ").flat_map(|part| part.split(" and ")) {
+            let label = label.trim();
+            expect!(panel.shows(world, label)?, "no setting named {label}");
+        }
+        Ok(())
+    });
+
+    // Refusals and waiting.
+    steps.step(
+        &format!("the device refuses to change appearance because {Q}"),
+        |world, c, _| {
+            fake_hub(world).refuse_action = c[0].clone();
+            Ok(())
+        },
+    );
+    steps.step("the appearance still reads \"Light\"", |world, _, _| {
+        expect!(
+            tools_view(world)["settings"]["appearance"] == "light",
+            "{}",
+            describe_tools(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        "the user changes a setting and the device is slow to answer",
+        |world, _, _| {
+            world.mc.hold("device.action");
+            click(world, "toolsChoice-Appearance-Dark")
+        },
+    );
+    steps.step("a spinner shows beside \"Tools\"", |world, _, _| {
+        let panel = device_panel(world)?;
+        world.wait_for_with(
+            |w| {
+                tools_view(w)["pending"] == true
+                    && panel
+                        .find(w, "toolsSpinner")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|s| panel.flag(w, s, "visible"))
+            },
+            describe_tools,
+        )
+    });
+    steps.step(
+        "no other control can be changed until it answers",
+        |world, _, _| {
+            expect!(
+                !item_flag(world, "toolsSwitch-Reduce Motion", "enabled")?,
+                "{}",
+                describe_tools(world)
+            );
+            world.mc.answer_held();
+            world.sync()
+        },
+    );
+
+    // Another device.
+    steps.step(
+        &format!("the user changed the location of {Q} in the tools"),
+        |world, c, _| {
+            fake_hub(world).foreground_app = json!({"id": "com.example.shop"});
+            open_device(world, "ios", &c[0])?;
+            wide_panel(world)?;
+            open_tools(world)?;
+            type_into(world, "toolsLatitude", "59.33")?;
+            type_into(world, "toolsLongitude", "18.07")?;
+            click(world, "toolsLocationSet")?;
+            // The other device, with its own settings.
+            add_device(world, "android", "Pixel 9", true);
+            let pixel = device_named(fake_hub(world), "Pixel 9")?;
+            open_session(&mut world.mc, &pixel, THREAD);
+            announce(&mut world.mc);
+            fake_hub(world).settings = json!({
+                "appearance": "dark",
+                "textSize": "large",
+                "reduceMotion": true,
+                "networkEnabled": false,
+            });
+            world.sync()
+        },
+    );
+    steps.step(&format!("the user shows the tab of {Q}"), |world, c, _| {
+        show_device_tab(world, &c[0])
+    });
+    steps.step(
+        "its tools show its own settings and an empty location",
+        |world, _, _| {
+            // Each device tab has its own drawer, closed until opened.
+            open_tools(world)?;
+            let panel = device_panel(world)?;
+            let empty = |w: &World, name: &str| {
+                panel
+                    .find(w, name)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|f| panel.text_of(w, f, "text").is_empty())
+            };
+            world.wait_for_with(
+                |w| {
+                    let tools = tools_view(w);
+                    tools["loaded"] == true
+                        && tools["settings"]["appearance"] == "dark"
+                        && empty(w, "toolsLatitude")
+                        && empty(w, "toolsLongitude")
+                },
+                describe_tools,
+            )
+        },
+    );
+
+    // Choices and switches.
+    steps.step(&format!("the user chooses {Q} for {Q}"), |world, c, _| {
+        if c[1] == "Appearance" || c[1] == "Liquid Glass" {
+            return click(world, &format!("toolsChoice-{}-{}", c[1], c[0]));
+        }
+        activate(world, &format!("toolsChoice-{}", c[1]), &c[0])
+    });
+    steps.step(
+        &format!("the device is asked to apply {Q}"),
+        |world, c, _| {
+            let wanted = value_of(&c[0]);
+            asked(world, |action| action["value"] == wanted)
+        },
+    );
+    steps.step(&format!("the control then shows {Q}"), |world, c, _| {
+        let (choice, wanted) = (c[0].clone(), value_of(&c[0]));
+        world.wait_for_with(
+            |w| {
+                let tools = tools_view(w);
+                if choice == "Landscape left" {
+                    return tools["pending"] != true;
+                }
+                tools["settings"]
+                    .as_object()
+                    .is_some_and(|s| s.values().any(|v| v == wanted))
+            },
+            describe_tools,
+        )
+    });
+    steps.step("the user turns on \"Reduce Motion\"", |world, _, _| {
+        click(world, "toolsSwitch-Reduce Motion")
+    });
+    steps.step("the device is asked to turn it on", |world, _, _| {
+        asked(world, |action| {
+            action["type"] == "setToggle"
+                && action["setting"] == "reduceMotion"
+                && action["value"] == true
+        })
+    });
+    steps.step("the switch then reads on", |world, _, _| {
+        world.wait_for_with(
+            |w| tools_view(w)["settings"]["reduceMotion"] == true,
+            describe_tools,
+        )
+    });
+    steps.step(
+        &format!("the device reports no value for {Q}"),
+        |world, _, _| {
+            tool_device(world, "ios", "iPhone 17")?;
+            if let Some(settings) = fake_hub(world).settings.as_object_mut() {
+                settings.remove("liquidGlass");
+            }
+            wide_panel(world)?;
+            open_tools(world)
+        },
+    );
+    steps.step("\"Liquid Glass\" cannot be changed", |world, _, _| {
+        expect!(
+            !item_flag(world, "toolsChoice-Liquid Glass-Tinted", "enabled")?,
+            "{}",
+            describe_tools(world)
+        );
+        Ok(())
+    });
+
+    // The app in front.
+    steps.step(
+        &format!("the iOS Simulator {Q} has {Q} in front"),
+        |world, c, _| {
+            fake_hub(world).foreground_app = json!({"id": c[1]});
+            open_device(world, "ios", &c[0])
+        },
+    );
+    steps.step(&format!("{Q} reads {Q}"), |world, c, _| {
+        world.mc.answer_held();
+        let (wanted, panel) = (c[1].clone(), device_panel(world)?);
+        world.wait_for_with(
+            |w| tools_view(w)["foreground"] == *wanted && panel.shows(w, &wanted).unwrap_or(false),
+            describe_tools,
+        )
+    });
+    steps.step("the app is stopped", |world, _, _| {
+        asked(world, |action| action["type"] == "terminateApp")
+    });
+    steps.step("the app is started again", |world, _, _| {
+        // Relaunch after a terminate names the app that was in front.
+        asked(world, |action| action["type"] == "launchApp")
+    });
+    steps.step("the user opens another app on the device", |world, _, _| {
+        report(world, "/appstate", "{\"bundleId\":\"com.example.other\"}")
+    });
+    steps.step(
+        &format!("the foreground feed ends with {Q} in front"),
+        |world, c, _| {
+            let hub = fake_hub(world);
+            hub.foreground_app = json!({"id": c[0]});
+            let before = hub.feed_requests;
+            for feed in feeds(world, "/appstate") {
+                let _ = feed.shutdown(Shutdown::Both);
+            }
+            world.sync()?;
+            // The feed is followed again after a wait.
+            for _ in 0..20 {
+                if fake_hub(world).feed_requests > before {
+                    return Ok(());
+                }
+                world.advance(500)?;
+                world.sync()?;
+            }
+            fail!("the feed was not followed again; {}", describe_tools(world))
+        },
+    );
+    steps.step("\"Foreground\" reads the other app's id", |world, _, _| {
+        world.wait_for_with(
+            |w| tools_view(w)["foreground"] == "com.example.other",
+            describe_tools,
+        )
+    });
+    steps.step("the device has no app in front", |world, _, _| {
+        fake_hub(world).foreground_app = Value::Null;
+        open_device(world, "ios", "iPhone 17")?;
+        wide_panel(world)?;
+        open_tools(world)
+    });
+    steps.step(
+        "\"Terminate\" and \"Relaunch\" are not offered",
+        |world, _, _| {
+            expect!(
+                !item_flag(world, "toolsTerminate", "visible")?
+                    && !item_flag(world, "toolsRelaunch", "visible")?,
+                "{}",
+                describe_tools(world)
+            );
+            Ok(())
+        },
+    );
+
+    // Addresses and apps by name.
+    steps.step(
+        &format!("the user types {Q} into {Q} and chooses {Q}"),
+        |world, c, _| {
+            let field = if c[2] == "Open" { "url" } else { "launch" };
+            type_into(world, &format!("toolsField-{field}"), &c[0])?;
+            click(world, &format!("toolsSubmit-{field}"))?;
+            // The field's name, for its emptiness to be checked against.
+            fake_hub(world).last_field = field.to_owned();
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the device is asked to (open|launch) {Q}"),
+        |world, c, _| {
+            let (open, wanted) = (c[0] == "open", c[1].clone());
+            asked(world, |action| {
+                if open {
+                    action["type"] == "openUrl" && action["url"] == *wanted
+                } else {
+                    action["type"] == "launchApp" && action["appId"] == *wanted
+                }
+            })
+        },
+    );
+    steps.step("the field is empty again", |world, _, _| {
+        let name = format!("toolsField-{}", fake_hub(world).last_field);
+        let panel = device_panel(world)?;
+        let field = panel.item(world, &name)?;
+        world.wait_for_with(
+            |w| panel.text_of(w, field, "text").is_empty(),
+            describe_tools,
+        )
+    });
+    steps.step(
+        "\"Open\" and \"Launch\" cannot be chosen while their fields are empty",
+        |world, _, _| {
+            expect!(
+                !item_flag(world, "toolsSubmit-url", "enabled")?
+                    && !item_flag(world, "toolsSubmit-launch", "enabled")?,
+                "{}",
+                describe_tools(world)
+            );
+            Ok(())
+        },
+    );
+
+    // Location.
+    steps.step(
+        &format!("the user types latitude {Q} and longitude {Q} and chooses \"Set\""),
+        |world, c, _| {
+            type_into(world, "toolsLatitude", &c[0])?;
+            type_into(world, "toolsLongitude", &c[1])?;
+            fake_hub(world).wanted_location = (
+                c[0].parse().unwrap_or_default(),
+                c[1].parse().unwrap_or_default(),
+            );
+            if item_flag(world, "toolsLocationSet", "enabled")? {
+                click(world, "toolsLocationSet")?;
+            }
+            Ok(())
+        },
+    );
+    steps.step("the device is placed there", |world, _, _| {
+        let (latitude, longitude) = fake_hub(world).wanted_location;
+        let near = |value: &Value, wanted: f64| {
+            value
+                .as_f64()
+                .is_some_and(|value| (value - wanted).abs() < 0.01)
+        };
+        asked(world, |action| {
+            action["type"] == "setLocation"
+                && near(&action["latitude"], latitude)
+                && near(&action["longitude"], longitude)
+        })
+    });
+    steps.step("\"Set\" could not be chosen", |world, _, _| {
+        expect!(
+            !item_flag(world, "toolsLocationSet", "enabled")?,
+            "{}",
+            describe_tools(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the user chooses the preset {Q}"),
+        |world, c, _| {
+            let Some(&(_, latitude, longitude)) =
+                PRESETS.iter().find(|(city, ..)| *city == c[0].as_str())
+            else {
+                fail!("no preset {}", c[0]);
+            };
+            fake_hub(world).wanted_location = (latitude, longitude);
+            activate(world, "toolsLocationPreset", &c[0])
+        },
+    );
+    steps.step(
+        "the fields show the preset's latitude and longitude",
+        |world, _, _| {
+            let (latitude, longitude) = fake_hub(world).wanted_location;
+            let panel = device_panel(world)?;
+            let (lat, lon) = (
+                panel.item(world, "toolsLatitude")?,
+                panel.item(world, "toolsLongitude")?,
+            );
+            world.wait_for_with(
+                |w| {
+                    panel.text_of(w, lat, "text") == latitude.to_string()
+                        && panel.text_of(w, lon, "text") == longitude.to_string()
+                },
+                |w| {
+                    format!(
+                        "the fields read {}, {}",
+                        panel.text_of(w, lat, "text"),
+                        panel.text_of(w, lon, "text")
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the user chooses \"Clear\" under \"Location\"",
+        |world, _, _| click(world, "toolsLocationClear"),
+    );
+    steps.step(
+        "the fields are empty and the simulator has no location",
+        |world, _, _| {
+            asked(world, |action| action["type"] == "clearLocation")?;
+            let panel = device_panel(world)?;
+            let (lat, lon) = (
+                panel.item(world, "toolsLatitude")?,
+                panel.item(world, "toolsLongitude")?,
+            );
+            world.wait_for_with(
+                |w| {
+                    panel.text_of(w, lat, "text").is_empty()
+                        && panel.text_of(w, lon, "text").is_empty()
+                },
+                describe_tools,
+            )
+        },
+    );
+    steps.step(
+        "\"Clear\" is not offered under \"Location\"",
+        |world, _, _| {
+            expect!(
+                !item_flag(world, "toolsLocationClear", "visible")?,
+                "{}",
+                describe_tools(world)
+            );
+            Ok(())
+        },
+    );
+
+    // Permissions.
+    steps.step(
+        &format!("the user chooses the permission {Q} and then {Q}"),
+        |world, c, _| {
+            // Android calls Motion "Physical activity".
+            let label = if c[0] == "Motion" && tools_view(world)["platform"] == "android" {
+                "Physical activity".to_owned()
+            } else {
+                c[0].clone()
+            };
+            let button = match c[1].as_str() {
+                "grant" => "Grant",
+                "revoke" => "Revoke",
+                _ => "Reset",
+            };
+            choose_permission(world, &label)?;
+            click(world, &format!("toolsPermission{button}"))
+        },
+    );
+    steps.step(
+        &format!("the device is asked to (grant|revoke|reset) {Q} for {Q}"),
+        |world, c, _| {
+            let permission = match c[1].as_str() {
+                "Face ID" => "faceid".to_owned(),
+                other => other.to_lowercase(),
+            };
+            let (decision, app) = (c[0].clone(), c[2].clone());
+            asked(world, |action| {
+                action["type"] == "setPermission"
+                    && action["decision"] == *decision
+                    && action["permission"] == *permission
+                    && action["appId"] == *app
+            })
+        },
+    );
+    steps.step(
+        &format!("the user types {Q} as the app and chooses \"Grant\" for {Q}"),
+        |world, c, _| {
+            type_into(world, "toolsPermissionApp", &c[0])?;
+            choose_permission(world, &c[1])?;
+            click(world, "toolsPermissionGrant")
+        },
+    );
+    steps.step(
+        "the device has no app in front and the user typed no app",
+        |world, _, _| {
+            fake_hub(world).foreground_app = Value::Null;
+            open_device(world, "ios", "iPhone 17")?;
+            wide_panel(world)?;
+            open_tools(world)
+        },
+    );
+    steps.step(
+        "\"Grant\", \"Revoke\" and \"Reset\" cannot be chosen",
+        |world, _, _| {
+            expect!(
+                !item_flag(world, "toolsPermissionGrant", "enabled")?
+                    && !item_flag(world, "toolsPermissionRevoke", "enabled")?
+                    && !item_flag(world, "toolsPermissionReset", "enabled")?,
+                "{}",
+                describe_tools(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step("the permission list (.+)", |world, c, _| {
+        let (_, model) = combo_model(world, "toolsPermission")?;
+        let has = |label: &str| model.iter().any(|m| m == label);
+        let reset = item_flag(world, "toolsPermissionReset", "visible")?;
+        let ios_only = ["Reminders", "Media library", "Face ID"];
+        let fits = if c[0].contains("includes") {
+            ios_only.iter().all(|l| has(l)) && reset
+        } else {
+            !ios_only.iter().any(|l| has(l)) && has("Physical activity") && !reset
+        };
+        expect!(fits, "{} (Reset shown {reset})", model.join(", "));
+        Ok(())
+    });
+
+    // Push notifications.
+    steps.step(
+        &format!("the user types {Q} under \"Push notification\" and chooses \"Send\""),
+        |world, c, _| {
+            type_into(world, "toolsPushField", &c[0])?;
+            click(world, "toolsPushSend")
+        },
+    );
+    steps.step(
+        &format!("the simulator is sent the notification for {Q}"),
+        |world, c, _| {
+            let app = c[0].clone();
+            asked(world, |action| {
+                action["type"] == "sendPush"
+                    && action["appId"] == *app
+                    && action["payload"] == "Order shipped"
+            })
+        },
+    );
+
+    // The event log.
+    steps.step(
+        "it says \"No events yet.\" until the simulator reports something",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                |w| panel.shows(w, "No events yet.").unwrap_or(false),
+                describe_tools,
+            )
+        },
+    );
+    steps.step("the simulator reports events", |world, _, _| {
+        let events: Vec<Value> = (1..=105)
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "timestamp": format!("2026-09-23T10:00:{:02}Z", id % 60),
+                    "summary": format!("Event {id}"),
+                })
+            })
+            .collect();
+        report(
+            world,
+            "/api/event-log/events",
+            &json!({"events": events}).to_string(),
+        )
+    });
+    steps.step("each is listed with its time and summary", |world, _, _| {
+        let panel = device_panel(world)?;
+        world.wait_for_with(
+            |w| {
+                let tools = tools_view(w);
+                let Some(events) = tools["events"].as_array() else {
+                    return false;
+                };
+                let first = format!(
+                    "{}  {}",
+                    text(&events[0]["time"]),
+                    text(&events[0]["summary"])
+                );
+                events.len() == 100 && panel.shows(w, &first).unwrap_or(false)
+            },
+            describe_tools,
+        )
+    });
+    steps.step("only the latest 100 are kept", |world, _, _| {
+        let tools = tools_view(world);
+        let events = tools["events"].as_array().cloned().unwrap_or_default();
+        expect!(
+            events.len() == 100 && events[0]["summary"] == "Event 6",
+            "{}",
+            describe_tools(world)
+        );
+        Ok(())
+    });
+    steps.step("the event log is open with entries", |world, _, _| {
+        tools_open_for(world, "ios", "iPhone 17")?;
+        click(world, "toolsEventLogToggle")?;
+        world.wait_for_with(|w| tools_view(w)["eventLogOpen"] == true, describe_tools)?;
+        report(
+            world,
+            "/api/event-log/events",
+            "{\"events\":[{\"id\":1,\"timestamp\":\"2026-09-23T10:00:01Z\",\"summary\":\"Event 1\"}]}",
+        )?;
+        world.wait_for_with(
+            |w| tools_view(w)["events"].as_array().is_some_and(|e| e.len() == 1),
+            describe_tools,
+        )
+    });
+    steps.step("the user closes \"Event log\"", |world, _, _| {
+        click(world, "toolsEventLogToggle")
+    });
+    steps.step(
+        "the simulator's events are no longer read",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let tools = tools_view(w);
+                    tools["eventLogOpen"] != true
+                        && tools["events"].as_array().is_none_or(Vec::is_empty)
+                },
+                describe_tools,
+            )?;
+            let open = feeds(world, "/api/event-log/events");
+            world.wait_for_with(
+                |w| {
+                    w.mc.peek::<FakeHub>().is_some_and(|hub| {
+                        !hub.feeds.iter().any(|(path, feed)| {
+                            path.ends_with("/api/event-log/events") && connected(feed)
+                        })
+                    })
+                },
+                |w| {
+                    format!(
+                        "{} event feeds are still open; {}",
+                        open.len(),
+                        describe_tools(w)
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the user opens \"Event log\" again", |world, _, _| {
+        click(world, "toolsEventLogToggle")
+    });
+    steps.step("it starts empty", |world, _, _| {
+        let panel = device_panel(world)?;
+        world.wait_for_with(
+            |w| {
+                let tools = tools_view(w);
+                tools["eventLogOpen"] == true
+                    && tools["events"].as_array().is_none_or(Vec::is_empty)
+                    && panel.shows(w, "No events yet.").unwrap_or(false)
+            },
+            describe_tools,
+        )
+    });
+
+    // Device access and the accessibility overlay.
+    steps.step(
+        "the MC has given the client no device access yet",
+        |world, _, _| no_access(world),
+    );
+    steps.step(
+        &format!("the thread has {Q} open and the MC has given the client no device access yet"),
+        |world, c, _| {
+            tool_device(world, "ios", &c[0])?;
+            no_access(world)
+        },
+    );
+    steps.step(
+        "\"Overlay element frames\" cannot be turned on",
+        |world, _, _| {
+            wide_panel(world)?;
+            if tools_view(world)["open"] != true {
+                open_tools(world)?;
+            }
+            expect!(
+                !item_flag(world, "toolsAxOverlay", "enabled")?,
+                "{}",
+                describe_tools(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user turns on \"Overlay element frames\" in the tools",
+        |world, _, _| {
+            if fake_hub(world).android_ax.is_null() {
+                ax_screen(world);
+            }
+            wide_panel(world)?;
+            open_tools(world)?;
+            click(world, "toolsAxOverlay")
+        },
+    );
+    steps.step(
+        "each accessibility element on the device is outlined over the screen with its label",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            let overlay = panel.item(world, "deviceAxOverlay")?;
+            refresh_until(world, |w| {
+                tools_view(w)["axElements"]
+                    .as_array()
+                    .is_some_and(|e| e.len() == 1)
+                    && panel.flag(w, overlay, "visible")
+                    && panel.shows(w, "Buy").unwrap_or(false)
+            })
+        },
+    );
+    steps.step(
+        "the outlines follow the device as its screen changes",
+        |world, _, _| {
+            let tree = &mut fake_hub(world).ax_tree;
+            tree[0]["children"][0]["frame"]["x"] = json!(195);
+            tree[0]["children"][0]["frame"]["y"] = json!(422);
+            refresh_until(world, |w| {
+                tools_view(w)["axElements"].as_array().is_some_and(|e| {
+                    e.len() == 1 && e[0]["x"].as_f64().is_some_and(|x| (x - 0.5).abs() < 0.01)
+                })
+            })
+        },
+    );
+    steps.step(
+        "the user turns it off or shows another tab",
+        |world, _, _| click(world, "toolsAxOverlay"),
+    );
+    steps.step("the outlines go away", |world, _, _| {
+        let panel = device_panel(world)?;
+        let overlay = panel.item(world, "deviceAxOverlay")?;
+        world.wait_for_with(|w| !panel.flag(w, overlay, "visible"), describe_tools)
+    });
+    steps.step("the accessibility requests stall", |world, _, _| {
+        fake_hub(world).stall_ax = true;
+        Ok(())
+    });
+    steps.step("no second accessibility request is out", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                w.mc.peek::<FakeHub>()
+                    .is_some_and(|hub| hub.ax_requests > 0)
+            },
+            describe_tools,
+        )?;
+        let asked = fake_hub(world).ax_requests;
+        // That nothing follows takes a few of the tools' refreshes to show.
+        world.advance(1600)?;
+        world.sync()?;
+        let now = fake_hub(world).ax_requests;
+        expect!(now == asked, "{now} requests out");
+        Ok(())
+    });
+    steps.step(
+        "the device's screen has more elements than the overlay shows",
+        |world, _, _| {
+            let mut nodes = vec![json!({"bounds": {"right": 1000, "bottom": 2000}})];
+            nodes.extend((0..600).map(|n| {
+                json!({
+                    "text": format!("Item {n}"),
+                    "bounds": {"left": 0, "top": n, "right": 100, "bottom": n + 1},
+                })
+            }));
+            fake_hub(world).android_ax = json!({ "nodes": nodes });
+            Ok(())
+        },
+    );
+    steps.step(
+        "the overlay outlines the first (\\d+) of them",
+        |world, c, _| {
+            let wanted: usize = c[0].parse().unwrap_or_default();
+            refresh_until(world, |w| {
+                tools_view(w)["axElements"]
+                    .as_array()
+                    .is_some_and(|e| e.len() == wanted)
+            })
+        },
+    );
+}
+
+/// "the user chooses {Q}" in the open Tools drawer.
+fn tools_chooses(world: &mut World, what: &str) -> Outcome<bool> {
+    if world.peek_part::<Panel>().and_then(|p| p.0).is_none() || tools_view(world)["open"] != true {
+        return Ok(false);
+    }
+    let name = match what {
+        "Dark" | "Light" => format!("toolsChoice-Appearance-{what}"),
+        "Clear" | "Tinted" => format!("toolsChoice-Liquid Glass-{what}"),
+        "Close tools" => "toolsClose".to_owned(),
+        "Terminate" => "toolsTerminate".to_owned(),
+        "Relaunch" => "toolsRelaunch".to_owned(),
+        "Set" => "toolsLocationSet".to_owned(),
+        _ => return Ok(false),
+    };
+    click(world, &name)?;
+    Ok(true)
+}
+
+/// Picks `label` in the permission list, as the user does before a decision.
+fn choose_permission(world: &mut World, label: &str) -> Outcome {
+    let (combo, model) = combo_model(world, "toolsPermission")?;
+    let Some(index) = model.iter().position(|m| m == label) else {
+        fail!("no permission {label} among {}", model.join(", "));
+    };
+    device_panel(world)?.write(world, combo, "currentIndex", QmlValue::Int(index as i32))?;
+    world.sync()
+}
+
+/// Whether the Device tab shows a device or one is open for the thread.
+/// The hub is only looked at: [`fake_hub`] would set one up (and rename
+/// the MC) in every world.
+fn showing_device(world: &mut World) -> Outcome<bool> {
+    if !screen_of(world).is_null() {
+        return Ok(true);
+    }
+    let last = world
+        .mc
+        .peek::<FakeHub>()
+        .filter(|hub| hub.used)
+        .and_then(|hub| {
+            let id = hub.sessions.last()?["deviceId"].clone();
+            hub.devices
+                .iter()
+                .find(|d| d["id"] == id)
+                .map(|d| text(&d["name"]))
+        });
+    // The device's own tab first, when the scenario only opened the device.
+    let Some(name) = last else {
+        return Ok(false);
+    };
+    show_device_tab(world, &name)?;
+    Ok(true)
+}
+
+/// "the user opens {Q}" for the Device tab: its Tools drawer and its event
+/// log. False when no device is open or `what` is neither.
+pub fn device_opens(world: &mut World, what: &str) -> Outcome<bool> {
+    if !matches!(what, "Tools" | "Event log") || !showing_device(world)? {
+        return Ok(false);
+    }
+    if what == "Tools" {
+        // The read is held, so a scenario can watch it land; the others'
+        // settings arrive when their next step answers the held call.
+        world.mc.hold("device.detail");
+        click(world, "deviceTools")?;
+        return Ok(true);
+    }
+    click(world, "toolsEventLogToggle")?;
+    world.wait_for_with(
+        |w| {
+            w.mc.peek::<FakeHub>().is_some_and(|hub| {
+                hub.feeds
+                    .iter()
+                    .any(|(path, feed)| path.ends_with("/api/event-log/events") && connected(feed))
+            })
+        },
+        |w| format!("no event feed; {}", describe_tools(w)),
+    )?;
+    Ok(true)
+}
+
+/// "{Q} cannot be chosen" for the Tools drawer's Send. False when the
+/// drawer is not open or `what` is not Send.
+pub fn device_cannot_choose(world: &mut World, what: &str) -> Outcome<bool> {
+    if what != "Send" || world.peek_part::<Panel>().and_then(|p| p.0).is_none() {
+        return Ok(false);
+    }
+    if tools_view(world)["open"] != true {
+        return Ok(false);
+    }
+    expect!(
+        !item_flag(world, "toolsPushSend", "enabled")?,
+        "{}",
+        describe_tools(world)
+    );
+    Ok(true)
 }

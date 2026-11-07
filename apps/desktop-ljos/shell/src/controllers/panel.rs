@@ -1346,13 +1346,23 @@ impl RightPanel {
         if let Some(files) = self.files {
             WorkspaceFiles::set_active(engine, files, open && active == "files");
         }
+        // Each device tab has its DeviceTab, and streams while it shows.
         if let Some(devices) = self.devices {
-            let tab = if open && kind_of(&active) == "device" {
-                active.as_str()
+            let tabs: Vec<String> = if self.on_thread {
+                let tabs = self.current().tabs;
+                tabs.into_iter()
+                    .filter(|t| t.starts_with(DEVICE_TAB))
+                    .collect()
             } else {
-                ""
+                Vec::new()
             };
-            ThreadDevices::set_tab(engine, devices, tab);
+            let shown: Vec<String> = if open && kind_of(&active) == "device" {
+                vec![active.clone()]
+            } else {
+                Vec::new()
+            };
+            ThreadDevices::set_tabs(engine, devices, &tabs);
+            ThreadDevices::set_shown(engine, devices, &shown);
         }
         // The review shows the active review tab's pull request, or the last
         // one shown.

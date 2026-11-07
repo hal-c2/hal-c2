@@ -431,6 +431,10 @@ pub fn register(steps: &mut Steps) {
         if super::planner::open_planner_view(world, &c[0])? {
             return Ok(());
         }
+        // The Device tab's Tools drawer and event log.
+        if super::device::device_opens(world, &c[0])? {
+            return Ok(());
+        }
         let key = ensure_thread(world, &c[0], "")?;
         world.dispatch("thread.open", json!({"key": key}))
     });
