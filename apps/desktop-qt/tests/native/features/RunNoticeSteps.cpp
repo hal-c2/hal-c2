@@ -144,6 +144,88 @@ void showError(World& world, const QString& message) {
   errorShows(world, message);
 }
 
+// The notices as they stack above the composer, drawn together: the bricks
+// ThreadView and the composer place, in one column (NoticeStackController
+// says which one is in front).
+Brick& stackView(World& world) {
+  if (!world.brick) {
+    world.brick = std::make_unique<Brick>(
+        world,
+        "import QtQuick\nimport QtQuick.Layouts\nimport HalC2.Bricks\nColumnLayout {\n  spacing: 4\n"
+        "  ThreadErrorBanner { Layout.fillWidth: true }\n  ProviderStatusBanner { Layout.fillWidth: true }\n"
+        "  LimitRecoveryBanner { Layout.fillWidth: true }\n  ThreadNotice { Layout.fillWidth: true }\n"
+        "  NoticeStackPeek { Layout.fillWidth: true }\n  ComposerUsageLimits { Layout.fillWidth: true }\n"
+        "  Item { Layout.fillHeight: true }\n}\n",
+        QSize(820, 560));
+    world.brick->takesKeys = true;
+  }
+  return *world.brick;
+}
+
+QVariantMap stack(World& world) {
+  return world.state(QStringLiteral("noticeStack")).toMap();
+}
+
+bool drawn(World& world, const QString& objectName) {
+  QQuickItem* item = stackView(world).find(objectName);
+  return item && item->isVisible();
+}
+
+QString stackSeen(World& world) {
+  return QStringLiteral("noticeStack is %1; %2").arg(show(world.state(QStringLiteral("noticeStack"))), seen(world));
+}
+
+// The thread runs on Codex, which offers "/usage-limits" and has limits to
+// show, and the user has asked: the answer is the composer's.
+void openUsageLimitsAnswer(World& world) {
+  const QJsonObject limits{{QStringLiteral("checkedAt"), world.now().toUTC().toString(Qt::ISODateWithMs)},
+                           {QStringLiteral("windows"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("five-hour")},
+                                                                              {QStringLiteral("kind"), QStringLiteral("session")},
+                                                                              {QStringLiteral("label"), QStringLiteral("5-hour")},
+                                                                              {QStringLiteral("usedPercent"), 40.0},
+                                                                              {QStringLiteral("resetsAt"), world.now().addSecs(3600).toUTC().toString(Qt::ISODateWithMs)},
+                                                                              {QStringLiteral("windowDurationMins"), 300}}}}};
+  const QJsonObject codex{{QStringLiteral("instanceId"), QStringLiteral("codex")},
+                          {QStringLiteral("driver"), QStringLiteral("codex")},
+                          {QStringLiteral("displayName"), QStringLiteral("Codex")},
+                          {QStringLiteral("enabled"), true},
+                          {QStringLiteral("installed"), true},
+                          {QStringLiteral("status"), QStringLiteral("ready")},
+                          {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-5")}, {QStringLiteral("name"), QStringLiteral("gpt-5")}}}},
+                          {QStringLiteral("usageLimits"), limits},
+                          {QStringLiteral("slashCommands"),
+                           QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("usage-limits")},
+                                                  {QStringLiteral("description"), QStringLiteral("Show this provider's usage limits")}}}}};
+  publishProviders(world.mc, {codex});
+  updateThreadRow(world, kThread, [&](QJsonObject& row) {
+    row.insert(QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
+  });
+  world.waitFor([&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("selectedModel")) == QLatin1String("gpt-5"); },
+                [&] { return QStringLiteral("the composer on Codex; it shows %1").arg(show(world.state(QStringLiteral("composer")))); });
+  world.bridge().dispatch(QStringLiteral("composer.submit"),
+                          QVariantMap{{QStringLiteral("text"), QStringLiteral("/usage-limits")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+  world.waitFor([&] { return !world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("usageLimits")).isNull(); },
+                [&] { return QStringLiteral("the answer to /usage-limits; the composer shows %1").arg(show(world.state(QStringLiteral("composer")))); });
+}
+
+// The thread's latest run stopped on a usage limit an hour from resetting,
+// as ThreadLimitSteps sets one up: the recovery banner is the thread's.
+void stopOnLimit(World& world) {
+  updateThreadRow(world, kThread, [&](QJsonObject& row) {
+    const QString stopped = world.now().addSecs(-300).toUTC().toString(Qt::ISODateWithMs);
+    row.insert(QStringLiteral("latestRunId"), QStringLiteral("r1"));
+    row.insert(QStringLiteral("activeRunId"), QJsonValue::Null);
+    row.insert(QStringLiteral("status"), QStringLiteral("failed"));
+    row.insert(QStringLiteral("lastErrorClass"), QStringLiteral("usage_limit"));
+    row.insert(QStringLiteral("latestRunStartedAt"), world.now().addSecs(-900).toUTC().toString(Qt::ISODateWithMs));
+    row.insert(QStringLiteral("latestRunCompletedAt"), stopped);
+    row.insert(QStringLiteral("updatedAt"), stopped);
+    row.insert(QStringLiteral("usageLimitResetAt"), world.now().addSecs(3600).toUTC().toString(Qt::ISODateWithMs));
+  });
+  world.waitFor([&] { return !world.state(QStringLiteral("limitRecovery")).isNull(); },
+                [&] { return QStringLiteral("the usage limit banner; it is %1").arg(show(world.state(QStringLiteral("limitRecovery")))); });
+}
+
 // The provider a scenario's thread runs on, as the MC's config lists it.
 struct ProviderShown {
   bool shown = false;
@@ -305,8 +387,10 @@ const Steps steps([] {
     shoot(world, QStringLiteral("background-stop-refused"));
   });
   step(QStringLiteral("the notice about %1 stays").arg(q), [](World& world, const Captures& c, const Table&) {
-    noticeSays(world, QStringLiteral("Waiting on background task"));
-    world.waitFor([&] { return notice(world).value(QStringLiteral("busy")) == false; }, [&] { return seen(world); });
+    // The error is in front of it now (the notice stack); the notice itself
+    // stays, no longer busy, still naming the task.
+    world.waitFor([&] { return notice(world).value(QStringLiteral("busy")) == false && notice(world).value(QStringLiteral("description")) == c[0]; },
+                  [&] { return seen(world); });
     expect(text(threadView(world).find(QStringLiteral("threadNoticeDescription"))) == c[0], seen(world));
   });
 
@@ -462,6 +546,122 @@ const Steps steps([] {
     providerNoticeSays(world, QStringLiteral("Codex provider status"), QStringLiteral("Codex exited during startup."));
   });
   step(QStringLiteral("no provider notice is shown"), [](World& world, const Captures&, const Table&) { noProviderNotice(world); });
+
+  // Several notices above the composer, one at a time (NoticeStackController).
+  step(QStringLiteral("the thread shows the error %1 and the answer to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[1] == QLatin1String("/usage-limits"), c[1]);
+    stackView(world);
+    openUsageLimitsAnswer(world);
+    showError(world, c[0]);
+  });
+  step(QStringLiteral("the error is the notice shown and the composer says there are other notices behind it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor(
+        [&] {
+          return drawn(world, QStringLiteral("threadError")) && !drawn(world, QStringLiteral("composerUsageLimits")) &&
+                 drawn(world, QStringLiteral("noticeStackPeek")) && stack(world).value(QStringLiteral("front")) == QLatin1String("error") &&
+                 stack(world).value(QStringLiteral("behind")).toInt() >= 1;
+        },
+        [&] { return QStringLiteral("the error in front, the answer behind it; %1").arg(stackSeen(world)); });
+    expect(stackView(world).shows(QStringLiteral("1 other notice")), QStringLiteral("the peek does not say so; %1").arg(stackSeen(world)));
+    shoot(world, QStringLiteral("notice-stack-collapsed"));
+  });
+  step(QStringLiteral("the user asks for the other notices"), [](World& world, const Captures&, const Table&) {
+    stackView(world).click(QStringLiteral("noticeStackToggle"));
+    world.waitFor([&] { return stack(world).value(QStringLiteral("expanded")).toBool(); }, [&] { return stackSeen(world); });
+  });
+  step(QStringLiteral("the answer to %1 is shown as well").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("/usage-limits"), c[0]);
+    world.waitFor([&] { return drawn(world, QStringLiteral("composerUsageLimits")) && drawn(world, QStringLiteral("threadError")); },
+                  [&] { return QStringLiteral("the answer shown as well; %1").arg(stackSeen(world)); });
+    expect(stackView(world).shows(QStringLiteral("Usage limits")), QStringLiteral("the answer is not drawn; %1").arg(stackSeen(world)));
+    shoot(world, QStringLiteral("notice-stack-expanded"));
+  });
+  step(QStringLiteral("only the error is shown again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor(
+        [&] {
+          return drawn(world, QStringLiteral("threadError")) && !drawn(world, QStringLiteral("composerUsageLimits")) &&
+                 !stack(world).value(QStringLiteral("expanded")).toBool() && stack(world).value(QStringLiteral("front")) == QLatin1String("error");
+        },
+        [&] { return QStringLiteral("only the error again; %1").arg(stackSeen(world)); });
+  });
+  step(QStringLiteral("the answer to %1 is the notice shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == QLatin1String("/usage-limits"), c[0]);
+    world.waitFor(
+        [&] {
+          return drawn(world, QStringLiteral("composerUsageLimits")) && !drawn(world, QStringLiteral("threadError")) &&
+                 stack(world).value(QStringLiteral("front")) == QLatin1String("usageLimits");
+        },
+        [&] { return QStringLiteral("the answer in front; %1").arg(stackSeen(world)); });
+    shoot(world, QStringLiteral("notice-stack-next"));
+  });
+  step(QStringLiteral("the composer no longer says there are other notices"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !drawn(world, QStringLiteral("noticeStackPeek")) && stack(world).value(QStringLiteral("behind")).toInt() == 0; },
+                  [&] { return stackSeen(world); });
+  });
+  step(QStringLiteral("the user dismisses the error and at once opens another thread"), [](World& world, const Captures&, const Table&) {
+    QJsonObject other{{QStringLiteral("id"), QStringLiteral("thread-2")},
+                      {QStringLiteral("title"), QStringLiteral("Other work")},
+                      {QStringLiteral("projectId"), kProject},
+                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
+                      {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
+    world.mc.threads.insert(QStringLiteral("thread-2"), other);
+    world.mc.sendRow(QStringLiteral("thread-2"), other);
+    // No wait between the dismiss and the switch: the error going away must
+    // not be undone by leaving.
+    threadView(world).click(QStringLiteral("threadErrorDismiss"));
+    world.native().controller<NavigationController>()->open(
+        NavigationController::Route::thread(world.mc.environmentId + QLatin1Char(':') + QStringLiteral("thread-2")));
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey().endsWith(QLatin1String("thread-2")); },
+                  QStringLiteral("the other thread to open"));
+  });
+  step(QStringLiteral("the user comes back to the thread"), [](World& world, const Captures&, const Table&) {
+    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(world.mc.environmentId + QLatin1Char(':') + kThread));
+    world.waitFor([&] { return world.native().controller<NavigationController>()->threadKey().endsWith(kThread); }, QStringLiteral("the thread to open again"));
+  });
+  step(QStringLiteral("the error is not shown"), [](World& world, const Captures&, const Table&) {
+    Brick& view = threadView(world);
+    world.waitFor(
+        [&] {
+          QQuickItem* banner = view.find(QStringLiteral("threadError"));
+          return world.state(QStringLiteral("threadError")).isNull() && !(banner && banner->isVisible());
+        },
+        [&] { return seen(world); });
+    expect(!world.mc.threads.value(kThread).value(QLatin1String("lastError")).toString().isEmpty(), seen(world));
+  });
+  step(QStringLiteral("the thread says it is waiting on the background work %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    stackView(world);
+    leaveRunning(world, {c[0]});
+    world.waitFor([&] { return notice(world).value(QStringLiteral("kind")) == QLatin1String("background"); }, [&] { return seen(world); });
+  });
+  step(QStringLiteral("the thread shows a usage limit with its recovery actions"), [](World& world, const Captures&, const Table&) {
+    stackView(world);
+    stopOnLimit(world);
+  });
+  step(QStringLiteral("a usage limit with its recovery actions is the notice shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor(
+        [&] {
+          return drawn(world, QStringLiteral("limitRecovery")) && drawn(world, QStringLiteral("limitRecoveryResume")) &&
+                 stack(world).value(QStringLiteral("front")) == QLatin1String("limit");
+        },
+        [&] { return QStringLiteral("the usage limit in front; %1").arg(stackSeen(world)); });
+  });
+  step(QStringLiteral("the error %1 is the notice shown").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor(
+        [&] {
+          return drawn(world, QStringLiteral("threadError")) && text(stackView(world).find(QStringLiteral("threadErrorMessage"))) == c[0] &&
+                 stack(world).value(QStringLiteral("front")) == QLatin1String("error");
+        },
+        [&] { return QStringLiteral("the error in front; %1").arg(stackSeen(world)); });
+  });
+  step(QStringLiteral("the notice about what the agent is doing waits behind it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor(
+        [&] {
+          const QStringList order = stack(world).value(QStringLiteral("order")).toStringList();
+          return notice(world).value(QStringLiteral("kind")) == QLatin1String("background") && !drawn(world, QStringLiteral("threadNotice")) &&
+                 order.size() > 1 && order.last() == QLatin1String("activity") && drawn(world, QStringLiteral("noticeStackPeek"));
+        },
+        [&] { return QStringLiteral("the activity notice behind; %1").arg(stackSeen(world)); });
+  });
 });
 
 }  // namespace

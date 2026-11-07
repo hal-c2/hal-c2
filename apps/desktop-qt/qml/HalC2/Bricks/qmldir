@@ -89,6 +89,7 @@ LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
 ThreadErrorBanner 1.0 ThreadErrorBanner.qml
 ProviderStatusBanner 1.0 ProviderStatusBanner.qml
 ThreadNotice 1.0 ThreadNotice.qml
+NoticeStackPeek 1.0 NoticeStackPeek.qml
 ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml

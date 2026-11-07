@@ -10,9 +10,13 @@ Rectangle {
 
     readonly property var recovery: Shell.state.limitRecovery ?? null
     readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
+    // One notice at a time above the composer (Shell.state.noticeStack,
+    // NoticeStackController); no stack published means drawn on its own.
+    readonly property var stack: Shell.state.noticeStack ?? null
+    readonly property bool inFront: stack === null || stack.expanded === true || stack.front === "limit"
 
     objectName: "limitRecovery"
-    visible: recovery !== null
+    visible: recovery !== null && inFront
     implicitHeight: visible ? column.implicitHeight + 16 : 0
     color: Qt.alpha(warning, 0.1)
 

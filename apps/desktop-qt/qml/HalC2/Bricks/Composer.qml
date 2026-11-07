@@ -701,6 +701,12 @@ Rectangle {
             }
         }
 
+        NoticeStackPeek {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
+        }
+
         ComposerUsageLimits {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.space.xl

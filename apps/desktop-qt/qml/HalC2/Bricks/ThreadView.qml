@@ -372,7 +372,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: implicitHeight
-        visible: recovery !== null && !view.draft
+        visible: recovery !== null && inFront && !view.draft
     }
 
     // The open thread's error, over the top of its conversation, and under
@@ -385,7 +385,7 @@ Item {
         anchors.right: timeline.right
         z: 2
         height: implicitHeight
-        visible: current !== null && !view.draft
+        visible: current !== null && inFront && !view.draft
     }
     ProviderStatusBanner {
         anchors.top: errorBanner.visible ? errorBanner.bottom : timeline.top
@@ -393,7 +393,7 @@ Item {
         anchors.right: timeline.right
         z: 2
         height: implicitHeight
-        visible: current !== null && !view.draft
+        visible: current !== null && inFront && !view.draft
     }
 
     // The open thread is settled: it says so, and un-settles from here.
@@ -404,7 +404,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: limitBanner.visible ? limitBanner.top : parent.bottom
         height: implicitHeight
-        visible: current !== null && !view.draft
+        visible: current !== null && inFront && !view.draft
     }
 
     // How the thread's new worktree is being prepared.
