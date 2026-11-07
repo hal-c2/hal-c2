@@ -214,6 +214,13 @@ for line in sys.stdin:
     # A handoff's earlier conversation is history, not a directive.
     if "wait" in text.split("</conversation_history>")[-1]:
         continue
+    # "never start a turn": Claude finishes the prompt without running a turn for it, as
+    # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
+    # ends it in another lifecycle state (discarded, refused).
+    if "never start a turn" in text:
+        ended = re.search(r"never start a turn \((\w+)\)", text)
+        send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg.get("uuid"), "state": ended.group(1) if ended else "completed"})
+        continue
     # "grow the conversation": with an autoCompactWindow in --settings the conversation
     # outgrows it and Claude compacts (compact_boundary) before it answers.
     if "grow the conversation" in text:
@@ -336,6 +343,18 @@ for line in sys.stdin:
             {"question": "Which color?", "header": "Color", "multiSelect": False,
              "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]}]}}})
         continue
+    # "enter plan mode yourself": Claude calls EnterPlanMode, which puts its session in
+    # plan mode; "which mode" says the mode the session runs in.
+    if "enter plan mode yourself" in text:
+        mode = "plan"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}p", "role": "assistant", "content": [{"type": "tool_use", "id": f"enter-plan-{turn}", "name": "EnterPlanMode", "input": {}}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"enter-plan-{turn}", "content": "Entered plan mode."}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "planning", "session_id": session})
+        continue
+    if "which mode" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}m", "role": "assistant", "content": [{"type": "text", "text": f"mode {mode}"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": f"mode {mode}", "session_id": session})
+        continue
     if "plan" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "# Plan\n- do it"}}})
         continue
@@ -393,6 +412,9 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     ev = lambda e: send({"type": "stream_event", "session_id": session, "event": e})
+    # Claude Code says when it starts and finishes a prompt it was given a uuid for.
+    lifecycle = lambda state: msg.get("uuid") and send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": state})
+    lifecycle("started")
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "thinking", "thinking": "Let me look."}]}})
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}b", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": "Bash", "input": {"command": "ls"}}]}})
     send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "a.txt\n", "is_error": False}]}})
@@ -402,4 +424,7 @@ for line in sys.stdin:
         ev({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": d}})
     ev({"type": "content_block_stop", "index": 0})
     send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}c", "role": "assistant", "content": [{"type": "text", "text": "Hello from claude"}]}})
-    send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session})
+    # "report your usage": the result carries the turn's token usage.
+    usage = {"usage": {"input_tokens": 1000, "output_tokens": 50}} if "report your usage" in text else {}
+    send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session, **usage})
+    lifecycle("completed")

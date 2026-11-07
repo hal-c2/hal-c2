@@ -56,6 +56,7 @@ Feature: Threads stopped by a usage limit
     When the provider rejects the automatic resume
     Then "Port tests" still records 14:00 as its reset time
 
+  # Upstream #17867: Resume sends the composer's model selection with the continuation turn
   @backlog @shared @mobile
   Scenario: Resuming a limited thread uses the model picked in the composer
     Given "Port tests" stopped on a usage limit of its model

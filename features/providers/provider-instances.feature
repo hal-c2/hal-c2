@@ -404,6 +404,7 @@ Feature: Provider instances
     When a thread runs on that instance
     Then the "grok" executable found on the path is started
 
+  # Upstream #2829: the new orchestrator expands a binary path in the user's home directory
   Scenario Outline: A binary path in the user's home directory is expanded
     Given the <provider> instance has the binary path "<path>"
     When a thread runs on that instance
@@ -447,12 +448,14 @@ Feature: Provider instances
       | Codex    | codex_work  | /opt/codex-work/bin/codex   |
       | Claude   | claude_work | /opt/claude-work/bin/claude |
 
+  # Upstream #16772: disabled providers stop checking for CLI updates
   @backlog @mc @priority-low
   Scenario: A disabled provider is not checked for updates
     Given the Codex instance "codex_work" is disabled
     When the MC refreshes the providers' status
     Then the MC does not look for the binary of "codex_work" or check it for updates
 
+  # Upstream #16772: disabled providers stop checking for CLI updates
   @backlog @mc @plugin-antigravity @priority-low
   Scenario: A disabled Antigravity records no account changes
     Given the Antigravity instance is disabled

@@ -120,6 +120,7 @@ Feature: Keybindings
         | preview.zoomOut           | mod+-           | in the preview                    | aligned |
         | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
+    # Upstream #14475: thread jumps no longer overlap model picker jumps
     @backlog @desktop @priority-low
     Scenario: With the model picker open a number jump picks a model, not a thread
       Given the model picker is open
@@ -145,6 +146,7 @@ Feature: Keybindings
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
 
+    # Upstream #16694: assign a thread details panel shortcut
     @backlog @desktop @priority-low
     Scenario: The thread details panel has a default shortcut that a saved one overrides
       Given no custom keybindings
@@ -167,6 +169,7 @@ Feature: Keybindings
       Then the terminal splits
       But the diff panel does not toggle
 
+    # Upstream #9434: add usage page keybinding
     @desktop @backlog
     Scenario: The usage shortcut opens usage from the composer
       Given no custom keybindings
@@ -174,6 +177,7 @@ Feature: Keybindings
       When the user presses mod+u
       Then the usage page opens
 
+    # Upstream #9434: add usage page keybinding
     @desktop @backlog
     Scenario: The usage shortcut does nothing in a terminal
       Given the user is in a terminal

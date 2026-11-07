@@ -366,6 +366,7 @@ Feature: The protocol 3 WebSocket
     And the client cannot reconnect with that session
 
   # The MC already does this (call_mc answers each request on its own); @backlog only until its steps exist.
+  # Upstream #15515: one failing RPC handler no longer ends the client's other requests
   @backlog @mc @priority-high
   Scenario: A handler that crashes fails only its own request
     Given a client has a thread subscription, a terminal subscription and a pending request open

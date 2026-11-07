@@ -331,6 +331,7 @@ Feature: Thread lifecycle in the orchestration engine
       | for a "child" that lives in another project          | the target thread belongs to another project       |
       | with a run that is not a run of "child"              | the target run does not belong to the thread       |
 
+  # Upstream #14104: agent-only history pages by bounded activity rows so earlier turns load
   @backlog @mc
   Scenario: An agent-only transcript can be paged back to its start
     Given a thread of an app agent that has no user prompts and a long history
