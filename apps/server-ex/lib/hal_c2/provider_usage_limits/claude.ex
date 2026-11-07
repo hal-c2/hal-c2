@@ -56,7 +56,12 @@ defmodule HalC2.ProviderUsageLimits.Claude do
           do: {name, scoped_window(name, used, Limits.iso(entry["resets_at"]))}
 
     names = with [{name, _} | _] <- scoped, do: name, else: (_ -> nil)
-    {Limits.limits(checked_at, windows ++ Enum.map(scoped, &elem(&1, 1))), names}
+
+    # An account that says it has limits but returns none is a failed check to repeat,
+    # not one that can never report.
+    if windows == [] and scoped == [],
+      do: {Limits.unavailable(checked_at, "probeFailed"), nil},
+      else: {Limits.limits(checked_at, windows ++ Enum.map(scoped, &elem(&1, 1))), names}
   end
 
   def limits(_response, checked_at), do: {Limits.unavailable(checked_at, "unsupported"), nil}

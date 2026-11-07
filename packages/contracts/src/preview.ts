@@ -386,7 +386,7 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
   "PreviewInvalidUrlError",
   {
     inputLength: Schema.Number,
-    reason: Schema.Literals(["empty", "parse", "unsupported-protocol", "unexpected"]),
+    reason: Schema.Literals(["empty", "parse", "unsupported-protocol", "too-long", "unexpected"]),
     protocol: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
@@ -397,5 +397,22 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
   }
 }
 
-export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
+/** A viewport or title outside the limits above; `field` names which. */
+export class PreviewInvalidInputError extends Schema.TaggedError<PreviewInvalidInputError>()(
+  "PreviewInvalidInputError",
+  {
+    field: Schema.Literals(["viewport", "title"]),
+    reason: Schema.String,
+  },
+) {
+  override get message() {
+    return `Invalid preview ${this.field}: ${this.reason}`;
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+  PreviewInvalidInputError,
+]);
 export type PreviewError = typeof PreviewError.Type;

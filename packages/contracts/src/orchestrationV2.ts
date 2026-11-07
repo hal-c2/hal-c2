@@ -944,6 +944,8 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
+    // The message that implemented the plan, once one has.
+    implementedByMessageId: Schema.optional(MessageId),
   }),
   Schema.Struct({
     ...OrchestrationV2PlanArtifactBaseFields,

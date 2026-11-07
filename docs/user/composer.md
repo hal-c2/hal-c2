@@ -206,7 +206,9 @@ The slash menu also includes skills unless you turn off **Settings â†’ General â
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 
 Provider commands must start the message to run. HAL-C2 commands such as
-`/model` and `/plan`, and skill mentions, work on any line.
+`/model` and `/plan`, and skill mentions, work on any line. After other text, the menu
+opens only for a word that starts a command or skill name, so words such as `/tmp` stay
+part of your message and Enter sends it.
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Desktop also offers compaction from the context meter.

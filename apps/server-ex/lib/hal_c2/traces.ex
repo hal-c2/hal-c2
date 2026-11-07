@@ -57,6 +57,25 @@ defmodule HalC2.Traces do
     end
   end
 
+  @doc """
+  The receipt for a span: the caller is sent `{:hal_c2_span, name, attributes}` once a span named
+  `name` is in the trace file, and not for one that could not be written. A no-op where the registry is not running.
+  """
+  def subscribe(name) do
+    if Process.whereis(HalC2.Traces.Registry),
+      do: {:ok, _} = Registry.register(HalC2.Traces.Registry, name, nil)
+
+    :ok
+  end
+
+  defp notify(name, attributes) do
+    if Process.whereis(HalC2.Traces.Registry),
+      do:
+        Registry.dispatch(HalC2.Traces.Registry, name, fn entries ->
+          for {pid, _} <- entries, do: send(pid, {:hal_c2_span, name, attributes})
+        end)
+  end
+
   @doc "Records a span that already happened, from `started_ms` until now."
   def finished(name, attributes, started_ms, exit \\ %{"_tag" => "Success"}) do
     if enabled?(),
@@ -73,6 +92,11 @@ defmodule HalC2.Traces do
   end
 
   defp record_span(name, attributes, started, ended, exit) do
+    if append_span(name, attributes, started, ended, exit) == :ok, do: notify(name, attributes)
+    :ok
+  end
+
+  defp append_span(name, attributes, started, ended, exit) do
     append(%{
       "type" => "effect-span",
       "name" => name,
@@ -220,8 +244,12 @@ defmodule HalC2.Traces do
     HalC2.Diagnostics.Attribution.write("server-trace", "append", IO.iodata_length(line), fn ->
       File.write!(path, line, [:append])
     end)
+
+    :ok
   rescue
-    error -> Logger.warning("Failed to write a trace record: #{Exception.message(error)}")
+    error ->
+      Logger.warning("Failed to write a trace record: #{Exception.message(error)}")
+      :error
   end
 
   defp rotate(path) do

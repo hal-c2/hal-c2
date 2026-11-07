@@ -3,11 +3,12 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// Settings → Pairing, in a client that paired itself with its environment
-// (`pairing`, apps/mobile-qt's Pairing): which environment that is, how the
-// connection to it stands, the way to pair with another one in its place
-// (`pairing.add`, the client's own pairing screen), and the way out, which
-// asks first (`pairing.askToForget`).
+// Settings → Pairing, in a client that paired itself with its environments
+// (`pairing`, apps/mobile-qt's Pairing): which environment the shell connects
+// to and how that connection stands, the others paired beside it
+// (SavedEnvironmentsGroup), the way to pair with one more (`pairing.add`, the
+// client's own pairing screen), and the way out of each, which asks first
+// (`pairing.askToForget`).
 SettingsPage {
     id: page
 
@@ -57,17 +58,27 @@ SettingsPage {
         }
 
         ShellButton {
-            objectName: "environmentPairAnother"
-            Layout.topMargin: Theme.space.sm
-            text: qsTr("Pair with another environment")
-            onClicked: Shell.dispatch("pairing.add")
-        }
-
-        ShellButton {
             objectName: "environmentForget"
             tint: Theme.palette.color("errorForeground", "#ef4444")
             text: qsTr("Forget this environment")
             onClicked: Shell.dispatch("pairing.askToForget")
+        }
+
+        SavedEnvironmentsGroup {
+            id: others
+
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.space.md
+            visible: others.environments.length > 0
+            pasting: false
+            removeAction: "pairing.askToForget"
+        }
+
+        ShellButton {
+            objectName: "environmentPairAnother"
+            Layout.topMargin: Theme.space.sm
+            text: qsTr("Pair with another environment")
+            onClicked: Shell.dispatch("pairing.add")
         }
     }
 }

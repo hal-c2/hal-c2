@@ -141,14 +141,12 @@ Feature: In-app preview browser
       When a client opens a browser tab under the profile "work"
       Then the tab remembers the profile "work"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (open takes the viewport)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A tab can be opened at the size the client asks for
       When a client opens a browser tab for the thread at the "iphone-se" preset
       Then the tab's viewport is the "iphone-se" preset from the start
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (snapshots are merged)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A tab keeps its profile and size when it navigates and reports its status
       Given a browser tab under the profile "work" resized to 1024 by 768
       When the desktop reports it navigated to "http://localhost:5173/resized"
@@ -188,7 +186,7 @@ Feature: In-app preview browser
       Then the tab's viewport is the "iphone-se" preset
       And every watching client is told the tab resized
 
-    @backlog @mc
+    @mc
     Scenario Outline: A viewport outside what a page can be rendered at is refused
       Given a browser tab that fills its space
       When a client resizes the tab to <width> by <height>
@@ -202,7 +200,7 @@ Feature: In-app preview browser
         | 3841  | 800    |
         | 3840  | 2161   |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: A viewport at the edge of the limits is accepted
       Given a browser tab that fills its space
       When a client resizes the tab to <width> by <height>
@@ -213,13 +211,13 @@ Feature: In-app preview browser
         | 240   | 240    |
         | 3840  | 2160   |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario: An address of more than 2048 characters is refused
       When a client opens a browser tab at an address of 2049 characters
       Then no tab opens
       And the client is told the address is too long
 
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: A refused address is described without repeating it
       When a client opens a browser tab at <address>
       Then no tab opens
@@ -231,7 +229,7 @@ Feature: In-app preview browser
         | "   "                                                                    |
         | "https://user:password@example.com:bad/path?access_token=secret#fragment" |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario: A page title of more than 512 characters is refused
       Given a browser tab showing a page
       When the desktop reports a navigation titled with 513 characters
@@ -257,8 +255,7 @@ Feature: In-app preview browser
       When a client closes the thread's browser tabs without naming one
       Then the thread has no browser tabs
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (close)
-    @backlog @mc @priority-high
+    @mc
     Scenario Outline: Closing a tab or thread that has no tabs succeeds quietly
       When a client closes <what>
       Then the request succeeds
@@ -270,8 +267,7 @@ Feature: In-app preview browser
         | a tab the thread does not have           |
         | the tabs of a thread that has none       |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/preview.ex (close emits one event per tab)
-    @backlog @mc @priority-high
+    @mc
     Scenario: Closing every tab of a thread gives each tab its own change number
       Given a thread with two browser tabs
       And a client is watching browser tab changes
@@ -396,16 +392,14 @@ Feature: In-app preview browser
       When a client watches for local servers
       Then "https://localhost:8443" is suggested
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/local_servers.ex (autoredirect false)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A listener that redirects elsewhere is suggested without following the redirect
       Given a program listening on port 3000 that redirects to "https://example.com"
       When a client watches for local servers
       Then port 3000 is suggested
       And the MC never asks "example.com" for anything
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/local_servers.ex (probe timeout)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A listener that does not answer within a second is not suggested
       Given a program listening on port 7000 that accepts connections and never answers
       When a client watches for local servers

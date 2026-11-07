@@ -251,7 +251,7 @@ Feature: Approvals and agent questions
     Then the agent receives "DuckDB, in memory"
 
   # Upstream #13865: a typed answer was lost after opening a new thread and coming back.
-  @backlog @shared @priority-low
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A half-written answer survives leaving the thread
     Given the agent asks "Which database?" and the user has typed "DuckDB" without sending it
     When the user opens a new thread and comes back

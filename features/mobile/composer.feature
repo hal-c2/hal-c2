@@ -141,9 +141,7 @@ Feature: Writing to an agent from a phone
       | the agent is working and the follow-up setting is steer             | Steer                  |
       | the user is editing a queued message                                | Update queued message  |
 
-  # A message written with no connection is not queued by the composer yet: it stays in the draft
-  # with a "Not connected" notice (see "A message written with no connection is sent once the connection returns").
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The send control reads Queue when the message must wait for a connection
     Given the agent is idle but the message must wait for a connection
     Then the send control reads "Queue"
@@ -853,7 +851,7 @@ Feature: Writing to an agent from a phone
     Then "add a test" is back in the composer
     And the user is pointed to the project's provider settings rather than to setting the provider up
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message written with no connection is sent once the connection returns
     Given "My MacBook" is unreachable
     When the user sends "add a test"

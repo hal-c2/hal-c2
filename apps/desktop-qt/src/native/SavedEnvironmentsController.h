@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 
 #include "EnvironmentCatalog.h"
 #include "NativeController.h"
@@ -66,7 +67,14 @@ public:
   // Pairs with the MC the link names and saves it; `done` gets why it failed,
   // or nothing.
   void pair(const QString& link, std::function<void(const QString& error)> done = {});
+  // Saves the environment a pairing exchange paid for, in the place of any
+  // with its id, and connects to it; why it could not be saved, or nothing.
+  // For a client that spends the link itself (apps/mobile-qt's Pairing).
+  std::optional<QString> add(const pairing::Result& result);
   void remove(const QString& id);
+  // Connects to every saved environment again, for a shell whose rows were
+  // emptied under them (NativeShell::close) and that needs them sent afresh.
+  void reconnect();
 
 signals:
   void changed();

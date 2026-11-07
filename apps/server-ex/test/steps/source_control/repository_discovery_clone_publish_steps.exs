@@ -912,7 +912,14 @@ defmodule HalC2.Steps.SourceControl.RepositoryDiscoveryClonePublish do
     |> Map.put(:keys_path, path)
   end
 
+  # fj's token is believed for thirty seconds in a `persistent_term` that outlives the
+  # scenario, so a scenario must start without one: it would otherwise skip `fj whoami`
+  # when an earlier scenario happened to warm it, and fail when none did.
   defp fj_installed(context, rules \\ []) do
+    key = {HalC2.SourceControl.Forgejo, :authenticated}
+    :persistent_term.erase(key)
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(key) end)
+
     context
     |> World.fake_cli(["fj"])
     |> World.cli_rules([

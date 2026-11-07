@@ -61,7 +61,7 @@ Feature: Subscription limits
 
   # Upstream #15116: a window reported mid-turn cleared the failed-check marker; the failure now
   # stays until a full check succeeds.
-  @mc @backlog
+  @mc
   Scenario: A reading from a running turn does not hide a failed check
     Given the last check of Codex's limits failed
     When a running Codex turn reports one rate-limit window
@@ -75,7 +75,7 @@ Feature: Subscription limits
     Then Codex's limits are reported as not supported for this account
 
   # Upstream #18624: a Claude account with limits but no data is a failed check, not unsupported
-  @mc @backlog @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude account whose limits come back empty is checked again
     Given a Claude subscription account whose check says it has limits but returns none
     When the MC checks Claude's limits
@@ -118,10 +118,10 @@ Feature: Subscription limits
     Then Codex and Claude are not checked
 
   # Upstream #10310: switching background checks off also stops reading the usage hubs
-  @mc @backlog
+  @mc
   Scenario: Background checks switched off do not read the usage hubs either
     Given the health check interval is set to never
-    When a minute passes
+    When a minute passes and the MC runs its periodic checks
     Then no usage hub is read
     And refreshing by hand still reads them
 
@@ -145,7 +145,7 @@ Feature: Subscription limits
     Then "Using reset credit…" shows under the bar after the popover closes
     And it is replaced by how the reset went
 
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex
   Scenario Outline: A refused Codex reset credit is not reported as unconfirmed when the following check fails
     Given Codex refuses the reset credit because <refusal>
     When the user uses the reset credit and the following check fails
@@ -258,8 +258,7 @@ Feature: Subscription limits
     Then the hub redeems it and the account's limits are read again
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (readAccounts: enabled codex and claude auth files only)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's disabled accounts and other providers are left out
     Given a hub that lists a disabled Codex account, an enabled Claude account and a Gemini account
     When the MC reads the hub
@@ -267,15 +266,14 @@ Feature: Subscription limits
     And a reset credit cannot be redeemed on the disabled Codex account
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (credits endpoint failure keeps usage)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (credits)
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's credit lookup failing keeps the account's windows
     Given a hub whose Codex account reports its windows but whose credit lookup fails
     When the MC reads the hub
     Then the account shows its windows with no reset credits
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (failed account never publishes the upstream body)
-  @mc @backlog @priority-low
+  @mc
   Scenario: What a hub's upstream said is not shown to clients
     Given a hub account whose upstream request fails with a message that holds a secret
     When the MC reads the hub
@@ -283,15 +281,14 @@ Feature: Subscription limits
     And the secret text is not in anything sent to clients
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (Claude weekly scoped windows)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's Claude account shows its per-model weekly limits
     Given a hub Claude account that reports a weekly limit scoped to one model
     When the MC reads the hub
     Then the account shows its session and weekly windows and the model's own weekly window
 
   # Upstream #21413: a hub Codex account keeps its plan when the usage response leaves it out
-  @mc @backlog @priority-high
+  @mc
   Scenario: A hub's Codex account keeps its plan when the usage report leaves it out
     Given a hub Codex account on the Free plan whose usage report names no plan
     When the MC reads the hub
@@ -299,10 +296,9 @@ Feature: Subscription limits
     And its quota is shown as that plan's window, not as a session window
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (consume outcomes)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (@outcomes)
-  @mc @backlog @priority-high
+  @mc
   Scenario Outline: A hub answers a reset credit redemption with what happened
-    Given a hub account with a banked reset credit
+    Given a hub account with a banked Codex reset credit
     When the hub answers the redemption with <answer>
     Then the user is told <outcome>
     And the hub's cooldown for that account is <cooldown>
@@ -315,16 +311,15 @@ Feature: Subscription limits
       | already redeemed    | the credit was already redeemed         | cleared           |
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (cooldown clearing failure is a warning)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex
-  @mc @backlog @priority-high
+  @mc
   Scenario: A reset applied through a hub whose cooldown cannot be cleared still succeeds
-    Given a hub account with a banked reset credit
+    Given a hub account with a banked Codex reset credit
     When the user uses the reset credit and the hub cannot clear the account's cooldown
     Then the reset is reported as applied
     And the user is warned that routing may resume only after the hub's cooldown expires
 
   # Legacy: apps/server/src/usage/cliproxyApi.ts (account in a redemption must be one the hub listed)
-  @mc @backlog @priority-low
+  @mc
   Scenario: A redemption for an account the hub does not list is not forwarded
     Given a hub that lists two accounts
     When the user uses a reset credit naming an account the hub does not list
