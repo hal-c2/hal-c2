@@ -1376,6 +1376,7 @@ defmodule HalC2.Test.Mc.World do
         ],
         do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
+    Mc.ensure(HalC2.WorkspaceLease)
     Mc.ensure(HalC2.StorageCleanup)
     context
   end
@@ -1393,6 +1394,23 @@ defmodule HalC2.Test.Mc.World do
   scenario ends.
   """
   def open_terminal(thread_id, cwd, terminal_id \\ "term-1") do
+    start_terminals()
+
+    {:ok, %{"pid" => shell}} =
+      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
+    end)
+
+    shell
+  end
+
+  @doc """
+  Starts the terminal services (registry, supervisor, hub) and the workspace leases
+  terminals take while they start, if the scenario has not, with `/bin/sh` as the shell.
+  """
+  def start_terminals do
     put_env("SHELL", "/bin/sh")
 
     Mc.ensure(
@@ -1403,15 +1421,8 @@ defmodule HalC2.Test.Mc.World do
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
     Mc.ensure(HalC2.Terminal.Hub)
-
-    {:ok, %{"pid" => shell}} =
-      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
-
-    ExUnit.Callbacks.on_exit(fn ->
-      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
-    end)
-
-    shell
+    Mc.ensure(HalC2.WorkspaceLease)
+    :ok
   end
 
   @doc "The output tokens a usage summary counts for `provider` across its buckets."
