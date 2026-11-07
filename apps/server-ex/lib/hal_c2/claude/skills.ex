@@ -426,10 +426,12 @@ defmodule HalC2.Claude.Skills do
 
   defp finish(acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
 
+  # A line comment ends at a newline or a lone carriage return, whichever comes
+  # first; the break itself stays as whitespace.
   defp drop_line(text) do
-    case :binary.split(text, "\n") do
-      [_line, rest] -> "\n" <> rest
-      [_line] -> ""
+    case :binary.matches(text, ["\n", "\r"]) do
+      [{at, _} | _] -> binary_part(text, at, byte_size(text) - at)
+      [] -> ""
     end
   end
 

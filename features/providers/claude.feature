@@ -196,7 +196,7 @@ Feature: Claude
     Then the user is told to update Claude by hand
 
   # Upstream #19517: WinGet Claude installs are updated by hand, not with claude update
-  @backlog @priority-low
+  @priority-low
   Scenario: Claude installed with WinGet can only be updated by hand
     Given Claude was installed with WinGet
     When a newer Claude is released
@@ -205,7 +205,7 @@ Feature: Claude
 
   # Upstream #27958: native installs were compared with npm releases the native channel had not
   # promoted yet, so Claude stayed "update available" after claude update said it was current.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A native Claude install is compared with its own release channel
     Given Claude was installed by its own native installer and follows the "<channel>" channel
     And npm has published a newer Claude than the "<channel>" channel offers
@@ -218,7 +218,7 @@ Feature: Claude
       | stable  |
 
   # Upstream #27958
-  @backlog @priority-low
+  @priority-low
   Scenario: A native Claude whose release channel cannot be read has an unknown latest version
     Given Claude was installed by its own native installer
     And Claude's release channel does not answer or answers with something unreadable
@@ -272,7 +272,6 @@ Feature: Claude
     And is told to upgrade to the version the model requires or newer
 
   # Upstream #23272: a signed-out Claude hid the model but lost the reason.
-  @backlog
   Scenario: A signed-out Claude still says which models need a newer Claude Code
     Given the installed Claude is older than a model requires
     And the Claude CLI is not signed in
@@ -287,7 +286,6 @@ Feature: Claude
     And is told to upgrade to that version or newer
 
   # Upstream #21263: Claude gets up to 20 seconds to report its version before it is called broken.
-  @backlog
   Scenario: A Claude that is slow to report its version is not reported as failing
     Given Claude takes 15 seconds to report its version
     When the MC checks Claude
@@ -327,7 +325,7 @@ Feature: Claude
     Then Claude shows the account's email and plan
 
   # Upstream #27745: Anthropic renamed Max 5x to Max and Max 20x to Ultra.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario Outline: A Claude subscription is shown by its current plan name
     Given the Claude CLI is signed in with the "<subscription>" subscription
     When Claude's usage has been checked
@@ -875,7 +873,7 @@ Feature: Claude
     When the user sends a message to Claude
     Then the turn fails saying to run the Claude sign-in command on that machine
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude's sign-in state is reported before the first turn
     Given the Claude CLI on the MC <sign-in>
     When the user looks at Claude in the provider settings
@@ -948,7 +946,6 @@ Feature: Claude
     Then the turn runs through the router with that model
 
   # Upstream #21169: Claude with a custom ANTHROPIC_BASE_URL does not read as logged out.
-  @backlog
   Scenario: A Claude on a custom endpoint is not reported signed out
     Given a Claude instance whose environment sets a custom ANTHROPIC_BASE_URL and key
     When the MC checks Claude
@@ -956,7 +953,7 @@ Feature: Claude
     And the user is not asked to sign in
 
   # Upstream #26937: a proxy set in Claude's own settings file read as "Claude API Key".
-  @backlog @priority-low
+  @priority-low
   Scenario: A Claude proxy set in Claude's settings file is shown as a custom endpoint
     Given Claude's settings file sets ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN in its env
     And the MC's own environment sets neither
@@ -977,7 +974,7 @@ Feature: Claude
     Then Claude shows its session and weekly windows
 
   # Upstream #19433: Claude's monthly account spending limit is shown as a usage window.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Claude account's monthly spending limit is a usage window
     Given the Claude account has a monthly spending limit, 40 percent used
     When the user opens the limits view
@@ -1954,7 +1951,7 @@ Feature: Claude
     Then "review" is shown as off
 
   # Upstream #27069: a "//" comment ran past a lone carriage return, so the settings after it were silently lost.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: Settings after a comment that ends in a lone carriage return are still read
     Given the project's Claude settings hold a "//" comment ended by a lone carriage return
     And the line after it switches the skill "review" off
@@ -2009,7 +2006,7 @@ Feature: Claude
 
   # Upstream #27957: with npm's global prefix at ~/.local, an npm install of Claude puts its launcher
   # where Claude's own installer does, and was offered "claude update".
-  @backlog @priority-low
+  @priority-low
   Scenario: Claude installed by npm into ".local" of the user's home updates through npm
     Given npm's global prefix is ".local" of the user's home
     And the claude command in ".local/bin" links into npm's "@anthropic-ai/claude-code" package

@@ -101,6 +101,161 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- WinGet, release channels, and who really installed it --------------------------
+
+  step "Claude was installed with WinGet", context do
+    context = World.fake_providers(context)
+    home = Mc.tmp_dir(context.mc, "claude-winget-home")
+
+    context
+    |> claude_at(
+      home,
+      Path.join([
+        "AppData",
+        "Local",
+        "Microsoft",
+        "WinGet",
+        "Packages",
+        "Anthropic.ClaudeCode",
+        "claude"
+      ])
+    )
+    |> latest("claudeAgent", "9.9.9")
+  end
+
+  step "a newer Claude is released", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude is reported out of date with the command to update it by hand", context do
+    assert %{
+             "status" => "behind_latest",
+             "updateCommand" => "winget upgrade Anthropic.ClaudeCode"
+           } =
+             claude(context.providers)["versionAdvisory"]
+
+    context
+  end
+
+  step "no Update action is offered", context do
+    assert claude(context.providers)["versionAdvisory"]["canUpdate"] == false
+    context
+  end
+
+  # The instance's Claude settings name the channel, in a config directory of
+  # their own; the channel offers the installed 2.1.0.
+  defp native_channel(context, channel) do
+    context = World.fake_providers(context, claude_layout: :native)
+    config = Mc.tmp_dir(context.mc, "claude-channel")
+
+    File.write!(
+      Path.join(config, "settings.json"),
+      JSON.encode!(%{"autoUpdatesChannel" => channel})
+    )
+
+    World.put_os_env("CLAUDE_CONFIG_DIR", config)
+    World.reset_provider_caches()
+    channel_latest(context, channel, "2.1.0")
+  end
+
+  step "Claude was installed by its own native installer and follows the {string} channel",
+       %{args: [channel]} = context do
+    native_channel(context, channel)
+  end
+
+  step "Claude was installed by its own native installer", context do
+    context |> World.fake_providers(claude_layout: :native) |> latest("claudeAgent", "9.9.9")
+  end
+
+  step "npm has published a newer Claude than the {string} channel offers",
+       %{args: [_channel]} = context do
+    # npm's last read is far ahead; it is not the native channel's to offer.
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "claudeAgent"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    context
+  end
+
+  step "the installed Claude is the newest the {string} channel offers",
+       %{args: [_channel]} = context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude is reported up to date", context do
+    assert %{"status" => "current", "latestVersion" => "2.1.0"} =
+             claude(context.providers)["versionAdvisory"]
+
+    context
+  end
+
+  step "Claude's release channel does not answer or answers with something unreadable",
+       context do
+    # No channel read stands (the reset clears the seeded one), and test update
+    # checks are off, so none arrives. npm's last read is still ahead.
+    World.reset_provider_caches()
+
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "claudeAgent"},
+      {"9.9.9", System.monotonic_time(:millisecond)}
+    )
+
+    context
+  end
+
+  step "the MC checks Claude for updates", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude's latest version is unknown", context do
+    assert %{"status" => "unknown", "latestVersion" => nil} =
+             claude(context.providers)["versionAdvisory"]
+
+    context
+  end
+
+  step "Claude is not reported out of date against npm's releases", context do
+    refute claude(context.providers)["versionAdvisory"]["status"] == "behind_latest"
+    context
+  end
+
+  step "npm's global prefix is {string} of the user's home", %{args: [_prefix]} = context do
+    context = World.fake_providers(context)
+    Map.put(context, :npm_home, Mc.tmp_dir(context.mc, "claude-npm-local"))
+  end
+
+  step "the claude command in {string} links into npm's {string} package",
+       %{args: [_bin, _package]} = context do
+    home = context.npm_home
+
+    real =
+      Path.join([home, ".local", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"])
+
+    File.mkdir_p!(Path.dirname(real))
+
+    File.write!(real, """
+    #!/bin/sh
+    if [ "$1" = "--version" ]; then echo "2.1.0 (Claude Code)"; exit 0; fi
+    exec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} "$@"
+    """)
+
+    File.chmod!(real, 0o755)
+    link = Path.join([home, ".local", "bin", "claude"])
+    File.mkdir_p!(Path.dirname(link))
+    File.ln_s!(real, link)
+    npm = Path.join([home, ".local", "bin", "npm"])
+    File.write!(npm, "#!/bin/sh\nexit 0\n")
+    File.chmod!(npm, 0o755)
+    World.put_os_env("HOME", home)
+    World.put_app_env(:claude_command, [link])
+    World.reset_provider_caches()
+    context
+  end
+
   # --- too old for a model, compatibility, who updates it ----------------------------
 
   # The gated manifest model needing the lowest version above `version` (every gated
@@ -627,6 +782,206 @@ defmodule HalC2.Steps.Providers.Claude do
              claude(context.providers)["auth"]
 
     assert label =~ "Max"
+    context
+  end
+
+  # --- plan names, sign-in state, custom endpoints ------------------------------------
+
+  step "the Claude CLI is signed in with the {string} subscription",
+       %{args: [subscription]} = context do
+    World.put_os_env("FAKE_CLAUDE_SUBSCRIPTION", subscription)
+    World.fake_providers(context)
+  end
+
+  step "Claude shows the plan as {string}", %{args: [plan]} = context do
+    assert %{"label" => ^plan} = claude(context.providers)["auth"]
+    context
+  end
+
+  # No key or token anywhere Claude would read one, and `claude auth status`
+  # itself says nobody is signed in.
+  defp signed_out(context) do
+    World.put_os_env("ANTHROPIC_API_KEY", nil)
+    World.put_os_env("ANTHROPIC_AUTH_TOKEN", nil)
+    World.put_os_env("ANTHROPIC_BASE_URL", nil)
+    World.put_os_env("FAKE_CLAUDE_AUTH_STATUS", ~s({"loggedIn":false,"authMethod":"none"}))
+    World.reset_provider_caches()
+    context
+  end
+
+  step "the Claude CLI on the MC reports no account, no API key and no token", context do
+    context |> World.fake_providers() |> signed_out()
+  end
+
+  step "the Claude CLI is not signed in", context do
+    context |> World.fake_providers() |> signed_out()
+  end
+
+  step "the Claude CLI on the MC uses an API key", context do
+    World.put_os_env("ANTHROPIC_API_KEY", "sk-ant-test")
+    context |> World.fake_providers() |> Map.put(:auth_checked, true)
+  end
+
+  step "the Claude CLI on the MC runs through Bedrock or Vertex", context do
+    World.put_os_env("CLAUDE_CODE_USE_BEDROCK", "1")
+    World.fake_providers(context)
+  end
+
+  step "the Claude CLI on the MC is too old to report its account", context do
+    World.put_os_env("FAKE_CLAUDE_AUTH_STATUS", "unknown")
+    World.fake_providers(context, claude_version: "1.0.44")
+  end
+
+  step "the user looks at Claude in the provider settings", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude is shown as not signed in, with {string} as the fix",
+       %{args: [fix]} = context do
+    assert %{"status" => "unauthenticated"} = claude(context.providers)["auth"]
+    assert claude(context.providers)["message"] =~ fix
+    context
+  end
+
+  step "Claude is shown as signed in", context do
+    assert %{"status" => "authenticated"} = claude(context.providers)["auth"]
+    assert claude(context.providers)["status"] == "ready"
+    context
+  end
+
+  step "the user is told to update Claude Code to use that model", context do
+    {providers, context} = World.provider_list(context)
+    {min, model} = lowest_gated(claude(providers)["version"])
+    assert claude(providers)["message"] =~ "is too old for #{model["name"]}"
+    assert claude(providers)["message"] =~ "Upgrade to v#{min} or newer"
+    Map.put(context, :providers, providers)
+  end
+
+  step "the sign-in hint is still shown", context do
+    assert %{"status" => "unauthenticated"} = claude(context.providers)["auth"]
+    assert claude(context.providers)["message"] =~ "claude auth login"
+    context
+  end
+
+  # The built-in instance's own variables, as Settings > Providers writes them.
+  defp instance_env(context, vars) do
+    write_settings(context, fn settings ->
+      put_in(settings, [Access.key("providerInstances", %{}), "claudeAgent"], %{
+        "driver" => "claudeAgent",
+        "enabled" => true,
+        "environment" =>
+          Enum.map(vars, fn {name, value} ->
+            %{"name" => name, "value" => value, "sensitive" => true}
+          end)
+      })
+    end)
+  end
+
+  step "a Claude instance whose environment sets a custom ANTHROPIC_BASE_URL and key",
+       context do
+    context
+    |> World.fake_providers()
+    |> instance_env(%{
+      "ANTHROPIC_BASE_URL" => "https://router.test/api",
+      "ANTHROPIC_API_KEY" => "[REDACTED]"
+    })
+  end
+
+  # The provider entries the MC serves, read in-process: a check whose version
+  # probe takes 15 seconds outlasts a socket frame's wait.
+  step "the MC checks Claude", context do
+    Map.put(context, :providers, HalC2.Environment.providers())
+  end
+
+  step "Claude is reported ready", context do
+    assert %{"status" => "ready", "auth" => %{"status" => "authenticated"}} =
+             claude(context.providers)
+
+    context
+  end
+
+  step "the user is not asked to sign in", context do
+    refute (claude(context.providers)["message"] || "") =~ "claude auth login"
+    context
+  end
+
+  step "Claude's settings file sets ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN in its env",
+       context do
+    context = World.fake_providers(context)
+    config = Mc.tmp_dir(context.mc, "claude-proxy")
+
+    File.write!(
+      Path.join(config, "settings.json"),
+      JSON.encode!(%{
+        "env" => %{
+          "ANTHROPIC_BASE_URL" => "https://proxy.test",
+          "ANTHROPIC_AUTH_TOKEN" => "[REDACTED]"
+        }
+      })
+    )
+
+    # The proxy login is what `initialize` reports: an auth token, no subscription.
+    World.put_os_env("CLAUDE_CONFIG_DIR", config)
+    World.put_os_env("FAKE_CLAUDE_TOKEN_SOURCE", "ANTHROPIC_AUTH_TOKEN")
+    World.reset_provider_caches()
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "the MC's own environment sets neither", context do
+    World.put_os_env("ANTHROPIC_BASE_URL", nil)
+    World.put_os_env("ANTHROPIC_AUTH_TOKEN", nil)
+    context
+  end
+
+  step "Claude is reported ready with {string}", %{args: [label]} = context do
+    assert %{"status" => "ready", "auth" => %{"status" => "authenticated", "label" => ^label}} =
+             claude(context.providers)
+
+    context
+  end
+
+  step "the Claude account has a monthly spending limit, 40 percent used", context do
+    World.put_os_env("FAKE_CLAUDE_MONTHLY", "40")
+    World.fake_providers(context)
+  end
+
+  step "Claude shows a monthly window at 40 percent with its reset date", context do
+    {providers, context} = World.provider_list(context)
+    windows = claude(providers)["usageLimits"]["windows"]
+
+    assert %{"kind" => "monthly", "usedPercent" => 40.0, "resetsAt" => resets} =
+             Enum.find(windows, &(&1["kind"] == "monthly"))
+
+    assert resets =~ "2026-10-01"
+    context
+  end
+
+  # The first `--version` takes the 15 seconds; the deadline is what is under
+  # test, so later probes of the same check answer at once.
+  step "Claude takes 15 seconds to report its version", context do
+    context = World.fake_providers(context)
+    marker = Path.join(Mc.tmp_dir(context.mc, "slow-version"), "reported")
+
+    claude_script(
+      context,
+      "claude",
+      """
+      #!/bin/sh
+      if [ "$1" = "--version" ]; then
+        if [ ! -e #{marker} ]; then touch #{marker}; sleep 15; fi
+        echo "2.1.0 (Claude Code)"; exit 0
+      fi
+      exec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} "$@"
+      """
+    )
+  end
+
+  step "Claude is not reported as failing to run", context do
+    assert %{"status" => "ready", "version" => "2.1.0"} = claude(context.providers)
     context
   end
 
@@ -2158,10 +2513,25 @@ defmodule HalC2.Steps.Providers.Claude do
 
   defp choices(model, id), do: Enum.map(descriptor(model, id)["options"], & &1["id"])
 
-  # The npm registry's latest release, as the MC last read it.
+  # The npm registry's latest release, as the MC last read it. A native Claude
+  # install follows its own release channel instead, so the channel's last read
+  # is seeded with the same version.
   defp latest(context, driver, version) do
+    read = {version, System.monotonic_time(:millisecond)}
+    :persistent_term.put({HalC2.ProviderUpdates, driver}, read)
+
+    if driver == "claudeAgent" do
+      for channel <- ["latest", "stable"],
+          do: :persistent_term.put({HalC2.ProviderUpdates, :claude_channel, channel}, read)
+    end
+
+    context
+  end
+
+  # The newest version Claude's own release channel offers, as the MC last read it.
+  defp channel_latest(context, channel, version) do
     :persistent_term.put(
-      {HalC2.ProviderUpdates, driver},
+      {HalC2.ProviderUpdates, :claude_channel, channel},
       {version, System.monotonic_time(:millisecond)}
     )
 
@@ -5722,6 +6092,26 @@ defmodule HalC2.Steps.Providers.Claude do
       },
     }
     """)
+
+    context
+  end
+
+  step "the project's Claude settings hold a \"//\" comment ended by a lone carriage return",
+       context do
+    context = context |> World.fake_providers() |> project_skill("review")
+    root = World.project(context).root
+    path = Path.join([root, ".claude", "settings.json"])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "{\n  // the team's switches" <> <<13>>)
+    Map.put(context, :settings_path, path)
+  end
+
+  step "the line after it switches the skill {string} off", %{args: [name]} = context do
+    File.write!(
+      context.settings_path,
+      "  \"skillOverrides\": {\"#{name}\": \"off\"}\n}\n",
+      [:append]
+    )
 
     context
   end

@@ -57,14 +57,36 @@ defmodule HalC2.ProviderUsageLimits.Claude do
 
     names = with [{name, _} | _] <- scoped, do: name, else: (_ -> nil)
 
+    # The account's monthly spending limit (`extra_usage`) is a window of its own.
+    monthly =
+      case rate_limits["extra_usage"] do
+        %{"utilization" => used} = extra when is_number(used) ->
+          if extra["is_enabled"] == false, do: [], else: [monthly_window(used, extra)]
+
+        _ ->
+          []
+      end
+
     # An account that says it has limits but returns none is a failed check to repeat,
     # not one that can never report.
-    if windows == [] and scoped == [],
+    if windows == [] and scoped == [] and monthly == [],
       do: {Limits.unavailable(checked_at, "probeFailed"), nil},
-      else: {Limits.limits(checked_at, windows ++ Enum.map(scoped, &elem(&1, 1))), names}
+      else:
+        {Limits.limits(checked_at, windows ++ Enum.map(scoped, &elem(&1, 1)) ++ monthly), names}
   end
 
   def limits(_response, checked_at), do: {Limits.unavailable(checked_at, "unsupported"), nil}
+
+  defp monthly_window(used, extra) do
+    %{
+      "id" => "monthly_spending",
+      "kind" => "monthly",
+      "label" => "Monthly spending",
+      "windowDurationMins" => 30 * 24 * 60,
+      "usedPercent" => Limits.clamp(used)
+    }
+    |> Limits.put_present("resetsAt", Limits.iso(extra["resets_at"]))
+  end
 
   @doc "The window a `rate_limit_event`'s `rate_limit_info` names, or nil."
   def event_window(%{"rateLimitType" => type, "utilization" => used} = info, overage_name)
@@ -145,7 +167,11 @@ defmodule HalC2.ProviderUsageLimits.Claude do
         # The initialize reply came first; it names the account.
         receive do
           {:claude, ^session, {:initialized, {:ok, init}}} ->
-            Limits.remember_account(instance, account(init["account"]))
+            Limits.remember_account(
+              instance,
+              account(init["account"], HalC2.Claude.Provider.effective_env(instance))
+            )
+
             Limits.remember_commands(instance, commands(init["commands"]))
         after
           1_000 -> :ok
@@ -163,21 +189,29 @@ defmodule HalC2.ProviderUsageLimits.Claude do
   end
 
   @doc false
-  # `auth` fields for the account `initialize` reports.
-  def account(%{} = account) do
+  # `auth` fields for the account `initialize` reports. `env` is the environment
+  # the instance runs under: with a custom `ANTHROPIC_BASE_URL` an API-key login
+  # is a custom endpoint, not Anthropic's own API key.
+  def account(account, env \\ %{})
+
+  def account(%{} = account, env) do
     method = String.downcase(String.replace(account["tokenSource"] || "", ~r/[\s_-]+/, ""))
     subscription = account["subscriptionType"]
 
     auth =
       cond do
         method in ~w(apikey anthropicapikey anthropicauthtoken) ->
-          %{"type" => "apiKey", "label" => "Claude API Key"}
+          label = if custom_endpoint?(env), do: "Custom API endpoint", else: "Claude API Key"
+          %{"type" => "apiKey", "label" => label}
 
         is_binary(subscription) and subscription != "" ->
           %{"type" => subscription, "label" => subscription_label(subscription)}
 
         account["apiProvider"] == "bedrock" ->
           %{"type" => "bedrock", "label" => "Amazon Bedrock"}
+
+        account["apiProvider"] == "vertex" ->
+          %{"type" => "vertex", "label" => "Google Vertex AI"}
 
         true ->
           %{}
@@ -186,7 +220,14 @@ defmodule HalC2.ProviderUsageLimits.Claude do
     Limits.put_present(auth, "email", account["email"])
   end
 
-  def account(_), do: %{}
+  def account(_, _env), do: %{}
+
+  defp custom_endpoint?(env) do
+    case env["ANTHROPIC_BASE_URL"] do
+      url when is_binary(url) -> String.trim(url) != ""
+      _ -> false
+    end
+  end
 
   @doc "The slash commands `initialize` reports (skills among them), as `ServerProviderSlashCommand`s."
   def commands(commands) when is_list(commands) do
@@ -210,18 +251,21 @@ defmodule HalC2.ProviderUsageLimits.Claude do
 
   defp blank_nil(_), do: nil
 
+  # Anthropic renamed Max 5x to Max and Max 20x to Ultra; the CLI still reports
+  # the old subscription ids.
   @plans %{
     "claudemaxsubscription" => "Max",
-    "claudemax5xsubscription" => "Max 5x",
-    "claudemax20xsubscription" => "Max 20x",
+    "claudemax5xsubscription" => "Max",
+    "claudemax20xsubscription" => "Ultra",
     "claudeenterprisesubscription" => "Enterprise",
     "claudeteamsubscription" => "Team",
     "claudeprosubscription" => "Pro",
     "claudefreesubscription" => "Free",
     "max" => "Max",
     "maxplan" => "Max",
-    "max5" => "Max 5x",
-    "max20" => "Max 20x",
+    "max5" => "Max",
+    "max20" => "Ultra",
+    "ultra" => "Ultra",
     "enterprise" => "Enterprise",
     "team" => "Team",
     "pro" => "Pro",

@@ -16,8 +16,18 @@ defmodule HalC2.Claude.Provider do
   @models {__MODULE__, :models}
   @capabilities {__MODULE__, :capabilities}
   @health {__MODULE__, :health}
+  @auth {__MODULE__, :auth}
   @workspaces {__MODULE__, :workspaces}
   @probe_timeout 20_000
+  # Claude gets up to 20 seconds to report its version before it is called broken.
+  @health_timeout 20_000
+  # `claude auth status` arrived with Claude Code 2.0; an older CLI cannot
+  # report its sign-in, so its word is not held against it.
+  @auth_status_floor "2.0.0"
+  @auth_env_keys ~w(
+    ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+    CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CONFIG_DIR
+  )
   # How long an `initialize` read (account, commands, models) stands before the
   # next check reads it again; a refresh by hand always reads afresh.
   @capabilities_ttl_ms 300_000
@@ -208,19 +218,176 @@ defmodule HalC2.Claude.Provider do
           "message" => message
         })
 
-      {:ok, _version} ->
-        if auth_unverified?(id, path) do
-          entry
-          |> Map.merge(%{
-            "status" => "warning",
-            "auth" => %{"status" => "unknown"},
-            "message" =>
-              "Could not verify Claude authentication status from initialization result."
-          })
-        else
-          entry
+      {:ok, version} ->
+        case auth_report(id, path, version) do
+          {:unauthenticated, hint} ->
+            # The sign-in hint joins whatever the entry already says (a model the
+            # CLI is too old for), so neither hides the other.
+            entry
+            |> Map.put("status", "error")
+            |> Map.put("auth", %{"status" => "unauthenticated"})
+            |> Map.put("message", join_message(entry["message"], hint))
+
+          {:authenticated, fields} ->
+            Map.put(entry, "auth", Map.merge(%{"status" => "authenticated"}, fields))
+
+          :unknown ->
+            if auth_unverified?(id, path) do
+              entry
+              |> Map.merge(%{
+                "status" => "warning",
+                "auth" => %{"status" => "unknown"},
+                "message" =>
+                  "Could not verify Claude authentication status from initialization result."
+              })
+            else
+              entry
+            end
         end
     end
+  end
+
+  defp join_message(nil, hint), do: hint
+  defp join_message(message, hint), do: message <> " " <> hint
+
+  @doc """
+  The environment instance `instance`'s sign-in is decided by, widest first:
+  the MC's own environment, the `env` of Claude's settings file in the
+  instance's config directory, and the instance's variables in HAL-C2 settings.
+  Only the keys that decide how Claude authenticates are read.
+  """
+  @spec effective_env(String.t()) :: %{optional(String.t()) => String.t()}
+  def effective_env(instance \\ "claudeAgent") do
+    system = Map.take(System.get_env(), @auth_env_keys)
+
+    system
+    |> Map.merge(settings_env(instance))
+    |> Map.merge(Map.take(HalC2.Settings.instance_env(instance), @auth_env_keys))
+  end
+
+  # The `env` object of the instance's Claude settings file, keyed as written.
+  defp settings_env(instance) do
+    path = Path.join(config_dir(instance), "settings.json")
+
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"env" => env}} when is_map(env) <- HalC2.Claude.Skills.decode_lenient(text) do
+      Map.new(env, fn {key, value} -> {to_string(key), to_string(value)} end)
+      |> Map.take(@auth_env_keys)
+    else
+      _ -> %{}
+    end
+  end
+
+  # How instance `id` is signed in, before any turn runs: a key, token or cloud
+  # backend in its environment signs it in without the CLI's word; else
+  # `claude auth status` decides. A CLI too old for that command, or one whose
+  # answer cannot be read, is `:unknown` and falls back to what `initialize`
+  # reported — except a CLI older than the command itself, which cannot report
+  # its account at all and keeps the benefit of the doubt.
+  defp auth_report(id, path, version) do
+    env = effective_env(id)
+
+    cond do
+      truthy?(env["CLAUDE_CODE_USE_BEDROCK"]) ->
+        {:authenticated, %{"type" => "bedrock", "label" => "Amazon Bedrock"}}
+
+      truthy?(env["CLAUDE_CODE_USE_VERTEX"]) ->
+        {:authenticated, %{"type" => "vertex", "label" => "Google Vertex AI"}}
+
+      present?(env["ANTHROPIC_API_KEY"]) or present?(env["ANTHROPIC_AUTH_TOKEN"]) ->
+        label =
+          if present?(env["ANTHROPIC_BASE_URL"]),
+            do: "Custom API endpoint",
+            else: "Claude API Key"
+
+        {:authenticated, %{"type" => "apiKey", "label" => label}}
+
+      true ->
+        case auth_status(id, path, env) do
+          :signed_in ->
+            {:authenticated, %{}}
+
+          :signed_out ->
+            {:unauthenticated, sign_in_hint()}
+
+          :unreadable ->
+            if older?(version, @auth_status_floor), do: {:authenticated, %{}}, else: :unknown
+        end
+    end
+  end
+
+  defp sign_in_hint,
+    do: "Claude is not signed in. Run `claude auth login` on this machine to sign in."
+
+  defp truthy?(value),
+    do: is_binary(value) and String.downcase(String.trim(value)) in ["1", "true", "yes"]
+
+  defp present?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp older?(version, floor) do
+    case Version.parse(version || "") do
+      {:ok, parsed} -> Version.compare(parsed, floor) == :lt
+      :error -> false
+    end
+  end
+
+  # `claude auth status` for `id`, read at most once in five minutes per
+  # executable and environment: `:signed_in`, `:signed_out`, or `:unreadable`
+  # when the CLI has no such command or its answer is not the JSON it prints.
+  defp auth_status(id, path, env) do
+    key = {id, path, :erlang.phash2(Enum.sort(Map.take(env, @auth_env_keys)))}
+    records = :persistent_term.get(@auth, %{})
+
+    case Map.get(records, key) do
+      {result, at} ->
+        if System.monotonic_time(:millisecond) - at < @capabilities_ttl_ms,
+          do: result,
+          else: read_auth_status(key, id, path)
+
+      _ ->
+        read_auth_status(key, id, path)
+    end
+  end
+
+  defp read_auth_status(key, id, path) do
+    result = run_auth_status(id, path)
+    records = :persistent_term.get(@auth, %{})
+
+    :persistent_term.put(
+      @auth,
+      Map.put(records, key, {result, System.monotonic_time(:millisecond)})
+    )
+
+    result
+  end
+
+  defp run_auth_status(id, path) do
+    home =
+      case home_path(id) do
+        nil -> []
+        dir -> [{"CLAUDE_CONFIG_DIR", expand_home(dir)}]
+      end
+
+    env = Enum.to_list(HalC2.Settings.instance_env(id)) ++ home
+
+    task =
+      Task.async(fn -> System.cmd(path, ["auth", "status"], env: env, stderr_to_stdout: true) end)
+
+    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, @health_timeout)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {output, _status}} ->
+        case JSON.decode(String.trim(output)) do
+          {:ok, %{"loggedIn" => true}} -> :signed_in
+          {:ok, %{"loggedIn" => false}} -> :signed_out
+          _ -> :unreadable
+        end
+
+      _ ->
+        :unreadable
+    end
+  rescue
+    _ -> :unreadable
   end
 
   # Signed-in-ness as the last `initialize` read left it: a read that reported no
@@ -262,7 +429,7 @@ defmodule HalC2.Claude.Provider do
 
   defp probe_version(path) do
     task = Task.async(fn -> run_version(path) end)
-    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, 5_000)
+    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, @health_timeout)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, version}} ->
