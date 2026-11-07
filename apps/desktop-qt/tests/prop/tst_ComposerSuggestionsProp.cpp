@@ -373,7 +373,7 @@ private slots:
         for (const QString& name : all) {
           const bool skill = name == QLatin1String("template") || name == QLatin1String("review");
           const QString wanted = skill && query.startsWith(QLatin1String("skill:")) ? query.mid(6) : query;
-          if (name.startsWith(wanted) || (skill && QStringLiteral("skill:").startsWith(query))) expected.append(name);
+          if (name.startsWith(wanted) || (skill && query.size() >= 3 && QStringLiteral("skill:").startsWith(query))) expected.append(name);
         }
         RC_LOG() << text.toStdString() << " offers " << namesShown(sut).join(u',').toStdString() << "\n";
         RC_ASSERT(namesShown(sut) == expected);

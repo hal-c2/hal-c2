@@ -114,7 +114,7 @@ Feature: Referencing files, skills, commands and context
     And a built-in command or skill is offered
 
     Examples:
-      | typed                |
+      | typed               |
       | Please use /         |
       | Please use /mo       |
       | Please use /ski      |
@@ -140,10 +140,11 @@ Feature: Referencing files, skills, commands and context
     And pressing Enter sends the draft with "<typed>" as typed
 
     Examples:
-      | typed              |
-      | summarise /thread  |
-      | fix /this          |
-      | look in /tmp       |
+      | typed               |
+      | summarise /thread   |
+      | fix /this           |
+      | look in /tmp        |
+      | that'll go great /s |
 
   @desktop @priority-high
   Scenario: A slash after leading spaces is still the start of the message

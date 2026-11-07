@@ -227,11 +227,16 @@ private slots:
     composer::Instance instance;
     instance.driver = QStringLiteral("claudeAgent");
     instance.skills = QJsonArray{review};
-    for (const char* word : {"s", "ski", "skill", "skill:", "skill:rev"}) {
+    for (const char* word : {"ski", "skill", "skill:", "skill:rev"}) {
       const composer::Trigger t{QStringLiteral("slash-command"), QString::fromLatin1(word), 10, 10 + 1 + int(strlen(word)), true};
       bool offersReview = false;
       for (const auto& s : composer::slashItems(&instance, t, true, true, false)) offersReview |= s.label == QLatin1String("/skill:review");
       QVERIFY2(offersReview, word);
+    }
+    // Too short to be heading for the label: "/s" ends a sentence.
+    for (const char* word : {"s", "sk"}) {
+      const composer::Trigger t{QStringLiteral("slash-command"), QString::fromLatin1(word), 10, 10 + 1 + int(strlen(word)), true};
+      QVERIFY2(composer::slashItems(&instance, t, true, true, false).isEmpty(), word);
     }
     const composer::Trigger other{QStringLiteral("slash-command"), QStringLiteral("skx"), 10, 14, true};
     QVERIFY(composer::slashItems(&instance, other, true, true, false).isEmpty());
