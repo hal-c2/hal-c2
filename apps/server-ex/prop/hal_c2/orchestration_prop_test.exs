@@ -743,13 +743,15 @@ defmodule HalC2.OrchestrationPropTest do
 
   # Sent while the stop is under way: a steer, restart or promote is refused; any other
   # message queues and resumes the held queue, which starts once the turn has stopped.
+  # A message naming an instance the project turned off is refused as any send is.
   defp step(state, _result, {:call, _, :send_stopping, [tid, msg, how, instance]}) do
     state = if how == :promote, do: state, else: %{state | next: state.next + 1}
+    queues = how == :auto and off_refusal(state.threads[tid], instance) == nil
 
     update(state, tid, fn thread ->
       thread = hold_queue(thread)
 
-      if how == :auto,
+      if queues,
         do: thread |> sent(msg, :queue, instance) |> end_running(:interrupted) |> start_next(),
         else: end_running(thread, :interrupted)
     end)
@@ -1182,8 +1184,11 @@ defmodule HalC2.OrchestrationPropTest do
        else: {:error, "no running turn"}
   end
 
-  defp expected_reply(state, :send_stopping, [tid, msg, how, _]) do
+  defp expected_reply(state, :send_stopping, [tid, msg, how, instance]) do
+    off = how != :promote && off_refusal(state.threads[tid], instance)
+
     cond do
+      off -> off
       how == :auto -> :ok
       how == :promote and agents_own(state, tid, msg) -> {:error, :agents_own}
       true -> {:error, :stopping}
