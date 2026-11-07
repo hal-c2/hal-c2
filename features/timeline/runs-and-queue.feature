@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24861
 #   https://github.com/pingdotgg/t3code/pull/27305
 #   https://github.com/pingdotgg/t3code/pull/27377
 #   https://github.com/pingdotgg/t3code/pull/27324
@@ -52,6 +53,7 @@
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (a message not yet acknowledged shows Pending)
 #   https://github.com/pingdotgg/t3code/pull/25002
 #   https://github.com/pingdotgg/t3code/pull/27383
+#   https://github.com/pingdotgg/t3code/pull/30369
 
 Feature: Runs, interruptions and the queue
   A turn runs until it finishes, fails or the user stops it. Messages sent meanwhile
@@ -403,6 +405,14 @@ Feature: Runs, interruptions and the queue
     And the link to the subagent's thread is still shown
     And Stop stays beside the notice's title
 
+  # Upstream #30369: a finished background command's notice cut its label at 79 characters and could
+  # keep half an emoji, in the timeline row, the phone's work log and a delegated task's question wake.
+  @backlog @mc @shared @priority-low
+  Scenario: A finished background work notice is cut before an emoji, not through it
+    Given a background command whose label is 100 characters with an emoji at the 79th
+    When the command finishes after its turn ended
+    Then the thread's notice quotes the label cut before the emoji and ending in "…"
+
   @backlog @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
@@ -728,6 +738,16 @@ Feature: Runs, interruptions and the queue
     When the user opens provider setup from the thread
     Then the setup for Codex opens
 
+  # Upstream #24861: the thread's provider notice had no way to check again, so the user had to
+  # leave the thread for Settings > Providers.
+  @desktop @backlog @priority-low
+  Scenario: The user checks the thread's provider again from its notice
+    Given the thread shows that Codex is unavailable
+    When the user chooses "Refresh" on the notice
+    Then the thread's environment checks Codex and its models again
+    And "Refresh" cannot be chosen again until that check ends
+    And a failed check is reported the way a refresh from Settings is
+
   @desktop @backlog
   Scenario: A dismissed provider notice stays away until the problem changes
     Given the thread shows that Codex is signed out
@@ -869,6 +889,7 @@ Feature: Runs, interruptions and the queue
       | the agent of the thread "Review the 2.4 notes" | "Review the 2.4 notes" |
       | an agent whose thread is not known          | "Agent"                |
 
+  # Upstream #23135: another agent's folded message opens whole and leads to its thread.
   @backlog @shared
   Scenario: Opening another agent's message shows it whole and leads to its thread
     Given the agent of "Review the 2.4 notes" sent a message into the thread
@@ -876,12 +897,14 @@ Feature: Runs, interruptions and the queue
     Then the whole message is shown with its time, a copy action and "Open thread"
     And "Open thread" opens "Review the 2.4 notes"
 
+  # Upstream #23135: finding text inside a folded agent message opens it.
   @backlog @shared @priority-low
   Scenario: Finding text inside a folded agent message opens it
     Given a folded message from another agent mentions "release blocker"
     When the user finds "release blocker" in the thread
     Then the message opens with the match shown
 
+  # Upstream #23135: messages HAL-C2 itself sends stay whole.
   @backlog @shared @priority-low
   Scenario: Messages HAL-C2 sends stay whole
     Given a delegated task's result was sent into the thread by HAL-C2

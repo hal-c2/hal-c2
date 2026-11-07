@@ -564,12 +564,28 @@ defmodule HalC2.Settings do
   end
 
   @impl true
-  def handle_call({:put, settings, version}, _from, %{version: version} = state),
-    do: save_reply(state, fn -> settings end)
+  def handle_call({:put, settings, version}, from, %{version: version} = state) do
+    {:reply, reply, state} =
+      handle_call({:update, &carry_over(settings, state.settings, &1)}, from, state)
+
+    # A client is answered with the error type it knows (`ServerSettingsError`).
+    reply =
+      with {:error, message} when is_binary(message) <- reply do
+        {:error,
+         %{
+           "_tag" => "ServerSettingsError",
+           "settingsPath" => state.path,
+           "operation" => "write",
+           "message" => message
+         }}
+      end
+
+    {:reply, reply, state}
+  end
 
   # `fun` is a caller's: a crash in it must not take the table every service reads with it.
   def handle_call({:update, fun}, _from, state),
-    do: save_reply(state, fn -> fun.(state.settings) end)
+    do: save_reply(state, fn disk -> fun.(disk) end)
 
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
@@ -647,15 +663,57 @@ defmodule HalC2.Settings do
     end
   end
 
-  # Saves what `settings.()` returns and replies with the new version. A document that
-  # cannot be built or written is refused with the reason and nothing changes.
+  # Saves what `settings.(disk)` returns and replies with the new version, `disk` being the
+  # document settings.json holds now, which a hand edit the check has not noticed yet can
+  # make differ from the MC's. A file that cannot be read is refused, so the user's text is
+  # left for them to repair; so is any document that cannot be built or written, and
+  # nothing changes.
   defp save_reply(state, settings) do
-    state = save(state, settings.(), true)
-    {:reply, {:ok, state.version}, state}
+    case disk(state) do
+      {:ok, disk} ->
+        state = save(state, settings.(disk), true)
+        {:reply, {:ok, state.version}, state}
+
+      {:error, reason} ->
+        {:reply,
+         {:error,
+          "Could not read #{state.path} (#{inspect(reason)}). Fix or remove it, then save again."},
+         state}
+    end
   rescue
     exception -> {:reply, {:error, Exception.message(exception)}, state}
   catch
     kind, reason -> {:reply, {:error, Exception.format_banner(kind, reason)}, state}
+  end
+
+  # The document on disk. A file that is gone, or that holds the MC's own document, is the
+  # MC's document.
+  defp disk(state) do
+    if File.exists?(state.path), do: read(state.path), else: {:ok, state.settings}
+  end
+
+  # What a client changed from the `base` it read, put on the `disk` document: a hand edit
+  # the MC has not noticed yet stays unless the client changed that very setting. Objects
+  # all three hold are merged the same way, key by key (`providers.codex` kept beside a
+  # client's change to `providers.claude`).
+  defp carry_over(client, base, disk) when disk == base, do: client
+
+  defp carry_over(client, base, disk) do
+    for key <- Enum.uniq(Map.keys(client) ++ Map.keys(base)),
+        client[key] != base[key],
+        reduce: disk do
+      acc ->
+        case {Map.fetch(client, key), base[key], acc[key]} do
+          {{:ok, %{} = value}, %{} = read, %{} = held} ->
+            Map.put(acc, key, carry_over(value, read, held))
+
+          {{:ok, value}, _, _} ->
+            Map.put(acc, key, value)
+
+          {:error, _, _} ->
+            Map.delete(acc, key)
+        end
+    end
   end
 
   # `shared` is what the records are before this document's shared keys are compared

@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/24605
+#   https://github.com/pingdotgg/t3code/pull/32408
 #   https://github.com/pingdotgg/t3code/pull/24609
 #   https://github.com/pingdotgg/t3code/pull/20881
 #   https://github.com/pingdotgg/t3code/pull/22849
@@ -25,6 +26,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14486
 #   https://github.com/pingdotgg/t3code/pull/22709
 #   https://github.com/pingdotgg/t3code/pull/24246
+#   https://github.com/pingdotgg/t3code/pull/28400
 
 @plugin-grok @mc @priority-low
 Feature: Grok
@@ -180,6 +182,14 @@ Feature: Grok
     Given Grok takes 15 seconds to answer when it starts
     When the MC checks Grok
     Then Grok is reported ready
+
+  # Upstream #28400: "grok --version" had 4 seconds, so a healthy CLI that started slowly behind a
+  # shim, a version manager or a virus scan showed as unavailable.
+  @backlog
+  Scenario: A Grok whose version check takes 8 seconds is not shown as unavailable
+    Given "grok --version" takes 8 seconds to answer
+    When the MC checks Grok
+    Then Grok is not reported as timed out
 
   @backlog
   Scenario: Grok that cannot report its model options stays usable
@@ -638,6 +648,13 @@ Feature: Grok
       | a subagent task with no description      | "Task"                                              |
       | a check on a background task             | "Task output"                                       |
       | a command of more than 80 characters     | the command's first 77 characters followed by "..." |
+
+  # Upstream #32408: the 77-character cut could land inside an emoji and leave half of it.
+  @backlog
+  Scenario: A Grok command name cut short does not end in a broken character
+    When Grok runs a command titled "Tool" whose 77th character falls inside an emoji
+    Then the tool call is named by the command up to just before that emoji, followed by "..."
+    And the name holds no replacement character
 
   @backlog
   Scenario Outline: A Grok command's result decides whether it is finished

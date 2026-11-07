@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29572
 #   https://github.com/pingdotgg/t3code/pull/24014
 #   https://github.com/pingdotgg/t3code/pull/16623
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -11,6 +12,7 @@
 #   docs/internals/ (context transfers and handoffs)
 #   https://github.com/pingdotgg/t3code/pull/23554
 #   https://github.com/pingdotgg/t3code/pull/26901
+#   https://github.com/pingdotgg/t3code/pull/29902
 Feature: Forking a thread and merging work back
   A fork is a new thread that starts with a copy of its source's history through
   a finished run. Its first run picks the conversation up natively when the
@@ -195,6 +197,21 @@ Feature: Forking a thread and merging work back
     When the user sends "Try again" to "f1" on "codex"
     Then the run fails saying the fork point cannot be honoured on paginated history
 
+  # Upstream #29902: the fork was cut at "the turn after run 1", which was an undone turn the
+  # provider no longer had, so the provider copied the whole conversation.
+  @backlog @mc @priority-high
+  Scenario Outline: A native fork after an undo gives the agent only the history the fork shows
+    Given "t1" ran runs 1 and 2 on "<provider>", the user undid run 2 and then ran run 3
+    And "f1" is a fork of "t1" at run 1 on "<provider>"
+    When the user sends "Try again" to "f1" on "<provider>"
+    Then the provider's conversation for "f1" holds run 1 and not runs 2 or 3
+
+    Examples:
+      | provider    |
+      | codex       |
+      | opencode    |
+      | claudeAgent |
+
   @mc
   Scenario: Merging a fork back queues its work for the parent's next run
     Given "f1" is a fork of "t1" at run 2 and has completed run 3
@@ -208,6 +225,20 @@ Feature: Forking a thread and merging work back
     When the user sends "Continue" to "t1"
     Then the provider receives the work of "f1" since the fork point, introduced as coming from the fork by its title
     And the merge-back transfer is consumed with a fork delta summary handoff
+
+  # Upstream #29572: each summarized message was cut at 237 UTF-16 units, so an emoji at the cut
+  # left a lone surrogate the provider's JSON request rejected, and the turn failed unexplained.
+  @backlog @mc @priority-high
+  Scenario Outline: A summarized message cut through an emoji still reaches the provider
+    Given a message of <source> is longer than 240 characters with an emoji at its 237th character
+    When <transfer>
+    Then the provider receives that message cut before the emoji, not through it
+    And the run starts
+
+    Examples:
+      | source                     | transfer                                                     |
+      | "t1"                       | the user asks a question in a side chat of "t1"              |
+      | its fork "f1" since run 2  | the user merges "f1" back into "t1" and sends "Continue" to it |
 
   @mc
   Scenario: A newer merge from the same fork supersedes an unused one

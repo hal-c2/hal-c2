@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29347
 #   https://github.com/pingdotgg/t3code/pull/24691
 #   https://github.com/pingdotgg/t3code/pull/22159
 #   https://github.com/pingdotgg/t3code/pull/15052
@@ -47,6 +48,8 @@
 #   https://github.com/pingdotgg/t3code/pull/22213
 #   https://github.com/pingdotgg/t3code/pull/25526
 #   https://github.com/pingdotgg/t3code/pull/25703
+#   https://github.com/pingdotgg/t3code/pull/31071
+#   https://github.com/pingdotgg/t3code/pull/28487
 
 Feature: Connection health
   Each environment has one connection owner in a client. It retries transport failures with
@@ -111,6 +114,8 @@ Feature: Connection health
     When a network comes back
     Then it tries again at once
 
+  # Upstream #29347: a client that saw a false offline report never connected to the server on
+  # its own machine; the MC on this machine is reached whatever the network report says.
   @desktop @mobile
   Scenario: An environment on this machine is reached without a network
     Given the environment is on another machine
@@ -257,6 +262,16 @@ Feature: Connection health
       | held       | delay                                  |
       | 40 seconds | the shortest delay                     |
       | 5 seconds  | the next longer delay than before      |
+
+  # Upstream #28487: on bad wifi the first retry after a drop waited one to two seconds, and
+  # cancelling each stream on the dead socket held the reconnect up by another second.
+  @backlog @desktop @mobile
+  Scenario: A connection that drops is first retried within a quarter of a second
+    Given the client is connected and its subscriptions are open
+    When the connection drops
+    Then the client retries within about a quarter of a second
+    And it does not wait on the dropped connection to cancel its subscriptions
+    And that retry counts towards the backoff, so an environment that keeps dropping is retried more slowly
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (blocked phase, waitForSignal)
   @desktop @mobile
@@ -827,6 +842,16 @@ Feature: Connection health
     Given a subscription keeps failing for an expected reason
     Then its retries double up to 30 seconds
     And the first value after a retry resets the delay
+
+  # Upstream #31071: a frame that failed to decode ended a thread's subscription for good, so the
+  # main thread stopped showing new messages until the app was killed.
+  @backlog @shared @priority-high
+  Scenario: A thread whose subscription broke catches up after the next reconnect
+    Given the user is reading thread "t1"
+    When the subscription to "t1" breaks on something it cannot read
+    Then it is not retried on a timer
+    When the connection is replaced or the app returns to the foreground
+    Then "t1" is subscribed again and shows the messages it missed
 
   @backlog @shared
   Scenario: A relay disconnect is a connection blip, not a thread error

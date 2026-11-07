@@ -83,6 +83,7 @@ void McClient::open(const QUrl& origin, const QString& token, const QString& env
   url.setPath(QStringLiteral("/ws"));
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("token"), token);
+  query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
   url.setQuery(query);
   // Another MC: what the last one said of itself is not this one's, and
   // until it answers nothing names the one it left ("Connecting to …").
@@ -543,6 +544,7 @@ void McClient::openSocket(const QString& ticket) {
   if (!ticket.isEmpty()) {
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("wsTicket"), ticket);
+    query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
     url.setQuery(query);
   }
   QNetworkRequest handshake(url);

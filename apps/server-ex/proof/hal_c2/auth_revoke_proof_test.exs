@@ -52,6 +52,7 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_slack, _, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:rpc_reply, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info :flush" => @socket_traffic,
+      "HalC2.Web.Socket handle_info {:release_progress, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:DOWN, _, :process, _, _}" => @socket_traffic,
       "HalC2.Auth.create_pairing_token/2" => @outside,
       "HalC2.Auth.mint_pairing_link/2" => @outside,

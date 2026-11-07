@@ -99,7 +99,8 @@ defmodule HalC2.Web.SocketTest do
 
   defp row(id, title), do: {id, {"thread", %{"title" => title}}}
 
-  test "a burst of row changes is one frame per MC, the latest row winning", %{port: port} do
+  test "a burst of row changes is one frame per MC, the latest row winning in the order rows last changed",
+       %{port: port} do
     frames =
       shell_frames(port, [
         rows(1, [row("th-2", "Second")]),
@@ -119,8 +120,8 @@ defmodule HalC2.Web.SocketTest do
                "reset" => false,
                "rows" => [
                  ["th-1", "thread", %{"title" => "First"}],
-                 ["th-2", "thread", %{"title" => "Renamed"}],
-                 ["th-3", "thread", %{"title" => "Third"}]
+                 ["th-3", "thread", %{"title" => "Third"}],
+                 ["th-2", "thread", %{"title" => "Renamed"}]
                ]
              }
            ] = frames
@@ -143,8 +144,8 @@ defmodule HalC2.Web.SocketTest do
                "rev" => 1,
                "reset" => true,
                "rows" => [
-                 ["th-2", "thread", %{"title" => "Changed"}],
-                 ["th-3", "thread", %{"title" => "After"}]
+                 ["th-3", "thread", %{"title" => "After"}],
+                 ["th-2", "thread", %{"title" => "Changed"}]
                ]
              }
            ] = frames

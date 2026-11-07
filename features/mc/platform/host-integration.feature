@@ -30,6 +30,7 @@
 #   Shared domain: files/ owns opening files from the explorer; preview/ owns server suggestions.
 #   https://github.com/pingdotgg/t3code/pull/28566
 #   https://github.com/pingdotgg/t3code/pull/23913
+#   https://github.com/pingdotgg/t3code/pull/29432
 
 Feature: The MC working with its host machine
   An MC opens editors on its own machine, lists folders for adding projects, finds
@@ -55,6 +56,15 @@ Feature: The MC working with its host machine
     Then the server config is answered at once with what the MC found before
     And the discoveries run again together in the background
     And a first read with nothing found before waits for the discoveries together, not one after another
+
+  # Upstream #29432: the first server config waited about two seconds on Tailscale's status and
+  # HTTPS check before a client could start.
+  @backlog @mc
+  Scenario: A client's first server config does not wait on Tailscale
+    Given Tailscale takes two seconds to report the MC's HTTPS address
+    When a client connects and reads the MC's server config
+    Then the server config is answered at once with the addresses the MC listens on and any it checked before
+    And the HTTPS address reaches the client once it is checked, without reconnecting
 
   # Upstream #7079: the agy command is Google's Antigravity CLI, not the Antigravity IDE.
   @backlog @mc @plugin-antigravity @priority-low
@@ -795,6 +805,7 @@ Feature: The MC working with its host machine
       | Muse     | the agent is released after 30 minutes idle          |
       | ACP      | the session ends while a helper still holds its pipe |
 
+  # Upstream #21299: servers shared by several agents keep their helpers when one session ends.
   @backlog @mc @priority-low
   Scenario: Agents that share one server keep their helpers when a session ends
     Given Codex and OpenCode serve several threads from one server

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25064
 #   https://github.com/pingdotgg/t3code/pull/26958
 #   https://github.com/pingdotgg/t3code/pull/24847
 #   https://github.com/pingdotgg/t3code/pull/19065
@@ -71,6 +72,17 @@ Feature: The desktop shell draws the thread in the window's centre
       When the user starts a new thread in "shop" on a new worktree from "main"
       Then the centre reads "What should we build in shop?"
       And the centre says the thread runs in a new worktree from "main"
+
+    # Upstream #25064: with projects grouped by repository, the headline named the repository's
+    # group while the breadcrumb named the checkout the draft would run in.
+    @backlog @desktop @priority-low
+    Scenario: A new thread's draft names the checkout it was started in
+      Given projects are grouped by repository
+      And "shop" and its checkout "shop-hotfix" share a repository
+      When the user starts a new thread in "shop-hotfix"
+      Then the centre reads "What should we build in shop-hotfix?"
+      And the draft's project picker still lists the repository's group
+
     # Upstream #26958: the reconnecting notice pushed the new thread's headline and composer up.
     @backlog @desktop @mobile @priority-low
     Scenario Outline: A notice in a new thread's draft does not move its composer

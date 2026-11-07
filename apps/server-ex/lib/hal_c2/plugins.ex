@@ -710,14 +710,15 @@ defmodule HalC2.Plugins do
         # A package gets only what the user accepted; a plugin file what it asks for.
         missing = if plugin.package, do: requested -- (granted(id) ++ accepted), else: []
 
-        if enabled and missing != [] do
-          {:reply, {:error, consent_required(plugin, missing)}, state}
-        else
+        saved = fn ->
           update_config(id, fn config ->
             config = Map.put(config, "enabled", enabled)
             if enabled, do: Map.put(config, "granted", requested), else: config
           end)
+        end
 
+        with {:consent, []} <- {:consent, if(enabled, do: missing, else: [])},
+             :ok <- saved.() do
           # Enabling compiles it, which says more than a check did.
           plugin = %{
             plugin
@@ -737,6 +738,10 @@ defmodule HalC2.Plugins do
             plugin ->
               {:reply, {:ok, entry(plugin)}, state}
           end
+        else
+          {:consent, missing} -> {:reply, {:error, consent_required(plugin, missing)}, state}
+          # The settings document refused the save: nothing changed.
+          {:error, error} -> {:reply, {:error, error}, state}
         end
     end
   end
@@ -812,14 +817,20 @@ defmodule HalC2.Plugins do
         next = current |> Map.merge(input) |> Map.reject(fn {_key, value} -> value == nil end)
 
         with :ok <- check_types(fields, input),
-             :ok <- validate(module, Map.merge(defaults(fields), reveal(id, fields, next))) do
-          old = settings(plugin)
-          update_config(id, &Map.put(&1, "settings", seal(id, fields, next)))
+             :ok <- validate(module, Map.merge(defaults(fields), reveal(id, fields, next))),
+             old = settings(plugin),
+             {sealed, store_secrets} = seal(id, fields, next),
+             {:saved, :ok} <- {:saved, update_config(id, &Map.put(&1, "settings", sealed))} do
+          store_secrets.()
           state = state |> apply_settings(plugin, old) |> push()
           {:reply, {:ok, entry(state.plugins[id])}, state}
         else
           {:error, message} ->
             {:reply, {:error, %{"_tag" => "PluginSettingsInvalid", "message" => message}}, state}
+
+          # The settings document refused the save: nothing changed, the secrets neither.
+          {:saved, error} ->
+            {:reply, error, state}
         end
 
       _ ->
@@ -1563,6 +1574,8 @@ defmodule HalC2.Plugins do
 
   defp config(id), do: get_in(HalC2.Settings.settings(), ["plugins", id]) || %{}
 
+  # `:ok`, or the settings document's `{:error, error}` when it refuses the save (a
+  # settings.json it cannot read): nothing is saved then.
   defp update_config(id, fun) do
     {settings, version} = HalC2.Settings.get()
     plugins = settings["plugins"] || %{}
@@ -1571,6 +1584,7 @@ defmodule HalC2.Plugins do
     case HalC2.Settings.put(next, version) do
       {:ok, _} -> :ok
       {:error, :stale} -> update_config(id, fun)
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -1628,20 +1642,27 @@ defmodule HalC2.Plugins do
   end
 
   # Secrets move to the secret store; the document keeps only that one is set.
+  # `{document, store}`: `store` writes the store, once the document is saved.
   defp seal(id, fields, settings) do
-    for %{"key" => key, "secret" => true} <- fields, reduce: settings do
-      settings ->
+    for %{"key" => key, "secret" => true} <- fields, reduce: {settings, fn -> :ok end} do
+      {settings, store} ->
         case settings[key] do
           @marker ->
-            settings
+            {settings, store}
 
           value when is_binary(value) and value != "" ->
-            write_secret(secret_path(id, key), value)
-            Map.put(settings, key, @marker)
+            {Map.put(settings, key, @marker),
+             fn ->
+               store.()
+               write_secret(secret_path(id, key), value)
+             end}
 
           _ ->
-            File.rm(secret_path(id, key))
-            Map.delete(settings, key)
+            {Map.delete(settings, key),
+             fn ->
+               store.()
+               File.rm(secret_path(id, key))
+             end}
         end
     end
   end

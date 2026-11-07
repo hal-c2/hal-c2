@@ -12,6 +12,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14319
 #   https://github.com/pingdotgg/t3code/pull/16772
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/29413
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?, instance_command/2 binaryPath of Codex and Claude)
 #   apps/server-ex/lib/hal_c2/provider_secrets.ex (sensitive variables in the secret store)
@@ -45,6 +46,16 @@ Feature: Provider instances
     Given the user adds a Grok instance "grok_work" with the variable "XAI_API_KEY"
     When a thread runs on "grok_work"
     Then Grok runs with that variable set
+
+  # Upstream #29413: Claude's commands inherited the desktop's ELECTRON_RUN_AS_NODE, so any Electron
+  # app Claude started ran as plain Node. The MC's analogue is its release's own variables, the
+  # cluster cookie among them.
+  @backlog @priority-high
+  Scenario: Commands an agent runs do not inherit the MC's own runtime variables
+    Given the MC runs as a release that sets its own runtime variables, its cluster cookie among them
+    When the agent of a thread runs a command
+    Then the command sees none of the MC's runtime variables
+    And it still sees the user's environment and the instance's own variables
 
   Scenario: Disabling a provider moves the text-generation choice to a usable provider
     Given Grok is picked for thread titles
