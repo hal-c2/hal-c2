@@ -265,9 +265,9 @@ Feature: Changing model and provider mid-thread
     And the run for "Later" starts on "codex" with the conversation intact
 
   # Upstream #15477: a handoff between two accounts of the same provider and model is a handoff
-  # like any other, its marker naming the account on each side. Another account runs in its own
-  # home, so it cannot resume the first account's conversation (see "Moving to another instance
-  # of the same provider starts a conversation there").
+  # like any other, its marker naming the account on each side. An account with its own home
+  # cannot resume the first account's conversation (see "Moving to another instance of the same
+  # provider starts a conversation there"); one sharing the home restarts in place instead.
   @backlog @mc
   Scenario: A queued switch to another account of the same provider hands the conversation over
     Given "t1" has a running turn on the "codex" instance
@@ -296,10 +296,10 @@ Feature: Changing model and provider mid-thread
     And the provider conversation is resumed without a handoff
 
     Examples:
-      | what                                                                           |
-      | the runtime mode                                                               |
-      | the workspace                                                                  |
-      | the instance, to another of the same provider that can continue the conversation |
+      | what                                                                                       |
+      | the runtime mode                                                                           |
+      | the workspace                                                                              |
+      | the instance, to another of the same provider that shares its home and so its conversation |
 
   @backlog @mc
   Scenario Outline: A change the provider takes in place keeps its process

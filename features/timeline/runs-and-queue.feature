@@ -617,5 +617,9 @@ Feature: Runs, interruptions and the queue
     Given a thread's agent waits for the thread "Add search" to finish
     And nothing else in the turn is running
     Then the thread shows it is waiting on another thread, not working
-    When the agent also runs a command
+
+  @backlog @mc @shared
+  Scenario: A turn that waits on another thread and runs a command reads as working
+    Given a thread's agent waits for the thread "Add search" to finish
+    And the agent also runs a command
     Then the thread shows it is working
