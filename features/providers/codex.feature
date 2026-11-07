@@ -810,8 +810,8 @@ Feature: Codex
   # Upstream #22541: a patch touching several files listed only the first.
   @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Codex change to several files lists every file
-    When Codex applies one patch that edits "a.ts", adds "b.ts" and renames "c.ts" to "d.ts"
-    Then the change in the timeline lists "a.ts", "b.ts" and "d.ts"
+    When Codex applies one patch that edits "a.ts", adds "b.ts", deletes "e.ts" and renames "c.ts" to "d.ts"
+    Then the change in the timeline lists "a.ts", "b.ts", "e.ts" and "d.ts"
     And the rename shows it came from "c.ts"
     And the change shows every file's diff
 

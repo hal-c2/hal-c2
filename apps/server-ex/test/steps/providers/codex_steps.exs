@@ -4275,8 +4275,10 @@ Red"} <- StreamState.get(state, "message")[message],
 
   # --- one patch, several files -------------------------------------------------------------------
 
-  step "Codex applies one patch that edits {string}, adds {string} and renames {string} to {string}",
-       %{args: [edited, added, from, to]} = context do
+  # Codex sends an update's diff as bare hunks and an add's or delete's as the
+  # file's content; neither carries file headers.
+  step "Codex applies one patch that edits {string}, adds {string}, deletes {string} and renames {string} to {string}",
+       %{args: [edited, added, deleted, from, to]} = context do
     context = start_waiting(context)
 
     notify_item(context, "completed", %{
@@ -4285,8 +4287,13 @@ Red"} <- StreamState.get(state, "message")[message],
       "status" => "completed",
       "changes" => [
         %{"path" => edited, "kind" => %{"type" => "update"}, "diff" => "@@ -1 +1 @@\n-a\n+b\n"},
-        %{"path" => added, "kind" => %{"type" => "add"}, "diff" => "@@ -0 +1 @@\n+b\n"},
-        %{"path" => from, "kind" => %{"type" => "update", "move_path" => to}, "diff" => ""}
+        %{"path" => added, "kind" => %{"type" => "add"}, "diff" => "first\nsecond\n"},
+        %{"path" => deleted, "kind" => %{"type" => "delete"}, "diff" => "gone\n"},
+        %{
+          "path" => from,
+          "kind" => %{"type" => "update", "move_path" => to},
+          "diff" => "@@ -1 +1 @@\n-c\n+d\n"
+        }
       ]
     })
 
@@ -4294,10 +4301,10 @@ Red"} <- StreamState.get(state, "message")[message],
     Map.put(context, :file_change, item)
   end
 
-  step "the change in the timeline lists {string}, {string} and {string}",
-       %{args: [first, second, third]} = context do
+  step "the change in the timeline lists {string}, {string}, {string} and {string}",
+       %{args: [first, second, third, fourth]} = context do
     paths = Enum.map(context.file_change["changes"], & &1["path"])
-    assert paths == [first, second, third]
+    assert paths == [first, second, third, fourth]
     context
   end
 
@@ -4308,8 +4315,25 @@ Red"} <- StreamState.get(state, "message")[message],
   end
 
   step "the change shows every file's diff", context do
-    assert context.file_change["diffStr"] =~ "@@ -1 +1 @@\n-a\n+b"
-    assert context.file_change["diffStr"] =~ "@@ -0 +1 @@\n+b"
+    [edited, added, deleted, renamed] = context.file_change["changes"]
+    diff = context.file_change["diffStr"]
+
+    assert diff =~
+             "diff --git a/#{edited["path"]} b/#{edited["path"]}\n" <>
+               "--- a/#{edited["path"]}\n+++ b/#{edited["path"]}\n@@ -1 +1 @@\n-a\n+b"
+
+    assert diff =~
+             "diff --git a/#{added["path"]} b/#{added["path"]}\n" <>
+               "--- /dev/null\n+++ b/#{added["path"]}\n@@ -0,0 +1,2 @@\n+first\n+second"
+
+    assert diff =~
+             "diff --git a/#{deleted["path"]} b/#{deleted["path"]}\n" <>
+               "--- a/#{deleted["path"]}\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-gone"
+
+    assert diff =~
+             "diff --git a/#{renamed["oldPath"]} b/#{renamed["path"]}\n" <>
+               "--- a/#{renamed["oldPath"]}\n+++ b/#{renamed["path"]}\n@@ -1 +1 @@\n-c\n+d"
+
     context
   end
 

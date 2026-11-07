@@ -2647,12 +2647,6 @@ defmodule HalC2.Codex.ThreadRuntime do
     at = Entities.now()
     item_id = item_id(ids, native)
 
-    diff =
-      changes
-      |> Enum.map(& &1["diff"])
-      |> Enum.filter(&(is_binary(&1) and &1 != ""))
-      |> Enum.join("\n")
-
     details =
       for change <- changes do
         kind = change["kind"] || %{}
@@ -2661,6 +2655,12 @@ defmodule HalC2.Codex.ThreadRuntime do
         %{"operation" => kind["type"] || "update", "path" => move || change["path"] || "file"}
         |> then(&if(move, do: Map.put(&1, "oldPath", change["path"]), else: &1))
       end
+
+    diff =
+      changes
+      |> Enum.zip(details)
+      |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
+      |> Enum.join()
 
     commit(state, fn stream ->
       [
@@ -2710,6 +2710,54 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, _item), do: state
+
+  # Codex sends each change's `diff` without file headers: bare `@@` hunks for
+  # an update, the file's content for an add or delete. The clients split a
+  # multi-file diff on its `diff --git` lines and read each file's paths from
+  # `---`/`+++`, so every change gets those headers (`/dev/null` for the side
+  # an add or delete has none of) and its content becomes a `+`/`-` hunk.
+  defp file_diff(change, detail) do
+    raw = if is_binary(change["diff"]), do: change["diff"], else: ""
+    path = detail["path"]
+    old = detail["oldPath"] || path
+
+    body =
+      case detail["operation"] do
+        "add" -> content_hunk(raw, "+")
+        "delete" -> content_hunk(raw, "-")
+        _ -> raw
+      end
+
+    if String.trim(body) == "" do
+      ""
+    else
+      """
+      diff --git a/#{old} b/#{path}
+      --- #{if detail["operation"] == "add", do: "/dev/null", else: "a/" <> old}
+      +++ #{if detail["operation"] == "delete", do: "/dev/null", else: "b/" <> path}
+      """ <> if(String.ends_with?(body, "\n"), do: body, else: body <> "\n")
+    end
+  end
+
+  # An add's or delete's content as one hunk; a change already sent as hunks
+  # keeps them.
+  defp content_hunk(raw, sign) do
+    lines =
+      case String.replace_suffix(raw, "\n", "") do
+        "" -> []
+        text -> String.split(text, "\n")
+      end
+
+    cond do
+      raw |> String.trim_leading() |> String.starts_with?("@@") -> raw
+      lines == [] -> ""
+      sign == "+" -> "@@ -0,0 +1,#{length(lines)} @@\n" <> prefix_lines(lines, sign)
+      true -> "@@ -1,#{length(lines)} +0,0 @@\n" <> prefix_lines(lines, sign)
+    end
+  end
+
+  defp prefix_lines(lines, sign),
+    do: Enum.map_join(lines, "", &(sign <> &1 <> "\n"))
 
   defp spawned(state, %{"tool" => "spawnAgent", "id" => id} = item) do
     known = Map.get(state, :subagents, %{})
