@@ -166,6 +166,23 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   @doc """
+  Marks (`awaited`) or clears the mark on background work Claude runs, named by the
+  task ids Claude showed it (or its tool use ids): work it waits on holds the thread
+  Working until it ends (`HalC2.Projection.BackgroundWork`). Answers the ids that
+  name running background work; the others change nothing.
+  """
+  @spec await_background(String.t(), [String.t()], boolean) :: {:ok, [String.t()]}
+  def await_background(thread_id, task_ids, awaited) do
+    case Registry.lookup(HalC2.Claude.Registry, thread_id) do
+      [{pid, _}] -> GenServer.call(pid, {:await_background, task_ids, awaited}, 15_000)
+      [] -> {:ok, []}
+    end
+  catch
+    # A runtime that stopped runs no background work.
+    :exit, _ -> {:ok, []}
+  end
+
+  @doc """
   Answers a prompt: a permission's `%{"decision" => ProviderApprovalDecision}`,
   AskUserQuestion's `%{"answers" => answers}`, or `%{"dismissed" => true}`.
   """
@@ -497,6 +514,35 @@ defmodule HalC2.Claude.ThreadRuntime do
       end) or buffered_subagent_tool?(state.wake, tool_use_id)
 
     {:reply, reply, state}
+  end
+
+  # `hal_c2_background_wait`: the mark lives on the work's item, so it ends with the work.
+  def handle_call({:await_background, task_ids, awaited}, _from, state) do
+    matched =
+      for id <- Enum.uniq(task_ids),
+          tool = state.tasks[id] || id,
+          match?(%{background: true}, state.work[tool]),
+          do: {id, tool}
+
+    items =
+      for {_id, tool} <- matched,
+          %{id: item_id} <- [state.work[tool].item || state.items[tool]],
+          uniq: true,
+          do: item_id
+
+    if items != [] do
+      commit(state, fn stream ->
+        for item_id <- items do
+          # Cleared as false: a patch only sets fields.
+          Orchestration.upsert(stream, "turn-item", item_id, fn
+            nil -> nil
+            item -> Map.put(item, "awaited", awaited)
+          end)
+        end
+      end)
+    end
+
+    {:reply, {:ok, Enum.map(matched, &elem(&1, 0))}, state}
   end
 
   def handle_call({:respond, request_id, response}, _from, state) do

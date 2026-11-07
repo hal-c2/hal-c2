@@ -189,4 +189,51 @@ defmodule HalC2.Projection.BackgroundWorkTest do
              turn_items: [command("item-active", "running", "vp check", %{"runId" => "run-1"})]
            ) == []
   end
+
+  describe "holding/1" do
+    defp settled(items, roster \\ []) do
+      BackgroundWork.derive(
+        latest_run: run("run-1", 1, "completed"),
+        provider_threads: [%{"id" => "pt-1", "pendingBackgroundTasks" => roster}],
+        turn_items: items
+      )
+    end
+
+    test "commands and monitors hold only when the agent waits on them" do
+      monitor = %{"type" => "dynamic_tool", "toolName" => "Monitor", "status" => "running"}
+
+      tasks =
+        settled([
+          command("dev", "running", "npm run dev"),
+          command("tests", "running", "mix test", %{"awaited" => true}),
+          Map.put(monitor, "id", "watch"),
+          Map.merge(monitor, %{"id" => "deploy", "awaited" => true}),
+          command("cleared", "running", "make", %{"awaited" => false})
+        ])
+
+      assert Enum.map(tasks, & &1["taskId"]) == ~w(dev tests watch deploy cleared)
+
+      assert [%{"taskId" => "tests", "awaited" => true}, %{"taskId" => "deploy"}] =
+               BackgroundWork.holding(tasks)
+    end
+
+    test "subagents and other roster tasks always hold" do
+      tasks =
+        settled(
+          [%{"id" => "child", "type" => "subagent", "status" => "running", "prompt" => "Review"}],
+          [
+            %{"taskId" => "agent", "taskType" => "local_agent"},
+            %{"taskId" => "shell", "taskType" => "local_bash"},
+            %{"taskId" => "build", "taskType" => "local_bash", "awaited" => true}
+          ]
+        )
+
+      assert BackgroundWork.holding(tasks) |> Enum.map(& &1["taskId"]) == ~w(agent build child)
+    end
+
+    test "the mark is carried only when set" do
+      assert [task] = settled([command("dev", "running", "npm run dev", %{"awaited" => false})])
+      refute Map.has_key?(task, "awaited")
+    end
+  end
 end

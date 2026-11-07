@@ -13,7 +13,9 @@ defmodule HalC2.Search do
   @roles ["user", "assistant"]
   @snippet 240
   @not_typed ~w(senderThreadId scheduledTaskId notification delegatedCompletion providerWake)
-  @read "messages_typed"
+  # Bumped when `typed?/2` learned that a stored JSON null (`:null`) is absent:
+  # rows an older MC indexed keep `typed = false` until every thread is re-read.
+  @read "messages_typed_2"
 
   @doc "Indexes the messages `events` finished or deleted, reading them from the committed `stream`."
   def index(stream_id, events, stream) do
@@ -128,15 +130,19 @@ defmodule HalC2.Search do
 
   defp entry(_id, _message, _thread), do: nil
 
-  # What an agent, a schedule or the MC sent has the role of a user's message too, and so
-  # does what a fork copied from its source, which keeps the time it was first sent.
-  defp typed?(%{"role" => "user"} = message, thread) do
-    not Enum.any?(@not_typed, &(message[&1] != nil)) and
+  @doc """
+  Whether the user typed `message` in `thread`. What an agent, a schedule or the MC sent has
+  the role of a user's message too, and so does what a fork copied from its source, which
+  keeps the time it was first sent.
+  """
+  @spec typed?(map, map) :: boolean
+  def typed?(%{"role" => "user"} = message, thread) do
+    not Enum.any?(@not_typed, &(message[&1] not in [nil, :null])) and
       not (get_in(thread, ["lineage", "relationshipToParent"]) == "fork" and
              message["createdAt"] < thread["createdAt"])
   end
 
-  defp typed?(_message, _thread), do: false
+  def typed?(_message, _thread), do: false
 
   @doc """
   Searches with `query` (trimmed, 2 to 200 characters) for up to `limit` (1 to 50,

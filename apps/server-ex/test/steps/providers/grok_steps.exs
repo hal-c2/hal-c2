@@ -813,7 +813,7 @@ defmodule HalC2.Steps.Providers.Grok do
 
     World.await_row(
       World.thread_id(context, context.thread),
-      &(length(&1["pendingBackgroundTasks"] || []) == 2)
+      &(length(&1["runningBackgroundTasks"] || []) == 2)
     )
 
     context
@@ -826,7 +826,7 @@ defmodule HalC2.Steps.Providers.Grok do
   step "{string} lists the command and the subagent as background work",
        %{args: [thread]} = context do
     assert ["command_execution", "subagent"] =
-             World.row(context, thread)["pendingBackgroundTasks"]
+             World.row(context, thread)["runningBackgroundTasks"]
              |> Enum.map(& &1["taskType"])
              |> Enum.sort()
 
@@ -836,7 +836,7 @@ defmodule HalC2.Steps.Providers.Grok do
   step "{string} lists only the subagent as background work", %{args: [thread]} = context do
     World.await_row(
       World.thread_id(context, thread),
-      &match?([%{"taskType" => "subagent"}], &1["pendingBackgroundTasks"])
+      &match?([%{"taskType" => "subagent"}], &1["runningBackgroundTasks"])
     )
 
     context
@@ -877,7 +877,7 @@ defmodule HalC2.Steps.Providers.Grok do
 
   step "the MC can release Grok's session of {string}", %{args: [thread]} = context do
     id = World.thread_id(context, thread)
-    World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+    World.await_row(id, &(&1["runningBackgroundTasks"] == []))
     idle_now()
     HalC2.Test.Mc.ensure(HalC2.Orchestration.IdleSessions)
     assert id in HalC2.Orchestration.IdleSessions.check()
@@ -910,7 +910,7 @@ defmodule HalC2.Steps.Providers.Grok do
 
   step "Grok's monitor is not listed as background work", context do
     id = World.thread_id(context, context.thread)
-    World.await_row(id, &(&1["pendingBackgroundTasks"] == []))
+    World.await_row(id, &(&1["runningBackgroundTasks"] == []))
 
     assert %{"mon-1" => "running"} =
              background_items(World.state(context, context.thread))

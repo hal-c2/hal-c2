@@ -1,7 +1,8 @@
 // The composer as the user drives it across threads and a new thread's draft,
 // against a fake MC that accepts, refuses or holds each send
 // (ComposerController, DraftController): typing, images, the model and
-// permissions picked, sends and follow-ups while a turn runs, the stash, the
+// permissions picked, sends and follow-ups while a turn runs, the stash (and a
+// stash that cannot be written), the
 // connection dropping and the app restarting, with sends in flight that the MC
 // did or did not get: each reaches the thread once or comes back to its draft,
 // unless a newer user message is in the thread by then. A thread names no
@@ -1206,6 +1207,29 @@ struct Stash : Command {
   void show(std::ostream& os) const override { os << "Stash"; }
 };
 
+// The stash cannot be written (its file is a folder for the moment): the
+// prompt stays in the composer, the stash and the file as they were, and an
+// error toast says so.
+struct StashUnwritable : Command {
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.open != kImages);
+    const Target& target = m.targets.value(m.open);
+    RC_PRE(!target.text.trimmed().isEmpty() || target.images > 0);
+  }
+  void apply(Model& m) const override { m.toasts.prepend({m.open, QString()}); }
+  void run(const Model& m0, Sut& sut) const override {
+    const QString path = sut.home.filePath(QStringLiteral("data/shell-composer.json"));
+    const QString aside = path + QStringLiteral(".aside");
+    const bool kept = QFile::rename(path, aside);
+    RC_ASSERT(QDir().mkpath(path));
+    sut.bridge->dispatch(QStringLiteral("composer.stash"));
+    RC_ASSERT(QDir(path).removeRecursively());
+    if (kept) RC_ASSERT(QFile::rename(aside, path));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "StashUnwritable"; }
+};
+
 // "Restore prompt" on the newest toast offering it: the prompt comes back
 // into its thread's draft if that is empty, and the thread opens.
 struct RestorePrompt : Command {
@@ -1602,9 +1626,9 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime,
-                                                   PickInteraction, Submit, Submit, Submit, Stash, RestorePrompt, SetRunning,
-                                                   SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow,
-                                                   Load, Recorded, NewThread>()));
+                                                   PickInteraction, Submit, Submit, Submit, Stash, StashUnwritable, RestorePrompt,
+                                                   SetRunning, SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart,
+                                                   Slow, Load, Recorded, NewThread>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

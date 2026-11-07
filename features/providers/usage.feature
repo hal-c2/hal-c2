@@ -134,6 +134,8 @@ Feature: Usage
     When the user opens Usage
     Then that model is priced at Google's rate
 
+  # Upstream #28004: if the model makers' own entries disagree with each other, the bare name
+  # stays unpriced.
   @backlog @mc @priority-low
   Scenario: A bare model name stays unpriced when its makers disagree
     Given the price table lists "orbit-1" from two model makers at different prices
@@ -481,6 +483,7 @@ Feature: Usage
       | include only "orbit-1" from Claude        | "orbit-1" from Claude    |
       | exclude "drift-9"                         | "orbit-1" and "orbit-2"  |
 
+  # Upstream #28952: a mixed-model session keeps exact totals for the models the filter keeps.
   @backlog @mc @priority-low
   Scenario: A session that mixed models keeps exact totals for the models kept
     Given one session ran turns on "orbit-1" and "drift-9"

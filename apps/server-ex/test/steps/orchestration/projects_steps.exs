@@ -366,6 +366,14 @@ defmodule HalC2.Steps.Orchestration.Projects do
     Map.merge(context, %{replies: [created, moved], folder: folder})
   end
 
+  step "the refusal names project {string}", %{args: [id]} = context do
+    for reply <- context.replies do
+      assert {:error, _message, %{"projectId" => ^id}} = reply
+    end
+
+    context
+  end
+
   step "it fails because the folder already belongs to a project", context do
     root = path(context, context.folder)
 
