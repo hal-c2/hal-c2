@@ -56,19 +56,19 @@ Feature: Creating threads
     When the user starts a new thread
     Then a draft thread opens in "docs"
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The new thread button asks which project when there are several
     Given the environment also has the project "docs"
     When the user presses the new thread button in the thread list
     Then the user is asked which project to start the thread in
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The new thread button starts straight away when there is one project
     Given "shop" is the only project
     When the user presses the new thread button in the thread list
     Then a draft thread opens in "shop" without asking
 
-  @backlog @desktop
+  @desktop
   Scenario: Shift on the new thread button starts in the current project
     Given the environment also has the project "docs"
     When the user presses the new thread button in the thread list with Shift held
@@ -88,13 +88,22 @@ Feature: Creating threads
     And the environment does not offer threads without a project
     Then the new thread button in the thread list is disabled
 
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A new thread keeps the current model and mode
     Given the current thread uses the model "Opus" in plan mode
     When the user starts a new thread
     Then the draft uses the model "Opus" in plan mode
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
+  Scenario: A new thread from another thread takes that thread's model and mode
+    Given the current thread uses the model "Opus" in plan mode
+    And the user starts a new thread
+    And the draft uses the model "Opus" in plan mode
+    When the user opens another thread of "shop" that uses the model "GPT-5"
+    And the user starts a new thread
+    Then the draft uses the model "GPT-5" in default mode
+
+  @desktop @mobile @priority-high
   Scenario: A new thread uses the project default model when the project has one
     Given "shop" has the default model "Sonnet"
     And the current thread uses the model "Opus"
@@ -152,7 +161,7 @@ Feature: Creating threads
     When the user tries to start a thread with an empty first message
     Then the thread is not started
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: Starting a thread from another thread's branch
     Given the current thread is on the branch "feature/cart"
     When the user starts a new thread on that branch from the thread menu
@@ -222,7 +231,7 @@ Feature: Creating threads
 
   # Upstream #14538: New thread did nothing while the last sent draft was still creating its
   # worktree; it now opens a fresh draft.
-  @backlog @shared @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A new thread started while the last one sets up its worktree opens a fresh draft
     Given the user sent a draft that is still creating its worktree
     When the user starts a new thread
@@ -275,7 +284,7 @@ Feature: Creating threads
     And the user is told "Could not start Gemini" with the reason
     And the draft has its prompt back with only "Gemini" still chosen
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A failed start does not put back a prompt over a newer draft
     Given a request to several models is still starting
     And the user has typed a new prompt in the emptied draft
@@ -284,7 +293,7 @@ Feature: Creating threads
 
   # Upstream #14538: a start that fails after the user moved on gives its prompt back to its own
   # draft.
-  @backlog @shared
+  @shared @backlog-tui
   Scenario: A thread whose start fails gets its prompt back without touching a newer draft
     Given the user sent a draft and opened a new draft while it set up
     When the sent thread fails to start
@@ -330,7 +339,7 @@ Feature: Creating threads
     Then the user is told "Update this server before starting multiple models."
     And nothing is sent
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A draft whose project is gone cannot be sent
     Given the draft's project is no longer available
     When the user sends the first message
@@ -356,13 +365,13 @@ Feature: Creating threads
     When the user chooses the branch "release" for the draft
     Then the draft runs on the machine whose branch was chosen instead of a balanced one
 
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A failed thread creation is reported
     Given the environment rejects new threads
-    When the user starts a new thread
+    When the user sends the first message of a new thread
     Then the user is told "Could not create thread"
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile @priority-high
+  @desktop @mobile @tui @priority-high
   Scenario: A new thread cannot be created while the environment is offline
     Given the environment is unreachable
     When the user starts a new thread
