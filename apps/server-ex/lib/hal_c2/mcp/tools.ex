@@ -995,12 +995,21 @@ defmodule HalC2.Mcp.Tools do
 
         with {:ok, _} <-
                orchestration(
-                 Orchestration.dispatch_once(%{
-                   "type" => "run.interrupt",
-                   "commandId" => command_id,
-                   "threadId" => id,
-                   "runId" => run
-                 })
+                 Orchestration.dispatch_once(
+                   %{
+                     "type" => "run.interrupt",
+                     "commandId" => command_id,
+                     "threadId" => id,
+                     "runId" => run,
+                     "requestedBy" => "agent"
+                   }
+                   |> then(
+                     &if(is_binary(args["reason"]),
+                       do: Map.put(&1, "reason", args["reason"]),
+                       else: &1
+                     )
+                   )
+                 )
                ) do
           answer = %{
             "threadId" => id,

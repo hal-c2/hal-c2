@@ -165,7 +165,7 @@ Feature: Runs and turns
     When a turn streams assistant text
     Then the text is written a paragraph at a time
 
-  @mc @backlog
+  @mc
   Scenario: Reasoning streams by the same mode as the reply
     Given project "demo" streams responses by "paragraph"
     And "t1" has a running turn
@@ -173,7 +173,7 @@ Feature: Runs and turns
     Then the reasoning is written a paragraph at a time, at most every 400 ms
     And by "turn" it is written only when the reasoning is finished
 
-  @mc @backlog
+  @mc
   Scenario Outline: Paragraph streaming holds back text whose shape could still change
     Given project "demo" streams responses by "paragraph"
     And "t1" has a running turn
@@ -187,7 +187,7 @@ Feature: Runs and turns
       | a code block nested in a list item, then its close      | the text up to and including the close is written |
       | a first paragraph with no blank line after it yet       | nothing is written                                |
 
-  @mc @backlog
+  @mc
   Scenario: The held-back tail is written when the reply finishes
     Given project "demo" streams responses by "paragraph"
     And the provider streamed a reply that ends without a blank line
@@ -358,7 +358,7 @@ Feature: Runs and turns
     Then the turn's work log shows a provider retry
     And no second user turn is created
 
-  @backlog @mc
+  @mc
   Scenario Outline: A provider retry says how it ended
     Given the provider is retrying a failed request during a turn of "t1"
     When <ending>
@@ -401,7 +401,7 @@ Feature: Runs and turns
       | a prefixed key, client secret or refresh token | "[REDACTED]" in place of the value       |
       | a URL that cannot be read                      | "[REDACTED_URL]" in place of the URL     |
   # Upstream #23313: values under keys like "client_secret" or "clientSecret" survived, being no bare key word.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A failure message hides values under compound credential keys
     When the provider fails a turn of "t1" with a message holding <text>
     Then the failure the thread records shows <shown>
@@ -556,11 +556,10 @@ Feature: Runs and turns
     Given "t1" has a running turn
     When the user interrupts the run giving the reason "wrong branch"
     Then the run records an item titled "Interrupt requested" saying "wrong branch"
-    And once the provider stops, an item titled "Interrupted" saying "Run interrupted by user"
+    And once the provider stops, an item titled "Interrupted" saying "Stopped by user"
 
   # Upstream #24299: every interrupt said "Run interrupted by user", even one an agent asked for.
-  # Replaces the outcome text of the scenario above once the MC carries it.
-  @backlog @mc
+  @mc
   Scenario Outline: An interrupt's outcome says who stopped the run
     Given "t1" has a running turn
     When <who>

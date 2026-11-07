@@ -3092,7 +3092,10 @@ defmodule HalC2.Orchestration do
             at,
             %{
               "title" => "Interrupt requested",
-              "message" => command["reason"] || "Interrupt requested"
+              "message" => command["reason"] || "Interrupt requested",
+              # An agent's stop (`hal_c2_thread_interrupt`) names itself, so the
+              # outcome does not credit the user with it.
+              "stoppedBy" => if(command["requestedBy"] == "agent", do: "agent", else: "user")
             }
           )
         )
