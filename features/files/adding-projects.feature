@@ -83,14 +83,14 @@ Feature: Adding projects
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @desktop @mobile @backlog-mobile @priority-high
+    @desktop @mobile @priority-high
     Scenario: Adding a folder from the desktop and mobile apps registers it and starts a thread
       Given the folder "/home/sam/shop" exists on "laptop"
       When the user adds the local folder "/home/sam/shop"
       Then the project "shop" is listed for "laptop"
       And a draft thread opens in "shop"
 
-    @desktop @mobile @backlog-mobile @priority-high
+    @desktop @mobile @priority-high
     Scenario: A folder the environment refuses to add says why
       Given the folder "/home/sam/shop" exists on "laptop"
       And the environment refuses to change projects with "Disk is read-only"
@@ -103,6 +103,25 @@ Feature: Adding projects
       When a client creates a project at "~/code/shop" without a title
       Then the project is titled "shop"
       And its workspace folder is the expanded home path ending in "code/shop"
+
+    @mc
+    Scenario: A typed path with dot segments is stored in its canonical form
+      When a client creates a project at "~/code/old/../shop/." without a title
+      Then the project is titled "shop"
+      And its workspace folder is the expanded home path ending in "code/shop"
+
+    @mc
+    Scenario Outline: A relative path is refused as a project folder
+      When a client creates a project at "<path>" without a title
+      Then the MC answers that "<path>" is not an absolute path
+      And no project is created
+
+      Examples:
+        | path     |
+        | shop     |
+        | ./shop   |
+        | ../shop  |
+        | ~sam/shop |
 
     @tui
     Scenario: Browsing for a folder lists only the folders under the typed path
@@ -226,7 +245,15 @@ Feature: Adding projects
       Then no second project is created
       And the user is told the project was already added
 
-    @desktop @mobile @backlog-mobile @priority-high
+    # A folder written another way (`..`, `~`) is not matched by the client; the MC's refusal names the project.
+    @desktop
+    Scenario: Adding an existing project's folder written another way opens its latest thread
+      Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
+      When the user adds the local folder of "shop" again written with a detour
+      Then no second project is created
+      And the thread "Fix checkout" opens
+
+    @desktop @mobile @priority-high
     Scenario: Adding an existing project from the desktop and mobile apps opens its latest thread
       Given "shop" is already a project on "laptop" with an unsettled thread "Fix checkout"
       When the user adds the local folder of "shop" again
@@ -527,7 +554,7 @@ Feature: Adding projects
         | Resolving deltas: 100% (3/3), done.   | resolving | 100     |
         | Updating files:  80% (8/10)           | checkout  | 80      |
 
-    @desktop @mobile @backlog-mobile @priority-high
+    @desktop @mobile @priority-high
     Scenario: Clone progress is shown while the user keeps working
       Given a clone of "acme/shop" is receiving objects at 45 percent
       When the user looks at the app
@@ -551,7 +578,7 @@ Feature: Adding projects
       Then the user sees "Cloning acme/shop" with "Receiving objects · 24% · Stalled"
       And the user can cancel the clone
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: A clone on another machine of the cluster shows its progress too
       Given a clone of "acme/shop" is receiving objects at 45 percent on another machine of the cluster
       When the user looks at the app
@@ -565,7 +592,7 @@ Feature: Adding projects
       Then the clone is no longer reported
       And the project "shop" stays with its files
 
-    @desktop @mobile @backlog-mobile @priority-high
+    @desktop @mobile @priority-high
     Scenario: A finished clone offers to open its project
       Given a clone of "acme/shop" finished
       When the user looks at the app
@@ -642,7 +669,7 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running
 
-    @desktop @mobile @backlog-mobile @priority-high
+    @desktop @mobile @priority-high
     Scenario: A failed or cancelled clone offers to remove the project it created
       Given a clone of "acme/shop" failed
       When the user removes the project from the clone's failure notice

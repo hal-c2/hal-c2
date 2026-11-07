@@ -17,7 +17,7 @@ defmodule HalC2.Mcp.Tools do
                   hal_c2_thread_search hal_c2_environment_read hal_c2_environment_preferences_update
                   hal_c2_project_list hal_c2_project_read list_scheduled_tasks schedule_task
                   update_scheduled_task delete_scheduled_task run_scheduled_task_now
-                  hal_c2_preview_list hal_c2_preview_close)
+                  hal_c2_preview_list hal_c2_preview_close hal_c2_background_wait)
 
   @areas [
     HalC2.Mcp.Tools.Threads,
@@ -325,6 +325,27 @@ defmodule HalC2.Mcp.Tools do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :ok <- live(caller) do
       interrupt(row["id"], args, me["id"])
+    end
+  end
+
+  # Marks the caller's own background work as awaited (or not), so it holds the thread
+  # Working; only adapters that track a background roster can.
+  def run("hal_c2_background_wait", args, %{row: me} = caller) do
+    ids =
+      for id <- List.wrap(args["taskIds"]), is_binary(id), id = String.trim(id), id != "", do: id
+
+    runtime = Orchestration.runtime(caller.instance)
+
+    cond do
+      ids == [] or length(ids) > 20 ->
+        {:error, "invalid_request", "taskIds must list 1 to 20 background task ids."}
+
+      not (Code.ensure_loaded?(runtime) and function_exported?(runtime, :await_background, 3)) ->
+        {:error, "invalid_request", "This provider cannot mark background work as awaited."}
+
+      true ->
+        {:ok, matched} = runtime.await_background(me["id"], ids, args["waiting"] != false)
+        {:ok, %{"matched" => matched, "unmatched" => Enum.uniq(ids) -- matched}}
     end
   end
 

@@ -184,9 +184,12 @@ const Steps steps([] {
       row.insert(QStringLiteral("updatedAt"), iso(world.now()));
       for (const char* key : {"latestRunCompletedAt", "lastErrorClass", "usageLimitResetAt", "limitRecovery", "snoozedUntil", "snoozedAt"}) row.remove(QLatin1String(key));
     });
-    waitSection(world, c[2], QStringLiteral("active"));
+    // Working again, it is listed in the Working section while that is on.
+    const QString live = at(world.state(QStringLiteral("sidebar")), QStringLiteral("workingShelf")).toBool() ? QStringLiteral("working")
+                                                                                                         : QStringLiteral("active");
+    waitSection(world, c[2], live);
     const QString key = threadKeyOf(world, c[2]);
-    for (const QVariant& row : at(world.state(QStringLiteral("sidebar")), QStringLiteral("active")).toList()) {
+    for (const QVariant& row : at(world.state(QStringLiteral("sidebar")), live).toList()) {
       if (row.toMap().value(QStringLiteral("key")) == key) {
         expect(row.toMap().value(QStringLiteral("status")) == QLatin1String("working"), QStringLiteral("the row is %1").arg(show(row)));
       }

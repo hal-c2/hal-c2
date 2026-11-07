@@ -25,7 +25,8 @@
 # Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate[, "sessionId": child's
 # session, else the prompt's]}, {"request": {method,
 # params}} (waits for the answer), {"permission": toolCall} (session/request_permission
-# with allow_once/allow_always/reject_once), {"waitCancel": true}, {"exit": code},
+# with allow_once/allow_always/reject_once), {"waitCancel": true[, "after": [sessionUpdate]]}
+# (the updates are sent once the cancel came, before the prompt ends), {"exit": code},
 # {"error": {code, message}} (ends the prompt with it), {"stop": reason},
 # {"hang": true} (never answers the prompt, even to a cancel),
 # {"waitFile": name} (waits until that file appears in FAKE_DIR),
@@ -172,6 +173,8 @@ def run_turn(mid, sid, text):
         elif "waitCancel" in step:
             if not cancelled:
                 wait_for(lambda m: m.get("method") == "session/cancel")
+            for u in step.get("after") or []:
+                update(sid, u)
             send({"id": mid, "result": {"stopReason": "cancelled"}})
             return
         elif "hang" in step:

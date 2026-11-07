@@ -131,6 +131,30 @@ Item {
             compare(spy.count, 1);
         }
 
+        // Scenario: A thread with unsent text in its composer is marked on its row (features/threads/sidebar-list.feature)
+        function test_unsentDraftIsMarkedAndDiscarded() {
+            let row = createTemporaryObject(rowComponent, root);
+            let mark = findChild(row, "unsentDraftMark");
+            verify(!mark.visible, "no mark without an unsent draft");
+            row.item = Object.assign({}, row.item, {
+                unsentDraft: true
+            });
+            verify(mark.visible, "the row marks its unsent draft");
+            compare(mark.Accessible.name, "Unsent draft");
+            row.focused = true;
+            let discard = findChild(row, "discardDraftAction");
+            verify(discard.visible, "the row offers to discard the draft");
+            compare(discard.Accessible.name, "Discard draft");
+            waitForRendering(row);
+            let spy = createTemporaryObject(spyComponent, root, {
+                target: row,
+                signalName: "discardDraftRequested"
+            });
+            mouseClick(discard);
+            compare(spy.count, 1);
+            verify(findChild(row, "settleAction").visible, "the row's other actions stay");
+        }
+
         // Scenario: A thread row shows its project's icon (features/threads/sidebar-list.feature)
         function test_rowDrawsTheProjectIcon_data() {
             return [

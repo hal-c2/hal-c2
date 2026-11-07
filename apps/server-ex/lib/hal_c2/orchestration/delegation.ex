@@ -271,8 +271,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   Settles the task `thread_id` works on, once the child is quiet: no run active or
-  queued, and no background work it still owes (`BackgroundWork.derive/1`, the
-  sidebar's Waiting pill). Until then the task works on, however many turns the
+  queued, and no background work still running (`BackgroundWork.derive/1`: all of
+  it, not only what holds the sidebar's Working, since a child's answer may wait on
+  a command it never marked). Until then the task works on, however many turns the
   child takes. It ends as the child's last run that was not rolled back did, with
   the child's last answer in such a run, and wakes the caller once.
 

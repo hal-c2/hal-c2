@@ -69,6 +69,26 @@ class SidebarRegression : public QObject {
   Q_OBJECT
 
 private slots:
+  // A scope the user picked goes the moment its project is removed, even with
+  // another machine asleep: only a scope restored at start, not seen yet,
+  // waits for every machine to say what projects it has.
+  void aRemovedScopeGoesWithAMachineAsleep() {
+    QTemporaryDir home;
+    Shell shell(home.path(), {QStringLiteral("t1")});
+    QTRY_VERIFY(shell.native->client()->isReady());
+    shell.mc.offline.insert(QStringLiteral("work"));
+    shell.mc.join(QStringLiteral("work"));
+    QTRY_VERIFY(!shell.native->store()->environmentOnline(QStringLiteral("work")) && shell.native->store()->environments().contains(QStringLiteral("work")));
+    QString scope;
+    QTRY_VERIFY(!(scope = shell.sidebar().value(QStringLiteral("projects")).toList().value(0).toMap().value(QStringLiteral("key")).toString()).isEmpty());
+    shell.bridge.dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), scope}});
+    QTRY_COMPARE(shell.sidebar().value(QStringLiteral("scopeProjectKey")).toString(), scope);
+    QJsonObject removed = shell.mc.projects.take(QStringLiteral("p1"));
+    removed.insert(QStringLiteral("deletedAt"), kAt);
+    shell.mc.sendRow(QStringLiteral("p1"), removed, QStringLiteral("project"));
+    QTRY_VERIFY(shell.sidebar().value(QStringLiteral("scopeProjectKey")).isNull());
+  }
+
   // A time of day reads with plain spaces whatever the locale separates it with:
   // the narrow no-break space (U+202F) of newer CLDR data, and the no-break space
   // (U+00A0) Spanish puts inside "p. m.".

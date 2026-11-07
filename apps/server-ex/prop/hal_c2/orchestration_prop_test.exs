@@ -8,7 +8,8 @@ defmodule HalC2.OrchestrationPropTest do
   reconnect does, or send the same steer twice at once, which Codex takes or refuses:
   the repeat hears it is still being sent, and the first hears how it went;
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
-  promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
+  promoted one, also after the thread was archived while Codex was asked); send a
+  queued message now on an idle thread, held or not; resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474);
   crash a provider runtime mid-turn, or end only its provider stream (the app-server
   exiting), which fails the run, unless the MC is shutting down, when the run is left
@@ -338,7 +339,8 @@ defmodule HalC2.OrchestrationPropTest do
            let(
              [{t, m} <- oneof(queued), how <- oneof([:taken, :refused])],
              do: {:call, __MODULE__, :promote, [t, m, how]}
-           )}
+           )},
+          {4, let({t, m} <- oneof(queued), do: {:call, __MODULE__, :start_queued, [t, m]})}
         ]
 
     # Archiving while Codex is asked needs Codex to be asked: a running turn that can
@@ -511,7 +513,7 @@ defmodule HalC2.OrchestrationPropTest do
         off_refusal(threads[tid], instance_of(threads[tid], msg)) == nil
 
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
-      when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run],
+      when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run, :start_queued],
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
 
   # An agent switches the thread it runs in; one put away has no agent to switch it.
@@ -825,6 +827,23 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  # Sent now, the queued message starts ahead of the rest, which stay as they were.
+  defp step(state, _result, {:call, _, :start_queued, [tid, msg]}) do
+    case start_refusal(state, tid, msg) do
+      nil ->
+        update(state, tid, fn thread ->
+          %{thread | queue: List.delete(thread.queue, msg)}
+          |> set_runs(&if(&1.msg == msg, do: %{&1 | held: false}, else: &1))
+          |> Map.put(:instance, Enum.find(thread.runs, &(&1.msg == msg)).instance)
+          |> put_in([:messages, msg, :shown], true)
+          |> started(msg)
+        end)
+
+      _ ->
+        state
+    end
+  end
+
   defp step(state, _result, {:call, _, :cancel, [tid, msg]}) do
     case refusal(state, tid, :queue) do
       nil ->
@@ -981,6 +1000,19 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  # A queued message is sent now only on a live thread with no turn running.
+  defp start_refusal(state, tid, msg) do
+    thread = state.threads[tid]
+
+    cond do
+      refused = refusal(state, tid, :resume) -> refused
+      own = agents_own(state, tid, msg) -> own
+      msg not in thread.queue -> {:error, :not_queued}
+      running(thread) -> {:error, :another_turn}
+      true -> nil
+    end
+  end
+
   defp promote_refusal(state, tid, msg) do
     case state.threads[tid] do
       nil ->
@@ -1050,6 +1082,8 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, :resume, [tid]), do: refusal(state, tid, :resume) || :ok
 
   defp expected_reply(state, :cancel, [tid | _]), do: refusal(state, tid, :queue) || :ok
+
+  defp expected_reply(state, :start_queued, [tid, msg]), do: start_refusal(state, tid, msg) || :ok
 
   defp expected_reply(state, :reorder, [tid, msg, before]),
     do: refusal(state, tid, :queue) || reorder_refusal(state, tid, msg, before) || :ok
@@ -1133,6 +1167,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp reply_matches?({:error, :not_queued}, {:error, message}),
     do: message =~ ~r/^Queued run \S+ is not queued\.$/
+
+  defp reply_matches?({:error, :another_turn}, {:error, message}),
+    do: message =~ "Another turn started first, so the message stays queued."
 
   defp reply_matches?({:error, :agents_own}, {:error, message}),
     do: message =~ ~r/^Automatic completion deliveries cannot be/
@@ -2034,6 +2071,14 @@ defmodule HalC2.OrchestrationPropTest do
       ending
     )
   end
+
+  def start_queued(tid, msg),
+    do:
+      thread_command(%{
+        "type" => "queued-run.start",
+        "threadId" => tid,
+        "runId" => run_of(tid, msg)
+      })
 
   def cancel(tid, msg),
     do:
