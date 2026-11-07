@@ -633,6 +633,51 @@ const Steps steps([] {
     expect(!text.isEmpty() && text == world.mc.part<Typed>().text && composerEditor(world)->property("text") == text,
            QStringLiteral("the draft reads \"%1\"").arg(text));
   });
+
+  // Stashing what a draft carries (editors-and-keys.feature).
+  // Stashes `text` with the images and files named, each kept or uploaded first.
+  const auto stashWith = [](World& world, const QString& text, const QStringList& images, const QStringList& files) {
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.native().controller<NavigationController>()->threadKey()},
+                                        {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
+    composerBrick(world);
+    QList<QUrl> urls;
+    for (const QString& name : images) urls.append(imageFile(world, name));
+    for (const QString& name : files) urls.append(plainFile(world, name));
+    choose(world, urls);
+    world.waitFor([&] { return carried(world) == images + files; }, [&] { return QStringLiteral("the draft to carry them; it carries %1").arg(carried(world).join(u", ")); });
+    for (const QString& name : files) waitForUpload(world, name, QString());
+    world.bridge().dispatch(QStringLiteral("composer.stash"));
+    world.sync();
+  };
+  step(QStringLiteral("the user stashed %1 with an image").arg(q), [stashWith](World& world, const Captures& c, const Table&) {
+    stashWith(world, c[0], {QStringLiteral("sketch.png")}, {});
+  });
+  step(QStringLiteral("the user stashed (two images|one image|one file|one image, one file) and no text"), [stashWith](World& world, const Captures& c, const Table&) {
+    QStringList images;
+    QStringList files;
+    if (c[0] == QLatin1String("two images")) images = {QStringLiteral("before.png"), QStringLiteral("after.png")};
+    if (c[0].startsWith(QLatin1String("one image"))) images = {QStringLiteral("sketch.png")};
+    if (c[0].endsWith(QLatin1String("one file"))) files = {QStringLiteral("schema.sql")};
+    stashWith(world, QString(), images, files);
+  });
+  step(QStringLiteral("the app is restarted"), [](World& world, const Captures&, const Table&) {
+    world.restart();
+    world.connect();
+    world.sync();
+  });
+  step(QStringLiteral("the stash lists %1 with its image").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto entries = [&] { return world.state(QStringLiteral("composerStash")).toMap().value(QStringLiteral("entries")).toList(); };
+    world.waitFor([&] { return entries().size() == 1 && entries().constFirst().toMap().value(QStringLiteral("snippet")) == c[0]; },
+                  [&] { return QStringLiteral("the stash holds %1").arg(show(entries())); });
+    // Its image comes back with it.
+    world.bridge().dispatch(QStringLiteral("composer.stash.restore"), QVariantMap{{QStringLiteral("id"), entries().constFirst().toMap().value(QStringLiteral("id"))}});
+    world.sync();
+    world.waitFor([&] { return carried(world) == QStringList{QStringLiteral("sketch.png")}; },
+                  [&] { return QStringLiteral("the restored draft to carry sketch.png; it carries %1").arg(carried(world).join(u", ")); });
+    const QString text = world.native().controller<ComposerController>()->draft(world.native().controller<NavigationController>()->threadKey());
+    expect(text == c[0], QStringLiteral("the restored draft reads \"%1\"").arg(text));
+  });
 });
 
 }  // namespace

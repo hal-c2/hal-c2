@@ -208,8 +208,12 @@ Rectangle {
         }
         const start = input.selectionStart;
         const end = input.selectionEnd;
+        // Its own undo step: Qt merges an edit into the one before it only
+        // while the document reads as modified.
+        input.textDocument.modified = false;
         input.remove(start, end);
         input.insert(start, text);
+        input.textDocument.modified = false;
         input.cursorPosition = start + text.length;
         flushText();
         return true;
@@ -297,15 +301,63 @@ Rectangle {
 
     // Up on the editor's first line recalls the thread's earlier prompts and
     // Down on its last steps forward again; ComposerController decides whether
-    // the draft is one a recall may replace.
+    // the draft is one a recall may replace. With nothing recalled the key
+    // takes the caret to that edge of the draft. True when the key was used.
     function stepPromptHistory(direction) {
         const caret = input.positionToRectangle(input.cursorPosition).y;
         const edge = input.positionToRectangle(direction === "backward" ? 0 : input.length).y;
-        if (!composer.ready || caret !== edge) return;
+        if (!composer.ready || caret !== edge) return false;
+        const before = input.text;
         composer.flushText();
         Shell.dispatch("composer.history.step", {
             direction: direction
         });
+        if (input.text === before) input.cursorPosition = direction === "backward" ? 0 : input.length;
+        return true;
+    }
+
+    // A new line in a Markdown list item ("- ", "* ", "+ ", "1. ", "1) ", a
+    // task) starts the next item, numbered one on and with its task unticked;
+    // on an item with nothing written it ends the list instead. True when it
+    // took the new line.
+    function continueList() {
+        if (input.selectionStart !== input.selectionEnd) return false;
+        const at = input.cursorPosition;
+        const lineStart = input.text.lastIndexOf("\n", at - 1) + 1;
+        const lineEnd = input.text.indexOf("\n", at) < 0 ? input.text.length : input.text.indexOf("\n", at);
+        const line = input.text.slice(lineStart, lineEnd);
+        const item = /^(\s*)(?:([-*+])|(\d{1,9})([.)]))[ \t]+(\[[ xX]\][ \t]+)?/.exec(line);
+        if (!item || at - lineStart < item[0].length) return false;
+        if (line.slice(item[0].length).trim().length === 0) {
+            input.remove(lineStart, lineEnd);
+            return true;
+        }
+        const marker = item[2] ?? (Number(item[3]) + 1) + item[4];
+        const next = "\n" + item[1] + marker + " " + (item[5] ? "[ ] " : "");
+        // Split in the middle of an item, the first half keeps no trailing space.
+        let cut = at;
+        while (cut > lineStart + item[0].length && /[ \t]/.test(input.text[cut - 1])) --cut;
+        input.remove(cut, at);
+        input.insert(cut, next);
+        input.cursorPosition = cut + next.length;
+        return true;
+    }
+
+    // An opening mark typed over a selection wraps it and keeps it selected,
+    // unless the selection holds a reference or Markdown of its own, which the
+    // mark replaces as any typed letter does.
+    function wrapSelection(mark) {
+        const closing = { "(": ")", "[": "]", "{": "}", "\"": "\"", "'": "'", "`": "`", "<": ">", "*": "*", "_": "_" }[mark];
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        if (closing === undefined || start === end) return false;
+        const selected = input.text.slice(start, end);
+        const around = input.text.slice(Math.max(0, start - 1), end + 1);
+        if (/[*_~`\[\]@]/.test(around) || /hal-c2-context:/.test(selected)) return false;
+        input.remove(start, end);
+        input.insert(start, mark + selected + closing);
+        input.select(start + 1, start + 1 + selected.length);
+        return true;
     }
 
     function runtimeIcon(mode) {
@@ -757,6 +809,13 @@ Rectangle {
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
                         }
 
+                        Text {
+                            objectName: "stashAge-" + stashRow.index
+                            text: Format.relative(stashRow.modelData.createdAt)
+                            color: composer.muted
+                            font.pixelSize: Theme.type.meta.size
+                        }
+
                         ShellButton {
                             objectName: "stashDelete-" + stashRow.index
                             subtle: true
@@ -1030,6 +1089,7 @@ Rectangle {
                     }
 
                     ScrollView {
+                        id: promptScroll
                         objectName: "promptScroll"
                         Layout.fillWidth: true
                         // Two lines at rest, one while scrolled away, and up to
@@ -1070,6 +1130,10 @@ Rectangle {
                             // The placeholder is one line, elided: an empty prompt
                             // does not wrap, so neither does it.
                             wrapMode: length > 0 || preeditText.length > 0 ? TextEdit.Wrap : TextEdit.NoWrap
+                            // The scroll view sizes the editor to its unwrapped text
+                            // and not again when wrapping starts: a long prompt
+                            // arriving whole (a recall, a restore) would stay one line.
+                            onWrapModeChanged: if (wrapMode !== TextEdit.NoWrap) width = promptScroll.contentItem.width
                             selectByMouse: true
                             background: null
                             // The prompt has its own font and size (Settings → Appearance).
@@ -1165,18 +1229,30 @@ Rectangle {
                                     return;
                                 }
                                 if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
-                                    composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
+                                    event.accepted = composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
+                                    return;
+                                }
+                                if (event.text.length === 1 && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier)) && composer.wrapSelection(event.text)) {
+                                    event.accepted = true;
                                     return;
                                 }
                                 if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter) {
                                     return;
                                 }
+                                // Enter that accepts the input method's word is the
+                                // input method's.
+                                if (input.preeditText.length > 0) {
+                                    event.accepted = true;
+                                    return;
+                                }
                                 const intent = composer.enterIntent(event.modifiers);
                                 if (intent === "") {
+                                    event.accepted = !event.isAutoRepeat && composer.continueList();
                                     return;
                                 }
                                 event.accepted = true;
-                                composer.submit(intent);
+                                // A held Enter sends once, on its first press.
+                                if (!event.isAutoRepeat) composer.submit(intent);
                             }
 
                             // Its Paste is the composer's, which attaches copied

@@ -4,6 +4,9 @@
 // qt-scenarios.feature).
 
 #include <QClipboard>
+#include <QCoreApplication>
+#include <QInputMethodEvent>
+#include <QKeyEvent>
 #include <QPointer>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -84,6 +87,14 @@ struct Pressed {
   QString text;
   qsizetype commands = 0;
   int cursor = 0;
+};
+
+// What a step set the draft up with, for a later step to compare: its text,
+// and the part of it selected.
+struct SetUp {
+  QString text;
+  int start = 0;
+  int length = 0;
 };
 
 QString target(World& world) {
@@ -455,6 +466,302 @@ const Steps steps([] {
     expect(sent.size() == 1 && sent.first().value(QLatin1String("text")) == c[0] &&
                sent.first().value(QLatin1String("dispatchMode")).toObject().value(QLatin1String("type")) == QLatin1String("start_immediately"),
            QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("%1 is sent").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QList<QJsonObject> list = messages(world);
+    expect(list.size() == 1 && list.first().value(QLatin1String("text")) == c[0], QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the window is narrowed to the width of a phone"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = composerBrick(world);
+    brick.window().resize(390, 700);
+    brick.root()->setSize(QSizeF(390, 700));
+    world.waitFor([&] { return composerItem(world)->width() <= 390; }, QStringLiteral("the composer to narrow"));
+  });
+
+  // More of recalling sent prompts, and what is never recalled.
+  step(QStringLiteral("the user sent %1 in this thread").arg(q), [sent](World& world, const Captures& c, const Table&) {
+    sent(world, {c[0]});
+    composerBrick(world);
+  });
+  step(QStringLiteral("the user sent %1, then %1 and then %1 in this thread").arg(q), [sent](World& world, const Captures& c, const Table&) {
+    sent(world, {c[0], c[1], c[2]});
+  });
+  step(QStringLiteral("the user then sent %1").arg(q), [sent](World& world, const Captures& c, const Table&) { sent(world, {c[0]}); });
+  step(QStringLiteral("a scheduled task then sent %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString run = startRun(world, 60, QStringLiteral("completed"));
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run,
+        {{QStringLiteral("text"), c[0]}, {QStringLiteral("scheduledTaskId"), QStringLiteral("task-nightly")}});
+  });
+  // How each extra reaches the MC: in the text after the words typed.
+  const QHash<QString, QString> extras{
+      {QStringLiteral("Ultrathink turned on"), QStringLiteral("Ultrathink:\n%1")},
+      {QStringLiteral("a comment on a file"), QStringLiteral("%1\n\n[cart.ts:12](hal-c2-context://v1/review-comment/comment-1)")},
+      {QStringLiteral("a terminal excerpt added at the end"), QStringLiteral("%1\n\n[Terminal 1 lines 3-9](hal-c2-context://v1/terminal/excerpt-1)")},
+      {QStringLiteral("a preview annotation"), QStringLiteral("%1 [Preview: Checkout button](hal-c2-context://v1/preview-annotation/note-1)")}};
+  step(QStringLiteral("the user sent %1 with (Ultrathink turned on|a comment on a file|a terminal excerpt added at the end|a preview annotation)").arg(q),
+       [sent, extras](World& world, const Captures& c, const Table&) { sent(world, {extras.value(c[1]).arg(c[0])}); });
+  step(QStringLiteral("the user sent %1 and then (an image with no text|the request to implement a proposed plan)").arg(q),
+       [sent](World& world, const Captures& c, const Table&) {
+         sent(world, {c[0], c[1].startsWith(QLatin1String("an image")) ? QString() : QStringLiteral("PLEASE IMPLEMENT THIS PLAN:\n# Tax line\n\nAdd it.")});
+       });
+  step(QStringLiteral("the user recalls the previous prompt"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    pressInComposer(world, QStringLiteral("Up"));
+  });
+  step(QStringLiteral("the user recalled %1(?: in thread A)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    composerBrick(world);
+    for (int i = 0; i < 8 && editorText(world) != c[0]; ++i) pressInComposer(world, QStringLiteral("Up"));
+    expect(editorText(world) == c[0], QStringLiteral("Up recalled \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the user changes the draft to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    write(world, c[0], int(c[0].size()));
+  });
+  step(QStringLiteral("the user presses (Up|Down) on the (?:first|last) line of the composer"), [](World& world, const Captures& c, const Table&) {
+    composerBrick(world);
+    pressInComposer(world, c[0]);
+  });
+  step(QStringLiteral("the caret moves to the start of the draft"), [](World& world, const Captures&, const Table&) {
+    expect(cursor(world) == 0, QStringLiteral("the caret is at %1").arg(cursor(world)));
+  });
+  step(QStringLiteral("the user recalled a prompt long enough to wrap onto three lines"), [sent](World& world, const Captures&, const Table&) {
+    QQuickItem* editor = composerEditor(world);
+    // Words until the editor wraps them onto a third line.
+    QString prompt = QStringLiteral("totals");
+    for (int words = 1; words < 1000; ++words) {
+      editor->setProperty("text", prompt);
+      world.sync();
+      if (editor->property("lineCount").toInt() >= 3) break;
+      prompt += QStringLiteral(" totals");
+    }
+    editor->setProperty("text", QString());
+    settleComposer(world);
+    sent(world, {prompt});
+    pressInComposer(world, QStringLiteral("Up"));
+    world.waitFor([&] { return editorText(world) == prompt && editor->property("lineCount").toInt() == 3; },
+                  [&] {
+                    return QStringLiteral("the editor reads \"%1\" on %2 lines").arg(editorText(world)).arg(editor->property("lineCount").toInt());
+                  });
+    world.mc.part<SetUp>().text = prompt;
+  });
+  step(QStringLiteral("the caret is on the last line"), [](World& world, const Captures&, const Table&) {
+    composerEditor(world)->setProperty("cursorPosition", int(editorText(world).size()));
+  });
+  const auto caretY = [](World& world, int position) {
+    QRectF rect;
+    QMetaObject::invokeMethod(composerEditor(world), "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, position));
+    return rect.y();
+  };
+  step(QStringLiteral("the caret moves up one line"), [caretY](World& world, const Captures&, const Table&) {
+    const qreal was = caretY(world, world.mc.part<Pressed>().cursor);
+    const qreal now = caretY(world, cursor(world));
+    expect(now < was && now > caretY(world, 0), QStringLiteral("the caret went from y %1 to %2").arg(was).arg(now));
+  });
+  step(QStringLiteral("the draft still reads that prompt"), [](World& world, const Captures&, const Table&) {
+    settleComposer(world);
+    const QString prompt = world.mc.part<SetUp>().text;
+    expect(world.native().controller<ComposerController>()->draft(target(world)) == prompt, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the user sent %1 in thread A and %1 in thread B").arg(q), [sent](World& world, const Captures& c, const Table&) {
+    sent(world, {c[0]});
+    otherThread(world);
+    // Thread B's own stream, while the user is still in thread A.
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    const QString was = std::exchange(fake.thread, QStringLiteral("thread-2"));
+    const QString at = iso(now().addSecs(-60));
+    set(world, QStringLiteral("run"), QStringLiteral("run-b"),
+        {{QStringLiteral("id"), QStringLiteral("run-b")}, {QStringLiteral("ordinal"), 1}, {QStringLiteral("status"), QStringLiteral("completed")},
+         {QStringLiteral("requestedAt"), at}, {QStringLiteral("startedAt"), at}});
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:run-b"),
+        {{QStringLiteral("id"), QStringLiteral("message:run-b")}, {QStringLiteral("type"), QStringLiteral("user_message")},
+         {QStringLiteral("runId"), QStringLiteral("run-b")}, {QStringLiteral("ordinal"), 2}, {QStringLiteral("status"), QStringLiteral("completed")},
+         {QStringLiteral("text"), c[1]}, {QStringLiteral("updatedAt"), at}});
+    fake.thread = was;
+  });
+  step(QStringLiteral("the user opens thread B and recalls the previous prompt"), [](World& world, const Captures&, const Table&) {
+    look(world, otherThread(world));
+    world.sync();
+    settleComposer(world);
+    pressInComposer(world, QStringLiteral("Up"));
+  });
+
+  // Keys the composer does not send with.
+  step(QStringLiteral("the user presses Enter (to accept a word from their input method|and holds it so the key repeats)"),
+       [](World& world, const Captures& c, const Table&) {
+         Brick& brick = composerBrick(world);
+         if (c[0].startsWith(QLatin1String("to accept"))) {
+           // The input method is still composing the word Enter accepts.
+           QInputMethodEvent composing(QStringLiteral("ね"), {QInputMethodEvent::Attribute(QInputMethodEvent::Cursor, 1, 1, QVariant())});
+           QCoreApplication::sendEvent(composerEditor(world), &composing);
+           pressInComposer(world, QStringLiteral("Enter"));
+         } else {
+           // Only the repeats: the first press has been and gone.
+           for (int i = 0; i < 3; ++i) {
+             QKeyEvent repeat(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"), true);
+             QCoreApplication::sendEvent(&brick.window(), &repeat);
+           }
+           QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+           QCoreApplication::sendEvent(&brick.window(), &release);
+           world.sync();
+         }
+       });
+
+  // Lists: a new line in an item starts the next one.
+  step(QStringLiteral("the draft's last line (?:reads|is) %1(?: with the caret at its end)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    write(world, c[0], int(c[0].size()));
+  });
+  step(QStringLiteral("the draft's last line is a bullet indented by two spaces"), [](World& world, const Captures&, const Table&) {
+    write(world, QStringLiteral("- milk\n  - oat"), 14);
+  });
+  step(QStringLiteral("the draft's last line is a bullet with nothing after it"), [](World& world, const Captures&, const Table&) {
+    write(world, QStringLiteral("- milk\n- "), 9);
+  });
+  step(QStringLiteral("a list item holds a file reference"), [](World& world, const Captures&, const Table&) {
+    const QString text = QStringLiteral("- read [cart.ts](src/cart.ts) first");
+    write(world, text, int(text.size()));
+  });
+  step(QStringLiteral("the draft reads %1 with the caret before %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    write(world, c[0], int(c[0].indexOf(c[1])));
+  });
+  step(QStringLiteral("the user (?:adds|starts) a new line"), [](World& world, const Captures&, const Table&) {
+    expect(pressInComposer(world, QStringLiteral("Shift+Enter")), QStringLiteral("the composer did not take Shift+Enter"));
+  });
+  step(QStringLiteral("the user adds a new line with the caret beside the reference"), [](World& world, const Captures&, const Table&) {
+    composerEditor(world)->setProperty("cursorPosition", int(editorText(world).indexOf(QLatin1Char(')')) + 1));
+    expect(pressInComposer(world, QStringLiteral("Shift+Enter")), QStringLiteral("the composer did not take Shift+Enter"));
+  });
+  const auto lines = [](World& world) {
+    settleComposer(world);
+    return editorText(world).split(QLatin1Char('\n'));
+  };
+  step(QStringLiteral("the new line starts with %1").arg(q), [lines](World& world, const Captures& c, const Table&) {
+    const QStringList now = lines(world);
+    expect(now.size() == 2 && now.last() == c[0] + QLatin1Char(' ') && cursor(world) == editorText(world).size(),
+           QStringLiteral("the draft reads \"%1\" with the caret at %2").arg(editorText(world)).arg(cursor(world)));
+  });
+  step(QStringLiteral("the new line is a bullet indented by two spaces"), [lines](World& world, const Captures&, const Table&) {
+    expect(lines(world).last() == QLatin1String("  - "), QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("that line is no longer a bullet"), [lines](World& world, const Captures&, const Table&) {
+    expect(lines(world).last().isEmpty(), QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("no new bullet is started"), [lines](World& world, const Captures&, const Table&) {
+    expect(lines(world) == QStringList{QStringLiteral("- milk"), QString()}, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the draft reads %1 and then %1 on the next line").arg(q), [lines](World& world, const Captures& c, const Table&) {
+    expect(lines(world) == QStringList{c[0], c[1]}, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the file reference is whole on one of the two lines"), [lines](World& world, const Captures&, const Table&) {
+    const QStringList now = lines(world);
+    expect(now.size() == 2 && (now.first().contains(QLatin1String("[cart.ts](src/cart.ts)")) || now.last().contains(QLatin1String("[cart.ts](src/cart.ts)"))),
+           QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the line %1 is kept and a new line starts below it").arg(q), [lines](World& world, const Captures& c, const Table&) {
+    expect(lines(world) == QStringList{c[0], QString()}, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("no suggestion list is open"), [](World& world, const Captures&, const Table&) {
+    expect(!composerItem(world)->property("suggesting").toBool(), QStringLiteral("a suggestion list is open"));
+  });
+  step(QStringLiteral("that line is indented by two spaces"), [](World& world, const Captures&, const Table&) {
+    settleComposer(world);
+    const QString was = world.mc.part<Pressed>().text;
+    expect(editorText(world) == QStringLiteral("  ") + was, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+
+  // Typing over a selection, and with an input method.
+  step(QStringLiteral("the user types (\\S)"), [](World& world, const Captures& c, const Table&) {
+    typeInComposer(world, c[0]);
+    settleComposer(world);
+  });
+  // The wrapped word is unquoted: one of the marks is a quote.
+  step(QStringLiteral("the draft reads hello (\\S+)"), [](World& world, const Captures& c, const Table&) {
+    settleComposer(world);
+    const QString expected = QStringLiteral("hello ") + c[0];
+    expect(editorText(world) == expected, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("%1 is still selected").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString selected = composerEditor(world)->property("selectedText").toString();
+    expect(selected == c[0], QStringLiteral("the selection is \"%1\"").arg(selected));
+  });
+  step(QStringLiteral("the draft's selection covers (a file reference|text shown in bold)"), [](World& world, const Captures& c, const Table&) {
+    const bool reference = c[0] == QLatin1String("a file reference");
+    const QString text = reference ? QStringLiteral("see [cart.ts](src/cart.ts) now") : QStringLiteral("see **bold** now");
+    const QString selected = reference ? QStringLiteral("[cart.ts](src/cart.ts)") : QStringLiteral("bold");
+    write(world, text, int(text.size()));
+    const int start = int(text.indexOf(selected));
+    QMetaObject::invokeMethod(composerEditor(world), "select", Q_ARG(int, start), Q_ARG(int, start + int(selected.size())));
+    world.mc.part<SetUp>() = {text, start, int(selected.size())};
+  });
+  step(QStringLiteral("the selection is replaced by %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    settleComposer(world);
+    const SetUp& kept = world.mc.part<SetUp>();
+    const QString expected = QString(kept.text).replace(kept.start, kept.length, c[0]);
+    expect(editorText(world) == expected, QStringLiteral("the draft reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the user types Compose, then (\\S), then (\\S)"), [](World& world, const Captures& c, const Table&) {
+    static const QHash<QString, QString> composed{{QStringLiteral("\"o"), QStringLiteral("ö")}, {QStringLiteral("\"a"), QStringLiteral("ä")},
+                                                  {QStringLiteral("'e"), QStringLiteral("é")}};
+    expect(composed.contains(c[0] + c[1]), QStringLiteral("no Compose sequence for %1%2").arg(c[0], c[1]));
+    QQuickItem* editor = composerEditor(world);
+    editor->setProperty("cursorPosition", int(editorText(world).size()));
+    // Compose shows the mark it is composing, then commits the letter.
+    QInputMethodEvent composing(c[0], {QInputMethodEvent::Attribute(QInputMethodEvent::Cursor, 1, 1, QVariant())});
+    QCoreApplication::sendEvent(editor, &composing);
+    QInputMethodEvent commit;
+    commit.setCommitString(composed.value(c[0] + c[1]));
+    QCoreApplication::sendEvent(editor, &commit);
+    settleComposer(world);
+  });
+
+  // Rich text.
+  step(QStringLiteral("rich text editing is (on|off)"), [](World& world, const Captures& c, const Table&) {
+    world.native().controller<SettingsController>()->set(QStringLiteral("composerRichTextEnabled"), c[0] == QLatin1String("on"));
+    composerBrick(world);
+  });
+  step(QStringLiteral("nothing in it is italic"), [](World& world, const Captures&, const Table&) {
+    auto* quick = composerEditor(world)->property("textDocument").value<QQuickTextDocument*>();
+    expect(quick && quick->textDocument(), QStringLiteral("the editor has no document"));
+    for (QTextBlock block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
+      for (const QTextLayout::FormatRange& range : block.layout()->formats()) {
+        expect(!range.format.fontItalic(), QStringLiteral("\"%1\" is italic").arg(block.text().mid(range.start, range.length)));
+      }
+    }
+  });
+  step(QStringLiteral("the draft reads %1 with a file reference").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString text = c[0] + QStringLiteral(" [cart.ts](src/cart.ts) ");
+    write(world, text, int(text.size()));
+    world.mc.part<SetUp>().text = text;
+  });
+  step(QStringLiteral("the user turns rich text editing on and then off again"), [](World& world, const Captures&, const Table&) {
+    auto* settings = world.native().controller<SettingsController>();
+    for (const bool on : {true, false}) {
+      settings->set(QStringLiteral("composerRichTextEnabled"), on);
+      world.sync();
+      settleComposer(world);
+    }
+  });
+  step(QStringLiteral("the draft reads the same text with the same file reference"), [](World& world, const Captures&, const Table&) {
+    settleComposer(world);
+    const QString kept = world.mc.part<SetUp>().text;
+    const QString draft = world.native().controller<ComposerController>()->draft(target(world));
+    expect(editorText(world) == kept && draft == kept, QStringLiteral("the editor reads \"%1\", the draft \"%2\"").arg(editorText(world), draft));
+  });
+
+  // Undo.
+  step(QStringLiteral("the user typed, pasted, then typed more"), [](World& world, const Captures&, const Table&) {
+    composerBrick(world);
+    typeInComposer(world, QStringLiteral("fix "));
+    QGuiApplication::clipboard()->setText(QStringLiteral("the tax line"));
+    world.clipboard = QStringLiteral("the tax line");
+    expect(pressInComposer(world, QStringLiteral("Ctrl+V")), QStringLiteral("the composer did not take Ctrl+V"));
+    typeInComposer(world, QStringLiteral(" today"));
+    expect(editorText(world) == QLatin1String("fix the tax line today"), QStringLiteral("the editor reads \"%1\"").arg(editorText(world)));
+  });
+  step(QStringLiteral("the user undoes once"), [](World& world, const Captures&, const Table&) {
+    expect(pressInComposer(world, QStringLiteral("Ctrl+Z")), QStringLiteral("the composer did not take Ctrl+Z"));
+  });
+  step(QStringLiteral("only the last action is undone"), [](World& world, const Captures&, const Table&) {
+    settleComposer(world);
+    expect(editorText(world) == QLatin1String("fix the tax line"), QStringLiteral("the editor reads \"%1\"").arg(editorText(world)));
   });
 });
 
