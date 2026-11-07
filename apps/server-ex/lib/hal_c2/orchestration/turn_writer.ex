@@ -10,7 +10,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{CommandOutput, Entities, TurnWatch, UserFacingErrors}
+  alias HalC2.Orchestration.{CommandOutput, CommandTail, Entities, TurnWatch, UserFacingErrors}
   alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
@@ -264,6 +264,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   def finish_item(state, native, status, fun) do
     %{id: item_id, node: node_id, message: message_id} = item = Map.fetch!(state.items, native)
     at = Entities.now()
+    tail = item[:kind] == :command && CommandTail.get(state.thread_id, item_id)
+    fun = if item[:kind] == :command, do: &keep_output(fun.(&1), tail || ""), else: fun
 
     opened =
       HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
@@ -301,8 +303,18 @@ defmodule HalC2.Orchestration.TurnWriter do
       end)
 
     if opened != [], do: Opened.link(state.thread_id, opened)
+    if item[:kind] == :command, do: CommandTail.delete(state.thread_id, item_id)
     state
   end
+
+  # What the thread keeps of a command's output: the provider's own account of it, or
+  # what was printed while it ran, cut to the last `CommandTail.kept/0` bytes.
+  defp keep_output(%{"output" => output} = item, tail) when is_binary(output) do
+    output = if output == "", do: tail, else: output
+    %{item | "output" => CommandTail.cut(output, CommandTail.kept())}
+  end
+
+  defp keep_output(item, _tail), do: item
 
   # A command the provider says completed whose output says otherwise.
   defp output_failure(%{"status" => "completed", "output" => output} = item, :command) do
@@ -1139,11 +1151,20 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     changes =
       Enum.flat_map(writes, fn {{native, field}, text} ->
-        %{id: item_id, message: message_id} = Map.fetch!(state.items, native)
-        append = %{"a" => %{field => text}}
+        %{id: item_id, message: message_id} = item = Map.fetch!(state.items, native)
 
-        [{"turn-item", item_id, append}] ++
-          if(message_id && field == "text", do: [{"message", message_id, append}], else: [])
+        cond do
+          # A command's output stays off the log: the item says how much there is.
+          field == "output" and item.kind == :command and CommandTail.running?() ->
+            size = CommandTail.append(state.thread_id, item_id, text)
+            [{"turn-item", item_id, %{"s" => %{"outputSize" => size}}}]
+
+          true ->
+            append = %{"a" => %{field => text}}
+
+            [{"turn-item", item_id, append}] ++
+              if(message_id && field == "text", do: [{"message", message_id, append}], else: [])
+        end
       end)
 
     if changes != [], do: {:ok, _} = HalC2.Streams.commit(state.thread_id, :thread, changes)

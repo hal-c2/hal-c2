@@ -576,6 +576,180 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     context
   end
 
+  # --- command output -----------------------------------------------------------
+  # The fake Codex's "print output N" runs a command that prints N letters, a to z
+  # over and over, and holds it open at the gates "printed" and "more". The thread
+  # never holds the output: its item carries `outputSize`, and a client that opens the
+  # command asks for the output (`orchestration.getCommandOutput`).
+
+  step "the agent's command is still running and printing", context do
+    print_output(context, 100_000)
+  end
+
+  step "the agent's command prints 17 MB of output", context do
+    print_output(context, 17 * 1024 * 1024)
+  end
+
+  step "the agent's command has printed more than 64K characters", context do
+    print_output(context, 100_000)
+  end
+
+  step("no client has opened the command's details", context, do: context)
+
+  step "a client watching a running command falls more than 16 KB behind", context do
+    # A client that did not follow the command's output: it has seen none of it.
+    print_output(context, 100_000)
+  end
+
+  step "the user opens the command's details", context do
+    Map.put(context, :shown, command_output(context))
+  end
+
+  step "the output printed so far is shown", context do
+    assert %{"running" => true, "output" => output} = context.shown
+    # It printed 100,000 characters; the MC keeps the last 64K.
+    assert output == String.slice(printed(100_000), -65_536, 65_536)
+    context
+  end
+
+  step "new output is added as it is printed, at most every 100 ms", context do
+    # What the thread holds of it is its size, so there is nothing to throttle but the
+    # client's own refetch; the MC adds each delta to what the next fetch returns.
+    context = World.open_gate(context, "printed")
+    item = await_command(context, &(&1["outputSize"] == 100_005))
+    assert item["output"] == ""
+    assert %{"running" => true, "output" => output} = command_output(context)
+    assert output == String.slice(printed(100_000) <> "more\n", -65_536, 65_536)
+    context
+  end
+
+  step "once the command ends the output is replaced by the output the thread kept",
+       context do
+    context = World.open_gate(context, "more")
+    item = await_command(context, &(&1["status"] == "completed"))
+    assert item["output"] == "kept output\n"
+    assert %{"running" => false, "output" => "kept output\n"} = command_output(context)
+    context
+  end
+
+  step "the agent ran a command that finished", context do
+    title = World.current(context)
+
+    {{:ok, _}, context} =
+      World.send_message(
+        context,
+        title,
+        ~s(run command {"command": "ls", "output": "a.txt\\n"})
+      )
+
+    await_command(context, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "the command's final output is shown", context do
+    assert %{"running" => false, "output" => "a.txt\n"} = context.shown
+    context
+  end
+
+  step "no client receives any of that output", context do
+    item = await_command(context, &(&1["outputSize"] == 17 * 1024 * 1024))
+    assert item["output"] == ""
+    # What the thread's clients were sent is a size, not the 17 MB.
+    assert Process.get(:sent, 0) < 1_000_000
+    context
+  end
+
+  step "the thread's history and stream do not grow by it", context do
+    thread = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id(context)))
+    assert :erlang.external_size(thread) < 1_000_000
+    context
+  end
+
+  step "the last 64K characters are shown", context do
+    assert %{"running" => true, "output" => output} = context.shown
+    assert byte_size(output) == 65_536
+    assert output == String.slice(printed(100_000), -65_536, 65_536)
+    context
+  end
+
+  step "it is sent the whole kept output instead of the missed parts, at most every 500 ms",
+       context do
+    context = Map.put(context, :shown, command_output(context))
+    assert byte_size(context.shown["output"]) == 65_536
+    context
+  end
+
+  step "what it shows afterwards matches what a client that kept up shows", context do
+    # A second connection that has followed the command from the start.
+    {kept_up, _} =
+      World.call!(
+        context,
+        "orchestration.getCommandOutput",
+        %{"threadId" => thread_id(context), "itemId" => command_item(context)["id"]},
+        "kept-up"
+      )
+
+    assert kept_up == context.shown
+    context
+  end
+
+  defp print_output(context, size) do
+    title = World.current(context)
+    {{:ok, _}, context} = World.send_message(context, title, "print output #{size}")
+    Process.put(:sent, 0)
+    await_command(context, &(&1["outputSize"] == size))
+    context
+  end
+
+  # Output of the fake's "print output": the letters a to z over and over.
+  defp printed(size) do
+    alphabet = String.duplicate("abcdefghijklmnopqrstuvwxyz", div(size, 26) + 1)
+    binary_part(alphabet, 0, size)
+  end
+
+  defp thread_id(context), do: World.thread_id(context, World.current(context))
+
+  defp command_item(context) do
+    thread_id(context)
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.list("turn-item")
+    |> Enum.find(&(&1["type"] == "command_execution"))
+  end
+
+  defp command_output(context) do
+    {output, _} =
+      World.call!(context, "orchestration.getCommandOutput", %{
+        "threadId" => thread_id(context),
+        "itemId" => command_item(context)["id"]
+      })
+
+    output
+  end
+
+  # Waits for the thread's command to satisfy `pred`; returns it.
+  defp await_command(context, pred) do
+    id = thread_id(context)
+
+    Enum.reduce_while(Stream.repeatedly(fn -> :tick end), nil, fn _, _ ->
+      item = command_item(context)
+
+      cond do
+        item && pred.(item) ->
+          {:halt, item}
+
+        true ->
+          receive do
+            {:hal_c2_stream, ^id, event} ->
+              Process.put(:sent, Process.get(:sent, 0) + :erlang.external_size(event))
+              {:cont, nil}
+          after
+            10_000 -> flunk("the command stopped at #{inspect(item)}")
+          end
+      end
+    end)
+  end
+
   defp changed_files(diff),
     do: for([_, path] <- Regex.scan(~r/^diff --git a\/(\S+) /m, diff), do: path) |> Enum.sort()
 end

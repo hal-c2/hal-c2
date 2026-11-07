@@ -87,8 +87,8 @@ Feature: Tool calls and file changes
   # The running group is one line: what the agent is doing now, with the count of the calls
   # before it at its end. It changes as calls land and never animates.
   # Proved by tst_Timeline.qml (test_runningToolCallsReadAsOneLiveRow), not yet by a step (hal-c2/hal-c2#213).
-  # TUI: the latest call and "+N previous tool calls" are still two lines (apps/tui/src/host/timelineState.ts).
-  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
+  # TUI: one row, the count in its right-hand part (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A running turn's tool calls read as one live row
     Given the agent has run five tool calls in a row in the running turn
     Then one row shows the latest tool call with "+4 previous tool calls" beside it
@@ -378,7 +378,7 @@ Feature: Tool calls and file changes
     Then the details show its input
     And no exit code is shown
 
-  @mc @shared @backlog @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An opened command shows its output while it runs
     Given the agent's command is still running and printing
     When the user opens the command's details
@@ -394,26 +394,26 @@ Feature: Tool calls and file changes
     Then the whole command is shown
     And no details are offered when the command fits
 
-  @mc @shared @backlog @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A finished command's output is fetched when it is opened
     Given the agent ran a command that finished
     When the user opens the command's details
     Then the command's final output is shown
 
-  @mc @backlog @priority-high
+  @mc
   Scenario: Command output does not ride the thread
     Given the agent's command prints 17 MB of output
     And no client has opened the command's details
     Then no client receives any of that output
     And the thread's history and stream do not grow by it
 
-  @mc @backlog
+  @mc
   Scenario: A running command keeps only the last 64K characters of output
     Given the agent's command has printed more than 64K characters
     When the user opens the command's details
     Then the last 64K characters are shown
 
-  @mc @backlog
+  @mc
   Scenario: A client that falls behind is sent the whole tail again
     Given a client watching a running command falls more than 16 KB behind
     Then it is sent the whole kept output instead of the missed parts, at most every 500 ms

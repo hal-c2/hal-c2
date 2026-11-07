@@ -982,19 +982,28 @@ function workGroupLines(
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
   const lines = visible.map((entry) => callLine(entry, toolRow(entry, ctx)));
+  if (hasOverflow && !expanded) {
+    // One live row: the latest call, and how many came before it beside it. It opens
+    // into every call.
+    const [latest] = lines;
+    return [
+      line(latest!.text, latest!.action, latest!.payload, {
+        text: styled(
+          chunk(`+${hidden} previous tool call${hidden === 1 ? "" : "s"}`, { fg: palette.dim }),
+        ),
+        action: "timeline.workGroup.toggle",
+        payload: { id },
+      }),
+    ];
+  }
   if (hasOverflow) {
     lines.push(
       line(
-        styled(
-          chunk(
-            expanded
-              ? "  ⌃ Show fewer tool calls"
-              : `  ⌄ +${hidden} previous tool call${hidden === 1 ? "" : "s"}`,
-            { fg: palette.dim },
-          ),
-        ),
+        styled(chunk("  ⌃ Show fewer tool calls", { fg: palette.dim })),
         "timeline.workGroup.toggle",
-        { id },
+        {
+          id,
+        },
       ),
     );
   }

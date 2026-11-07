@@ -52,7 +52,7 @@ step("the latest tool call is shown", async (ctx: TurnWorld) => {
 step("the other four are behind {string}", async (ctx: TurnWorld, label: string) => {
   const group = lastOf(ctx, "work");
   expect(callRows(group)).toHaveLength(1);
-  expect(linesOf(group).at(-1)!.trim()).toBe(`⌄ ${label}`);
+  expect(plain(group.lines.at(-1)!.right!.text)).toBe(label);
   const screen = await snapshot(ctx);
   expect(screen).toContain(label);
   for (const hidden of [1, 2, 3, 4]) expect(screen).not.toContain(`bun test cart-${hidden}`);
@@ -71,6 +71,41 @@ step("all five tool calls are shown", async (ctx: TurnWorld) => {
 
 step("the user hides them again", async (ctx: TurnWorld) => {
   await clickText(ctx, "Show fewer tool calls");
+});
+
+// The running group is one row: the latest call, the count of the ones before it beside it.
+async function oneLiveRow(ctx: TurnWorld, call: string, label: string) {
+  const group = lastOf(ctx, "work");
+  expect(group.lines).toHaveLength(1);
+  const [row] = group.lines;
+  expect(plain(row!.text)).toContain(call);
+  expect(plain(row!.right!.text)).toBe(label);
+  const screen = (await snapshot(ctx)).split("\n").find((shown) => shown.includes(call));
+  expect(screen).toContain(label);
+}
+
+step(
+  "one row shows the latest tool call with {string} beside it",
+  async (ctx: TurnWorld, label: string) => oneLiveRow(ctx, "bun test cart-5", label),
+);
+
+step("the agent starts a sixth tool call", async (ctx: TurnWorld) => {
+  await addCommand(ctx, 6);
+});
+
+step(
+  "the row shows the sixth tool call with {string} beside it",
+  async (ctx: TurnWorld, label: string) => oneLiveRow(ctx, "bun test cart-6", label),
+);
+
+step("the user opens the row", async (ctx: TurnWorld) => {
+  await clickText(ctx, "previous tool calls");
+});
+
+step("all six tool calls are shown", async (ctx: TurnWorld) => {
+  expect(callRows(lastOf(ctx, "work"))).toHaveLength(6);
+  const screen = await snapshot(ctx);
+  for (const shown of [1, 2, 3, 4, 5, 6]) expect(screen).toContain(`bun test cart-${shown}`);
 });
 
 // --- how a call ended ------------------------------------------------------------------

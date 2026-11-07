@@ -145,6 +145,23 @@ defmodule HalC2.Orchestration do
   def handle("orchestration.getFullThreadDiff", %{"threadId" => thread_id} = input),
     do: turn_diff(thread_id, 0, input["toTurnCount"], input)
 
+  # A command's output, which the thread's clients do not hold: what it has printed so
+  # far while it runs, what the thread kept once it ended (`CommandTail`).
+  def handle("orchestration.getCommandOutput", %{"threadId" => thread_id, "itemId" => item_id}) do
+    tail = HalC2.Orchestration.CommandTail.get(thread_id, item_id)
+
+    kept =
+      case StreamState.get(HalC2.Streams.state(thread_id), "turn-item")[item_id] do
+        %{"type" => "command_execution", "output" => output} when is_binary(output) -> output
+        _ -> nil
+      end
+
+    case tail || kept do
+      nil -> {:error, "That command is not in this thread."}
+      output -> {:ok, %{"output" => output, "running" => tail != nil}}
+    end
+  end
+
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   defp turn_diff(thread_id, from, to, input) do

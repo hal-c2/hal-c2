@@ -406,6 +406,7 @@ defmodule HalC2.Rpc do
   # changes something.
   @reads ~w(
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
+    orchestration.getCommandOutput
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
     hal-c2.placeThread hal-c2.registerPush hal-c2.unregisterPush

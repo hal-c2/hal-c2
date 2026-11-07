@@ -1770,6 +1770,7 @@ defmodule HalC2.Test.Mc.World do
   defp fake_codex do
     Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
 
     unless Application.get_env(:hal_c2, :codex_command) == ["python3", "-u", @fake_codex] do
       previous = Application.get_env(:hal_c2, :codex_command)
@@ -1997,6 +1998,7 @@ defmodule HalC2.Test.Mc.World do
         do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
     Map.put(context, :agents, true)
   end
 
@@ -2594,6 +2596,7 @@ defmodule HalC2.Test.Mc.World do
           ),
           HalC2.Mcp,
           HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.CommandTail,
           HalC2.Orchestration.Effects
         ],
         do: Mc.ensure(child)
@@ -2869,7 +2872,13 @@ defmodule HalC2.Test.Mc.World do
         do: Mc.ensure(Supervisor.child_spec(spec, id: name))
 
     Enum.each(
-      [HalC2.Settings, HalC2.Terminal.Hub, HalC2.Mcp, HalC2.Orchestration.TurnWatch],
+      [
+        HalC2.Settings,
+        HalC2.Terminal.Hub,
+        HalC2.Mcp,
+        HalC2.Orchestration.TurnWatch,
+        HalC2.Orchestration.CommandTail
+      ],
       &Mc.ensure/1
     )
   end
@@ -3468,6 +3477,7 @@ defmodule HalC2.Test.Mc.World do
     )
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
 
     # The built-in ACP agents run the fake through their binary setting, unless the
     # scenario already pointed them elsewhere.
