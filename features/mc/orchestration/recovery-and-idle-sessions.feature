@@ -284,7 +284,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | "t1" is settled                                                |
       | "t1" is snoozed until tomorrow                                 |
 
-  @backlog @mc
+  @mc
   Scenario: A continuation is checked again when it is delivered
     Given project "demo" continues threads after a server update
     And the continuation of "t1" was recorded but not yet delivered

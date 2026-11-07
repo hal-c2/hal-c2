@@ -447,6 +447,37 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The restart asked to continue the cut-off turn, and its effect waits in the thread's
+  # lane, recorded but not run.
+  step "the continuation of {string} was recorded but not yet delivered",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
+
+    context = context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+    id = World.thread_id(context, thread)
+    World.put_app_env(:effects_hook, {__MODULE__, :hold_continuation, [self(), id]})
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert_receive {:continuation_held, ^id, lane}, 5_000
+    Map.put(context, :held_continuation, lane)
+  end
+
+  step "{string} is archived before it is delivered", %{args: [thread]} = context do
+    context =
+      World.patch_thread(context, thread, %{"archivedAt" => World.iso_from_now(0)})
+
+    Application.delete_env(:hal_c2, :effects_hook)
+    send(context.held_continuation, :release_continuation)
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    context
+  end
+
   # The effect a restart enqueues to continue a thread waits in its lane until released.
   step "the continuation a restart asks of the subagent waits to be sent", context do
     child = World.thread_id(context, "subagent")

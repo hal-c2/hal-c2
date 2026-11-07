@@ -472,15 +472,34 @@ defmodule HalC2.Orchestration.Recovery do
 
   defp continue?(thread_id, run) do
     case HalC2.Shell.row(node(), thread_id) do
-      {"thread", thread} ->
-        thread["archivedAt"] == nil and thread["deletedAt"] == nil and
-          HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-            true and same_provider?(thread, run) and latest?(thread_id, run) and
-          not continued?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
-
-      _ ->
-        false
+      {"thread", thread} -> wanted?(thread, thread_id, run) and not continued?(thread_id, run)
+      _ -> false
     end
+  end
+
+  @doc """
+  Whether the continuation `continue/0` recorded for `thread_id`'s run `run_id` is still
+  wanted when its effect runs, which can be well after: the thread may have been
+  archived, deleted, set to another provider, sent something newer, or had its project
+  stop continuing threads since. One whose message is in already (a retry after it was
+  sent) is, so the retry finds it sent.
+  """
+  def deliverable?(thread_id, run_id) do
+    state = HalC2.Streams.state(thread_id)
+
+    with %{} = thread <- StreamState.get(state, "thread")[thread_id],
+         %{} = run <- StreamState.fetch(state, "run", run_id) do
+      continued?(thread_id, run) or wanted?(thread, thread_id, run)
+    else
+      _ -> false
+    end
+  end
+
+  defp wanted?(thread, thread_id, run) do
+    thread["archivedAt"] == nil and thread["deletedAt"] == nil and
+      HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
+        true and same_provider?(thread, run) and latest?(thread_id, run) and
+      not HalC2.Space.PageAgent.stopping?(thread_id)
   end
 
   # A thread set to another provider since would be continued on a conversation it left.
@@ -518,7 +537,7 @@ defmodule HalC2.Orchestration.Recovery do
     HalC2.Orchestration.Effects.enqueue(
       thread_id,
       "provider-runtime.continue",
-      %{"command" => command}
+      %{"command" => command, "runId" => run["id"]}
     )
   end
 
