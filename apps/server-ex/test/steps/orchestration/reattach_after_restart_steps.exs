@@ -640,13 +640,13 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     row =
       World.await_row(
         World.thread_id(context, thread),
-        &Enum.any?(&1["pendingBackgroundTasks"] || [], fn task ->
+        &Enum.any?(&1["runningBackgroundTasks"] || [], fn task ->
           task["taskType"] not in ~w(local_agent subagent)
         end)
       )
 
     command =
-      Enum.find(row["pendingBackgroundTasks"], &(&1["taskType"] not in ~w(local_agent subagent)))
+      Enum.find(row["runningBackgroundTasks"], &(&1["taskType"] not in ~w(local_agent subagent)))
 
     context
     |> Map.delete(:cut_off)
@@ -660,12 +660,12 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     row =
       World.await_row(
         World.thread_id(context, thread),
-        &Enum.any?(&1["pendingBackgroundTasks"] || [], fn t ->
+        &Enum.any?(&1["runningBackgroundTasks"] || [], fn t ->
           t["taskType"] in ~w(local_agent subagent)
         end)
       )
 
-    task = Enum.find(row["pendingBackgroundTasks"], &(&1["taskType"] in ~w(local_agent subagent)))
+    task = Enum.find(row["runningBackgroundTasks"], &(&1["taskType"] in ~w(local_agent subagent)))
 
     context
     |> Map.delete(:cut_off)
@@ -677,7 +677,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
 
     World.await_row(
       World.thread_id(context, thread),
-      &Enum.any?(&1["pendingBackgroundTasks"] || [], fn t -> t["taskId"] == task end)
+      &Enum.any?(&1["runningBackgroundTasks"] || [], fn t -> t["taskId"] == task end)
     )
 
     context
@@ -725,7 +725,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
 
     World.await_row(
       World.thread_id(context, thread),
-      &Enum.any?(&1["pendingBackgroundTasks"] || [], fn t -> t["taskId"] == task end)
+      &Enum.any?(&1["runningBackgroundTasks"] || [], fn t -> t["taskId"] == task end)
     )
 
     context

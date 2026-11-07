@@ -8,8 +8,9 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   Setups are put in the server's state directly, since a real one has a
   worker racing the commands; retention is long enough that only a sent `:expire` acts.
 
-  Beside it, two pure properties: how output is cut into lines does not depend on how it
-  arrived, and ending a setup touches only its running stages.
+  Beside it, three properties without the server: how output is cut into lines does not
+  depend on how it arrived, the setup script's tail shows the shell's startup only until
+  the script starts, and ending a setup touches only its running stages.
   """
 
   use ExUnit.Case, async: false
@@ -57,6 +58,78 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
       shown = &Enum.reject(&1, fn line -> line == "" end)
       {whole, whole_partial} = WorktreeSetup.script_lines("", data)
       shown.(lines_a ++ lines_b) == shown.(whole) and partial == whole_partial
+    end
+  end
+
+  @question "install it? [y/N] "
+
+  # The terminal's output, cut anywhere, is read in the setup's own process: the shell's
+  # startup lines (and an unanswered question) until the start line, the script's own after.
+  property "the setup script's tail shows the startup only until the script starts",
+    numtests: HalC2.Prop.numtests(200) do
+    forall {startup, question, started, output, code, cuts} <-
+             {resize(4, list(oneof(~w(rc1 rc2)))), boolean(), boolean(),
+              resize(8, list(oneof(~w(out1 out2 out3)))), oneof([nil, 0, 1, 7]), list(nat())} do
+      sentinel = "__hal_c2_setup_abc_"
+      key = {"t1", "setup"}
+      asked = Enum.map_join(startup, &(&1 <> "\n")) <> if(question, do: @question, else: "")
+      answered = asked <> if(question, do: "n\n", else: "")
+
+      ran =
+        Enum.map_join(output, &(&1 <> "\n")) <>
+          if(code, do: "#{sentinel}#{code}\n", else: "")
+
+      data = if started, do: answered <> sentinel <> "start\n" <> ran, else: answered
+      ends = for cut <- cuts, do: rem(cut, byte_size(data) + 1)
+      ends = Enum.sort(Enum.uniq([byte_size(data) | ends]))
+
+      ends
+      |> Enum.zip([0 | ends])
+      |> Enum.each(fn {to, from} ->
+        data = binary_part(data, from, to - from)
+        send(self(), {:hal_c2_terminal, key, %{"type" => "output", "data" => data}})
+      end)
+
+      unless started and code, do: send(self(), {:hal_c2_terminal, key, %{"type" => "exited"}})
+
+      script = %{
+        start: sentinel <> "start",
+        exit: ~r/^#{sentinel}(\d+)$/,
+        deadline: System.monotonic_time(:millisecond) + 60_000
+      }
+
+      Process.put(:snapshot, %{"stages" => [%{"id" => "setup-script", "detail" => nil}]})
+
+      set = fn change ->
+        snapshot = change.(Process.get(:snapshot))
+        Process.put(:snapshot, snapshot)
+        send(self(), {:shown, hd(snapshot["stages"])["tail"]})
+      end
+
+      result = WorktreeSetup.read_script(key, script, set)
+      shown = drain(key)
+      lines = if question, do: startup ++ [String.trim_trailing(@question) <> " n"], else: startup
+      expected = if started, do: {code, Enum.take(output, -5)}, else: {nil, Enum.take(lines, -5)}
+      ran? = fn tail -> Enum.any?(tail, &String.starts_with?(&1, "out")) end
+      startup? = fn tail -> Enum.any?(tail, &(not String.starts_with?(&1, "out"))) end
+
+      (result == expected and
+         not Enum.any?(shown, fn tail -> Enum.any?(tail, &String.starts_with?(&1, "__")) end) and
+         not (shown |> Enum.drop_while(&(not ran?.(&1))) |> Enum.any?(startup?)) and
+         (not started or shown == [] or not startup?.(List.last(shown))) and
+         (not question or byte_size(asked) not in ends or
+            Enum.any?(shown, &(List.last(&1) == String.trim_trailing(@question)))))
+      |> when_fail(IO.inspect({data, ends, result, shown}, label: "data, cuts, result, shown"))
+    end
+  end
+
+  # The tails `set` was given, in order; what the read left unread goes too.
+  defp drain(key) do
+    receive do
+      {:shown, tail} -> [tail | drain(key)]
+      {:hal_c2_terminal, ^key, _event} -> drain(key)
+    after
+      0 -> []
     end
   end
 

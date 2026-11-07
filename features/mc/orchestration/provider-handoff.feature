@@ -233,7 +233,7 @@ Feature: Changing model and provider mid-thread
     When the user sends "Carry on" to "t1"
     Then each item of the handoff is marked as historical, with its role, kind and status and the thread and run it came from
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A handoff tells the agent its history is context, not a new request
     Given the conversation of "t1" is longer than the handoff budget
     When a run starts a new provider thread for "t1"
@@ -267,7 +267,7 @@ Feature: Changing model and provider mid-thread
 
   # Upstream #22902: a failed native resume put its whole-thread summary in front of an older
   # pending handoff, so under the budget the newest turn's result was dropped.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A failed resume keeps the latest turn when an older handoff is waiting
     Given "t1" has a handoff from an earlier run still waiting
     And the latest turn of "t1" finished with "Result 3"
@@ -276,7 +276,7 @@ Feature: Changing model and provider mid-thread
     And "Result 3" is in the history it receives
 
   # Upstream #22902
-  @backlog @mc
+  @mc
   Scenario: A failed resume does not resend a missed request after the whole-thread summary
     Given an earlier run of "t1" failed before its provider started a turn
     When the next run of "t1" cannot resume its provider conversation
@@ -343,17 +343,23 @@ Feature: Changing model and provider mid-thread
     Then the run for "Next" starts a new provider thread on "codex-work"
     And a handoff from "codex" to "codex-work" carries the earlier conversation
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Switching to a provider instance that cannot run is refused
     Given provider instance "claudeAgent" is disabled
     When the user switches "t1" to "claudeAgent"
     Then the command fails with "The target provider instance is unavailable."
 
-  @backlog @mc @priority-high
-  Scenario: A model change the running agent cannot take is refused
+  @mc @priority-high
+  Scenario Outline: A model change the running agent cannot take is refused
     Given "t1" runs on an ACP agent whose session does not offer switching models
-    When the user sets another model for "t1"
+    When the user <changes> "t1"
     Then the command fails with "The active ACP session does not expose a model-switch capability."
+    And "t1" keeps its model
+
+    Examples:
+      | changes                                |
+      | sets another model for                 |
+      | sends a message on another model to    |
 
   @backlog @mc
   Scenario Outline: A change the provider cannot take in place restarts it on the same conversation

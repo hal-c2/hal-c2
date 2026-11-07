@@ -22,7 +22,7 @@ QVariantMap notice(World& world) {
 
 std::optional<QVariantMap> rowOf(World& world, const QString& key) {
   const QVariantMap state = world.state(QStringLiteral("sidebar")).toMap();
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
     for (const QVariant& row : state.value(section).toList()) {
       if (row.toMap().value(QStringLiteral("key")) == key) return row.toMap();
     }

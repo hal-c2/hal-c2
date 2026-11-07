@@ -94,6 +94,38 @@ defmodule HalC2.AuthDpopTest do
              Mc.request(mc, :post, path, headers: headers)
   end
 
+  test "the DPoP scheme is read in any letter case and refusals challenge for DPoP", %{mc: mc} do
+    key = dpop_key()
+    pairing = Auth.create_pairing_token(mc.store)
+    exchange_proof = dpop_proof(key, "POST", url(mc, "/oauth/token"))
+
+    assert {200, _, %{"access_token" => access, "token_type" => "DPoP"}} =
+             exchange(mc, pairing, exchange_proof)
+
+    path = "/api/auth/websocket-ticket"
+
+    for scheme <- ["DPoP", "dpop", "DPOP"] do
+      proof = dpop_proof(key, "POST", url(mc, path), access: access)
+
+      assert {200, _, %{"ticket" => _}} =
+               Mc.request(mc, :post, path,
+                 headers: [{"authorization", "#{scheme} #{access}"}, {"dpop", proof}]
+               ),
+             "scheme #{scheme} should authenticate"
+
+      assert {401, headers, %{"reason" => "invalid_credential"}} =
+               Mc.request(mc, :post, path, headers: [{"authorization", "#{scheme} #{access}"}]),
+             "scheme #{scheme} without a proof should be refused"
+
+      assert {"www-authenticate", "DPoP"} in headers,
+             "scheme #{scheme} refusal should challenge for DPoP, got: #{inspect(headers)}"
+    end
+
+    # A Bearer refusal is not a DPoP challenge.
+    assert {401, headers, _} = Mc.request(mc, :post, path, bearer: access)
+    refute {"www-authenticate", "DPoP"} in headers
+  end
+
   defp exchange(mc, token, proof) do
     Mc.request(mc, :post, "/oauth/token",
       form: %{

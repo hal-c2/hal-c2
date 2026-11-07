@@ -330,6 +330,8 @@ Feature: Source Control settings
     And the settings show the reference as written
     And the token for "github.example.com" is still saved as it was
 
+  # Upstream #27756: an unreadable per-host token reference counts as no saved token, so the
+  # environment fallback applies.
   @backlog @mc @priority-low
   Scenario: A host token reference that cannot be read counts as no token
     Given the token for "github.com" points at a secret "Work" cannot read

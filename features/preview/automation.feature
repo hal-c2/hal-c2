@@ -716,6 +716,8 @@ Feature: Agents drive the preview browser
         | reveal a tab              | an agent in another thread reveals a tab already in the panel |
         | click in two tabs at once | agents click in two browser tabs at the same time             |
 
+    # Upstream #28613: each tab keeps its own queue, so a press held open by a page's confirm
+    # dialog does not block its siblings.
     @backlog @desktop @priority-low
     Scenario: A click held open by a page's dialog does not hold up the other tabs
       Given an agent's click in one tab is waiting on a confirm dialog the page opened

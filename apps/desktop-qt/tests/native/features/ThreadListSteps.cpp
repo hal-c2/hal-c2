@@ -14,6 +14,7 @@
 #include <algorithm>
 
 #include "Brick.h"
+#include "ComposerController.h"
 #include "DevicePanelSteps.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -85,7 +86,7 @@ QVariantMap sidebar(World& world) {
 
 std::optional<QVariantMap> rowOf(World& world, const QString& key) {
   const QVariantMap state = sidebar(world);
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
     for (const QVariant& row : state.value(section).toList()) {
       if (row.toMap().value(QStringLiteral("key")) == key) return row.toMap();
     }
@@ -124,6 +125,33 @@ void snoozeUntilTomorrow(World& world, const QString& thread) {
     row.insert(QStringLiteral("snoozedAt"), since);
   });
 }
+
+// The titles of the active section, top first.
+QStringList activeTitles(World& world) {
+  QStringList titles;
+  for (const QVariant& row : sidebar(world).value(QStringLiteral("active")).toList()) titles.append(row.toMap().value(QStringLiteral("title")).toString());
+  return titles;
+}
+
+// The project the list was scoped to, and the member that had not reported.
+struct ScopeMemory {
+  QString name;
+  QString key;
+  QString waiting;
+};
+
+// Takes the project from the MC (while the app is closed: no row is sent).
+void removeProjectTitled(World& world, const QString& title) {
+  for (auto it = world.mc.projects.begin(); it != world.mc.projects.end();) {
+    if (it->value(QLatin1String("title")).toString() == title) it = world.mc.projects.erase(it);
+    else ++it;
+  }
+}
+
+// How many commands the MC had before a drop.
+struct Reorder {
+  qsizetype commandsBefore = 0;
+};
 
 QSet<QString> activeProjects(World& world) {
   QSet<QString> projects;
@@ -627,6 +655,125 @@ const Steps steps([] {
           .arg(at(world.state(QStringLiteral("layout")), QStringLiteral("sidebarMode")).toString());
     });
   });
+  // A thread's composer holding unsent text marks its row (but the open one's).
+  step(QStringLiteral("the user typed a message in the composer of %1 and did not send it").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = ensureThread(world, c[0]);
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
+    const QString text = QStringLiteral("Half a thought");
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), key},
+                                        {QStringLiteral("edit"), QVariantMap{{QStringLiteral("clientId"), QStringLiteral("qml")},
+                                                                             {QStringLiteral("revision"), world.nextEdit++}}},
+                                        {QStringLiteral("text"), text},
+                                        {QStringLiteral("cursor"), text.size()}});
+  });
+  step(QStringLiteral("%1 is the open thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), ensureThread(world, c[0])}});
+  });
+  step(QStringLiteral("the row for %1 (says|no longer says) \"Unsent draft\"").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = threadKeyOf(world, c[0]);
+    const bool marked = c[1] == QLatin1String("says");
+    world.waitFor([&] {
+      const auto row = rowOf(world, key);
+      return row && row->value(QStringLiteral("unsentDraft")).toBool() == marked;
+    }, [&] { return QStringLiteral("the row for %1 is %2").arg(c[0], show(rowOf(world, key).value_or(QVariantMap()))); });
+  });
+  step(QStringLiteral("the user discards the draft from the row"), [](World& world, const Captures&, const Table&) {
+    QString marked;
+    for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("snoozed"), QStringLiteral("settled")}) {
+      for (const QVariant& row : sidebar(world).value(section).toList()) {
+        if (row.toMap().value(QStringLiteral("unsentDraft")).toBool()) marked = row.toMap().value(QStringLiteral("key")).toString();
+      }
+    }
+    expect(!marked.isEmpty(), QStringLiteral("no row is marked \"Unsent draft\""));
+    world.bridge().dispatch(QStringLiteral("thread.draft.discard"), QVariantMap{{QStringLiteral("key"), marked}});
+  });
+  step(QStringLiteral("the composer of %1 is empty").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto preview = world.native().controller<ComposerController>()->draftPreview(threadKeyOf(world, c[0]));
+    expect(!preview, QStringLiteral("the composer of %1 holds %2").arg(c[0], preview.value_or(QString())));
+  });
+
+  // The project filter this device remembers.
+  step(QStringLiteral("the user scoped the list to %1(?: before closing the app)?").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<ScopeMemory>().name = c[0];
+    world.mc.part<ScopeMemory>().key = world.projectKey(c[0]);
+    world.bridge().dispatch(QStringLiteral("sidebar.scope"), QVariantMap{{QStringLiteral("projectKey"), world.mc.part<ScopeMemory>().key}});
+    world.sync();
+  });
+  step(QStringLiteral("the list (?:is|is still|stays) scoped to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.mc.part<ScopeMemory>().key;
+    expect(!key.isEmpty(), QStringLiteral("the list was scoped to %1").arg(c[0]));
+    world.sync();
+    world.waitFor([&] { return sidebar(world).value(QStringLiteral("scopeProjectKey")).toString() == key; },
+                  [&] { return QStringLiteral("the list scoped to %1; it is scoped to \"%2\"").arg(key, sidebar(world).value(QStringLiteral("scopeProjectKey")).toString()); });
+  });
+  step(QStringLiteral("the user opens settings and then returns to the threads"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("settings.open"), {});
+    world.sync();
+    world.bridge().dispatch(QStringLiteral("settings.back"), {});
+    world.sync();
+  });
+  // "docs" goes from this MC while it is closed, and the member "work" is
+  // listed but unreachable when the app starts.
+  step(QStringLiteral("the app starts and the environment %1 has not reported its projects yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<ScopeMemory>().waiting = c[0];
+    world.restart();
+    removeProjectTitled(world, world.mc.part<ScopeMemory>().name);
+    world.mc.offline.insert(c[0]);
+    world.mc.join(c[0]);
+    world.connect();
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+  });
+  step(QStringLiteral("every environment has reported and %1 is gone").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.setOnline(world.mc.part<ScopeMemory>().waiting, true);
+    world.sync();
+    expect(c[0] == world.mc.part<ScopeMemory>().name, QStringLiteral("%1 was the remembered project").arg(c[0]));
+  });
+  step(QStringLiteral("the list shows every project"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return sidebar(world).value(QStringLiteral("scopeProjectKey")).isNull(); },
+                  [&] { return QStringLiteral("the list unscoped; it is scoped to \"%1\"").arg(sidebar(world).value(QStringLiteral("scopeProjectKey")).toString()); });
+  });
+
+  // A drop beside rows the offline member "work" serves: its keyless "Deploy"
+  // stays newest at the top, and only this MC's rows take an order.
+  step(QStringLiteral("the sidebar shows rows from a machine that is offline or asleep"), [](World& world, const Captures&, const Table&) {
+    projectThreadCommands(world);
+    const QString project = world.mc.projects.firstKey();
+    putThread(world, titleId(QStringLiteral("Here one")),
+              {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Here one")}, {QStringLiteral("createdAt"), kAt}});
+    putThread(world, titleId(QStringLiteral("Here two")),
+              {{QStringLiteral("projectId"), project}, {QStringLiteral("title"), QStringLiteral("Here two")}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:05:00Z")}});
+    const QString deploy = QStringLiteral("t-deploy");
+    world.mc.sendPeerRow(QStringLiteral("work"), deploy,
+                         {{QStringLiteral("id"), deploy},
+                          {QStringLiteral("title"), QStringLiteral("Deploy")},
+                          {QStringLiteral("projectId"), project},
+                          {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:10:00Z")},
+                          {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:10:00Z")}});
+    world.mc.offline.insert(QStringLiteral("work"));
+    world.mc.join(QStringLiteral("work"));
+    world.waitFor([&] { return activeTitles(world) == QStringList{QStringLiteral("Deploy"), QStringLiteral("Here two"), QStringLiteral("Here one")}; },
+                  [&] { return QStringLiteral("Deploy, Here two, Here one; the active threads are %1").arg(activeTitles(world).join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("the user drops a thread among rows that have no order yet"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Reorder>().commandsBefore = world.mc.commands.size();
+    world.bridge().dispatch(QStringLiteral("thread.drop"), QVariantMap{{QStringLiteral("key"), threadKeyOf(world, QStringLiteral("Here one"))},
+                                                                        {QStringLiteral("section"), QStringLiteral("active")},
+                                                                        {QStringLiteral("beforeKey"), threadKeyOf(world, QStringLiteral("Here two"))}});
+  });
+  step(QStringLiteral("the thread lands where it was dropped"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return activeTitles(world) == QStringList{QStringLiteral("Deploy"), QStringLiteral("Here one"), QStringLiteral("Here two")}; },
+                  [&] { return QStringLiteral("Deploy, Here one, Here two; the active threads are %1").arg(activeTitles(world).join(QStringLiteral(", "))); });
+  });
+  step(QStringLiteral("rows that cannot store an order are not written"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const qsizetype before = world.mc.part<Reorder>().commandsBefore;
+    for (qsizetype index = before; index < world.mc.commands.size(); ++index) {
+      expect(world.mc.commandEnvironments.value(index) != QLatin1String("work"),
+             QStringLiteral("no command to the offline \"work\"; the MC has %1").arg(world.describeCommands()));
+    }
+  });
+
   // A thread row's state word; a device row's "host · version · state" is
   // DeviceSteps' step of the same words, told apart by the middle dots.
   step(QStringLiteral("the row for %1 reads \"([^\"·]*)\"").arg(q), [](World& world, const Captures& c, const Table&) {

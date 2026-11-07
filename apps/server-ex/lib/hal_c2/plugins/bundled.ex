@@ -33,7 +33,14 @@ defmodule HalC2.Plugins.Bundled do
 end
 
 defmodule HalC2.Plugins.Bundled.Codex do
-  @moduledoc "Codex (`codex app-server`) as a bundled provider plugin."
+  @moduledoc """
+  Codex (`codex app-server`) as a bundled provider plugin.
+
+  It does not implement `await_background/3` (`hal_c2_background_wait` answers
+  unsupported), so its background commands and monitors never hold a thread
+  Working or block settlement; only its subagents do. The work still counts
+  in `runningBackgroundTasks` for idle release and recovery.
+  """
   @behaviour HalC2.Plugins.ProviderAdapter
   alias HalC2.Codex.ThreadRuntime
 
@@ -92,6 +99,8 @@ defmodule HalC2.Plugins.Bundled.Claude do
   defdelegate respond(thread_id, request_id, response), to: ThreadRuntime
   @impl true
   defdelegate rollback(thread_id, plan), to: ThreadRuntime
+  @impl true
+  defdelegate await_background(thread_id, task_ids, awaited), to: ThreadRuntime
 
   @impl true
   def providers(_settings),
@@ -106,6 +115,12 @@ defmodule HalC2.Plugins.Bundled.Acp do
   @moduledoc """
   Every ACP agent (`HalC2.Acp`): the built-in ones and those added from the ACP
   registry, which need no plugin of their own.
+
+  It does not implement `await_background/3` (`hal_c2_background_wait` answers
+  unsupported for Grok, Cursor, OpenCode, Antigravity and every other ACP
+  agent), so their background commands and monitors never hold a thread
+  Working or block settlement; only their subagents do. The work still counts
+  in `runningBackgroundTasks` for idle release and recovery.
   """
   @behaviour HalC2.Plugins.ProviderAdapter
   alias HalC2.Acp.ThreadRuntime
