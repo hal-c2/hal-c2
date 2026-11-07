@@ -92,16 +92,80 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   step ~r/^thread "(?<thread>[^"]+)" (?:had a running turn|was mid-turn(?: on "codex")? when the MC stopped|was mid-turn on a provider conversation that can resume)$/,
        %{args: [thread]} = context do
-    context = World.running_turn(context, thread)
-    # The provider's conversation can resume: Codex named its native thread.
-    World.await_state(context, thread, fn state ->
-      Enum.any?(
-        Map.values(state.entities["provider-thread"] || %{}),
-        &is_map(&1["nativeThreadRef"])
-      )
-    end)
+    continued_turn(context, thread)
+  end
 
-    context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+  # Three runs before the next one, each but the first continuing the one before it after
+  # a restart, the first the user's: the next turn of `thread` continues the last
+  # (`context.continuing`). Quick ones are cut off a minute after they start; the others
+  # after ten.
+  step ~r/^"(?<thread>[^"]+)" has been continued after 3 restarts(?<how>, each after more than five minutes of work| in a row without a message from the user)$/,
+       %{args: [thread, how]} = context do
+    context = World.providers(context)
+
+    context =
+      if (context[:threads] || %{})[thread],
+        do: context,
+        else: World.named_thread(context, thread)
+
+    minutes = if how =~ "five minutes", do: 10, else: 1
+    ids = for n <- 1..3, do: "run:seeded-#{thread}-#{n}"
+
+    for {id, n} <- Enum.with_index(ids, 1) do
+      start = -(4 - n) * (minutes + 1) * 60_000
+
+      message =
+        if n == 1,
+          do: "msg-seeded-#{thread}",
+          else: "message:restart-continuation:#{Enum.at(ids, n - 2)}"
+
+      World.put_entity(context, thread, "run", id, %{
+        "s" => %{
+          "id" => id,
+          "threadId" => World.thread_id(context, thread),
+          "ordinal" => n,
+          "status" => "interrupted",
+          "userMessageId" => message,
+          "requestedAt" => World.iso_from_now(start),
+          "startedAt" => World.iso_from_now(start),
+          "completedAt" => World.iso_from_now(start + minutes * 60_000),
+          "updatedAt" => World.iso_from_now(start + minutes * 60_000)
+        }
+      })
+    end
+
+    Map.put(context, :continuing, List.last(ids))
+  end
+
+  step "{string} waits for the user's next message", %{args: [thread]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+
+    assert World.runs(context, thread)
+           |> Enum.filter(&(&1["status"] in ~w(starting running waiting queued))) == []
+
+    context
+  end
+
+  # The user's message starts the count again: a turn continuing it, cut off by a
+  # restart, is continued.
+  step "{string} may be continued after a later restart again", %{args: [thread]} = context do
+    source = World.await_latest_run(context, thread, "completed")
+    context = context |> Map.put(:continuing, source["id"]) |> continued_turn(thread)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    message = "message:restart-continuation:#{context.cut_off}"
+    assert %{"text" => @continuation} = World.state(context, thread).entities["message"][message]
+    context
+  end
+
+  step "{string} receives {string} from the server", %{args: [thread, text]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
+    message = "message:restart-continuation:#{context.cut_off}"
+
+    assert %{"text" => ^text, "createdBy" => "agent"} =
+             World.state(context, thread).entities["message"][message]
+
+    context
   end
 
   # The provider's turn ended, and the MC stopped while it captured the run's checkpoint:
@@ -2042,6 +2106,38 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
           do: pid
 
     pid
+  end
+
+  # A turn of `thread` the MC stops in, on a provider conversation that can resume. With
+  # `context.continuing`, the turn is a restart's continuation of that run.
+  defp continued_turn(context, thread) do
+    context =
+      case context[:continuing] do
+        nil ->
+          World.running_turn(context, thread)
+
+        source ->
+          context =
+            World.dispatch_message(context, thread, "wait for it", %{
+              "messageId" => "message:restart-continuation:#{source}",
+              "createdBy" => "agent",
+              "creationSource" => "server"
+            })
+
+          assert {:ok, _} = context.reply
+          run = World.await_latest_run(context, thread, "running")
+          context |> Map.delete(:reply) |> Map.merge(%{thread: thread, running: run["id"]})
+      end
+
+    # The provider's conversation can resume: Codex named its native thread.
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
+
+    context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
   end
 
   defp kill_provider(context, thread) do

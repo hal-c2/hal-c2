@@ -8,8 +8,14 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   - when the continuation's effect runs (`Recovery.deliverable?/2`), it is sent only if
     the thread is still not archived, on the provider the turn ran on, with nothing
     newer sent, and its project still continues threads;
+  - and only if it would not be the fourth continuation in a row with nothing from the
+    user between them (upstream #18461), where a continued run that worked longer than
+    five minutes before it was cut off breaks the row (upstream #20306);
   - except that one whose message is in already (a retry after it was sent) always
     goes on, so the retry finds it sent rather than reporting it dropped.
+
+  The turn cut off is extended by `cut/2`: the user's turn, or a continuation of the
+  last one, each cut off after a minute or after ten.
   """
 
   use ExUnit.Case, async: false
@@ -22,11 +28,9 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   @moduletag capture_log: true
 
   @thread "t1"
-  @run "run-1"
-  @message "message:restart-continuation:run-1"
 
-  property "a continuation is sent only if it is still wanted when it runs",
-    numtests: HalC2.Prop.numtests(100),
+  property "a continuation is sent only if it is still wanted when it runs, and not in a loop",
+    numtests: HalC2.Prop.numtests(300),
     max_size: 30 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
@@ -53,30 +57,60 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   # --- model ----------------------------------------------------------------------
 
   # The thread starts on the cut-off turn's provider, unarchived, with its project
-  # continuing threads and nothing sent since.
+  # continuing threads and nothing sent since. runs: the ordinal of the thread's last
+  # run; current: that of the run cut off; chain: the quick continuations in a row that
+  # led to it.
   def initial_state,
-    do: %{archived: false, provider: "claudeAgent", setting: true, newer: 0, sent: false}
+    do: %{
+      archived: false,
+      provider: "claudeAgent",
+      setting: true,
+      runs: 1,
+      current: 1,
+      chain: 0,
+      newer: false,
+      sent: false
+    }
 
+  # Cuts come often, and mostly as quick continuations, so rows of them reach the limit.
   def command(state) do
-    oneof(
+    frequency(
       [
-        {:call, __MODULE__, :archive, [not state.archived]},
-        {:call, __MODULE__, :provider, [oneof(["claudeAgent", "codex"])]},
-        {:call, __MODULE__, :setting, [boolean()]},
-        {:call, __MODULE__, :deliver, []}
+        {1, {:call, __MODULE__, :archive, [not state.archived]}},
+        {1, {:call, __MODULE__, :provider, [oneof(["claudeAgent", "codex"])]}},
+        {1, {:call, __MODULE__, :setting, [boolean()]}},
+        {3, {:call, __MODULE__, :deliver, [state.current]}}
       ] ++
-        if(state.sent,
+        if(state.sent or state.newer,
           do: [],
           else: [
-            {:call, __MODULE__, :newer, [state.newer + 2]},
-            {:call, __MODULE__, :sent, [state.newer + 2]}
+            {1, {:call, __MODULE__, :newer, [state.runs + 1]}},
+            {1, {:call, __MODULE__, :sent, [state.runs + 1, state.current]}},
+            {6,
+             {:call, __MODULE__, :cut,
+              [
+                state.runs + 1,
+                frequency([{1, :user}, {4, {:continues, state.current}}]),
+                frequency([{3, true}, {1, false}])
+              ]}}
           ]
         )
     )
   end
 
-  def precondition(state, {:call, _, :newer, [n]}), do: not state.sent and n == state.newer + 2
-  def precondition(state, {:call, _, :sent, [n]}), do: not state.sent and n == state.newer + 2
+  def precondition(state, {:call, _, :deliver, [n]}), do: n == state.current
+
+  def precondition(state, {:call, _, :newer, [n]}),
+    do: not (state.sent or state.newer) and n == state.runs + 1
+
+  def precondition(state, {:call, _, :sent, [n, current]}),
+    do: not (state.sent or state.newer) and n == state.runs + 1 and current == state.current
+
+  def precondition(state, {:call, _, :cut, [n, how, _]}),
+    do:
+      not (state.sent or state.newer) and n == state.runs + 1 and
+        how in [:user, {:continues, state.current}]
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :archive, [archived]}),
@@ -86,8 +120,14 @@ defmodule HalC2.ContinuationDeliveryPropTest do
     do: %{state | provider: provider}
 
   def next_state(state, _result, {:call, _, :setting, [on]}), do: %{state | setting: on}
-  def next_state(state, _result, {:call, _, :newer, [n]}), do: %{state | newer: n}
-  def next_state(state, _result, {:call, _, :sent, [n]}), do: %{state | newer: n, sent: true}
+  def next_state(state, _result, {:call, _, :newer, [n]}), do: %{state | runs: n, newer: true}
+  def next_state(state, _result, {:call, _, :sent, [n, _]}), do: %{state | runs: n, sent: true}
+
+  def next_state(state, _result, {:call, _, :cut, [n, how, quick]}) do
+    chain = if how != :user and quick, do: state.chain + 1, else: 0
+    %{state | runs: n, current: n, chain: chain}
+  end
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :deliver, _}, deliverable),
@@ -98,7 +138,7 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   defp wanted?(state),
     do:
       not state.archived and state.provider == "claudeAgent" and state.setting and
-        state.newer == 0
+        not state.newer and state.chain < 3
 
   # --- commands -------------------------------------------------------------------
 
@@ -115,25 +155,34 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   end
 
   # The user sends a message, which runs after the cut-off turn.
-  def newer(n), do: commit([run("run-#{n}", n, "completed")])
+  def newer(n), do: commit([run(n, "completed", "msg-#{n}", 1)])
 
   # The continuation's own message went in, and its run started; the effect then runs
   # again, as after a crash before it was marked done.
-  def sent(n) do
+  def sent(n, current) do
+    message = continuation(current)
+
     commit([
-      run("run-#{n}", n, "running"),
-      {"message", @message,
+      run(n, "running", message, nil),
+      {"message", message,
        %{
-         "id" => @message,
+         "id" => message,
          "role" => "user",
          "text" => "Continue where you left off.",
          "runId" => "run-#{n}",
-         "createdAt" => at(n)
+         "createdAt" => at(n, 0)
        }}
     ])
   end
 
-  def deliver, do: Recovery.deliverable?(@thread, @run)
+  # Run `n` is the user's turn, or the continuation of the turn cut off before it, and is
+  # cut off in turn, a minute or ten minutes after it starts.
+  def cut(n, how, quick) do
+    message = if how == :user, do: "msg-#{n}", else: continuation(elem(how, 1))
+    commit([run(n, "interrupted", message, if(quick, do: 1, else: 10))])
+  end
+
+  def deliver(n), do: Recovery.deliverable?(@thread, "run-#{n}")
 
   # --- helpers --------------------------------------------------------------------
 
@@ -151,24 +200,35 @@ defmodule HalC2.ContinuationDeliveryPropTest do
         "interactionMode" => "default"
       })
 
-    commit([run(@run, 1, "interrupted")])
+    commit([run(1, "interrupted", "msg-1", 1)])
   end
 
-  defp run(id, ordinal, status),
+  defp continuation(n), do: "message:restart-continuation:run-#{n}"
+
+  # Run `n`, which `message` started, ended `minutes` after it started (nil: still runs).
+  defp run(n, status, message, minutes),
     do:
-      {"run", id,
+      {"run", "run-#{n}",
        %{
-         "id" => id,
-         "ordinal" => ordinal,
+         "id" => "run-#{n}",
+         "ordinal" => n,
          "status" => status,
+         "userMessageId" => message,
          "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "m"},
-         "startedAt" => at(ordinal),
-         "updatedAt" => at(ordinal)
+         "requestedAt" => at(n, 0),
+         "startedAt" => at(n, 0),
+         "completedAt" => minutes && at(n, minutes),
+         "updatedAt" => at(n, minutes || 0)
        }}
 
   defp patch_thread(fields), do: commit([{"thread", @thread, fields}])
 
-  defp at(n), do: "2026-01-01T00:#{String.pad_leading("#{rem(n, 60)}", 2, "0")}:00.000Z"
+  # Each run starts twenty minutes after the one before it.
+  defp at(n, minutes),
+    do:
+      ~U[2026-01-01 00:00:00.000Z]
+      |> DateTime.add((n * 20 + minutes) * 60, :second)
+      |> DateTime.to_iso8601()
 
   defp commit(entities) do
     {:ok, _} =

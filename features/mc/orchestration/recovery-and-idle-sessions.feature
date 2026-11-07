@@ -246,7 +246,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then "t1" receives one "Continue where you left off." message
 
   # Upstream #18461: a turn that crashed the server was otherwise resumed after every restart.
-  @backlog @mc
+  @mc
   Scenario: A thread is continued at most three times in a row without the user
     Given project "demo" continues threads after a server update
     And "t1" has been continued after 3 restarts in a row without a message from the user
@@ -259,7 +259,7 @@ Feature: Recovering from restarts and releasing idle sessions
 
   # Upstream #20306: the restart guard counts only continuations requested within five minutes
   # of the interrupted run finishing; rapid loops still stop at three.
-  @backlog @mc
+  @mc
   Scenario: Continuations far apart do not use up the restart limit
     Given project "demo" continues threads after a server update
     And "t1" has been continued after 3 restarts, each after more than five minutes of work

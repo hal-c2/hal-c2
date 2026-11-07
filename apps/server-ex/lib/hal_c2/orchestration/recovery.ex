@@ -499,7 +499,40 @@ defmodule HalC2.Orchestration.Recovery do
     thread["archivedAt"] == nil and thread["deletedAt"] == nil and
       HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
         true and same_provider?(thread, run) and latest?(thread_id, run) and
-      not HalC2.Space.PageAgent.stopping?(thread_id)
+      not looping?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
+  end
+
+  @chain_limit 3
+  @chain_window_ms 5 * 60_000
+
+  # Upstream #18461: a turn that brings the MC down would otherwise be continued after
+  # every restart. After three continuations in a row with nothing from the user between
+  # them, the thread waits for the user. Upstream #20306: a continued run that worked
+  # longer than five minutes before the next restart breaks the chain, so a thread that
+  # works across many updates keeps being continued.
+  defp looping?(thread_id, run),
+    do: links(HalC2.Streams.state(thread_id), run, 0) >= @chain_limit
+
+  # How many quick continuations in a row led to `run`, newest first.
+  defp links(_state, _run, n) when n >= @chain_limit, do: n
+
+  defp links(state, run, n) do
+    with "message:restart-continuation:" <> source_id <- run["userMessageId"] || "",
+         true <- quick?(run) do
+      case StreamState.fetch(state, "run", source_id) do
+        nil -> n + 1
+        source -> links(state, source, n + 1)
+      end
+    else
+      _ -> n
+    end
+  end
+
+  # A run that ended (or, still settling, is ending now) within five minutes of starting.
+  defp quick?(run) do
+    started = HalC2.Projection.JS.epoch_ms(run["startedAt"] || run["requestedAt"])
+    ended = HalC2.Projection.JS.epoch_ms(run["completedAt"]) || System.os_time(:millisecond)
+    started == nil or ended - started <= @chain_window_ms
   end
 
   # A thread set to another provider since would be continued on a conversation it left.
