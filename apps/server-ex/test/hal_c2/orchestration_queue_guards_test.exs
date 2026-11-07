@@ -194,8 +194,9 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     :erlang.trace(stream, false, [:receive])
     :ok = :sys.resume(stream)
-    assert_receive {:DOWN, ^failed, :process, ^failer, :normal}
-    assert_receive {:DOWN, ^stopped, :process, ^stopper, :normal}
+    # The stop captures a git checkpoint first, which can outlast the default 100ms.
+    assert_receive {:DOWN, ^failed, :process, ^failer, :normal}, 5_000
+    assert_receive {:DOWN, ^stopped, :process, ^stopper, :normal}, 5_000
 
     state = current(thread_id)
     assert ["failed"] = Enum.map(runs(state), & &1["status"])
@@ -250,6 +251,33 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     assert ["m1", "m3", "m2"] = Enum.map(runs(current(thread_id)), & &1["userMessageId"])
     assert ["m1", "m2", "m3"] = user_messages(thread_id)
+  end
+
+  # The resumed queue is refused on a limit that names no reset: the thread keeps the reset
+  # of the stop the queue resume continued, as an automatic resume's message does.
+  test "a held queue resume refused without a reset keeps the stop's reset time",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    {:ok, _} = send_message(thread_id, "m2", "capped m2")
+    await_statuses(thread_id, ["running", "queued"])
+    restart(thread_id)
+
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3", "start_immediately")
+    [_, stopped, _] = await_statuses(thread_id, ["interrupted", "failed", "queued"])
+    {:ok, _} = recover(thread_id)
+    HalC2.Streams.flush_shell(thread_id)
+    reset = HalC2.Projection.Shell.thread_shell(current(thread_id))["usageLimitResetAt"]
+    assert reset
+    restart(thread_id)
+
+    assert [%{"type" => "queue.resume"}] = sweep(thread_id)
+    [_, _, resumed] = await_statuses(thread_id, ["interrupted", "failed", "failed"])
+    assert resumed["usageLimitContinuationOfRunId"] == stopped["id"]
+
+    shell = HalC2.Projection.Shell.thread_shell(current(thread_id))
+    assert shell["lastErrorClass"] == "usage_limit"
+    assert shell["usageLimitResetAt"] == reset
   end
 
   test "a deleted thread refuses messages, updates and queue commands", %{thread_id: thread_id} do

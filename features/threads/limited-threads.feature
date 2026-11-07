@@ -126,6 +126,21 @@ Feature: Threads stopped by a usage limit
       | the user                                   |
       | the parent agent cancelling its task       |
 
+  # A stop that cuts Claude off mid-reply or mid-tool is the user's stop, not a provider
+  # failure, even when a usage limit was reported earlier in the run.
+  @mc @priority-high
+  Scenario Outline: A stop that cuts the run short after a usage limit is only a stop
+    Given the user turned on auto-resume for limited threads
+    And Claude is running "Port tests"
+    When the user stops "Port tests" <where> after Claude reported a usage limit that resets at 14:00
+    Then the run is shown as stopped, not failed
+    And "Port tests" does not continue on its own at 14:00
+
+    Examples:
+      | where            |
+      | mid-reply        |
+      | during a tool    |
+
   # Upstream #21114: a stopped usage-limit thread no longer auto-resumes, so resuming it is an explicit choice.
   @shared @mc @backlog-desktop @backlog-mobile
   Scenario: A stopped limited thread can be set to resume at the reset again

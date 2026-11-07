@@ -1730,6 +1730,31 @@ defmodule HalC2.Steps.Threads do
     Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread, thread: thread})
   end
 
+  step ~r/^the user stops "(?<thread>[^"]+)" (?<where>mid-reply|during a tool) after Claude reported a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, where, time]} = context do
+    reason = if where == "mid-reply", do: "aborted_streaming", else: "aborted_tools"
+    File.write!(context.limit_flags <> ".stop", "#{div(next_clock(time), 1000)} #{reason}")
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    World.await_runs(context, thread, ["interrupted"])
+    Map.put(context, :current, thread)
+  end
+
+  step "the run is shown as stopped, not failed", context do
+    thread = World.current(context)
+    assert [%{"status" => "interrupted"}] = World.runs(context, thread)
+    row = World.row(context, thread)
+    refute row["lastErrorClass"]
+    refute row["lastError"]
+    context
+  end
+
   step "the user can still choose to resume it at the reset", context do
     thread = World.current(context)
     context = choose_recovery(context, thread, %{"autoResume" => true})

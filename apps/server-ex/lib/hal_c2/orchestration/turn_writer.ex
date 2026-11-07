@@ -715,10 +715,16 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # An automatic resume the provider rejects with a limit that names no reset leaves the
   # reset time of the stop it continued, so the thread still says when the limit lifts.
+  # The resume's message names that stop, or, when the resume restarted a held queue, the
+  # run it started does.
   defp kept_reset(%{"class" => "usage_limit", "resetAt" => nil} = failure, stream, ids) do
     run = StreamState.get(stream, "run")[ids.run] || %{}
     message = StreamState.get(stream, "message")[run["userMessageId"]] || %{}
-    continued = StreamState.get(stream, "run")[message["usageLimitContinuationOfRunId"]]
+
+    continued =
+      StreamState.get(stream, "run")[
+        run["usageLimitContinuationOfRunId"] || message["usageLimitContinuationOfRunId"]
+      ]
 
     reset =
       continued &&

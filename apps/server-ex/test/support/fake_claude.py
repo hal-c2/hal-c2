@@ -169,12 +169,17 @@ for line in sys.stdin:
         # FAKE_CLAUDE_HOLD_INTERRUPT: an interrupt the CLI never answers, so the
         # host has to settle the turn itself.
         # FAKE_CLAUDE_STOP_LIMIT_FILE names a file holding an epoch: once it exists, the limit
-        # resetting then lands as an interrupt ends the run.
+        # resetting then lands as an interrupt ends the run. A terminal reason after the epoch
+        # ("EPOCH aborted_streaming") is the one the interrupt's result carries.
         limit_file = os.environ.get("FAKE_CLAUDE_STOP_LIMIT_FILE")
-        stop_limit = int(open(limit_file).read()) if limit_file and os.path.exists(limit_file) else None
+        stop_spec = open(limit_file).read().split() if limit_file and os.path.exists(limit_file) else []
+        stop_limit = int(stop_spec[0]) if stop_spec else None
         if sub == "interrupt" and stop_limit and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "rate_limit_event", "session_id": session, "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour", "resetsAt": stop_limit}})
-            send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
+            stopped = {"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session}
+            if len(stop_spec) > 1:
+                stopped["terminal_reason"] = stop_spec[1]
+            send(stopped)
         elif sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
         continue

@@ -692,13 +692,24 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # After a restart the queue waits until the user resumes it.
-  def dispatch(%{"type" => "queue.resume", "threadId" => thread_id}) do
+  # After a restart the queue waits until the user resumes it. The limit recovery's
+  # resume names the stopped run it continues (`usageLimitContinuationOfRunId`), which
+  # the run it starts carries, as a resume's message does (`TurnWriter`'s `kept_reset/3`).
+  def dispatch(%{"type" => "queue.resume", "threadId" => thread_id} = command) do
+    continued = command["usageLimitContinuationOfRunId"]
+
     with :ok <- unarchived(thread_id),
          {:ok, result} <-
            queue_change(thread_id, fn state ->
-             for run <- queued_runs(state),
-                 do: upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", false))
+             for {run, index} <- Enum.with_index(queued_runs(state)),
+                 do:
+                   upsert(state, "run", run["id"], fn run ->
+                     run = Map.put(run, "queueHeld", false)
+
+                     if index == 0 and is_binary(continued),
+                       do: Map.put(run, "usageLimitContinuationOfRunId", continued),
+                       else: run
+                   end)
            end) do
       start_next(thread_id)
       {:ok, result}

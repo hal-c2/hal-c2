@@ -128,7 +128,8 @@ defmodule HalC2.Orchestration.LimitRecovery do
           %{
             "type" => "queue.resume",
             "commandId" => "limit-resume:#{delivery}",
-            "threadId" => thread["id"]
+            "threadId" => thread["id"],
+            "usageLimitContinuationOfRunId" => thread["latestRunId"]
           }
         else
           %{
