@@ -416,6 +416,8 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the subagent and its thread read as stopped
 
   # Upstream #22846: ending a native subagent's turn left the provider turn under it running.
+  # Open in #1187: the MC records no provider turn under a native subagent, and has no
+  # command to stop one subagent.
   @backlog @mc
   Scenario Outline: Ending a native subagent's turn also ends its provider turn
     Given thread "t1" has a provider-native subagent with a running turn
