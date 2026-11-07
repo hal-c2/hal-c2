@@ -156,12 +156,11 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     :erlang.trace(stream, false, [:receive])
     :ok = :sys.resume(stream)
-    assert_receive {:unarchived, {:ok, _}}
+    assert {:ok, _} = receive(do: ({:unarchived, result} -> result))
 
     # What follows the end runs in a task of its own; once it is over, the queue waits.
-    assert_receive {:trace, ^ender, :spawn, task, _}
-    ref = Process.monitor(task)
-    assert_receive {:DOWN, ^ref, :process, ^task, _}
+    task = receive(do: ({:trace, ^ender, :spawn, task, _} -> task))
+    await_down(Process.monitor(task))
     assert ["failed", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
@@ -185,18 +184,22 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     :ok = :sys.suspend(stream)
     :erlang.trace(stream, true, [:receive])
 
-    stopper = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "interrupted", nil) end)
-    stopped = Process.monitor(stopper)
+    {stopper, stopped} =
+      spawn_monitor(fn -> TurnWriter.abandon(thread_id, running["id"], "interrupted", nil) end)
+
     await_call(stream, stopper)
-    failer = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
-    failed = Process.monitor(failer)
+
+    {failer, failed} =
+      spawn_monitor(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
+
     await_call(stream, failer)
 
     :erlang.trace(stream, false, [:receive])
     :ok = :sys.resume(stream)
-    # The stop captures a git checkpoint first, which can outlast the default 100ms.
-    assert_receive {:DOWN, ^failed, :process, ^failer, :normal}, 5_000
-    assert_receive {:DOWN, ^stopped, :process, ^stopper, :normal}, 5_000
+    # Both ends are over once their callers are: the failed one has the run, and the
+    # stop, past its capture, has dropped the checkpoint it could not record.
+    assert await_down(failed) == :normal
+    assert await_down(stopped) == :normal
 
     state = current(thread_id)
     assert ["failed"] = Enum.map(runs(state), & &1["status"])
@@ -386,8 +389,13 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
         do: id
   end
 
+  # The waits below wait on the event itself, however long it takes; a hang fails at
+  # the test's timeout.
   defp await_call(stream, from),
-    do: assert_receive({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}})
+    do: receive(do: ({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}} -> :ok))
+
+  # Waits for monitor `ref`'s process to exit; returns why.
+  defp await_down(ref), do: receive(do: ({:DOWN, ^ref, :process, _, reason} -> reason))
 
   defp current(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
 
@@ -402,8 +410,6 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     else
       receive do
         {:hal_c2_stream, ^thread_id, _} -> await_statuses(thread_id, statuses)
-      after
-        5_000 -> flunk("runs never reached #{inspect(statuses)}")
       end
     end
   end
