@@ -324,8 +324,31 @@ defmodule HalC2.Checkpoint do
   @doc "Whether a checkpoint ref resolves to a commit, under either namespace."
   def exists?(cwd, ref), do: existing(cwd, ref) != nil
 
-  @doc "Commits the whole worktree (tracked and untracked, minus ignored) to `ref`."
-  def capture(cwd, ref) do
+  # Git refuses for a moment while another git holds a lock, or while a file it is
+  # indexing is replaced under it; the capture is tried up to three times.
+  @capture_attempts 3
+  @transient ~r/\.lock['"]?:? File exists|Another git process|unable to (index|stat) file|No such file or directory|failed to insert into database/i
+
+  @doc """
+  Commits the whole worktree (tracked and untracked, minus ignored) to `ref`, trying
+  again when git reports a lock or a file that vanished meanwhile.
+  """
+  def capture(cwd, ref, attempt \\ 1) do
+    case capture_once(cwd, ref) do
+      {:error, {_status, err}} = error when is_binary(err) and attempt < @capture_attempts ->
+        if Regex.match?(@transient, err) do
+          Process.sleep(Application.get_env(:hal_c2, :checkpoint_retry_ms, 100))
+          capture(cwd, ref, attempt + 1)
+        else
+          error
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp capture_once(cwd, ref) do
     with {:ok, common} <- git(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
       index = Path.join(String.trim(common), "hal-c2-checkpoint-index-#{Entities.new_id("i")}")
       env = [{"GIT_INDEX_FILE", index} | @identity]

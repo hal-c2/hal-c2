@@ -13,6 +13,7 @@ defmodule HalC2.Vcs.Watch do
 
   use GenServer, restart: :temporary
 
+  alias HalC2.Git
   alias HalC2.Vcs
 
   @registry HalC2.Vcs.Registry
@@ -39,6 +40,17 @@ defmodule HalC2.Vcs.Watch do
   def refresh(cwd) do
     HalC2.Space.Files.changed(cwd)
     if watch = lookup(cwd), do: GenServer.cast(watch, :refresh)
+    :ok
+  end
+
+  @doc """
+  A turn in `cwd` ended: like `refresh/1`, and the branch's pull request is looked up
+  again at once (someone may have opened one meanwhile), unless the checkout is on no
+  branch or background work is paused for it.
+  """
+  def turn_ended(cwd) do
+    HalC2.Space.Files.changed(cwd)
+    if watch = lookup(cwd), do: GenServer.cast(watch, :turn_ended)
     :ok
   end
 
@@ -69,7 +81,8 @@ defmodule HalC2.Vcs.Watch do
        subscribers: %{},
        local: Vcs.local_status(cwd),
        remote: Vcs.remote_status(cwd, pr: true),
-       timer: schedule_fetch()
+       timer: schedule_fetch(),
+       pr_branch: Git.current_branch(cwd)
      }}
   end
 
@@ -89,13 +102,30 @@ defmodule HalC2.Vcs.Watch do
     end
   end
 
-  # A local change keeps the pull request last looked up; the timer refreshes it.
+  # A local change keeps the pull request last looked up while the checkout stays on the
+  # branch it was looked up for (`pr_branch`); the timer refreshes it.
   def handle_cast(:refresh, state) do
-    remote =
-      with %{} = remote <- Vcs.remote_status(state.cwd),
-           do: Map.put(remote, "pr", state.remote && state.remote["pr"])
+    branch = Git.current_branch(state.cwd)
 
-    {:noreply, update(state, Vcs.local_status(state.cwd), remote)}
+    remote =
+      with %{} = remote <- Vcs.remote_status(state.cwd) do
+        pr = if branch == state.pr_branch, do: state.remote && state.remote["pr"]
+        Map.put(remote, "pr", pr)
+      end
+
+    {:noreply, update(%{state | pr_branch: branch}, read_local(state), remote)}
+  end
+
+  def handle_cast(:turn_ended, state) do
+    branch = Git.current_branch(state.cwd)
+    scope = %{"type" => "vcs-status", "cwd" => state.cwd}
+
+    if branch && HalC2.BackgroundPolicy.run_scope_work?(scope) do
+      remote = Vcs.remote_status(state.cwd, pr: :fresh)
+      {:noreply, update(%{state | pr_branch: branch}, read_local(state), remote)}
+    else
+      handle_cast(:refresh, state)
+    end
   end
 
   def handle_cast({:publish, local, remote}, state), do: {:noreply, update(state, local, remote)}
@@ -107,7 +137,11 @@ defmodule HalC2.Vcs.Watch do
     state =
       if Application.get_env(:hal_c2, :auto_actions, true) and
            HalC2.BackgroundPolicy.run_scope_work?(scope) do
-        update(state, state.local, Vcs.remote_status(state.cwd, fetch: true, pr: true))
+        update(
+          %{state | pr_branch: Git.current_branch(state.cwd)},
+          state.local,
+          Vcs.remote_status(state.cwd, fetch: true, pr: true)
+        )
       else
         state
       end
@@ -125,6 +159,14 @@ defmodule HalC2.Vcs.Watch do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A status git cannot give right now (the index is locked) leaves the last one standing.
+  defp read_local(state) do
+    case Vcs.read_status(state.cwd) do
+      {:ok, local} -> local
+      {:error, _} -> state.local
+    end
+  end
 
   defp update(state, local, remote) do
     if local != state.local, do: broadcast(state, %{"_tag" => "localUpdated", "local" => local})

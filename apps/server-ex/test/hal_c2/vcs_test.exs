@@ -24,6 +24,7 @@ defmodule HalC2.VcsTest do
     %{repo: repo, other: other}
   end
 
+  # An untracked text file counts its lines as inserted, as a staged one does.
   test "local status lists every change with its line counts", %{repo: repo} do
     File.write!(Path.join(repo, "a.txt"), "one\ntwo\n")
     File.write!(Path.join(repo, "staged.txt"), "s\n")
@@ -36,12 +37,12 @@ defmodule HalC2.VcsTest do
              "isDefaultRef" => true,
              "hasPrimaryRemote" => true,
              "hasWorkingTreeChanges" => true,
-             "workingTree" => %{"files" => files, "insertions" => 2, "deletions" => 0}
+             "workingTree" => %{"files" => files, "insertions" => 3, "deletions" => 0}
            } = Vcs.local_status(repo)
 
     assert Enum.map(files, &{&1["path"], &1["insertions"]}) == [
              {"a.txt", 1},
-             {"new file.txt", 0},
+             {"new file.txt", 1},
              {"staged.txt", 1}
            ]
 

@@ -33,20 +33,37 @@ defmodule HalC2.Vcs do
   @status_timeout 30_000
   @status_max_bytes 50_000_000
 
-  # `{:ok, status}`, or `{:error, reason}` when git could not be started, ran past
-  # its time limit or printed more than the limit (`:vcs_status_limits` overrides them).
+  @index_locked "Git index is locked. Status will resume when the index lock is removed."
+
+  @doc """
+  `{:ok, status}`, or `{:error, reason}` when the index is locked by another git, git ran
+  past its time limit or printed more than the limit (`:vcs_status_limits` overrides
+  them). A folder that is no repository, or a machine without git, is `{:ok, not a repo}`.
+  """
+  def read_status(cwd), do: read_local_status(cwd)
+
   defp read_local_status(cwd) do
     limits = Application.get_env(:hal_c2, :vcs_status_limits, [])
     max = limits[:max_bytes] || @status_max_bytes
 
     result =
-      File.dir?(cwd) &&
-        Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all),
-          timeout: limits[:timeout] || @status_timeout,
-          max_bytes: max
-        )
+      if File.dir?(cwd) do
+        if index_locked?(cwd, limits[:timeout] || 5_000) do
+          {:error, @index_locked}
+        else
+          Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all),
+            timeout: limits[:timeout] || @status_timeout,
+            max_bytes: max
+          )
+        end
+      end
 
     case result do
+      # No git on this machine: a folder with no `.git` in it is no repository, and
+      # says so; one that has it is a checkout git cannot be started for.
+      {:error, "git could not be started" <> _} = error ->
+        if git_marker?(cwd), do: error, else: {:ok, not_a_repo()}
+
       {:ok, %{truncated: true}} ->
         {:error, "git status produced too much output (more than #{max} bytes)"}
 
@@ -61,6 +78,19 @@ defmodule HalC2.Vcs do
     end
   end
 
+  defp git_marker?(dir) do
+    File.exists?(Path.join(dir, ".git")) or
+      (Path.dirname(dir) != dir and git_marker?(Path.dirname(dir)))
+  end
+
+  # Another git holds the index while its `index.lock` exists.
+  defp index_locked?(cwd, timeout) do
+    case Git.ok(cwd, ~w(rev-parse --git-path index.lock), timeout: timeout) do
+      {:ok, path} -> File.exists?(Path.expand(String.trim(path), cwd))
+      _ -> false
+    end
+  end
+
   defp local_status(cwd, status) do
     branch = parse_branch(status)
     changed = changed_paths(status)
@@ -68,15 +98,17 @@ defmodule HalC2.Vcs do
     default = default_branch(cwd)
 
     # Untracked and binary files have no line counts but are still changes.
+    untracked = untracked_paths(status)
+
     files =
       (for(
-         {path, {ins, del}} <- stats,
-         do: %{"path" => path, "insertions" => ins, "deletions" => del}
+         {path, {ins, del, previous}} <- stats,
+         do: file(path, ins, del, previous)
        ) ++
          for(
            path <- changed,
            not Map.has_key?(stats, path),
-           do: %{"path" => path, "insertions" => 0, "deletions" => 0}
+           do: untracked_file(cwd, path, path in untracked)
          ))
       |> Enum.sort_by(& &1["path"])
 
@@ -93,6 +125,37 @@ defmodule HalC2.Vcs do
       }
     }
   end
+
+  defp file(path, ins, del, nil), do: %{"path" => path, "insertions" => ins, "deletions" => del}
+
+  defp file(path, ins, del, previous),
+    do: file(path, ins, del, nil) |> Map.put("previousPath", previous)
+
+  # An untracked text file counts its lines as all inserted; other changes without line
+  # counts (binary, mode only) count none. Files past a megabyte are not read.
+  # `path` is one git listed under `cwd`, and a link is never followed (`lstat`).
+  @untracked_read_limit 1_000_000
+  # sobelow_skip ["Traversal.FileModule"]
+  defp untracked_file(cwd, path, true) do
+    full = Path.join(cwd, path)
+
+    with {:ok, %{type: :regular, size: size}} when size <= @untracked_read_limit <-
+           File.lstat(full),
+         {:ok, data} <- File.read(full),
+         false <- String.contains?(data, <<0>>) do
+      lines =
+        data
+        |> :binary.matches("\n")
+        |> length()
+        |> Kernel.+(if data == "" or String.ends_with?(data, "\n"), do: 0, else: 1)
+
+      file(path, lines, 0, nil)
+    else
+      _ -> file(path, 0, 0, nil)
+    end
+  end
+
+  defp untracked_file(_cwd, path, false), do: file(path, 0, 0, nil)
 
   # Without a known default branch, main and master count as the default.
   defp default_ref?(nil, _default), do: false
@@ -251,6 +314,10 @@ defmodule HalC2.Vcs do
     |> Enum.uniq()
   end
 
+  defp untracked_paths(status) do
+    for "? " <> path <- String.split(status, <<0>>, trim: true), do: path
+  end
+
   defp parse_changed([], acc), do: acc
   defp parse_changed(["#" <> _ | rest], acc), do: parse_changed(rest, acc)
 
@@ -278,7 +345,7 @@ defmodule HalC2.Vcs do
         Map.merge(
           numstat_of(cwd, ~w(diff --numstat -z)),
           numstat_of(cwd, ~w(diff --cached --numstat -z)),
-          fn _, {a, b}, {c, d} -> {a + c, b + d} end
+          fn _, {a, b, p}, {c, d, q} -> {a + c, b + d, p || q} end
         )
     end
   end
@@ -291,10 +358,10 @@ defmodule HalC2.Vcs do
   end
 
   defp parse_numstat(out) do
-    for %{"path" => path, "additions" => ins, "deletions" => del} <-
+    for %{"path" => path, "additions" => ins, "deletions" => del} = stat <-
           HalC2.Review.numstat(out),
         into: %{},
-        do: {path, {ins, del}}
+        do: {path, {ins, del, stat["previousPath"]}}
   end
 
   defp default_branch(cwd) do

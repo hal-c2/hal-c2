@@ -512,4 +512,357 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     assert {:ok, %{"isRepo" => true}} = reply
     context
   end
+
+  # --- paths exactly as git has them ---------------------------------------------------
+
+  # A name as a scenario writes it: in either kind of quotes, or a name with the invisible
+  # byte-order mark in front.
+  defp name("\"" <> _ = text), do: String.trim(text, "\"")
+  defp name("'" <> _ = text), do: text |> String.trim("'")
+
+  defp name("a name of U+FEFF followed by " <> rest), do: "\uFEFF" <> name(rest)
+  defp name("that name, U+FEFF included"), do: :listed_name
+
+  defp write_and_add(context, path, content \\ "one\ntwo\n") do
+    File.mkdir_p!(Path.dirname(Path.join(context.cwd, path)))
+    File.write!(Path.join(context.cwd, path), content)
+    git(context, ["--literal-pathspecs", "add", "--", path])
+  end
+
+  step ~r/^the user has (?<kind>added|renamed) (?<change>.+) in "(?<title>[^"]+)"$/,
+       %{args: [kind, change, title]} = context do
+    assert World.project(context, title).root == context.cwd
+
+    case kind do
+      "added" ->
+        path = name(change)
+        write_and_add(context, path)
+        Map.put(context, :listed, %{path: path, previous: nil})
+
+      "renamed" ->
+        [from, to] = Regex.run(~r/^("[^"]+") to (.+)$/, change, capture: :all_but_first)
+        from = name(from)
+        to = name(to)
+        World.commit!(context.cwd, %{from => "one\ntwo\nthree\nfour\nfive\n"}, "Add #{from}")
+        File.mkdir_p!(Path.dirname(Path.join(context.cwd, to)))
+        git(context, ["mv", "--", from, to])
+        Map.put(context, :listed, %{path: to, previous: from})
+    end
+  end
+
+  step ~r/^it lists (?<listed>"[^"]*"|'[^']*'|that name, U\+FEFF included)(?:,? as renamed from (?<from>"[^"]*"))?$/,
+       %{args: [listed | from]} = context do
+    expected = context.listed
+    previous = from |> List.first() |> then(&(&1 && name(&1)))
+    path = if name(listed) == :listed_name, do: expected.path, else: name(listed)
+    assert path == expected.path
+    file = Enum.find(status(context)["workingTree"]["files"], &(&1["path"] == path))
+    assert file, "#{inspect(path)} is not in #{inspect(status(context)["workingTree"]["files"])}"
+    assert file["previousPath"] == previous
+    context
+  end
+
+  step "a git action given that path acts on that file", context do
+    path = context.listed.path
+
+    {events, context} =
+      World.git_action(context, context.cwd, "commit", %{
+        "commitMessage" => "Take the file",
+        "filePaths" => [path]
+      })
+
+    assert List.last(events)["kind"] == "action_finished"
+
+    committed =
+      context.cwd
+      |> World.git!(~w(show --name-only --format= -z HEAD))
+      |> String.split(<<0>>, trim: true)
+
+    assert path in committed
+    context
+  end
+
+  # --- a bare repository among the project's files --------------------------------------
+
+  step "the folder {string} in {string} is shaped like a bare repository with a hook",
+       %{args: [folder, title]} = context do
+    root = World.project(context, title).root
+    evil = Path.join(root, folder)
+    File.mkdir_p!(evil)
+    World.git!(evil, ~w(init -q --bare))
+    marker = Path.join(Mc.tmp_dir(context.mc, "hook"), "ran")
+    hook = Path.join(evil, "hook.sh")
+    File.write!(hook, "#!/bin/sh\ntouch '#{marker}'\n")
+    File.chmod!(hook, 0o755)
+    # What a hostile repository would plant: a program git runs on every status.
+    World.git!(evil, ["config", "core.bare", "false"])
+    World.git!(evil, ["config", "core.worktree", evil])
+    World.git!(evil, ["config", "core.fsmonitor", hook])
+    Map.merge(context, %{evil: evil, hook_marker: marker})
+  end
+
+  step "HAL-C2 runs git inside {string}", %{args: [folder]} = context do
+    assert context.evil == Path.join(context.cwd, folder)
+    Map.put(context, :git_result, HalC2.Git.run(context.evil, ~w(status --porcelain=2)))
+  end
+
+  step "{string} is not opened as a repository", %{args: [folder]} = context do
+    assert context.evil == Path.join(context.cwd, folder)
+    assert {:ok, %{status: status}} = context.git_result
+    assert status != 0
+    assert HalC2.Vcs.local_status(context.evil)["isRepo"] == false
+    context
+  end
+
+  step "the hook does not run", context do
+    refute File.exists?(context.hook_marker)
+    context
+  end
+
+  # --- a folder git cannot read the status of ------------------------------------------
+
+  step "git is not installed on the MC's machine", context do
+    previous = Application.get_env(:hal_c2, :git_command)
+    Application.put_env(:hal_c2, :git_command, "/nonexistent/hal-c2-git")
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :git_command, previous),
+        else: Application.delete_env(:hal_c2, :git_command)
+    end)
+
+    context
+  end
+
+  step "no failure is reported", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "the status names the branch the first commit will go on", context do
+    assert status(context)["refName"] ==
+             World.git!(context.cwd, ~w(symbolic-ref --short HEAD))
+
+    context
+  end
+
+  step "{string} and {string} are listed with their changed line counts",
+       %{args: [a, b]} = context do
+    files =
+      for f <- status(context)["workingTree"]["files"],
+          into: %{},
+          do: {f["path"], {f["insertions"], f["deletions"]}}
+
+    assert Map.take(files, [a, b]) == %{a => {1, 0}, b => {1, 0}}
+    context
+  end
+
+  step "another git process is holding the index lock of {string}", %{args: [title]} = context do
+    root = World.project(context, title).root
+    File.write!(Path.join(root, ".git/index.lock"), "")
+    Map.put(context, :index_lock, Path.join(root, ".git/index.lock"))
+  end
+
+  step "the status read fails with {string}", %{args: [message]} = context do
+    assert {:error, _, %{"detail" => detail}} = context.reply
+    assert detail == message
+    context
+  end
+
+  step "the next status read after the lock is gone reports the checkout normally", context do
+    File.rm!(context.index_lock)
+    {reply, context} = World.call(context, "vcs.refreshStatus", %{"cwd" => context.cwd})
+    assert {:ok, %{"isRepo" => true}} = reply
+    context
+  end
+
+  # --- initializing ---------------------------------------------------------------------
+
+  step "the user initializes {string} without naming a version control system",
+       %{args: [title]} = context do
+    {reply, context} =
+      World.call(context, "vcs.init", %{"cwd" => World.project(context, title).root})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "status was just read for {string} and said it is not a repository",
+       %{args: [title]} = context do
+    {reply, context} =
+      World.call(context, "vcs.refreshStatus", %{"cwd" => World.project(context, title).root})
+
+    assert {:ok, %{"isRepo" => false}} = reply
+    context
+  end
+
+  step "{string} is initialized as a git repository", %{args: [title]} = context do
+    {reply, context} =
+      World.call(context, "vcs.init", %{"cwd" => World.project(context, title).root})
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the next status for {string} reports the repository", %{args: [title]} = context do
+    {reply, context} =
+      World.call(context, "vcs.refreshStatus", %{"cwd" => World.project(context, title).root})
+
+    assert {:ok, %{"isRepo" => true}} = reply
+    context
+  end
+
+  # --- the turn-end pull request check ---------------------------------------------------
+
+  step "the status has no pull request for {string}", %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    assert context.vcs.remote["pr"] == nil
+    context
+  end
+
+  step "someone opened a pull request for it on the host", context do
+    branch = git(context, ~w(branch --show-current))
+
+    World.cli_rules(context, [
+      %{"args" => ["pr list", "--head #{branch}"], "stdout" => [pr(42, branch, "OPEN", false)]}
+    ])
+  end
+
+  # The turn runs to its end; the status the watcher holds once it has told its clients
+  # what the turn changed in the pull request.
+  step "the thread's turn ends", context do
+    context = World.run_turn(context, context.thread_title, "write notes.md")
+    {_event, context} = World.await_vcs(context, &(&1["_tag"] == "remoteUpdated"))
+    state = :sys.get_state(watcher(context))
+    Map.put(context, :reply, {:ok, Map.merge(state.local, state.remote)})
+  end
+
+  step "the status carries that pull request without waiting for the slower recheck", context do
+    assert %{"number" => 42, "state" => "open"} = status(context)["pr"]
+    context
+  end
+
+  step "the status of {string} carries the pull request of {string}",
+       %{args: [title, branch]} = context do
+    assert World.project(context, title).root == context.cwd
+    git(context, ["checkout", "-q", "-b", branch])
+
+    context =
+      World.cli_rules(context, [
+        %{"args" => ["pr list", "--head #{branch}"], "stdout" => [pr(42, branch, "OPEN", false)]}
+      ])
+
+    context = show(shared_answers(context), true)
+    assert %{"number" => 42} = context.vcs.remote["pr"]
+    context
+  end
+
+  step "the agent checks out {string}, which has no pull request, during its turn",
+       %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    context
+  end
+
+  # --- git itself -----------------------------------------------------------------------
+
+  # Every git the MC starts says how it was started, so what it asked of git is checked.
+  defp record_git(context) do
+    previous = Application.get_env(:hal_c2, :git_command)
+    log = Path.join(Mc.tmp_dir(context.mc, "gitlog"), "calls")
+    script = Path.join(Path.dirname(log), "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    echo "$GIT_OPTIONAL_LOCKS $*" >> '#{log}'
+    exec git "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    Application.put_env(:hal_c2, :git_command, script)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :git_command, previous),
+        else: Application.delete_env(:hal_c2, :git_command)
+    end)
+
+    Map.put(context, :git_log, log)
+  end
+
+  step "the MC keeps the status of {string} fresh in the background",
+       %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    context |> record_git() |> World.watch_vcs(context.cwd)
+  end
+
+  step "the user runs {string} or {string} in {string} while a status read is under way",
+       %{args: [checkout, commit, _title]} = context do
+    {reply, context} = World.call(context, "vcs.refreshStatus", %{"cwd" => context.cwd})
+    assert {:ok, _} = reply
+    assert checkout == "git checkout" and commit == "git commit"
+    File.write!(Path.join(context.cwd, "user.txt"), "mine\n")
+    git(context, ["checkout", "-q", "-b", "user-branch"])
+    git(context, ["add", "user.txt"])
+    git(context, ["commit", "-q", "-m", "mine"])
+    context
+  end
+
+  step "the user's git command is not refused for a lock the MC holds", context do
+    calls = context.git_log |> File.read!() |> String.split("\n", trim: true)
+    reads = Enum.filter(calls, &String.contains?(&1, "status"))
+    assert reads != []
+    # Status (and every other read) asks git not to refresh the index, which takes its lock.
+    assert Enum.all?(calls, &String.starts_with?(&1, "0 "))
+    refute File.exists?(Path.join(context.cwd, ".git/index.lock"))
+    context
+  end
+
+  step "git reports a lock file or a vanished file while a checkpoint is being captured",
+       context do
+    # A git that fails the capture's `git add` twice as a held lock does, then works.
+    tmp = Mc.tmp_dir(context.mc, "flaky")
+    counter = Path.join(tmp, "failures")
+    script = Path.join(tmp, "git")
+    previous = Application.get_env(:hal_c2, :git_command)
+
+    File.write!(script, """
+    #!/bin/sh
+    for a in "$@"; do
+      if [ "$a" = add ]; then
+        n=$(cat '#{counter}' 2>/dev/null || echo 0)
+        if [ "$n" -lt 2 ]; then
+          echo $((n + 1)) > '#{counter}'
+          echo "fatal: Unable to create '/x/index.lock': File exists." >&2
+          exit 128
+        fi
+      fi
+    done
+    exec git "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    Application.put_env(:hal_c2, :git_command, script)
+    Application.put_env(:hal_c2, :checkpoint_retry_ms, 1)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:hal_c2, :checkpoint_retry_ms)
+
+      if previous,
+        do: Application.put_env(:hal_c2, :git_command, previous),
+        else: Application.delete_env(:hal_c2, :git_command)
+    end)
+
+    Map.put(context, :flaky_counter, counter)
+  end
+
+  step "the capture command is retried", context do
+    File.write!(Path.join(context.cwd, "captured.txt"), "x\n")
+    Map.put(context, :capture, HalC2.Checkpoint.capture(context.cwd, "refs/hal-c2/test/flaky"))
+  end
+
+  step "the checkpoint is captured if the second or third attempt succeeds", context do
+    assert context.capture == :ok
+    assert File.read!(context.flaky_counter) |> String.trim() == "2"
+    assert HalC2.Checkpoint.exists?(context.cwd, "refs/hal-c2/test/flaky")
+    context
+  end
 end

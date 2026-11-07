@@ -726,7 +726,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     # The turn may have changed the checkout; clients watching it see the result.
     if cwd = state.turn.cwd do
-      HalC2.Vcs.Watch.refresh(cwd)
+      HalC2.Vcs.Watch.turn_ended(cwd)
       HalC2.Workspace.invalidate(cwd)
     end
 
