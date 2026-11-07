@@ -187,5 +187,24 @@ Item {
             tryVerify(() => input.activeFocus);
             compare(pressPalette(), ["Ctrl+K"]);
         }
+
+        // The keymap republishes its keys as the route, the turn and the focus
+        // change. A shortcut it drops goes, rather than staying in the
+        // application's shortcut map for the life of the process, and the key
+        // fires once when it is back.
+        function test_a_dropped_key_leaves_no_shortcut_behind() {
+            const window = openPage();
+            focusPrompt(window);
+            const held = window.keyShortcuts.objectAt(0);
+            const shortcut = held.shortcut ?? held;
+            const keymap = Keybindings.shortcuts;
+            compare(shortcut.sequence, "Ctrl+K");
+            Keybindings.shortcuts = [];
+            // A deleted object's properties read as undefined.
+            tryVerify(() => shortcut.sequence === undefined, 2000, "the dropped shortcut is deleted");
+            compare(pressPalette(), []);
+            Keybindings.shortcuts = keymap;
+            compare(pressPalette(), ["Ctrl+K"]);
+        }
     }
 }
