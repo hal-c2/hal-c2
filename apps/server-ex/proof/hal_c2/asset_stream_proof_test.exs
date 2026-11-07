@@ -24,6 +24,7 @@ defmodule HalC2.AssetStreamProofTest do
       "HalC2.Attachments.delete/1" => @storage,
       "HalC2.Attachments.delete_thread/1" => @storage,
       "HalC2.Attachments.claim/2" => @storage,
+      "HalC2.Attachments.release/2" => @storage,
       "HalC2.Attachments.persist/1" => @storage,
       "HalC2.Attachments.path/1" => @storage,
       "HalC2.Attachments.valid_id?/1" => @storage,

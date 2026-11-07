@@ -208,20 +208,35 @@ defmodule HalC2.Orchestration do
     # A resend of a message the thread already has was delivered, plan and all.
     ref = command["sourcePlanRef"]
     plan = unless ref == nil or delivered?(thread_id, command["messageId"]), do: ref
+    uploads = command["attachments"] || []
 
     with :ok <- claim_plan(thread_id, command["messageId"], plan) do
       # Uploads join the thread before the message names them.
-      sent =
-        with {:ok, attachments} <-
-               HalC2.Attachments.claim(thread_id, command["attachments"] || []),
-             do: dispatch_message(thread_id, claimed(command, attachments))
+      case HalC2.Attachments.claim(thread_id, uploads) do
+        {:ok, attachments} ->
+          case dispatch_message(thread_id, claimed(command, attachments)) do
+            # A resend names its first copies, so the copies this claim made go.
+            {:sent, reply} ->
+              HalC2.Attachments.release(uploads, attachments)
+              reply
 
-      # A message refused for good gives its plan back. One refused only for now (a
-      # map: the same message is still being sent) leaves it with the send under way.
-      with {:error, reason} when is_binary(reason) <- sent,
-           do: reopen_plan(command["messageId"], plan)
+            # A message refused for good gives its uploads and its plan back. One
+            # refused only for now (a map: the same message is still being sent) leaves
+            # the plan with the send under way; the copies this claim made are its own,
+            # never the first send's, so they go either way.
+            {:error, reason} = refused ->
+              HalC2.Attachments.release(uploads, attachments)
+              if is_binary(reason), do: reopen_plan(command["messageId"], plan)
+              refused
 
-      sent
+            sent ->
+              sent
+          end
+
+        {:error, _} = refused ->
+          reopen_plan(command["messageId"], plan)
+          refused
+      end
     end
   end
 
@@ -432,21 +447,38 @@ defmodule HalC2.Orchestration do
 
     with :ok <- users_run(state, run_id, "edited"),
          :ok <- not_emptied(state, run_id, command),
-         {:ok, command} <- edit_claims(thread_id, command) do
+         {:ok, claimed_command} <- edit_claims(thread_id, command) do
+      sent = command
+      command = claimed_command
+
       edited =
         %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
         |> Map.merge(Map.take(command, ["attachments"]))
         |> then(&if(command["context"], do: Map.put(&1, "context", command["context"]), else: &1))
 
-      queue_change(thread_id, fn state ->
-        case StreamState.get(state, "run")[run_id] do
-          %{"status" => "queued", "userMessageId" => message_id} ->
-            [upsert(state, "message", message_id, &Map.merge(&1, edited))]
+      result =
+        queue_change(thread_id, fn state ->
+          case StreamState.get(state, "run")[run_id] do
+            %{"status" => "queued", "userMessageId" => message_id} ->
+              [upsert(state, "message", message_id, &Map.merge(&1, edited))]
 
-          _ ->
-            []
-        end
-      end)
+            _ ->
+              []
+          end
+        end)
+
+      # An edit that changed nothing (the run is no longer queued, or the thread
+      # refused it) gives its copies back.
+      with {:ok, _} = ok <- result do
+        unless edit_applied?(thread_id, run_id, edited),
+          do: HalC2.Attachments.release(sent["attachments"] || [], edited["attachments"] || [])
+
+        ok
+      else
+        {:error, _} = refused ->
+          HalC2.Attachments.release(sent["attachments"] || [], command["attachments"] || [])
+          refused
+      end
     end
   end
 
@@ -701,8 +733,17 @@ defmodule HalC2.Orchestration do
       if request && HalC2.Orchestration.TurnWriter.message_request?(request) do
         answer_with_message(thread_id, request, command)
       else
-        with {:ok, response} <- response(thread_id, command),
-             do: respond(thread_id, command["requestId"], response)
+        with {:ok, response} <- response(thread_id, command) do
+          case respond(thread_id, command["requestId"], response) do
+            # An answer nobody took (a retry of one already taken) gives its copies back.
+            {:error, _} = refused ->
+              release_answers(command, response)
+              refused
+
+            sent ->
+              sent
+          end
+        end
       end
     end
   end
@@ -1145,6 +1186,17 @@ defmodule HalC2.Orchestration do
   end
 
   defp response(_thread_id, command), do: {:ok, %{"decision" => command["decision"] || "decline"}}
+
+  defp release_answers(%{"attachmentsByQuestionId" => by_question}, %{
+         "questionAnswer" => %{"attachmentsByQuestionId" => claimed}
+       }) do
+    for {question, attachments} <- by_question,
+        do: HalC2.Attachments.release(attachments, claimed[question] || [])
+
+    :ok
+  end
+
+  defp release_answers(_command, _response), do: :ok
 
   # Answers keep their provider's shape; files are named by where they are saved.
   defp with_attachment_paths(answers, claimed) do
@@ -2427,6 +2479,7 @@ defmodule HalC2.Orchestration do
     decide = fn state -> decide_dispatch(state, thread_id, command) end
 
     case HalC2.Streams.transact(thread_id, :thread, decide) do
+      {:ok, :sent} = decided -> {:sent, dispatched(thread_id, command, decided)}
       {:ok, _} = decided -> dispatched(thread_id, command, decided)
       {:error, _} = error -> error
     end
@@ -2808,6 +2861,17 @@ defmodule HalC2.Orchestration do
 
     for {id, position} <- Enum.with_index(order, 1),
         do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
+  end
+
+  defp edit_applied?(thread_id, run_id, edited) do
+    state = HalC2.Streams.state(thread_id)
+
+    with %{"userMessageId" => id} <- StreamState.get(state, "run")[run_id],
+         %{"attachments" => named} <- StreamState.get(state, "message")[id] do
+      Enum.all?(edited["attachments"] || [], fn a -> Enum.any?(named, &(&1["id"] == a["id"])) end)
+    else
+      _ -> edited["attachments"] in [nil, []]
+    end
   end
 
   defp edit_claims(thread_id, %{"attachments" => attachments} = command)
