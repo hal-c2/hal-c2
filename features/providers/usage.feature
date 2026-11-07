@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15661
+#   https://github.com/pingdotgg/t3code/pull/17848
 #   https://github.com/pingdotgg/t3code/pull/10409
 #   https://github.com/pingdotgg/t3code/pull/13650
 #   https://github.com/pingdotgg/t3code/pull/13599
@@ -328,6 +330,15 @@ Feature: Usage
     When the user opens Usage
     Then the user is told "Transcripts could not be scanned."
 
+  # Upstream #15661: unreadable files used to drop their usage while the source said ok.
+  @backlog @mc
+  Scenario: A scan that could not read every transcript says its usage is incomplete
+    Given one Claude transcript cannot be read and the others can
+    When the user opens Usage
+    Then Claude's usage is marked incomplete, saying how many transcripts could not be read
+    And it counts the readable transcripts and the usage saved from the unreadable one
+    And a later scan that reads everything is no longer marked incomplete
+
   # Clients leave a missing source out of the totals; saved records keep counting.
   @backlog @mc @priority-low
   Scenario: A provider with no history folder on an environment is noted and its saved usage still counts
@@ -452,3 +463,11 @@ Feature: Usage
     When the user switches the metric from cost to tokens
     Then each model's share and the order of the list are by tokens
     And a model with an unknown price shows its real token share
+
+  @backlog @mc @plugin-pi
+  Scenario: Pi's own sessions count towards usage
+    Given Pi kept sessions in its session directory, one of them copied into a fork
+    When the user opens Usage
+    Then the Pi sessions' tokens and cost are included, with their extra costs
+    And the entries the fork copied are counted once
+    And each model keeps the name Pi gave it while priced by its bare model id

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17079
+#   https://github.com/pingdotgg/t3code/pull/14874
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/13481 (Codex 0.156 rollback through thread/revert only)
 #   packages/contracts/src/orchestrationV2.ts (checkpoint.captured, checkpoint-scope.created,
@@ -150,6 +152,16 @@ Feature: Checkpoints, diffs and rewinding
     Given the checkpoint of run 1 holds no files
     When the user rewinds "t1" to before run 2
     Then the workspace folder still exists and is empty
+
+  # Upstream #14874: on Windows, cleaning an emptied subfolder removes the folder itself and
+  # still succeeds, so the restore reported success with the project's folder gone.
+  @backlog @mc
+  Scenario: Restoring an empty checkpoint keeps a project folder that sits inside a repository
+    Given "demo" is rooted at the folder "packages/app" inside a git repository
+    And the checkpoint of run 1 holds no files
+    When the user rewinds "t1" to before run 2
+    Then the rewind succeeds
+    And the folder "packages/app" still exists and is empty
 
   @mc
   Scenario: The diff of one turn
@@ -360,6 +372,16 @@ Feature: Checkpoints, diffs and rewinding
     When the user sends "Again" to "t1"
     Then the provider receives the history through run 1
     And neither rolled-back run is replayed
+
+  # Upstream #17079: a message read before the rewind's result was written put the old
+  # provider session back, so the next turn ran on the history the rewind removed.
+  @backlog @mc
+  Scenario: A message sent while a rewind runs continues from the rewound history
+    Given runs 1 and 2 of "t1" completed
+    When the user rewinds "t1" to run 1
+    And the user sends "Again" to "t1" before the rewind has finished
+    Then the provider receives the history through run 1
+    And run 2 is not replayed
 
   @mc
   Scenario: A rewind whose restore fails ends with an error

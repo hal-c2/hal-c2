@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19328
 #   apps/desktop-qt/src/native/SidebarController.cpp (row actions, scope, parking, snooze menu, toasts)
 #   apps/desktop-qt/src/native/SidebarModel.cpp (sections, project grouping and order)
 #   apps/desktop-qt/src/native/ShellStore.cpp (the MC's project and thread rows)
@@ -159,6 +160,14 @@ Feature: The desktop's thread list against its MC
       And the user is viewing "env-a:t3"
       When the user settles "env-a:t3"
       Then the window shows a new draft in "proj-2"
+
+    # Upstream #19328: the shortcut settled the thread but stayed on it, unlike the sidebar's Settle.
+    @backlog @desktop
+    Scenario: The settle shortcut moves on like the sidebar's Settle
+      Given the user is viewing "env-a:t1"
+      When the user presses the settle-thread shortcut
+      Then "env-a:t1" is settled
+      And the window shows the thread "env-a:t2"
 
     @desktop
     Scenario: Moving elsewhere before the MC answers keeps the user where they went

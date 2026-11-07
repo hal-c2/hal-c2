@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15834
+#   https://github.com/pingdotgg/t3code/pull/14847
+#   https://github.com/pingdotgg/t3code/pull/15150
+#   https://github.com/pingdotgg/t3code/pull/15208
+#   https://github.com/pingdotgg/t3code/pull/17563
+#   https://github.com/pingdotgg/t3code/pull/19748
+#   https://github.com/pingdotgg/t3code/pull/19749
+#   https://github.com/pingdotgg/t3code/pull/19437
 #   https://github.com/pingdotgg/t3code/pull/16231
 #   apps/server-ex/lib/hal_c2/storage_cleanup.ex (hourly sweep, worktree rules, browser artifacts)
 #   apps/server/src/storageCleanup.ts (deletion effects finished, symbolic links, numbered rotations, settings re-read, independent steps)
@@ -33,6 +41,29 @@ Feature: Storage cleanup
         | deleting merged worktrees           | has a merged pull request                     |
         | deleting unchanged worktrees        | has no commits beyond the default branch      |
 
+    @backlog @mc
+    Scenario: A settled thread's worktree is removed after the chosen days
+      Given the user turned on deleting worktrees of threads settled for 2 days
+      And a thread was settled 3 days ago and its session has stopped
+      When the MC sweeps storage
+      Then the worktree is removed
+      And the thread keeps its branch and its history
+      When the user sends the thread a new message
+      Then its worktree is checked out again from the branch
+
+    @backlog @mc
+    Scenario: A worktree is never removed in the minute after its thread settles
+      Given the user turned on deleting worktrees of threads settled for 0 days
+      When a thread settles and the MC sweeps storage within a minute
+      Then the worktree is kept so the project's settle script can run in it
+      And the next sweep after that minute removes it
+
+    @backlog @mc
+    Scenario: Delete now runs when settled retention is the only rule on
+      Given the only cleanup rule on is deleting worktrees of settled threads
+      When the user chooses Delete now in Storage settings
+      Then the rule runs once
+
     @mc
     Scenario Outline: A worktree with something to lose is kept
       Given the user turned on deleting worktrees idle for 8 days
@@ -47,6 +78,40 @@ Feature: Storage cleanup
         | is shared with another thread           |
         | is checked out on a different branch    |
         | holds ignored files besides node_modules |
+
+    # Upstream #17563 made what counts as local changes a choice, and its default no longer
+    # keeps a worktree for ignored files such as ".env" alone; the row above is then true
+    # only under "Any local files".
+    @backlog @mc @shared
+    Scenario Outline: The user chooses which local changes keep a worktree
+      Given the user turned on deleting worktrees idle for 8 days
+      And "Keep worktrees with local changes" is set to <choice>
+      And an idle thread's worktree has <changes>
+      When the MC sweeps storage
+      Then the worktree is <outcome>
+
+      Examples:
+        | choice                         | changes                     | outcome |
+        | "Uncommitted changes", the default | an untracked file       | kept    |
+        | "Uncommitted changes", the default | only an ignored ".env" file | removed |
+        | "Any local files"              | only an ignored ".env" file | kept    |
+        | "Any local files"              | only "node_modules"         | removed |
+        | "Edited tracked files"         | an untracked file           | removed |
+        | "Edited tracked files"         | an edited tracked file      | kept    |
+
+    @backlog @mc @shared
+    Scenario: Delete now runs the cleanup rules at once and says what happened
+      Given the user turned on worktree cleanup rules
+      When the user chooses Delete now in Storage settings
+      Then the rules run once, never alongside the automatic sweep
+      And the last run lists each worktree removed, kept or failed, with removed sizes, why each was kept, and each failure's reason
+      And it shows how much space was recovered
+
+    @backlog @mc
+    Scenario: A worktree that gets busy while it is being measured is kept
+      Given a worktree about to be removed is being measured
+      When its thread starts a turn before the measuring ends
+      Then the worktree is kept
 
     @mc
     Scenario: A thread that becomes active during a sweep keeps its worktree
@@ -124,6 +189,51 @@ Feature: Storage cleanup
         | deleting merged worktrees    |
         | deleting unchanged worktrees |
 
+    @backlog @mc
+    Scenario Outline: A worktree whose pull request was squash merged is removed only at the merged head
+      Given the user turned on deleting merged worktrees
+      And a thread's worktree on branch "cart" has commits the default branch does not have
+      And GitHub says pull request 42 from "cart" was squash merged <detail>
+      When the MC sweeps storage
+      Then the worktree is <outcome>
+
+      Examples:
+        | detail                                                  | outcome |
+        | into the default branch at the worktree's current head  | removed |
+        | into the default branch, but the worktree has a later commit | kept |
+        | into a release branch at the worktree's current head    | kept    |
+
+    @backlog @mc
+    Scenario: The unchanged rule does not take a squash merge as merged
+      Given the user turned on deleting unchanged worktrees only
+      And a thread's worktree whose pull request was squash merged at its current head
+      When the MC sweeps storage
+      Then the worktree is kept
+      And its pull request was not read
+
+    @backlog @mc
+    Scenario: An untracked file the repository's status settings hide still keeps the worktree
+      Given the user turned on deleting worktrees of deleted threads
+      And a deleted thread's worktree is set not to show untracked files in its status
+      And it holds an untracked file "notes.txt"
+      When the MC sweeps storage
+      Then the worktree is kept with "notes.txt"
+
+    @backlog @mc
+    Scenario Outline: An idle thread's worktree is removed however its last turn ended
+      Given the user turned on deleting worktrees idle for 8 days
+      And a thread whose last turn <ended> has been idle for 9 days with no pending work
+      When the MC sweeps storage
+      Then the worktree is removed
+
+      Examples:
+        | ended            |
+        | completed        |
+        | was interrupted  |
+        | failed           |
+        | was cancelled    |
+        | was rolled back  |
+
     @backlog @mc @priority-high
     Scenario: Cleanup never follows a symbolic link out of the folder it cleans
       Given the user turned on deleting browser captures after 14 days
@@ -154,6 +264,80 @@ Feature: Storage cleanup
       When the MC sweeps storage
       Then rotated logs older than the limit are still deleted
       And the failure is logged
+
+    @backlog @mc
+    Scenario: A thread and the subagents working in its worktree count as one owner
+      Given the user turned on deleting worktrees idle for 8 days
+      And a thread and two subagents it delegated to share its worktree on its branch
+      And all three have been idle for 9 days with no pending work
+      When the MC sweeps storage
+      Then the worktree is removed
+
+    @backlog @mc
+    Scenario Outline: A worktree shared with subagents is kept when one of them could lose work
+      Given the user turned on deleting worktrees idle for 8 days
+      And a thread and a subagent it delegated to share its worktree
+      And <condition>
+      When the MC sweeps storage
+      Then the worktree is kept with the reason "<reason>"
+
+      Examples:
+        | condition                                              | reason                                                      |
+        | the subagent is on another branch                      | A subagent thread's branch differs from this worktree's branch |
+        | the subagent has no branch                             | A subagent thread's branch differs from this worktree's branch |
+        | a forked thread also works in the worktree             | Shared by 3 threads                                         |
+        | an unrelated thread also works in the worktree         | Shared by 3 threads                                         |
+
+    @backlog @mc
+    Scenario: The newest work of a thread's subagents keeps their shared worktree
+      Given the user turned on deleting worktrees idle for 8 days
+      And a thread idle for 9 days shares its worktree with a subagent that worked 2 days ago
+      When the MC sweeps storage
+      Then the worktree is kept
+
+    @backlog @mc
+    Scenario Outline: A folder in the managed worktrees no thread uses is reported and kept
+      Given <kind> in the MC's worktrees directory that no thread, deleted or not, uses
+      And it was last changed more than an hour ago
+      When the MC sweeps storage
+      Then the report lists it as kept with its full path and its size
+      And its reason reads "<reason>"
+      And its files stay on disk
+      And its size does not count toward the bytes recovered
+
+      Examples:
+        | kind                  | reason                                                      |
+        | a linked git worktree | No thread uses this worktree                                |
+        | a plain folder        | No thread uses this folder, and it isn't a git worktree     |
+
+    @backlog @mc
+    Scenario Outline: A folder in the managed worktrees is not reported as unused
+      Given a folder in the MC's worktrees directory that <situation>
+      When the MC sweeps storage
+      Then it is not reported as unused
+
+      Examples:
+        | situation                                         |
+        | an archived, deleted or subagent thread uses      |
+        | holds a folder a thread uses                      |
+        | is the root of a project, deleted or not          |
+        | is a symbolic link                                |
+        | was changed within the last hour                  |
+        | cannot be read                                    |
+
+    @backlog @mc
+    Scenario: Unused worktree folders are listed ahead of the threads' results
+      Given 300 threads' worktrees were kept and 2 unused folders were found
+      When the MC sweeps storage
+      Then the 200-entry report lists failed and removed entries first, then the unused folders, then the other kept entries
+
+    @backlog @mc
+    Scenario: Measuring unused folders has a time budget per sweep
+      Given unused folders too large to measure in 30 seconds
+      When the MC sweeps storage
+      Then the folders it did not finish measuring are reported with an unknown size
+      And they are measured again on the next sweep
+      And a folder already measured is not walked again while it stays unused
 
   Rule: Storage settings
 
@@ -186,6 +370,34 @@ Feature: Storage cleanup
       Given the selected machine does not support storage cleanup
       When the user opens storage settings
       Then the user is asked to update that machine first
+
+    @mc @shared @backlog
+    Scenario: A store with much space to reclaim suggests the doctor command
+      Given the machine's store cannot give space back while running
+      And it has 2.7 GiB it could reclaim
+      When the user opens storage settings
+      Then a notice offers to reclaim 2.7 GiB
+      And the user can copy the doctor command that targets that machine's data
+      And the user can dismiss the notice
+
+    @mc @shared @backlog
+    Scenario Outline: The reclaim notice is not shown
+      Given <situation>
+      When the user opens storage settings
+      Then no reclaim notice is shown
+
+      Examples:
+        | situation                                                  |
+        | the machine's store has less than 1 GiB it could reclaim   |
+        | the machine's store already gives space back while running |
+        | the MC runs from a dev checkout with its own dev store     |
+        | the user dismissed the notice                              |
+
+    @mc @backlog
+    Scenario: The store's size is published again only when it changed
+      Given a client follows the store's size
+      When the log is compacted and nothing it reports changed
+      Then the client is sent nothing
 
     @backlog @desktop @priority-low
     Scenario: A machine too old for project worktree cleanup asks to be updated

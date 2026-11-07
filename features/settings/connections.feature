@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17370
+#   https://github.com/pingdotgg/t3code/pull/19354
+#   https://github.com/pingdotgg/t3code/pull/20432
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
@@ -518,6 +521,14 @@ Feature: Connections settings
       When the user creates a pairing link that includes managing access
       Then the user is warned this client can create or revoke access for other devices
 
+    # Upstream #20432; blocked with "An ordinary pairing grants access and relay management
+    # by default" in mc/platform/auth-and-scopes.feature.
+    @backlog @blocked @desktop
+    Scenario: The Standard preset includes managing access and carries its warning
+      When the user creates a pairing link and keeps the preset "Standard"
+      Then the permissions chosen include "View access" and "Manage access"
+      And the user is warned this client can create or revoke access for other devices
+
     @backlog @desktop @priority-low
     Scenario: A pairing link's label is optional
       When the user creates a pairing link without a label
@@ -888,6 +899,15 @@ Feature: Connections settings
       When the user goes on to this machine's cluster
       Then the window shows the settings section "/settings/cluster"
 
+    # Upstream #17370: a client could not see what its own session was allowed to do.
+    @backlog @desktop @mobile
+    Scenario: An environment shows what this device is allowed to do there
+      Given this device's session on "Build box" may read threads but not change settings
+      When the user opens "Build box" in the connections settings
+      Then the permissions this device has there are listed
+      And changing settings is listed as missing
+      And the list follows the route this device is using to reach "Build box"
+
     @dropped @desktop
     Scenario: Adding an environment from a pairing link
       When the user adds an environment with a host and pairing code
@@ -1031,6 +1051,13 @@ Feature: Connections settings
       Given "Build box" is switched off
       When the user hovers its status
       Then it says "Switched off"
+
+    @backlog @desktop
+    Scenario: Pairing a switched-off environment again switches it back on
+      Given "Build box" is switched off
+      When the user pairs with "Build box" again
+      Then "Build box" is switched on and connects
+      But renaming "Build box" or changing its address keeps it switched off
 
     @backlog @desktop
     Scenario: An environment this client cannot talk to cannot be switched on

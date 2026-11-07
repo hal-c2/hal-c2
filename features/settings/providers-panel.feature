@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16958
 #   apps/web/src/components/settings/ProviderSettingsPanel.tsx
 #   apps/web/src/components/settings/ProviderSettingsPanel.logic.ts
 #   apps/web/src/components/settings/ProviderInstanceCard.tsx
@@ -1015,6 +1016,29 @@ Feature: Providers settings panel
       And updating "Codex" fails with "npm exited with status 1"
       When the user updates "Codex"
       Then the user is told "Codex" could not be updated
+
+    # Upstream #16958: a bare spinner could not tell downloading from stuck.
+    @backlog @mc @desktop @mobile
+    Scenario: A provider update shows each step as it runs
+      Given "Claude" is behind its latest release
+      When the user updates "Claude"
+      Then "Claude" shows "Updating · Checking for the latest version"
+      And then "Updating · Running claude update"
+      And then the updater's latest line, such as "Updating · Downloading 2.1.293... 66%"
+      And then "Updating · Verifying the installed version"
+
+    @backlog @mc
+    Scenario: An updater's output is sent to clients at most once a second, plain and short
+      Given a provider updater redraws a coloured progress bar many times a second
+      When the user updates that provider
+      Then clients are sent its newest line at most once a second
+      And the line has no colour codes and is cut to 200 characters
+
+    @backlog @desktop @mobile
+    Scenario: A failed provider update says why where the user started it
+      Given updating "Claude" fails with "npm exited with status 1"
+      When the user updates "Claude" from its version details
+      Then the version details say "npm exited with status 1"
 
     @desktop
     Scenario Outline: A provider version outside the supported range is flagged in the panel

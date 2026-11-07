@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17901
 #   https://github.com/pingdotgg/t3code/pull/16322
 #   https://github.com/pingdotgg/t3code/pull/14103
 #   docs/user/source-control.md (providers, rescan)
@@ -211,3 +212,28 @@ Feature: Source Control settings
     Given the user saved a GitHub token
     When the MC talks to GitHub
     Then it uses the token and does not need the GitHub CLI
+
+  @backlog @mc @shared
+  Scenario: A GitCafe token is saved from Source Control settings
+    Given GitCafe is not signed in through its CLI or environment
+    When the user saves a GitCafe token
+    Then GitCafe works at once, using the saved token before any from the environment or the CLI
+    And the token is only sent to git.cafe, never to its staging host
+
+  @backlog @mc @shared
+  Scenario: A host's saved secret is never shown back
+    Given the user saved a secret for a source control host
+    When the user opens that host's settings on any client
+    Then the field says a secret is saved without showing it
+
+  @backlog @mc @shared
+  Scenario: Removing a host's settings clears them
+    Given a source control host has saved settings and a token
+    When the user removes that host's settings
+    Then the host's settings and token are gone and the host falls back to its environment or CLI sign-in
+
+  @backlog @mc
+  Scenario: Settings of a host this MC does not know are kept
+    Given the settings file holds settings for a source control host this MC does not ship
+    When the MC saves other settings
+    Then that host's settings are still in the file

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17258
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.settled, thread.unsettle,
 #     thread.unsettled, thread.snooze, thread.snoozed, thread.unsnooze, thread.unsnoozed,
 #     thread.pin, thread.pinned, thread.unpin, thread.unpinned, thread.pin.reorder,
@@ -151,6 +152,21 @@ Feature: Organizing threads in the engine
       | waits for an approval                 |
       | waits for an answer to a question     |
       | has a queued run that has not started |
+
+  # Upstream #17258 names the first thing in the way and how to clear it. When this lands
+  # the generic reason above and in the scenarios below gives way to these.
+  @backlog @mc
+  Scenario Outline: Refusing to settle a thread says what is in the way
+    Given thread "t1" <state>
+    When a client settles "t1"
+    Then the command fails with "<reason>"
+
+    Examples:
+      | state                                              | reason                                                                                  |
+      | waits for an approval                              | Thread t1 is waiting on an approval or question. Answer it before settling.             |
+      | waits for an answer to a question                  | Thread t1 is waiting on an approval or question. Answer it before settling.             |
+      | has a running turn                                 | Thread t1 is still running. Stop it before settling.                                    |
+      | holds a message the user queued, paused by a Stop  | Thread t1 has a queued message. Send it or remove it from the queue before settling.    |
 
   # A message from a client whose clock is off still counts as waiting for its turn,
   # but only within two minutes either way; older or further ahead is stale data.

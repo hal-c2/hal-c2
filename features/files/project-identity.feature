@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17149
 #   https://github.com/pingdotgg/t3code/pull/12810
 #   docs/user/project-settings.md (Project icons)
 #   apps/server-ex/lib/hal_c2/environment_themes.ex
@@ -53,6 +54,24 @@ Feature: Project and environment identity
         | "app/icon.png" only                    | "app/icon.png"       |
         | "assets/logo.svg" only                 | "assets/logo.svg"    |
         | ".idea/icon.svg" only                  | ".idea/icon.svg"     |
+
+    # Upstream #17149: a macOS app's icon kept only as .icns, which no client can draw.
+    @mc @backlog
+    Scenario Outline: A macOS app icon is served as a picture every client can draw
+      Given the checkout of "shop" has <file> only, holding PNG pictures of <sizes>
+      When a client asks for the icon of "shop"
+      Then <served>
+
+      Examples:
+        | file                       | sizes                         | served                              |
+        | "Resources/AppIcon.icns"   | 32, 128 and 512 pixels wide   | its 128 pixel PNG is served         |
+        | "AppIcon.icns"             | 32 and 64 pixels wide         | its 64 pixel PNG is served          |
+        | "AppIcon.icns"             | no PNG at all                 | the MC answers that there is no icon |
+
+    @mc @backlog
+    Scenario: An .icns file can be chosen as a project's icon
+      When the user sets "shop"'s icon to "Resources/AppIcon.icns"
+      Then the icon is saved and shown
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (extractIconHref, resolveIconHref)
     # Likely already implemented: apps/server-ex/lib/hal_c2/project_favicon.ex

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19291
+#   https://github.com/pingdotgg/t3code/pull/18053
+#   https://github.com/pingdotgg/t3code/pull/18208
+#   https://github.com/pingdotgg/t3code/pull/19837
 #   https://github.com/pingdotgg/t3code/pull/13575
 #   https://github.com/pingdotgg/t3code/pull/13302 (phone maintenance of environments and providers)
 #   docs/user/updating.md
@@ -67,6 +71,90 @@ Feature: Updating the server, the desktop app and providers
       When the user updates all machines
       Then the user is asked to confirm that the desktop app on "laptop" will relaunch
       And "server" updates independently of "laptop"
+
+    @backlog @desktop
+    Scenario: Updating every machine does not wait for a slow machine before the app relaunches
+      Given "server" takes ten minutes to restart into its update
+      When the user updates all machines
+      Then the desktop app relaunches once every machine has started restarting into its update
+      And a five second countdown comes first, which "Later" postpones
+      And after "Later" the user is offered to restart to update
+      And after the relaunch the app follows "server" until it reports the new version or fails after 32 minutes
+
+    @backlog @desktop
+    Scenario: Updating every machine shows its progress where the update button was
+      Given the user is updating six machines
+      When three of them have updated
+      Then the update button reads "3 of 6 updated"
+      And a machine slower than three minutes shows how long it has taken
+      And a machine whose update failed offers "Retry"
+      And opening the progress lists each machine
+      And the elapsed times change no more than every 30 seconds
+
+    # Upstream #19291: each machine and provider had its own toast and the icon animated.
+    @backlog @desktop
+    Scenario: Updating every machine ends with one summary that survives the relaunch
+      Given the user updates all machines and the update of "server" fails
+      When the run finishes and the desktop app has relaunched
+      Then one summary is shown for the run, naming "server" as failed
+      And no toast is shown for each machine or provider along the way
+      And the update button does not animate while the run goes on
+
+    @backlog @desktop
+    Scenario: An app update that did not apply says so and is not installed again
+      Given the desktop app relaunched to install "1.4.0" during an update of every machine
+      When it starts again still on the old version
+      Then the user is told "Update did not apply"
+      And a later update request from another machine does not install "1.4.0" again
+
+    # Upstream #18053 made the sidebar's update button update every machine and provider.
+    @backlog @desktop
+    Scenario: The update button says everything it will update
+      Given this app, 2 servers and 3 providers across the connected machines have updates
+      Then the update button reads "Update this app, 2 servers, and 3 providers"
+      When the user presses it
+      Then the confirmation lists each machine on a line of its own
+
+    @backlog @desktop
+    Scenario: Updating everything brings providers current before servers and the app last
+      Given this app, the server "server" and providers on "server" and "laptop" have updates
+      When the user updates everything
+      Then the providers on every connected machine finish updating before any server restarts
+      And "server" moves to the version this app is about to install
+      And this app installs last, once its download has finished alongside the rest
+
+    @backlog @desktop
+    Scenario: A failed download of the app skips only the app's own install
+      Given this app and the server "server" have updates
+      When the user updates everything and the app's download fails
+      Then "server" and the providers are still updated
+      And this app is not installed
+
+    @backlog @desktop
+    Scenario Outline: Updating everything leaves out a machine it cannot update
+      Given "server" has an update and <reason>
+      When the user updates everything
+      Then "server" is not updated
+      And its own notice in Connections still offers its update
+
+      Examples:
+        | reason                                                    |
+        | "server" is not connected                                 |
+        | the user's session on "server" may not maintain it        |
+        | "server" is an install that must be updated by hand       |
+
+    @backlog @desktop
+    Scenario: Updating everything keeps a service on its release channel
+      Given this app is on the nightly channel and "server" is a service on the stable channel
+      When the user updates everything
+      Then "server" moves to the newest stable version
+
+    @backlog @desktop
+    Scenario: With only this app to update the button downloads and then restarts
+      Given only this app has an update
+      When the user presses the update button
+      Then the app downloads its update
+      And the button then offers to restart to update
 
     @shared
     Scenario: The user copies the update command instead
@@ -655,6 +743,19 @@ Feature: Updating the server, the desktop app and providers
       Given the user turned off provider update checks
       When the MC would check provider versions
       Then no version check is made
+
+    @backlog @mc
+    Scenario: Provider update checks also gate the model catalog
+      Given the user turned off provider update checks
+      When the user refreshes provider status
+      Then the MC does not fetch the newer model catalog
+      And models that are only in the newer catalog are not offered
+
+    @backlog @desktop @mobile
+    Scenario: The provider update checks setting says it also brings new models
+      When the user reads the provider update checks setting
+      Then it says it also fetches model catalog updates
+      And that new models may not appear while it is off
 
     @desktop
     Scenario: At launch an outdated provider is offered its update

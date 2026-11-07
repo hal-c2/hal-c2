@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16624
+#   https://github.com/pingdotgg/t3code/pull/19334
+#   https://github.com/pingdotgg/t3code/pull/19338
 #   https://github.com/pingdotgg/t3code/pull/13554
 #   https://github.com/pingdotgg/t3code/pull/13551 (the sync status waits 400 ms before it shows)
 #   https://github.com/pingdotgg/t3code/pull/13060 (Run a shell command from a reply in the thread terminal)
@@ -81,6 +84,16 @@ Feature: Streaming the agent's reply
   Scenario: Reasoning written in Markdown is labelled by its words alone
     Given the agent reasoned in Markdown
     Then the reasoning is labelled "Checking the cart total a chart"
+
+  @backlog @shared
+  Scenario: Opened reasoning keeps its newest text in view while it streams
+    Given the user opened the agent's reasoning while it is still being written
+    When more reasoning arrives
+    Then the reasoning box stays scrolled to the newest text without animating
+    When the user scrolls up inside the reasoning box
+    Then it stays where the user put it as more reasoning arrives
+    When the user scrolls back to its end
+    Then it follows the newest text again
 
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
   @shared
@@ -171,6 +184,18 @@ Feature: Streaming the agent's reply
       | 8 short lines                     | shown in full       |
       | 9 short lines                     | shortened           |
       | only spaces and blank lines       | shown in full       |
+
+  # Upstream #16624: the length is measured on the text the user sees, not the hidden markup.
+  @backlog @desktop @tui
+  Scenario Outline: A short message with references is measured by what it shows
+    Given the user sent a 200 character message holding <reference>
+    When the user looks at it in the conversation
+    Then it is shown in full
+
+    Examples:
+      | reference                                                     |
+      | a quote of a long earlier reply, shown by its label           |
+      | a link with a 700 character address, shown by its text        |
 
   @shared
   Scenario: The user copies an assistant reply
@@ -358,6 +383,14 @@ Feature: Streaming the agent's reply
     Then the three tool calls are shown one row each
     And the failure is shown after them
     And no "Worked for" row hides them
+
+  @backlog @shared
+  Scenario: A subagent resumed by a later turn leaves each turn its own fold
+    Given the first turn started a subagent and answered
+    When the second turn resumes that subagent and answers
+    Then the thread reads the first prompt, its "Worked for" row and its answer
+    And then the second prompt, its own "Worked for" row and its answer
+    And the subagent's card stays in the first turn's fold
 
   @mobile
   Scenario: A fold keeps the first and last replies and any notice in view

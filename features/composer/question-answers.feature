@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17364
+#   https://github.com/pingdotgg/t3code/pull/15537
+#   https://github.com/pingdotgg/t3code/pull/18789
+#   https://github.com/pingdotgg/t3code/pull/11337
 #   docs/user/question-attachments.md
 #   apps/tui/src/userInput.ts
 #   apps/tui/src/components/ChatView.tsx (question panel, defer and reopen)
@@ -76,6 +80,14 @@ Feature: Answering the agent's questions from the composer
     And submits the answer
     Then the agent receives "use this schema" with "schema.sql"
     And the normal draft still reads "unrelated"
+
+  # Upstream #15537: the strip was hidden while a question was open, so a dropped image
+  # was staged and sent with no tile.
+  @backlog @desktop @mobile
+  Scenario: A file attached to an open question shows before the answer is sent
+    Given the agent's question is waiting for an answer
+    When the user drops "diagram.png" onto the thread
+    Then "diagram.png" shows with the answer before it is sent
 
   @desktop @mobile @backlog-mobile
   Scenario: A question with only fixed choices takes no attachments
@@ -161,6 +173,19 @@ Feature: Answering the agent's questions from the composer
     Given the agent asked "Which database?" and "Which cache?" in one request
     When the user picks "Postgres"
     Then "Which cache?" is shown with "Postgres" kept as the first answer
+
+  # Upstream #17364: the move after a pick was still pending when the user moved by hand,
+  # and it then skipped or undid that move.
+  @backlog @desktop
+  Scenario Outline: Moving by hand right after a pick is not moved again
+    Given the agent asked "Which database?", "Which cache?" and "Which queue?" in one request
+    When the user picks "Postgres" and at once <moves>
+    Then "<shown>" is still shown a moment later
+
+    Examples:
+      | moves                                  | shown          |
+      | presses Next                           | Which cache?   |
+      | goes back to a question already shown  | Which database? |
 
   @backlog @desktop @priority-high
   Scenario: A question that allows several answers waits for the user to move on
@@ -266,3 +291,15 @@ Feature: Answering the agent's questions from the composer
     Then the answers cannot be submitted
     When the user answers "Which cache?" too
     Then both answers are sent together
+
+  @backlog @desktop
+  Scenario: A thread dropped while answering goes with the answer
+    When the user drops the thread "Schema notes" on the composer while answering "Which database?"
+    Then the answer to "Which database?" links "Schema notes"
+    And the composer's own draft is unchanged
+
+  @backlog @shared
+  Scenario: A skill picked in an answer becomes a chip and typing goes on after it
+    When the user types "$bro" in the answer to "Which database?" and picks the skill "bro"
+    Then the answer shows the skill "bro" as a chip and the skill picker closes
+    And what the user types next follows the chip

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18494
 #   https://github.com/pingdotgg/t3code/pull/16069
 #   https://github.com/pingdotgg/t3code/pull/13590
 #   https://github.com/pingdotgg/t3code/pull/13555
@@ -70,6 +71,13 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | opus   | opus        | gpt-5-codex |
       | claude | sonnet      | gpt-5-codex |
       | codex  | gpt-5-codex | opus        |
+
+  @desktop @backlog
+  Scenario: Search results keep the provider's newest-first order
+    Given Claude lists "Opus 5.5", "Opus 5", "Opus 4.8" and "Opus 4.5" in that order
+    When the user searches the models for "opus"
+    Then the models are listed as "Opus 5.5", "Opus 5", "Opus 4.8" and "Opus 4.5"
+    And a shorter name is not listed ahead of a newer model
 
   @desktop
   Scenario: A model that cannot be used says why and cannot be chosen

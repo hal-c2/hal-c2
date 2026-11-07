@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17092
+#   https://github.com/pingdotgg/t3code/pull/16019
+#   https://github.com/pingdotgg/t3code/pull/19331
+#   https://github.com/pingdotgg/t3code/pull/19354
 #   apps/mobile/src/features/connection/pairing.ts (host + token, QR payload, scheme defaults)
 #   apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx (Scan QR Code, pairing code)
 #   apps/mobile/src/features/connection/ConnectionsRouteScreen.tsx
@@ -217,6 +221,28 @@ Feature: Pairing a phone with environments
     Then the user is told "Failed to pair with the environment."
     And no environment is added
 
+  # Upstream #17092: the failure banner pushed the form around, and opening the sheet asked for the camera.
+  @backlog @mobile
+  Scenario: A pairing failure is shown in the form and clears when the user edits it
+    Given the pairing token has already been used
+    When the user tries to pair with it
+    Then the failure is shown in the pairing form where its note was, without moving the fields
+    When the user edits the pairing code
+    Then the failure is no longer shown
+
+  @backlog @mobile
+  Scenario: Adding an environment asks for the camera only when the user chooses to scan
+    Given the app has not been granted camera access
+    When the user opens the screen to add an environment
+    Then the phone does not ask for camera access
+    When the user chooses to scan a pairing code
+    Then the phone asks for camera access
+
+  @backlog @mobile
+  Scenario: Adding an environment shows that it is connecting
+    When the user tries to pair with an environment
+    Then the add action shows it is connecting until the pairing succeeds or fails
+
   @backlog @mobile @priority-low
   Scenario: An iPhone that is refused local network access is told how to allow it
     Given the phone has not allowed HAL-C2 to find devices on the local network
@@ -402,6 +428,26 @@ Feature: Pairing a phone with environments
     Given an environment runs a server version the app does not support
     Then the user cannot switch it on
     And it is explained as not supported rather than shown as off
+
+  @backlog @mobile
+  Scenario Outline: An incompatible environment's row says which side to update
+    Given the environment "Office Mac" runs <host version> than the app supports
+    When the user opens the list of environments
+    Then the row for "Office Mac" says <guidance>
+    And a long sentence can be tapped to read it in full
+    And the row's switch stays disabled
+
+    Examples:
+      | host version     | guidance                                                     |
+      | a newer server   | to update the app or use a compatible release to connect     |
+      | an older server  | to update HAL-C2 on "Office Mac" to connect                  |
+
+  @backlog @mobile
+  Scenario: Pairing a switched-off environment again switches it back on
+    Given "My MacBook" is switched off
+    When the user pairs with "My MacBook" again
+    Then "My MacBook" is switched on
+    And the phone connects to "My MacBook"
 
   @backlog @mobile
   Scenario: The user changes the address of an environment on the phone
@@ -670,3 +716,15 @@ Feature: Pairing a phone with environments
     Given the phone runs app version "1.2.3"
     When the user pairs with "My MacBook"
     Then "My MacBook" lists the phone with the app version "1.2.3"
+
+  @backlog @mobile
+  Scenario Outline: Adding an environment offers scanning wherever it starts
+    Given the app runs on <device>
+    When the user adds an environment from <entry>
+    Then the pairing screen is titled and offers to scan a pairing code
+
+    Examples:
+      | device   | entry                          |
+      | a tablet | the new task screen            |
+      | a tablet | settings                       |
+      | a phone  | the new task screen            |

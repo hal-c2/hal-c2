@@ -1,4 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17723
+#   https://github.com/pingdotgg/t3code/pull/18369
+#   https://github.com/pingdotgg/t3code/pull/16878
+#   https://github.com/pingdotgg/t3code/pull/16925 (covered: the effort and speed a finished subagent ran with)
+#   https://github.com/pingdotgg/t3code/pull/16634
+#   https://github.com/pingdotgg/t3code/pull/18778
+#   https://github.com/pingdotgg/t3code/pull/18996
+#   https://github.com/pingdotgg/t3code/pull/20033
+#   https://github.com/pingdotgg/t3code/pull/17496
+#   https://github.com/pingdotgg/t3code/pull/17826
+#   https://github.com/pingdotgg/t3code/pull/12598
 #   https://github.com/pingdotgg/t3code/pull/16635
 #   https://github.com/pingdotgg/t3code/pull/15211
 #   https://github.com/pingdotgg/t3code/pull/13056
@@ -462,6 +473,27 @@ Feature: Plans and subagents
     Then the timeline says "Background activity updated"
     And nothing says a message was sent by another agent
 
+  # Upstream #17723: the continuation after a restart showed as the user's own bubble,
+  # "Sent by another agent". The text the agent receives is unchanged.
+  @backlog @mc @shared @mobile
+  Scenario Outline: The prompt that resumes a turn after a restart is a HAL-C2 notice
+    Given <work> was cut off when the MC stopped and continuing after restarts is on
+    When the MC starts again and resumes the thread
+    Then the timeline says "<summary>" instead of showing a message of the user's
+    And opening the notice shows the prompt the agent received
+
+    Examples:
+      | work                                   | summary                                    |
+      | the agent's turn                       | HAL-C2 restarted and resumed this turn     |
+      | only the agent's background work       | HAL-C2 restarted and stopped background work |
+
+  @backlog @shared @mobile
+  Scenario: A restart continuation saved as a user message says it came from HAL-C2
+    Given a thread saved the prompt that resumed it after a restart as a user message
+    When the user reads the thread
+    Then the message says "Sent by HAL-C2"
+    And a message another agent sent to the thread still says "Sent by another agent"
+
   @mc @shared
   Scenario: A subagent shows the model it runs on
     Given the agent delegated work to a subagent on the model "model-b"
@@ -565,6 +597,26 @@ Feature: Plans and subagents
   Scenario: A context handoff that failed is marked as failed
     When the context handoff fails
     Then the marker "Context handoff" is shown as a failure
+
+  @shared @backlog
+  Scenario: A pending context handoff is not marked on a thread with nothing in it
+    Given no message has been sent on the thread
+    When the user switches the thread to another provider
+    Then the timeline does not mark "Context handoff pending"
+
+  @shared @backlog
+  Scenario: A pending context handoff is marked once the timeline has rows
+    Given the loaded part of the thread's timeline holds only tool calls
+    When the user switches the thread to another provider
+    Then the timeline marks "Context handoff pending"
+
+  @shared @backlog
+  Scenario: Picking a model that needs a handoff marks it before anything is sent
+    Given the thread has run on Codex
+    When the user picks a Claude model in the composer
+    Then the timeline marks "Context handoff pending" before the next message is sent
+    When the user picks the Codex model again
+    Then the mark is gone
 
   @desktop
   Scenario Outline: A fork marker leads to the other end of the fork
@@ -738,6 +790,15 @@ Feature: Plans and subagents
     Given the agent started three subagents in this turn
     When the turn settles and every subagent has finished
     Then the thread's status does not mention subagents
+
+  # Upstream #16878: folding a settled turn (or a superseded attempt) left running work out of sight.
+  @backlog @shared
+  Scenario: A running subagent's card stays in view after its turn is folded
+    Given the agent started the subagent "Tax tests" in a turn
+    When the turn settles and folds while "Tax tests" is still working
+    Then the card of "Tax tests" is shown outside the folded turn
+    When "Tax tests" finishes
+    Then its card folds with the turn
 
   @mobile
   Scenario: The subagents of the turn are listed with their state and time
@@ -929,6 +990,72 @@ Feature: Plans and subagents
     Then its run is interrupted
     And the parent hears the interrupted result like any other finished subagent
     And subagents the provider owns and settled subagents offer no stop
+
+  @backlog @mc @shared @plugin-claude
+  Scenario: Stopping one Claude subagent leaves its owner and siblings running
+    Given a Claude run has two of its own subagents running
+    When the user stops one of them from the thread's lineage
+    Then that subagent reads as stopped
+    And the Claude run, the other subagent and the thread's queued work keep going
+
+  @backlog @mc @shared @plugin-claude
+  Scenario: A Claude subagent's details show the effort it really runs at
+    Given a Claude thread runs at high effort
+    When Claude starts a subagent on a model alias such as "opus"
+    Then the subagent's details show the effort "High", not the model's default
+    And the effort stays when the subagent later reports its model under another name
+
+  @backlog @mc @shared @plugin-claude
+  Scenario: A Claude workflow shows its phases and members in the lineage
+    Given Claude runs a workflow with two phases
+    When the user opens the thread's lineage
+    Then the workflow shows each phase with its members, their status, counts and elapsed time
+    And a queued member stays pending and its timer starts only when it starts running
+    And opening a member shows its original prompt and its final answer
+
+  @backlog @mc @shared @plugin-claude
+  Scenario: Stopping a whole Claude workflow
+    Given Claude runs a workflow with members still running
+    When the user stops the workflow from the thread's lineage
+    Then every member and its thread read as stopped
+    And a user who may not operate the thread sees the workflow's timers but no stop
+
+  @backlog @mc @plugin-claude
+  Scenario: A Claude workflow's members settle when the workflow ends early
+    Given Claude runs a workflow with members still running
+    When the workflow's coordinator fails, the Claude process exits or the MC restarts
+    Then no member or member thread is left reading as running
+
+  @backlog @mc @plugin-claude
+  Scenario: A finished Claude subagent does not read as running again
+    Given a Claude subagent has finished
+    When Claude replays an older start of that subagent
+    Then the subagent still reads as finished
+    And a subagent Claude really resumes reads as running
+
+  @backlog @mc @shared @plugin-claude
+  Scenario: Stopping a Claude subagent that already finished settles its card
+    Given a Claude subagent finished without HAL-C2 hearing of it
+    When the user stops it from the thread's lineage
+    Then its card and thread read as finished with Claude's own outcome
+    And a stop Claude does not confirm is not shown as cancelled
+
+  @backlog @shared
+  Scenario: A finished subagent's open question no longer asks the parent for input
+    Given a subagent asked a question and finished without it being answered
+    When the user looks at the parent thread
+    Then the parent does not say "Subagent needs input"
+    And the question can still be answered on the subagent's own thread
+
+  # Upstream #16634: the parent only read Waiting while the child, hidden from the sidebar,
+  # waited on a question.
+  @backlog @shared @mobile
+  Scenario: A subagent's waiting question is shown on its parent
+    Given a delegated subagent hidden from the sidebar asks "Which colour?"
+    When the user opens the parent thread
+    Then the parent shows that its subagent is waiting on "Which colour?"
+    And the user can answer it from there
+    And answering resumes the subagent and clears the notice from the parent
 
   @backlog @shared @priority-low
   Scenario: Expanding the lineage keeps the workspace options

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15937 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/15925 (dropped: the MC runs no numbered migrations)
+#   https://github.com/pingdotgg/t3code/pull/19435
+#   https://github.com/pingdotgg/t3code/pull/19436
 #   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers, WAL checkpoints)
 #   apps/server-ex/lib/hal_c2/patch.ex (set, append, unset, delete, quiet)
 #   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration, hot and cold)
@@ -177,6 +181,15 @@ Feature: The MC's event store and projections
     When an older MC opens it
     Then it refuses to start and names the version it found
 
+  # T3 Code's #15937 has an older server skip event types a newer build wrote when a client
+  # resumes past them. The MC's log holds patches, not typed events, and an older MC refuses
+  # a newer store outright (above), so there is nothing to skip.
+  @dropped @mc
+  Scenario: A thread resumes past an event a newer build wrote
+    Given a thread's log holds an event of a type only a newer build knows
+    When a client resumes the thread from before that event
+    Then the event is skipped and the thread finishes syncing
+
   # The Node server builds these checks but nothing in it runs them yet; see the audit's
   # "Uncertain" list before implementing.
   @mc @backlog
@@ -203,12 +216,36 @@ Feature: The MC's event store and projections
     And the check against the log passes
 
   @mc @backlog
+  # Upstream keeps the oldest event of each message as well as the newest
+  # (pingdotgg/t3code#19435): a client adds a message where it first sees it.
   Scenario: Compacting the log removes only what a replay no longer needs
     Given a thread was renamed, pinned and visited many times and its messages streamed in many updates
     When the log is compacted
-    Then only the newest state of the thread and of each message is kept
-    And the thread's creation and every timeline item update stay in the log
+    Then only the newest state of the thread is kept
+    And the oldest and the newest update of each message and pull request link are kept
+    And the thread's creation, its deletion, its runs and every timeline item update stay in the log
     And rebuilding the projections gives the same threads as before
+
+  @mc @backlog
+  Scenario: A visit does not compact away the rename that carries the thread's activity time
+    Given a thread was renamed and then visited
+    When the log is compacted
+    Then the rename stays in the log
+    And of the visits and marks as unread only the newest is kept
+
+  @mc @backlog
+  Scenario: A client resuming from before a compaction ends in the same state
+    Given a client last read the log at an offset before many messages were streamed
+    And the log was compacted since
+    When the client resumes from its offset
+    Then it ends with the same threads and messages, in the same order, as a client that read every event
+
+  @mc @backlog
+  Scenario: The log is compacted in the background
+    When the MC has been running for one minute
+    Then the log is compacted
+    And it is compacted again every six hours after that
+    And the space it frees is given back to the disk a little at a time while the MC runs
 
   @mc @backlog @priority-low
   Scenario: Compacting the log reports what it removed and what can be reclaimed
@@ -220,7 +257,41 @@ Feature: The MC's event store and projections
   Scenario: Compacting a long log does not hold up other work
     Given a log with many thousands of events
     When the log is compacted while clients send commands
-    Then the commands are accepted between the batches of 500 events it works through
+    Then the commands are accepted between the batches of 50 events it works through
+
+  @mc @backlog
+  Scenario: The doctor command reclaims the space of a store that cannot shrink online
+    Given a store created before it could give space back to the disk while running
+    When the user runs the MC's doctor command with "--fix"
+    Then the projections are checked, the log is compacted and the projections are checked again
+    And the store is switched to give space back while running and is shrunk
+    And it reports the store's size before and after and how many events it removed
+    And a second run reports "Nothing to repair"
+
+  @mc @backlog
+  Scenario Outline: The doctor command asks before it repairs
+    When the user runs the MC's doctor command <how>
+    Then <outcome>
+
+    Examples:
+      | how                          | outcome                                                    |
+      | in a terminal                | the user chooses the repairs, with the recommended ones chosen |
+      | with "--dry-run"             | the repairs are listed and nothing changes                 |
+      | with "--dry-run" and "--fix" | the repairs are listed and nothing changes                 |
+
+  @mc @backlog
+  Scenario: The doctor command does not repair a store that is open
+    Given an MC or a client has the store open
+    When the user runs the MC's doctor command with "--fix"
+    Then it refuses and changes nothing
+
+  @mc @backlog
+  Scenario: The doctor command pauses this home's background service while it repairs
+    Given the MC runs as a background service for this home
+    When the user runs the MC's doctor command with "--fix"
+    Then the service is stopped for the repair and started again afterwards, even when the repair fails
+    And a service that was disabled is not enabled
+    And services for other homes are left alone
 
   # The TypeScript server's numbered projection migrations. The MC stores entity
   # patches, and its state format migrates snapshots in place instead.

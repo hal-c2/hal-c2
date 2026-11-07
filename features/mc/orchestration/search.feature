@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/10439 (find in thread)
 #   packages/contracts/src/rpc.ts (orchestration.searchThreads)
 #   packages/contracts/src/orchestration.ts (OrchestrationSearchThreadsInput, OrchestrationThreadSearchMatch)
 #   apps/server-ex/lib/hal_c2/search.ex
@@ -119,3 +120,27 @@ Feature: Searching threads by what was said
   Scenario: A limit outside 1 to 50 is rejected
     When a client searches for "deploy" with limit 500
     Then the request is rejected as invalid
+
+  # Find in thread: one thread, every occurrence, for a client to move through.
+  @backlog @mc
+  Scenario: Finding in a thread counts every occurrence the user can see
+    Given thread "t1" was forked from "t0", whose messages mention "deploy" twice
+    And "t1" mentions "deploy" three times since the fork
+    And "t1" was rolled back past one of them
+    And a cancelled queued message in "t1" mentions "deploy"
+    When a client finds "deploy" in "t1"
+    Then the MC answers with 4 matches
+    And the answer names the selected match without any message text
+
+  @backlog @mc
+  Scenario: An answer a question card folded in is found in its card
+    Given the user answered a question in "t1" with "deploy on Friday"
+    When a client finds "Friday" in "t1"
+    Then the match is the question card
+
+  @backlog @mc
+  Scenario: A finished turn changes the count of a find in that thread
+    Given a client found "deploy" 3 times in "t1"
+    When a turn in "t1" adds a message mentioning "deploy"
+    And the client finds "deploy" in "t1" again
+    Then the MC answers with 4 matches

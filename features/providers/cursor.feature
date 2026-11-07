@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17389
+#   https://github.com/pingdotgg/t3code/pull/19712
+#   https://github.com/pingdotgg/t3code/pull/15875
 #   https://github.com/pingdotgg/t3code/pull/13820
 #   https://github.com/pingdotgg/t3code/pull/13870
 #   https://github.com/pingdotgg/t3code/pull/13714
@@ -123,6 +126,13 @@ Feature: Cursor
       | auto-accept edits | off    | on      |
       | auto              | off    | on      |
       | full access       | off    | off     |
+
+    # Upstream #19712 turned Cursor's review on in auto too, so escalations are reviewed
+    # instead of denied. Replaces the "auto" row above once the MC carries it.
+    @backlog
+    Examples: Not yet on the MC
+      | mode              | review | sandbox |
+      | auto              | on     | on      |
 
   Scenario: A Cursor sign-in that takes too long expires
     Given Cursor sign-in has been waiting for five minutes
@@ -259,6 +269,14 @@ Feature: Cursor
     When a Cursor turn starts in the project
     Then Cursor receives the project's skills and rules
 
+  # Upstream #15875. HAL-C2's own MCP server is added when the agent opens or resumes;
+  # a send that named MCP servers replaced the user's, project's and plugins' ones.
+  @backlog
+  Scenario: Cursor keeps the user's own MCP servers alongside HAL-C2's
+    Given the user's Cursor settings, the project and a Cursor plugin each configure an MCP server
+    When the user sends a message on a Cursor thread
+    Then the Cursor agent can use those MCP servers and HAL-C2's MCP server
+
   Scenario: A Cursor shell command that fails to start does not stop the turn
     Given Cursor is running a turn
     When a shell command Cursor tries fails to start
@@ -301,6 +319,14 @@ Feature: Cursor
     Given the project has a Cursor skill whose header forbids the model from starting it
     When the user opens the skill list in a Cursor thread
     Then the skill is offered as one only the user can run
+
+  @backlog
+  Scenario: A skill folder nested too deep does not hide the other skills
+    Given the project has the Cursor skill "review"
+    And the user's ".claude/skills" holds a folder tree deeper than the scan reaches
+    When the user opens the skill list in a Cursor thread
+    Then "review" is offered
+    And skills inside the too-deep part of the tree are not
 
   @backlog @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short

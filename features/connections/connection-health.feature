@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14518
+#   https://github.com/pingdotgg/t3code/pull/20441
 #   https://github.com/pingdotgg/t3code/pull/16200
 #   https://github.com/pingdotgg/t3code/pull/13083
 #   https://github.com/pingdotgg/t3code/pull/13577
@@ -205,6 +207,15 @@ Feature: Connection health
     When 15 seconds pass
     Then the attempt is abandoned and reported as a timeout
     And the client retries after the usual delay
+
+  # Upstream #14518: a cold MC slow to build its first snapshot was torn down and retried in a loop.
+  @backlog @desktop @mobile
+  Scenario: A connection that is open but slow to send its first snapshot is kept
+    Given the environment's socket opened and its first snapshot takes 40 seconds to arrive
+    When the client connects
+    Then the connection is kept and is ready once the snapshot arrives
+    And the attempt is given up only after 75 seconds more than the setup time
+    And a route that fails while waiting for its snapshot leaves the next route its own time
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
   @desktop @mobile
@@ -611,6 +622,14 @@ Feature: Connection health
     When "studio" has been reconnecting for more than two seconds
     Then the thread says "studio is reconnecting"
     And reconnecting by hand is not offered while it is already trying
+
+  # Upstream #20441: the elapsed grace of an earlier reconnect does not carry over.
+  @backlog @desktop
+  Scenario: Every reconnect gets its own two seconds before it is named in the thread
+    Given the user is looking at a thread on "studio"
+    And "studio" was named as reconnecting in the thread and then connected again
+    When "studio" drops again and reconnects within two seconds
+    Then the thread shows no notice about "studio"
 
   @desktop
   Scenario: An offline computer is named in the thread with a way to reconnect

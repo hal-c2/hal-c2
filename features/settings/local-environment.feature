@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17359
 #   apps/web/src/components/settings/LocalEnvironmentSetting.tsx
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts (localEnvironmentOnly)
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (This machine)
@@ -35,6 +36,13 @@ Feature: Local environment
       When the user turns on the local environment and confirms
       Then the app restarts with its local environment
       And this machine is listed as an environment again
+
+    @backlog @desktop
+    Scenario: The switch to turn the local environment back on stays reachable
+      Given the local environment is off
+      And no other environment is selected
+      When the user opens the Connections settings, or searches settings for "Local environment"
+      Then the local environment's switch is shown, ready to turn it back on
 
     @backlog @desktop
     Scenario: Cancelling leaves the local environment as it was

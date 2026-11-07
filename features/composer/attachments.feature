@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16480
+#   https://github.com/pingdotgg/t3code/pull/19364
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
@@ -120,6 +122,20 @@ Feature: Attaching images and files to a message
       | a file that is not a supported image | Select a supported image file.          |
       | an image that is already attached    | bug.png is already attached.            |
       | a 101st image                        | You can attach up to 100 images.        |
+
+  @backlog @shared @mobile
+  Scenario Outline: A message of only images asks the agent to respond to them
+    Given the draft carries "bug.png" and <text>
+    When the user sends it, in a thread or as a new task
+    Then the agent receives <prompt>
+    And "bug.png" stays attached to the message
+
+    Examples:
+      | text                     | prompt                                                       |
+      | no text                  | the prompt saying the user attached files without more text |
+      | only a reference to it   | the prompt saying the user attached files without more text |
+      | a reference to "cart.ts" | the message unchanged                                        |
+      | "what is wrong here?"    | the message unchanged                                        |
 
   @mc
   Scenario Outline: The MC refuses uploads over its size limit
@@ -279,9 +295,24 @@ Feature: Attaching images and files to a message
     And the user is told "'broken.heic' could not be read as an image."
 
   @backlog @desktop @priority-low
-  Scenario: A very large photo is scaled to a longest side of 2048 pixels before quality is given up
+  Scenario: A very large photo is scaled to a longest side of 2000 pixels before quality is given up
     When the user attaches a 6000 by 4000 pixel photo over the size limit
-    Then the attached photo's longest side is at most 2048 pixels
+    Then the attached photo's longest side is at most 2000 pixels
+
+  # Upstream #19364: past 20 images Claude refuses any image over 2000 pixels on a side,
+  # and Claude Code does not scale images pasted into a running turn.
+  @backlog @desktop @mobile
+  Scenario Outline: An attached image larger than 2000 pixels on a side is scaled down when attached
+    When the user attaches <image>
+    Then the attached image is <result>
+
+    Examples:
+      | image                                      | result                                                       |
+      | a 3000 by 1500 pixel PNG with transparency | a 2000 by 1000 pixel PNG that keeps its transparency         |
+      | a 4000 by 3000 pixel JPEG taken sideways   | a JPEG whose longest side is 2000 pixels, turned upright     |
+      | a 1800 by 1200 pixel JPEG                  | the original file, not encoded again                         |
+      | a 3000 by 3000 pixel GIF                   | the original file                                            |
+      | a 3000 by 2000 pixel PNG that cannot be decoded | the original file                                       |
 
   @backlog @desktop @priority-high
   Scenario: A message is not sent while a pasted image is still being scaled down

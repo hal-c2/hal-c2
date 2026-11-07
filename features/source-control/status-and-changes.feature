@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12465
+#   https://github.com/pingdotgg/t3code/pull/16771
+#   https://github.com/pingdotgg/t3code/pull/13894
 #   https://github.com/pingdotgg/t3code/pull/14718
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsStatusLocalResult, VcsStatusRemoteResult, VcsStatusStreamEvent, VcsDriverKind)
@@ -32,6 +35,22 @@ Feature: Repository status and working tree changes
     Then the status names the branch "feature/tax"
     And it lists both files with their inserted and deleted line counts
     And it says the working tree has changes
+
+  @backlog @mc
+  Scenario: A file whose name starts or ends with a space keeps its exact path
+    Given the user has added " leading.txt" to "shop"
+    When status is read for "shop"
+    Then it lists " leading.txt" with its leading space
+    And a git action given " leading.txt" acts on that file, not on "leading.txt"
+
+  # Upstream #16771: counting the lines of thousands of untracked files pegged the CPU.
+  @backlog @mc
+  Scenario: Status over 5,000 untracked files says its totals are incomplete
+    Given "shop" has 6,000 untracked files and a change to "src/cart.ts"
+    When status is read for "shop"
+    Then it says the line totals are incomplete instead of counting every untracked file
+    And the thread's changes show no totals
+    And the diff shows the change to "src/cart.ts", marked as cut short
 
   @mc
   Scenario: Status reports how the branch stands against its upstream
@@ -257,6 +276,14 @@ Feature: Repository status and working tree changes
     And an open pull request on the host comes from a "patch-1" branch of someone else's fork
     When status is read for "shop" on "patch-1"
     Then the status carries no pull request
+
+  @mc @backlog
+  Scenario: A branch pushed to the user's fork without an upstream finds its pull request
+    Given "fix/loader" was pushed to the remote "fork" without setting an upstream
+    And an open pull request on "origin" comes from "fix/loader" on that fork
+    When status is read for "shop" on "fix/loader"
+    Then the status carries that pull request
+    And the pull request is not linked to the thread until the user links it
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus), GitManager.ts (refreshMissingPullRequest)
   @mc @backlog @priority-high

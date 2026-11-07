@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15856
+#   https://github.com/pingdotgg/t3code/pull/15841
+#   https://github.com/pingdotgg/t3code/pull/17492
+#   https://github.com/pingdotgg/t3code/pull/17879
 #   https://github.com/pingdotgg/t3code/pull/15807
 #   apps/mobile/src/features/threads/ (composer send modes, queued messages, command popover)
 #   apps/mobile/src/features/threads/ThreadQueueControl.tsx (queued messages: editing, held queue, empty)
@@ -430,6 +434,21 @@ Feature: Writing to an agent from a phone
     When the composer is widened
     Then the whole hint is shown again
 
+  # Upstream #17492: with FUTO or HeliBoard, or a saved draft reopened, the editor stopped
+  # following the caret after three lines.
+  @backlog @mobile
+  Scenario Outline: The composer keeps the caret in view as a prompt wraps past its height
+    Given an Android phone using <keyboard>
+    And <draft>
+    When the user types until the prompt wraps past the lines the composer shows
+    Then the line with the caret stays in view
+
+    Examples:
+      | keyboard  | draft                                          |
+      | FUTO      | a new thread with no project                   |
+      | HeliBoard | a new thread with no project                   |
+      | Gboard    | a saved draft reopened from the thread list    |
+
   @backlog @mobile
   Scenario: Pictures dropped onto the composer are attached
     Given the user drags pictures from another app onto the composer on an iPad
@@ -454,6 +473,21 @@ Feature: Writing to an agent from a phone
       | $       | skills        |
       | @       | files         |
       | #       | pull requests |
+
+  # Upstream #15856: on Android the list showed four rows and swipes scrolled the chat behind it.
+  @backlog @mobile
+  Scenario: The trigger list scrolls to every match with the keyboard open or closed
+    Given typing "$" offers 12 skills
+    When the user swipes up in the list
+    Then the list scrolls to the later skills and the chat behind it does not move
+    When the user closes the keyboard and swipes again
+    Then the list still scrolls
+
+  @backlog @mobile
+  Scenario: The trigger list goes away when a question replaces the composer
+    Given typing "$" offers skills
+    When the agent asks a question and its card replaces the composer
+    Then the list of skills is no longer shown
 
   @backlog @mobile
   Scenario Outline: Provider commands are offered only at the start of a message
@@ -495,6 +529,13 @@ Feature: Writing to an agent from a phone
     Given the environment has the thread "Auth refactor"
     When the user chooses "Auth refactor" after typing "@" in the composer
     Then the draft references "Auth refactor" and carries it as context
+
+  @backlog @mobile
+  Scenario: A thread an agent started can be referenced from the composer
+    Given an agent started the thread "Review: auth" whose id holds characters a reference cannot
+    When the user chooses "Review: auth" after typing "@" in the composer
+    Then the draft references "Review: auth" and carries it as context
+    And choosing it again reuses the same reference
 
   @backlog @mobile
   Scenario Outline: A draft that already carries the most context refuses more
@@ -626,6 +667,14 @@ Feature: Writing to an agent from a phone
   Scenario: The user picks the model's other options from the composer
     When the user picks the model "Opus" with the 1M context window and fast mode on
     Then the next message is sent to "Opus" with the 1M context window and fast mode on
+
+  # Upstream #17879: a project can turn a provider off apart from its environment.
+  @backlog @mobile
+  Scenario: Sending with a model the project turned off keeps the message
+    Given the thread's project turned off the provider of its selected model
+    When the user sends "add a test"
+    Then "add a test" is back in the composer
+    And the user is pointed to the project's provider settings rather than to setting the provider up
 
   @backlog @mobile @priority-high
   Scenario: A message written with no connection is sent once the connection returns

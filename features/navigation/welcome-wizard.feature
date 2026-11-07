@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12474
+#   https://github.com/pingdotgg/t3code/pull/14584
+#   https://github.com/pingdotgg/t3code/pull/16887
+#   https://github.com/pingdotgg/t3code/pull/19354
 #   https://github.com/pingdotgg/t3code/pull/13935
 #   docs/user/welcome-wizard.md
 #   apps/web/src/components/onboarding/WelcomeWizard.tsx
@@ -173,6 +177,18 @@ Feature: Welcome wizard
       When that computer connects
       Then the user can continue
 
+    # Upstream #16887: a computer that will not connect no longer locks Continue.
+    @backlog @desktop
+    Scenario: A selected computer that keeps failing to connect does not hold up continuing
+      Given the selected computer "studio" is connected
+      And the selected computer "laptop" failed its first attempt and keeps retrying
+      Then the user can continue
+
+    @backlog @desktop
+    Scenario: A switched-off computer is not selected by default
+      Given a saved computer "laptop" that is switched off
+      Then "laptop" is not selected
+
     @backlog @desktop
     Scenario: Continuing needs at least one computer
       Given no computer is selected
@@ -196,6 +212,14 @@ Feature: Welcome wizard
       Given a connected computer "studio" and a computer "laptop" that is still connecting
       Then "studio" reads "Connected"
       And "laptop" reads "Connecting…"
+
+    @backlog @desktop
+    Scenario: A switched-off computer reads "Off" rather than "Not connected"
+      Given a computer "laptop" the user switched off
+      Then "laptop" reads "Off"
+      When the user pairs with "laptop" again
+      Then "laptop" is switched on
+      And "laptop" reads "Connected"
 
     # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
     @dropped @desktop
@@ -412,6 +436,15 @@ Feature: Welcome wizard
       When the wizard lists projects
       Then both folders are grouped under "acme/api"
 
+    # Upstream #12474: long shared parent paths hid the folder names.
+    @backlog @shared
+    Scenario: Listed folders keep their names readable and are told apart by path
+      Given two clones of github.com/acme/api share a long parent path
+      And two repositories without a remote are both named "project"
+      When the wizard lists projects in a narrow window
+      Then each folder's name stays visible and its parent path is shortened instead
+      And the two "project" repositories each show the path they live in
+
     @mc
     Scenario: Busy recent repositories are selected by default
       Given a repository with 3 conversations in the last 30 days
@@ -428,6 +461,13 @@ Feature: Welcome wizard
         | choice      | outcome                         |
         | Select all  | every listed project is selected|
         | Select none | no project is selected          |
+
+    # Upstream #14584: "Choose your projects" read as projects HAL-C2 already had.
+    @backlog @desktop
+    Scenario: The projects step names where it imports from
+      When the user reaches the wizard's projects step
+      Then it is titled "Import your projects"
+      And it says it imports projects and conversations from Claude Code and Codex on the selected computers
 
     @mc
     Scenario Outline: Some folders are never offered

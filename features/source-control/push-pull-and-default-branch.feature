@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17376
 #   docs/user/source-control.md
 #   packages/contracts/src/git.ts (GitRunStackedActionResult, GitActionToastCta)
 #   packages/contracts/src/rpc.ts (git.runStackedAction, vcs.pull)
@@ -111,6 +112,15 @@ Feature: Pushing, pulling and guarding the default branch
     Given "feature/tax" is 2 commits behind its upstream and has no local commits
     When the user pulls
     Then the branch has the 2 new commits
+
+  # Upstream #17376: git's diffstat for a large fast-forward ran past the output cap, so a
+  # pull that had applied was reported as failed.
+  @backlog @mc
+  Scenario: A fast-forward that prints more than a megabyte is still a pull
+    Given "feature/tax" is 13,000 files behind its upstream and git prints 1.5 MB while pulling
+    When the user pulls, or the MC pulls it automatically
+    Then the pull is reported as done and the branch is at its upstream
+    And pulling again reports it is already up to date
 
   @desktop
   Scenario: A refused pull is reported

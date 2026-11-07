@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19197
+#   https://github.com/pingdotgg/t3code/pull/17637
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/12900
 #   docs/user/permission-modes.md
@@ -105,6 +107,22 @@ Feature: Approvals and agent questions
     When the user opens the pending requests
     Then "Which database?" comes first and "npm test" second
 
+  # Upstream #17637: a request arriving mid-sentence took over the composer and caught
+  # the rest of the draft as its answer.
+  @backlog @desktop
+  Scenario: A request that arrives while the user is typing waits until they stop
+    Given the user is typing a follow-up in the thread's composer
+    When the agent asks a question or an approval
+    Then the composer keeps the draft and sends it as a message, not as the answer
+    And the request appears once the user has not typed for 1.5 seconds, sends or queues the draft, or leaves the composer
+
+  @backlog @desktop
+  Scenario: A request is held back for typing only once
+    Given a request was held while the user typed and then appeared
+    When the user starts typing again
+    Then the request stays shown
+    And a request that arrives while the user is not typing appears at once
+
   # Legacy: packages/client-runtime/src/pendingRequests.ts (closedApprovals, closedUserInputs)
   @backlog @desktop @mobile @priority-high
   Scenario: A request that was settled stays settled whatever order the news arrived in
@@ -184,6 +202,14 @@ Feature: Approvals and agent questions
     Given the agent asks "Which database?" with three options
     When the user answers "DuckDB, in memory"
     Then the agent receives "DuckDB, in memory"
+
+  @backlog @shared
+  Scenario: A link in the agent's question opens the way a chat link does
+    Given the agent asks "Authorize this device at https://example.com/device with `RTJS-TQGS`"
+    When the user opens the link in the question
+    Then the link opens the way a link in chat does
+    And no option is picked
+    And "RTJS-TQGS" is shown as inline code
 
   # Legacy: packages/client-runtime/src/work-log (answered question rows lead with the question)
   @backlog @shared

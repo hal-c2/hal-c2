@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14623
+#   https://github.com/pingdotgg/t3code/pull/17724
+#   https://github.com/pingdotgg/t3code/pull/17528
 #   https://github.com/pingdotgg/t3code/pull/12613
 #   packages/contracts/src/review.ts (ReviewDiffPreviewInput, ReviewDiffPreviewResult, ReviewDiffFileContentsInput)
 #   packages/contracts/src/rpc.ts (review.getDiffPreview, review.getDiffFileContents)
@@ -167,6 +170,39 @@ Feature: Reviewing working tree and branch changes
   Scenario: Collapsing and expanding every file
     When the user collapses all files and then expands all files
     Then every file is shown open again
+
+  # Upstream #14623: find in the diff panel and a pull request's code, not only rows on screen.
+  @backlog @desktop
+  Scenario: Find in a diff searches every file, including what is not shown
+    Given the diff has "retry" on a removed line, in a collapsed file and in unchanged lines between changes
+    When the user presses Ctrl+F in the diff and searches for "retry"
+    Then the find bar shows "1 of 3"
+    And moving to each match opens the collapsed file or the hidden lines that hold it
+
+  @backlog @desktop
+  Scenario Outline: Find in a diff can match case, whole words or a pattern
+    When the user searches the diff for "<query>" with <option>
+    Then only <matches> are matched
+
+    Examples:
+      | query    | option          | matches                       |
+      | Retry    | match case      | "Retry" and not "retry"       |
+      | try      | whole word      | "try" and not "retry"         |
+      | re.ry    | a pattern       | "retry" and "reply"           |
+
+  @backlog @desktop
+  Scenario: Find in a diff starts at the match in view and closes back to the diff
+    Given the user has scrolled to the third match of "retry" in the diff
+    When the user opens find and searches for "retry"
+    Then the third match is selected
+    When the user presses Escape
+    Then the find bar closes, the matches are no longer marked and the diff has the keyboard
+
+  @backlog @desktop
+  Scenario: Typing in a diff's find bar does not trigger shortcuts
+    Given the find bar of a diff has the keyboard
+    When the user types a letter that opens a panel elsewhere, or presses Ctrl+Z
+    Then the letter goes into the find bar and nothing else happens
 
   @desktop
   Scenario: Wrapping long lines
@@ -411,6 +447,25 @@ Feature: Reviewing working tree and branch changes
       | for the contents of a file | inside the MC's worktrees folder               | the contents are returned                                                     |
       | for the contents of a file | outside the MC's projects and worktrees        | it is refused with "Review cwd must be inside one of this MC's projects."     |
       | for a review               | reached through a link out of the MC's projects | it is refused with "Review cwd must be inside one of this MC's projects."    |
+
+  @backlog @mc @shared
+  Scenario: A project on another drive than the MC's folder shows its own diff
+    Given the MC runs from the home folder and the project lives on another drive
+    When the user opens the project's diff
+    Then the project's own changes are shown
+    And a refused diff shows its error instead of falling back to the diff of the MC's own folder
+
+  @backlog @mc
+  Scenario: A project at the root of a drive reads its agent instructions
+    Given a project at the root of a drive has an AGENTS.md
+    When the agent starts a turn in that project
+    Then the project's instructions are read
+
+  @backlog @mc
+  Scenario: A GitLab merge request's unchanged lines can be expanded
+    Given a GitLab merge request is open for review
+    When the user expands the unchanged lines of a file
+    Then the unchanged lines are shown
 
   @backlog @shared @priority-high
   Scenario: The diff panel opens on all branch changes

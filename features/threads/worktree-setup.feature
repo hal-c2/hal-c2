@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17654
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
 #   packages/contracts/src/rpc.ts (subscribeWorktreeSetup, worktreeSetup.cancel)
@@ -200,3 +201,24 @@ Feature: Preparing a new thread's worktree
     Given the setup script of "Cart totals" is running or failed
     When the user opens the setup details
     Then the user sees the last few lines of the script's output
+
+  @backlog @mc @shared @mobile
+  Scenario: A new worktree thread keeps its worktree when the agent starts
+    Given a new worktree thread whose setup script runs alongside the agent
+    When the agent starts its first turn
+    Then the thread stays on its worktree and branch
+    And the first turn completes
+
+  @backlog @mc @shared @mobile
+  Scenario: A message sent while the worktree is being set up is queued
+    Given a new worktree thread is still checking out its worktree or running a setup script it must wait for
+    When the user sends a follow-up
+    Then the follow-up is queued
+    And it starts by itself after the first turn finishes
+
+  @backlog @mc
+  Scenario: A follow-up queued during a setup that never made the worktree is held
+    Given a follow-up is queued behind a worktree thread's setup
+    When the setup is cancelled or fails before the worktree exists
+    Then the follow-up is held instead of running in the project's own checkout
+    And retrying the setup lets it follow the first turn again

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17327
+#   https://github.com/pingdotgg/t3code/pull/17730
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
 #   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
@@ -467,6 +469,15 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user opens it in the centre again
       Then the tab is back in the right panel beside the thread
 
+    # Upstream #17327: a maximized right panel came back beside the chat after the user
+    # visited Settings or another thread.
+    @backlog @desktop
+    Scenario: A tab opened in the centre is still there when the user comes back to the thread
+      Given the right panel's tab of "t1" is open in the thread's centre
+      When the user visits Settings or another thread and returns to "t1"
+      Then the tab still fills "t1"'s centre
+      And another thread's right panel stays where its user left it
+
     @desktop
     Scenario: The right panel's tabs and width survive a restart
       Given the right panel has "Diff" and "Files" tabs
@@ -561,6 +572,22 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user opens the "Files" tab's menu
       Then "Close to the right" cannot be chosen
       And "Close others" can be chosen
+
+    # Upstream #17730: tabs kept the order they were opened in.
+    @backlog @desktop
+    Scenario: Right panel tabs are put in order by dragging
+      Given the right panel has "Diff", "Files" and "Terminal" tabs in that order
+      And the terminal is running a command
+      When the user drags the "Terminal" tab before "Diff"
+      Then the tabs read "Terminal", "Diff" and "Files"
+      And the terminal is still running its command
+      And the thread keeps that order when it is opened again
+
+    @backlog @desktop
+    Scenario: A browser tab that opens after a reorder goes at the end
+      Given the user has dragged the right panel's tabs into the order "Terminal", "Diff" and "Files"
+      When the agent opens a browser tab
+      Then the tabs read "Terminal", "Diff", "Files" and the browser tab
 
     @backlog @desktop
     Scenario: Closing the active tab moves to the tab beside it

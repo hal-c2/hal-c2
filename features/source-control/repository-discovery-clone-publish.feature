@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11059
 #   https://github.com/pingdotgg/t3code/pull/16353
 #   https://github.com/pingdotgg/t3code/pull/15876
 #   https://github.com/pingdotgg/t3code/pull/14781
@@ -267,6 +268,19 @@ Feature: Finding hosting tools, cloning and publishing repositories
       | git.example.com  | the GitLab CLI has a login for it          | "GitLab Self-Hosted"  |
       | git.example.com  | the Forgejo CLI has a login for it         | Forgejo               |
       | git.example.com  | no hosting tool has a login for it         | unknown               |
+
+  @mc @backlog
+  Scenario Outline: A GitHub Enterprise server the GitHub CLI knows is recognised
+    Given the checkout's remote is on "ghe.example.com", which is not a well-known host
+    And the GitHub CLI lists "ghe.example.com" with <account>
+    When the user asks which host the checkout is on
+    Then the host is reported as "GitHub Self-Hosted"
+    And the checkout's pull requests are listed from "ghe.example.com", not github.com
+
+    Examples:
+      | account            |
+      | a working login    |
+      | an expired login   |
 
   # Legacy: apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts (mixed-case provider hosts), gitLabAuthStatus.ts (ports, single-label names)
   @mc @backlog @priority-low

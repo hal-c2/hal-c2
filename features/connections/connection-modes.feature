@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17158
+#   https://github.com/pingdotgg/t3code/pull/19372
+#   https://github.com/pingdotgg/t3code/pull/19432
 #   https://github.com/pingdotgg/t3code/pull/15468
 #   docs/user/remote-access.md (Pair over a LAN or private network, Tailscale HTTPS, Hosted web app,
 #     Desktop-managed SSH)
@@ -175,6 +178,14 @@ Feature: How clients reach an environment
     When the user connects to the SSH environment
     Then the server starts on the next free port after it
 
+  @backlog @desktop
+  Scenario: An SSH launch skips a port another server already answers on
+    Given another server on the host listens on every address on the port the launch would pick
+    And the host lets a loopback test bind succeed on that port anyway
+    When the user connects to the SSH environment
+    Then the server starts on a port nothing answers on
+    And the host shows no firewall prompt for the check
+
   @backlog @desktop @priority-low
   Scenario: An SSH launch fails when no port is free in the range it tries
     Given every port in the range the launch tries is taken
@@ -292,6 +303,35 @@ Feature: How clients reach an environment
     Given an SSH environment that reused a running server
     When the user removes it
     Then that server keeps running
+
+  @backlog @desktop
+  Scenario: Reconnecting reuses the server the app launched
+    Given an SSH environment whose server the desktop app launched
+    And that server recorded itself in the host's runtime record
+    When the laptop wakes from sleep and the app reconnects
+    Then the app connects to the same server
+    And the agents running on the host keep running
+
+  @backlog @desktop
+  Scenario: Reconnecting waits for a busy server instead of replacing it
+    Given an SSH environment whose launched server is slow to answer but still running
+    When the app reconnects
+    Then it waits as long as it would for a cold start
+    And if the server still does not answer the reconnect fails and can be retried
+    And the server keeps running
+
+  @backlog @desktop
+  Scenario: Replacing a dead forward closes only the local tunnel
+    Given an SSH environment whose local forward died while the network was down
+    When the app reconnects
+    Then a new forward is opened to the same server
+    And the server on the host is not stopped
+
+  @backlog @desktop
+  Scenario: A crashed launched server is replaced on reconnect
+    Given an SSH environment whose launched server crashed and was not reaped
+    When the app reconnects
+    Then a new server is started on the host
 
   @backlog @desktop @priority-low
   Scenario: A failed SSH reconnect after an update can be retried
@@ -475,3 +515,27 @@ Feature: How clients reach an environment
     Then the old learned route is dropped and the new one saved
     And a route the user paired is never rewritten
     And the live session is not replaced by the change, only by the better-route check
+
+  @backlog @mc
+  Scenario Outline: An address in the shared 100.64/10 range is a tailnet address only on Tailscale's own interface
+    Given the MC's machine has the address "100.96.0.1" on <interface>
+    When the MC reports the addresses it is bound to
+    Then "100.96.0.1" is reported as <kind>
+
+    Examples:
+      | interface                                | kind                    |
+      | Tailscale's network interface            | a tailnet address       |
+      | a Cloudflare WARP or other VPN interface | a local network address |
+
+  @backlog @shared
+  Scenario Outline: A route is labelled Tailscale only with proof
+    Given a client has a route to "<host>"
+    And <proof>
+    When the user looks at the environment's routes
+    Then the route is labelled "<label>"
+
+    Examples:
+      | host                | proof                                                   | label     |
+      | 100.101.102.103     | the MC reported that address as a tailnet address       | Tailscale |
+      | devbox.tail1.ts.net | the host is a Tailscale name                            | Tailscale |
+      | 100.96.0.1          | the MC reported that address as a local network address | VPN       |

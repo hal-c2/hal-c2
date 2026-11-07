@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20184
+#   https://github.com/pingdotgg/t3code/pull/18824
+#   https://github.com/pingdotgg/t3code/pull/19210
 #   https://github.com/pingdotgg/t3code/pull/13764 (covered: the MC sends queued runs, so a thread the user is not viewing still sends when its turn ends)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
@@ -67,6 +70,22 @@ Feature: Queueing, steering and restarting
     Given "t1" has a running turn on "codex"
     When the user sends "Later" to "t1" to queue after the active turn
     Then "Later" waits at the end of the queue
+
+  @backlog @mc @plugin-claude
+  Scenario: A steer leaves Claude's running subagents running
+    Given "t1" has a running turn on "claudeAgent" with a subagent it started in the foreground
+    When the user sends "Also" to "t1" as a steer
+    Then the subagent moves to the background and keeps running
+    And "Also" joins the running turn
+    And the subagent's result wakes "t1" when it finishes
+
+  @backlog @mc @plugin-codex
+  Scenario: A Codex steer with a different model selection joins the running turn
+    Given "t1" has a running turn on "codex" with subagents running
+    When the user sends "Also" to "t1" as a steer with a different reasoning effort
+    Then "Also" joins the running turn instead of restarting it
+    And the subagents keep running
+    And the new selection is used from the next turn
 
   @mc
   Scenario: An explicit steer that the provider cannot take interrupts and goes first
@@ -268,6 +287,13 @@ Feature: Queueing, steering and restarting
     When the user edits the queued message removing the screenshot and adding a file reference
     Then the queued message carries only the file reference
 
+  @mc @backlog
+  Scenario: An image added while editing a queued message keeps the earlier image intact
+    Given "t1" has a queued message with the image "before.png"
+    When the user edits the queued message adding the image "after.png"
+    Then the queued message carries both images
+    And "before.png" still reads as it did
+
   @mc
   Scenario: Reordering a queued message before another
     Given "t1" has queued messages "A", "B" and "C"
@@ -449,6 +475,27 @@ Feature: Queueing, steering and restarting
       | command  | message                                                            |
       | /compact | Wait for context compaction to finish before steering the thread. |
       | /logout  | Wait for sign-out to finish before steering the thread.           |
+
+  # Upstream #20184 queues these steers instead of refusing them, so the message is no
+  # longer stuck in the composer. Replaces the scenario above once the MC carries it.
+  @mc @backlog
+  Scenario Outline: A steer sent while a thread compacts or signs out is queued
+    Given "t1" has a running turn started by "<command>" sent by itself
+    When the user sends "Also check the docs" to "t1" as a steer
+    Then "Also check the docs" is queued to run after the active turn
+    And it runs once the "<command>" turn finishes
+
+    Examples:
+      | command  |
+      | /compact |
+      | /logout  |
+
+  @shared @backlog
+  Scenario: The composer offers to queue while the thread compacts
+    Given the user's follow-up behaviour is to steer
+    And "t1" is running "/compact"
+    When the user writes a follow-up, with or without the steer modifier held
+    Then the composer's send action queues it
 
   @mc
   Scenario: A queued message cannot be edited down to nothing

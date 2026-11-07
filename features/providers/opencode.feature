@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17134
+#   https://github.com/pingdotgg/t3code/pull/19319
+#   https://github.com/pingdotgg/t3code/pull/17414
+#   https://github.com/pingdotgg/t3code/pull/17424
+#   https://github.com/pingdotgg/t3code/pull/12469
+#   https://github.com/pingdotgg/t3code/pull/14752
+#   https://github.com/pingdotgg/t3code/pull/14744
 #   https://github.com/pingdotgg/t3code/pull/16142
 #   https://github.com/pingdotgg/t3code/pull/13651
 #   https://github.com/pingdotgg/t3code/pull/12003
@@ -36,6 +43,28 @@ Feature: OpenCode
     When the user enables OpenCode
     Then the model picker offers the OpenAI and Anthropic models through OpenCode
     And each model is grouped under its upstream provider
+
+  # Upstream #17424: OpenCode 2 lost the provider beside each model, so one model offered by
+  # two subscriptions read the same twice.
+  @backlog @mc @shared @mobile
+  Scenario Outline: A model offered by two OpenCode providers says which one it bills
+    Given OpenCode 2 is connected to <provider>, which names itself "<name>" and lists "Step 5 Preview Free"
+    When the user opens the model picker
+    Then "Step 5 Preview Free" from it reads "<label>"
+    And searching the picker for "<search>" finds it
+
+    Examples:
+      | provider          | name         | label                                       | search       |
+      | OpenCode Zen      | OpenCode Zen | OpenCode Zen                                | Zen          |
+      | OpenRouter        | OpenRouter   | OpenCode · OpenRouter                       | OpenRouter   |
+      | OpenCode itself   | OpenCode     | OpenCode                                    | Step 5       |
+      | OpenCode Go       |              | OpenCode · opencode-go, until it is named   | opencode-go  |
+
+  @backlog @mc
+  Scenario: OpenCode's models are still listed when it cannot name its providers
+    Given OpenCode 2 lists its models but its list of providers cannot be read
+    When the MC checks OpenCode's status
+    Then its models are offered, each with its provider's id
 
   Scenario: OpenCode is only offered when the opencode command is installed
     Given the opencode command is not installed on the MC
@@ -468,6 +497,20 @@ Feature: OpenCode
       | a steer is sent with no text and no attachment                       | OpenCode steering requires text or an attachment                                              |
       | a turn is sent after the event stream ended                          | OpenCode event stream has ended; reconnect the provider session before starting another turn. |
 
+  # Upstream #19319: OpenCode passes text files other than plain text to the model API, which refuses them.
+  @backlog
+  Scenario Outline: A text attachment OpenCode cannot pass on is given to it by path
+    When the user sends an OpenCode turn with the attachment "<file>"
+    Then the turn runs and the prompt names the file's path instead of attaching it
+    But a plain text file is still attached as a file
+
+    Examples:
+      | file       |
+      | page.html  |
+      | notes.md   |
+      | data.csv   |
+      | style.css  |
+
   @backlog
   Scenario: An OpenCode server that exits says its exit code
     Given an OpenCode turn is running on a local server
@@ -484,6 +527,12 @@ Feature: OpenCode
   Scenario: An OpenCode failure without details gets a plain message
     When OpenCode reports that a session failed without saying why
     Then the turn fails saying "OpenCode session failed without an error payload."
+
+  @backlog
+  Scenario: An OpenCode timeout without a message still fails the turn readably
+    Given an OpenCode turn is running
+    When the request to OpenCode times out with an error that carries no message
+    Then the turn fails with a readable error instead of the MC failing to describe it
 
   @backlog
   Scenario: A stopped OpenCode turn shows as stopped, not failed
@@ -530,10 +579,21 @@ Feature: OpenCode
     When the MC restarts and reads the thread back from OpenCode
     Then the turns after the first are not shown again
 
+  # Upstream #17414: an untitled session made OpenCode run its own title model, and the
+  # session list showed OpenCode's title rather than the thread's.
   @backlog
   Scenario: OpenCode's session carries the thread's name
-    When a thread "t1" starts on OpenCode
-    Then its OpenCode session is titled "HAL-C2 t1"
+    When the thread "Fix login" starts on OpenCode
+    Then its OpenCode session is titled "Fix login"
+    And OpenCode does not write a title of its own
+
+  @backlog
+  Scenario: A renamed thread renames its OpenCode session at its next turn
+    Given the thread "Fix login" runs on OpenCode
+    When the thread is renamed "Fix the login redirect" and the user sends a message
+    Then its OpenCode session is titled "Fix the login redirect" before the message reaches OpenCode
+    And a turn under an unchanged name does not retitle the session
+    And a title that cannot be written does not fail the turn
 
   @backlog
   Scenario Outline: The HAL-C2 tools are offered only to a local OpenCode
@@ -737,3 +797,44 @@ Feature: OpenCode
     When an OpenCode turn starts in it
     Then the HAL-C2 tool server is registered under a shorter name that is the same on every turn
     And the thread can use the HAL-C2 tools
+
+  # OpenCode 2 runs background subagents; when one reports back, OpenCode replies on its own
+  # and HAL-C2 shows that reply as a continuation turn.
+  @backlog @mc @plugin-opencode
+  Scenario: Each OpenCode 2 continuation shows its own background reply
+    Given an OpenCode 2 turn started two background subagents
+    And each one's report woke a reply, first "A" and then "B"
+    When only the continuation for "B" runs
+    Then that turn shows reply "B", not "A"
+    And no reply is left waiting
+
+  @backlog @mc @plugin-opencode
+  Scenario: An OpenCode 2 continuation ends after a reconnect lost a stop's end
+    Given an OpenCode 2 turn with a background subagent was stopped and its stop timed out
+    And the event stream dropped before the stopped turn's end arrived
+    When the subagent's report wakes a continuation turn
+    Then the continuation turn completes
+
+  # Upstream #17134: steering a running subagent joins its run, and OpenCode sends one
+  # report for both calls; the second call stayed "Running" until a restart.
+  @backlog @mc @plugin-opencode
+  Scenario: Steering a running OpenCode 2 subagent finishes with the run it joined
+    Given an OpenCode 2 turn started the background subagent "A"
+    When the agent steers "A" while it is still running
+    And "A" reports back once
+    Then both the subagent call and the steer show "A"'s report
+    And the thread is no longer waiting on background work
+
+  @backlog @mc @plugin-opencode
+  Scenario: A steer that joins a background run waits for its report
+    Given an OpenCode 2 background subagent "A" is running
+    When the agent steers "A" without asking for it to run in the background
+    And the turn ends before "A" reports back
+    Then the steer stays running until "A"'s report arrives
+
+  @backlog @mc @plugin-opencode
+  Scenario: A finished OpenCode 2 subagent asked again waits for its new run
+    Given the OpenCode 2 subagent "A" finished its run
+    When the agent calls "A" again and the old report arrives late
+    Then the old report settles only the first call
+    And the new call waits for the report of its own run

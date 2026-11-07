@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16772
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/internals/providers.md (route by instance, unknown drivers keep their configuration)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?, instance_command/2 binaryPath of Codex and Claude)
@@ -445,3 +446,15 @@ Feature: Provider instances
       | provider | instance    | path                        |
       | Codex    | codex_work  | /opt/codex-work/bin/codex   |
       | Claude   | claude_work | /opt/claude-work/bin/claude |
+
+  @backlog @mc
+  Scenario: A disabled provider is not checked for updates
+    Given the Codex instance "codex_work" is disabled
+    When the MC refreshes the providers' status
+    Then the MC does not look for the binary of "codex_work" or check it for updates
+
+  @backlog @mc @plugin-antigravity
+  Scenario: A disabled Antigravity records no account changes
+    Given the Antigravity instance is disabled
+    When the user signs in or out of Antigravity elsewhere
+    Then the Antigravity instance shows no account and no model list

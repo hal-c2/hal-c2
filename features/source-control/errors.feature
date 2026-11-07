@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14140
 #   https://github.com/pingdotgg/t3code/pull/8645
 #   docs/user/source-control.md (Troubleshooting)
 #   packages/contracts/src/vcs.ts (VcsProcessExitError, VcsProcessTimeoutError, VcsOutputLimitError, VcsProcessSpawnError, VcsRepositoryDetectionError, VcsUnsupportedOperationError)
@@ -133,6 +134,19 @@ Feature: When source control goes wrong
       | runs past its time limit       | timed out            |
       | prints more than the limit     | produced too much output |
       | cannot be started              | could not be started |
+
+  @backlog @mc
+  Scenario Outline: A Bitbucket request that stalls gives up after 30 seconds
+    Given Bitbucket <stalls>
+    When the MC reads a pull request from Bitbucket
+    Then the request fails as timed out after 30 seconds
+    And nothing waits on it any longer
+
+    Examples:
+      | stalls                                                  |
+      | sends no response                                       |
+      | sends a success header and then stops sending the body  |
+      | sends an error header and then stops sending the body   |
 
   @tui
   Scenario: The terminal client reports a failed git action

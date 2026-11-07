@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14697
+#   https://github.com/pingdotgg/t3code/pull/17268
 #   https://github.com/pingdotgg/t3code/pull/15068
 #   https://github.com/pingdotgg/t3code/pull/15844
 #   docs/internals/mobile-navigation.md (root stack, overlay routes, previews)
@@ -26,6 +28,13 @@ Feature: Navigating the phone app and opening links into it
   Scenario: Opening a thread keeps the home screen one step back
     When the user opens "Fix checkout" from the home screen
     Then going back returns to the home screen
+
+  @backlog @mobile
+  Scenario: A tap right after swiping back opens what was tapped
+    Given the user opened "Fix checkout" from the home screen
+    When the user swipes back and at once taps "Fix checkout" again
+    Then "Fix checkout" opens and stays open
+    And a swipe back the user lets go of halfway leaves "Fix checkout" open with its history
 
   @backlog @mobile
   Scenario Outline: A link opens the matching screen for a thread
@@ -72,6 +81,14 @@ Feature: Navigating the phone app and opening links into it
     When the user follows a link to a thread on an environment the phone is not paired with
     Then the user is told the thread is unavailable
     And the user can return home
+
+  @backlog @shared @mobile
+  Scenario: A link to a thread the client has not seen yet waits for the environment
+    Given the client still shows the thread list it saved before going offline
+    When the user follows a link to a thread created since on another device
+    Then the link stays on that thread while the environment catches up
+    And the thread opens once it arrives, instead of a new thread
+    And only a thread still missing once the environment is up to date leaves the link
 
   @backlog @mobile
   Scenario: A thread that is the only screen offers a way to the thread list

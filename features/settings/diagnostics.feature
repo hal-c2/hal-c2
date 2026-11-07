@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12538
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (process list, history, signals, traces)
 #   apps/server-ex/lib/hal_c2/traces.ex (MC spans, client trace forwarding, trace diagnostics)
 #   apps/server-ex/test/mc_parity_test.exs (diagnostics RPCs aligned)
@@ -321,3 +322,36 @@ Feature: Diagnostics
     Given the MC recorded a failed span that has no end time
     When the user opens diagnostics
     Then that failure says "No trace records" where it would say how long ago it ended
+
+  @backlog @mc @desktop
+  Scenario: The user sets where traces, metrics and logs are exported
+    Given the user opens diagnostics for an environment
+    When the user changes the logs endpoint and saves
+    Then only the logs endpoint is saved for that environment
+    And typing a field back to its saved value leaves nothing to save
+
+  @backlog @mc @desktop
+  Scenario Outline: Testing an export endpoint says whether it answers
+    Given the traces endpoint is <endpoint>
+    When the user tests it
+    Then the test reads <result>
+
+    Examples:
+      | endpoint                                   | result                       |
+      | a collector that accepts the export        | Connected, with its latency  |
+      | a collector that refuses with 401          | Rejected, with 401           |
+      | a host that nothing listens on             | Unreachable                  |
+      | a collector that does not answer in 5 s    | Timed out                    |
+
+  @backlog @mc
+  Scenario: Testing an export endpoint sends its credentials only to its own endpoint
+    Given the logs endpoint sends export headers
+    When the user tests another URL for logs
+    Then the test sends no export headers and follows no redirect
+    And the test's own request is not exported as a trace
+
+  @backlog @mc @desktop
+  Scenario: Export endpoints are read-only without permission to change settings
+    Given a session that may not change environment settings
+    When the user opens the export endpoints in diagnostics
+    Then the user is told why and cannot save or test them

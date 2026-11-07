@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17370
+#   https://github.com/pingdotgg/t3code/pull/18509
+#   https://github.com/pingdotgg/t3code/pull/14128
+#   https://github.com/pingdotgg/t3code/pull/17772
+#   https://github.com/pingdotgg/t3code/pull/20432
 #   https://github.com/pingdotgg/t3code/pull/10298
 #   https://github.com/pingdotgg/t3code/pull/9791
 #   https://github.com/pingdotgg/t3code/pull/9790
@@ -92,6 +97,17 @@ Feature: MC authentication and scopes
       | a command-line pairing token | orchestration:read, orchestration:operate, terminal:operate, review:write, relay:read |
       | the desktop bootstrap token  | the standard scopes plus access:read, access:write and relay:write                    |
       | a pairing link naming scopes | only the named scopes the MC knows                                                    |
+
+  # Upstream #20432 dropped the standard/administrative split: standard scopes already hold
+  # terminal:operate (a shell as the MC's user), from which every scope can be minted, so
+  # access and relay management join the default. Blocked on the maintainers deciding to
+  # follow it; if they do, the rows above and the scenarios that pair "with standard scopes"
+  # to show a refusal pair with an explicitly narrowed grant instead.
+  @backlog @blocked @mc
+  Scenario: An ordinary pairing grants access and relay management by default
+    When a client pairs with a command-line pairing token that names no scopes
+    Then its session carries access:read, access:write and relay:write besides the standard scopes
+    And a session paired before the change keeps the scopes it was granted
 
   @mc
   Scenario: The desktop bootstrap token can be exchanged repeatedly for a day
@@ -368,6 +384,14 @@ Feature: MC authentication and scopes
     When a browser signs in to both
     Then each MC reads only the session cookie that it set
 
+  # hosted-web-app: upstream #18509 accepts a session cookie only from the server's own page.
+  # The MC's clients sign in with bearer credentials and no browser session exists to guard.
+  @dropped @mc
+  Scenario: A browser session cookie sent from another site's page is refused
+    Given a browser holds a session cookie for the MC
+    When a page from another origin sends a request with that cookie
+    Then the MC refuses the request as an invalid credential
+
   @mc
   Scenario: Listed pairing links never reveal their secret
     Given an administrator created a pairing link
@@ -412,6 +436,19 @@ Feature: MC authentication and scopes
     When an administrator revokes that client
     Then the client's socket is closed as revoked
     And it cannot reconnect with its old session
+
+  @backlog @mc
+  Scenario Outline: A session that ends closes the sockets it has open
+    Given a paired client has an open socket
+    When <ending>
+    Then the client's socket is closed
+    And it cannot reconnect with its old session
+
+    Examples:
+      | ending                                                      |
+      | the client's session expires                                |
+      | the client's session is replaced by a new one               |
+      | an administrator revokes the client while its socket opens  |
 
   @mc
   Scenario: A token exchange can narrow the scopes it asks for
@@ -501,6 +538,12 @@ Feature: MC authentication and scopes
     Then the printed link points at "https://mc.example.com" and carries a one-time token
     And the link expires after one hour
     And Connections settings lists the link as "Ana's phone"
+
+  # Upstream #14128: the readable output printed "DateTime.Utc(...)" for the expiry.
+  @backlog @mc
+  Scenario: A minted pairing link's readable output gives its expiry as an ISO 8601 time
+    When an operator mints a pairing link from the command line
+    Then the output says when the link expires as an ISO 8601 time such as "2026-09-28T00:56:46.668Z"
 
   @backlog @mc @priority-low
   Scenario: An operator can print a minted pairing link as JSON
@@ -610,3 +653,23 @@ Feature: MC authentication and scopes
     When it pairs or reads its permissions
     Then scopes it does not know are left out of what it is told
     And it stays connected, with single features denied rather than the connection
+
+  @backlog @mc
+  Scenario Outline: An action needs its own narrower scope, not only orchestration
+    Given a session with the orchestration scopes but without "<scope>"
+    When it <action>
+    Then the call is refused for the missing scope
+
+    Examples:
+      | scope                | action                                                     |
+      | settings:write       | saves a project's scripts                                  |
+      | preview:operate      | clicks, types, navigates or uploads a file in a preview    |
+      | settings:write       | approves a full-access MCP client                          |
+      | source-control:write | approves a full-access MCP client                          |
+
+  @backlog @mc
+  Scenario: Only the viewer controlling a preview answers its file picker
+    Given two viewers watch a preview and one of them controls it
+    When the page opens a file picker
+    Then only the controlling viewer can answer it
+    And when control passes to the other viewer, the picker is offered to them

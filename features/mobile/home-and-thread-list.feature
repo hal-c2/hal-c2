@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16693
+#   https://github.com/pingdotgg/t3code/pull/17368
 #   apps/mobile/src/features/home/ (thread list options, empty states, search, connection status)
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (status labels, shelves)
 #   apps/mobile/src/features/threads/thread-provider-instance.ts (provider account badge on a row)
@@ -217,9 +219,17 @@ Feature: Home screen and thread list on a phone
       | waits for the user to approve a command  | Approval |
       | asks the user a question                 | Input    |
       | has a turn running                       | Working  |
+      | has a queued turn waiting to start       | Waiting  |
       | ended its last turn with an error        | Failed   |
       | hit a provider usage limit               | Limited  |
       | finished work the user has not looked at | Done     |
+
+  @backlog @mobile
+  Scenario: Threads that are only working recede so the ones that need the user stand out
+    Given "Fix cart" has a turn running and "Fix tax" waits for the user to approve a command
+    When the user looks at the thread list
+    Then "Fix cart" is shown quieter than "Fix tax"
+    And a working thread the user has open is not shown quieter
 
   @backlog @mobile @priority-high
   Scenario: Opening a finished thread on another device clears its Done label on the phone

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/8011
 #   https://github.com/pingdotgg/t3code/pull/15642
 #   https://github.com/pingdotgg/t3code/pull/11594
 #   docs/user/appearance.md (appearance, composer context, motion)
@@ -425,6 +426,14 @@ Feature: Appearance
       Given a label that names no font is on screen
       When the user sets the interface font to "Inter" at 14
       Then the label is written in "Inter"
+
+    # Upstream #8011: the file trees held a fixed size; at the default interface size they read
+    # three quarters of it.
+    @backlog @desktop
+    Scenario: File trees grow and shrink with the interface font size
+      Given the Files tree and a diff's file tree are open
+      When the user sets the interface font size from 16 to 20
+      Then the names in both trees grow from 12 to 15
 
     @desktop
     Scenario: A font preference can be reset to the system font

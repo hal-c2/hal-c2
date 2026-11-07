@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12648 (folded phone and unfolded split; Android foldables here)
+#   https://github.com/pingdotgg/t3code/pull/19988
+#   https://github.com/pingdotgg/t3code/pull/20403
+#   https://github.com/pingdotgg/t3code/pull/18157
+#   https://github.com/pingdotgg/t3code/pull/13085
 #   https://github.com/pingdotgg/t3code/pull/13310
 #   apps/mobile/src/lib/layout.ts (split view thresholds, pane widths)
 #   apps/mobile/src/features/layout/ (sidebar, inspector pane, maximize content)
@@ -46,6 +51,44 @@ Feature: Tablet layout and hardware keyboards
       | width | height |
       | 736   | 480    |
       | 1024  | 768    |
+
+  # Android foldables with a vertical hinge. The split snaps at 170° and lets go at
+  # 175°, because Pixel foldables report the hinge in 5° steps and read 175° nearly flat.
+  @backlog @mobile
+  Scenario Outline: A foldable bent like a book splits at the crease
+    Given the layout is split on a foldable with a vertical hinge
+    When the hinge is bent from <from>° to <to>°
+    Then the thread list <result>
+
+    Examples:
+      | from | to  | result                                  |
+      | 180  | 175 | keeps its usual width                   |
+      | 175  | 170 | ends at the crease                      |
+      | 170  | 175 | goes back to its usual width            |
+
+  @backlog @mobile
+  Scenario: A crease that would leave a pane too narrow keeps the usual split
+    Given the layout is split on a foldable bent like a book
+    And ending the thread list at the crease would leave the list under 280 or the thread under 320 wide
+    Then the thread list keeps its usual width
+
+  @backlog @mobile
+  Scenario: A menu does not open across the crease
+    Given the layout is split on a foldable bent like a book
+    When the user opens the thread filter menu
+    Then the menu opens on its button's side of the crease
+
+  @backlog @mobile
+  Scenario: A foldable opened before the app was ready still follows its crease
+    Given the app's window was not ready when it began watching the fold
+    When the foldable is bent like a book
+    Then the thread list ends at the crease
+
+  @backlog @mobile
+  Scenario: Bending the hinge again mid-move moves the split on from where it is
+    Given the split is moving to the crease
+    When the hinge changes again before it gets there
+    Then the edge moves on from where it is without jumping
 
   # The desktop's layout has no empty detail pane: with no thread it lands on a new thread's draft.
   @backlog @mobile
@@ -169,6 +212,23 @@ Feature: Tablet layout and hardware keyboards
     When the window widens again
     Then "Tax line" is shown side by side with the list
     And the composer still reads "half a thought"
+
+  # Upstream #13085: the one-column list and the two-column sidebar share one filter.
+  @backlog @mobile
+  Scenario: Changing the layout keeps the thread list's project filter and search
+    Given the thread list is filtered to the project "Linux" and searched for "Make"
+    When the window changes between one column and two columns and back
+    Then the thread list is still filtered to "Linux" and searched for "Make"
+    When the user clears the project filter and the window changes layout again
+    Then the thread list is still unfiltered
+
+  # Upstream #18157. In two columns the empty detail pane offers a new task; with one
+  # column there is none, so the list offers it.
+  @backlog @mobile
+  Scenario: A tablet window too narrow for two columns starts a new task from the thread list
+    Given the tablet window is narrow enough to show one column
+    When the user starts a new task from the thread list
+    Then the user is asked to choose its project
 
   @mobile
   Scenario: A finger scrolls the thread list beside the thread

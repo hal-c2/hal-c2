@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17409
+#   https://github.com/pingdotgg/t3code/pull/17611
 #   https://github.com/pingdotgg/t3code/pull/13454 (branch search and remote-only branches)
 #   apps/mobile/src/features/threads/NewTaskRouteScreen.tsx (project choice, empty states, search)
 #   apps/mobile/src/features/threads/new-task-project-selection.ts (scopes, environment match)
@@ -32,6 +34,20 @@ Feature: Starting a task from a phone
     And the new task was last aimed at "Office Mac"
     When the user chooses "shop"
     Then the task is aimed at "shop" on "Office Mac"
+
+  # Upstream #17611: the draft named the workspace's folder ("server") while the picker named
+  # the repository, and on iOS its header was empty.
+  @backlog @mobile
+  Scenario Outline: A new task's draft names the project as the picker does and says it is new
+    Given a project at <folder> is listed as "<listed>" in the project picker
+    When the user chooses it for a new task
+    Then the draft asks what to build in "<listed>"
+    And the screen's title is "New thread"
+
+    Examples:
+      | folder                                                 | listed      |
+      | apps/server in a repository from github.com/acme/shop | acme/shop   |
+      | plain-notes, which is not a repository                 | plain-notes |
 
   @backlog @mobile @priority-high
   Scenario: Projects are searched by name or folder
@@ -204,6 +220,14 @@ Feature: Starting a task from a phone
       | a pasted text is still being turned into an attachment  |
       | the voice input is still being transcribed              |
       | the task is already being sent                          |
+
+  # Upstream #17409: a photo shared to the app could not start a task until text was typed,
+  # and a task with only a photo stayed in the outbox.
+  @backlog @mobile
+  Scenario: A task with only a photo can be started and is sent
+    Given the user shared a photo to HAL-C2 and the new task holds it with no text
+    When the user starts the task
+    Then the thread is created with the photo as its first message
 
   @backlog @mobile @priority-low
   Scenario: The project picker has one No project row on top

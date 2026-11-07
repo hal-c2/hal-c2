@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17566
+#   https://github.com/pingdotgg/t3code/pull/18502
+#   https://github.com/pingdotgg/t3code/pull/18326
+#   https://github.com/pingdotgg/t3code/pull/20077
 #   https://github.com/pingdotgg/t3code/pull/13574
 #   https://github.com/pingdotgg/t3code/pull/13534
 #   https://github.com/pingdotgg/t3code/pull/12787
@@ -287,6 +291,47 @@ Feature: Device panel
       When the emulator's video restarts
       Then the device is asked for a fresh keyframe
       And the tab "Pixel 9" shows the device's screen
+
+    # Upstream #18326. An idle simulator can go minutes without a keyframe of its own, so
+    # only the video is reconnected; input and the 3D view stay connected.
+    @desktop @backlog
+    Scenario: A simulator picture that fell behind catches up within seconds
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the picture falls behind while the simulator moves from Settings to Home
+      Then the tab "iPhone 17" shows Home within a few seconds
+      And the device's input and 3D view stay connected
+
+    @desktop @backlog
+    Scenario: A device that does not admit input says input is unavailable
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the device refuses input to the viewer
+      When the user shows the "iPhone 17" tab
+      Then the picture is shown and the tab says input is unavailable
+      And the device's buttons cannot be used
+
+    # Upstream #17566: a decoder backlog switched the viewer to still pictures for good and
+    # lost the 3D view.
+    @desktop @backlog
+    Scenario: A decoder that falls behind starts again at a keyframe and keeps the video
+      Given the thread has the iOS Simulator "iPhone 17" open in 3D
+      And the user is watching the "iPhone 17" tab
+      When the desktop's decoder falls behind the device's video
+      Then the decoder starts again from the device's next keyframe
+      And the tab keeps showing video in the same 3D view
+
+    @desktop @backlog
+    Scenario: A still picture that arrives late does not cover newer video
+      Given the "iPhone 17" tab has shown decoded video
+      When the device's first still picture arrives after it
+      Then the tab keeps showing the newer video
+
+    @desktop @backlog
+    Scenario: Input is offered only once the device has admitted it
+      Given the thread has the iOS Simulator "iPhone 17" open
+      When the user shows the "iPhone 17" tab
+      Then the device's buttons stay unavailable until the device admits the viewer's input
+      And they become available again when input recovers after being unavailable
 
     @desktop
     Scenario: A Device tab in the background streams nothing
@@ -767,6 +812,16 @@ Feature: Device panel
       Given the wizard is at "Device hub" and the hub is off
       Then the user cannot continue
 
+    @desktop @backlog
+    Scenario: A ready remote machine lets the wizard go on without local device tools
+      Given the thread's environment has no simulator tooling and its own hub is idle
+      And the remote machine "Mac mini" has its device tools ready with "iOS Simulator"
+      When the user opens the "Set up devices" wizard
+      Then the machines are checked without the user asking
+      And the user can continue
+      And the "Simulators" step reads "Xcode and iOS Simulator are available on Mac mini."
+      And it does not say that no simulator is installed
+
     @desktop
     Scenario: Turning the device hub off also turns agent access off
       Given the hub is on and agents may control devices
@@ -829,6 +884,14 @@ Feature: Device panel
         | starting agent tools    | Starting agent tools…        |
         | updating                | Updating agent access…       |
         | ready with agent tools  | Agent tools are ready.       |
+
+    @backlog @mc @desktop
+    Scenario: Agent tools that exit at startup say why at once
+      Given the agent tools refuse to start because of a lock left by an older version
+      When the user turns on "Allow agents to control devices"
+      Then the device status says why the agent tools did not start and where their state is
+      And it says so without waiting 30 seconds for them to come up
+      And the old lock is left in place for the user to repair
 
     @desktop
     Scenario: Agent access can stay off

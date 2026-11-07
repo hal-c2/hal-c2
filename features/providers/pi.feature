@@ -1,4 +1,18 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18639
+#   https://github.com/pingdotgg/t3code/pull/18643
+#   https://github.com/pingdotgg/t3code/pull/17851
+#   https://github.com/pingdotgg/t3code/pull/17853
+#   https://github.com/pingdotgg/t3code/pull/17835
+#   https://github.com/pingdotgg/t3code/pull/17834
+#   https://github.com/pingdotgg/t3code/pull/17840
+#   https://github.com/pingdotgg/t3code/pull/17852
+#   https://github.com/pingdotgg/t3code/pull/17214
+#   https://github.com/pingdotgg/t3code/pull/17220
+#   https://github.com/pingdotgg/t3code/pull/17206
+#   https://github.com/pingdotgg/t3code/pull/17190
+#   https://github.com/pingdotgg/t3code/pull/17194
+#   https://github.com/pingdotgg/t3code/pull/13839
 #   https://github.com/pingdotgg/t3code/pull/16661
 #   https://github.com/pingdotgg/t3code/pull/16210
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -171,6 +185,20 @@ Feature: Pi
     When the Pi process exits unexpectedly
     Then the turn fails saying Pi exited unexpectedly
 
+  @backlog
+  Scenario: A message sent while Pi resumes extension work on its own is queued
+    Given Pi has resumed extension work before HAL-C2 heard that it woke
+    When the user sends a message in the Pi thread
+    Then Pi takes the message after its current work
+    And the turn does not fail with "Agent is already processing"
+
+  @backlog
+  Scenario: HAL-C2 tools are usable by a Pi model behind an OpenAI-compatible completions gateway
+    Given Pi runs a model through an "openai-completions" gateway
+    When the Pi model calls "hal_c2_thread_read"
+    Then the call runs and its result reaches the model
+    And tools the user excluded with "--exclude-tools" are still left out
+
   # PiCommands.ts: Pi's command list omits its terminal built-ins, and Pi only expands
   # skills written as leading "/skill:name" commands.
   @backlog
@@ -190,22 +218,23 @@ Feature: Pi
     Then Pi compacts its conversation following "keep the database notes"
 
   @backlog
-  Scenario: Skill mentions are moved to the start for Pi
+  Scenario: Every skill a Pi message mentions is loaded and the message keeps its words
     Given Pi has the skills "deploy" and "review"
     When the user sends "please $review this and then $deploy it" to a Pi thread
-    Then Pi receives "/skill:review /skill:deploy please this and then it"
+    Then Pi loads both "review" and "deploy"
+    And Pi receives the user's text as written, with any images it carries
 
   @backlog
   Scenario: A dollar word that is not a Pi skill is left as written
     Given Pi has the skill "deploy"
     When the user sends "the price is $5 and $deploy it" to a Pi thread
-    Then Pi receives "/skill:deploy the price is $5 and it"
+    Then Pi loads "deploy" and nothing for "$5"
 
   @backlog
   Scenario: A skill mentioned twice is expanded once
     Given Pi has the skill "deploy"
     When the user sends "$deploy and again $deploy" to a Pi thread
-    Then Pi receives one "/skill:deploy" at the start
+    Then Pi loads "deploy" once
 
   # piHalC2McpInjection.ts: the arguments HAL-C2 owns, in their "--flag" and "--flag=value" forms.
   @backlog
@@ -436,9 +465,10 @@ Feature: Pi
       | a longer text edit |
 
   @backlog
-  Scenario: A Pi extension's text edit shows what is there now
+  Scenario: A Pi extension's text edit starts the answer from what is there now
     When a Pi extension asks the user to edit a text that already has content
-    Then the request shows that content under "Current value:"
+    Then the whole text fills the answer composer, ready to edit
+    And the answer goes back to the extension with its spaces and line breaks as typed
 
   @backlog
   Scenario: An empty choice from a Pi extension can still be picked
@@ -774,3 +804,104 @@ Feature: Pi
     Given Pi discovered models from the providers "openai" and "anthropic"
     When the user opens the model picker and searches for "anthropic"
     Then the models from that provider are listed with its name
+
+  @backlog @mc @plugin-pi
+  Scenario: Work a Pi extension starts after a turn settled runs as its own turn
+    Given a Pi thread whose last turn has finished
+    When a Pi extension wakes Pi to continue on its own
+    Then the thread gets a new turn that shows Pi's work
+    And Pi is not prompted a second time for it
+
+  @backlog @mc @plugin-pi
+  Scenario: A message sent while an extension's wake is pending joins that work
+    Given a Pi extension has woken Pi after the last turn
+    When the user sends a message to the Pi thread before the wake's turn starts
+    Then the message's turn shows the extension's work and the reply to the message
+
+  @backlog @mc @plugin-pi
+  Scenario: Reverting a Pi thread does not replay work from the discarded conversation
+    Given a Pi extension has woken Pi after the last turn
+    When the user reverts the Pi thread to an earlier turn
+    Then the revert is refused until the woken work is settled or stopped
+    And nothing from the discarded conversation appears in the thread afterwards
+
+  @backlog @mc @plugin-pi
+  Scenario Outline: Pi is offered the HAL-C2 tools the way its version can find them
+    Given Pi <version> is installed
+    When a Pi thread starts
+    Then <how>
+    And tool selections the user made with Pi's tool flags keep applying by tool name
+
+    Examples:
+      | version         | how                                                                                            |
+      | 0.99 or newer   | Pi finds the optional HAL-C2 tools by searching, and the delegation tools are offered directly |
+      | older than 0.99 | every HAL-C2 tool is offered directly                                                          |
+
+  @backlog @mc @plugin-pi
+  Scenario: Pi offers the skills and commands of the thread's own workspace
+    Given the project "web" has its own Pi skill "release" and prompt template "triage"
+    When the user opens the skill menu in a Pi thread of "web"
+    Then "release" and "triage" are offered
+    And a Pi thread of another project does not offer them
+
+  @backlog @mc @plugin-pi
+  Scenario: A workspace whose Pi commands cannot be found keeps the ones it had
+    Given a Pi thread of "web" offered the skill "release"
+    When finding the workspace's Pi commands fails
+    Then "release" is still offered
+
+  @backlog @mc @plugin-pi
+  Scenario: A rewind made inside Pi drops the abandoned turns from the thread
+    Given a Pi thread with three turns
+    When a Pi extension rewinds Pi's session to the end of the first turn
+    Then the thread no longer counts the second and third turns as Pi's history
+    And reverting the thread afterwards only offers turns Pi still has
+
+  @backlog @mc @plugin-pi
+  Scenario: An image a Pi tool returns is shown as an image
+    When a Pi tool returns a screenshot alongside structured results
+    Then the tool call shows the screenshot as an image, not as text
+    And its structured results are kept in the tool's details
+
+  @backlog @mc @plugin-pi
+  Scenario: A turn Pi aborts on its own reads as interrupted
+    When Pi aborts a turn itself, for an extension, a compaction or a session replacement
+    Then the turn reads as interrupted, not completed
+    And the next turn Pi starts reads as its own outcome
+
+  @backlog @mc @plugin-pi
+  Scenario: Only the model Pi is set to marks Pi's thinking level as its default
+    Given Pi is set to model "a" at thinking level high
+    When the user opens the thinking options for Pi model "b"
+    Then no level is marked as Pi's default for "b"
+    And for "a" high is marked as the default
+
+  @backlog @mc @plugin-pi
+  Scenario Outline: A Pi shell command keeps its exit code
+    When Pi runs <shell> on a Pi version that reports the exit code <where>
+    Then the step shows as a command with exit code 2
+
+    Examples:
+      | shell              | where                              |
+      | a bash command     | in its structured result           |
+      | a bash command     | in its details, as older Pi does   |
+      | a PowerShell command | in its structured result         |
+
+  @backlog @mc @plugin-pi
+  Scenario: A Pi extension's approval goes away when Pi stops waiting for it
+    Given a Pi extension asked the user to approve with a time limit
+    When the time limit passes, or the Pi process dies, before the user answers
+    Then the approval is no longer pending
+    And an answer the user sends afterwards is refused and not remembered
+
+  @backlog @mc @plugin-pi
+  Scenario Outline: Pi asks before HAL-C2's tools only when they change something
+    Given the thread runs Pi in approval required
+    When Pi calls <tool>
+    Then it is <outcome>
+
+    Examples:
+      | tool                                             | outcome                |
+      | a HAL-C2 tool marked read-only                   | allowed without asking |
+      | a HAL-C2 tool that changes something             | asked for approval     |
+      | a read-only tool from another MCP server         | asked for approval     |

@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16956
+#   https://github.com/pingdotgg/t3code/pull/16963
+#   https://github.com/pingdotgg/t3code/pull/17360
+#   https://github.com/pingdotgg/t3code/pull/17693
+#   https://github.com/pingdotgg/t3code/pull/18556
 #   https://github.com/pingdotgg/t3code/pull/13559
 #   https://github.com/pingdotgg/t3code/pull/13558
 #   https://github.com/pingdotgg/t3code/pull/13064
@@ -94,6 +99,15 @@ Feature: Agents drive the preview browser
       And the MC drops that desktop so it has to register again
       And the action is not tried a second time
 
+    # Upstream #17693: the MC gave up at the same moment the page did, so the browser's own
+    # timeout answer, a few milliseconds late, cost the agent its browser.
+    @backlog @mc
+    Scenario: A browser that reports its own page timeout stays connected
+      Given an agent is waiting for a page in a desktop browser
+      When the page wait times out and the browser says so within a second of the time limit
+      Then the tool fails with the browser's timeout
+      And the agent's next action goes to the same browser
+
     @mc
     Scenario: A browser that disconnects fails its unanswered actions
       Given an agent is waiting on an action in a desktop browser
@@ -144,6 +158,71 @@ Feature: Agents drive the preview browser
       When an agent opens a preview and asks to show it
       Then the browser comes to the front with the page
 
+    # Upstream #16956: agents saw only the tabs they opened, so "what is on this page?" failed.
+    @backlog @mc
+    Scenario: An agent sees every browser tab of its thread and who has each
+      Given the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened
+      When the agent asks for the preview status
+      Then every tab is listed with whether a person, an agent or nobody has it, whether it is this agent's, whether it is shown and its profile
+
+    @backlog @mc
+    Scenario: An agent reads the user's tab while the user is using it
+      Given the user is typing in a tab the user opened
+      When an agent takes a snapshot of that tab by its id
+      Then the tool returns the page without waiting for the user's input to finish
+
+    @backlog @mc
+    Scenario: An agent with no tab of its own reads the one the user is looking at
+      Given the agent has opened no tab and the user is looking at "http://localhost:5173/cart"
+      When the agent takes a snapshot without naming a tab
+      Then the tool returns "http://localhost:5173/cart"
+
+    @backlog @mc
+    Scenario Outline: An agent acts on a tab it did not open only while no one else has it
+      Given a tab <tab>
+      When an agent clicks on that tab by its id
+      Then <outcome>
+
+      Examples:
+        | tab                                      | outcome                                                      |
+        | the user opened and is not using         | the click happens                                            |
+        | the user opened and is using             | the tool fails saying a person is in control of the tab      |
+        | another agent session opened             | the tool fails saying the tab belongs to another agent       |
+
+    @backlog @mc
+    Scenario: Only the agent session that opened a tab can close it
+      Given a tab the user opened
+      When an agent closes that tab
+      Then the tab stays open and the agent is told it did not open it
+
+    @backlog @mc
+    Scenario: An agent's new tab opens in the user's default browser profile
+      Given the desktop reports the profiles "Default" and "Work", with "Work" the default
+      When an agent opens a preview without naming a profile
+      Then the tab opens in the profile "Work"
+
+    @backlog @mc
+    Scenario Outline: An agent can name the profile a new tab opens in
+      Given the desktop reports the profiles "Default" and "Work"
+      When an agent opens a preview in the profile "<named>"
+      Then <outcome>
+
+      Examples:
+        | named    | outcome                                                          |
+        | work     | the tab opens in the profile "Work"                              |
+        | personal | the tool fails and lists "Default" and "Work" as the profiles to use |
+
+    @backlog @mc
+    Scenario Outline: An agent's instructions let it use another browser only when the preview cannot do the job
+      When <situation>
+      Then the agent's instructions let it use another browser <how>
+
+      Examples:
+        | situation                                                              | how                                         |
+        | the user invokes a skill or written workflow that names another browser | and report any missing prerequisite         |
+        | the preview fails twice on the same step of an open tab                | after quoting the error, without asking     |
+        | the preview works                                                      | not at all, the preview stays the default   |
+
     @mc
     Scenario: An action reports the page it left the tab on
       Given an agent's current tab shows "http://localhost:5173/cart"
@@ -162,6 +241,24 @@ Feature: Agents drive the preview browser
       When the agent takes a snapshot
       Then the tool returns the page's address, its text and its interactive elements
       And the tool returns the page's screenshot
+
+    # Upstream #16956: providers replay a tool's images on every later request, and some refuse
+    # them, so the screenshot is only sent when asked for. Replaces the scenario above once the
+    # MC carries it.
+    @backlog @mc
+    Scenario: A snapshot returns the page text and leaves the screenshot out unless asked
+      Given an agent's current tab shows a page
+      When the agent takes a snapshot
+      Then the tool returns the page's address, its text and its interactive elements
+      And the tool returns no screenshot
+      When the agent takes a snapshot and asks for the image
+      Then the tool returns the page's screenshot
+
+    @backlog @mc
+    Scenario: A snapshot saved as a file returns only the address and the path unless the image is asked for
+      Given an agent's current tab shows a page
+      When the agent takes a snapshot and saves the screenshot
+      Then the tool returns only the page's address and the saved file's path
 
     @mc
     Scenario: An agent takes a snapshot without the image
@@ -385,6 +482,23 @@ Feature: Agents drive the preview browser
       Given an agent's current tab shows a page
       When the agent evaluates a script whose result is larger than 64,000 bytes
       Then the tool fails saying the result was too large and what the maximum is
+
+    # Upstream #16963: a script that never returned held the tab's queue of actions.
+    @backlog @desktop
+    Scenario: A script that runs past the time limit is stopped
+      Given an agent's current tab shows a page
+      When the agent evaluates a script that never finishes
+      Then the tool fails saying the evaluation timed out
+      And the script is stopped in the page
+      And the agent's next action on the tab runs at once
+
+    # Upstream #17360: a drag that timed out before it finished took the whole server down.
+    @backlog @desktop
+    Scenario: A drag that times out fails without taking the browser down
+      Given an agent's current tab shows a page
+      When the agent drags an element and the drag times out while the cursor is still moving
+      Then the tool fails with the drag's error
+      And the desktop and the MC keep running with the thread's work untouched
 
     @backlog @desktop @priority-low
     Scenario: Waiting for text gives up after fifteen seconds by default
@@ -647,6 +761,28 @@ Feature: Agents drive the preview browser
       Given an agent's current tab has a text field with the focus
       When the agent types text without naming a target
       Then the text goes into the focused field
+
+    @backlog @desktop
+    Scenario: An agent typing in a preview tab does not type into the app the user is using
+      Given the user is typing in the composer
+      And an agent's current tab shows a page with a focused text field
+      When the agent types "pairing-code" and presses Enter in the tab
+      Then the page's field holds "pairing-code" and receives the Enter
+      And the composer keeps its text and its focus
+
+    @backlog @desktop
+    Scenario: An agent's copy, cut and paste keys in a preview tab without focus are ignored
+      Given the preview tab does not have the focus
+      When the agent presses the copy, cut or paste key in the tab
+      Then nothing is copied, cut or pasted
+      And the user's clipboard is unchanged
+
+    @backlog @desktop
+    Scenario: Typing into a frame from another site fails clearly while the preview has no focus
+      Given the preview tab does not have the focus
+      And the page's focus is in a frame from another site
+      When the agent types text in the tab
+      Then the tool fails saying the text cannot reach that frame
 
     @backlog @desktop
     Scenario: Typing into a field that is read-only or disabled fails

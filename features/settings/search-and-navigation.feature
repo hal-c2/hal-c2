@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17396
+#   https://github.com/pingdotgg/t3code/pull/17859
 #   https://github.com/pingdotgg/t3code/pull/13516 (Escape in settings returns to the last main page)
 #   apps/web/src/components/settings/settingsSearch.ts
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts
@@ -53,6 +55,18 @@ Feature: Settings search and navigation
       Given the user has focus in the settings search
       When the user presses Tab
       Then the list of sections has focus, on the current section
+
+    @backlog @desktop
+    Scenario Outline: The find key focuses the settings search in every section
+      Given the user is in the "<section>" settings
+      When the user presses mod+f
+      Then the settings search has focus
+
+      Examples:
+        | section     |
+        | General     |
+        | Providers   |
+        | Keybindings |
 
     @desktop
     Scenario: Escape leaves settings when nothing else takes it
@@ -244,6 +258,14 @@ Feature: Settings search and navigation
         | battery saver      | Background activity    |
         | binary path        | Providers              |
         | pull request template | Follow change request templates |
+
+      # Upstream #17396: About's version and update track rows were not in settings search.
+      # The update track is only found where the app has a release channel to change.
+      @backlog
+      Examples:
+        | query              | first                  |
+        | check for updates  | Version                |
+        | nightly            | Update track           |
 
     @desktop
     Scenario: Search ignores case, extra spaces and accents

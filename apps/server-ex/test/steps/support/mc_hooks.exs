@@ -13,6 +13,9 @@ defmodule HalC2.Test.McHooks do
         "hal-c2-features-#{System.unique_integer([:positive])}-#{:erlang.phash2(context.scenario_name)}"
       )
 
+    # A provider CLI check an earlier scenario cached (Codex "not installed", say)
+    # is not this MC's.
+    HalC2.Test.Mc.World.reset_provider_caches()
     mc = HalC2.Test.Mc.start(dir)
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
     {:ok, Map.merge(context, %{mc: mc, clients: %{}, projects: %{}, threads: %{}})}

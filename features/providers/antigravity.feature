@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18472
 #   https://github.com/pingdotgg/t3code/pull/15746
 #   https://github.com/pingdotgg/t3code/pull/7079
 #   https://github.com/pingdotgg/t3code/pull/13339
@@ -38,6 +39,15 @@ Feature: Antigravity
     Then the user sees the download progress in megabytes
     And then that it is extracting and then checking the runtime
     And finally that Antigravity is installed
+
+  # Windows can keep the checked runtime's files locked for a moment after its
+  # processes end, so the check must not fail the installation.
+  @backlog
+  Scenario: Installing the Antigravity runtime finishes on Windows on ARM
+    Given the MC runs on Windows on ARM and the Antigravity runtime is not installed
+    When the user installs the Antigravity runtime
+    Then the runtime is checked and Antigravity is installed
+    And no process of the check is left running
 
   Scenario: Installation continues when the user leaves settings or reconnects
     Given the Antigravity runtime is downloading

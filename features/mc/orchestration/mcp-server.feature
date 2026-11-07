@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16909
+#   https://github.com/pingdotgg/t3code/pull/19751
 #   https://github.com/pingdotgg/t3code/pull/16741
 #   https://github.com/pingdotgg/t3code/pull/16718
 #   https://github.com/pingdotgg/t3code/pull/16337
@@ -210,6 +212,41 @@ Feature: The HAL-C2 MCP server agents receive
       | has no run starting, running or waiting       |
       | is archived                                  |
       | is running on a different provider instance   |
+
+  # Upstream #19751: a background subagent outlives its parent's turn and calls tools with
+  # the parent thread's credential. The thread lists it as background work while it runs.
+  @backlog @mc
+  Scenario: A caller whose background subagent still runs can still change things
+    Given "caller" has no active run
+    And "caller" lists a subagent of its own provider instance running in the background
+    When that subagent sends a message to another thread of "demo"
+    Then the message is sent
+
+  @backlog @mc
+  Scenario Outline: Background work that is not the caller's does not keep it running
+    Given "caller" has no active run
+    And "caller" lists a subagent running in the background that <owner>
+    When the agent of "caller" sends a message to another thread of "demo"
+    Then it fails with code "parent_not_active"
+
+    Examples:
+      | owner                                                       |
+      | an earlier provider of the thread started                    |
+      | runs on a different provider instance than the caller        |
+      | has no known owner                                           |
+
+  @backlog @mc
+  Scenario: Stopping the background work ends the caller's standing
+    Given "caller" has no active run and a subagent running in the background
+    When the user stops the background work of "caller"
+    And the agent of "caller" sends a message to another thread of "demo"
+    Then it fails with code "parent_not_active"
+
+  @backlog @mc
+  Scenario: Delegating still needs a running caller
+    Given "caller" has no active run and a subagent running in the background
+    When that subagent delegates a task
+    Then it fails with code "parent_not_active"
 
   @mc
   Scenario: Reading does not need a running caller
@@ -523,3 +560,16 @@ Feature: The HAL-C2 MCP server agents receive
     Given the user has an environment saved
     When the user chooses to copy its MCP address
     Then the address is copied with an example command for adding it to an agent
+
+  # Upstream #16909: plain http routes (LAN, Tailscale) get the action too.
+  @backlog @shared
+  Scenario Outline: The MCP address copied is the route the client reaches the environment by
+    Given the user's environment "studio" is reached over <routes>
+    When the user chooses to copy its MCP address
+    Then the copied address is <address>
+
+    Examples:
+      | routes                                                      | address                       |
+      | plain http at "http://studio.lan:3773", connected            | on "http://studio.lan:3773"   |
+      | "https://studio.ts.net" not connected and "http://10.0.0.5:3773" connected | on "http://10.0.0.5:3773" |
+      | "https://studio.ts.net" and "http://10.0.0.5:3773", neither connected | on the first ranked of them, "https://studio.ts.net" |

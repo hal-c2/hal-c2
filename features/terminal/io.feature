@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11305
+#   https://github.com/pingdotgg/t3code/pull/19395
+#   https://github.com/pingdotgg/t3code/pull/17091
+#   https://github.com/pingdotgg/t3code/pull/18519
+#   https://github.com/pingdotgg/t3code/pull/20289
+#   https://github.com/pingdotgg/t3code/pull/17178
 #   docs/user/terminal.md
 #   docs/internals/terminal-runtime.md (pending writes drain before clear, restart and close)
 #   packages/contracts/src/terminal.ts (TerminalWriteInput, TerminalResizeInput, TerminalClearInput, TerminalRestartInput, TerminalCloseInput, TerminalEvent)
@@ -51,6 +57,15 @@ Feature: Terminal input and output
       Then only a small amount of output waits unacknowledged for that client
       And the MC stops sending output to that client until it catches up
       And the shell itself keeps running
+
+    # Upstream #17178: a client that only watched waited for an acknowledgement after
+    # every chunk, so it slowed with network latency.
+    @backlog @mc
+    Scenario: A client that only watches a terminal gets output as freely as one that types
+      Given a client watches a running terminal without typing into it
+      When the shell prints continuously
+      Then up to eight chunks or 64 KiB of output reach that client before it must acknowledge any
+      And it is held back like a client that types once it falls further behind
 
     @desktop
     Scenario: The desktop says what it has read in batches, not per chunk
@@ -130,6 +145,13 @@ Feature: Terminal input and output
       When a client resizes it to 80 columns and 24 rows
       Then the running program sees 80 columns and 24 rows
 
+    @backlog @desktop
+    Scenario: Releasing a resize drag tells the shell its new size at once
+      Given the user is dragging the divider beside a running terminal
+      When the user releases the drag at a narrower width
+      Then the shell is told the final size once, without waiting out the resize delay
+      And typing straight after the release lays out at the new width
+
     @mc
     Scenario: Clearing a terminal empties its history for every client
       Given a running terminal with output
@@ -152,6 +174,14 @@ Feature: Terminal input and output
       When a client closes it
       Then the shell is asked to stop first
       And the shell is killed if it is still running a second later
+
+    @mc @backlog
+    Scenario: A shell that stops when asked is not killed and the close does not wait
+      Given a running terminal whose shell stops as soon as it is asked
+      When a client closes it
+      Then the shell is asked to stop
+      And it is never killed
+      And the close finishes without waiting out the grace period
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (scoped runtime shutdown stops active terminals
     #   cleanly)
@@ -313,6 +343,40 @@ Feature: Terminal input and output
         | Copy   | the selected text is on the clipboard      |
         | Paste  | the clipboard text is sent to the shell    |
 
+    @backlog @desktop
+    Scenario: Select all in the terminal's menu selects the whole kept history
+      Given the terminal has more output than fits on screen
+      When the user chooses "Select all" from the terminal's menu and copies
+      Then all the output the terminal keeps is on the clipboard, including what is scrolled off screen
+
+    @backlog @desktop
+    Scenario Outline: The user reads the history without leaving the terminal's input
+      Given the terminal has more output than fits on screen and a shell prompt
+      When the user presses "<keys>" in the terminal
+      Then <outcome>
+      And the keys do not reach the shell
+
+      Examples:
+        | keys                  | outcome                                       |
+        | Shift+PageUp          | the terminal shows the page of history above  |
+        | Shift+PageDown        | the terminal shows the page of history below  |
+        | Mod+Shift+Home        | the terminal shows the oldest output it keeps |
+        | Mod+Shift+End         | the terminal shows the latest output          |
+        | Mod+A on macOS        | all the output the terminal keeps is selected |
+        | Ctrl+Shift+A on Linux | all the output the terminal keeps is selected |
+
+    @backlog @desktop
+    Scenario: History keys belong to a full-screen program
+      Given a full-screen program runs in the terminal
+      When the user presses "Shift+PageUp" or "Ctrl+A"
+      Then the program receives the keys
+
+    @backlog @desktop
+    Scenario: Jump to latest returns a scrolled-back terminal to its current output
+      Given the user has scrolled the terminal back into its history
+      When the user chooses "Jump to latest" from the terminal's menu
+      Then the terminal shows the live output again
+
     @desktop
     Scenario Outline: The usual copy and paste keys work in the terminal
       Given the terminal has a selection
@@ -388,6 +452,25 @@ Feature: Terminal input and output
       When the user drags a selection past the top of the terminal and holds it there
       Then the history keeps scrolling up
       And the selection grows with it
+
+    # Upstream #11305: on a touch screen a drag selected text instead of scrolling.
+    @backlog @desktop @mobile
+    Scenario Outline: A finger dragged up or down a terminal scrolls it instead of selecting
+      Given the terminal on a touch screen is showing <content>
+      When the user drags a finger down the terminal and back up
+      Then <outcome>
+      And no text is selected
+
+      Examples:
+        | content                  | outcome                                          |
+        | scrolled-back output     | the history scrolls back and forth with the finger |
+        | a full-screen program    | the program receives the scrolling                |
+
+    @backlog @desktop @mobile
+    Scenario: Touching a split terminal that is not active makes it active
+      Given the terminal is split in two and the left one is active
+      When the user touches the right one
+      Then the right terminal is active and has focus
 
     @desktop
     Scenario Outline: The Linux and Windows copy and paste keys work in the terminal

@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19538
+#   https://github.com/pingdotgg/t3code/pull/19521
+#   https://github.com/pingdotgg/t3code/pull/18459
+#   https://github.com/pingdotgg/t3code/pull/14416
+#   https://github.com/pingdotgg/t3code/pull/17028
+#   https://github.com/pingdotgg/t3code/pull/19102 (covered: a task's own worktree, cut from the caller's local commits)
+#   https://github.com/pingdotgg/t3code/pull/17696
+#   https://github.com/pingdotgg/t3code/pull/18065
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (subagent.updated, delegated_task.request,
 #     delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge,
@@ -151,6 +159,32 @@ Feature: Delegating tasks to subagents
       | the task asks for full access while "parent" is approval-required | runtime_mode_escalation_denied     |
       | the task asks for default mode while "parent" is in plan mode     | interaction_mode_escalation_denied |
 
+  @backlog @mc
+  Scenario: A task asking for an access mode its provider lacks is refused with the modes it has
+    Given "parent" is in full access
+    When the agent in "parent" delegates a task to Muse Code asking for auto-accept edits
+    Then the tool fails and lists the access modes Muse Code offers
+
+  @backlog @mc
+  Scenario: A task that inherits an access mode its provider lacks gets the broadest one it has
+    Given "parent" is in auto-accept edits
+    When the agent in "parent" delegates a task to Muse Code without naming an access mode
+    Then the subagent runs in the broadest mode Muse Code offers that does not exceed "parent"'s
+
+  @backlog @mc
+  Scenario: The orchestrator's capabilities list each provider's access modes
+    When an agent asks for the orchestrator's capabilities
+    Then each provider lists the access modes it offers
+
+  # Upstream #14416: agents asked for a read-only reviewer picked a supervised mode, and the
+  # child sat on its first approval with nobody to answer it.
+  @backlog @mc
+  Scenario: The delegation tool says a supervised access mode pauses the subagent
+    When an agent reads the description of delegate_task
+    Then it says to leave the access mode inherited unless the user asks for a supervised subagent
+    And that a supervised subagent waits for a person on each action that needs approval
+    And that a narrower mode is not a read-only switch, so a limit belongs in the task itself
+
   # A Claude subagent shares its thread's MCP credential; Claude names the tool call
   # behind each MCP call, which tells the subagent's calls from Claude's own.
   @mc
@@ -184,6 +218,44 @@ Feature: Delegating tasks to subagents
     When the agent in "parent" delegates a task and waits 1 second
     And the subagent is still working after 1 second
     Then the wait returns the task as working and says the wait timed out
+
+  @backlog @mc
+  Scenario: A wait returns as soon as the subagent asks a question it is blocked on
+    When the agent in "parent" delegates a task and waits
+    And the subagent asks the user a question and stops until it is answered
+    Then the wait returns the task as working with a pending question, not timed out
+    And the result tells the agent how to read and answer the question on the subagent's thread
+    And the task's later result still wakes "parent"
+    But a question the subagent asks while it keeps working does not end the wait
+    And neither does an approval
+
+  @backlog @mc @plugin-codex
+  Scenario: A Codex wait is not cut short by Codex's own tool time limit
+    Given thread "parent" runs on Codex
+    When the agent in "parent" delegates a task and waits 30 minutes
+    And the subagent is still working after 10 minutes
+    Then the wait is still open
+
+  @backlog @mc
+  Scenario: A subagent's question wakes the agent that delegated it
+    Given the agent in "parent" delegated a task and its turn has ended
+    When the subagent asks the user a question
+    Then "parent" is woken once with the task, the subagent's thread and the question
+    And it is told whether the subagent is blocked or still working
+    And a wake still queued when the question is answered is cancelled
+
+  @backlog @mc
+  Scenario Outline: A subagent's question does not wake its delegating agent when <why>
+    Given the agent in "parent" delegated a task
+    And <situation>
+    When the subagent asks the user a question
+    Then "parent" is not woken for it
+
+    Examples:
+      | why                               | situation                                       |
+      | the agent is waiting on the task  | the agent in "parent" is still waiting on it    |
+      | the parent is archived            | "parent" is archived                            |
+      | the user stopped the task         | the user stopped the task                       |
 
   @mc
   Scenario: A wait gives up before the caller's MCP client would
@@ -341,6 +413,28 @@ Feature: Delegating tasks to subagents
     When the command ends and the subagent's turn about it ends
     Then the work state is "result_available"
 
+  # Upstream #17028: a wake held for the user only the user can resume, so it is not work the task owes.
+  @backlog @mc
+  Scenario Outline: A task whose subagent's queued wakes are held for the user settles
+    Given the agent in "parent" delegated a task whose subagent has a pull request wake queued
+    When <event>
+    And the subagent's queued wake is held for the user
+    Then the task settles as "<status>" with that run as its result
+    And its status says no child runs are pending
+    And the held wake stays for the user to resume or discard
+
+    Examples:
+      | event                                   | status    |
+      | the user stops the subagent             | cancelled |
+      | the subagent's provider fails its turn  | failed    |
+
+  @backlog @mc
+  Scenario: A task left running behind a held wake settles when the MC starts
+    Given a task whose subagent's turn ended and whose only queued wake is held for the user
+    And the task is still "running"
+    When the MC restarts
+    Then the task settles with its subagent's last run as its result
+
   @mc
   Scenario: Checking a task that does not exist
     When the agent in "parent" asks for the status of task "node:subagent:none"
@@ -361,6 +455,19 @@ Feature: Delegating tasks to subagents
     When the agent cancels the task
     Then the subagent's turn is interrupted and the message behind it cancelled
     And the task is cancelled and its delivery disposed
+
+  @backlog @mc
+  Scenario Outline: A task that ends <ending> <fate> its subagent's open questions
+    Given the agent in "parent" delegated a task whose subagent asked a question and kept working
+    When the task ends <ending>
+    Then the question is <state>
+
+    Examples:
+      | ending      | fate   | state                    |
+      | cancelled   | closes | dismissed                |
+      | interrupted | closes | dismissed                |
+      | completed   | keeps  | still open to be answered |
+      | failed      | keeps  | still open to be answered |
 
   @mc
   Scenario: Cancelling a finished task is refused
@@ -771,3 +878,20 @@ Feature: Delegating tasks to subagents
     When the parent wants the child to review again
     Then the instructions tell it to start a new delegated task with the full context and a new request id
     And cancelling the finished task leaves later runs of the child thread alone
+
+  # Upstream #17696: a message to a finished subagent reused its task, so the follow-up's
+  # result overwrote the first one or was never delivered.
+  @backlog @mc
+  Scenario: A follow-up sent to a finished subagent is a task of its own
+    Given "parent" delegated "task-1", which finished with the answer "Found 3 bugs"
+    When "parent" sends the subagent "Fix them" in the same child thread
+    Then a new task tracks the follow-up in that thread
+    And "task-1" still finishes with "Found 3 bugs"
+    And the follow-up's status, result and completion reach "parent" on their own
+
+  @backlog @mc
+  Scenario: Reading a follow-up task gives its own run's result
+    Given a finished subagent's thread ran "task-1" and then the follow-up "task-2"
+    When "parent" asks for the status and result of "task-1"
+    Then it gets "task-1"'s run, not the later one
+    And a follow-up continued after a restart stays the task it was

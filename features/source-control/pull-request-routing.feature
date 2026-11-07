@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19692
+#   https://github.com/pingdotgg/t3code/pull/17729
 #   https://github.com/pingdotgg/t3code/pull/12537
 #   docs/user/source-control.md (GitHub sharing across environments)
 #   packages/contracts/src/pullRequest.ts (PullRequestRouting, PullRequestRoutingIdentity, expectedAccountId, allowStale)
@@ -125,6 +127,30 @@ Feature: Sharing GitHub access between environments
     When the user comments on it from the local environment
     Then the next read of that pull request through "build-box" asks GitHub again
 
+  # Upstream #17729: only the thread's own environment updates its link, and a settled
+  # thread no longer polls, so a state seen through another environment never reached it.
+  @backlog @mc @desktop @mobile
+  Scenario: A pull request state seen through another environment reaches the thread that links it
+    Given the settled thread "t1" on the local environment links pull request 42, last seen open
+    And pull request 42 has since been closed
+    When the user opens it and it is read through "build-box"
+    Then the local environment is told "build-box" saw it closed
+    And it reads pull request 42 from GitHub itself before changing "t1"'s link
+    And "t1"'s tab, sidebar badge and tooltip show it closed
+
+  @backlog @mc
+  Scenario: A state told by another environment is checked at most once in five minutes
+    Given "build-box" told the local environment that pull request 42 is closed two minutes ago
+    When "build-box" tells it the same again
+    Then the local environment does not read pull request 42 from GitHub again
+
+  @backlog @mc
+  Scenario: A wrong state told by another environment changes nothing on its own
+    Given pull request 42 is open on GitHub
+    When "build-box" tells the local environment that pull request 42 is merged
+    Then the local environment reads pull request 42 from GitHub once
+    And the thread's link still shows it open
+
   # Legacy: packages/client-runtime/src/state/pullRequestRouting.ts (Effect.map projectId)
   @backlog @desktop @mobile
   Scenario: A pull request read through another environment belongs to the project it was opened from
@@ -158,6 +184,14 @@ Feature: Sharing GitHub access between environments
     Given "build-box" has no project on "git.example.test"
     When a client asks for pull request 7 of "team/app" on "git.example.test"
     Then the answer is that the provider is unsupported there
+
+  @backlog @mc
+  Scenario: Which tool owns an unrecognised host is asked once in five minutes
+    Given the projects "web" and "api" have remotes on "acme.ghe.com", a host the MC does not recognise
+    When pull requests are read for both projects twice within five minutes
+    Then each hosting tool is asked about "acme.ghe.com" only once
+    And a tool that timed out or failed is asked again next time
+    And saving a credential or turning a host on or off in Settings asks again
 
   @backlog @mc
   Scenario: An account that cannot be told is refused

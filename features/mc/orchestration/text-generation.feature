@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15615
+#   https://github.com/pingdotgg/t3code/pull/17058
+#   https://github.com/pingdotgg/t3code/pull/18781
+#   https://github.com/pingdotgg/t3code/pull/19386
+#   https://github.com/pingdotgg/t3code/pull/19394
 #   apps/server-ex/lib/hal_c2/text_generation.ex (model selection, fallback, thread titles,
 #     branch names, output normalization)
 #   apps/server-ex/lib/hal_c2/text_generation/prompts.ex, style.ex
@@ -84,6 +89,28 @@ Feature: Generated titles, branch names and source control text
       | "grok"        | "grok-build"       |
       | "opencode"    | "openai/gpt-5"     |
 
+  # Upstream #18781 moved Claude's default writer from Haiku 4.5 to Haiku 5.5. Replaces the
+  # "claudeAgent" row above once the MC carries it.
+  @backlog @mc
+  Scenario: Claude falls back to writing with Haiku 5.5
+    Given the text model's provider cannot be used and only "claudeAgent" is installed and enabled
+    When a title is generated
+    Then "claudeAgent" writes it with "claude-haiku-5-5"
+
+  @backlog @mc
+  Scenario: A saved Haiku 4.5 text model is kept
+    Given the text generation model was saved as "claude-haiku-4-5" on "claudeAgent"
+    When a title is generated
+    Then "claudeAgent" writes it with "claude-haiku-4-5"
+
+  @backlog @mc
+  Scenario: The fallback uses the thread's custom model where the built-in default could be refused
+    Given no usable text generation model is chosen
+    And the default thread model is "router/claude-guarded", a custom model of the Claude instance text falls back to
+    When a commit message is generated
+    Then "claudeAgent" writes it with "router/claude-guarded" and that model's options
+    But when the default thread model is a built-in one the fallback still uses "claude-haiku-5-5"
+
   @mc
   Scenario: No usable provider at all
     Given no provider that can write text is installed and enabled
@@ -114,6 +141,13 @@ Feature: Generated titles, branch names and source control text
     When "claudeAgent" writes a title
     Then it runs in a new temporary folder that is removed afterwards
     And the user's hooks, slash commands and MCP servers are not loaded
+
+  @backlog @mc
+  Scenario: Codex writes without the user's MCP servers, plugins or apps
+    Given the user's Codex configuration enables the MCP server "augmenter"
+    When "codex" writes a branch name for a prompt that asks to call "augmenter"
+    Then "augmenter" is not started and nothing reaches it
+    And the branch name is still written when Codex cannot list its MCP servers
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("runs Claude text generation with the configured CLAUDE_CONFIG_DIR")
   # Likely already implemented: apps/server-ex/lib/hal_c2/text_generation.ex (claude_command per instance)
@@ -237,6 +271,13 @@ Feature: Generated titles, branch names and source control text
       | claudeAgent   | with no output     | Claude CLI command failed with code 1. |
       | codex         | after printing "x" | Codex CLI command failed: x            |
       | codex         | with no output     | Codex CLI command failed with code 1.  |
+
+  @backlog @mc @plugin-claude
+  Scenario: A failed Claude writer shows the error Claude reported, not a wrapper's notice
+    Given the claude command runs through a wrapper that prints a notice on its error output
+    When a title is generated and Claude's result reports "API Error: 400 Model blocked by guardrail"
+    Then it fails saying "API Error: 400 Model blocked by guardrail"
+    And the wrapper's notice is not the failure shown
 
   # Legacy: apps/server/src/textGeneration/TextGenerationUtils.ts (normalizeCliError), TextGenerationPrompts.test.ts
   @backlog @mc
@@ -485,6 +526,21 @@ Feature: Generated titles, branch names and source control text
       | "--leading and trailing--"   | "leading-and-trailing"   |
       | 100 letters                  | the first 64 letters     |
       | "!!!"                        | "update"                 |
+
+  # Upstream #15615. A suggested namespace such as fix/ is kept instead of nested under
+  # feature/; only a name with no namespace gets feature/.
+  @backlog @mc
+  Scenario Outline: A generated branch keeps the namespace the writer chose
+    Given the repository has the branches <existing>
+    When the writing agent answers the branch <raw> for a new branch
+    Then the new branch is <branch>
+
+    Examples:
+      | existing                 | raw                          | branch                          |
+      | "main"                   | "fix/calendar-filter"        | "fix/calendar-filter"           |
+      | "main"                   | "calendar-filter"            | "feature/calendar-filter"       |
+      | "main" and "fix"         | "fix/calendar-filter"        | "fix-2/calendar-filter"         |
+      | "main" and "fix/calendar-filter" | "fix/calendar-filter" | "fix/calendar-filter-2"         |
 
   @mc @plugin-pi
   Scenario: Pi can write titles and branch names

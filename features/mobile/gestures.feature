@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17648
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe actions, long-press menu)
 #   apps/mobile/src/features/threads/threadListV2.ts (drag between sections)
 #   apps/mobile/src/state/thread-order.ts, apps/mobile/src/features/threads/threadOrder.ts (drop labels, arrangement held until confirmed)
@@ -263,6 +264,13 @@ Feature: Touch gestures on a phone
     Given the user is reading a thread with a wide code block scrolled to its start
     When the user swipes from the leading edge over the code block
     Then the user goes back instead of scrolling the code block
+
+  @backlog @mobile
+  Scenario: A back swipe that starts on a row does not also press the row
+    Given the user opened Settings and the environment row is under their finger
+    When the user swipes back starting on that row, or starts the swipe and cancels it
+    Then the environment's details do not open
+    And a plain tap on the row afterwards opens them
 
   @backlog @mobile @priority-low
   Scenario: A code block scrolled away from its start still scrolls first
