@@ -173,6 +173,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | a subagent            |
       | a background task     |
 
+  # Open in #1179.
   @backlog @mc
   Scenario: A shutdown releases every provider session at once
     Given ten threads have provider sessions open
@@ -181,7 +182,7 @@ Feature: Recovering from restarts and releasing idle sessions
     And none is left running for the next MC to resume beside it
 
   # Upstream #12513: helpers that ignored SIGTERM hung shutdown and survived the backend;
-  # they are now killed a second after the stop request.
+  # they are now killed a second after the stop request. Open in #1179.
   @backlog @mc
   Scenario: A helper process that ignores the stop request does not outlive the MC
     Given a provider's helper process ignores the request to stop
@@ -284,7 +285,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | "t1" is settled                                                |
       | "t1" is snoozed until tomorrow                                 |
 
-    # The MC has no secret requests yet: no provider adapter asks for one.
+    # The MC has no secret requests yet: no provider adapter asks for one (#1182).
     @backlog
     Examples:
       | reason                                                         |
@@ -383,6 +384,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | launches a subagent in the background     |
       | reports progress on a subagent it resumed |
 
+  # Open in #1180.
   @backlog @mc @plugin-claude
   Scenario: A Claude workflow that keeps reporting progress outlives the background cap
     Given thread "t1" left a Claude workflow running in the background
@@ -704,7 +706,8 @@ Feature: Recovering from restarts and releasing idle sessions
     And its background cleanup note reaches the provider once, on the next manual turn
 
   # Upstream #19750: work a subagent started belongs to that subagent, so losing it leaves
-  # the parent waiting on the subagent. The note names the subagent to resume.
+  # the parent waiting on the subagent. The note names the subagent to resume. Open in
+  # #1181, with the Codex scenario after it.
   @backlog @mc @plugin-claude
   Scenario: A restart that cut a Claude subagent's background command wakes the thread
     Given "continue threads after restarts" is on
