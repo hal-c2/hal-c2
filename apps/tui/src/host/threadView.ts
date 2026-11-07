@@ -278,6 +278,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       cellPixels: cellPixels(),
       diagrams: diagrams.get,
       codeColours: codeColours.lines,
+      commandOutput: (id) => commandOutputs.get(id)?.text ?? null,
       workspaceRoot:
         detail?.worktreePath ??
         store.getState().shell?.projects.find((project) => project.id === detail?.projectId)
@@ -388,6 +389,87 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const requestScroll = (to: "top" | "bottom" | null, by = 0) => {
     scrollSeq += 1;
     state.set("timelineScroll", { seq: scrollSeq, to, by });
+  };
+
+  // --- command output -----------------------------------------------------
+
+  /** What an opened command showed last, and which version of the item that was. */
+  const commandOutputs = new Map<
+    string,
+    { text: string | null; key: string; at: number; timer: ReturnType<typeof setTimeout> | null }
+  >();
+  /** Fewest ms between two fetches of one command's output while it prints. */
+  const COMMAND_OUTPUT_MS = 100;
+
+  /** The command's turn item as the thread holds it now. */
+  const commandItem = (id: string): Record<string, unknown> | null => {
+    for (const activity of detail?.activities ?? []) {
+      const item = (activity.payload as { turnItem?: Record<string, unknown> } | null)?.turnItem;
+      if (item?.id === id) return item;
+    }
+    return null;
+  };
+
+  /**
+   * Fetches an opened command's output when what the thread says of it moved: more
+   * printed, or it ended. While it prints, at most every `COMMAND_OUTPUT_MS`.
+   */
+  const syncCommand = (id: string) => {
+    if (!detail || !view.openCommands.has(id)) return;
+    const item = commandItem(id);
+    const key = `${String(item?.status)}:${String(item?.outputSize ?? "")}`;
+    const held = commandOutputs.get(id);
+    if (held?.key === key) return;
+    if (held?.timer) return;
+    const wait = held ? held.at + COMMAND_OUTPUT_MS - Date.now() : 0;
+    const fetchNow = () => {
+      const current = commandOutputs.get(id);
+      if (current) current.timer = null;
+      if (!detail || !view.openCommands.has(id)) return;
+      const latest = commandItem(id);
+      const latestKey = `${String(latest?.status)}:${String(latest?.outputSize ?? "")}`;
+      const threadId = detail.id;
+      commandOutputs.set(id, {
+        text: current?.text ?? null,
+        key: latestKey,
+        at: Date.now(),
+        timer: null,
+      });
+      client.getCommandOutput(threadId as never, id).then(
+        ({ output }) => {
+          const now = commandOutputs.get(id);
+          if (!now || detail?.id !== threadId) return;
+          now.text = output;
+          publishTimeline();
+          syncCommand(id);
+        },
+        () => {
+          const now = commandOutputs.get(id);
+          if (now) now.key = "";
+        },
+      );
+    };
+    if (wait > 0) {
+      const timer = setTimeout(fetchNow, wait);
+      if (held) held.timer = timer;
+    } else {
+      fetchNow();
+    }
+  };
+
+  const toggleCommand = (id: string) => {
+    const open = new Set(view.openCommands);
+    if (open.has(id)) {
+      open.delete(id);
+      const held = commandOutputs.get(id);
+      if (held?.timer) clearTimeout(held.timer);
+      commandOutputs.delete(id);
+      setView({ openCommands: open });
+      return;
+    }
+    open.add(id);
+    setView({ openCommands: open });
+    syncCommand(id);
   };
 
   const setView = (next: Partial<TimelineView>) => {
@@ -975,6 +1057,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       question = { ...NO_QUESTION, requestId };
       answering = null;
     }
+    if (threadChanged) {
+      for (const held of commandOutputs.values()) if (held.timer) clearTimeout(held.timer);
+      commandOutputs.clear();
+    }
+    for (const id of view.openCommands) syncCommand(id);
     publishTimeline();
     settleOlderPage();
     publishInteraction();
@@ -1068,6 +1155,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       }
       case "timeline.workGroup.toggle":
         setView({ expandedGroups: toggled(view.expandedGroups, String(field(payload, "id"))) });
+        return true;
+      case "command.toggle":
+        toggleCommand(String(field(payload, "id")));
         return true;
       case "timeline.fold.toggle":
         setView({ expandedFolds: toggled(view.expandedFolds, String(field(payload, "id"))) });

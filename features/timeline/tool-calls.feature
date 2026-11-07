@@ -378,7 +378,7 @@ Feature: Tool calls and file changes
     Then the details show its input
     And no exit code is shown
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: An opened command shows its output while it runs
     Given the agent's command is still running and printing
     When the user opens the command's details
@@ -394,7 +394,7 @@ Feature: Tool calls and file changes
     Then the whole command is shown
     And no details are offered when the command fits
 
-  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A finished command's output is fetched when it is opened
     Given the agent ran a command that finished
     When the user opens the command's details

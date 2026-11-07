@@ -81,6 +81,8 @@ export interface TimelineView {
   /** Turn folds the user flipped from how they start (folded, or open for `openTurns`). */
   readonly expandedFolds: ReadonlySet<string>;
   readonly expandedMessages: ReadonlySet<string>;
+  /** Commands opened into their output, by turn item id. */
+  readonly openCommands: ReadonlySet<string>;
   /** Collapsed changed-files folders, keyed by checkpoint turn count. */
   readonly collapsedDirs: ReadonlyMap<number, ReadonlySet<string>>;
   /** End of the mounted window; null follows the latest row. */
@@ -97,6 +99,7 @@ export const EMPTY_TIMELINE_VIEW: TimelineView = {
   expandedGroups: new Set(),
   expandedFolds: new Set(),
   expandedMessages: new Set(),
+  openCommands: new Set(),
   collapsedDirs: new Map(),
   windowEnd: null,
 };
@@ -221,6 +224,8 @@ export interface TimelineInput {
   readonly diagrams?: (source: string) => MermaidRenderResult | undefined;
   /** Colours a reply's code by its language (`codeColours.ts`); without it code is one colour. */
   readonly codeColours?: CodeColouring;
+  /** A command's output as fetched (`orchestration.getCommandOutput`); null until it arrives. */
+  readonly commandOutput?: (itemId: string) => string | null;
   /** Where the thread works; a file change in it is named relative to it. */
   readonly workspaceRoot?: string | null;
   /** How this device writes times (default: the locale's). */
@@ -300,6 +305,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     diagrams: input.diagrams ?? null,
     codeColours: input.codeColours,
     workspaceRoot: input.workspaceRoot ?? null,
+    commandOutput: input.commandOutput ?? (() => null),
     nowMs: input.nowMs,
     timestampFormat: input.timestampFormat ?? "locale",
     withMeta: repliesWithMeta(detail),
@@ -510,6 +516,7 @@ interface RowContext {
   readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
   readonly codeColours: CodeColouring | undefined;
   readonly workspaceRoot: string | null;
+  readonly commandOutput: (itemId: string) => string | null;
   readonly nowMs: number;
   readonly timestampFormat: TimestampFormat;
   /** The replies that end a settled turn, which carry its time and actions. */
@@ -981,11 +988,11 @@ function workGroupLines(
   const expanded = ctx.view.expandedGroups.has(id);
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
-  const lines = visible.map((entry) => callLine(entry, toolRow(entry, ctx)));
+  const lines = visible.flatMap((entry) => callLines(entry, toolRow(entry, ctx), ctx));
   if (hasOverflow && !expanded) {
     // One live row: the latest call, and how many came before it beside it. It opens
     // into every call.
-    const [latest] = lines;
+    const [latest, ...output] = lines;
     return [
       line(latest!.text, latest!.action, latest!.payload, {
         text: styled(
@@ -994,6 +1001,7 @@ function workGroupLines(
         action: "timeline.workGroup.toggle",
         payload: { id },
       }),
+      ...output,
     ];
   }
   if (hasOverflow) {
@@ -1012,12 +1020,37 @@ function workGroupLines(
 
 // A subagent's row opens the thread it works in.
 // A file change's row opens its diff.
-const callLine = (entry: WorkLogEntry, text: StyledText): TimelineLine =>
-  entry.childThreadId
-    ? line(text, "thread.open", { key: threadKey(entry.childThreadId) })
-    : entry.diff
-      ? line(text, "diff.item", { id: entry.id })
-      : line(text);
+// A command's row opens into its output, below the call and muted.
+function callLines(entry: WorkLogEntry, text: StyledText, ctx: RowContext): TimelineLine[] {
+  if (entry.childThreadId)
+    return [line(text, "thread.open", { key: threadKey(entry.childThreadId) })];
+  if (entry.diff) return [line(text, "diff.item", { id: entry.id })];
+  const item = entry.item;
+  if (item?.type !== "command_execution" || typeof item.id !== "string") return [line(text)];
+  const id = item.id;
+  const open = ctx.view.openCommands.has(id);
+  const head = line(text, "command.toggle", { id });
+  if (!open) return [head];
+  const output = ctx.commandOutput(id);
+  const body =
+    output === null ? ["Loading output…"] : output === "" ? ["No output"] : tailLines(output);
+  return [
+    head,
+    ...body.map((row) =>
+      line(styled(chunk(`    ${clip(row, Math.max(8, ctx.width - 6))}`, { fg: ctx.palette.dim }))),
+    ),
+  ];
+}
+
+/** The last lines of an output: what an opened command shows. */
+const COMMAND_OUTPUT_LINES = 200;
+function tailLines(output: string): string[] {
+  const rows = output.replace(/\n$/, "").split("\n");
+  const shown = rows.slice(-COMMAND_OUTPUT_LINES);
+  return shown.length < rows.length
+    ? [`… ${rows.length - shown.length} earlier lines`, ...shown]
+    : shown;
+}
 
 /**
  * A finished turn's group of calls: what they did in one sentence, marked when
@@ -1043,7 +1076,9 @@ function summarizedGroupLines(
   if (!expanded) return [head];
   return [
     head,
-    ...entries.map((entry) => callLine(entry, toolRow(entry, ctx, callShown(entry, ctx)))),
+    ...entries.flatMap((entry) =>
+      callLines(entry, toolRow(entry, ctx, callShown(entry, ctx)), ctx),
+    ),
   ];
 }
 

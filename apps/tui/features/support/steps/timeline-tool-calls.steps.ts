@@ -30,12 +30,15 @@ interface ToolWorld extends TurnWorld {
 
 /** The newest tool call's row: the last line of the last work group that is not its toggle. */
 function lastCall(ctx: TurnWorld) {
-  const row = lastOf(ctx, "work").lines.findLast((line) => line.action === null);
+  const row = lastOf(ctx, "work").lines.findLast(isCallRow);
   if (!row) throw new Error("the work group shows no tool call");
   return row;
 }
 
-const callRows = (group: ShownItem) => group.lines.filter((line) => line.action === null);
+// A command's row opens its output; its output lines below it are not calls.
+const isCallRow = (line: ShownItem["lines"][number]) =>
+  line.action === null || line.action === "command.toggle";
+const callRows = (group: ShownItem) => group.lines.filter(isCallRow);
 
 // --- groups of calls -------------------------------------------------------------------
 
@@ -775,4 +778,75 @@ step("the diff shows only {string}", async (ctx: ToolWorld, path: string) => {
   for (const other of ctx.changedFiles!.filter((entry) => entry !== path)) {
     expect(screen).not.toContain(other);
   }
+});
+
+// --- a command's output --------------------------------------------------------------------
+
+interface CommandWorld extends TurnWorld {
+  /** What the MC would answer `orchestration.getCommandOutput` with. */
+  printed?: string;
+}
+
+/** The MC's answer to a command's output is whatever the scenario says it has printed. */
+function servesOutput(ctx: CommandWorld, running: boolean) {
+  ctx.fake!.override("getCommandOutput", async () => ({ output: ctx.printed ?? "", running }));
+}
+
+step("the agent's command is still running and printing", async (ctx: CommandWorld) => {
+  await startRun(ctx);
+  ctx.printed = "compiling\nlinking\n";
+  servesOutput(ctx, true);
+  await addCommand(ctx, 1, "running");
+  await setItem(ctx, "call-1", { outputSize: ctx.printed.length });
+});
+
+step("the agent ran a command that finished", async (ctx: CommandWorld) => {
+  await startRun(ctx);
+  ctx.printed = "3 passed\n";
+  servesOutput(ctx, false);
+  await addCommand(ctx, 1);
+});
+
+step("the user opens the command's details", async (ctx: CommandWorld) => {
+  await clickText(ctx, "bun test cart-1");
+});
+
+step("the output printed so far is shown", async (ctx: CommandWorld) => {
+  const screen = await snapshot(ctx);
+  expect(screen).toContain("compiling");
+  expect(screen).toContain("linking");
+});
+
+step("new output is added as it is printed, at most every 100 ms", async (ctx: CommandWorld) => {
+  const before = recorded(ctx, "getCommandOutput").length;
+  // Five bursts of output inside one window are one fetch, not five.
+  for (const word of ["a", "b", "c", "d", "e"]) {
+    ctx.printed = `${ctx.printed ?? ""}${word}\n`;
+    await setItem(ctx, "call-1", { outputSize: ctx.printed.length });
+  }
+  expect(recorded(ctx, "getCommandOutput").length - before).toBeLessThanOrEqual(2);
+  // The window is the one thing here that is time itself.
+  await Bun.sleep(150);
+  await settle();
+  const screen = await snapshot(ctx);
+  for (const word of ["a", "b", "c", "d", "e"]) expect(screen).toContain(`    ${word}`);
+});
+
+step(
+  "once the command ends the output is replaced by the output the thread kept",
+  async (ctx: CommandWorld) => {
+    ctx.printed = "the kept output\n";
+    servesOutput(ctx, false);
+    await setItem(ctx, "call-1", { status: "completed", output: "", exitCode: 0 });
+    await Bun.sleep(150);
+    await settle();
+    const screen = await snapshot(ctx);
+    expect(screen).toContain("the kept output");
+    expect(screen).not.toContain("compiling");
+  },
+);
+
+step("the command's final output is shown", async (ctx: CommandWorld) => {
+  expect(recorded(ctx, "getCommandOutput").map(([, item]) => item)).toEqual(["call-1"]);
+  expect(await snapshot(ctx)).toContain("3 passed");
 });
