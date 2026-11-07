@@ -436,12 +436,12 @@ std::string sectionOf(const Model& model, const std::string& key) {
 }
 
 // What the shell redoes on every refresh: a scope whose project went shows
-// everything once every environment is online to say it went, and only
-// listed rows stay selected.
+// everything, offline members or not (every scope here was picked from the
+// list; only one restored at start waits for them), and only listed rows stay
+// selected.
 void normalize(Model& model) {
   if (!model.connected) return;
-  const bool reported = std::all_of(model.environments.begin(), model.environments.end(), [](const auto& entry) { return entry.second.online; });
-  if (model.scope && reported && !groupExists(model.environments, *model.scope)) model.scope.reset();
+  if (model.scope && !groupExists(model.environments, *model.scope)) model.scope.reset();
   const std::vector<std::string> listed = orderedKeys(model);
   std::erase_if(model.selected, [&listed](const std::string& key) { return std::find(listed.begin(), listed.end(), key) == listed.end(); });
 }

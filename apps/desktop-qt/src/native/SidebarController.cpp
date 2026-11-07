@@ -100,9 +100,11 @@ void SidebarController::refresh() {
     if (kept.isString() && !kept.toString().isEmpty()) m_scope = kept.toString();
   }
   // A scope whose project went away (removed, regrouped) shows everything
-  // again, but only once every environment has said what projects it has: a
-  // cached or unreachable one cannot tell that the project is gone.
-  if (m_scope && group(*m_scope) == nullptr && projectsReported()) {
+  // again. One restored from the preferences and not seen yet this run waits
+  // until every environment has said what projects it has: a cached or
+  // unreachable one cannot tell that the project is gone.
+  if (m_scope && !m_store->previewing() && m_store->synchronized() && group(*m_scope) != nullptr) m_scopeSeen = true;
+  if (m_scope && group(*m_scope) == nullptr && (m_scopeSeen || projectsReported())) {
     m_scope.reset();
     rememberScope();
   }
@@ -289,6 +291,8 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
     const QVariant projectKey = map.value(QStringLiteral("projectKey"));
     m_scope = projectKey.typeId() == QMetaType::QString ? sidebar::Nullable(projectKey.toString())
                                                         : std::nullopt;
+    // Picked from the projects listed now.
+    m_scopeSeen = true;
     rememberScope();
     refresh();
     return true;

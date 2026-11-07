@@ -182,6 +182,10 @@ private:
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   bool m_scopeRestored = false;
+  // Whether a synchronized MC has listed the scope's project this run (or the
+  // user picked it): only a restored one not seen yet waits for every
+  // environment. A cached listing does not count.
+  bool m_scopeSeen = false;
   sidebar::View m_view;
   qsizetype m_settledPage = sidebar::kSettledPage;
   qsizetype m_settledShown = sidebar::kSettledPage;
