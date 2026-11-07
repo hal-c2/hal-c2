@@ -18,6 +18,7 @@
 #   docs/internals/glossary.md
 #   https://github.com/pingdotgg/t3code/pull/14104
 #   https://github.com/pingdotgg/t3code/pull/27990
+#   https://github.com/pingdotgg/t3code/pull/29853
 Feature: Thread lifecycle in the orchestration engine
   A thread is the durable conversation for a project. The engine creates it,
   records its metadata, and moves it between active, archived and deleted, with
@@ -220,6 +221,19 @@ Feature: Thread lifecycle in the orchestration engine
     Given the user answered a question in thread "t1" with an attached file
     When a client deletes "t1"
     Then the attached file and its extracted text are removed from the MC's attachment storage
+
+  # Upstream #29853: an agent's preview recordings stayed in attachment storage after their thread or project was deleted.
+  @mc @backlog @priority-low
+  Scenario Outline: Deleting a thread removes the agent's preview recordings
+    Given an agent in thread "t1" recorded the preview
+    When a client deletes <what>
+    Then the recording is removed from the MC's attachment storage
+    But a recording of the thread "t1" was forked from is kept
+
+    Examples:
+      | what                  |
+      | "t1"                  |
+      | the project of "t1"   |
 
   @mc @backlog
   Scenario: Cleanup after deleting a thread is finished after a restart

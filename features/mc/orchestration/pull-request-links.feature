@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24803
 #   https://github.com/pingdotgg/t3code/pull/14626
 #   https://github.com/pingdotgg/t3code/pull/18854
 #   https://github.com/pingdotgg/t3code/pull/20223
@@ -8,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/13463
 #   https://github.com/pingdotgg/t3code/pull/13689
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/30071
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink,
 #     thread.pull-request-link.sync, thread.pull-request.sync, thread.pull-request-synced,
 #     thread.metadata.update linkedPullRequest)
@@ -210,6 +212,15 @@ Feature: Pull requests linked to a thread
     When the MC looks for branch pull requests
     Then the pull request of "feature/x" is looked up from the folder of "demo"
 
+  # Upstream #24803: a worktree folder that was left without its .git sent the branch look-ups and
+  # the auto-settle sweep to a folder git could not read, so they found nothing.
+  @backlog @mc
+  Scenario: Discovery reads from the project folder when the worktree folder is no checkout
+    Given thread "t1" is in a worktree folder that still exists but no longer has a .git
+    When the MC looks for branch pull requests
+    Then the pull request of "feature/x" is looked up from the folder of "demo"
+    And the auto-settle sweep reads the pull request of "t1" from the folder of "demo" too
+
   # A thread in the project folder shares its checkout, so a branch that stops
   # showing a pull request there says nothing about work that already landed.
   @mc
@@ -358,6 +369,34 @@ Feature: Pull requests linked to a thread
     And "acme/app#12" was reopened on the host
     When the sync sweep runs 15 minutes after the last read
     Then thread "t1" shows "acme/app#12" as open
+
+  # Upstream #30071: closed links on unsettled threads were read every 15 minutes for as long as
+  # the thread stayed unsettled. Replaces the "closed | active | 15 minutes" row above, and the
+  # sweep in "A closed pull request that was reopened is noticed", for links closed over a day ago.
+  @backlog @mc
+  Scenario Outline: A pull request closed over a day ago leaves the sweep
+    Given pull request "acme/app#12" is linked to the active thread "t1" and its last read said closed <when>
+    When the sync sweep runs 15 minutes after the last read
+    Then the host <asked> about "acme/app#12"
+
+    Examples:
+      | when                       | asked        |
+      | 8 days ago                 | is not asked |
+      | an hour ago                | is asked     |
+      | without saying when        | is asked     |
+
+  # Upstream #30071: a reopened pull request is still picked up once it has left the sweep.
+  @backlog @mc
+  Scenario Outline: A pull request that left the sweep is read again when something asks
+    Given pull request "acme/app#12" is linked to "t1" and its last read said closed 8 days ago
+    When <what>
+    Then the MC reads "acme/app#12" from the host
+
+    Examples:
+      | what                                                        |
+      | a client asks to refresh "acme/app#12"                      |
+      | a branch status look-up sees "acme/app#12" open             |
+      | the user closes or merges "acme/app#12" from HAL-C2         |
 
   @mc
   Scenario: Archived threads' pull requests are not read

@@ -231,6 +231,7 @@ void ComposerController::activate() {
   connect(shell->controller<ThreadStore>(), &ThreadStore::activeThreadChanged, this, &ComposerController::follow);
   // A draft opened, renewed or promoted in any window.
   connect(shell->controller<DraftController>(), &DraftController::changed, this, &ComposerController::publish);
+  connect(shell->controller<DraftController>(), &DraftController::started, this, &ComposerController::carryInto);
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
@@ -992,6 +993,13 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   if (m_launching.contains(draftId)) return true;
 
   const WorkspaceController::Launch where = shell->controller<WorkspaceController>()->launch(draftId);
+  // A draft whose project is gone (its machine left, or the project went
+  // before the draft heard) keeps its prompt for another project.
+  if (where.problem.isEmpty() && !m_store->project(where.environmentId + QLatin1Char(':') + where.projectId)) {
+    shell->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Choose a project first"),
+                                               QStringLiteral("This draft no longer points to an available project."));
+    return true;
+  }
   if (!where.problem.isEmpty()) {
     toast(QStringLiteral("Could not create thread"), where.problem);
     return true;
@@ -1176,6 +1184,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
     // One model left is the draft's model again.
     if (!models.isEmpty()) kept.modelSelection = models.constFirst();
     kept.multipleModels.reset();
+    kept.carried = false;
   } else {
     // Each model's thread starts in a worktree of its own.
     if (!kept.multipleModels) m_bridge->dispatch(QStringLiteral("workspace.envMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("worktree")}});
@@ -2711,13 +2720,7 @@ QJsonObject ComposerController::newThreadSelection(const QString& environmentId,
   const auto setting = [settings](const QString& path) {
     return settings ? QJsonValue::fromVariant(settings->value(path)).toObject() : QJsonObject();
   };
-  QJsonObject selection;
-  if (!projectId.isEmpty()) {
-    selection = setting(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(projectId));
-    if (selection.isEmpty()) {
-      selection = m_store->projectRow(environmentId, projectId).value(QLatin1String("defaultModelSelection")).toObject();
-    }
-  }
+  QJsonObject selection = projectSelection(environmentId, projectId);
   if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
   // A page's ask then takes the model of the user's latest thread in its project,
   // from the threads the MC counts (page_agent.ex): not those a plugin or an agent
@@ -2745,6 +2748,51 @@ QJsonObject ComposerController::newThreadSelection(const QString& environmentId,
     }
   }
   return selection;
+}
+
+QJsonObject ComposerController::projectSelection(const QString& environmentId, const QString& projectId) const {
+  if (projectId.isEmpty()) return {};
+  if (const auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    const QJsonObject own =
+        QJsonValue::fromVariant(settings->value(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(projectId))).toObject();
+    if (!own.isEmpty()) return own;
+  }
+  return m_store->projectRow(environmentId, projectId).value(QLatin1String("defaultModelSelection")).toObject();
+}
+
+// A new thread (DraftController::started names `from` only then) opened on a
+// draft with nothing of its own (just created, or never written or picked in,
+// or holding only what an earlier new thread carried) takes the mode as
+// picked there or as the thread has it, and the model the same way unless
+// the project has a default model of its own. A draft the user has started
+// on keeps what it has.
+void ComposerController::carryInto(const QString& draftId, const QString& from) {
+  if (from.isEmpty() || from == draftId) return;
+  const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(draftId);
+  if (!kept) return;
+  const Draft before = m_drafts.value(draftId);
+  const bool picked = !before.carried && (before.modelSelection || !before.interactionMode.isEmpty());
+  if (!kept->text.isEmpty() || picked || before.multipleModels || !before.attachments.isEmpty() || !before.excerpts.isEmpty()) {
+    return;
+  }
+  const auto thread = m_store->thread(from);
+  const Draft source = m_drafts.value(from);
+  Draft draft = before;
+  // The mode the composer showed there.
+  draft.interactionMode = interactionModeOf(from);
+  draft.modelSelection.reset();
+  if (projectSelection(kept->environmentId, kept->projectId).isEmpty()) {
+    const QJsonObject model = source.modelSelection.value_or(thread ? thread->modelSelection : QJsonObject());
+    if (!model.isEmpty()) draft.modelSelection = model;
+  }
+  draft.carried = true;
+  if (draft.interactionMode == before.interactionMode && draft.modelSelection == before.modelSelection &&
+      before.carried) {
+    return;
+  }
+  m_drafts.insert(draftId, draft);
+  save();
+  publish();
 }
 
 QString ComposerController::openPage() const {
@@ -2805,7 +2853,9 @@ QJsonObject ComposerController::imageSelection(const QString& target) const {
 bool ComposerController::selectImageModel(const QString& target, const QString& instanceId, const QString& model) {
   const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
   if (!spaces || !composer::offersImageModel(spaces->imageProviders(), instanceId, model)) return false;
-  m_drafts[target].modelSelection = QJsonObject{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
+  Draft& kept = m_drafts[target];
+  kept.modelSelection = QJsonObject{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
+  kept.carried = false;
   save();
   publish();
   return true;
@@ -3466,6 +3516,7 @@ void ComposerController::setInteractionMode(const QString& target, const QString
   if (mode == QLatin1String("plan") && !planModeOn(instanceOf(selection(target)))) return;
   if (mode == interactionModeOf(target)) return;
   m_drafts[target].interactionMode = mode;
+  m_drafts[target].carried = false;
   save();
   publish();
 }
@@ -3502,6 +3553,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
   }
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
+  kept.carried = false;
   NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
@@ -3540,6 +3592,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   if (!options) return false;
   chosen.insert(QStringLiteral("options"), *options);
   m_drafts[target].modelSelection = chosen;
+  m_drafts[target].carried = false;
   save();
   publish();
   return true;
@@ -4089,7 +4142,7 @@ std::optional<ComposerController::Attachment> ComposerController::attachmentOf(c
 }
 
 // Each target's text and choices, as {targets: {<target>: {text, modelSelection,
-// runtimeMode, interactionMode}}, stash: [{id, createdAt, text, attachments,
+// runtimeMode, interactionMode, carried}}, stash: [{id, createdAt, text, attachments,
 // terminalContexts}]} (a quoted reply among them carries its `citation`), and the drafts' images beside them (imagesPath).
 void ComposerController::setStorePath(const QString& path) {
   m_kept.path = path;
@@ -4126,6 +4179,7 @@ void ComposerController::setStorePath(const QString& path) {
     }
     kept.runtimeMode = entry.value(QLatin1String("runtimeMode")).toString();
     kept.interactionMode = entry.value(QLatin1String("interactionMode")).toString();
+    kept.carried = entry.value(QLatin1String("carried")).toBool();
     kept.projectId = entry.value(QLatin1String("projectId")).toString();
   }
   QFile images(imagesPath());
@@ -4195,6 +4249,7 @@ bool ComposerController::save() const {
     if (kept.modelSelection) entry.insert(QStringLiteral("modelSelection"), *kept.modelSelection);
     if (!kept.runtimeMode.isEmpty()) entry.insert(QStringLiteral("runtimeMode"), kept.runtimeMode);
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
+    if (kept.carried) entry.insert(QStringLiteral("carried"), true);
     if (!kept.projectId.isEmpty()) entry.insert(QStringLiteral("projectId"), kept.projectId);
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }

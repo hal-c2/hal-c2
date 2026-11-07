@@ -949,7 +949,7 @@ void ThreadMenuController::newThreadOnBranch(const QString& key) {
   checkout.startFromOrigin = false;
   checkout.branch = *thread->branch;
   if (!worktree.isEmpty()) checkout.worktreePath = worktree;
-  const QString draftId = drafts->start(thread->environmentId, thread->projectId);
+  const QString draftId = drafts->start(thread->environmentId, thread->projectId, true);
   workspace->setCheckout(draftId, checkout);
 }
 

@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/26151
+#   https://github.com/pingdotgg/t3code/pull/30805
 #   https://github.com/pingdotgg/t3code/pull/26145
 #   https://github.com/pingdotgg/t3code/pull/23755
 #   https://github.com/pingdotgg/t3code/pull/18552
@@ -28,6 +29,11 @@
 #   https://github.com/pingdotgg/t3code/pull/26681
 #   https://github.com/pingdotgg/t3code/pull/26448
 #   https://github.com/pingdotgg/t3code/pull/25661
+#   https://github.com/pingdotgg/t3code/pull/31670
+#   https://github.com/pingdotgg/t3code/pull/31653
+#   https://github.com/pingdotgg/t3code/pull/29825
+#   https://github.com/pingdotgg/t3code/pull/29727
+#   https://github.com/pingdotgg/t3code/pull/30257
 #   apps/server-ex/lib/hal_c2/mcp.ex (POST /mcp, per-thread bearer credentials, JSON-RPC methods)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (advertised tools, caller access rules, escalation checks)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (a turn whose MCP server changed resumes in a new process)
@@ -477,6 +483,20 @@ Feature: The HAL-C2 MCP server agents receive
     When the local command relays it
     Then each event is written to the agent's output as one line
 
+  # Upstream #29727: events framed with CR-only or mixed line endings were lost, merged into the
+  # next one, or held until the stream closed.
+  @backlog @mc @priority-low
+  Scenario Outline: A streamed answer is split into events whatever its line endings
+    Given the MC answers a request as a stream of events ended by <endings>
+    When the local command relays it
+    Then each event is written to the agent's output as one line as soon as it ends
+
+    Examples:
+      | endings                   |
+      | a carriage return alone   |
+      | a carriage return and a line feed |
+      | a mix of the two          |
+
   @mc
   Scenario Outline: The MC being unwell is reported to the agent that asked
     Given the MC answers with an HTTP error <status>
@@ -701,6 +721,38 @@ Feature: The HAL-C2 MCP server agents receive
     And the value leaves the secret store, and the file is removed 24 hours after it was made
     And the transcript never holds the value
 
+  # Upstream #31670: a user who keeps the secret in 1Password had to copy it out into the card.
+  @backlog @mc @shared
+  Scenario: A secret card is answered with a secret provider reference
+    Given the 1Password secret provider "Work" is set up
+    And an agent asks for a secret
+    When the user answers the card with "op://vault/item/field" in "Work"
+    Then the MC reads the value once and keeps it like a typed answer
+    And the agent gets only its one-use reference
+
+  # Upstream #31670: a retry after unlocking reads the reference again without a Settings refresh.
+  @backlog @mc @shared
+  Scenario: A secret card answered with a reference that cannot be read stays open
+    Given an agent asks for a secret
+    When the user answers the card with a reference that "Work" cannot read
+    Then the card says the secret could not be read from "Work", to unlock it and try again or enter the value
+    And the card stays open
+    When the user unlocks "Work" and answers with the same reference
+    Then the card is answered
+
+  # Upstream #31653: a masked text field still handed the secret to screen readers.
+  # Upstream #29825: Android offered password manager logins in the field.
+  @backlog @shared @priority-high
+  Scenario Outline: A secret typed into a card <stays>
+    Given an agent asks for a secret
+    When the user types the secret into the card
+    Then it <stays>
+
+    Examples:
+      | stays                                                       |
+      | is read out by screen readers as hidden, never as its value |
+      | is not offered a saved login or kept by a password manager  |
+
   @backlog @mc
   Scenario: A retried file secret request returns the same file
     Given an agent asked for a secret delivered as a file and the user saved it
@@ -712,6 +764,35 @@ Feature: The HAL-C2 MCP server agents receive
     Given the user saved a secret on a card that asked for a one-use reference
     When the agent asks to save that secret to a file
     Then the request is refused
+
+  # Upstream #30257: a secret the user pasted into chat was copied into children's briefs; the
+  # agent now saves it to a private file instead of passing it on.
+  @backlog @mc
+  Scenario: A secret the user pasted in the thread is saved to a private file without a card
+    Given the user pasted a pairing code into the thread
+    When the agent hands the pasted code to the secret tool to save as a file
+    Then the code is saved exactly as pasted to a file only the user's account can read, removed after 24 hours
+    And the agent gets the file's path at once, with no card and no wait
+    And the code is not logged
+    But handing a pasted secret over while asking for a one-use reference is refused
+
+  # Upstream #30257: Claude Code kept the MC's tools behind its tool search, so Claude never saw
+  # the secret tool and asked for logins and codes in chat.
+  @backlog @mc @plugin-claude
+  Scenario: Claude has the secret tool at hand without searching for it
+    Given a Claude thread with the MC's tools
+    When Claude needs a login, token, PIN or pairing code only the user can give
+    Then the secret tool is loaded from the start of the session, the only MC tool that is
+    And its instructions tell Claude to open a secret card rather than ask in chat
+
+  # Upstream #30805: agents bundled several credentials into one card whose single-line
+  # field collapsed them; the tool now takes one secret per request.
+  @backlog @mc @shared
+  Scenario: An agent needing several credentials asks for each on its own card
+    Given an agent needs three credentials the user copied as three lines
+    When it asks the user for them
+    Then the thread shows three cards, one labelled for each credential
+    And a single request naming more than one value is refused
 
   # Upstream #26145: a long link in the reason ran off the card and could not be copied whole.
   @backlog @shared @priority-low

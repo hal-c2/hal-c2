@@ -66,9 +66,12 @@ public:
   std::optional<Draft> draft(const QString& id) const;
   // Opens the project's draft, creating it the first time; returns its id, or
   // nothing when a new draft could not be kept (its store is not writable).
-  QString start(const QString& environmentId, const QString& projectId);
+  // `carry` is for a new thread the user asked for (New thread, New thread
+  // in..., New thread on <branch>): a draft with nothing of its own takes the
+  // model and mode of the thread or draft the window shows (ComposerController).
+  QString start(const QString& environmentId, const QString& projectId, bool carry = false);
   // Opens the draft of the logical project `group` (see startIn below).
-  void startIn(const sidebar::ProjectGroup& group);
+  void startIn(const sidebar::ProjectGroup& group, bool carry = false);
   // On `home`, opens the most recent project's draft (see above).
   void land();
   // Whether a window with no thread lands on a draft at all. A client whose
@@ -94,9 +97,10 @@ public:
 
 signals:
   void changed();
-  // A new thread was asked for and `draftId` shows: a new draft, or the
-  // project's one again.
-  void started(const QString& draftId);
+  // A draft was opened by start(): a new draft, or the project's one again.
+  // `from` is the composer target (a thread's key or a draft's id) whose model
+  // and mode the draft carries: set only when start() was asked to carry.
+  void started(const QString& draftId, const QString& from);
 
 private:
   bool startNew(const QVariantMap& payload);
@@ -113,6 +117,8 @@ private:
   void setLandingFailed(bool failed);
   // Every window's controller, this one's included.
   QList<DraftController*> everyWindow() const;
+  // A window is sending the draft's first message: it is the thread's now.
+  bool launching(const QString& id) const;
   void changedEverywhere();
 
   // What every window's controller keeps.
@@ -128,4 +134,6 @@ private:
   bool m_active = false;
   bool m_landingFailed = false;
   bool m_landsOnDraft = true;
+  // The thread key or draft id the window last showed.
+  QString m_lastShown;
 };

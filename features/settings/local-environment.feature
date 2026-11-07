@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/17359
+#   https://github.com/pingdotgg/t3code/pull/26464
 #   apps/web/src/components/settings/LocalEnvironmentSetting.tsx
 #   apps/web/src/components/settings/useAvailableSettingsSearchItems.ts (localEnvironmentOnly)
 #   apps/web/src/components/settings/ConnectionsSettings.tsx (This machine)
@@ -43,6 +44,17 @@ Feature: Local environment
       And no other environment is selected
       When the user opens the Connections settings, or searches settings for "Local environment"
       Then the local environment's switch is shown, ready to turn it back on
+
+    # Upstream #26464: with the local environment off, Sharing & access said "No environment
+    # selected" while the app was connected to a background service.
+    @backlog @desktop
+    Scenario: With the local environment off, pairing is done on a connected environment
+      Given the local environment is off
+      And the app is connected to the environments "Build box" and "Mac mini"
+      When the user opens the pairing settings
+      Then the user can choose which of them to pair devices with
+      And pairing links are made with that environment's own permissions
+      And choosing another environment hides the pairing link shown for the first
 
     @backlog @desktop
     Scenario: Cancelling leaves the local environment as it was

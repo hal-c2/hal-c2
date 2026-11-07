@@ -1,6 +1,8 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/20748
+#   https://github.com/pingdotgg/t3code/pull/28389
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/18385
 #   apps/server-ex/lib/hal_c2/orchestration.ex (orchestration.dispatchCommand, result sequence)
 #   apps/server-ex/lib/hal_c2/streams.ex (one writer per stream, transactions)
 #   apps/server/src/orchestration-v2/Orchestrator.ts, CommandReceiptStore.ts,
@@ -60,6 +62,14 @@ Feature: How the engine accepts commands
     Then the command is rejected
     And nothing about "t2" changes
 
+  # Upstream #18385: two commands sharing an id for two threads at once both reported success,
+  # though only one thread changed.
+  @mc @backlog @priority-high
+  Scenario: One command id sent to two threads at once succeeds for only one
+    When a client dispatches a command to "t1" and a command to "t2" at the same moment, both with id "c4"
+    Then exactly one of them succeeds and changes its thread
+    And the other fails as a command id conflict and changes nothing
+
   @mc
   Scenario: A rejected command id stays rejected
     Given a command with id "c2" was rejected
@@ -92,6 +102,22 @@ Feature: How the engine accepts commands
       | cannot be opened     | to check free space and that its data folder is writable |
       | has run out of space | to free disk space and try again                         |
       | is read-only         | to make the data folder writable                         |
+
+  # Upstream #28389: seven commands dropped the storage failure behind a bare "Failed to load
+  # orchestration projection for thread X.", so they gave no hint what to do.
+  @backlog @mc @shared @priority-low
+  Scenario Outline: Any command that fails reading its thread on the MC's storage says what to do
+    Given the MC's database has run out of space
+    When the user <action> in "t1"
+    Then the user is told to free disk space and try again
+
+    Examples:
+      | action                       |
+      | snoozes the thread           |
+      | stops the turn               |
+      | answers an approval          |
+      | reorders the queued messages |
+      | steers with a queued message |
 
   @mc
   Scenario: A side effect that fails is retried with growing delays and then given up

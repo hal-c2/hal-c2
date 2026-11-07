@@ -1,7 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29579
 #   https://github.com/pingdotgg/t3code/pull/19533
 #   https://github.com/pingdotgg/t3code/pull/18152
 #   https://github.com/pingdotgg/t3code/pull/17161
+#   https://github.com/pingdotgg/t3code/pull/29852
+#   https://github.com/pingdotgg/t3code/pull/28361
+#   https://github.com/pingdotgg/t3code/pull/29124
 #   packages/contracts/src/checkpointDiff.ts (TurnCountRange, getTurnDiff, getFullThreadDiff)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (turn_diff, capture, start_ref)
@@ -83,6 +87,23 @@ Feature: What each turn changed
     When the user opens the diff of turn 2
     Then the change to "src/cart.ts" is shown
     And files only "main" changed are not
+
+  # Upstream #28361: with git's diff.relative on, a project in a subfolder of its repository lost
+  # the agent's committed files from the turn.
+  # Upstream #29124: with log.showSignature on, the first file of each signed commit was read with
+  # the signature line in front of it and dropped from the turn.
+  @backlog @mc
+  Scenario Outline: The agent's commits stay in its turn whatever the user's git config says
+    Given the user's git config has <setting>
+    And during turn 2 the agent committed a change to "src/cart.ts"
+    When the user opens the diff of turn 2
+    Then the change to "src/cart.ts" is shown
+    And the turn's changed files list "src/cart.ts"
+
+    Examples:
+      | setting                                                                 |
+      | diff.relative on and the project is a subfolder of its repository        |
+      | log.showSignature on and the agent's commits are signed                  |
 
   @backlog @mc
   Scenario: A conflict the agent resolved is part of its turn
@@ -174,3 +195,21 @@ Feature: What each turn changed
     When a turn finishes
     Then its checkpoint is taken in "shop"
     And the branch list shows the branches of "shop"
+
+  # Upstream #29579: under diff.suppressBlankEmpty a turn's diff wrote blank context lines empty,
+  # so the clients dropped them and numbered every later line of the hunk wrong.
+  @backlog @mc @shared
+  Scenario: A turn's diff keeps blank context lines when git is set to write them empty
+    Given the user set git to suppress blank context lines in the project
+    And turn 3 changed a line of "src/cart.ts" that follows a blank line
+    When the user opens the diff of turn 3
+    Then the blank line is shown as context and the changed line keeps its line number
+
+  # Upstream #29852: under diff.submodule=log or diff a moved submodule pointer was listed in the
+  # turn's files but had no entry in its diff.
+  @backlog @mc @shared @priority-low
+  Scenario: A turn's diff shows a moved submodule when git is set to log submodule changes
+    Given the user set git to show submodule changes as a log of their commits
+    And turn 3 moved the submodule "vendor/ui" to another commit
+    When the user opens the diff of turn 3
+    Then "vendor/ui" has an entry showing its old and new commit

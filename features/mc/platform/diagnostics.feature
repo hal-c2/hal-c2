@@ -7,6 +7,9 @@
 #   https://github.com/pingdotgg/t3code/pull/22753
 #   https://github.com/pingdotgg/t3code/pull/27904
 #   https://github.com/pingdotgg/t3code/pull/27986
+#   https://github.com/pingdotgg/t3code/pull/29770
+#   https://github.com/pingdotgg/t3code/pull/27503
+#   https://github.com/pingdotgg/t3code/pull/29786
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
 #   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry shape)
@@ -296,6 +299,21 @@ Feature: MC diagnostics
     Then it moves aside as the newest backup and the oldest backup is dropped
     And the MC keeps writing to a new trace file
 
+  # Upstream #27503: rotation read any number-like suffix as a backup, so files such as
+  # "debug.log.04" or "debug.log.4.0" beside the log were deleted.
+  @backlog @mc @priority-low
+  Scenario Outline: Rolling the trace file over keeps files that are not its backups
+    Given tracing is enabled on the MC
+    And the trace file's folder holds the file "<name>" beside the trace file's backups
+    When the trace file reaches 10 MiB
+    Then "<name>" is kept
+
+    Examples:
+      | name                    |
+      | server.trace.ndjson.04  |
+      | server.trace.ndjson.4.0 |
+      | server.trace.ndjson.0x4 |
+
   @mc
   Scenario: The MC accepts client spans
     Given client tracing is on
@@ -306,6 +324,15 @@ Feature: MC diagnostics
   Scenario: The MC forwards client spans to a configured collector
     Given an OTLP collector is configured on the MC
     When client spans arrive
+    Then the MC forwards them to the collector
+
+  # Upstream #29786: the collector addresses were read by decoding the whole settings file, so a
+  # retired "token" streaming mode still on disk dropped them and nothing was exported.
+  @backlog @mc @priority-low
+  Scenario: A settings file with a value from an older version keeps its collector
+    Given an OTLP collector is configured in settings.json
+    And settings.json still sets the response streaming mode to the retired "token"
+    When the MC starts and client spans arrive
     Then the MC forwards them to the collector
 
   # The standard OpenTelemetry switch turns export off without losing the local trace file.
@@ -394,6 +421,16 @@ Feature: MC diagnostics
     When a thread's provider log passes 10 MiB
     Then the log continues in a new file for that thread
     And at most ten files are kept for that thread, the oldest dropped first
+
+  # Upstream #29770: delegated thread IDs share a long prefix, so every delegated thread of one
+  # parent wrote into the same provider log.
+  @backlog @mc @priority-low
+  Scenario: Delegated threads each get their own provider event log
+    Given provider event logging is on
+    And "parent" delegated two tasks whose thread IDs share a prefix longer than a log name holds
+    When both delegated threads run
+    Then each writes its events to a provider log of its own
+    And a thread with a short ID keeps its log's name
 
   @backlog @mc @priority-low
   Scenario: Old and excess provider event logs are removed

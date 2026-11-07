@@ -1,5 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29741
+#   https://github.com/pingdotgg/t3code/pull/29755
 #   https://github.com/pingdotgg/t3code/pull/23954
+#   https://github.com/pingdotgg/t3code/pull/29355
+#   https://github.com/pingdotgg/t3code/pull/32403
 #   https://github.com/pingdotgg/t3code/pull/27519
 #   https://github.com/pingdotgg/t3code/pull/27144
 #   https://github.com/pingdotgg/t3code/pull/22883
@@ -89,6 +93,11 @@
 #   https://github.com/pingdotgg/t3code/pull/22875
 #   https://github.com/pingdotgg/t3code/pull/22893
 #   https://github.com/pingdotgg/t3code/pull/22367
+#   https://github.com/pingdotgg/t3code/pull/27794
+#   https://github.com/pingdotgg/t3code/pull/29079
+#   https://github.com/pingdotgg/t3code/pull/28637
+#   https://github.com/pingdotgg/t3code/pull/30762
+#   https://github.com/pingdotgg/t3code/pull/30606
 
 Feature: Formatted messages
   Messages are written in Markdown. The timeline shows headings, lists, quotes, code and
@@ -297,6 +306,8 @@ Feature: Formatted messages
     And the image is a link to its address and nothing is loaded from the web
 
   # Upstream #13807: a trailing "_" or "~" is part of a bare web address.
+  # Upstream #27794: the same fix again, for bare and "www." addresses only; explicit links and
+  # emphasis keep their own rules.
   @shared @backlog
   Scenario Outline: A bare web address in a reply keeps a trailing underscore or tilde
     When the reply contains the bare address "<address>"
@@ -470,6 +481,16 @@ Feature: Formatted messages
       | absolute value bars      |
       | escaped double norm bars |
 
+  # Upstream #29355: the phone turned "<br>" in a table cell into a space, so items ran together,
+  # and copying lost the breaks.
+  @backlog @shared @priority-low
+  Scenario: A line break in a table cell is kept and copied back as "<br>"
+    Given the agent's reply has a table cell "Apples<br>Pears"
+    When the user looks at the reply
+    Then the cell shows "Apples" and "Pears" on separate lines
+    When the user copies the table as Markdown
+    Then the cell reads "Apples<br>Pears"
+
   # Upstream #22893: an escaped backslash right before "\(" broke the message.
   @backlog @shared @priority-low
   Scenario: An escaped backslash before a formula opener is shown as a backslash
@@ -625,6 +646,27 @@ Feature: Formatted messages
     When the agent's reply holds "[exam](pastexam/線性代數/考試.pdf)"
     Then it is shown as a file chip for "pastexam/線性代數/考試.pdf", not as a web link
 
+  # Upstream #28637: route file names from Next.js, SvelteKit and TanStack Router, and npm scope
+  # folders, were not file links unless written with "./".
+  @backlog @shared
+  Scenario Outline: A relative link with routing punctuation is a file chip
+    When the agent's reply holds "[<name>](<path>)"
+    Then it is shown as a file chip for "<path>", not as a web link
+
+    Examples:
+      | name                  | path                                     |
+      | page.tsx              | app/(marketing)/page.tsx                 |
+      | posts.$postId.tsx     | app/routes/posts.$postId.tsx             |
+      | +page.svelte          | src/routes/+page.svelte                  |
+      | [slug].tsx            | pages/blog/[slug].tsx                    |
+      | index.ts              | node_modules/@scope/pkg/index.ts         |
+
+  # Upstream #28637: a bare name with "@" stays an address, not a file.
+  @backlog @shared
+  Scenario: A bare e-mail address as a link target is not a file chip
+    When the agent's reply holds "[write](me@example.com)"
+    Then it is not shown as a file chip
+
   # Legacy: packages/client-runtime/src/codexMarkdownDirectives.ts (renderCodexDirectivesForCopy)
   @backlog @desktop @mobile
   Scenario: Copying a reply copies its file citations and template cards as plain text
@@ -640,6 +682,21 @@ Feature: Formatted messages
     When the user selects the list and copies it
     Then the copied Markdown nests each item under its parent
     And the code block stays under its item
+
+  # Upstream #29755: copying a selection dropped blank lines inside a code block in a list item or
+  # quote, and after a fence written inside a longer fence.
+  @backlog @shared @priority-low
+  Scenario Outline: A copied code block keeps its blank lines when it sits <where>
+    Given a reply holds a Python code block with two blank lines before "def main():", <where>
+    When the user selects the reply and copies it
+    Then the copied code keeps both blank lines and its trailing spaces
+
+    Examples:
+      | where                                                     |
+      | right under a numbered list item                          |
+      | in a loose list item                                      |
+      | in a quote                                                |
+      | after a fence written inside it, in a longer fence        |
 
   # Upstream #16249: selected text that spans a Mermaid diagram copies the diagram's source.
   @backlog @desktop
@@ -675,6 +732,21 @@ Feature: Formatted messages
       | "z-ai/glm-5.3"        | left as code                     |
       | "Qwen/Qwen2.5-Coder"  | left as code                     |
       | "vendor/jquery-3.6.0.min.js" | a file chip              |
+
+    # Upstream #32403: a bare C++ source with a line, such as "allocator.cc:217", was read as a host
+    # and port; ".cc" now reads as a file when a line follows and as a host otherwise.
+    Examples:
+      | code                  | shown                            |
+      | "allocator.cc:217"    | a file chip                      |
+      | "example.cc/docs"     | left as code                     |
+
+    # Upstream #30762: a shortened path such as "/tmp/claude-1000/..." became a chip that asked for a
+    # file named "..." and showed it could not be read.
+    Examples:
+      | code                       | shown        |
+      | "/tmp/claude-1000/..."     | left as code |
+      | "src/…/cart.ts:12"         | left as code |
+      | "../shop/.env"             | a file chip  |
 
   # Legacy: packages/client-runtime/src/markdownLinks.ts (parseMarkdownFileLink)
   @backlog @desktop @mobile @priority-low
@@ -749,6 +821,16 @@ Feature: Formatted messages
   Scenario: An image embedded from an address without a file extension is still an image
     When the agent's reply embeds an image from "https://example.com/render?id=7"
     Then the image is shown in the reply
+
+  # Upstream #29741: a reply's image of a workspace file kept the copy fetched first, so an image
+  # the agent rewrote under the same name showed its old picture for an hour.
+  @backlog @shared
+  Scenario: An image the agent rewrites under the same name shows its new picture
+    Given an earlier reply shows the workspace image "wau.png"
+    When the agent rewrites "wau.png" with a command, a file edit, a tool call or a subagent
+    And shows it again in a later reply
+    Then both replies show the new picture
+    But an image whose file did not change is not downloaded again
 
   # Upstream #22787: an image alone on its line keeps that line instead of joining the label
   # above it; inline images in a sentence stay inline.
@@ -1381,6 +1463,19 @@ Feature: Formatted messages
       | Copy image | the clipboard holds the picture        |
       | Save image | the picture is saved                   |
 
+  # Upstream #29079: Save image and Copy image fetched the image again, and failed for a host
+  # that lets the image show but refuses other reads.
+  @desktop @backlog
+  Scenario Outline: An image the reply shows can be copied and saved even when its host refuses other reads
+    Given the agent's reply shows an image from a host that refuses cross-site reads
+    When the user chooses "<action>" from the media's menu
+    Then <outcome>
+
+    Examples:
+      | action     | outcome                         |
+      | Copy image | the clipboard holds the picture |
+      | Save image | the picture is saved            |
+
   @desktop @backlog
   Scenario Outline: A media action that cannot finish says why
     Given the agent's reply embeds <media>
@@ -1496,6 +1591,14 @@ Feature: Formatted messages
       | src/main.ts#L18C2                  | main.ts:18:2  |
       | apps/mobile/src/index.ts:10        | index.ts:10   |
       | docs/My%20Folder/checklist.xml     | checklist.xml |
+
+  # Upstream #30606: a path the agent named before creating it stayed "missing" for the thread, so
+  # the folder it then made kept a file's icon.
+  @backlog @shared @priority-low
+  Scenario: A path named before it existed shows what it became within a minute
+    Given the agent's reply links to "src/widgets" before that folder exists
+    When the agent creates "src/widgets" as a folder
+    Then within 60 seconds the link shows a folder's icon, without the user reloading
 
   @backlog @mobile
   Scenario: A path in code formatting is a file link and the same path in prose is not
