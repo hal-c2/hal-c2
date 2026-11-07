@@ -345,7 +345,7 @@ Feature: Unread and status in the thread list
     And the preview says "2 terminal processes running"
 
   # Upstream #13673: zsh prompt helpers made idle shells look busy.
-  @mc @desktop @tui @backlog @priority-high
+  @mc @desktop @tui @backlog-desktop @backlog-tui @priority-high
   Scenario: An idle shell does not make its thread look busy
     Given "Build search" has one terminal waiting at an idle prompt
     Then "Build search" is not shown as busy

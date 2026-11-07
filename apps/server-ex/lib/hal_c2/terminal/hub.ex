@@ -236,7 +236,7 @@ defmodule HalC2.Terminal.Hub do
     end
   end
 
-  # `{first child by parent pid, command by pid}` from `ps`, which lists by pid.
+  # `{children by parent pid, command by pid}` from `ps`, which lists by pid.
   defp process_table do
     ps =
       Application.get_env(:hal_c2, :terminal_ps) ||
@@ -250,7 +250,9 @@ defmodule HalC2.Terminal.Hub do
           {children, commands} ->
             pid = String.to_integer(pid)
             ppid = String.to_integer(ppid)
-            {Map.put_new(children, ppid, pid), Map.put(commands, pid, String.trim(command))}
+
+            {Map.update(children, ppid, [pid], &(&1 ++ [pid])),
+             Map.put(commands, pid, String.trim(command))}
         end
 
       _ ->
@@ -260,13 +262,27 @@ defmodule HalC2.Terminal.Hub do
     _ -> {%{}, %{}}
   end
 
-  # The shell's first child and its command name, e.g. `{true, "vim"}`.
+  # The shell's first child that is a command, and its name, e.g. `{true, "vim"}`. A prompt
+  # theme forks copies of the shell to compute its prompt; a child with the shell's own name
+  # is that, not a command the user started.
   defp child({children, commands}, shell_pid) do
-    case Map.fetch(children, shell_pid) do
-      {:ok, pid} -> {true, command_name(Map.get(commands, pid, ""))}
-      :error -> {false, nil}
+    shell = command_name(Map.get(commands, shell_pid, ""))
+
+    names =
+      children
+      |> Map.get(shell_pid, [])
+      |> Enum.map(&command_name(Map.get(commands, &1, "")))
+
+    case Enum.reject(names, &shell_copy?(&1, shell)) do
+      [name | _] -> {true, name}
+      [] -> {false, nil}
     end
   end
+
+  defp shell_copy?(name, shell),
+    do:
+      name != nil and shell != nil and
+        String.trim_leading(name, "-") == String.trim_leading(shell, "-")
 
   defp command_name(raw) do
     raw = String.trim(raw)
