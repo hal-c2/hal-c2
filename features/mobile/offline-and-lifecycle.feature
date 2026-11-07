@@ -454,7 +454,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then "add a test" and the photo are back in the draft of "Fix checkout"
     And the user is told the reason the environment gave
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread's stuck message does not hold up another thread
     Given "add a test" in "Fix checkout" cannot be sent yet
     And "update the readme" is waiting in "Docs pass" on the same environment

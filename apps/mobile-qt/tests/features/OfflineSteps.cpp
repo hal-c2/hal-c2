@@ -446,6 +446,21 @@ const Steps steps([] {
     world.mc.threads.remove(id);
     if (world.find(S("threadScreen")) != nullptr) world.back();
   });
+  // One thread's message the MC never answers: it went out, the connection
+  // dropped under it (below), and it waits; the MC holds it again when it is back.
+  step(S("%1 in %1 cannot be sent yet").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    seed(world);
+    world.mc.hold(S("answers:") + haveThread(world, c[1]));
+    send(world, c[1], c[0]);
+  });
+  // Another thread the phone lists, whose message waits for the connection.
+  step(S("%1 is waiting in %1 on the same environment").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    haveThread(world, c[1]);
+    beInThread(world, c[1]);
+    sendOffline(world, c[1], c[0]);
+  });
+  step(S("the environment is connected"), [](World& world, const Captures&, const Table&) { comeBack(world); });
+
   step(S("%1 is not sent").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(!sentTexts(world).contains(c[0]), S("the MC was sent %1").arg(sentTexts(world).join(S(", "))));

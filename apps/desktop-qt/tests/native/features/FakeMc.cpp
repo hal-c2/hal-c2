@@ -485,7 +485,7 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
       reply(rpc, result);
     }
   };
-  if (holding(QStringLiteral("answers"))) {
+  if (holding(QStringLiteral("answers")) || holding(QStringLiteral("answers:") + rpc.payload.value(QLatin1String("threadId")).toString())) {
     defer(answer);
   } else {
     answer();

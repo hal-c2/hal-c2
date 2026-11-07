@@ -103,7 +103,7 @@ public:
   void forget(int id) { m_live.remove(id); }
 
   // Named holds say which answers wait: `answers` holds commands and terminal
-  // calls; a domain may hold its own. Held answers are deferred until
+  // calls (`answers:<threadId>` one thread's commands); a domain may hold its own. Held answers are deferred until
   // answerHeld(), which lifts every hold.
   void hold(const QString& what) { m_holds.insert(what); }
   bool holding(const QString& what) const { return m_holds.contains(what); }
