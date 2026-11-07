@@ -93,6 +93,31 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.local_thread("th-cart") == nil
   end
 
+  test "a failed import takes back the worktree branch it made", %{context: context, root: root} do
+    bundle = feature_bundle(context, root)
+    branches = World.git!(root, ~w(for-each-ref refs/heads))
+    refuse_worktree(root, bundle)
+
+    assert World.git!(root, ~w(for-each-ref refs/heads)) == branches
+
+    assert World.git!(root, ~w(worktree list --porcelain)) =~
+             ~r/\Aworktree [^\n]+\n(?!.*worktree )/s
+  end
+
+  test "a failed import puts back a worktree branch this checkout already had",
+       %{context: context, root: root} do
+    # Here the branch is a commit behind the carried one: the fetch moves it on.
+    World.git!(root, ~w(branch feature))
+    bundle = feature_bundle(context, root)
+    branches = World.git!(root, ~w(for-each-ref refs/heads))
+    refuse_worktree(root, bundle)
+
+    assert World.git!(root, ~w(for-each-ref refs/heads)) == branches
+
+    assert World.git!(root, ~w(worktree list --porcelain)) =~
+             ~r/\Aworktree [^\n]+\n(?!.*worktree )/s
+  end
+
   test "a thread from an earlier install reaches the store in one write", %{root: root} do
     # Room for five changes: its four entities fit in one write. An import that stored
     # its events (five changes) and then took its provider thread's session in a write
@@ -119,6 +144,47 @@ defmodule HalC2.ThreadArchiveTest do
 
     refute Enum.any?(HalC2.Store.list_streams(HalC2.Store.path()), &(&1.id == "th-legacy"))
     assert ThreadArchive.local_thread("th-legacy") == nil
+  end
+
+  # A bundle of the branch `feature` of a laptop's clone of `root`, a commit ahead of it.
+  defp feature_bundle(context, root) do
+    source = Path.join(context.mc.home, "laptop-shop")
+    World.git!(context.mc.home, ["clone", "-q", root, source])
+    World.git!(source, ~w(checkout -q -b feature))
+
+    World.git!(
+      source,
+      ~w(-c user.email=a@example.com -c user.name=A commit -q --allow-empty -m run-1)
+    )
+
+    bundle = Path.join(context.mc.home, "worktree.bundle")
+    World.git!(source, ["bundle", "create", "-q", bundle, "refs/heads/feature"])
+    bundle
+  end
+
+  defp refuse_worktree(root, bundle) do
+    archive =
+      archive(root, %{
+        "thread" => %{
+          "id" => "th-cart",
+          "title" => "Cart",
+          "projectId" => "shop-laptop",
+          "projectRoot" => "/home/a/code/shop",
+          "worktreePath" => "/home/a/code/shop-feature",
+          "repository" => ThreadArchive.repository(root),
+          "machine" => "laptop"
+        },
+        "worktree" => %{
+          "branch" => "feature",
+          "path" => "/home/a/code/shop-feature",
+          "bundle" => file("worktree.bundle", File.read!(bundle))
+        }
+      })
+
+    Application.put_env(:hal_c2, :store_hook, {Machines, :refuse_change, ["th-cart"]})
+
+    assert ThreadArchive.import_archive(archive, project: "shop") ==
+             {:error, "The import of Cart failed: the disk is full. Nothing was imported."}
   end
 
   @doc false
