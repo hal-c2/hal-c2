@@ -775,6 +775,66 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  # Two scheduled task lists wait on their suspended server; the handler of one is
+  # killed under it.
+  step "a client has a thread subscription, a terminal subscription and a pending request open",
+       context do
+    context = follow_thread(context)
+    {_snapshot, context} = Mc.Terminal.open!(context)
+    {_snapshot, context} = Mc.Terminal.attach!(context, "default")
+
+    tasks = Mc.ensure(HalC2.ScheduledTasks)
+    :ok = :sys.suspend(tasks)
+    ExUnit.Callbacks.on_exit(fn -> resume(tasks) end)
+
+    client =
+      World.client(context)
+      |> Mc.rpc(context.mc.environment, 98, "scheduledTasks.list", %{})
+      |> Mc.rpc(context.mc.environment, 99, "scheduledTasks.list", %{})
+
+    :ok = WsClient.await_mailbox(tasks, 2)
+    HalC2.Test.LogTap.attach()
+    context |> Map.put(:tasks_pid, tasks) |> World.put_client(client)
+  end
+
+  step "the MC handler for the pending request crashes", context do
+    {:messages, [{:"$gen_call", {handler, _}, _} | _]} =
+      Process.info(context.tasks_pid, :messages)
+
+    Process.exit(handler, :kill)
+    context
+  end
+
+  step "that request fails with an error", context do
+    {reply, client} =
+      Mc.await(World.client(context), &(&1["t"] in ["rpc.result", "rpc.error"]), 5_000)
+
+    assert %{"t" => "rpc.error", "id" => failed} = reply
+    assert failed in [98, 99]
+    context |> Map.put(:failed, failed) |> World.put_client(client)
+  end
+
+  step "the client's other subscriptions and requests carry on", context do
+    :ok = :sys.resume(context.tasks_pid)
+    other = if context.failed == 98, do: 99, else: 98
+    {reply, client} = Mc.await(World.client(context), Mc.reply?(other), 5_000)
+    assert %{"t" => "rpc.result", "result" => %{"tasks" => _}} = reply
+
+    {:ok, seq} = HalC2.Streams.commit(context.stream, :thread, [note("after the crash")])
+    {events, client} = Mc.await(client, &(&1["t"] == "events" and &1["id"] == 1), 5_000)
+    assert [[^seq | _]] = events["events"]
+
+    context = World.put_client(context, client)
+    context = Mc.Terminal.write(context, "default", "echo still''-here\n")
+    {_output, _events, context} = Mc.Terminal.await_output(context, "default", "still-here")
+    context
+  end
+
+  step "the crash is logged by the MC", context do
+    assert_receive {:logged, :error, "scheduledTasks.list failed: " <> _}, 5_000
+    context
+  end
+
   # --- stream lifetime and upgrades --------------------------------------------------------
 
   step "nobody follows a thread for five minutes", context do
