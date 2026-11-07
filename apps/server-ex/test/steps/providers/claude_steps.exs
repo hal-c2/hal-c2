@@ -1104,6 +1104,213 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # The fake's "in the background" turn leaves its subagent (task task-agent-1) running;
+  # the MC restarts under it.
+  step "a Claude subagent was working when the MC restarted", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => "running"}], StreamState.list(state, "subagent"))
+    end)
+
+    # The runtimes go as the MC stops, which leaves their work to the next boot's recovery.
+    HalC2.Orchestration.Recovery.leaving(true)
+
+    try do
+      %{
+        context
+        | mc: Mc.restart(context.mc, fn -> HalC2.Orchestration.Recovery.leaving(false) end),
+          clients: %{}
+      }
+    after
+      HalC2.Orchestration.Recovery.leaving(false)
+    end
+  end
+
+  step "recovery marked it cancelled", context do
+    state = World.stream(context, @thread)
+    assert [%{"status" => "interrupted"} = subagent] = StreamState.list(state, "subagent")
+    assert %{"status" => "interrupted"} = item = subagent_item(state, subagent)
+    assert HalC2.Orchestration.Recovery.cut_off?(item)
+    assert World.row(context, @thread)["pendingBackgroundTasks"] == []
+    Map.put(context, :subagent, subagent)
+  end
+
+  step "the user's next message makes Claude resume the subagent", context do
+    context = World.post_message(context, @thread, "wait and resume it")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(inspect(get_in(&1, ["in", "message", "content"])) =~ "wait and resume it")
+    )
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-send",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "send-1",
+            "name" => "SendMessage",
+            "input" => %{"to" => "task-agent-1", "message" => "Also check the tests"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "description" => "Survey the repo",
+      "task_type" => "local_agent",
+      "is_backgrounded" => true
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{"type" => "tool_result", "tool_use_id" => "send-1", "content" => "Message delivered"}
+        ]
+      }
+    })
+
+    flush_runtime(context)
+  end
+
+  step "the subagent's thread shows it running again, not cancelled", context do
+    state = World.stream(context, @thread)
+
+    assert [%{"status" => "running", "completedAt" => nil} = subagent] =
+             StreamState.list(state, "subagent")
+
+    assert subagent["childThreadId"] == context.subagent["childThreadId"]
+    assert %{"status" => "running"} = item = subagent_item(state, subagent)
+    refute HalC2.Orchestration.Recovery.cut_off?(item)
+    assert %{"status" => "running"} = StreamState.get(state, "node")[subagent["id"]]
+    context
+  end
+
+  # The parent's turn ends with the resumed subagent still at work in the background.
+  step "its resume prompt, tool calls and final answer appear in its own thread", context do
+    sidechain = &Map.put(&1, "parent_tool_use_id", "send-1")
+
+    claude_says(
+      context,
+      sidechain.(%{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-sub-1",
+          "content" => [
+            %{
+              "type" => "tool_use",
+              "id" => "sub-bash-1",
+              "name" => "Bash",
+              "input" => %{"command" => "mix test"}
+            }
+          ]
+        }
+      })
+    )
+
+    claude_says(
+      context,
+      sidechain.(%{
+        "type" => "user",
+        "message" => %{
+          "role" => "user",
+          "content" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "sub-bash-1",
+              "content" => "12 tests, 0 failures"
+            }
+          ]
+        }
+      })
+    )
+
+    claude_says(
+      context,
+      sidechain.(%{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-sub-2",
+          "content" => [%{"type" => "text", "text" => "The tests pass"}]
+        }
+      })
+    )
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.subagent["childThreadId"]))
+    items = Enum.sort_by(StreamState.list(child, "turn-item"), & &1["ordinal"])
+
+    assert [
+             {"user_message", "List what is in the repo"},
+             {"user_message", "Also check the tests"},
+             {"assistant_message", "The tests pass"}
+           ] =
+             for(
+               %{"type" => type} = item <- items,
+               type in ["user_message", "assistant_message"],
+               do: {type, item["text"]}
+             )
+
+    assert %{"status" => "completed", "output" => "12 tests, 0 failures"} =
+             Enum.find(items, &(&1["input"] == "mix test"))
+
+    context
+  end
+
+  step "the subagent's thread and the parent's waiting list agree on its state", context do
+    assert [%{"status" => "running"}] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+
+    World.await_row(
+      World.thread_id(context, @thread),
+      &match?(
+        [%{"taskType" => "subagent", "description" => "Survey the repo"}],
+        &1["pendingBackgroundTasks"]
+      )
+    )
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "status" => "completed",
+      "summary" => "The tests pass"
+    })
+
+    World.await_row(World.thread_id(context, @thread), &(&1["pendingBackgroundTasks"] == []))
+
+    assert [%{"status" => "completed", "result" => "The tests pass"} = subagent] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+
+    refute HalC2.Orchestration.Recovery.cut_off?(
+             subagent_item(World.stream(context, @thread), subagent)
+           )
+
+    context
+  end
+
+  defp subagent_item(state, subagent),
+    do: StreamState.get(state, "turn-item")["turn-item:subagent:#{subagent["id"]}"]
+
   # --- several accounts ------------------------------------------------------------------
 
   @work "claude-work"

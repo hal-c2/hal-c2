@@ -788,7 +788,7 @@ Feature: Claude
     Then the thread shows the message that resumed it
     And the parent thread does not
 
-  @backlog @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A Claude subagent cancelled by a restart and then resumed keeps updating its own thread
     Given a Claude subagent was working when the MC restarted
     And recovery marked it cancelled
