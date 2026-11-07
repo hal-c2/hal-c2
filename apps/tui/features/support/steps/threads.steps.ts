@@ -1387,6 +1387,80 @@ step("the user is told to pick a base branch", async (ctx: World) => {
   expect(await snapshot(ctx)).toContain("Select a base branch");
 });
 
+// --- The new thread's project picker ----------------------------------------------
+
+const selectState = (ctx: World) => ctx.host!.state.get("select") as TuiSelectState;
+const pickerLabels = (ctx: World) => selectState(ctx).options.map((option) => option.label);
+
+step("the user has many projects and is writing a new thread", async (ctx: World) => {
+  for (const title of ["docs", "api", "billing", "blog", "mobile"]) addProject(ctx, title);
+  await ui(ctx);
+  await pressKey(ctx, "Ctrl+N");
+  await flush(ctx);
+  expect(draft(ctx)?.projectName).toBe("shop");
+});
+
+step("the user is searching the new thread's project picker", async (ctx: World) => {
+  addProject(ctx, "docs");
+  await ui(ctx);
+  await pressKey(ctx, "Ctrl+N");
+  await flush(ctx);
+  await openProjectPicker(ctx);
+  await typeText(ctx, "zzz");
+  await flush(ctx);
+});
+
+async function openProjectPicker(ctx: World): Promise<void> {
+  await pressKey(ctx, "Ctrl+K");
+  await typeText(ctx, "change project");
+  await flush(ctx);
+  await pressKey(ctx, "Enter");
+  await flush(ctx);
+  expect(selectState(ctx)).toMatchObject({ open: true, title: "project", searchable: true });
+}
+
+step("the user opens the draft's project picker", openProjectPicker);
+
+step("every project is listed, with {string} last", (ctx: World, last: string) => {
+  expect(pickerLabels(ctx)).toEqual(["shop", "docs", "api", "billing", "blog", "mobile", last]);
+});
+
+step(
+  "the user opens the draft's project picker and types part of a project's name",
+  async (ctx: World) => {
+    await openProjectPicker(ctx);
+    await typeText(ctx, "bl");
+    await flush(ctx);
+  },
+);
+
+step("only matching projects are listed", async (ctx: World) => {
+  expect(pickerLabels(ctx)).toEqual(["blog"]);
+  const rows = (await objectRows(ctx, "selectOverlay")).join("\n");
+  expect(rows).toContain("blog");
+  expect(rows).not.toContain("docs");
+});
+
+step("choosing one moves the draft into that project", async (ctx: World) => {
+  await pressKey(ctx, "Enter");
+  await flush(ctx);
+  expect(draft(ctx)).toMatchObject({ projectName: "blog", workspaceMode: "new-worktree" });
+  expect(await snapshot(ctx)).toContain("What should we build in blog?");
+});
+
+step("nothing matches the search", async (ctx: World) => {
+  expect(selectState(ctx).options).toEqual([]);
+});
+
+step("the picker reads {string}", async (ctx: World, text: string) => {
+  expect((await objectRows(ctx, "selectOverlay")).join("\n")).toContain(text);
+});
+
+step("{string} is not listed while searching", (ctx: World, label: string) => {
+  expect(selectState(ctx).query).not.toBe("");
+  expect(pickerLabels(ctx)).not.toContain(label);
+});
+
 // --- The OpenTUI client's look ---------------------------------------------
 
 type Colour = keyof typeof THEME;

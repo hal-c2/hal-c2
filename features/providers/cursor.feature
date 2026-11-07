@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19806
+#   https://github.com/pingdotgg/t3code/pull/19678
+#   https://github.com/pingdotgg/t3code/pull/18664
+#   https://github.com/pingdotgg/t3code/pull/16146
+#   https://github.com/pingdotgg/t3code/pull/17462
+#   https://github.com/pingdotgg/t3code/pull/17419
+#   https://github.com/pingdotgg/t3code/pull/19771
 #   https://github.com/pingdotgg/t3code/pull/17389
 #   https://github.com/pingdotgg/t3code/pull/19712
 #   https://github.com/pingdotgg/t3code/pull/15875
@@ -78,6 +85,14 @@ Feature: Cursor
       | the CURSOR_API_KEY was rejected by Cursor                 | Cursor SDK authentication failed. Check CURSOR_API_KEY.                     |
       | the Cursor model catalog request fails for another reason | Cursor SDK catalog request failed. Check server logs for details.           |
 
+  # Upstream #19771: a free-plan Cursor account is told a paid plan is needed; its credentials are discarded.
+  @backlog @shared
+  Scenario: A free-plan Cursor account is told it needs a paid plan
+    Given the user signs in to Cursor with a free-plan account
+    When Cursor rejects the account
+    Then Cursor's status and the sign-in say a paid Cursor plan is needed
+    And the rejected sign-in is not kept
+
   @backlog
   Scenario: A Cursor model catalog request that does not finish is reported
     Given the user has a CURSOR_API_KEY
@@ -152,6 +167,28 @@ Feature: Cursor
   Scenario: Cursor model options come from the Cursor catalog
     When the user opens the options for a Cursor model
     Then the reasoning, context size, fast mode and thinking choices Cursor offers for that model are shown
+
+  # Upstream #17462: Cursor handoffs used a 128K fallback whatever window the model ran with; the
+  # chosen window, or the catalog's default for the model, now sets the budget.
+  @backlog
+  Scenario Outline: A handoff to Cursor is budgeted by the context window the model runs with
+    Given "t1" is switched to a Cursor model whose catalog default context window is 1,000,000 tokens
+    And <chosen>
+    When the conversation is handed over with a new message
+    Then the history is budgeted against <window>
+
+    Examples:
+      | chosen                                  | window           |
+      | the user chose the 500,000 token window | 500,000 tokens   |
+      | the user chose no window                | 1,000,000 tokens |
+
+  # Upstream #19678: a model the account's catalog rejects is explained
+  @backlog
+  Scenario: A model the Cursor account does not offer says so
+    Given a Cursor thread set to a model the account's catalog does not include
+    When the turn fails because Cursor rejects the model
+    Then the user is told the model must be one the Cursor account offers
+    And the error does not suggest trying again
 
   Scenario: An empty Cursor catalog is a warning
     Given Cursor returns no models
@@ -328,6 +365,25 @@ Feature: Cursor
     Then "review" is offered
     And skills inside the too-deep part of the tree are not
 
+  # Upstream #18664: skill discovery walks a folder once even when two skill roots link to
+  # it, so a linked root no longer doubles the scan and exhausts its budget.
+  @backlog @priority-low
+  Scenario: A skill folder linked from a second root is read once
+    Given the user's "~/.agents/skills" is a link to "~/.claude/skills"
+    And "~/.claude/skills" holds 6,000 entries including the skill "review"
+    When the user opens the skill list in a Cursor thread
+    Then "review" is offered once
+    And the skill search is not reported as incomplete
+
+  # Upstream #19806: installed node_modules no longer exhaust skill discovery
+  @backlog
+  Scenario: Installed dependencies inside a skill do not hide the other skills
+    Given a Cursor skill folder holds an installed "node_modules" with thousands of files
+    And other skills sit beside it
+    When the user lists Cursor's skills
+    Then every skill is listed
+    And nothing inside "node_modules" is searched for skills
+
   @backlog @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short
     Given <situation>
@@ -363,6 +419,15 @@ Feature: Cursor
     Given a Cursor turn is running
     When Cursor's whole reply is a connection error such as "Something went wrong communicating with the server. Please try again."
     Then the turn fails as a connection problem instead of showing the error as Cursor's answer
+
+  # Upstream #16146: a failed Cursor run fails the turn with Cursor's own message and code,
+  # and an SDK failure names the SDK's reason, code and HTTP status.
+  @backlog
+  Scenario: A failed Cursor turn shows the reason Cursor gave
+    Given a Cursor turn is running
+    When Cursor ends the run with the error "Model Blocked Please ask your admin to enable access"
+    Then the turn fails with "Model Blocked Please ask your admin to enable access"
+    And a thread that delegated the turn is told the same reason
 
   @backlog @priority-low
   Scenario: An answer that quotes a connection error is still an answer
@@ -426,6 +491,13 @@ Feature: Cursor
     Then a child thread opens with the task as its first message
     And the subagent's tool calls appear in the child thread
     And the subagent's result is shown when it finishes
+
+  # Upstream #17419: subagent cards show Cursor's reasoning effort.
+  @backlog @shared
+  Scenario: A Cursor subagent's card names its reasoning effort
+    Given Cursor starts a subagent with high reasoning effort
+    When the user looks at the subagent's card
+    Then the card reads the effort "High"
 
   @backlog @priority-low
   Scenario Outline: A Cursor subagent that never reported back takes the run's outcome

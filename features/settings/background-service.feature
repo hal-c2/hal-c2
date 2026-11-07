@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14361
 #   docs/user/background-service.md
 #   apps/server-ex/lib/hal_c2/background_policy.ex (profiles, leases, host power, pause rules)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (server.reportClientActivity)
@@ -306,3 +307,12 @@ Feature: Background activity and the background service
       Given the MC runs on Windows
       When the user installs the background service
       Then the install fails closed saying the background service is not available on Windows
+
+    # Upstream #14361: a restart or update run from inside the service stopped its own caller
+    # before starting the service again; it now hands the work to the service manager.
+    @backlog @mc
+    Scenario: Restarting the service from a terminal inside HAL-C2 brings it back
+      Given the MC runs under its service
+      When the user restarts the service from a terminal in one of its threads
+      Then the user is told the restart is under way
+      And the MC comes back running under the service

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19377
 #   apps/web/src/components/settings/BrowserImportWizard.tsx
 #   apps/web/src/components/settings/browserImportWizard.logic.ts
 #   apps/web/src/components/settings/browserImportWizard.logic.test.ts
@@ -211,6 +212,14 @@ Feature: Importing cookies from another browser
       When the user imports cookies from Safari
       Then the user is told the browser's cookie database could not be read
       And no cookie is imported
+
+    # Upstream #19377: Chromium cookies whose stored value is text instead of bytes still import.
+    @backlog @desktop
+    Scenario: A Chromium cookie stored as text does not stop the import
+      Given a Chromium profile with a cookie whose value was stored as text
+      When the user imports from that profile
+      Then the import finishes
+      And that cookie is imported with the others
 
   Rule: Recovering from what blocks an import
 

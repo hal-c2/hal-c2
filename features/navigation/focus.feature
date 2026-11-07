@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18850
+#   https://github.com/pingdotgg/t3code/pull/14786
 #   https://github.com/pingdotgg/t3code/pull/14595
 #   https://github.com/pingdotgg/t3code/pull/13344
 #   https://github.com/pingdotgg/t3code/pull/11580
@@ -29,6 +31,14 @@ Feature: Keyboard focus and keyboard-only use
       Given the command palette is open
       When a background update changes the thread list
       Then the command palette search still has keyboard focus
+
+    # Upstream #18850: with no composer on screen, dismissing the palette returns focus to
+    # what had it before; with a composer, focus goes to the composer as before.
+    @backlog @desktop
+    Scenario: Dismissing the palette away from a thread returns focus to where it was
+      Given the settings search has keyboard focus
+      When the user opens the command palette and dismisses it with Escape
+      Then the settings search has keyboard focus again
 
     @desktop
     Scenario Outline: Thread shortcuts do nothing while the command palette is open
@@ -254,6 +264,14 @@ Feature: Keyboard focus and keyboard-only use
       Given the right panel has "Diff" and "Files" tabs with "Diff" active
       When the user focuses the "Files" tab and presses Enter
       Then the "Files" tab is active
+
+    # Upstream #14786: closing the right panel moves the focus out of it.
+    @backlog @desktop @priority-low
+    Scenario: Closing the right panel from the keyboard leaves the focus on its toggle
+      Given the focus is inside the right panel
+      When the user closes the right panel
+      Then the focus is on the control that opens the right panel
+      And Tab does not reach the controls of the closing panel
 
     @desktop
     Scenario Outline: Window controls are announced by name

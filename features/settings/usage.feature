@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21055
+#   https://github.com/pingdotgg/t3code/pull/19245
+#   https://github.com/pingdotgg/t3code/pull/20349
+#   https://github.com/pingdotgg/t3code/pull/14477
+#   https://github.com/pingdotgg/t3code/pull/15575
+#   https://github.com/pingdotgg/t3code/pull/14672
+#   https://github.com/pingdotgg/t3code/pull/17759
 #   https://github.com/pingdotgg/t3code/pull/16970
 #   https://github.com/pingdotgg/t3code/pull/17147
 #   https://github.com/pingdotgg/t3code/pull/17869
@@ -61,6 +68,7 @@ Feature: Usage and limits
       When a client asks for the usage summary
       Then the repeated turns count once
 
+    # Upstream #14672: Claude's "<synthetic>" placeholder is not listed as a model, cached or not.
     @mc
     Scenario: Claude's local error replies are not counted as a model
       Given Claude Code's history holds a local error reply beside a real model's replies
@@ -95,6 +103,14 @@ Feature: Usage and limits
     Scenario: An unknown time zone falls back to UTC
       When a client asks for daily usage in "Mars/Olympus"
       Then the buckets are in UTC
+
+    # Upstream #17759: OpenCode usage is read from each instance's own data folder.
+    @backlog @mc @plugin-opencode
+    Scenario: OpenCode instances with their own data folders are each counted
+      Given two OpenCode instances whose environments point at different data folders
+      When a client asks for the usage summary
+      Then the history of both folders is counted
+      And a folder both instances share is counted once
 
   @priority-low
   Rule: Prices
@@ -192,7 +208,15 @@ Feature: Usage and limits
         | no model ID                            | Enter a model ID.                            |
         | an output rate but no input rate       | Input is required on laptop.                 |
         | a negative output rate                 | Use non-negative numbers for prices.         |
-        | a rate that is not a number            | Use non-negative numbers for prices.         |
+
+    # Upstream #19245: custom price cells take only numbers, so letters never reach a rate.
+    @backlog @desktop
+    Scenario: A model's price takes only a number
+      Given the user is adding a price for a model
+      When the user types "abc" as its input rate
+      Then the input rate stays empty
+      When the user types "2.5"
+      Then the input rate is 2.5
 
     @backlog @desktop
     Scenario: A model that already has a price row is edited there
@@ -226,6 +250,14 @@ Feature: Usage and limits
       Given no environment is selected
       When the user opens model prices
       Then the user is asked to select an environment to see and change its model prices
+
+    # Upstream #21055: model prices fall back to GitHub's API.
+    @backlog @mc
+    Scenario: Prices are fetched another way when the usual address cannot be reached
+      Given the address the MC fetches model prices from cannot be reached
+      When the user refreshes usage prices
+      Then the MC fetches the prices through GitHub's API
+      And if that fails too, costs keep using the saved prices
 
   Rule: Reading usage
 
@@ -394,6 +426,18 @@ Feature: Usage and limits
       When the user views cost for the past 24 hours
       Then the chart tells the two hours labelled 1 AM apart
 
+    # Upstream #15575: the past 24 hours' hour labels ignored the Time format setting.
+    @backlog @desktop @priority-low
+    Scenario Outline: Hours in the past 24 hours follow the time format
+      Given the user set the time format to "<format>"
+      When the user views cost for the past 24 hours
+      Then midnight on the chart, in its hover and in the hourly table reads "<midnight>"
+
+      Examples:
+        | format  | midnight |
+        | 24-hour | 00:00    |
+        | 12-hour | 12 AM    |
+
     @desktop @backlog-desktop
     Scenario: Each model shows its share of the cost
       Given the user views cost for the past 7 days
@@ -459,6 +503,15 @@ Feature: Usage and limits
       When the user views limits
       Then Codex shows one 5-hour number made up of both accounts
       And the account that resets soonest comes first
+
+    # Upstream #20349: accounts out of weekly allowance add no usable session quota to the pool.
+    @backlog @shared
+    Scenario: An account that spent its weekly allowance adds no session quota to the pool
+      Given two Codex accounts with all their 5-hour quota left
+      And one of them has spent its whole weekly allowance
+      When the user views limits
+      Then Codex's 5-hour number counts only the other account's quota
+      And the spent account's session quota is expected back no sooner than its weekly reset
 
     @desktop @backlog-desktop
     Scenario: Each account in Limits is told apart by its chip
@@ -543,6 +596,15 @@ Feature: Usage and limits
         | 20%     | 60%  | ahead of pace: spending faster than the window elapses |
         | 50%     | 50%  | on pace with the window                               |
         | 80%     | 30%  | under pace: headroom left for the rest of the window  |
+
+    # Upstream #14477: pooled Limits bars lacked the even-pace mark single-account bars have.
+    @backlog @shared @priority-low
+    Scenario: A pooled limit marks where each account would be at an even pace
+      Given two Codex accounts whose 5-hour windows are 25% and 75% through
+      When the user views limits
+      Then Codex's pooled limit marks where each account's usage would be at an even pace
+      And each account's pace is also said in words
+      But an account whose window timing is unknown gets no mark
 
     @backlog @desktop
     Scenario: A limit says when it resets

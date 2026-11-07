@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11943
+#   https://github.com/pingdotgg/t3code/pull/18604
 #   https://github.com/pingdotgg/t3code/pull/13340
 #   docs/user/mobile-notifications.md
 #   packages/contracts/src/rpc.ts (hal-c2.registerPush, hal-c2.unregisterPush)
@@ -101,7 +103,9 @@ Feature: Push notifications and live agent activity
 
   # What a machine had when it joined the cluster is not news either, but its first
   # finished turn is, even when it joined with no threads at all.
-  @mc @mobile
+  # The phone sees only one environment, so it cannot join a second machine to the
+  # cluster yet (#1092); the MC's half runs under features/mc.
+  @mc @mobile @backlog-mobile
   Scenario: A machine that joins the cluster with no threads alerts about its first finished turn
     Given device notifications are on
     And "Studio" joins the cluster with no threads
@@ -157,12 +161,23 @@ Feature: Push notifications and live agent activity
     When the user sends a message in "Fix checkout"
     Then the lock screen shows that agent work is in progress
 
+  # Upstream #11943: an idle live activity ends once its 15-minute display window is over.
   @mobile
   Scenario: The live activity follows the agent and shows the result
     Given the lock screen shows agent work in progress for "Fix checkout"
     When the agent finishes its turn
     Then the lock screen shows that the agent work completed
     And the result stays visible for up to 15 minutes
+
+  # Upstream #18604: a settled thread kept its Done row; settling now removes it, and
+  # unsettling does not send another Done alert.
+  @backlog @mc @mobile
+  Scenario: Settling a finished thread takes it off the live activity
+    Given the lock screen shows "Fix checkout" as done and "Add search" as running
+    When the user settles "Fix checkout"
+    Then the lock screen shows only "Add search"
+    When the user unsettles "Fix checkout"
+    Then no new alert says "Fix checkout" is done
 
   @mobile
   Scenario: Only one live activity is shown per phone

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13253
 #   https://github.com/pingdotgg/t3code/pull/17901
 #   https://github.com/pingdotgg/t3code/pull/16322
 #   https://github.com/pingdotgg/t3code/pull/14103
@@ -87,6 +88,15 @@ Feature: Source Control settings
   Scenario: A fetch interval of zero turns background fetching off
     When the user sets the automatic Git fetch interval to 0 seconds
     Then Git never fetches in the background
+
+  # Upstream #13253: a zero fetch interval also stops the fetch and pull on window focus.
+  @backlog @mc @desktop
+  Scenario: With fetching off, coming back to the window neither fetches nor pulls
+    Given the automatic Git fetch interval is 0 seconds
+    And the default branch is clean and was behind its remote when last fetched
+    When the user comes back to the window
+    Then Git does not fetch and the branch is not pulled
+    And the branch's local status still refreshes
 
   @tui
   Scenario: Seeing source control tools from the terminal client

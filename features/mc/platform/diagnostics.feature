@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19789
 #   https://github.com/pingdotgg/t3code/pull/13697
 #   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
@@ -353,6 +354,14 @@ Feature: MC diagnostics
     Given provider event logging is on
     When a provider streams text, command output and plan deltas
     Then the log keeps lifecycle events, responses and failures but not the deltas
+
+  # Upstream #19789: provider logs skip Claude's thinking-token counters
+  @backlog @mc @plugin-claude @priority-low
+  Scenario: Claude's thinking-token counters are left out of provider event logs
+    Given provider event logging is on
+    When a Claude turn thinks and finishes
+    Then the log has no thinking-token counter updates
+    And it keeps Claude's usage and result records
 
   # Rotation and retention of apps/server/src/provider/Layers/EventNdjsonLogger.ts
   # (10 MiB a file, ten files a thread, 512 MiB and 14 days in all). The MC's provider_log.ex

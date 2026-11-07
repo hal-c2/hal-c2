@@ -382,6 +382,9 @@ defmodule HalC2.Claude.ThreadRuntime do
         message = Provider.too_old(turn.model, Entities.instance(ids)) ->
           {:error, {:refused, message}}
 
+        message = background_change(state, turn) ->
+          {:error, {:refused, message}}
+
         true ->
           open_session(state, turn)
       end
@@ -398,7 +401,11 @@ defmodule HalC2.Claude.ThreadRuntime do
         case started(state) do
           :ok ->
             {state, opts} = take_wake(state, session)
-            Session.send_message(state.session, claude_content(turn), opts)
+            # Fresh for every prompt: Claude finishes one whose uuid its transcript
+            # already holds without running a turn for it (Upstream #16897).
+            uuid = HalC2.Environment.uuid4()
+            state = put_in(state.turn[:prompt], %{uuid: uuid, started: false})
+            Session.send_message(state.session, claude_content(turn), [uuid: uuid] ++ opts)
             {:reply, :ok, state}
 
           :ended ->
@@ -687,6 +694,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       cond do
         state.turn && state.interrupted -> end_turn(state, "interrupted", nil)
+        # The MC ending its CLI on the way down leaves the run and its work for the
+        # next boot's recovery (`HalC2.Orchestration.Recovery.stopping?/0`).
+        HalC2.Orchestration.Recovery.stopping?() -> state
         state.turn -> end_turn(state, "failed", "Claude exited")
         true -> end_work(state, "failed")
       end
@@ -1121,23 +1131,44 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp semver(_text), do: nil
 
-  # The CLI takes its model, options and MCP server at launch, so a turn on others
-  # resumes the conversation in a new process.
-  defp ensure_session(%{session: session} = state, turn)
-       when session != nil and state.launch != turn.launch do
-    state = end_work(state, "interrupted")
-    GenServer.stop(session)
-    ensure_session(%{state | session: nil}, turn)
+  # Fast mode left off launches as it does unset.
+  defp same_launch?(launch, other), do: plain_launch(launch) == plain_launch(other)
+
+  defp plain_launch(%{settings: %{"fastMode" => false} = settings} = launch),
+    do: %{launch | settings: Map.delete(settings, "fastMode")}
+
+  defp plain_launch(launch), do: launch
+
+  # A new process would end the background work Claude runs, so a turn on another model
+  # or other options waits until the user stops that work. Only what the user picks
+  # counts: a turn that needs a new process for anything else still gets one.
+  defp background_change(%{session: session} = state, turn) when session != nil do
+    picked = &Map.take(plain_launch(&1), [:model, :effort, :settings, :context_window])
+
+    if picked.(state.launch) != picked.(turn.launch) and
+         Enum.any?(state.work, fn {_, work} -> work.background end),
+       do:
+         "Claude is still running background work, which a change of model or options would end. Stop it first, or send the message with the current selection."
   end
 
+  defp background_change(_state, _turn), do: nil
+
+  # The CLI takes its model, options and MCP server at launch, so a turn on others
+  # resumes the conversation in a new process.
   defp ensure_session(%{session: session} = state, turn) when session != nil do
-    mode = permission_mode(turn)
+    if same_launch?(state.launch, turn.launch) do
+      mode = permission_mode(turn)
 
-    if state.permission_mode != mode do
-      _ = Session.control(session, "set_permission_mode", %{"mode" => mode})
+      if state.permission_mode != mode do
+        _ = Session.control(session, "set_permission_mode", %{"mode" => mode})
+      end
+
+      {:ok, %{state | permission_mode: mode}}
+    else
+      state = end_work(state, "interrupted")
+      GenServer.stop(session)
+      ensure_session(%{state | session: nil}, turn)
     end
-
-    {:ok, %{state | permission_mode: mode}}
   end
 
   defp ensure_session(state, turn) do
@@ -1349,6 +1380,34 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(%{"type" => type, "parent_tool_use_id" => parent} = message, state)
        when type in @sidechain and is_binary(parent),
        do: sidechain(message, parent, state)
+
+  # Claude says it started, or finished, the turn's prompt. One it finishes without
+  # starting gets no turn and no result (Upstream #16897), so the turn fails.
+  defp message(
+         %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => lifecycle},
+         %{turn: %{prompt: %{uuid: uuid} = prompt}} = state
+       ) do
+    case lifecycle do
+      "started" ->
+        put_in(state.turn.prompt, %{prompt | started: true})
+
+      # Claude ended the prompt without running it; a cancelled one is a stop, which
+      # settles the turn itself.
+      ended when ended in ["completed", "discarded", "refused"] and not prompt.started ->
+        end_turn(
+          state,
+          "failed",
+          "Claude acknowledged the message but never started a turn for it.",
+          # The process and the work it runs in the background are untouched.
+          keep_background: true
+        )
+
+      _ ->
+        state
+    end
+  end
+
+  defp message(%{"type" => "command_lifecycle"}, state), do: state
 
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     # `with_ids/1` recovers the latest turn's ids when this runtime has not
@@ -1613,9 +1672,15 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     failure =
       cond do
-        status != "failed" -> nil
-        state.turn[:auth_failure] -> auth_failure(state.turn[:auth_failure], result)
-        true -> failure(result, state.turn)
+        status != "failed" ->
+          nil
+
+        # Claude labels a 403 an authentication failure too, but its reason is not a sign-in problem.
+        state.turn[:auth_failure] && result["api_error_status"] in [nil, 401] ->
+          auth_failure(state.turn[:auth_failure], result)
+
+        true ->
+          failure(result, state.turn)
       end
 
     end_turn(state, status, failure)
@@ -2002,8 +2067,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     shown = user_facing_error(result)
     structured = @terminal_errors[reason]
 
+    gateway_reset = gateway_reset(result, api_status)
+    limits = if gateway_reset, do: %{gateway: gateway_reset}, else: limits
+
     limited? =
-      reason == "blocking_limit" or (result["subtype"] == "success" and api_status == 429) or
+      gateway_reset != nil or reason == "blocking_limit" or
+        (result["subtype"] == "success" and api_status == 429) or
         ((limits != %{} or turn[:rate_limited] == true) and
            (result["subtype"] != "success" or api_status in [nil, 429]) and
            reason in [nil, "api_error", "blocking_limit"])
@@ -2036,6 +2105,35 @@ defmodule HalC2.Claude.ThreadRuntime do
         "retryable" => if(api_status in [429, 529], do: true)
       }
     end
+  end
+
+  # A gateway (9router and the like) wraps Claude's 429 as a 503 `rate_limit_error` that
+  # names its cooldown, "(reset after 1h 2m 3s)". The reset is that long from now; a cooldown of zero or one that cannot be
+  # read is no usage limit.
+  defp gateway_reset(result, 503) do
+    text =
+      Enum.join(
+        [result["result"] | List.wrap(result["errors"])] |> Enum.filter(&is_binary/1),
+        " "
+      )
+
+    with true <- text =~ "rate_limit_error",
+         [_, cooldown] <- Regex.run(~r/\(reset after ((?:\d+[hms] ?)+)\)/, text),
+         seconds when seconds > 0 <- cooldown_seconds(cooldown) do
+      reset_at(System.system_time(:second) + seconds)
+    else
+      _ -> nil
+    end
+  end
+
+  defp gateway_reset(_result, _status), do: nil
+
+  defp cooldown_seconds(cooldown) do
+    ~r/(\d+)([hms])/
+    |> Regex.scan(cooldown)
+    |> Enum.sum_by(fn [_, n, unit] ->
+      String.to_integer(n) * %{"h" => 3600, "m" => 60, "s" => 1}[unit]
+    end)
   end
 
   defp api_status_message(529), do: "Claude API is overloaded (529). Try again shortly."
@@ -2184,6 +2282,11 @@ defmodule HalC2.Claude.ThreadRuntime do
         tool_block(block, state)
     end
   end
+
+  # Claude put its own session in plan mode: the next turn sets the thread's mode back
+  # (`ensure_session/2`), so Claude and the subagents it starts can edit again.
+  defp assistant_block(%{"type" => "tool_use", "name" => "EnterPlanMode"} = block, _, _, state),
+    do: tool_block(block, %{state | permission_mode: "plan"})
 
   defp assistant_block(%{"type" => "tool_use"} = block, _id, _index, state),
     do: tool_block(block, state)
@@ -2485,13 +2588,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  defp end_turn(state, status, failure) do
+  defp end_turn(state, status, failure, opts \\ []) do
     state = flush(state)
 
     # Items and prompts still open when the turn ends are closed with it; background
-    # work goes on after a completed turn.
+    # work goes on after a completed turn, or one Claude never started (`:keep_background`).
     state =
-      if status == "completed",
+      if status == "completed" or opts[:keep_background],
         do: end_work(state, &(not &1.background), status),
         else: end_work(state, status)
 

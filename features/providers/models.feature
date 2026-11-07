@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18581
 #   https://github.com/pingdotgg/t3code/pull/16816
 #   https://github.com/pingdotgg/t3code/pull/14314
 #   https://github.com/pingdotgg/t3code/pull/17307
@@ -282,6 +283,15 @@ Feature: Models
     When it connects to an environment that keeps none yet
     Then the environment takes the device's favourites and hidden models
     And a list the user cleared stays cleared
+
+  # Upstream #18581: the model preferences migration no longer loops on servers that ignore it
+  @backlog @shared @priority-low
+  Scenario: An environment that does not take the device's model preferences is asked once per connection
+    Given a client kept favourite models on its device
+    And the environment it connects to does not keep model preferences
+    When the environment sends settings updates during that connection
+    Then the client offers its device's preferences only once
+    And it offers them again only after it reconnects
 
   @backlog @mc
   Scenario: Changes to model preferences from two clients do not undo each other

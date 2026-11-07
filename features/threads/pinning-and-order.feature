@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19697
 #   docs/user/thread-sidebar.md (Pinning, Undo, Arranging threads, drag between sections)
 #   apps/web/src/components/Sidebar.tsx (pin, unpin, drag and drop, confirm unpin)
 #   apps/web/src/components/Sidebar.drag.ts, Sidebar.pointer.ts (drag collisions, a drag that is cancelled)

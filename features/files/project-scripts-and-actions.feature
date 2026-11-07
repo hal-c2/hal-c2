@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18412
+#   https://github.com/pingdotgg/t3code/pull/13903
+#   https://github.com/pingdotgg/t3code/pull/18891
+#   https://github.com/pingdotgg/t3code/pull/20891
 #   docs/user/project-settings.md (Actions)
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex (setup script)
 #   apps/web/src/components/ProjectScriptsControl.tsx
@@ -88,6 +92,15 @@ Feature: Project actions
       Then the preview opens at that address
       And a failed write opens nothing
 
+    # Upstream #13903: project actions are typed with a leading space so they stay out of shell history.
+    @backlog @shared @priority-low
+    Scenario: An action's command stays out of the shell's history
+      Given the user's shell leaves out of its history the lines that start with a space
+      When the user runs an action
+      Then the action's command runs in the terminal
+      And it is not saved in the shell's history
+      And a command the user types afterwards is saved as usual
+
   Rule: The setup script
 
     Background:
@@ -121,6 +134,23 @@ Feature: Project actions
       When a thread in "shop" starts on a new worktree
       Then the setup script step is skipped
       And the agent starts
+
+    # Upstream #18891: a setup action set to run on worktree creation no longer runs when a
+    # thread starts in the main checkout, where it could overwrite the project's own files.
+    @backlog @mc @priority-high
+    Scenario: A thread in the main checkout runs no setup script
+      Given "Install" runs automatically when a worktree is created
+      When a thread in "shop" starts in the main checkout
+      Then "bun install" does not run
+      And the agent starts
+
+    # Upstream #13903: setup and settle scripts are typed with a leading space so they stay out of shell history.
+    @backlog @mc @priority-low
+    Scenario: A setup script stays out of the shell's history
+      Given the user's shell leaves out of its history the lines that start with a space
+      When a thread in "shop" starts on a new worktree
+      Then "bun install" runs in the new worktree's setup terminal
+      And it is not saved in the shell's history
 
   Rule: An action can run when a worktree thread settles
 
@@ -256,6 +286,7 @@ Feature: Project actions
       Then "shop" has one action named "Test"
       And the form cannot be edited until the save finishes
 
+    # Upstream #20891: a late failure from an earlier save no longer shows on the form opened after it.
     @backlog @desktop @priority-low
     Scenario: Closing the form while saving ignores the result
       Given the user saved a new action and the save is still running
@@ -292,3 +323,15 @@ Feature: Project actions
       Given an action with a shortcut
       When the user changes the shortcut, clears it, or deletes the action
       Then only the new shortcut is bound, or none, and no earlier rule stays active
+
+    # Upstream #18412: an edit that left the shortcut alone was saved as clearing it.
+    @backlog @shared @priority-low
+    Scenario Outline: Editing an action's <field> keeps its shortcut
+      Given the action "Test" runs "echo original" on "Ctrl+Shift+T"
+      When the user changes only its <field> and saves
+      Then "Ctrl+Shift+T" still runs the action
+
+      Examples:
+        | field   |
+        | name    |
+        | command |

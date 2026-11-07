@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18194
+#   https://github.com/pingdotgg/t3code/pull/18360
+#   https://github.com/pingdotgg/t3code/pull/17454
+#   https://github.com/pingdotgg/t3code/pull/21027
 #   https://github.com/pingdotgg/t3code/pull/17791
 #   https://github.com/pingdotgg/t3code/pull/17823
 #   https://github.com/pingdotgg/t3code/pull/17145
@@ -55,6 +59,14 @@ Feature: Agents working with threads through MCP tools
     Then it receives the messages at positions 3 and 4, the next position and whether more remain
     And the thread's recent runs, newest first
 
+  # Upstream #18194: reading a thread names the thread that sent each agent message
+  @backlog @mc
+  Scenario: Reading a thread says which thread sent a message
+    Given the agent of "caller" sent "check the tests" to "t2"
+    When another agent reads "t2"
+    Then "check the tests" names "caller" as the thread that sent it
+    And messages the user typed name no sending thread
+
   @mc
   Scenario: The activity view includes tool work, not just messages
     When the agent of "caller" reads "t2" in the activity view
@@ -97,6 +109,15 @@ Feature: Agents working with threads through MCP tools
     Given "t2" is idle
     When the agent of "caller" sends a message to "t2" in mode "restart"
     Then it fails with code "thread_not_sendable"
+
+  # Upstream #21027: a send the orchestrator refuses reports the orchestrator's reason, the one
+  # a client would show, instead of a generic dispatch failure.
+  @backlog @mc
+  Scenario: A send the orchestrator refuses says why
+    Given "t2" has a turn running whose provider session is gone
+    When the agent of "caller" sends a message to "t2" in mode "restart"
+    Then it fails with the orchestrator's reason for refusing it
+    And not only with the name of the command that failed
 
   @mc
   Scenario: An archived thread cannot be messaged
@@ -263,6 +284,18 @@ Feature: Agents working with threads through MCP tools
     Then it fails because the threads already exist
     And no extra threads are created
 
+  # Upstream #18360: a repeat of an accepted batch is answered with the threads it created, even
+  # once the project has turned its provider off; a new batch is judged by today's settings.
+  # Replaces the scenario above once the MC carries it.
+  @mc @backlog
+  Scenario: Repeating a batch with the same request key answers with the threads it created
+    Given the agent of "caller" created threads on "codex-work" with request key "k1"
+    And the project then turned "codex-work" off
+    When it repeats the request with request key "k1"
+    Then it is answered with the threads the first request created
+    And no extra threads are created
+    But a new batch on "codex-work" is refused because the provider is off for the project
+
   @mc
   Scenario Outline: Batch-created thread titles
     When the agent of "caller" creates a thread with <input>
@@ -363,6 +396,14 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" lists or reads "t2"
     Then the response includes the settlement state of "t2"
     And it says why "t2" can or cannot settle
+
+  # Upstream #17454: thread list and read include the thread's visible pull request links, the
+  # list list_thread_pull_requests returns, without dismissed stack members.
+  @backlog @mc
+  Scenario: Listing or reading a thread shows every pull request linked to it
+    Given "t2" is linked to pull request 42 in "demo" and pull request 7 in another repository
+    When the agent of "caller" lists or reads "t2"
+    Then the response names both pull requests with their host, repository, number and state
 
   # Upstream #16782: agents see snooze state, can filter on it, and are told how to link a thread.
   @backlog @mc

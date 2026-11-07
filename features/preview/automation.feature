@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20994
+#   https://github.com/pingdotgg/t3code/pull/18146
+#   https://github.com/pingdotgg/t3code/pull/17429
+#   https://github.com/pingdotgg/t3code/pull/20085
+#   https://github.com/pingdotgg/t3code/pull/19737
+#   https://github.com/pingdotgg/t3code/pull/20446
 #   https://github.com/pingdotgg/t3code/pull/16956
 #   https://github.com/pingdotgg/t3code/pull/16963
 #   https://github.com/pingdotgg/t3code/pull/17360
@@ -165,6 +171,14 @@ Feature: Agents drive the preview browser
       When the agent asks for the preview status
       Then every tab is listed with whether a person, an agent or nobody has it, whether it is this agent's, whether it is shown and its profile
 
+    # Upstream #18146: threads that share a provider session keep their browser tabs apart.
+    @backlog @mc
+    Scenario: Threads sharing a provider session keep their own browser tabs
+      Given the threads "Tax fix" and "Docs" share one provider session
+      And "Tax fix" has the browser tab "Checkout"
+      When the agent in "Docs" lists its browser tabs
+      Then "Checkout" is not listed
+
     @backlog @mc
     Scenario: An agent reads the user's tab while the user is using it
       Given the user is typing in a tab the user opened
@@ -194,6 +208,13 @@ Feature: Agents drive the preview browser
       Given a tab the user opened
       When an agent closes that tab
       Then the tab stays open and the agent is told it did not open it
+
+    # Upstream #17429: closing another session's tab says why it was refused.
+    @backlog @mc
+    Scenario: An agent refused a tab it did not open is told whose it is
+      Given another agent session opened the browser tab "Checkout"
+      When an agent asks to close "Checkout"
+      Then the agent is told the tab belongs to another agent session
 
     @backlog @mc @priority-low
     Scenario: An agent's new tab opens in the user's default browser profile
@@ -265,6 +286,22 @@ Feature: Agents drive the preview browser
       When an agent takes a snapshot and asks for no image
       Then the tool returns the page's text without the screenshot
 
+    # Upstream #20446: snapshots mask what password fields hold, in every frame.
+    @backlog @mc @desktop @priority-high
+    Scenario: A snapshot never shows what a password field holds
+      Given an agent's current tab shows a sign-in form with a password typed in
+      When the agent takes a snapshot
+      Then the snapshot shows the password field with its value masked
+      And the password appears nowhere in the page text, including fields drawn as dots
+
+    # Upstream #20446: a snapshot it cannot vouch for fails instead of risking a leak.
+    @backlog @mc @desktop
+    Scenario: A snapshot of a page that changes while it is read fails instead of leaking
+      Given an agent's current tab shows a password field whose value changes while the snapshot is taken
+      When the agent takes a snapshot
+      Then the tool fails saying the page was too busy to read safely
+      And it answers within 10 seconds
+
     # Upstream #13558: a save-only snapshot returns the path, not the page metadata.
     @mc @backlog
     Scenario: A snapshot saved as a file without its image returns only the address and the file's path
@@ -277,6 +314,14 @@ Feature: Agents drive the preview browser
     Scenario: An agent that names a tab which is not open is told to open a preview first
       When an agent takes a snapshot of a tab that is not open
       Then the tool fails saying to open a preview with preview_open first
+
+    # Upstream #19737: preview_open refuses a tab id that is not open
+    @mc @backlog
+    Scenario: Opening a preview on a tab that is not open fails instead of opening a new tab
+      Given the thread has no browser tab "tab-9"
+      When an agent opens a preview naming the tab "tab-9"
+      Then the agent is told the tab is not open
+      And no new tab is opened
 
     @mc
     Scenario Outline: A large snapshot is cut down and says what was left out
@@ -416,6 +461,13 @@ Feature: Agents drive the preview browser
       Given an agent asked to record a tab and the recording never started
       When ten seconds pass
       Then the agent can record another tab
+
+    # Upstream #20085: a recording warmup that never settles no longer holds up stopping
+    @backlog @desktop @priority-low
+    Scenario: A recording whose warmup never settles can still be stopped
+      Given a recording of the preview has started and its warmup never settles
+      When the recording is stopped
+      Then it stops without waiting for the warmup
 
     @backlog @desktop @priority-low
     Scenario: A recording is not started while the app window is closed
@@ -558,6 +610,15 @@ Feature: Agents drive the preview browser
       Given the thread has a browser tab the agent opened
       When the agent closes that tab
       Then the tab is gone for every client
+
+    # Upstream #20994: file requests are intercepted only while an agent acts or a streamed
+    # controller drives the tab; otherwise the desktop opens the system file picker.
+    @backlog @desktop
+    Scenario: A file input the user clicks opens the system file picker
+      Given an agent has used the preview tab "Upload"
+      And no agent action is running on "Upload"
+      When the user clicks a file input on "Upload"
+      Then the system file picker opens
 
   Rule: The desktop hosts the agent's browser
 

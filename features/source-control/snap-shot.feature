@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12978
+#   https://github.com/pingdotgg/t3code/pull/11325
+#   https://github.com/pingdotgg/t3code/pull/11037
 #   docs/user/snap-shot.md
 #   docs/internals/linux-snap-shot.md
 #   apps/web/src/components/desktop/SnapShotCoordinator.tsx
@@ -48,6 +51,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then nothing is attached and the user is told the capture was too large
 
+  # Upstream #11037: shortcut repeats during a capture's flight are ignored.
   @backlog @desktop
   Scenario: Pressing the shortcut again while a capture is being taken is ignored
     Given the user has just pressed the Snap Shot shortcut
@@ -241,6 +245,16 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then the image is attached without any app text
     And no other window's text is attached
+
+  # Upstream #11325: Chrome on macOS lost its app text because its title names the browser and
+  # profile; that suffix is allowed for the captured Chrome process only.
+  @backlog
+  Scenario: A Chrome window on macOS gives its app text though its title names the browser
+    Given including app text is on
+    And Chrome on macOS is in front with a window titled "Shop - Google Chrome - Work"
+    When the user presses the Snap Shot shortcut
+    Then the page's app text is attached with the image
+    And no other Chrome process's window gives its text
 
   @backlog @desktop
   Scenario: Very long app text is cut at its limit and marked incomplete
@@ -652,3 +666,10 @@ Feature: Snap Shot captures another app's window into the draft
     When the captured window and the draft are on different displays
     Then the flying image is shown across each display it passes over
     And a failing display does not cut the flight short on the others
+
+  # Upstream #12978: macOS captures could pick a browser's thin helper strip.
+  @backlog
+  Scenario: A Snap Shot on macOS captures the front window, not a helper strip
+    Given the front app on macOS has a thin untitled strip above its content window
+    When the user presses the Snap Shot shortcut
+    Then the content window is captured

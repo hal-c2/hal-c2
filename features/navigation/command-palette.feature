@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19055
+#   https://github.com/pingdotgg/t3code/pull/15940
 #   https://github.com/pingdotgg/t3code/pull/8513
 #   https://github.com/pingdotgg/t3code/pull/10158
 #   docs/user/keyboard-focus.md
@@ -257,6 +259,26 @@ Feature: Command palette
       When the user presses Backspace
       Then the palette shows the root list again
 
+    # Upstream #15940: going back from a submenu or a search cleared the search that led there.
+    @backlog @desktop @priority-low
+    Scenario Outline: Going back in the palette brings back the search that led there
+      Given the user typed "<query>" in the palette and opened <view> from it
+      When the user goes back with <key>
+      Then the palette shows the root list searched for "<query>"
+
+      Examples:
+        | query      | view                       | key       |
+        | theme      | the "Change theme" submenu | Backspace |
+        | go to file | go to file mode            | Escape    |
+        | >search    | project search mode        | Escape    |
+
+    # Upstream #15940: closing the palette forgets the searches it went through.
+    @backlog @desktop @priority-low
+    Scenario: A palette opened again forgets where the user went back from
+      Given the user typed "theme" in the palette and opened the "Change theme" submenu
+      When the user closes the palette and opens it again
+      Then the palette shows the root list with an empty search
+
     @desktop
     Scenario: A command that fails says so
       Given an action that will fail
@@ -384,3 +406,20 @@ Feature: Command palette
     Scenario: A settings result opens that setting
       When the user searches the palette for "word wrap" and chooses the setting
       Then settings open with the word wrap setting highlighted
+
+    # Upstream #19055: new-thread shortcuts run while the open command palette lists them;
+    # shortcuts of entries the search filtered out, and keys typed during IME composition, do not.
+    @backlog @desktop
+    Scenario: A new-thread shortcut the palette lists runs while the palette is open
+      Given the command palette is open and lists "New thread" with its shortcut
+      When the user presses that shortcut
+      Then a new thread starts
+      And the command palette is closed
+
+    # Upstream #19055: a shortcut whose entry the search filtered out stays unavailable.
+    @backlog @desktop
+    Scenario: A shortcut of an entry the search hid does nothing in the palette
+      Given the user searched the command palette so that "New thread" is not listed
+      When the user presses the new-thread shortcut
+      Then no thread is started
+      And the command palette stays open

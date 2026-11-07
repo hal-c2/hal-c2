@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19899
 #   https://github.com/pingdotgg/t3code/pull/15951
 #   https://github.com/pingdotgg/t3code/pull/16118
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (@version 3, client and server frames, shapes, decode)
@@ -222,6 +223,7 @@ Feature: Protocol 3 wire parity
 
   # Upstream #15951: clients tolerate union members they do not know yet
   # Upstream #16118: project icons decode forward-compatibly
+  # Upstream #19899: a pull request action, review verdict or merge method the client does not know is dropped from the list instead of failing the pull request.
   @backlog @shared
   Scenario: A newer MC's unknown union member does not break an older client
     Given the MC sends a thread item, event, attachment or project icon kind the client does not know

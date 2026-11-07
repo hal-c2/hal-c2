@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14538
 #   https://github.com/pingdotgg/t3code/pull/17959
 #   https://github.com/pingdotgg/t3code/pull/17371
 #   https://github.com/pingdotgg/t3code/pull/17664
@@ -195,6 +196,15 @@ Feature: Creating threads
     Then the thread starts working without being opened
     And a new draft opens with the same workspace mode and base branch
 
+  # Upstream #14538: New thread did nothing while the last sent draft was still creating its
+  # worktree; it now opens a fresh draft.
+  @backlog @shared @priority-high
+  Scenario: A new thread started while the last one sets up its worktree opens a fresh draft
+    Given the user sent a draft that is still creating its worktree
+    When the user starts a new thread
+    Then a fresh draft opens
+    And the sent thread keeps setting up and starts when its worktree is ready
+
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: Each background start into a new worktree gets its own worktree
     Given the draft is set to use a new worktree
@@ -247,6 +257,15 @@ Feature: Creating threads
     And the user has typed a new prompt in the emptied draft
     When one of the models fails to start
     Then the new prompt is left as it is
+
+  # Upstream #14538: a start that fails after the user moved on gives its prompt back to its own
+  # draft.
+  @backlog @shared
+  Scenario: A thread whose start fails gets its prompt back without touching a newer draft
+    Given the user sent a draft and opened a new draft while it set up
+    When the sent thread fails to start
+    Then its prompt is back in its own draft
+    And the new draft is unchanged
 
   @backlog @desktop @priority-low
   Scenario: A start that may have gone through is not sent twice by accident
@@ -487,14 +506,20 @@ Feature: Creating threads
     And the current project is still the default choice
 
   # Upstream #17664: the draft screen's picker searches like the sidebar's project filter.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: The new thread's project picker ends with Add project
+    Given the user has many projects and is writing a new thread
+    When the user opens the draft's project picker
+    Then every project is listed, with "Add project" last
+
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The new thread's project picker can be searched
     Given the user has many projects and is writing a new thread
     When the user opens the draft's project picker and types part of a project's name
-    Then only matching projects are listed, with "Add project" last
+    Then only matching projects are listed
     And choosing one moves the draft into that project
 
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A project search with no match says so
     Given the user is searching the new thread's project picker
     When nothing matches the search

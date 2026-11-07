@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13359
+#   https://github.com/pingdotgg/t3code/pull/19685
+#   https://github.com/pingdotgg/t3code/pull/16039
+#   https://github.com/pingdotgg/t3code/pull/18669
 #   https://github.com/pingdotgg/t3code/pull/13927
 #   docs/user/terminal.md
 #   https://github.com/pingdotgg/t3code/pull/13673 (settling closes idle shells)
@@ -94,6 +98,22 @@ Feature: Terminal sessions
       When a terminal opens
       Then the shell is started with zsh's partial-line marker turned off
 
+    # Upstream #19685: fish 4.1+ stalled about ten seconds on startup waiting for terminal replies;
+    # terminals now add no-query-term to fish_features.
+    @backlog @mc
+    Scenario: A fish shell shows its first prompt without waiting on terminal queries
+      Given the user's shell is fish 4.1 or newer
+      When a terminal opens
+      Then the prompt appears without a ten-second wait or a terminal-query warning
+      And fish_features holds "no-query-term" beside any flags the user already set
+
+    # Upstream #19685: an explicit query-term choice in fish_features is kept.
+    @backlog @mc
+    Scenario: A fish shell keeps the user's own choice about terminal queries
+      Given the user's environment sets fish_features to "query-term"
+      When a terminal opens
+      Then the shell sees fish_features as "query-term"
+
     @mc
     Scenario Outline: The MC keeps its own settings out of the user's shell
       Given the MC runs with <variable> set
@@ -109,6 +129,30 @@ Feature: Terminal sessions
         | any variable starting with VITE_    |
         | any variable starting with RELEASE_ |
         | any variable starting with ERL_     |
+
+    # Upstream #13359: shells no longer inherit the terminal multiplexer session the server was started from.
+    @backlog @mc
+    Scenario Outline: A shell does not join the multiplexer session the MC was started from
+      Given the MC was started inside a terminal multiplexer that set <variable>
+      When a terminal opens
+      Then the shell does not see <variable>
+
+      Examples:
+        | variable            |
+        | TMUX                |
+        | TMUX_PANE           |
+        | STY                 |
+        | WINDOW              |
+        | ZELLIJ              |
+        | ZELLIJ_SESSION_NAME |
+        | ZELLIJ_PANE_ID      |
+
+    # Upstream #13359: only per-session variables are dropped; the user's multiplexer settings pass.
+    @backlog @mc @priority-low
+    Scenario: A multiplexer's own settings still reach the shell
+      Given the MC runs with ZELLIJ_CONFIG_DIR set
+      When a terminal opens
+      Then the shell sees ZELLIJ_CONFIG_DIR
 
     @mc
     Scenario: A shell started from an AppImage build does not see the AppImage's mount
@@ -245,6 +289,13 @@ Feature: Terminal sessions
       When storage cleanup looks for worktrees to remove
       Then that worktree is kept
 
+    # Upstream #18669: terminals open for threads whose ids are very long, such as subagents'.
+    @backlog @mc
+    Scenario: A thread with a very long id gets a terminal
+      Given a subagent thread whose id is 200 characters long
+      When the user opens a terminal in it
+      Then a shell starts in the thread's workspace
+
   Rule: Clients open and hide the terminal without stopping it
 
     @desktop
@@ -334,6 +385,14 @@ Feature: Terminal sessions
       Given a thread with a running terminal on a paired environment
       When the user opens the thread's terminal on the phone
       Then the phone shows the same terminal and its recent output
+
+    # Upstream #16039: a checkout terminal reopened in the thread's later worktree.
+    @backlog @shared
+    Scenario: A terminal in the checkout stays there after the thread gets a worktree
+      Given a thread's terminal runs in the project's checkout
+      And the thread has since moved to a worktree
+      When the user opens that terminal again
+      Then it opens in the project's checkout
 
   Rule: Settling a thread closes its idle shells and leaves running commands alone
 
