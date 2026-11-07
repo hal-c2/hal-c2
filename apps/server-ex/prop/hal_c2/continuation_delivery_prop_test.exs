@@ -8,6 +8,9 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   - when the continuation's effect runs (`Recovery.deliverable?/2`), it is sent only if
     the thread is still not archived, on the provider the turn ran on, with nothing
     newer sent, and its project still continues threads;
+  - and only if the thread is not settled or snoozed, and the cut-off turn was not
+    waiting on the user (a request still open, or one the restart closed) and had not
+    been answered already (its provider turn had ended), as upstream #18461 asks;
   - and only if it would not be the fourth continuation in a row with nothing from the
     user between them (upstream #18461), where a continued run that worked longer than
     five minutes before it was cut off breaks the row (upstream #20306);
@@ -59,10 +62,15 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   # The thread starts on the cut-off turn's provider, unarchived, with its project
   # continuing threads and nothing sent since. runs: the ordinal of the thread's last
   # run; current: that of the run cut off; chain: the quick continuations in a row that
-  # led to it.
+  # led to it; asked: what the cut-off run asked the user (nil, `:open` or `:closed`, as
+  # the restart closed it); ended: its provider turn had ended.
   def initial_state,
     do: %{
       archived: false,
+      settled: false,
+      snoozed: false,
+      asked: nil,
+      ended: false,
       provider: "claudeAgent",
       setting: true,
       runs: 1,
@@ -79,6 +87,11 @@ defmodule HalC2.ContinuationDeliveryPropTest do
         {1, {:call, __MODULE__, :archive, [not state.archived]}},
         {1, {:call, __MODULE__, :provider, [oneof(["claudeAgent", "codex"])]}},
         {1, {:call, __MODULE__, :setting, [boolean()]}},
+        {1, {:call, __MODULE__, :settle, [boolean()]}},
+        {1, {:call, __MODULE__, :snooze, [boolean()]}},
+        {1,
+         {:call, __MODULE__, :ask, [state.current, oneof([:open, :closed, :answered, :older])]}},
+        {1, {:call, __MODULE__, :end_turn, [state.current]}},
         {3, {:call, __MODULE__, :deliver, [state.current]}}
       ] ++
         if(state.sent or state.newer,
@@ -99,6 +112,8 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   end
 
   def precondition(state, {:call, _, :deliver, [n]}), do: n == state.current
+  def precondition(state, {:call, _, :ask, [n, _]}), do: n == state.current
+  def precondition(state, {:call, _, :end_turn, [n]}), do: n == state.current
 
   def precondition(state, {:call, _, :newer, [n]}),
     do: not (state.sent or state.newer) and n == state.runs + 1
@@ -120,12 +135,21 @@ defmodule HalC2.ContinuationDeliveryPropTest do
     do: %{state | provider: provider}
 
   def next_state(state, _result, {:call, _, :setting, [on]}), do: %{state | setting: on}
+  def next_state(state, _result, {:call, _, :settle, [on]}), do: %{state | settled: on}
+  def next_state(state, _result, {:call, _, :snooze, [on]}), do: %{state | snoozed: on}
+  def next_state(state, _result, {:call, _, :end_turn, _}), do: %{state | ended: true}
+
+  # A request answered, or one an earlier restart closed, does not count; the first that
+  # does stays.
+  def next_state(state, _result, {:call, _, :ask, [_, how]}),
+    do: %{state | asked: state.asked || if(how in [:open, :closed], do: how)}
+
   def next_state(state, _result, {:call, _, :newer, [n]}), do: %{state | runs: n, newer: true}
   def next_state(state, _result, {:call, _, :sent, [n, _]}), do: %{state | runs: n, sent: true}
 
   def next_state(state, _result, {:call, _, :cut, [n, how, quick]}) do
     chain = if how != :user and quick, do: state.chain + 1, else: 0
-    %{state | runs: n, current: n, chain: chain}
+    %{state | runs: n, current: n, chain: chain, asked: nil, ended: false}
   end
 
   def next_state(state, _result, _call), do: state
@@ -138,6 +162,7 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   defp wanted?(state),
     do:
       not state.archived and state.provider == "claudeAgent" and state.setting and
+        not state.settled and not state.snoozed and state.asked == nil and not state.ended and
         not state.newer and state.chain < 3
 
   # --- commands -------------------------------------------------------------------
@@ -153,6 +178,52 @@ defmodule HalC2.ContinuationDeliveryPropTest do
     {:ok, _} = HalC2.Settings.put(%{"continueThreadsAfterServerUpdate" => on}, version)
     :ok
   end
+
+  def settle(true), do: patch_thread(%{"settledOverride" => "settled"})
+  def settle(false), do: patch_thread(%{"settledOverride" => "active"})
+
+  def snooze(true),
+    do:
+      patch_thread(%{
+        "snoozedUntil" => DateTime.utc_now() |> DateTime.add(1, :day) |> DateTime.to_iso8601()
+      })
+
+  def snooze(false), do: patch_thread(%{"snoozedUntil" => nil})
+
+  # The cut-off run `n` asked the user something, under its root node: a request still
+  # open, one the restart closed as it ended the run, one the user answered, or one an
+  # earlier restart closed.
+  def ask(n, how) do
+    id = "runtime-request:#{n}:#{System.unique_integer([:positive])}"
+
+    ended =
+      HalC2.Streams.state(@thread)
+      |> HalC2.StreamState.fetch("run", "run-#{n}")
+      |> Map.fetch!("completedAt")
+
+    {status, resolved} =
+      case how do
+        :open -> {"pending", nil}
+        :closed -> {"expired", ended}
+        :answered -> {"resolved", ended}
+        :older -> {"expired", at(n, 0)}
+      end
+
+    commit([
+      {"runtime-request", id,
+       %{
+         "id" => id,
+         "nodeId" => "node-#{n}",
+         "kind" => "approval",
+         "status" => status,
+         "resolvedAt" => resolved
+       }}
+    ])
+  end
+
+  # The cut-off run `n`'s provider turn had ended before the restart.
+  def end_turn(n),
+    do: commit([{"provider-turn", "provider-turn-#{n}", %{"status" => "completed"}}])
 
   # The user sends a message, which runs after the cut-off turn.
   def newer(n), do: commit([run(n, "completed", "msg-#{n}", 1)])
@@ -179,7 +250,7 @@ defmodule HalC2.ContinuationDeliveryPropTest do
   # cut off in turn, a minute or ten minutes after it starts.
   def cut(n, how, quick) do
     message = if how == :user, do: "msg-#{n}", else: continuation(elem(how, 1))
-    commit([run(n, "interrupted", message, if(quick, do: 1, else: 10))])
+    commit([run(n, "interrupted", message, if(quick, do: 1, else: 10)) | turn(n)])
   end
 
   def deliver(n), do: Recovery.deliverable?(@thread, "run-#{n}")
@@ -200,8 +271,19 @@ defmodule HalC2.ContinuationDeliveryPropTest do
         "interactionMode" => "default"
       })
 
-    commit([run(1, "interrupted", "msg-1", 1)])
+    commit([run(1, "interrupted", "msg-1", 1) | turn(1)])
   end
+
+  # The root node, attempt and provider turn of run `n`, which the restart interrupted.
+  defp turn(n),
+    do: [
+      {"node", "node-#{n}",
+       %{"id" => "node-#{n}", "runId" => "run-#{n}", "status" => "interrupted"}},
+      {"run-attempt", "attempt-#{n}",
+       %{"id" => "attempt-#{n}", "runId" => "run-#{n}", "providerTurnId" => "provider-turn-#{n}"}},
+      {"provider-turn", "provider-turn-#{n}",
+       %{"id" => "provider-turn-#{n}", "runId" => "run-#{n}", "status" => "interrupted"}}
+    ]
 
   defp continuation(n), do: "message:restart-continuation:run-#{n}"
 
@@ -214,6 +296,8 @@ defmodule HalC2.ContinuationDeliveryPropTest do
          "ordinal" => n,
          "status" => status,
          "userMessageId" => message,
+         "rootNodeId" => "node-#{n}",
+         "activeAttemptId" => "attempt-#{n}",
          "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "m"},
          "requestedAt" => at(n, 0),
          "startedAt" => at(n, 0),

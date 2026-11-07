@@ -267,7 +267,8 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then "t1" receives "Continue where you left off." from the server
 
-  @backlog @mc
+  # Upstream #18461.
+  @mc
   Scenario Outline: A cut-off thread that should not be answered for is not continued
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn when the MC stopped
@@ -279,10 +280,15 @@ Feature: Recovering from restarts and releasing idle sessions
       | reason                                                         |
       | the restart closed an approval "t1" was waiting on             |
       | the restart closed a question "t1" was asking the user         |
-      | the restart closed a request for a secret from "t1"            |
       | the provider's turn had already ended                          |
       | "t1" is settled                                                |
       | "t1" is snoozed until tomorrow                                 |
+
+    # The MC has no secret requests yet: no provider adapter asks for one.
+    @backlog
+    Examples:
+      | reason                                                         |
+      | the restart closed a request for a secret from "t1"            |
 
   @mc
   Scenario: A continuation is checked again when it is delivered

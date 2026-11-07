@@ -480,8 +480,8 @@ defmodule HalC2.Orchestration.Recovery do
   @doc """
   Whether the continuation `continue/0` recorded for `thread_id`'s run `run_id` is still
   wanted when its effect runs, which can be well after: the thread may have been
-  archived, deleted, set to another provider, sent something newer, or had its project
-  stop continuing threads since. One whose message is in already (a retry after it was
+  archived, deleted, settled, snoozed, set to another provider, sent something newer, or
+  had its project stop continuing threads since. One whose message is in already (a retry after it was
   sent) is, so the retry finds it sent.
   """
   def deliverable?(thread_id, run_id) do
@@ -496,11 +496,48 @@ defmodule HalC2.Orchestration.Recovery do
   end
 
   defp wanted?(thread, thread_id, run) do
-    thread["archivedAt"] == nil and thread["deletedAt"] == nil and
+    state = HalC2.Streams.state(thread_id)
+    # `continue/0` holds the run as boot found it, before the restart ended it.
+    run = StreamState.fetch(state, "run", run["id"]) || run
+
+    thread["archivedAt"] == nil and thread["deletedAt"] == nil and not resting?(thread) and
       HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-        true and same_provider?(thread, run) and latest?(thread_id, run) and
-      not looping?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
+        true and same_provider?(thread, run) and latest?(state, run) and
+      not waiting_on_user?(state, run) and not answered?(state, run) and
+      not looping?(state, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
   end
+
+  # Upstream #18461: a thread the user settled, or snoozed until later, is not woken.
+  defp resting?(thread) do
+    thread["settledOverride"] == "settled" or
+      (HalC2.Projection.JS.epoch_ms(thread["snoozedUntil"]) || 0) > System.os_time(:millisecond)
+  end
+
+  # Upstream #18461: a cut-off turn that was waiting on the user, for an approval, a
+  # question or a secret, is not answered for: whether the request is still open (a
+  # question answered with a message) or the restart closed it (`changes/4` expires it
+  # as it ends the run).
+  defp waiting_on_user?(state, %{"status" => "interrupted"} = run) do
+    nodes = StreamState.get(state, "node")
+
+    Enum.any?(StreamState.get(state, "runtime-request"), fn {_, request} ->
+      (request["runId"] || nodes[request["nodeId"]]["runId"]) == run["id"] and
+        (request["status"] == "pending" or
+           (request["status"] == "expired" and request["resolvedAt"] == run["completedAt"]))
+    end)
+  end
+
+  defp waiting_on_user?(_state, _run), do: false
+
+  # Upstream #18461: a cut-off run whose provider turn had already ended was answered;
+  # only its run was left to finish.
+  defp answered?(state, %{"status" => "interrupted"} = run) do
+    attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]] || %{}
+    turn = StreamState.get(state, "provider-turn")[attempt["providerTurnId"]] || %{}
+    turn["status"] in ~w(completed failed cancelled)
+  end
+
+  defp answered?(_state, _run), do: false
 
   @chain_limit 3
   @chain_window_ms 5 * 60_000
@@ -510,8 +547,7 @@ defmodule HalC2.Orchestration.Recovery do
   # them, the thread waits for the user. Upstream #20306: a continued run that worked
   # longer than five minutes before the next restart breaks the chain, so a thread that
   # works across many updates keeps being continued.
-  defp looping?(thread_id, run),
-    do: links(HalC2.Streams.state(thread_id), run, 0) >= @chain_limit
+  defp looping?(state, run), do: links(state, run, 0) >= @chain_limit
 
   # How many quick continuations in a row led to `run`, newest first.
   defp links(_state, _run, n) when n >= @chain_limit, do: n
@@ -600,8 +636,7 @@ defmodule HalC2.Orchestration.Recovery do
   # a message queued behind it, held by this very settle — still counts as
   # newer-sent, so no continuation jumps it: creation order (the order of
   # `StreamState.list/2`) tells the two apart where the ordinal no longer can.
-  defp latest?(thread_id, run) do
-    state = HalC2.Streams.state(thread_id)
+  defp latest?(state, run) do
     runs = StreamState.list(state, "run")
     made = Map.new(Enum.with_index(runs, &{&1["id"], &2}))
 

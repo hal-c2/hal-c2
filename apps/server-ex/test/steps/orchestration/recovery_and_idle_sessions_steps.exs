@@ -137,6 +137,36 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     Map.put(context, :continuing, List.last(ids))
   end
 
+  # A request of the cut-off run that the restart then closes: the provider that asked
+  # is gone.
+  step ~r/^the restart closed (?:an approval "(?<a>[^"]+)" was waiting on|a question "(?<q>[^"]+)" was asking the user)$/,
+       %{args: args} = context do
+    [thread] = Enum.reject(args, &(&1 in [nil, ""]))
+    kind = if Enum.at(args, 0) in [nil, ""], do: "user_input", else: "command_execution"
+    run = World.state(context, thread).entities["run"][context.cut_off]
+
+    World.put_entity(context, thread, "runtime-request", "runtime-request:restart-closed", %{
+      "s" => %{
+        "id" => "runtime-request:restart-closed",
+        "nodeId" => run["rootNodeId"],
+        "kind" => kind,
+        "status" => "pending",
+        "responseCapability" => %{"type" => "live"},
+        "createdAt" => World.iso_from_now(0),
+        "resolvedAt" => nil
+      }
+    })
+  end
+
+  step "the provider's turn had already ended", context do
+    run = World.state(context, context.thread).entities["run"][context.cut_off]
+    attempt = World.state(context, context.thread).entities["run-attempt"][run["activeAttemptId"]]
+
+    World.put_entity(context, context.thread, "provider-turn", attempt["providerTurnId"], %{
+      "s" => %{"status" => "completed", "completedAt" => World.iso_from_now(0)}
+    })
+  end
+
   step "{string} waits for the user's next message", %{args: [thread]} = context do
     :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread))
 
