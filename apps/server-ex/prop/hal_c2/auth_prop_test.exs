@@ -34,6 +34,7 @@ defmodule HalC2.AuthPropTest do
   @standard ~w(orchestration:read orchestration:operate terminal:operate review:write relay:read)
   @admin @standard ++ ~w(access:read access:write relay:write)
   @url "http://www.example.com/api/x"
+  @ws_url "http://www.example.com/ws"
 
   property "tokens, tickets, sessions and proofs keep their promises",
     numtests: HalC2.Prop.numtests(100),
@@ -111,6 +112,8 @@ defmodule HalC2.AuthPropTest do
       tickets: %{},
       tickets_seen: [],
       proofs: %{},
+      # The seconds (iat) of socket proofs a key-bound ticket's upgrade claimed.
+      ticket_proofs: [],
       sockets: %{}
     }
   end
@@ -154,7 +157,9 @@ defmodule HalC2.AuthPropTest do
           [
             {3, {:call, __MODULE__, :bearer_request, [seen]}},
             {3, {:call, __MODULE__, :renew, [seen]}},
-            {4, {:call, __MODULE__, :issue_ticket, [n, oneof([:token, :session]), seen]}},
+            {4,
+             {:call, __MODULE__, :issue_ticket,
+              [n, oneof([:token, :session]), seen, frequency([{1, nil}, {3, :rpc}, {1, :media}])]}},
             {3, {:call, __MODULE__, :revoke_client, [seen]}},
             {1, {:call, __MODULE__, :revoke_others, [seen]}},
             {2, {:call, __MODULE__, :connect, [seen]}},
@@ -166,8 +171,12 @@ defmodule HalC2.AuthPropTest do
         else
           [
             {5,
-             {:call, __MODULE__, :take_ticket,
-              [pick(Map.keys(state.tickets), state.tickets_seen)]}},
+             let t <- ticket_to_take(state) do
+               # Usually no proof or the bound key's, so a binding is tested both ways.
+               bound = get_in(state.tickets, [t, :key])
+               signer = frequency([{2, :none}, {2, bound || :none}, {1, key()}])
+               {:call, __MODULE__, :take_ticket, [t, signer]}
+             end},
             {3,
              {:call, __MODULE__, :ticket_scopes,
               [pick(Map.keys(state.tickets), state.tickets_seen)]}}
@@ -217,6 +226,16 @@ defmodule HalC2.AuthPropTest do
   defp maybe_key, do: frequency([{3, nil}, {2, key()}])
   defp key, do: integer(0, Reg.key_count() - 1)
 
+  # Key-bound tickets are rare (a DPoP session's RPC ticket), so they are picked often.
+  defp ticket_to_take(state) do
+    any = pick(Map.keys(state.tickets), state.tickets_seen)
+
+    case for({t, %{key: k}} <- state.tickets, k != nil, do: t) do
+      [] -> any
+      bound -> frequency([{1, any}, {3, oneof(bound)}])
+    end
+  end
+
   defp variant,
     do: frequency([{6, :ok}, {1, :wrong_method}, {1, :wrong_url}, {1, :wrong_ath}, {1, :forged}])
 
@@ -237,7 +256,7 @@ defmodule HalC2.AuthPropTest do
 
   def precondition(state, {:call, _, :connect, [h]}), do: Map.has_key?(state.sessions, h)
 
-  def precondition(state, {:call, _, :issue_ticket, [_, :session, h]}),
+  def precondition(state, {:call, _, :issue_ticket, [_, :session, h, _]}),
     do: valid?(state, h)
 
   def precondition(state, {:call, _, :make_proof, [_, h, _, _, _]}),
@@ -256,7 +275,15 @@ defmodule HalC2.AuthPropTest do
       when name in [:exchange, :revoke_link],
       do: h in state.links_seen
 
-  def precondition(state, {:call, _, :take_ticket, [t]}), do: t in state.tickets_seen
+  # Shrinking may drop the exchange that made a session handle.
+  def precondition(state, {:call, _, name, [h]})
+      when name in [:bearer_request, :renew, :revoke_client, :revoke_others],
+      do: h in state.sessions_seen
+
+  def precondition(state, {:call, _, :issue_ticket, [_, :token, h, _]}),
+    do: h in state.sessions_seen
+
+  def precondition(state, {:call, _, :take_ticket, [t, _]}), do: t in state.tickets_seen
   def precondition(state, {:call, _, :ticket_scopes, [t]}), do: t in state.tickets_seen
   def precondition(_state, _call), do: true
 
@@ -353,19 +380,35 @@ defmodule HalC2.AuthPropTest do
 
   def next_state(state, _r, {:call, _, :advance, [ms]}), do: %{state | clock: state.clock + ms}
 
-  def next_state(state, _r, {:call, _, :issue_ticket, [t, via, h]}) do
+  # A DPoP session's RPC ticket is bound to the session's key.
+  def next_state(state, _r, {:call, _, :issue_ticket, [t, via, h, use]}) do
     if via == :token and not valid?(state, h) do
       state
     else
-      issued(state, t, h, min(state.clock + @ticket_ttl, state.sessions[h].expires))
+      expires = min(state.clock + @ticket_ttl, state.sessions[h].expires)
+      issued(state, t, h, expires, use, if(use == :rpc, do: state.sessions[h].key))
     end
   end
 
   def next_state(state, _r, {:call, _, :issue_local_ticket, [t]}),
-    do: issued(state, t, :local, state.clock + @ticket_ttl)
+    do: issued(state, t, :local, state.clock + @ticket_ttl, nil, nil)
 
-  def next_state(state, _r, {:call, _, :take_ticket, [t]}),
-    do: %{state | tickets: Map.delete(state.tickets, t)}
+  # A refused ticket stays usable by its owner.
+  def next_state(state, _r, {:call, _, :take_ticket, [t, signer]}) do
+    case taken(state, t, signer) do
+      {:ok, _} ->
+        claimed = if state.tickets[t].key, do: [div(state.clock, 1000)], else: []
+
+        %{
+          state
+          | tickets: Map.delete(state.tickets, t),
+            ticket_proofs: state.ticket_proofs ++ claimed
+        }
+
+      :error ->
+        state
+    end
+  end
 
   def next_state(state, _r, {:call, _, :make_proof, [p, h, k, variant, offset]}) do
     proof = %{h: h, k: k, variant: variant, iat: div(state.clock, 1000) + offset, accepted: false}
@@ -398,7 +441,7 @@ defmodule HalC2.AuthPropTest do
   def next_state(state, _r, {:call, _, :restart, []}) do
     # Tickets, proof records and socket registrations lived in the process.
     proofs = Map.new(state.proofs, fn {p, proof} -> {p, %{proof | accepted: :forgotten}} end)
-    %{state | tickets: %{}, proofs: proofs, sockets: %{}}
+    %{state | tickets: %{}, proofs: proofs, ticket_proofs: [], sockets: %{}}
   end
 
   def next_state(state, _r, _call), do: state
@@ -412,13 +455,28 @@ defmodule HalC2.AuthPropTest do
   defp subset?(nil, _granted), do: true
   defp subset?(req, granted), do: Enum.all?(req, &(&1 in granted))
 
-  defp issued(state, t, sess, expires) do
+  defp issued(state, t, sess, expires, use, key) do
+    ticket = %{expires: expires, sess: sess, use: use, key: key}
+
     %{
       state
       | next: t + 1,
-        tickets: Map.put(state.tickets, t, %{expires: expires, sess: sess}),
+        tickets: Map.put(state.tickets, t, ticket),
         tickets_seen: state.tickets_seen ++ [t]
     }
+  end
+
+  # Taking a ticket on the client socket, with a proof signed by key `signer` (or none):
+  # a media ticket never opens it, a key-bound one only with that key's proof.
+  defp taken(state, t, signer) do
+    case state.tickets[t] do
+      %{expires: expires, use: use, key: key, sess: sess}
+      when expires > state.clock and use != :media and (is_nil(key) or key == signer) ->
+        {:ok, sess}
+
+      _ ->
+        :error
+    end
   end
 
   defp drop_sessions(state, hs) do
@@ -544,7 +602,7 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :issue_ticket, [_t, via, h]}, result) do
+  def postcondition(state, {:call, _, :issue_ticket, [_t, via, h, _use]}, result) do
     if via == :token and not valid?(state, h),
       do: result == :error,
       else: result == {:ok, min(state.clock + @ticket_ttl, state.sessions[h].expires)}
@@ -553,15 +611,14 @@ defmodule HalC2.AuthPropTest do
   def postcondition(state, {:call, _, :issue_local_ticket, _}, result),
     do: result == {:ok, state.clock + @ticket_ttl}
 
-  def postcondition(state, {:call, _, :take_ticket, [t]}, result) do
-    case state.tickets[t] do
-      %{expires: expires, sess: sess} when expires > state.clock -> result == {:ok, sess}
-      _ -> result == :error
-    end
-  end
+  def postcondition(state, {:call, _, :take_ticket, [t, signer]}, result),
+    do: result == taken(state, t, signer)
 
   def postcondition(state, {:call, _, :ticket_scopes, [t]}, result) do
     case state.tickets[t] do
+      %{expires: expires, use: :rpc} when expires > state.clock ->
+        result == :error
+
       %{expires: expires, sess: sess} when expires > state.clock ->
         if sess == :local do
           result == {:ok, Enum.sort(@admin)}
@@ -595,7 +652,8 @@ defmodule HalC2.AuthPropTest do
     threshold = div(now, 1000) - 305
 
     live_proofs =
-      Enum.count(state.proofs, fn {_, p} -> p.accepted == true and p.iat >= threshold end)
+      Enum.count(state.proofs, fn {_, p} -> p.accepted == true and p.iat >= threshold end) +
+        Enum.count(state.ticket_proofs, &(&1 >= threshold))
 
     removed.pairing == count.(state.links) and removed.sessions == count.(state.sessions) and
       removed.tickets == count.(state.tickets) and
@@ -760,13 +818,14 @@ defmodule HalC2.AuthPropTest do
     end
   end
 
-  def issue_ticket(t, via, h) do
-    {id, access} = Reg.get({:session, h})
+  def issue_ticket(t, via, h, use) do
+    {_id, access} = Reg.get({:session, h})
 
     result =
       case via do
-        :token -> Auth.issue_ticket(access)
-        :session -> Auth.issue_ticket(%{id: id, expires_at: session_expiry(access)})
+        :token -> Auth.issue_ticket(access, use)
+        # What `request_session/1` would have found for the session.
+        :session -> Auth.issue_ticket(elem(Auth.session(access), 1), use)
       end
 
     case result do
@@ -785,14 +844,17 @@ defmodule HalC2.AuthPropTest do
     {:ok, expires}
   end
 
-  # What `request_session/1` would have found for the session.
-  defp session_expiry(access) do
-    {:ok, %{expires_at: expires}} = Auth.session(access)
-    expires
-  end
+  # The client socket's upgrade, with a fresh proof from key `signer` naming the ticket.
+  def take_ticket(t, signer) do
+    ticket = Reg.get({:ticket, t})
 
-  def take_ticket(t) do
-    case Auth.take_ticket(Reg.get({:ticket, t})) do
+    proof =
+      if signer != :none do
+        jti = "ticket-#{System.unique_integer([:positive])}"
+        {Reg.proof(signer, ticket, jti, 0, :ok, "GET", @ws_url), "GET", @ws_url}
+      end
+
+    case Auth.take_ticket(ticket, proof) do
       {:ok, nil} ->
         {:ok, :local}
 
