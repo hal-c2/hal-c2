@@ -214,6 +214,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       "failing checks" => {%{"checks" => "failing"}, &checks?(&1, "FAILURE")},
       "passing checks" => {%{"checks" => "passing"}, &checks?(&1, "SUCCESS")},
       ~s(the label "bug") => {%{"labels" => [["bug"]]}, &labelled?(&1, "bug")},
+      ~s(the author "alice") => {%{"author" => "alice"}, &author?(&1, "alice")},
       ~s(the author "octocat") => {%{"author" => "octocat"}, &author?(&1, "octocat")},
       "the author being the user" => {%{"author" => "@me"}, &author?(&1, "monalisa")}
     }
@@ -1457,6 +1458,855 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   step "pull request 1 is listed", context do
     assert Enum.any?(entries(context), &(&1["number"] == 1))
+    context
+  end
+
+  # --- the other hosts (`HalC2.PullRequests.Hosts`) ---------------------------------
+  #
+  # One fixture item (title, state, draft, author, reviewers, labels, pipeline)
+  # is answered by each host in its own shape: GitLab, Forgejo and Azure from
+  # the fake CLI under their own names, Bitbucket from a local API server.
+
+  defmodule HostedBitbucket do
+    @moduledoc false
+    @behaviour Plug
+
+    def init(opts), do: opts
+
+    def call(conn, %{test: test, token: token, user: user, items: items}) do
+      conn = Plug.Conn.fetch_query_params(conn)
+      send(test, {:hosted_bitbucket, conn.request_path, conn.query_params})
+
+      cond do
+        Plug.Conn.get_req_header(conn, "authorization") != ["Bearer " <> token] ->
+          Plug.Conn.send_resp(conn, 401, "")
+
+        conn.request_path == "/2.0/user" ->
+          json(conn, user)
+
+        String.ends_with?(conn.request_path, "/pullrequests") ->
+          params = conn.query_params
+          rows = Enum.filter(items, &(&1["state"] == params["state"]))
+          rows = filter_title(rows, params["q"])
+          pagelen = String.to_integer(params["pagelen"] || "50")
+          page = String.to_integer(params["page"] || "1")
+          json(conn, %{"values" => rows |> Enum.drop((page - 1) * pagelen) |> Enum.take(pagelen)})
+
+        true ->
+          Plug.Conn.send_resp(conn, 404, "")
+      end
+    end
+
+    defp filter_title(rows, nil), do: rows
+
+    defp filter_title(rows, q) do
+      case Regex.run(~r/title ~ "((?:\\.|[^"])*)"/, q) do
+        [_, words] ->
+          words = words |> String.replace("\\\"", "\"") |> String.replace("\\\\", "\\")
+
+          Enum.filter(
+            rows,
+            &String.contains?(String.downcase(&1["title"]), String.downcase(words))
+          )
+
+        _ ->
+          rows
+      end
+    end
+
+    defp json(conn, body),
+      do:
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, JSON.encode!(body))
+  end
+
+  @hosted_token "bitbucket-list-token"
+
+  defp h(number, fields \\ %{}) do
+    Map.merge(
+      %{
+        "number" => number,
+        "title" => "Change #{number}",
+        "state" => "open",
+        "draft" => false,
+        "author" => "alice",
+        "reviewers" => [],
+        "labels" => [],
+        "created" => "2026-09-01T00:00:00Z",
+        "updated" => "2026-09-20T00:00:00Z",
+        "pipeline" => nil,
+        "raw_state" => nil,
+        "wip" => false,
+        "omit_draft" => false,
+        "merged_at" => nil,
+        "participants" => nil,
+        "azure" => %{}
+      },
+      fields
+    )
+  end
+
+  defp hosted_fixture do
+    [
+      h(1, %{"labels" => ["bug"], "reviewers" => [@me], "pipeline" => "success"}),
+      h(2, %{
+        "draft" => true,
+        "author" => "bob",
+        "updated" => "2026-09-19T00:00:00Z",
+        "pipeline" => "failed"
+      }),
+      h(3, %{"updated" => "2026-09-18T00:00:00Z"}),
+      h(4, %{"state" => "closed", "updated" => "2026-09-17T00:00:00Z"}),
+      h(5, %{"state" => "merged", "author" => "bob", "updated" => "2026-09-16T00:00:00Z"})
+    ]
+  end
+
+  defp gitlab_raw(it, repo) do
+    %{
+      "iid" => it["number"],
+      "title" => it["title"],
+      "web_url" => "https://gitlab.com/#{repo}/-/merge_requests/#{it["number"]}",
+      "source_branch" => "feature/#{it["number"]}",
+      "target_branch" => "main",
+      "state" =>
+        it["raw_state"] ||
+          %{"open" => "opened", "closed" => "closed", "merged" => "merged"}[it["state"]],
+      "draft" => it["draft"],
+      "work_in_progress" => it["wip"],
+      "merged_at" => it["merged_at"] || if(it["state"] == "merged", do: it["updated"]),
+      "author" => %{"username" => it["author"], "name" => it["author"]},
+      "reviewers" => for(r <- it["reviewers"], do: %{"username" => r}),
+      "labels" => it["labels"],
+      "created_at" => it["created"],
+      "updated_at" => it["updated"],
+      "sha" => "abc#{it["number"]}",
+      "head_pipeline" => it["pipeline"] && %{"status" => it["pipeline"]}
+    }
+  end
+
+  defp forgejo_raw(it, repo) do
+    raw = %{
+      "number" => it["number"],
+      "title" => it["title"],
+      "html_url" => "https://codeberg.org/#{repo}/pulls/#{it["number"]}",
+      "state" => if(it["state"] == "open", do: "open", else: "closed"),
+      "merged" => it["state"] == "merged",
+      "user" => %{"login" => it["author"]},
+      "head" => %{"ref" => "feature/#{it["number"]}", "sha" => "abc#{it["number"]}"},
+      "base" => %{"ref" => "main"},
+      "labels" => for(name <- it["labels"], do: %{"name" => name, "color" => "d73a4a"}),
+      "requested_reviewers" => for(r <- it["reviewers"], do: %{"login" => r}),
+      "created_at" => it["created"],
+      "updated_at" => it["updated"]
+    }
+
+    if it["omit_draft"], do: raw, else: Map.put(raw, "draft", it["draft"])
+  end
+
+  defp azure_raw(it, _repo) do
+    base = %{
+      "pullRequestId" => it["number"],
+      "title" => it["title"],
+      "status" =>
+        it["raw_state"] ||
+          %{"open" => "active", "closed" => "abandoned", "merged" => "completed"}[it["state"]],
+      "isDraft" => it["draft"],
+      "sourceRefName" => "refs/heads/feature/#{it["number"]}",
+      "targetRefName" => "refs/heads/main",
+      "creationDate" => it["created"],
+      "closedDate" => if(it["state"] == "open", do: nil, else: it["updated"]),
+      "createdBy" => %{"uniqueName" => it["author"], "displayName" => it["author"]},
+      "reviewers" => for(r <- it["reviewers"], do: %{"uniqueName" => r}),
+      "repository" => %{
+        "name" => "shop",
+        "webUrl" => "https://dev.azure.com/acme/shop/_git/shop",
+        "project" => %{"name" => "shop"}
+      },
+      "_links" => %{
+        "web" => %{
+          "href" => "https://dev.azure.com/acme/shop/_git/shop/pullrequest/#{it["number"]}"
+        }
+      }
+    }
+
+    Map.merge(base, it["azure"])
+  end
+
+  defp bitbucket_raw(it, repo) do
+    %{
+      "id" => it["number"],
+      "title" => it["title"],
+      "state" =>
+        it["raw_state"] ||
+          %{"open" => "OPEN", "closed" => "DECLINED", "merged" => "MERGED"}[it["state"]],
+      "draft" => it["draft"],
+      "author" => %{
+        "username" => it["author"],
+        "nickname" => it["author"],
+        "display_name" => it["author"]
+      },
+      "source" => %{"branch" => %{"name" => "feature/#{it["number"]}"}},
+      "destination" => %{"branch" => %{"name" => "main"}},
+      "links" => %{
+        "html" => %{"href" => "https://bitbucket.org/#{repo}/pull-requests/#{it["number"]}"}
+      },
+      "reviewers" => for(r <- it["reviewers"], do: %{"username" => r, "nickname" => r}),
+      "participants" =>
+        it["participants"] ||
+          for(r <- it["reviewers"], do: %{"user" => %{"username" => r}, "approved" => false}),
+      "created_on" => it["created"],
+      "updated_on" => it["updated"]
+    }
+  end
+
+  defp hosted_rules(context, "GitLab", items, repo, _opts) do
+    by_param = [
+      {"opened", Enum.filter(items, &(&1["state"] == "open"))},
+      {"closed", Enum.filter(items, &(&1["state"] == "closed"))},
+      {"merged", Enum.filter(items, &(&1["state"] == "merged"))},
+      {"all", items}
+    ]
+
+    rules =
+      for {param, rows} <- by_param,
+          {chunk, index} <- Enum.with_index(Enum.chunk_every(rows, 100)) do
+        %{
+          "cmd" => "glab",
+          # "&page=" so page=1 does not also match inside per_page=100.
+          "args" => ["api", "state=#{param}", "&page=#{index + 1}"],
+          "stdout" => Enum.map(chunk, &gitlab_raw(&1, repo))
+        }
+      end
+
+    World.cli_rules(
+      context,
+      [%{"cmd" => "glab", "args" => ["api user"], "stdout" => %{"username" => @me}}] ++
+        rules ++
+        [%{"cmd" => "glab", "args" => ["api", "merge_requests"], "stdout" => []}]
+    )
+  end
+
+  defp hosted_rules(context, "Forgejo", items, repo, _opts) do
+    by_param = [
+      {"open", Enum.filter(items, &(&1["state"] == "open"))},
+      {"closed", Enum.filter(items, &(&1["state"] != "open"))},
+      {"all", items}
+    ]
+
+    rules =
+      for {param, rows} <- by_param,
+          {chunk, index} <- Enum.with_index(Enum.chunk_every(rows, 50)) do
+        %{
+          "cmd" => "tea",
+          "args" => ["api", "state=#{param}", "&page=#{index + 1}"],
+          "stderr" => "HTTP/2.0 200 OK\n",
+          "stdout" => Enum.map(chunk, &forgejo_raw(&1, repo))
+        }
+      end
+
+    World.cli_rules(
+      context,
+      [
+        %{
+          "cmd" => "tea",
+          "args" => ["login list"],
+          "stdout" => [
+            %{
+              "name" => "codeberg",
+              "url" => "https://codeberg.org",
+              "user" => @me,
+              "default" => "true",
+              "valid" => "true"
+            }
+          ]
+        },
+        %{
+          "cmd" => "tea",
+          "args" => ["api", "/api/v1/user"],
+          "stderr" => "HTTP/2.0 200 OK\n",
+          "stdout" => %{"login" => @me}
+        }
+      ] ++
+        rules ++
+        [
+          %{
+            "cmd" => "tea",
+            "args" => ["api", "/pulls?"],
+            "stderr" => "HTTP/2.0 200 OK\n",
+            "stdout" => []
+          }
+        ]
+    )
+  end
+
+  defp hosted_rules(context, "Azure DevOps", items, repo, opts) do
+    by_param = [
+      {"active", Enum.filter(items, &(&1["state"] == "open"))},
+      {"abandoned", Enum.filter(items, &(&1["state"] == "closed"))},
+      {"completed", Enum.filter(items, &(&1["state"] == "merged"))},
+      {"all", items}
+    ]
+
+    # Skip rules first: a later page's call also carries the first page's words.
+    rules =
+      for {param, rows} <- by_param,
+          {chunk, index} <- Enum.with_index(Enum.chunk_every(rows, 100)),
+          index > 0 do
+        %{
+          "cmd" => "az",
+          "args" => ["pr list", "--status #{param}", "--skip #{index * 100}"],
+          "stdout" => Enum.map(chunk, &azure_raw(&1, repo))
+        }
+      end ++
+        for {param, rows} <- by_param do
+          %{
+            "cmd" => "az",
+            "args" => ["pr list", "--status #{param}"],
+            "stdout" => rows |> Enum.take(100) |> Enum.map(&azure_raw(&1, repo))
+          }
+        end
+
+    viewer = %{
+      "cmd" => "az",
+      "args" => ["account show"],
+      "stdout" => opts[:azure_viewer] || %{"name" => @me}
+    }
+
+    World.cli_rules(
+      context,
+      [viewer] ++ rules ++ [%{"cmd" => "az", "args" => ["pr list"], "stdout" => []}]
+    )
+  end
+
+  defp hosted_rules(context, "Bitbucket", items, repo, opts) do
+    server =
+      Mc.ensure(
+        {Bandit,
+         plug:
+           {HostedBitbucket,
+            %{
+              test: self(),
+              token: @hosted_token,
+              user: opts[:bitbucket_user] || %{"username" => @me},
+              items: Enum.map(items, &bitbucket_raw(&1, repo))
+            }},
+         port: 0,
+         ip: :loopback}
+      )
+
+    {:ok, {_, port}} = ThousandIsland.listener_info(server)
+    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
+    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", @hosted_token)
+    context
+  end
+
+  defp hosted_remote("GitLab", repo), do: "git@gitlab.com:#{repo}.git"
+  defp hosted_remote("Forgejo", repo), do: "https://codeberg.org/#{repo}.git"
+  defp hosted_remote("Bitbucket", repo), do: "git@bitbucket.org:#{repo}.git"
+
+  defp hosted_project(context, host, items, opts \\ []) do
+    opts = Map.new(opts)
+    title = opts[:title] || "hosted"
+    repo = opts[:repository] || "acme/shop"
+
+    remote =
+      opts[:remote] ||
+        if host == "Azure DevOps" do
+          [owner, name] = String.split(repo, "/") |> Enum.take(-2)
+          "https://dev.azure.com/#{owner}/#{name}/_git/#{name}"
+        else
+          hosted_remote(host, repo)
+        end
+
+    context = World.create_project(context, title)
+    project = World.project(context, title)
+    World.git!(project.root, ["remote", "add", "origin", remote])
+
+    context
+    |> World.fake_cli(["glab", "az", "tea"])
+    |> hosted_rules(host, items, repo, opts)
+    |> Map.put(:hosted, %{
+      host: host,
+      items: items,
+      id: project.id,
+      repository: repo,
+      title: title
+    })
+  end
+
+  defp hosted_entries(context),
+    do: Enum.filter(entries(context), &(&1["projectId"] == context.hosted.id))
+
+  defp hosted_numbers(context), do: Enum.map(hosted_entries(context), & &1["number"])
+
+  step "a project on {word}", %{args: [host]} = context do
+    hosted_project(context, host, hosted_fixture())
+  end
+
+  step "a project on Azure DevOps", context do
+    hosted_project(context, "Azure DevOps", hosted_fixture())
+  end
+
+  step "a project on {word} with 200 open change requests", %{args: [host]} = context do
+    items =
+      for number <- 200..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, host, items)
+  end
+
+  step "a project on Azure DevOps with 200 open change requests", context do
+    items =
+      for number <- 200..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, "Azure DevOps", items)
+  end
+
+  step "the user lists change requests", context do
+    list(context, %{"state" => "all"})
+  end
+
+  step "the user lists open merge requests", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "the user lists merge requests", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step ~r/^the user lists merge requests with (?<filter>passing checks|failing checks|pending checks)$/,
+       %{args: [filter]} = context do
+    checks =
+      %{
+        "passing checks" => "passing",
+        "failing checks" => "failing",
+        "pending checks" => "pending"
+      }[filter]
+
+    list(context, %{"filters" => %{"checks" => checks}})
+  end
+
+  step ~r/^the user searches pull requests for `(?<words>.+)`$/, %{args: [words]} = context do
+    context |> list(%{"query" => words}) |> Map.put(:query, words)
+  end
+
+  step "the user loads more change requests", context do
+    context = list(context)
+    assert {:ok, %{"nextCursors" => cursors}} = context.reply
+    first = hosted_numbers(context)
+
+    context
+    |> list(%{"cursors" => cursors})
+    |> Map.put(:first_hosted, first)
+  end
+
+  step ~r/^only change requests matching (?<filter>.+) are listed$/,
+       %{args: [filter]} = context do
+    keep =
+      %{
+        "drafts hidden" => &(not &1["draft"]),
+        ~s(the label "bug") => &("bug" in &1["labels"]),
+        ~s(the author "alice") => &(&1["author"] == "alice"),
+        "review required" => &(&1["number"] == 1)
+      }[filter] || flunk("no hosted filter #{inspect(filter)}")
+
+    wanted =
+      for it <- context.hosted.items, it["state"] == "open", keep.(it), do: it["number"]
+
+    assert wanted != []
+    assert Enum.sort(hosted_numbers(context)) == Enum.sort(wanted)
+    context
+  end
+
+  step "the next change requests follow without repeating or skipping any", context do
+    assert context.first_hosted == Enum.to_list(200..102//-1)
+    assert hosted_numbers(context) == Enum.to_list(101..3//-1)
+    context
+  end
+
+  step "the open change requests are listed unnarrowed", context do
+    wanted = for it <- context.hosted.items, it["state"] == "open", do: it["number"]
+    assert Enum.sort(hosted_numbers(context)) == Enum.sort(wanted)
+    context
+  end
+
+  step "the words are searched for as plain text", context do
+    case context.hosted.host do
+      "GitLab" ->
+        calls = World.cli_calls(context, "merge_requests")
+        assert Enum.any?(calls, &(Enum.join(&1["args"], " ") =~ "search=tax%26state%3Dall"))
+
+      "Bitbucket" ->
+        assert_received {:hosted_bitbucket, _path, %{"q" => q, "state" => "OPEN"}}
+        assert q == ~s(title ~ "a\\" OR state=\\"MERGED")
+    end
+
+    assert Enum.all?(hosted_entries(context), &(&1["state"] == "open"))
+    context
+  end
+
+  step "no other filter is added", context do
+    case context.hosted.host do
+      "GitLab" ->
+        calls = World.cli_calls(context, "merge_requests")
+
+        assert Enum.all?(
+                 calls,
+                 &(Enum.join(&1["args"], " ") =~ "state=opened" and
+                     not (Enum.join(&1["args"], " ") =~ "&state=all"))
+               )
+
+      "Bitbucket" ->
+        :ok
+    end
+
+    context
+  end
+
+  step "a GitLab merge request whose latest pipeline {word}",
+       %{args: [pipeline]} = context do
+    status =
+      %{"passed" => "success", "failed" => "failed", "was" => "canceled", "is" => "running"}[
+        pipeline
+      ]
+
+    hosted_project(context, "GitLab", [h(1, %{"pipeline" => status}), h(2)])
+  end
+
+  step ~r/^a GitLab merge request whose latest pipeline (?<pipeline>was canceled|is running)$/,
+       %{args: [pipeline]} = context do
+    status = if pipeline == "was canceled", do: "canceled", else: "running"
+    hosted_project(context, "GitLab", [h(1, %{"pipeline" => status}), h(2)])
+  end
+
+  step "it is listed", context do
+    assert hosted_numbers(context) == [1]
+    context
+  end
+
+  step ~r/^a change request on (?<host>Azure DevOps|Bitbucket|GitLab) that the host calls (?<state>.+)$/,
+       %{args: [host, state]} = context do
+    item =
+      case {host, state} do
+        {"GitLab", "closed with a merge time"} ->
+          h(1, %{
+            "state" => "merged",
+            "raw_state" => "closed",
+            "merged_at" => "2026-09-20T00:00:00Z"
+          })
+
+        {"GitLab", raw} ->
+          h(1, %{"raw_state" => raw})
+
+        {"Azure DevOps", "a state not known"} ->
+          h(1, %{"raw_state" => "somethingElse"})
+
+        {"Azure DevOps", raw} ->
+          state_name =
+            %{"active" => "open", "completed" => "merged", "abandoned" => "closed"}[raw]
+
+          h(1, %{"state" => state_name, "raw_state" => raw})
+
+        {"Bitbucket", raw} ->
+          h(1, %{"state" => "closed", "raw_state" => String.upcase(raw)})
+      end
+
+    hosted_project(context, host, [item])
+  end
+
+  step ~r/^a change request on (?<host>GitLab|Forgejo|Azure DevOps|Bitbucket) that (?<marking>is flagged as a draft|is flagged as work in progress, the older name|has no flag and .*)$/,
+       %{args: [host, marking]} = context do
+    item =
+      case marking do
+        "is flagged as a draft" ->
+          h(1, %{"draft" => true})
+
+        "is flagged as work in progress, the older name" ->
+          h(1, %{"wip" => true})
+
+        ~s(has no flag and a title starting "[WIP]") ->
+          h(1, %{"omit_draft" => true, "title" => "[WIP] Change 1"})
+
+        ~s(has no flag and a title starting "WIP:" in any case) ->
+          h(1, %{"omit_draft" => true, "title" => "wip: Change 1"})
+
+        ~s(has no flag and "WIP:" only in the middle of its title) ->
+          h(1, %{"omit_draft" => true, "title" => "A WIP: Change 1"})
+      end
+
+    hosted_project(context, host, [item])
+  end
+
+  step ~r/^it is shown as (?<shown>open|closed|merged|a draft|not a draft)$/,
+       %{args: [shown]} = context do
+    assert [entry] = hosted_entries(context)
+
+    if shown in ["a draft", "not a draft"],
+      do: assert(entry["isDraft"] == (shown == "a draft")),
+      else: assert(entry["state"] == shown)
+
+    context
+  end
+
+  step "the project {string} has its remote on GitLab at {string}",
+       %{args: [title, repo]} = context do
+    hosted_project(context, "GitLab", hosted_fixture(), title: title, repository: repo)
+  end
+
+  step "the merge requests of {string} are listed", %{args: [repo]} = context do
+    assert hosted_numbers(context) != []
+    assert Enum.all?(hosted_entries(context), &(&1["repository"] == repo))
+
+    calls = World.cli_calls(context, "merge_requests")
+    encoded = URI.encode(repo, &URI.char_unreserved?/1)
+    assert Enum.any?(calls, &(Enum.join(&1["args"], " ") =~ "projects/#{encoded}/"))
+    context
+  end
+
+  step "an open merge request on GitLab", context do
+    hosted_project(context, "GitLab", [h(1)])
+  end
+
+  step "the row shows no added or removed line counts", context do
+    assert [%{"additions" => 0, "deletions" => 0}] = hosted_entries(context)
+    context
+  end
+
+  step "a Forgejo repository with merged pull requests and pull requests closed without merging",
+       context do
+    items =
+      Enum.flat_map(1..120, fn n ->
+        at = fn m -> DateTime.add(~U[2026-09-01 00:00:00Z], m * 60) |> DateTime.to_iso8601() end
+
+        [
+          h(1000 + n, %{"state" => "merged", "updated" => at.(2 * n)}),
+          h(2000 + n, %{"state" => "closed", "updated" => at.(2 * n - 1)})
+        ]
+      end)
+      |> Enum.sort_by(& &1["updated"], :desc)
+
+    hosted_project(context, "Forgejo", items)
+  end
+
+  step "the list is filled to its page size when there are enough", context do
+    assert length(hosted_entries(context)) == 99
+    context
+  end
+
+  # --- Azure and Bitbucket specifics ------------------------------------------------
+
+  step ~r/^pull request 7 on Azure DevOps comes with (?<given>.+)$/,
+       %{args: [given]} = context do
+    web = "https://dev.azure.com/acme/shop/_git/shop/pullrequest/7"
+
+    {azure, expected} =
+      case given do
+        "a web link" ->
+          {%{}, web}
+
+        "no web link but the repository's web address" ->
+          {%{"_links" => %{}}, web}
+
+        ~s|only a programming address under "dev.azure.com/org", project "My App" and repository "web"| ->
+          {%{
+             "_links" => %{},
+             "url" =>
+               "https://dev.azure.com/org/My%20App/_apis/git/repositories/1/pullRequests/7",
+             "repository" => %{"name" => "web", "project" => %{"name" => "My App"}}
+           }, "https://dev.azure.com/org/My%20App/_git/web/pullrequest/7"}
+
+        ~s|only a programming address under "org.visualstudio.com", project "app" and repository "web"| ->
+          {%{
+             "_links" => %{},
+             "url" => "https://org.visualstudio.com/app/_apis/git/repositories/1/pullRequests/7",
+             "repository" => %{"name" => "web", "project" => %{"name" => "app"}}
+           }, "https://org.visualstudio.com/app/_git/web/pullrequest/7"}
+
+        "nothing but a programming address of another kind" ->
+          {%{
+             "_links" => %{},
+             "url" => "https://example.test/api/pullRequests/7",
+             "repository" => %{"name" => "web", "project" => %{"name" => "app"}}
+           }, "https://example.test/api/pullRequests/7"}
+      end
+
+    context
+    |> hosted_project("Azure DevOps", [h(7, %{"azure" => azure})])
+    |> Map.put(:azure_link, expected)
+  end
+
+  step ~r/^its link is (?<link>.+)$/, %{args: [_link]} = context do
+    assert [%{"url" => url}] = hosted_entries(context)
+    assert url == context.azure_link
+    context
+  end
+
+  step "an open pull request on Azure DevOps", context do
+    hosted_project(context, "Azure DevOps", [h(1)])
+  end
+
+  step "its row shows no labels", context do
+    assert [%{"labels" => []}] = hosted_entries(context)
+    context
+  end
+
+  step "the row claims no added or removed lines", context do
+    assert [%{"additions" => 0, "deletions" => 0}] = hosted_entries(context)
+    context
+  end
+
+  defp without_env(name) do
+    previous = System.get_env(name)
+    System.delete_env(name)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+    end)
+  end
+
+  step "the project's remote is {string}", %{args: [remote]} = context do
+    context = World.create_project(context, "server repo")
+    project = World.project(context, "server repo")
+    World.git!(project.root, ["remote", "add", "origin", remote])
+    Map.put(context, :server_project, project)
+  end
+
+  step "no Bitbucket API address is configured", context do
+    without_env("HAL_C2_BITBUCKET_API_BASE_URL")
+    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", @hosted_token)
+    context
+  end
+
+  step "a Bitbucket API address is configured", context do
+    project = context.server_project
+
+    items = [h(1)]
+
+    server =
+      Mc.ensure(
+        {Bandit,
+         plug:
+           {HostedBitbucket,
+            %{
+              test: self(),
+              token: @hosted_token,
+              user: %{"username" => @me},
+              items: Enum.map(items, &bitbucket_raw(&1, "proj/repo"))
+            }},
+         port: 0,
+         ip: :loopback}
+      )
+
+    {:ok, {_, port}} = ThousandIsland.listener_info(server)
+    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
+    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", @hosted_token)
+
+    Map.put(context, :hosted, %{
+      host: "Bitbucket",
+      items: items,
+      id: project.id,
+      repository: "proj/repo"
+    })
+  end
+
+  step "{string} reports that its host cannot be browsed here yet",
+       %{args: [_repository]} = context do
+    assert {:ok, %{"providers" => providers}} = context.reply
+
+    assert %{"configured" => false, "detail" => "This host cannot be browsed here yet."} =
+             Enum.find(providers, &(&1["host"] == "bitbucket.example.com"))
+
+    refute Enum.any?(entries(context), &(&1["projectId"] == context.server_project.id))
+    context
+  end
+
+  step "nothing about {string} is sent to bitbucket.org", context do
+    # With credentials set but no API address, a read sent to Bitbucket Cloud
+    # would have answered (or failed) as a read of the repository; the listing
+    # instead left the host unconfigured, which only happens before any request.
+    assert {:ok, %{"errors" => errors}} = context.reply
+    refute Enum.any?(errors, &(&1["projectId"] == context.server_project.id))
+    context
+  end
+
+  step "the pull requests of {string} are read through the configured address",
+       %{args: [_repository]} = context do
+    assert hosted_numbers(context) == [1]
+    assert_received {:hosted_bitbucket, "/2.0/repositories/proj/repo/pullrequests", _params}
+    context
+  end
+
+  step "the Azure CLI answers for the current sign-in with no account", context do
+    hosted_project(context, "Azure DevOps", [h(1)], azure_viewer: %{})
+  end
+
+  step "the user lists their pull requests on Azure DevOps", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "the user lists their pull requests on Bitbucket", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "Bitbucket answers for the configured credentials with no account name", context do
+    hosted_project(context, "Bitbucket", [h(1)], bitbucket_user: %{"display_name" => "Octo"})
+  end
+
+  step ~r/^a project whose Bitbucket repository is not written as workspace\/repository$/,
+       context do
+    hosted_project(context, "Bitbucket", [h(1)], repository: "acme/team/shop")
+  end
+
+  step "the user lists its pull requests", context do
+    list(context, %{"state" => "open"})
+  end
+
+  step "the host of {string} cannot filter by author", %{args: [_repository]} = context do
+    items =
+      for number <- 600..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        author = if rem(number, 100) == 0, do: "octocat", else: "bob"
+        h(number, %{"author" => author, "updated" => at})
+      end
+
+    hosted_project(context, "GitLab", items)
+  end
+
+  step "the user lists pull requests by the author {string}", %{args: [author]} = context do
+    list(context, %{"filters" => %{"author" => author}})
+  end
+
+  step "the MC reads further pages of {string} until the page is full", context do
+    pages =
+      World.cli_calls(context, "merge_requests")
+      |> Enum.map(fn call ->
+        case Regex.run(~r/&page=(\d+)/, Enum.join(call["args"], " ")) do
+          [_, page] -> String.to_integer(page)
+          _ -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    assert Enum.max(pages) > 1
+    Map.put(context, :hosted_pages, pages)
+  end
+
+  step "it stops after five reads when the filter matches little", context do
+    assert Enum.max(context.hosted_pages) == 5
+    # Only the octocat rows of the first five hundred survived the filter.
+    assert Enum.sort(hosted_numbers(context)) == [200, 300, 400, 500, 600]
+    context
+  end
+
+  step "the list offers more when more is left", context do
+    assert {:ok, %{"truncated" => true, "nextCursors" => cursors}} = context.reply
+    assert cursors != %{}
     context
   end
 end

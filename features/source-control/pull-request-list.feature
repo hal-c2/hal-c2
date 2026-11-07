@@ -106,7 +106,7 @@ Feature: Browsing pull requests
 
   # Upstream #24772: Forgejo has no merged list, so merged and closed lists each held the other's
   # pull requests and came up short.
-  @backlog @mc
+  @mc
   Scenario Outline: A Forgejo list by state holds only pull requests in that state
     Given a Forgejo repository with merged pull requests and pull requests closed without merging
     When the user lists <state> pull requests
@@ -151,7 +151,7 @@ Feature: Browsing pull requests
       | GitCafe |
 
   # Upstream #23923: a filter the host could not apply left the first page with a couple of rows.
-  @backlog @mc
+  @mc
   Scenario: A filter the host cannot apply still fills the page
     Given the host of "acme/shop" cannot filter by author
     When the user lists pull requests by the author "octocat"
@@ -249,7 +249,7 @@ Feature: Browsing pull requests
     Then the merge requests are listed without an approval
 
   # Upstream #30433: GitLab rows carried no checks state, so the checks filter did nothing.
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: A GitLab merge request is listed by the state of its pipeline
     Given a GitLab merge request whose latest pipeline <pipeline>
     When the user lists merge requests with <filter>
@@ -478,7 +478,7 @@ Feature: Browsing pull requests
     And opening it shows the whole reason
 
   # Upstream #22029: a Bitbucket Server remote was sent to the Bitbucket Cloud API, credentials and all.
-  @backlog @mc
+  @mc
   Scenario: A Bitbucket Server repository is not read through Bitbucket Cloud
     Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
     And no Bitbucket API address is configured
@@ -487,7 +487,7 @@ Feature: Browsing pull requests
     And nothing about "proj/repo" is sent to bitbucket.org
 
   # Upstream #22029: a configured Bitbucket API address keeps every host readable through it.
-  @backlog @mc @priority-low
+  @mc
   Scenario: A configured Bitbucket API address reads a Bitbucket Server repository through it
     Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
     And a Bitbucket API address is configured
@@ -1914,7 +1914,7 @@ Feature: Browsing pull requests
     When the user lists pull requests
     Then the pull requests of both are listed under their own host
 
-  @backlog @mc
+  @mc
   Scenario Outline: A filter the host cannot apply is applied by the MC
     Given a project on <host>
     When the user lists open pull requests with <filter>
@@ -1959,7 +1959,7 @@ Feature: Browsing pull requests
     Then each repository is read on its own
     And a repository that fails is reported as "<repository> could not be read."
 
-  @backlog @mc
+  @mc
   Scenario Outline: A long list on another host carries on without repeating or skipping
     Given a project on <host> with 200 open change requests
     When the user loads more change requests
@@ -1996,7 +1996,7 @@ Feature: Browsing pull requests
     Then the other one is listed on the next page
     And no pull request is listed twice
 
-  @backlog @mc
+  @mc
   Scenario Outline: A host that cannot search text lists without narrowing
     Given a project on <host>
     When the user searches pull requests for "tax"
@@ -2007,7 +2007,7 @@ Feature: Browsing pull requests
       | Azure DevOps |
       | Forgejo      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Search words cannot reshape the request
     Given a project on <host>
     When the user searches pull requests for <words>
@@ -2024,13 +2024,13 @@ Feature: Browsing pull requests
     When the user searches pull requests for "   "
     Then the list is not narrowed
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A GitLab project in a nested group is addressed by its full path
     Given the project "infra" has its remote on GitLab at "acme/platform/infra"
     When the user lists open merge requests
     Then the merge requests of "acme/platform/infra" are listed
 
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: Host states are shown as open, closed or merged
     Given a change request on <host> that the host calls <host state>
     When the user lists change requests
@@ -2054,7 +2054,7 @@ Feature: Browsing pull requests
     Then the row is dated 5 July
 
   # Legacy: apps/server/src/sourceControl/azureDevOpsPullRequests.ts (azureDevOpsPullRequestWebUrl)
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: An Azure DevOps pull request is opened at the host's own link or one built from what it said
     Given pull request 7 on Azure DevOps comes with <given>
     When the user lists pull requests
@@ -2069,7 +2069,7 @@ Feature: Browsing pull requests
       | nothing but a programming address of another kind                                              | that address as it came                                         |
 
   # Legacy: apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: Each host marks a draft in its own way
     Given a change request on <host> that <marking>
     When the user lists change requests
@@ -2086,7 +2086,7 @@ Feature: Browsing pull requests
       | Azure DevOps | is flagged as a draft                               | a draft      |
       | Bitbucket    | is flagged as a draft                               | a draft      |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A host that reports no line counts leaves them out
     Given an open merge request on GitLab
     When the user lists open pull requests
@@ -2332,28 +2332,28 @@ Feature: Browsing pull requests
     Then pull request 1 is listed
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestCli.ts (AzureDevOpsViewerUnavailableError)
-  @backlog @mc @priority-low
+  @mc
   Scenario: An Azure DevOps sign-in that names no account cannot be listed for
     Given the Azure CLI answers for the current sign-in with no account
     When the user lists their pull requests on Azure DevOps
     Then the user is told "Azure CLI returned no account for the current sign-in."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketViewerUnavailableError)
-  @backlog @mc @priority-low
+  @mc
   Scenario: Bitbucket credentials that name no account cannot be listed for
     Given Bitbucket answers for the configured credentials with no account name
     When the user lists their pull requests on Bitbucket
     Then the user is told "Bitbucket returned no account name for the configured credentials."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketRepositoryUnsupportedError)
-  @backlog @mc @priority-low
+  @mc
   Scenario: A Bitbucket repository that is not a workspace and a name is refused
     Given a project whose Bitbucket repository is not written as workspace/repository
     When the user lists its pull requests
     Then the user is told "A Bitbucket repository is addressed as workspace/repository."
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts (toChangeRequest: additions 0, deletions 0, labels [])
-  @backlog @mc @priority-low
+  @mc
   Scenario: An Azure DevOps row has no labels and no line counts, since the host keeps neither on the pull request
     Given an open pull request on Azure DevOps
     When the user lists open pull requests

@@ -518,7 +518,14 @@ defmodule HalC2.PullRequests.Hosts do
         {:error, {:missing, "Bitbucket credentials are not configured."}}
 
       true ->
-        case String.split(project.repository, "/") do
+        # A Bitbucket Server remote is spelled `scm/<project>/<repo>`.
+        segments =
+          case String.split(project.repository, "/") do
+            ["scm", workspace, slug] -> [workspace, slug]
+            other -> other
+          end
+
+        case segments do
           [workspace, slug] ->
             states = @bitbucket_states[opts.state] || ["OPEN"]
 
