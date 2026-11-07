@@ -75,10 +75,45 @@ struct Watched {
     /// The cluster member the scenario removes.
     saved_environment: String,
     rows_before: usize,
+    /// Every `connection` the shell published while watching.
+    down: Rc<Down>,
+}
+
+/// What the shell said of the connection while a step watched it.
+#[derive(Default)]
+struct Down {
+    watching: Cell<bool>,
+    /// The controller saw the client leave Ready.
+    saw_down: Cell<bool>,
+    /// A surface said the connection was down.
+    shown_down: Cell<bool>,
+    /// A surface said the connection was up.
+    said_connected: Cell<bool>,
 }
 
 fn watched(world: &mut World) -> &mut Watched {
     world.part::<Watched>()
+}
+
+/// Watches every `connection` the shell publishes, not only those a poll
+/// lands on, while `down.watching`.
+fn watch_connection(world: &World, down: Rc<Down>) {
+    let engine = world.engine();
+    hal_c2_shell::bridge::Bridge::of(engine).watch(engine, "connection", move |_, said| {
+        if !down.watching.get() {
+            return;
+        }
+        let settling = said["settling"].as_bool().unwrap_or(false);
+        if said["phase"] == "connected" || settling {
+            down.said_connected.set(true);
+        }
+        if said["phase"] != "connected" {
+            down.saw_down.set(true);
+            if !settling {
+                down.shown_down.set(true);
+            }
+        }
+    });
 }
 
 fn health(mc: &mut FakeMc) -> &mut FakeHealth {
@@ -308,8 +343,19 @@ fn set_network(world: &mut World, disconnected: bool, interface_up: bool) -> Out
     world.pump()
 }
 
-/// The notice every window shows over its layout.
+/// The notice every window shows over its layout, its panel opened from its
+/// icon when it shows one. A reconnect younger than its grace shows nothing,
+/// so the grace is waited out first.
 fn notice(world: &mut World) -> Outcome<Brick> {
+    world.wait_for_with(
+        |w| !settling(w),
+        |w| {
+            format!(
+                "the reconnect to be past its grace; the connection is {}",
+                show(&connection(w))
+            )
+        },
+    )?;
     let brick = Brick::new(
         world,
         "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n",
@@ -317,7 +363,15 @@ fn notice(world: &mut World) -> Outcome<Brick> {
         600.0,
     )?;
     world.part::<crate::brick::Shown>().0 = Some(brick);
+    let item = brick.item(world, "connectionNotice")?;
+    if brick.flag(world, item, "visible") {
+        brick.click(world, "connectionNoticeButton")?;
+    }
     Ok(brick)
+}
+
+fn settling(world: &World) -> bool {
+    connection(world)["settling"].as_bool().unwrap_or(false)
 }
 
 fn notice_shows(world: &mut World, text: &str) -> Outcome<bool> {
@@ -608,7 +662,7 @@ pub fn register(steps: &mut Steps) {
     steps.step("says the device is offline", |world, _, _| {
         let offline = notice_shows(world, "This device is offline")?;
         expect!(
-            field(world, "status") == "Waiting for the network" && offline,
+            field(world, "status") == "Offline" && offline,
             "the connection is {}",
             show(&connection(world))
         );
@@ -632,12 +686,14 @@ pub fn register(steps: &mut Steps) {
             wait_for_phase(world, &["connected", "refused", "blocked"])
         },
     );
+    // Refused waits for the user to pair again; blocked, for an update or the user.
     steps.step("the client stops retrying", |world, _, _| {
-        wait_for_phase(world, &["refused"])?;
+        wait_for_phase(world, &["refused", "blocked"])?;
         world.pump()?;
         let before = watched(world).connections_before;
+        let now = world.client().phase();
         expect!(
-            world.client().phase() == Phase::Refused && world.mc.connections.len() == before,
+            matches!(now, Phase::Refused | Phase::Blocked) && world.mc.connections.len() == before,
             "the client went on: {}",
             show(&connection(world))
         );
@@ -650,13 +706,13 @@ pub fn register(steps: &mut Steps) {
             show(&connection(world))
         );
         let shown = notice(world)?;
+        // After what the environment said of the credential, when it said it.
+        let detail = field(world, "detail");
         let item = shown.item(world, "connectionNotice")?;
         let asks = shown.flag(world, item, "visible")
             && shown.shows(world, "Pair again")?
-            && shown.shows(
-                world,
-                "Pair again with a fresh pairing link from the environment.",
-            )?;
+            && detail.ends_with("Pair again with a fresh pairing link from the environment.")
+            && shown.shows(world, &detail)?;
         expect!(asks, "the window does not ask for a pairing link");
         Ok(())
     });
@@ -837,8 +893,10 @@ pub fn register(steps: &mut Steps) {
     steps.step("the client reports the data problem", |world, _, _| {
         wait_for_phase(world, &["problem"])?;
         let said = notice_shows(world, "Could not load projects and threads")?;
+        // The MC's own words stay out of it.
+        let quiet = !show(&connection(world)).contains("the shell is unavailable");
         expect!(
-            field(world, "status") == "Could not load its data: the shell is unavailable" && said,
+            field(world, "status") == "Can't load data" && quiet && said,
             "the connection is {}",
             show(&connection(world))
         );
@@ -898,6 +956,16 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("the environment reads {Q}"), |world, c, _| {
+        // Once the reconnect is past its grace: until then it reads as connected.
+        world.wait_for_with(
+            |w| !settling(w),
+            |w| {
+                format!(
+                    "the reconnect to be past its grace; the connection is {}",
+                    show(&connection(w))
+                )
+            },
+        )?;
         expect!(
             field(world, "status") == c[0],
             "the connection is {}",
@@ -915,6 +983,199 @@ pub fn register(steps: &mut Steps) {
             row.shows(world, &c[0])?,
             "Connections settings does not read \"{}\"",
             c[0]
+        );
+        Ok(())
+    });
+    steps.step(&format!("the notice says why: {Q}"), |world, c, _| {
+        let said = field(world, "detail") == c[0];
+        let shown = notice_shows(world, &c[0])?;
+        expect!(
+            said && shown,
+            "the connection is {}",
+            show(&connection(world))
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("no surface shows the client's own reason {Q}"),
+        |world, c, _| {
+            let reason = c[0].to_lowercase();
+            for key in ["status", "title", "detail"] {
+                expect!(
+                    !field(world, key).to_lowercase().contains(&reason),
+                    "its {key} says {}",
+                    show(&connection(world))
+                );
+            }
+            Ok(())
+        },
+    );
+
+    // The icon. What the controller says of each state is the other
+    // scenarios'; these say it as it would and read the window.
+    steps.step(
+        "the connection is (connecting|retrying after a drop|waiting for the network|refused its credential|on another protocol)",
+        |world, c, _| {
+            let (phase, state, status) = match c[0].as_str() {
+                "connecting" => ("connecting", "connecting", "Connecting"),
+                "retrying after a drop" => ("reconnecting", "retrying", "Reconnecting"),
+                "waiting for the network" => ("offline", "offline", "Offline"),
+                "refused its credential" => ("refused", "needsPairing", "Needs pairing"),
+                _ => ("blocked", "blocked", "Update needed"),
+            };
+            let said = json!({
+                "phase": phase, "state": state, "status": status,
+                "title": format!("About {}", c[0]), "detail": "What to do.",
+                "settling": false, "traceId": "", "canRetry": false,
+                "needsPairing": state == "needsPairing", "pairing": false,
+                "pairingError": "", "versionWarning": null,
+            });
+            let engine = world.engine();
+            hal_c2_shell::bridge::Bridge::of(engine).publish(engine, "connection", said);
+            world.pump()?;
+            let brick = Brick::new(
+                world,
+                "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n",
+                900.0,
+                600.0,
+            )?;
+            world.part::<crate::brick::Shown>().0 = Some(brick);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the window shows the (\\S+) icon with {Q}"),
+        |world, c, _| {
+            let shown = crate::brick::shown(world)?;
+            let notice = shown.item(world, "connectionNotice")?;
+            let icon_item = shown.item(world, "connectionNoticeIcon")?;
+            let icon = shown.text_of(world, icon_item, "name");
+            let status_item = shown.item(world, "connectionNoticeStatus")?;
+            let status = shown.text_of(world, status_item, "text");
+            expect!(
+                shown.flag(world, notice, "visible") && icon == c[0] && status == c[1],
+                "the notice shows {icon} with \"{status}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step("hovering it says what is going on", |world, _, _| {
+        let shown = crate::brick::shown(world)?;
+        let notice = shown.item(world, "connectionNotice")?;
+        let tip = shown.text_of(world, notice, "tip");
+        expect!(
+            tip.starts_with("About ") && tip.ends_with("What to do."),
+            "hovering says \"{tip}\""
+        );
+        Ok(())
+    });
+
+    // A reconnect over before its grace is never shown.
+    steps.step(
+        "the connection drops and comes back at once",
+        |world, _, _| {
+            world.client().set_retry_delays(ms(&[20]));
+            let connections = world.mc.connections.len();
+            // Every connection published, not only those a poll lands on.
+            let seen = watched(world).down.clone();
+            seen.watching.set(true);
+            watch_connection(world, seen.clone());
+            world.mc.drop_connection();
+            world.wait_for_with(
+                move |w| w.mc.connections.len() > connections && phase(w) == "connected",
+                |w| {
+                    format!(
+                        "the client to be back; the connection is {}",
+                        show(&connection(w))
+                    )
+                },
+            )?;
+            seen.watching.set(false);
+            expect!(
+                seen.saw_down.get(),
+                "the controller never saw the connection drop"
+            );
+            Ok(())
+        },
+    );
+    steps.step("no surface said the connection was down", |world, _, _| {
+        let brick = Brick::new(
+            world,
+            "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n",
+            900.0,
+            600.0,
+        )?;
+        world.part::<crate::brick::Shown>().0 = Some(brick);
+        let notice = brick.item(world, "connectionNotice")?;
+        let shown_down = watched(world).down.shown_down.get();
+        expect!(
+            !shown_down && !brick.flag(world, notice, "visible"),
+            "the connection was shown down; it is {}",
+            show(&connection(world))
+        );
+        Ok(())
+    });
+    // A fresh launch, its first connection never coming up.
+    steps.step("the environment takes no connections", |world, _, _| {
+        world.mc.stop_accepting();
+        Ok(())
+    });
+    steps.step("the app starts and connects to it", |world, _, _| {
+        world.restart()?;
+        // A grace long enough that nothing in the scenario could outlast it.
+        world.with::<ConnectionHealth, _>(|h, _| h.set_grace(600_000))?;
+        let seen = watched(world).down.clone();
+        seen.watching.set(true);
+        watch_connection(world, seen);
+        let origin = world.mc.origin();
+        open_at(world, &origin)
+    });
+    steps.step(
+        "within a second and a half the window shows it is not connected",
+        |world, _, _| {
+            let brick = Brick::new(
+                world,
+                "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n",
+                900.0,
+                600.0,
+            )?;
+            world.part::<crate::brick::Shown>().0 = Some(brick);
+            let notice = brick.item(world, "connectionNotice")?;
+            world.wait_for_with(
+                move |w| brick.flag(w, notice, "visible"),
+                |w| {
+                    format!(
+                        "the notice to show; the connection is {}",
+                        show(&connection(w))
+                    )
+                },
+            )?;
+            let status = field(world, "status");
+            let status_item = brick.item(world, "connectionNoticeStatus")?;
+            let read = brick.text_of(world, status_item, "text");
+            expect!(read == status, "the notice does not read \"{status}\"");
+            // And Connections settings reads the same.
+            let row = Brick::new(
+                world,
+                "import QtQuick\nimport HalC2.Bricks\nConnectionStatusRow {}\n",
+                640.0,
+                40.0,
+            )?;
+            world.part::<crate::brick::Shown>().0 = Some(row);
+            expect!(
+                row.shows(world, &status)? && !row.shows(world, "Connected")?,
+                "Connections settings does not read \"{status}\"; the connection is {}",
+                show(&connection(world))
+            );
+            Ok(())
+        },
+    );
+    steps.step("nothing said it was connected", |world, _, _| {
+        let said = watched(world).down.said_connected.get();
+        expect!(
+            !said && !settling(world),
+            "a surface said it was connected; the connection is {}",
+            show(&connection(world))
         );
         Ok(())
     });
@@ -1048,16 +1309,18 @@ pub fn register(steps: &mut Steps) {
                 !has_thread(world, &thread) && rows == 0 && !opened && !open,
                 "its threads are still kept"
             );
-            let left: Vec<String> = drafts::all(world.engine())
-                .into_iter()
-                .filter(|d| d.environment_id == environment)
-                .map(|d| d.text)
-                .collect();
-            expect!(
-                left.is_empty(),
-                "its drafts are still kept: {}",
-                left.join(", ")
-            );
+            // Its drafts go once the MC has answered the removal.
+            let left = move |w: &World| -> Vec<String> {
+                drafts::all(w.engine())
+                    .into_iter()
+                    .filter(|d| d.environment_id == environment)
+                    .map(|d| format!("{:?}", d.text))
+                    .collect()
+            };
+            world.wait_for_with(
+                |w| left(w).is_empty(),
+                |w| format!("its drafts are still kept: {}", left(w).join(", ")),
+            )?;
             expect!(
                 !kept_copy(world, &thread).found(),
                 "the client still keeps a copy of {thread}"

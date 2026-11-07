@@ -1,18 +1,24 @@
 //! `connectionHealth`, desktop-qt's ConnectionHealthController: how the
-//! shell's one connection to its MC is doing, said in words. The client owns
-//! the retries (its phases); this turns them into what every window shows
-//! (the ConnectionNotice brick, the first row of Connections settings). One
-//! per process.
+//! shell's one connection to its MC is doing, said in plain words. The client
+//! owns the retries (its phases); this turns them into what every window
+//! shows (the ConnectionNotice brick's icon, the first row of Connections
+//! settings). One per process. The client's own reason for a drop
+//! ("timeout", "HTTP 502", a socket error) goes to its log, not here.
 //!
 //! Publishes `connection`:
 //!   {phase: connecting | connected | reconnecting | offline | refused |
 //!           blocked | problem,
-//!    status,          the row's words: "Connected", "Reconnecting: timeout", ...
-//!    title, detail,   the notice's words; empty while connected
-//!    reason,          why the last connection ended, or ""
+//!    state,           the icon: connecting | ready | retrying | offline |
+//!                     needsPairing | blocked
+//!    status,          a word or two: "Connected", "Reconnecting", ...
+//!    title, detail,   a sentence each for the tooltip and the panel; empty
+//!                     while connected
+//!    settling,        a reconnect younger than the grace (set_grace), which
+//!                     no surface shows yet: most are over before it ends.
+//!                     Never before the first connection ([`Grace`])
 //!    traceId,         the failed attempt's trace id, or ""
 //!    canRetry, needsPairing, pairing, pairingError,
-//!    versionWarning:  null | {key, clientVersion, serverVersion, text}}
+//!    versionWarning:  null | {key, environmentId, clientVersion, serverVersion, text}}
 //! `connected` is not said before the MC's shell snapshot lands on this
 //! connection: the socket alone shows nothing. `problem` is a socket that is
 //! fine while the MC turned the shell subscription down, which is not a
@@ -29,10 +35,11 @@
 //! A change in the system's reachability (`ljos::system`, Qt's
 //! QNetworkInformation) says again whether the client is online.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos::prelude::{Engine, Value};
+use ljos::prelude::{Engine, ObjectId, Value};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -49,6 +56,64 @@ use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing};
 
 const KEY: &str = "connection";
 const DISMISSALS: &str = "versionMismatchDismissals";
+/// How long a reconnect stays `settling` unless a test says.
+const GRACE_MS: i32 = 1500;
+
+/// Whether a connection coming back up is still held back from the user
+/// (`settling`), desktop-qt's ConnectionGrace. Told each state the
+/// connection's icon shows (`see`), and when the grace ran out (`expire`);
+/// the owner runs the grace's timer for as long as it is `settling()`.
+///
+/// Only a reconnect is held back: a connection that was never up says it is
+/// connecting at once. What needs the user (no network, pairing, an update,
+/// an MC that will not send its data) spends the grace until the next
+/// connection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Grace {
+    /// Never up, or a problem or the grace's end since it last was.
+    #[default]
+    Shown,
+    Up,
+    Settling,
+}
+
+impl Grace {
+    /// `state` is the icon's: ready | connecting | retrying | offline |
+    /// needsPairing | blocked.
+    pub fn see(self, state: &str) -> Grace {
+        match state {
+            "ready" => Grace::Up,
+            "connecting" | "retrying" if self == Grace::Up => Grace::Settling,
+            "connecting" | "retrying" => self,
+            _ => Grace::Shown,
+        }
+    }
+
+    pub fn expire(self) -> Grace {
+        if self == Grace::Settling {
+            Grace::Shown
+        } else {
+            self
+        }
+    }
+
+    pub fn settling(self) -> bool {
+        self == Grace::Settling
+    }
+}
+
+/// Why a connection went, in words: the client's own reason is for its log.
+fn cause(reason: &str, label: &str) -> String {
+    if reason == "timeout" {
+        "It stopped answering.".to_owned()
+    } else if reason == "check" {
+        format!("{label} did not respond to a connection health check.")
+    } else if reason.starts_with("HTTP ") {
+        "It answered with an error.".to_owned()
+    } else {
+        "The connection was lost.".to_owned()
+    }
+}
 
 /// Spends a pairing link's token on a session; blocking, so it runs off the
 /// UI thread.
@@ -230,6 +295,10 @@ pub struct ConnectionHealth {
     ready: bool,
     pairing: bool,
     pairing_error: String,
+    /// Whether a reconnect is held back, and the timer that runs while it is.
+    grace: Cell<Grace>,
+    grace_ms: Cell<i32>,
+    grace_timer: Cell<Option<ObjectId>>,
 }
 
 impl Controller for ConnectionHealth {
@@ -279,6 +348,9 @@ impl Controller for ConnectionHealth {
             ready: false,
             pairing: false,
             pairing_error: String::new(),
+            grace: Cell::new(Grace::Shown),
+            grace_ms: Cell::new(GRACE_MS),
+            grace_timer: Cell::new(None),
         };
         health.network_changed(engine);
         health.update(engine);
@@ -350,6 +422,11 @@ impl ConnectionHealth {
     pub fn set_client_version(&mut self, engine: &Engine, version: &str) {
         self.client_version = version.to_owned();
         self.update(engine);
+    }
+
+    /// How long a reconnect stays `settling` (1500 ms unless a test says).
+    pub fn set_grace(&mut self, ms: i32) {
+        self.grace_ms.set(ms);
     }
 
     /// What `connection.pair` says this client is; the desktop unless told.
@@ -546,8 +623,10 @@ impl ConnectionHealth {
         if self.dismissed(engine).contains(&key) {
             return Json::Null;
         }
+        let served = store::with(engine, |s| s.environment_of(&status.mc));
         json!({
             "key": key,
+            "environmentId": if served.is_empty() { status.environment.clone() } else { served },
             "clientVersion": client,
             "serverVersion": server,
             "text": format!(
@@ -557,28 +636,68 @@ impl ConnectionHealth {
         })
     }
 
+    /// Starts the grace's timer while a reconnect is settling, and stops it
+    /// once it is not.
+    fn run_grace(&self, engine: &Engine, settling: bool) {
+        if !settling {
+            if let Some(timer) = self.grace_timer.take() {
+                controller::stop_timer(engine, timer);
+            }
+            return;
+        }
+        if self.grace_timer.get().is_some() {
+            return;
+        }
+        let native = ljos::prelude::Timer {
+            interval: self.grace_ms.get(),
+            repeat: false,
+            running: true,
+            ..ljos::prelude::Timer::default()
+        };
+        let Ok(timer) = engine.create_native(native, None) else {
+            return;
+        };
+        self.grace_timer.set(Some(timer));
+        let me = self.me.clone();
+        let fired = engine.connect_by_name(timer, "triggered", move |engine, _| {
+            me.run(engine, |c, engine| {
+                if let Some(timer) = c.grace_timer.take() {
+                    controller::stop_timer(engine, timer);
+                }
+                c.grace.set(c.grace.get().expire());
+                c.update(engine);
+            });
+        });
+        if fired.is_err() || engine.complete(timer).is_err() {
+            self.grace_timer.set(None);
+            controller::stop_timer(engine, timer);
+        }
+    }
+
     fn update(&self, engine: &Engine) {
         let status = self.mc.status();
         let reason = status.failure.clone();
         let label = || self.label(&status, engine);
         let problem = store::with(engine, |s| s.problem().to_owned());
         let snapshots = store::with(engine, |s| s.snapshots());
-        let (name, state, title, detail, can_retry);
+        let (mut title, mut detail) = (String::new(), String::new());
+        let (name, state, words, can_retry);
         match status.phase {
             Phase::Closed | Phase::Connecting | Phase::Retrying => {
                 // A first attempt that has not failed is connecting; anything
                 // after a failure is a reconnect.
                 if reason.is_empty() {
                     name = "connecting";
-                    state = "Connecting".to_owned();
-                    title = String::new();
-                    detail = String::new();
+                    state = "connecting";
+                    words = "Connecting";
+                    title = format!("Connecting to {}", label());
                     can_retry = false;
                 } else {
                     name = "reconnecting";
-                    state = format!("Reconnecting: {reason}");
+                    state = "retrying";
+                    words = "Reconnecting";
                     title = format!("Reconnecting to {}", label());
-                    detail = reason.clone();
+                    detail = format!("{} HAL-C2 keeps trying.", cause(&reason, &label()));
                     can_retry = status.phase == Phase::Retrying;
                 }
             }
@@ -586,14 +705,17 @@ impl ConnectionHealth {
                 can_retry = !problem.is_empty();
                 if !problem.is_empty() {
                     name = "problem";
-                    state = format!("Could not load its data: {problem}");
+                    state = "blocked";
+                    words = "Can't load data";
                     title = "Could not load projects and threads".to_owned();
-                    detail = problem;
+                    detail = format!(
+                        "{} is connected but did not send them. Try again, or restart it.",
+                        label()
+                    );
                 } else if snapshots > self.snapshots_at_ready {
                     name = "connected";
-                    state = "Connected".to_owned();
-                    title = String::new();
-                    detail = String::new();
+                    state = "ready";
+                    words = "Connected";
                 } else {
                     // The socket is open; the environment has not described
                     // itself yet.
@@ -602,36 +724,38 @@ impl ConnectionHealth {
                     } else {
                         "reconnecting"
                     };
-                    state = "Connecting".to_owned();
-                    title = String::new();
-                    detail = String::new();
+                    state = "connecting";
+                    words = "Connecting";
+                    title = format!("Connecting to {}", label());
                 }
             }
             Phase::Offline => {
                 name = "offline";
-                state = "Waiting for the network".to_owned();
+                state = "offline";
+                words = "Offline";
                 title = "This device is offline".to_owned();
                 detail = "HAL-C2 connects again when the network is back.".to_owned();
                 can_retry = false;
             }
             Phase::Refused => {
                 name = "refused";
-                state = "Access refused: pair it again".to_owned();
+                state = "needsPairing";
+                words = "Needs pairing";
                 title = format!("{} no longer accepts this device", label());
                 detail = "Pair again with a fresh pairing link from the environment.".to_owned();
                 can_retry = true;
             }
             Phase::Blocked => {
                 name = "blocked";
+                state = "blocked";
+                words = "Update needed";
                 if status
                     .blocked_protocol
                     .is_some_and(|p| p > hal_c2_mc::PROTOCOL)
                 {
-                    state = "This app is too old: update HAL-C2 on this device".to_owned();
                     title = format!("This app is too old for {}", label());
                     detail = "Update HAL-C2 on this device to connect.".to_owned();
                 } else {
-                    state = "Its server is too old: update HAL-C2 on that environment".to_owned();
                     title = format!("{} runs an older HAL-C2", label());
                     detail = "Update HAL-C2 on that environment to connect.".to_owned();
                 }
@@ -639,15 +763,22 @@ impl ConnectionHealth {
             }
         }
         let connected = name == "connected";
+        // A reconnect is not shown before the grace runs out: most are over
+        // by then. What needs the user is shown at once, and so is a first
+        // connection.
+        self.grace.set(self.grace.get().see(state));
+        let settling = self.grace.get().settling();
+        self.run_grace(engine, settling);
         self.bridge.publish(
             engine,
             KEY,
             json!({
                 "phase": name,
-                "status": state,
+                "state": state,
+                "status": words,
                 "title": title,
                 "detail": detail,
-                "reason": if connected { "" } else { reason.as_str() },
+                "settling": settling,
                 "traceId": if connected { "" } else { status.failure_trace_id.as_str() },
                 "canRetry": can_retry,
                 "needsPairing": status.phase == Phase::Refused,

@@ -211,6 +211,7 @@ connections/connection-health.feature: A failed shell subscription is not shown 
 connections/connection-health.feature: A network that comes back is tried at once
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [a newer protocol than the client, update HAL-C2 on this device]
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [an older protocol than the client, update HAL-C2 on that environment]
+connections/connection-health.feature: A reconnect within a second and a half is not shown
 connections/connection-health.feature: A refused credential waits for the user
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.3.2, 1.4.0, does not warn]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.3.2, warns of a version mismatch]
@@ -218,6 +219,7 @@ connections/connection-health.feature: A server on another HAL-C2 version warns 
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0-nightly.20260902, 1.4.0-nightly.20260901, warns of a version mismatch]
 connections/connection-health.feature: A thread left for longer comes back from what the client kept
 connections/connection-health.feature: A thread left for under five minutes resumes without a snapshot
+connections/connection-health.feature: An app that starts with its environment out of reach says so at once
 connections/connection-health.feature: An environment on this machine is reached without a network
 connections/connection-health.feature: An offline device waits instead of retrying
 connections/connection-health.feature: Cached data stays readable offline without looking live
@@ -227,7 +229,13 @@ connections/connection-health.feature: One connection serves every MC of a clust
 connections/connection-health.feature: Reconnecting does not repeat the user's actions
 connections/connection-health.feature: Removing an environment clears everything the client kept for it
 connections/connection-health.feature: Subscriptions follow a replaced connection
+connections/connection-health.feature: The connection's state is an icon with a word [connecting, circle-dashed, Connecting]
+connections/connection-health.feature: The connection's state is an icon with a word [on another protocol, octagon-alert, Update needed]
+connections/connection-health.feature: The connection's state is an icon with a word [refused its credential, lock, Needs pairing]
+connections/connection-health.feature: The connection's state is an icon with a word [retrying after a drop, refresh-cw, Reconnecting]
+connections/connection-health.feature: The connection's state is an icon with a word [waiting for the network, cloud, Offline]
 connections/connection-health.feature: The environment's status names why it is reconnecting
+connections/connection-health.feature: The environment's status says it is reconnecting, in plain words
 connections/connection-health.feature: The user copies a connection's trace id for a bug report
 connections/environments.feature: A preference saved by an older build snaps to the nearest choice
 connections/environments.feature: The icon cannot be changed [the environment is not connected, connect to the environment to change its icon]

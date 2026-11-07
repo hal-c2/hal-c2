@@ -101,6 +101,8 @@ impl Mc for StatusMc {
 struct Rig {
     engine: Engine,
     mc: Rc<StatusMc>,
+    /// Whose virtual clock the shell's timers run on.
+    window: RefCell<ljos::testing::TestWindow>,
 }
 
 fn config_dir(test: &str) -> PathBuf {
@@ -116,6 +118,8 @@ impl Rig {
         let engine = App::new("test")
             .register(hal_c2_shell::register)
             .build_engine();
+        // Before the shell starts, for its timers to start on the window's clock.
+        let window = RefCell::new(ljos::testing::TestWindow::new(&engine, 100.0, 100.0));
         let mc = Rc::new(StatusMc::default());
         let launch = Launch {
             config_dir: Some(config_dir(test)),
@@ -125,7 +129,15 @@ impl Rig {
             ..Launch::default()
         };
         hal_c2_shell::start(&engine, &launch, mc.clone());
-        Rig { engine, mc }
+        Rig { engine, mc, window }
+    }
+
+    /// Moves the clock on by `ms`, running each timer as it falls due.
+    fn advance(&self, ms: u64) {
+        self.window
+            .borrow_mut()
+            .advance(ms)
+            .expect("the shell comes to rest");
     }
 
     fn published(&self) -> Json {
@@ -187,15 +199,68 @@ fn a_socket_alone_is_not_connected_until_the_snapshot_lands() {
     rig.status(Phase::Retrying, "timeout");
     assert_eq!(rig.phase(), "reconnecting");
     let state = rig.published();
-    assert_eq!(state["status"], "Reconnecting: timeout");
+    assert_eq!(state["status"], "Reconnecting");
+    assert_eq!(state["state"], "retrying");
     assert_eq!(state["title"], "Reconnecting to Laptop");
-    assert_eq!(state["detail"], "timeout");
+    // The client's own reason stays in its log; the user reads a sentence.
+    assert_eq!(
+        state["detail"],
+        "It stopped answering. HAL-C2 keeps trying."
+    );
     assert_eq!(state["canRetry"], true);
+    // A reconnect is held back from the user until its grace runs out.
+    assert_eq!(state["settling"], true);
     rig.status(Phase::Ready, "timeout");
     assert_eq!(rig.phase(), "reconnecting");
     rig.snapshot();
     assert_eq!(rig.phase(), "connected");
-    assert_eq!(rig.published()["reason"], "");
+    assert_eq!(rig.published()["state"], "ready");
+    assert_eq!(rig.published()["settling"], false);
+}
+
+#[test]
+fn a_first_connection_is_not_held_back() {
+    let rig = Rig::new("first");
+    // Never up: connecting and failing are shown at once.
+    assert_eq!(rig.published()["settling"], false);
+    assert_eq!(rig.published()["title"], "Connecting to the environment");
+    rig.status(Phase::Retrying, "closed");
+    assert_eq!(rig.published()["settling"], false);
+    assert_eq!(
+        rig.published()["detail"],
+        "The connection was lost. HAL-C2 keeps trying."
+    );
+}
+
+#[test]
+fn what_needs_the_user_spends_the_grace() {
+    let rig = Rig::new("grace-spent");
+    rig.status(Phase::Ready, "");
+    rig.snapshot();
+    rig.status(Phase::Retrying, "HTTP 502");
+    assert_eq!(rig.published()["settling"], true);
+    assert_eq!(
+        rig.published()["detail"],
+        "It answered with an error. HAL-C2 keeps trying."
+    );
+    // Offline is shown at once, and the retry after it is no longer held back.
+    rig.status(Phase::Offline, "HTTP 502");
+    assert_eq!(rig.published()["settling"], false);
+    rig.status(Phase::Retrying, "HTTP 502");
+    assert_eq!(rig.published()["settling"], false);
+}
+
+#[test]
+fn a_reconnect_shows_once_its_grace_runs_out() {
+    let rig = Rig::new("grace");
+    rig.status(Phase::Ready, "");
+    rig.snapshot();
+    rig.status(Phase::Retrying, "timeout");
+    rig.advance(1400);
+    assert_eq!(rig.published()["settling"], true);
+    rig.advance(200);
+    assert_eq!(rig.published()["settling"], false);
+    assert_eq!(rig.published()["status"], "Reconnecting");
 }
 
 #[test]
@@ -211,9 +276,12 @@ fn a_refused_subscription_is_a_problem_not_a_reconnect() {
     );
     let state = rig.published();
     assert_eq!(state["phase"], "problem");
+    assert_eq!(state["status"], "Can't load data");
+    // The MC's own words stay out of it.
+    assert!(!state.to_string().contains("database is locked"));
     assert_eq!(
-        state["status"],
-        "Could not load its data: database is locked"
+        state["detail"],
+        "Laptop is connected but did not send them. Try again, or restart it."
     );
     assert_eq!(state["canRetry"], true);
     // Retrying a ready connection asks for the subscription on a new socket.
@@ -230,7 +298,7 @@ fn each_phase_that_waits_says_what_for() {
     let state = rig.published();
     assert_eq!(
         (state["phase"].as_str(), state["status"].as_str()),
-        (Some("offline"), Some("Waiting for the network"))
+        (Some("offline"), Some("Offline"))
     );
     assert_eq!(state["canRetry"], false);
 
@@ -238,6 +306,8 @@ fn each_phase_that_waits_says_what_for() {
     let state = rig.published();
     assert_eq!(state["phase"], "refused");
     assert_eq!(state["needsPairing"], true);
+    assert_eq!(state["status"], "Needs pairing");
+    assert_eq!(state["state"], "needsPairing");
     assert_eq!(
         state["title"],
         "the environment no longer accepts this device"
@@ -251,9 +321,10 @@ fn each_phase_that_waits_says_what_for() {
             ..Status::default()
         },
     );
+    assert_eq!(rig.published()["status"], "Update needed");
     assert_eq!(
-        rig.published()["status"],
-        "This app is too old: update HAL-C2 on this device"
+        rig.published()["detail"],
+        "Update HAL-C2 on this device to connect."
     );
     rig.mc.set(
         &rig.engine,
@@ -263,9 +334,10 @@ fn each_phase_that_waits_says_what_for() {
             ..Status::default()
         },
     );
+    assert_eq!(rig.published()["status"], "Update needed");
     assert_eq!(
-        rig.published()["status"],
-        "Its server is too old: update HAL-C2 on that environment"
+        rig.published()["detail"],
+        "Update HAL-C2 on that environment to connect."
     );
 
     // Retry while not ready tries again now.
@@ -302,6 +374,7 @@ fn a_server_older_than_the_app_warns_until_dismissed() {
     rig.snapshot();
     let warning = rig.published()["versionWarning"].clone();
     assert_eq!(warning["key"], "env-1:0.0.9:0.0.5");
+    assert_eq!(warning["environmentId"], "env-1");
     assert_eq!(
         warning["text"],
         "Version mismatch: Laptop runs HAL-C2 0.0.5, older than this app (0.0.9). Update it to stay in sync."
@@ -540,6 +613,16 @@ struct Model {
     snapshots: u32,
     at_ready: u32,
     problem: bool,
+    grace: Grace,
+}
+
+/// Whether the connection was last up (`Up`), is coming back from being up
+/// (`Settling`), or neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Grace {
+    Shown,
+    Up,
+    Settling,
 }
 
 impl Model {
@@ -578,6 +661,7 @@ proptest! {
             snapshots: 0,
             at_ready: 0,
             problem: false,
+            grace: Grace::Shown,
         };
         for op in ops {
             match op {
@@ -612,10 +696,18 @@ proptest! {
             }
             let state = rig.published();
             prop_assert_eq!(state["phase"].as_str().unwrap(), model.expected());
+            model.grace = match model.expected() {
+                "connected" => Grace::Up,
+                "connecting" | "reconnecting" if model.grace != Grace::Shown => Grace::Settling,
+                "connecting" | "reconnecting" => Grace::Shown,
+                _ => Grace::Shown,
+            };
+            // Only a connection that was up and is coming back is held back.
+            prop_assert_eq!(&state["settling"], &json!(model.grace == Grace::Settling));
             let connected = state["phase"] == "connected";
             prop_assert_eq!(state["status"] == "Connected", connected);
+            prop_assert_eq!(state["state"] == "ready", connected);
             if connected {
-                prop_assert_eq!(&state["reason"], "");
                 prop_assert_eq!(&state["title"], "");
             }
             prop_assert_eq!(&state["needsPairing"], &json!(model.phase == Phase::Refused));
