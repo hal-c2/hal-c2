@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15020
+#   https://github.com/pingdotgg/t3code/pull/22872
 #   https://github.com/pingdotgg/t3code/pull/21199
 #   https://github.com/pingdotgg/t3code/pull/15838
 #   https://github.com/pingdotgg/t3code/pull/9867
@@ -249,6 +251,19 @@ Feature: Links and rendering inside terminals
         | bottom | below     |
         | top    | above     |
 
+    # Upstream #22872: dragging past the edge scrolled one row a tick however far the pointer
+    # went, so selecting a few hundred lines took tens of seconds.
+    @desktop @backlog @priority-low
+    Scenario Outline: A selection dragged further past the edge scrolls faster
+      Given the terminal has hundreds of rows of history above the visible rows
+      When the user drags a selection <distance> past the top edge and holds it there
+      Then the terminal scrolls up <speed>
+
+      Examples:
+        | distance        | speed                   |
+        | just            | one row at a time       |
+        | 50 pixels       | fifteen rows at a time  |
+
     @desktop
     Scenario: A link replaced before the pointer is released is not followed
       Given the user pressed on a link
@@ -296,6 +311,14 @@ Feature: Links and rendering inside terminals
       Given a program turns on the Kitty keyboard protocol
       When the user presses a key with modifiers
       Then the program receives the enhanced key report
+
+    # Upstream #15020: Kitty programs got releases for shortcuts the app took, and a split lost held keys.
+    @backlog @desktop
+    Scenario: A program gets no key release for a shortcut the app handled
+      Given a program turns on the Kitty keyboard protocol
+      When the user presses and releases a shortcut that the app handles
+      Then the program receives neither the press nor the release
+      And splitting the terminal while a key is held keeps the program's view of that key
 
     @desktop
     Scenario: On macOS a program that asks for enhanced reporting gets Ctrl as Ctrl

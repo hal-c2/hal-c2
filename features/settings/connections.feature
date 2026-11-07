@@ -9,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/17370
 #   https://github.com/pingdotgg/t3code/pull/19354
 #   https://github.com/pingdotgg/t3code/pull/20432
+#   https://github.com/pingdotgg/t3code/pull/22900
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
@@ -129,6 +130,14 @@ Feature: Connections settings
       And Tailscale HTTPS is off
       When the user opens the Connections settings
       Then HAL-C2 does not query the Tailscale app for this machine's tailnet name
+
+    # Upstream #22900: a timed-out Tailscale probe left Tailscale running, and on macOS it opened
+    # the menu-bar app.
+    @backlog @mc @priority-low
+    Scenario: A Tailscale check that times out leaves nothing running
+      Given asking Tailscale for this machine's status does not answer in time
+      When the check gives up
+      Then no Tailscale process it started is left running, even one that ignores being asked to stop
 
     @backlog @desktop
     Scenario: A tailnet HTTPS name is available only while Tailscale Serve actually answers on it

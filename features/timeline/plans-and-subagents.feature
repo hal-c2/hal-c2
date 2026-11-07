@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19523
+#   https://github.com/pingdotgg/t3code/pull/24349
 #   https://github.com/pingdotgg/t3code/pull/20785
 #   https://github.com/pingdotgg/t3code/pull/20786
 #   https://github.com/pingdotgg/t3code/pull/18099
@@ -62,6 +64,9 @@
 #   https://github.com/pingdotgg/t3code/pull/15493
 #   https://github.com/pingdotgg/t3code/pull/15334
 #   https://github.com/pingdotgg/t3code/pull/15281
+#   https://github.com/pingdotgg/t3code/pull/25759
+#   https://github.com/pingdotgg/t3code/pull/24587
+#   https://github.com/pingdotgg/t3code/pull/21393
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -72,6 +77,7 @@ Feature: Plans and subagents
     And the user is looking at a thread in "shop"
 
   # TUI: implemented in apps/tui/src/proposedPlan.ts
+  # Upstream #21393: the phone showed proposed plans as JSON; they are cards with copy and save.
   @shared
   Scenario: A proposed plan appears as a card titled by its first heading
     When the agent proposes a plan whose first heading is "Add a tax line"
@@ -649,6 +655,24 @@ Feature: Plans and subagents
     When the user picks the Codex model again
     Then the mark is gone
 
+  # Upstream #19523: a stale draft showed a pending handoff to a provider the next send would
+  # skip or refuse.
+  @shared @mobile @backlog @priority-low
+  Scenario: No handoff is marked for a provider the next send cannot use
+    Given the thread has run on Codex
+    And the draft names a Claude model
+    And Claude is disabled for the thread's project
+    Then the timeline does not mark "Context handoff pending"
+    But a project that enables Claude while it is off elsewhere does mark it
+
+  # Upstream #24349: the handoff showed twice, as its row and as the pending mark, until the
+  # new provider started.
+  @shared @backlog @priority-low
+  Scenario: A starting handoff is marked once
+    Given the timeline marks "Context handoff pending"
+    When the user sends the next message and the handoff starts
+    Then the handoff's row is shown and "Context handoff pending" is gone, before the new provider starts
+
   @desktop
   Scenario Outline: A fork marker leads to the other end of the fork
     Given <situation>
@@ -821,6 +845,39 @@ Feature: Plans and subagents
     Given the agent started three subagents in this turn
     When the turn settles and every subagent has finished
     Then the thread's status does not mention subagents
+
+  # Upstream #25759: the Agents entry disappeared when the turn ended, leaving finished subagents
+  # out of reach from the parent.
+  # Replaces the scenario above once mobile carries it.
+  @backlog @mobile @priority-high
+  Scenario: Finished subagents stay reachable from the thread's status after the turn settles
+    Given the agent started three subagents in this turn
+    When the turn settles and every subagent has finished
+    Then the thread's status says "3 agents done"
+    And opening it lists the three subagents, each opening its own thread
+
+  # Upstream #25759: a later run takes the roster over; a queued, cancelled or rolled-back run does not.
+  @backlog @mobile
+  Scenario Outline: The finished subagents give way only to a later run that started
+    Given the agent started three subagents in a turn that has settled
+    When <later>
+    Then the thread's status <status>
+
+    Examples:
+      | later                                          | status                         |
+      | a later turn starts                            | follows the later turn         |
+      | a later message is only queued                 | still says "3 agents done"     |
+      | a later message is cancelled before it starts  | still says "3 agents done"     |
+      | a later turn is rolled back                    | still says "3 agents done"     |
+
+  # Upstream #24587: completed workflows stayed out of the Agents list after later turns, and idle
+  # agents counted as done.
+  @backlog @mobile
+  Scenario: A finished workflow stays in the thread's agents and idle agents are not counted done
+    Given a workflow finished in an earlier run of the thread
+    And an agent of the latest run is idle
+    Then the thread's status says "1 done"
+    And its agents list both, and the workflow opens its result thread
 
   # Upstream #16878: folding a settled turn (or a superseded attempt) left running work out of sight.
   @backlog @shared

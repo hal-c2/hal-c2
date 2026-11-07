@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24605
+#   https://github.com/pingdotgg/t3code/pull/24609
 #   https://github.com/pingdotgg/t3code/pull/20881
+#   https://github.com/pingdotgg/t3code/pull/22849
 #   https://github.com/pingdotgg/t3code/pull/20180
 #   https://github.com/pingdotgg/t3code/pull/18772
 #   https://github.com/pingdotgg/t3code/pull/18771
@@ -20,6 +23,7 @@
 #     (x.ai/task_backgrounded, x.ai/task_completed, background subagent notices, persistent monitors)
 #   apps/server/src/provider/acp/XAiBackgroundTasks.ts (how background tasks are listed and ended)
 #   https://github.com/pingdotgg/t3code/pull/14486
+#   https://github.com/pingdotgg/t3code/pull/22709
 
 @plugin-grok @mc @priority-low
 Feature: Grok
@@ -43,6 +47,28 @@ Feature: Grok
     Given the grok command is installed and signed in
     When the user enables Grok
     Then Grok's models are offered in the model picker
+
+  # Upstream #22849: every Grok refresh added back cached models the CLI no longer advertised,
+  # so a model gateway's models stayed listed after Grok was disconnected from it.
+  @backlog @mc @plugin-grok @priority-low
+  Scenario: A Grok refresh drops models Grok no longer offers
+    Given Grok offered the models of a model gateway
+    And Grok was disconnected from the gateway
+    When the user refreshes Grok
+    Then only the models Grok now offers are in the model picker
+
+  # Upstream #22849
+  @backlog @mc @plugin-grok @priority-low
+  Scenario Outline: A Grok check that finds no models keeps the last known ones with a warning
+    Given Grok offered four models
+    When the MC checks Grok and <result>
+    Then Grok shows a warning
+    And the four models are still offered
+
+    Examples:
+      | result                         |
+      | Grok lists no models           |
+      | Grok fails to start a session  |
 
   Scenario: A signed-out Grok says so
     Given the grok command is installed but not signed in
@@ -252,10 +278,41 @@ Feature: Grok
     Then Grok's command is cancelled
     And "Work" lists only the subagent as background work
 
+  # Upstream #22709: Grok does not always report a background command's end; the result of
+  # polling or killing it ends it too, and it is not listed again afterwards.
+  @backlog
+  Scenario Outline: A Grok background command ends when its result says so
+    Given Grok left a command running in the background
+    When <event> and Grok never reports the command ended
+    Then Grok's command is completed
+    And "Work" lists no background work
+
+    Examples:
+      | event                                               |
+      | Grok reads the command's output after it finished   |
+      | Grok kills the command                              |
+
+  # Upstream #22709: a command's result read alongside a subagent's does not end the subagent.
+  @backlog
+  Scenario: Reading a command's result does not end a subagent beside it
+    Given Grok left a command and a subagent running in the background
+    When Grok reads the finished command's output and the subagent's progress together
+    Then Grok's command is completed
+    And "Work" lists the subagent as background work
+
   # A persistent monitor watches until the session ends, so nothing waits on it.
   Scenario: A persistent Grok monitor is not background work
     Given Grok left a persistent monitor running
     Then Grok's monitor is not listed as background work
+
+  # Upstream #24609: a Grok monitor was listed as a command and noted as a shell on restart.
+  # Replaces the scenario above once the MC carries it.
+  @backlog
+  Scenario: A persistent Grok monitor is listed as a monitor that does not hold the thread
+    Given Grok left a persistent monitor running
+    Then "Work" lists the monitor as a monitor in its background work
+    And the note after a restart names it as a monitor
+    And "Work" does not stay Working for it
 
   @backlog
   Scenario: Grok monitor updates do not end or hold the turn
@@ -272,6 +329,19 @@ Feature: Grok
     Given Grok left a command and a subagent running in the background
     When Grok reports the command and the subagent ended
     Then "Work" runs a turn telling Grok its background work finished
+
+  # Upstream #24605: picking a skill writes "$name", but Grok only expands a leading "/name".
+  @backlog
+  Scenario Outline: A picked Grok skill at the start of a message runs as Grok's own command
+    Given the grok command reports the skill "deploy" for the project
+    When the user sends "<message>" to Grok
+    Then Grok receives "<received>"
+
+    Examples:
+      | message             | received            |
+      | $deploy to staging  | /deploy to staging  |
+      | please run $deploy  | please run $deploy  |
+      | $unknown to staging | $unknown to staging |
 
   @backlog
   Scenario: Grok skills are the ones the grok command reports

@@ -69,6 +69,7 @@ defmodule HalC2.Projection.Shell do
 
     error =
       ThreadError.summary(
+        latest_run,
         ThreadError.latest_root_provider_failure(latest_run, turn_items),
         get(provider_session, "lastError")
       )

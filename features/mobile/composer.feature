@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21352
+#   https://github.com/pingdotgg/t3code/pull/23096
+#   https://github.com/pingdotgg/t3code/pull/24363
 #   https://github.com/pingdotgg/t3code/pull/20803
 #   https://github.com/pingdotgg/t3code/pull/21473
 #   https://github.com/pingdotgg/t3code/pull/15719
@@ -12,6 +15,11 @@
 #   https://github.com/pingdotgg/t3code/pull/17492
 #   https://github.com/pingdotgg/t3code/pull/17879
 #   https://github.com/pingdotgg/t3code/pull/15807
+#   https://github.com/pingdotgg/t3code/pull/25176
+#   https://github.com/pingdotgg/t3code/pull/25376
+#   https://github.com/pingdotgg/t3code/pull/25681
+#   https://github.com/pingdotgg/t3code/pull/20812
+#   https://github.com/pingdotgg/t3code/pull/21390
 #   apps/mobile/src/features/threads/ (composer send modes, queued messages, command popover)
 #   apps/mobile/src/features/threads/ThreadQueueControl.tsx (queued messages: editing, held queue, empty)
 #   apps/mobile/src/features/threads/use-composer-command-menu.ts, ComposerCommandPopover.tsx (triggers, skills, empty and loading texts)
@@ -170,10 +178,12 @@ Feature: Writing to an agent from a phone
     Then "also update the changelog" runs after the current turn
 
   # Upstream #18846: typing during the save was lost when the edit closed.
+  # Upstream #21390: the lock covers pasting, attaching, commands, dictation and sending too,
+  # and voice input holds the same lock.
   @backlog @mobile
   Scenario: The composer takes no typing while an edited queued message saves
     Given the user is saving an edit to a queued message
-    Then the composer does not take typing until the save ends
+    Then the composer takes no typing, paste, attachment, command, dictation or send until the save ends
     When the save fails
     Then the user can type in the composer again
 
@@ -194,6 +204,34 @@ Feature: Writing to an agent from a phone
       | a photo      | the photo library |
       | a video      | the photo library |
       | a PDF        | the files app     |
+
+  # Upstream #21352: an image picked from the files app stayed a plain file, skipping the
+  # photo picker's scaling.
+  @backlog @mobile
+  Scenario Outline: An image picked from the files app is attached as an image
+    When the user attaches <file> from the files app
+    Then it is attached as <kind>
+
+    Examples:
+      | file                    | kind                                         |
+      | a 3 KB PNG              | an image the agent sees                      |
+      | a 4 MB JPEG             | an image the agent sees                      |
+      | a 12 MB PNG             | a file, still shown in the draft             |
+      | a PNG the phone calls a generic file | an image the agent sees         |
+
+  # Upstream #25376: a pick or paste still running lands in the draft it was started for.
+  @backlog @mobile
+  Scenario Outline: An attachment still being added lands only in the draft it was started for
+    Given the user is attaching "photo.jpg" to the draft of "Fix checkout"
+    When <change> before "photo.jpg" is ready
+    Then <result>
+
+    Examples:
+      | change                                                   | result                                                         |
+      | the user opens another thread                            | "photo.jpg" is in the draft of "Fix checkout" only             |
+      | the user clears the draft                                | "photo.jpg" is not added and its copy on the phone is removed  |
+      | the user starts the new task the draft was for           | "photo.jpg" is not added to the started task                   |
+      | the draft's machine is removed from the phone            | "photo.jpg" is not added and its copy on the phone is removed  |
 
   # New behaviour: the React Native app offers the photo library and files but no camera.
   @backlog @mobile @priority-high
@@ -489,6 +527,49 @@ Feature: Writing to an agent from a phone
     When the composer is widened
     Then the whole hint is shown again
 
+  # Upstream #20812: focusing the phone's composer always turned it into a tall card.
+  @backlog @mobile @priority-high
+  Scenario: The composer stays one row until the draft wraps
+    Given the user is typing a one-word reply in "Fix checkout"
+    Then the composer is one row with the model picker in it
+    When the draft no longer fits on one row
+    Then the draft sits above the composer's controls, showing two to four lines before it scrolls
+    When the user deletes back to a draft that fits
+    Then the composer is one row again
+
+  # Upstream #20812
+  @backlog @mobile @priority-low
+  Scenario: The model picker shows the model's name only while the draft is empty
+    Given the composer of "Fix checkout" is one row
+    When the draft is empty
+    Then the model picker names the model
+    When the user types
+    Then the model picker shows only the provider's icon
+
+  # Upstream #20812: on an Android tablet's split view the soft keyboard leaves the thread the
+  # room; a hardware keyboard changes nothing.
+  @backlog @mobile @priority-low
+  Scenario: The soft keyboard on a split view gives the thread the room
+    Given the phone shows the sidebar beside "Fix checkout"
+    When the user types in the composer with the on-screen keyboard
+    Then the sidebar steps aside while the keyboard is open
+    When the keyboard closes
+    Then the sidebar is back
+
+  # Upstream #20812: it used to take two taps, and flipped the user's sidebar preference.
+  @backlog @mobile
+  Scenario: The sidebar button while typing closes the keyboard and opens the sidebar
+    Given the user hid the sidebar and is typing in "Fix checkout"
+    When the user presses the sidebar button once
+    Then the keyboard closes and the sidebar is shown
+
+  # Upstream #25176: the phone's hint, "Ask the repo agent, or run a command…", never fit one row.
+  @backlog @mobile @priority-low
+  Scenario: An empty composer on the phone asks "Ask anything"
+    Given nothing is waiting on the user
+    When the composer of a thread or of a new-thread draft is empty
+    Then its hint reads "Ask anything"
+
   # Upstream #17492: with FUTO or HeliBoard, or a saved draft reopened, the editor stopped
   # following the caret after three lines.
   @backlog @mobile @priority-high
@@ -503,6 +584,22 @@ Feature: Writing to an agent from a phone
       | FUTO      | a new thread with no project                   |
       | HeliBoard | a new thread with no project                   |
       | Gboard    | a saved draft reopened from the thread list    |
+
+  # Upstream #23096: tapping a long draft after closing the keyboard opened it at its first line.
+  @backlog @mobile @priority-low
+  Scenario: A long draft reopens where the user left it
+    Given the user closed the keyboard with the caret near the end of a long draft on an iPhone
+    When the user taps the composer again
+    Then the composer opens to its full size with the caret where it was
+    But in a draft short enough to fit one row the caret goes where the user taps
+
+  # Upstream #25681: one caret was shared by every draft, so context landed at the end of the first.
+  @backlog @mobile
+  Scenario: Context added to a draft goes to that draft's caret
+    Given the user left the caret in the middle of the draft of "Fix checkout"
+    And the user then moved the caret in the draft of "Docs" on a tablet beside it
+    When the user adds terminal output to the draft of "Fix checkout"
+    Then the output is inserted at the caret of "Fix checkout", not at its end
 
   @backlog @mobile
   Scenario: Pictures dropped onto the composer are attached
@@ -543,6 +640,14 @@ Feature: Writing to an agent from a phone
     Given typing "$" offers skills
     When the agent asks a question and its card replaces the composer
     Then the list of skills is no longer shown
+
+  # Upstream #24363: the question card always set aside a keyboard's height, leaving a narrow strip.
+  @backlog @mobile @priority-low
+  Scenario: A question card uses the room the keyboard leaves
+    Given the agent asked a question with three options on a short screen
+    When the keyboard is closed
+    Then the card can grow to all the room below the header
+    And it shrinks with the keyboard as the keyboard rises
 
   @backlog @mobile
   Scenario Outline: Provider commands are offered only at the start of a message

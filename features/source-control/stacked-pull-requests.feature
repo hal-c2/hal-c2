@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20415
 #   https://github.com/pingdotgg/t3code/pull/20388
 #   https://github.com/pingdotgg/t3code/pull/17116
 #   https://github.com/pingdotgg/t3code/pull/17559
@@ -31,6 +32,13 @@ Feature: Stacked pull requests
   Scenario: Reading a pull request's stack
     When the user asks for the stack of pull request 42
     Then the layers 41, 42 and 43 are listed in order with their heads
+
+  # Upstream #20415: older layers kept the shorter stack after a new layer was linked.
+  @backlog @mc
+  Scenario: Every linked layer learns of a layer added on top
+    Given pull requests 41, 42 and 43 are each linked to a thread
+    When pull request 44 is stacked on 43 and linked to a thread
+    Then the threads of 41, 42 and 43 each show the layers 41, 42, 43 and 44
 
   @mc
   Scenario: Merging a layer merges the open layers below it

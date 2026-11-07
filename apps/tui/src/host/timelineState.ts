@@ -43,7 +43,7 @@ import {
   workLogStatusLabel,
   type WorkLogEntry,
 } from "../worklog.ts";
-import type { AttachmentPreview } from "./attachmentPreviews.ts";
+import type { AttachmentPreview, AttachmentPreviews } from "./attachmentPreviews.ts";
 import { tableToCsv, tableToMarkdown } from "../markdownTable.ts";
 import { threadKey } from "./sidebarState.ts";
 import {
@@ -100,6 +100,14 @@ export const EMPTY_TIMELINE_VIEW: TimelineView = {
   collapsedDirs: new Map(),
   windowEnd: null,
 };
+
+/** Why the latest run failed. A usage limit reads as a warning that names when to retry. */
+export interface TimelineError {
+  readonly message: string;
+  readonly usageLimit: { readonly resetAt: string | null } | null;
+  /** The user dismissed this failure (its run and message); another one shows again. */
+  readonly dismissed: boolean;
+}
 
 /** One painted line; a click dispatches `action` with `payload`. */
 export interface TimelineLine {
@@ -175,6 +183,8 @@ export interface TimelineState {
   readonly items: ReadonlyArray<TimelineItem>;
   /** The newest row is mounted, so the view sticks to the bottom. */
   readonly showingLatest: boolean;
+  /** Earlier turns wait on the MC and are not being fetched: a short timeline asks for them. */
+  readonly canLoadEarlier: boolean;
   readonly rowCount: number;
   readonly windowStart: number;
   readonly windowEnd: number;
@@ -213,8 +223,10 @@ export interface TimelineInput {
   readonly nowMs: number;
   readonly palette: Palette;
   readonly emptyHint: string;
+  /** The thread's error, as the banner shows it; null when there is none. */
+  readonly error?: TimelineError | null;
   /** Image attachments' links and previews; without it every link reads unavailable. */
-  readonly attachments?: (attachmentId: string) => AttachmentPreview;
+  readonly attachments?: AttachmentPreviews["get"];
   /** Sizes inline previews (default: `FALLBACK_CELL_PIXELS`). */
   readonly cellPixels?: CellPixels | null;
   /** What the MC drew of a reply's Mermaid diagram (`mermaidDiagrams.ts`); without it they are code. */
@@ -271,6 +283,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       context: null,
       items: [],
       showingLatest: true,
+      canLoadEarlier: false,
       rowCount: 0,
       windowStart: 0,
       windowEnd: 0,
@@ -402,6 +415,47 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     );
   }
 
+  const error = showingLatest ? input.error : null;
+  if (error) {
+    const reset = error.usageLimit?.resetAt;
+    items.push(
+      item(
+        "error",
+        "notice",
+        width,
+        [
+          error.dismissed
+            ? line(
+                styled(chunk("✕ error hidden · show", { fg: palette.dim })),
+                "timeline.error.show",
+              )
+            : line(
+                styled(
+                  error.usageLimit
+                    ? chunk(
+                        `⚠ Usage limit reached${
+                          reset
+                            ? ` · retry at ${formatDayAwareTimestamp(reset, ctx.timestampFormat, input.nowMs)}`
+                            : ""
+                        }`,
+                        { fg: palette.warning },
+                      )
+                    : chunk(`✖ ${error.message}`, { fg: palette.error }),
+                ),
+                null,
+                null,
+                {
+                  action: "timeline.error.dismiss",
+                  payload: null,
+                  text: styled(chunk("✕ dismiss", { fg: palette.dim })),
+                },
+              ),
+        ],
+        { marginTop: 1 },
+      ),
+    );
+  }
+
   const plan = showingLatest ? latestActionableProposedPlan(detail) : null;
   const working = showingLatest && isWorking(detail);
   const workingFrom = working ? workingStartedAt(detail) : null;
@@ -430,6 +484,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       : null,
     items,
     showingLatest,
+    canLoadEarlier: window.start === 0 && input.hasOlderTurns && !input.loadingOlderTurns,
     rowCount: rows.length,
     windowStart: window.start,
     windowEnd: window.end,
@@ -505,7 +560,7 @@ interface RowContext {
   readonly copied: string | null;
   readonly threadTitle: (threadId: string) => string | null;
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
-  readonly attachments: (attachmentId: string) => AttachmentPreview;
+  readonly attachments: AttachmentPreviews["get"];
   readonly cellPixels: CellPixels;
   readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
   readonly codeColours: CodeColouring | undefined;
@@ -531,7 +586,34 @@ const ATTACHMENT_TAIL_MIN = 8;
 /** Room a user bubble keeps for an attachment line's link/state tail. */
 const ATTACHMENT_TAIL_WIDTH = 28;
 
-type ImageAttachment = { readonly id: string; readonly name: string; readonly sizeBytes: number };
+type ImageAttachment = {
+  readonly type?: string;
+  readonly id: string;
+  readonly name: string;
+  readonly sizeBytes: number;
+};
+type FileAttachment = ImageAttachment & { readonly type: "file"; readonly mimeType: string };
+
+/** `2 MB`, `12 KB`, `300 B`: a file's size at the unit it reads best in. */
+function fileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+/** A file's kind as people say it: its extension (`PDF`), else its mime subtype. */
+function fileKind(file: Pick<FileAttachment, "name" | "mimeType">): string {
+  const extension = /\.([a-z0-9]{1,8})$/i.exec(file.name)?.[1];
+  const subtype = file.mimeType.split("/")[1]?.split(/[+;]/)[0];
+  return (extension ?? subtype ?? file.mimeType).toUpperCase();
+}
+
+const FILE_GLYPH = "▤";
+
+/** `▤ name · PDF · 2 MB`: what a sent file is called. */
+export function fileLabel(file: FileAttachment): string {
+  return `${FILE_GLYPH} ${file.name} · ${fileKind(file)} · ${fileSize(file.sizeBytes)}`;
+}
 
 /** What a message's input intent reads as; a plain turn start says nothing. */
 function intentMarker(intent: TuiMessageIntent | undefined): string | null {
@@ -582,12 +664,13 @@ export function previewCells(
  * the inline preview under it once loaded (a click opens it full size).
  */
 function attachmentLines(
-  attachment: ImageAttachment,
+  attachment: ImageAttachment | FileAttachment,
   lineWidth: number,
   ctx: RowContext,
 ): TimelineLine[] {
-  const { link, image } = ctx.attachments(attachment.id);
-  const label = attachmentLabel(attachment);
+  const file = attachment.type === "file";
+  const { link, image } = ctx.attachments(attachment.id, file ? "file" : "image");
+  const label = file ? fileLabel(attachment as FileAttachment) : attachmentLabel(attachment);
   const linkText = attachmentLinkText(link);
   const tail = image ? `click image to expand · ${linkText}` : linkText;
   const tailWidth = Math.max(ATTACHMENT_TAIL_MIN, lineWidth - Bun.stringWidth(label) - 2);
@@ -659,7 +742,11 @@ function pushFoldable(
   const message = row.message;
   const rawBody = message.text.trim().length > 0 ? message.text : "…";
   const body = linkifyTimelineUrls(rawBody);
-  const images = (message.attachments ?? []).filter((attachment) => attachment.type === "image");
+  // Images draw (when the terminal can) and files list; a kind this build does not know has nothing to show.
+  const images: Array<ImageAttachment | FileAttachment> = [
+    ...(message.attachments ?? []).filter((attachment) => attachment.type === "image"),
+    ...(message.attachments ?? []).filter((attachment) => attachment.type === "file"),
+  ] as never;
 
   if (message.role === "user") {
     // MessagesTimeline's bubble: its longest line plus chrome, at most 80% of
@@ -674,7 +761,15 @@ function pushFoldable(
             maxBubble,
             Math.max(
               images.reduce(
-                (max, attachment) => Math.max(max, Bun.stringWidth(attachmentLabel(attachment))),
+                (max, attachment) =>
+                  Math.max(
+                    max,
+                    Bun.stringWidth(
+                      attachment.type === "file"
+                        ? fileLabel(attachment as FileAttachment)
+                        : attachmentLabel(attachment),
+                    ),
+                  ),
                 0,
               ) +
                 2 +

@@ -61,7 +61,18 @@ Rectangle {
             visible: conversation.timeline.context !== null && !conversation.draft
             text: conversation.timeline.context ?? ""
         }
-        Timeline { visible: conversation.timeline.kind !== "none" && !conversation.draft }
+        Timeline {
+            id: timelineView
+            visible: conversation.timeline.kind !== "none" && !conversation.draft
+        }
+        Text {
+            objectName: "scrollToEnd"
+            visible: timelineView.visible && timelineView.awayFromEnd
+            flexShrink: 0
+            text: "▾ Scroll to end"
+            color: Theme.colors.dim
+            onMouseDown: Qt.callLater(Shell.dispatch, "timeline.showEnd")
+        }
         PlanStatus { visible: !conversation.draft && Shell.state.planStatus !== null }
         Approvals { visible: !conversation.draft && Shell.state.approvals.count > 0 }
     }

@@ -21,6 +21,7 @@
 #   apps/server/src/git/GitManager.ts (runPrStep: reuse, base branch, bounded context, body file)
 #   https://github.com/pingdotgg/t3code/pull/15532
 #   https://github.com/pingdotgg/t3code/pull/15441
+#   https://github.com/pingdotgg/t3code/pull/22848
 
 Feature: Committing with written or generated messages
   The user reviews what goes into a commit, may leave the message to the writer model,
@@ -148,6 +149,14 @@ Feature: Committing with written or generated messages
     Given the writing style is Repository conventions and the writer model is a Claude model
     When the user commits without writing a message
     Then the writer model also sees the repository's CLAUDE.md
+
+  # Upstream #22848: a CLAUDE.md that copies AGENTS.md was sent twice.
+  @backlog @mc @priority-low
+  Scenario: A CLAUDE.md that says the same as AGENTS.md is not read twice
+    Given the writing style is Repository conventions and the writer model is a Claude model
+    And the repository's CLAUDE.md holds the same text as its AGENTS.md
+    When the user commits without writing a message
+    Then the writer model sees the conventions once
 
   @mc
   Scenario Outline: A generated pull request follows the writing style

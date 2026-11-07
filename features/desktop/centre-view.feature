@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24847
 #   https://github.com/pingdotgg/t3code/pull/19065
 #   https://github.com/pingdotgg/t3code/pull/15686
 #   https://github.com/pingdotgg/t3code/pull/15207
@@ -29,6 +30,30 @@ Feature: The desktop shell draws the thread in the window's centre
       Then the thread's conversation is shown above the composer
       When the user opens settings
       Then settings take the centre's place
+
+    # Upstream #24847: Settings and Usage open as a large dialog over the thread instead of
+    # replacing it.
+    # Replaces the scenario above once desktop carries it.
+    @backlog @desktop
+    Scenario Outline: <page> opens over the thread it was opened from
+      Given the user is in a thread
+      When the user opens <page>
+      Then <page> is shown over the thread, which stays open behind it
+      When the user closes <page> by pressing Escape, its close button or outside it
+      Then the same thread is shown as the user left it
+
+      Examples:
+        | page     |
+        | settings |
+        | usage    |
+
+    # Upstream #24847
+    @backlog @desktop
+    Scenario: The thread behind settings takes no shortcuts or typing
+      Given settings are open over a thread
+      When the user presses the thread's shortcuts or types
+      Then the thread behind does not react
+      And Escape closes only the topmost thing open inside settings first
 
     @desktop
     Scenario: A thread says it is loading without moving
