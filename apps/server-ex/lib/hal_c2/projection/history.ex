@@ -313,9 +313,11 @@ defmodule HalC2.Projection.History do
             do: row
       end
 
+    # The nodes were read above; only the items named after them need a read.
     direct =
-      for {{kind, id}, entity} <- StreamState.lookup(state, direct_keys(pending)),
-          do: {kind, id, entity}
+      for({{kind, id}, entity} <- nodes, do: {kind, id, entity}) ++
+        for {{kind, id}, entity} <- StreamState.lookup(state, item_keys(pending)),
+            do: {kind, id, entity}
 
     have = MapSet.new(held, fn {kind, id, _} -> {kind, id} end)
 
@@ -324,24 +326,13 @@ defmodule HalC2.Projection.History do
     |> Enum.reject(fn {kind, id, _} -> MapSet.member?(have, {kind, id}) end)
   end
 
-  # Each pending request's node and the item named after it
+  # Each pending request's item, named after its node
   # (`node:approval:x` -> `turn-item:approval:x`).
-  defp direct_keys(pending) do
-    Enum.flat_map(pending, fn request ->
-      case request["nodeId"] do
-        "node:" <> _ = node_id ->
-          [
-            {"node", node_id},
-            {"turn-item", String.replace_prefix(node_id, "node:", "turn-item:")}
-          ]
-
-        node_id when is_binary(node_id) ->
-          [{"node", node_id}]
-
-        _ ->
-          []
-      end
-    end)
+  defp item_keys(pending) do
+    for request <- pending,
+        node_id = request["nodeId"],
+        is_binary(node_id) and String.starts_with?(node_id, "node:"),
+        do: {"turn-item", String.replace_prefix(node_id, "node:", "turn-item:")}
   end
 
   # A handoff waits to be delivered while `pending` or `ready` (the MC writes `ready`,
