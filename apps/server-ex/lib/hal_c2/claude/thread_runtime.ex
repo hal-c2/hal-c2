@@ -1598,9 +1598,15 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     failure =
       cond do
-        status != "failed" -> nil
-        state.turn[:auth_failure] -> auth_failure(state.turn[:auth_failure], result)
-        true -> failure(result, state.turn)
+        status != "failed" ->
+          nil
+
+        # Claude labels a 403 an authentication failure too, but its reason is not a sign-in problem.
+        state.turn[:auth_failure] && result["api_error_status"] in [nil, 401] ->
+          auth_failure(state.turn[:auth_failure], result)
+
+        true ->
+          failure(result, state.turn)
       end
 
     end_turn(state, status, failure)

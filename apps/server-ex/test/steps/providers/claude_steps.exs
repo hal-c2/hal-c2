@@ -326,6 +326,87 @@ defmodule HalC2.Steps.Providers.Claude do
     World.fake_providers(context)
   end
 
+  # The model's options as the thread's model picker offers them, and what it launches with.
+  # The older models Claude Code lists next to `@listed`.
+  @listed_older [
+    %{
+      "value" => "claude-opus-4-6",
+      "resolvedModel" => "claude-opus-4-6",
+      "displayName" => "Opus 4.6",
+      "supportsEffort" => true,
+      "supportedEffortLevels" => ~w(low medium high max)
+    },
+    %{
+      "value" => "claude-opus-4-5",
+      "resolvedModel" => "claude-opus-4-5",
+      "displayName" => "Opus 4.5",
+      "supportsEffort" => true,
+      "supportedEffortLevels" => ~w(low medium high)
+    },
+    %{
+      "value" => "claude-haiku-4-5",
+      "resolvedModel" => "claude-haiku-4-5",
+      "displayName" => "Haiku 4.5"
+    }
+  ]
+
+  step ~r/^the user opens the options for (?<name>(?:Opus|Sonnet|Haiku) [\d.]+)$/,
+       %{args: [name]} = context do
+    context = World.fake_providers(context, claude_version: "999.0.0")
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed ++ @listed_older))
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_MODELS") end)
+    :ok = HalC2.Claude.Provider.load()
+    {providers, context} = World.provider_list(context)
+    model = Enum.find(claude(providers)["models"], &(&1["name"] == name))
+    assert model, "#{name} is not offered"
+
+    Map.merge(context, %{
+      window_model: model,
+      window_launch: HalC2.Claude.Provider.launch(model["slug"], %{}),
+      option_descriptor: descriptor(model, "contextWindow")
+    })
+  end
+
+  step "there is no context window option and it runs {word}", %{args: [window]} = context do
+    refute descriptor(context.window_model, "contextWindow")
+    assert context.window_launch.context_window == window_tokens(window)
+    context
+  end
+
+  defp window_tokens("1M"), do: 1_000_000
+  defp window_tokens("200k"), do: 200_000
+
+  step "a thread on Opus 5.5 that saved a 200k context window", context do
+    context = World.providers(context)
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed))
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_MODELS") end)
+    :ok = HalC2.Claude.Provider.load()
+
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => "opus",
+      "options" => [%{"id" => "contextWindow", "value" => "200k"}]
+    }
+
+    Map.put(context, :pending_launch, %{
+      instance: "claudeAgent",
+      fields: %{"modelSelection" => selection}
+    })
+  end
+
+  step "Claude runs Opus 5.5 with its 1M context window", context do
+    World.await_runs(context, World.current_thread(context), ["completed"])
+    # The first start is the CLI probe; the turn is the last.
+    argv = List.last(World.claude_starts(context))
+    # No window suffix: the model's window is not something the user picks.
+    assert Enum.any?(pairs(argv), &match?(["--model", "opus"], &1))
+
+    assert HalC2.Claude.Provider.launch("opus", %{"contextWindow" => "200k"}).context_window ==
+             1_000_000
+
+    context
+  end
+
   step "the MC has read the Claude model list", context do
     :ok = HalC2.Claude.Provider.load()
     {providers, context} = World.provider_list(context)
@@ -359,7 +440,9 @@ defmodule HalC2.Steps.Providers.Claude do
              choices(listed_model(context, "opus"), "effort")
 
     assert descriptor(listed_model(context, "opus"), "fastMode")
-    assert descriptor(listed_model(context, "opus"), "contextWindow")
+    # Opus 5.5 always runs 1M; Sonnet 4.6 lets the user choose.
+    refute descriptor(listed_model(context, "opus"), "contextWindow")
+    assert descriptor(listed_model(context, "claude-sonnet-4-6"), "contextWindow")
     context
   end
 
@@ -1574,7 +1657,32 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude's process arguments do not contain the credential for the HAL-C2 tools", context do
+    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
+
+    # The credential lives in the private MCP config file the arguments point to.
+    %{"mcpServers" => %{"hal-c2" => %{"headers" => %{"Authorization" => credential}}}} =
+      argv
+      |> Enum.drop_while(&(&1 != "--mcp-config"))
+      |> Enum.at(1)
+      |> File.read!()
+      |> JSON.decode!()
+
+    token = credential |> String.split(" ") |> List.last()
+    assert byte_size(token) >= 16
+    refute Enum.any?(argv, &String.contains?(&1, token))
+    context
+  end
+
+  step "Claude can still call the HAL-C2 tools for this thread", context do
+    call_hal_c2_tools(context)
+  end
+
   step "Claude can call the HAL-C2 tools for this thread", context do
+    call_hal_c2_tools(context)
+  end
+
+  defp call_hal_c2_tools(context) do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
 
     config =
@@ -1964,6 +2072,50 @@ defmodule HalC2.Steps.Providers.Claude do
   step ~r/^Claude ends a turn reporting the API error (?<status>\d+) as its result$/,
        %{args: [status]} = context do
     api_error_turn(context, String.to_integer(status))
+  end
+
+  step ~r/^Claude ends a turn with the API error (?<status>\d+) "(?<reason>[^"]+)"$/,
+       %{args: [status, reason]} = context do
+    context = running_turn(context)
+    text = "API Error: #{status} #{reason}"
+
+    # Claude labels a 403 an authentication failure, as it does a 401.
+    claude_says(context, %{
+      "type" => "assistant",
+      "error" => "authentication_failed",
+      "message" => %{"id" => "m-403", "content" => [%{"type" => "text", "text" => text}]}
+    })
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "api_error_status" => String.to_integer(status),
+      "terminal_reason" => "completed",
+      "result" => text
+    })
+
+    Map.put(context, :error_text, text)
+  end
+
+  step "the turn fails showing {string}", %{args: [reason]} = context do
+    World.await_runs(context, @thread, ["failed"])
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert %{"failure" => %{"message" => message, "class" => "provider_error"}} =
+             Enum.find(items, &(&1["type"] == "error"))
+
+    assert message =~ reason
+    context
+  end
+
+  step "it does not tell the user to run {string}", %{args: [command]} = context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    for %{"type" => "error"} = item <- items,
+        do: refute(inspect(item) =~ command)
+
+    context
   end
 
   step "the last Claude turn of a thread failed with an API error", context do
@@ -2493,6 +2645,63 @@ defmodule HalC2.Steps.Providers.Claude do
         "threadId" => World.thread_id(context, @thread)
       })
 
+    context
+  end
+
+  step "a Claude turn is running a command", context do
+    # A stop is settled by the MC itself soon after, as Claude never answers it.
+    World.put_app_env(:claude_interrupt_timeout_ms, 300)
+    System.put_env("FAKE_CLAUDE_HOLD_INTERRUPT", "1")
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_HOLD_INTERRUPT") end)
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-cmd",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "cmd-1",
+            "name" => "Bash",
+            "input" => %{"command" => "sleep 60"}
+          }
+        ]
+      }
+    })
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "command_execution"))
+    end)
+
+    context
+  end
+
+  defp command_items(context),
+    do:
+      context
+      |> World.stream(@thread)
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["type"] == "command_execution"))
+
+  step "the command is recorded as interrupted, as Codex and Cursor record it", context do
+    World.await_runs(context, @thread, ["interrupted"], 10_000)
+    assert [%{"status" => "interrupted"}] = command_items(context)
+    context
+  end
+
+  step "agents reading the thread are told it was interrupted, not that it failed", context do
+    {:ok, result} =
+      World.mcp_tool(
+        context,
+        @thread,
+        "hal_c2_thread_read",
+        %{"threadId" => World.thread_id(context, @thread)},
+        "claudeAgent"
+      )
+
+    assert inspect(result) =~ "interrupted"
+    refute Enum.any?(command_items(context), &(&1["status"] == "failed"))
     context
   end
 

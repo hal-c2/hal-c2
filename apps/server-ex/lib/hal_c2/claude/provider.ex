@@ -605,6 +605,18 @@ defmodule HalC2.Claude.Provider do
     )
     |> Map.update("effortMap", %{}, &Map.drop(&1, levels))
     |> then(&if suffixed?(row["value"]), do: Map.delete(&1, "modelSuffixes"), else: &1)
+    |> claude_5_window(row["resolvedModel"] || row["value"])
+  end
+
+  # The Claude 5 models always run with a 1M context window, whatever a listed row's
+  # profile says, so there is nothing to choose.
+  defp claude_5_window(adapter, model) do
+    if model =~ ~r/^claude-[a-z]+-5(-|$)/,
+      do:
+        adapter
+        |> Map.drop(["modelSuffixes", "contextWindowTokens"])
+        |> Map.put("fixedContextWindowTokens", 1_000_000),
+      else: adapter
   end
 
   defp suffixed?(value), do: String.ends_with?(value, "]")

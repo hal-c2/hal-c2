@@ -284,7 +284,6 @@ Feature: Claude
       | context window | 200k or 1M                                                |
 
   # Upstream #16908: the Claude 5 models always run with a 1M context window.
-  @backlog
   Scenario Outline: Which Claude models let the user choose a context window
     When the user opens the options for <model>
     Then <choice>
@@ -293,12 +292,12 @@ Feature: Claude
       | model          | choice                                                   |
       | Opus 5.5       | there is no context window option and it runs 1M        |
       | Sonnet 5.5     | there is no context window option and it runs 1M        |
-      | Opus 4.6       | the user can choose a 200k or 1M context window          |
-      | Sonnet 4.6     | the user can choose a 200k or 1M context window          |
+      | Opus 4.6       | the user can choose 200k or 1M                          |
+      | Sonnet 4.6     | the user can choose 200k or 1M                          |
       | Opus 4.5       | there is no context window option and it runs 200k       |
       | Haiku 4.5      | there is no context window option and it runs 200k       |
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A context window saved on a Claude 5 thread is ignored
     Given a thread on Opus 5.5 that saved a 200k context window
     When the user sends a message
@@ -444,7 +443,7 @@ Feature: Claude
       | runs through Bedrock or Vertex                         | signed in                                          |
       | is too old to report its account                       | signed in                                          |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: The HAL-C2 tools' credential is never in Claude's command line
     Given the project allows the HAL-C2 tools
     When a Claude turn starts
@@ -900,7 +899,7 @@ Feature: Claude
     And says to start a new thread afterwards, or to check the instance's credentials when it uses an API key
 
   # Upstream #15872: Claude labels a 403 as an authentication failure, like a 401.
-  @backlog @mc
+  @mc
   Scenario: A Claude turn refused with a 403 shows Claude's reason, not a sign-in hint
     Given Claude ends a turn with the API error 403 "Your organization does not have access to this model."
     Then the turn fails showing "Your organization does not have access to this model."
@@ -1194,7 +1193,7 @@ Feature: Claude
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
 
-  @backlog @priority-high
+  @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
     Given a Claude turn is running a command
     When the user stops the turn
