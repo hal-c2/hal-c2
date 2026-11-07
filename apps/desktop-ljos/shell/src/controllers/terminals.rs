@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::LazyLock;
 
+use ljos::item::Font;
 use ljos::prelude::QmlValue;
 use ljos::prelude::RowKey;
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
@@ -44,10 +45,12 @@ use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::keybindings::Keymap;
 use crate::controllers::menus::{Answer, Menus};
+use crate::controllers::settings::Settings;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
 use crate::json::Json;
 use crate::mc::{Frame, Mc, SubId};
+use crate::platform_window;
 use crate::thread_view::rows::{ListRows, RowChange, RowSource, int};
 
 pub const MAX_TERMINALS: usize = 6;
@@ -984,6 +987,14 @@ pub struct TerminalsObject {
     /// TerminalTabs.
     #[qml(notify, readonly)]
     tabs: Value,
+    /// The drawer's terminals (none in the right panel's groups): its list
+    /// shows past one.
+    #[qml(notify, readonly)]
+    drawer_count: i32,
+    /// The system or the "Reduce motion" setting asks for less motion: the
+    /// cursor holds still.
+    #[qml(notify, readonly)]
+    reduce_motion: bool,
 }
 
 impl Default for TerminalsObject {
@@ -997,12 +1008,21 @@ impl Default for TerminalsObject {
             active_group: Atom::new(""),
             group_sizes: Value::Undefined,
             tabs: Value::Null,
+            drawer_count: 0,
+            reduce_motion: false,
         }
     }
 }
 
 #[qml_impl]
 impl TerminalsObject {
+    /// The terminals' font: `family` (the system's monospace when empty) at
+    /// `point_size` points when above zero, else `pixel_size` pixels.
+    #[qml(invokable)]
+    fn terminal_font(_cx: &Cx, family: Atom, pixel_size: i32, point_size: f64) -> Font {
+        terminal_font(&family, pixel_size, point_size)
+    }
+
     /// The terminal's drawer or panel tab should give it the keyboard.
     #[qml(signal)]
     fn focus_requested(terminal_id: Atom);
@@ -1068,6 +1088,35 @@ fn group_of_mut<'a>(ui: &'a mut ThreadUi, terminal_id: &str) -> Option<&'a mut G
 }
 
 /// The drawer's terminals (none of the panel's) among `ids`.
+/// The system or the "Reduce motion" setting asks for less motion.
+fn reduce_motion(engine: &Engine) -> bool {
+    platform_window::system_reduced_motion(engine)
+        || Settings::of(engine)
+            .setting(engine, "reduceMotion")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+/// [`TerminalsObject::terminal_font`].
+fn terminal_font(family: &str, pixel_size: i32, point_size: f64) -> Font {
+    let mut font = Font {
+        family: Atom::from(if family.is_empty() {
+            "monospace"
+        } else {
+            family
+        }),
+        ..Font::default()
+    };
+    if point_size > 0.0 {
+        font.point_size = point_size;
+        font.pixel_size = -1;
+    } else {
+        font.pixel_size = pixel_size;
+        font.point_size = -1.0;
+    }
+    font
+}
+
 fn drawer_ids(ui: &ThreadUi, ids: &[String]) -> Vec<String> {
     ids.iter()
         .filter(|id| group_of(ui, id).is_none_or(|g| !g.panel))
@@ -1091,6 +1140,7 @@ struct Facts {
     active: String,
     active_group: String,
     group_sizes: BTreeMap<String, usize>,
+    drawer_count: usize,
 }
 
 pub struct Terminals {
@@ -1145,7 +1195,14 @@ impl Controller for Terminals {
                 tabs.object.map_or(Value::Null, Value::Object),
             );
             let _ = cx.set(TerminalsObject::GROUP_SIZES, json!({}).to_value());
+            let _ = cx.set(TerminalsObject::REDUCE_MOTION, reduce_motion(engine));
         }
+        Settings::of(engine).on_device_changed(|engine| {
+            if let Ok(obj) = Bridge::of(engine).singleton::<TerminalsObject>(engine) {
+                let _ =
+                    Cx::new(engine, obj).set(TerminalsObject::REDUCE_MOTION, reduce_motion(engine));
+            }
+        });
         let mut terminals = Terminals {
             bridge: init.bridge,
             mc: init.mc,
@@ -1351,6 +1408,17 @@ impl Terminals {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// How many terminals the drawer lists: those in no panel group.
+    pub fn drawer_count(&self) -> usize {
+        if self.place.is_none() {
+            return 0;
+        }
+        let ids = self.terminal_ids();
+        self.ui
+            .get(&self.thread_key)
+            .map_or(ids.len(), |ui| drawer_ids(ui, &ids).len())
     }
 
     /// The tab rows as the bricks see them.
@@ -1717,6 +1785,7 @@ impl Terminals {
             active: self.active_terminal_id(),
             active_group: self.active_group(),
             group_sizes: self.group_sizes(),
+            drawer_count: self.drawer_count(),
         }
     }
 
@@ -1739,6 +1808,8 @@ impl Terminals {
             let _ = cx.set(TerminalsObject::ACTIVE_GROUP, Atom::new(&now.active_group));
             let sizes = json!(now.group_sizes);
             let _ = cx.set(TerminalsObject::GROUP_SIZES, sizes.to_value());
+            let count = i32::try_from(now.drawer_count).unwrap_or(i32::MAX);
+            let _ = cx.set(TerminalsObject::DRAWER_COUNT, count);
         }
         let bridge = self.bridge;
         if was_open != now.open {

@@ -1663,6 +1663,11 @@ pub struct PanelObject {
     /// A device tab's ThreadDevices.
     #[qml(readonly)]
     device: Value,
+    /// The hover cards and clicks of pull request links (desktop-qt's
+    /// PullRequestLinkPreviews). Null until the port has them: Markdown then
+    /// shows a link's address on hover.
+    #[qml(notify, readonly)]
+    link_previews: Value,
 }
 
 impl Default for PanelObject {
@@ -1675,6 +1680,7 @@ impl Default for PanelObject {
             review: Value::Null,
             pull_requests: Value::Null,
             device: Value::Null,
+            link_previews: Value::Null,
         }
     }
 }

@@ -770,9 +770,17 @@ impl Keymap {
             let default_key = standard.map_or(String::new(), |s| keymap::key_text(&s.shortcut));
             let default_when =
                 standard.map_or(String::new(), |s| keymap::when_text(s.when.as_ref()));
-            let search = [binding.command.as_str(), &label, &key, &when, source]
-                .join("\n")
-                .to_lowercase();
+            let when_label = keymap::when_words(binding.when.as_ref());
+            let search = [
+                binding.command.as_str(),
+                &label,
+                &key,
+                &when,
+                &when_label,
+                source,
+            ]
+            .join("\n")
+            .to_lowercase();
             rows.push(json!({
                 "id": format!("{}\n{}\n{}\n{}", binding.command, key, when, index),
                 "command": binding.command,
@@ -780,6 +788,7 @@ impl Keymap {
                 "key": key,
                 "keyLabel": keymap::label(&binding.shortcut, mac),
                 "when": when,
+                "whenLabel": when_label,
                 "rule": binding.rule.to_json(),
                 "source": source,
                 "defaultKey": default_key,
@@ -1480,6 +1489,19 @@ impl KeybindingsObject {
     #[qml(invokable)]
     fn command_label(_cx: &Cx, command: Atom) -> Atom {
         Atom::from(keymap::command_label(&command).as_str())
+    }
+
+    /// A typed condition in the words the rows show; as typed when it does
+    /// not parse.
+    #[qml(invokable)]
+    fn when_label(_cx: &Cx, expression: Atom) -> Atom {
+        let trimmed = expression.trim();
+        let words = if trimmed.is_empty() {
+            keymap::when_words(None)
+        } else {
+            keymap::parse_when(trimmed).map_or(trimmed.to_owned(), |w| keymap::when_words(Some(&w)))
+        };
+        Atom::from(words.as_str())
     }
 
     #[qml(invokable)]

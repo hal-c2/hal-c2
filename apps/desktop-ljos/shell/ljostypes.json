@@ -371,6 +371,150 @@
               "notify": "radiusChanged"
             },
             {
+              "name": "radiusXs",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "radiusXsChanged"
+            },
+            {
+              "name": "radiusSm",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "radiusSmChanged"
+            },
+            {
+              "name": "radiusMd",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "radiusMdChanged"
+            },
+            {
+              "name": "radiusLg",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "radiusLgChanged"
+            },
+            {
+              "name": "radiusXl",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "radiusXlChanged"
+            },
+            {
+              "name": "radiusPill",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "type",
+              "type": "ThemeTypeRamp",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "space",
+              "type": "ThemeSpace",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "control",
+              "type": "ThemeSizes",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "icon",
+              "type": "ThemeSizes",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "headerHeight",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "monospace",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "monospaceChanged"
+            },
+            {
               "name": "fontUi",
               "type": "string",
               "kind": "value",
@@ -547,6 +691,317 @@
               "name": "reload",
               "parameters": [],
               "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "ThemeTypeStep",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "size",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "sizeChanged"
+            },
+            {
+              "name": "lineHeight",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "lineHeightChanged"
+            },
+            {
+              "name": "weight",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "weightChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "ThemeTypeRamp",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "caption",
+              "type": "ThemeTypeStep",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "meta",
+              "type": "ThemeTypeStep",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "body",
+              "type": "ThemeTypeStep",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "prose",
+              "type": "ThemeTypeStep",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "title",
+              "type": "ThemeTypeStep",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "display",
+              "type": "ThemeTypeStep",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "ThemeSpace",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "xxs",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "xs",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "sm",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "md",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "lg",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "xl",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "xxl",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "ThemeSizes",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "sm",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "md",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "lg",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "xl",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "stroke",
+              "parameters": [
+                {
+                  "name": "size",
+                  "type": "real"
+                }
+              ],
+              "returnType": "real"
             }
           ]
         },
@@ -890,6 +1345,105 @@
               "constant": false,
               "group": false,
               "notify": "codeFontChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "CodeHighlighter",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "document",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "documentChanged"
+            },
+            {
+              "name": "language",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "languageChanged"
+            },
+            {
+              "name": "path",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pathChanged"
+            },
+            {
+              "name": "background",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "backgroundChanged"
+            },
+            {
+              "name": "streaming",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "streamingChanged"
+            },
+            {
+              "name": "coloured",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "colouredChanged"
+            },
+            {
+              "name": "reading",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
             }
           ],
           "signals": [],
@@ -1708,6 +2262,16 @@
               "returnType": "string"
             },
             {
+              "name": "whenLabel",
+              "parameters": [
+                {
+                  "name": "expression",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
               "name": "whenError",
               "parameters": [
                 {
@@ -1952,6 +2516,18 @@
               "constant": false,
               "group": false,
               "notify": "timelineChanged"
+            },
+            {
+              "name": "timestampFormat",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "timestampFormatChanged"
             }
           ],
           "signals": [],
@@ -1985,6 +2561,56 @@
                 }
               ],
               "returnType": "void"
+            },
+            {
+              "name": "upcoming",
+              "parameters": [
+                {
+                  "name": "at",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "formatTime",
+              "parameters": [
+                {
+                  "name": "at",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "formatDate",
+              "parameters": [
+                {
+                  "name": "at",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "formatDateTime",
+              "parameters": [
+                {
+                  "name": "at",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "formatRelative",
+              "parameters": [
+                {
+                  "name": "at",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
             }
           ]
         },
@@ -2082,6 +2708,18 @@
               "constant": false,
               "group": false,
               "notify": null
+            },
+            {
+              "name": "linkPreviews",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "linkPreviewsChanged"
             }
           ],
           "signals": [],
@@ -2193,6 +2831,30 @@
               "constant": false,
               "group": false,
               "notify": "tabsChanged"
+            },
+            {
+              "name": "drawerCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "drawerCountChanged"
+            },
+            {
+              "name": "reduceMotion",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "reduceMotionChanged"
             }
           ],
           "signals": [
@@ -2207,6 +2869,24 @@
             }
           ],
           "methods": [
+            {
+              "name": "terminalFont",
+              "parameters": [
+                {
+                  "name": "family",
+                  "type": "string"
+                },
+                {
+                  "name": "pixelSize",
+                  "type": "int"
+                },
+                {
+                  "name": "pointSize",
+                  "type": "real"
+                }
+              ],
+              "returnType": "font"
+            },
             {
               "name": "focusTerminal",
               "parameters": [
@@ -5360,6 +6040,30 @@
               "constant": false,
               "group": false,
               "notify": "atBottomChanged"
+            },
+            {
+              "name": "cursorBlink",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "cursorBlinkChanged"
+            },
+            {
+              "name": "macModifiers",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "macModifiersChanged"
             }
           ],
           "signals": [

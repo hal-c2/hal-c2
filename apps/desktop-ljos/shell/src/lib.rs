@@ -5,6 +5,7 @@
 pub mod attachment_files;
 pub mod bridge;
 pub mod cache;
+pub mod code_highlighter;
 pub mod commands;
 pub mod composer_model;
 pub mod controller;
@@ -72,9 +73,11 @@ pub fn register(engine: &Engine) {
     let v = Version::new(1, 0);
     engine.register_singleton::<bridge::ShellBridge>(MODULE, v);
     engine.register_singleton::<theme::ThemeStore>(MODULE, v);
+    theme::tokens::register(engine);
     engine.register_singleton::<runtime::ShellRuntime>(MODULE, v);
     folders::register(engine);
     highlighter::register(engine);
+    code_highlighter::register(engine);
     device::register(engine);
     device_screen::register(engine);
     local_transcriber::register(engine);

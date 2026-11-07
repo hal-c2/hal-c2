@@ -209,6 +209,67 @@ pub fn upcoming_stamp(at: Option<DateTime<Utc>>, clock: &Clock, timestamp_format
     }
 }
 
+/// What plugin pages format a time with (Format.qml): the locale's
+/// numeric date, with the year only when it is not this year's ("9/20",
+/// "9/20/2025"). Empty for none.
+pub fn short_date(at: Option<DateTime<Utc>>, clock: &Clock) -> String {
+    let Some(at) = at else {
+        return String::new();
+    };
+    let date = clock.zone.local(at).date();
+    let this_year = clock.zone.local(clock.now()).year();
+    numeric_date(date, date.year() != this_year, &clock.locale)
+}
+
+/// [`short_date`] and the time of day: "9/20 18:05".
+pub fn short_date_time(at: Option<DateTime<Utc>>, clock: &Clock, timestamp_format: &str) -> String {
+    let Some(time) = at else {
+        return String::new();
+    };
+    let local = clock.zone.local(time);
+    format!(
+        "{} {}",
+        short_date(at, clock),
+        time_of_day(local, timestamp_format, &clock.locale)
+    )
+}
+
+/// How long ago or ahead `at` is: "just now", "5m ago", "in 2h", "3d ago".
+pub fn relative_time(at: Option<DateTime<Utc>>, clock: &Clock) -> String {
+    let Some(at) = at else {
+        return String::new();
+    };
+    let seconds = (clock.now() - at).num_seconds();
+    let span = seconds.abs();
+    if span < 60 {
+        return "just now".into();
+    }
+    let amount = if span < 3600 {
+        format!("{}m", span / 60)
+    } else if span < 86400 {
+        format!("{}h", span / 3600)
+    } else {
+        format!("{}d", span / 86400)
+    };
+    if seconds < 0 {
+        format!("in {amount}")
+    } else {
+        format!("{amount} ago")
+    }
+}
+
+/// A time a script hands a native call: an ISO time, or a `Date`, which
+/// reaches it as its `toString()` ("Sat Nov 07 2026 10:04:00 GMT+0100
+/// (CET)"). None for anything else.
+pub fn script_time(text: &str, zone: Zone) -> Option<DateTime<Utc>> {
+    parse_iso(text, zone).or_else(|| {
+        let text = text.split(" (").next()?;
+        DateTime::parse_from_str(text, "%a %b %d %Y %H:%M:%S GMT%z")
+            .ok()
+            .map(|at| at.with_timezone(&Utc))
+    })
+}
+
 /// The long form of a time, in English but for the time of day, for a
 /// tooltip: "9:41 AM, 23rd September 2026".
 pub fn long_time(at: DateTime<Utc>, clock: &Clock, timestamp_format: &str) -> String {

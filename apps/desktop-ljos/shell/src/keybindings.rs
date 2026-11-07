@@ -722,6 +722,82 @@ pub fn when_text(when: Option<&When>) -> String {
     }
 }
 
+/// Each context variable in words, held and negated; the caller
+/// capitalises. A variable this does not know reads as it is spelled.
+fn when_phrase(name: &str) -> Option<(&'static str, &'static str)> {
+    Some(match name {
+        "terminalFocus" => ("in the terminal", "outside the terminal"),
+        "editableFocus" => ("in a text field", "outside text fields"),
+        "composerFocus" => ("in the composer", "outside the composer"),
+        "previewFocus" => ("in a preview", "outside previews"),
+        "terminalOpen" => ("terminal open", "terminal closed"),
+        "previewOpen" => ("preview open", "no preview open"),
+        "modelPickerOpen" => ("model picker open", "model picker closed"),
+        "composerDraft" => ("composer has a draft", "composer empty"),
+        "draftThreadRoute" => ("on a new thread", "not on a new thread"),
+        "turnRunning" => ("agent working", "agent not working"),
+        "isDesktop" => ("on desktop", "not on desktop"),
+        "isWeb" => ("on web", "not on web"),
+        "true" => ("always", "never"),
+        "false" => ("never", "always"),
+        _ => return None,
+    })
+}
+
+fn words(when: &When, negated: bool) -> String {
+    // A side of an "and"/"or": a group of the other kind keeps its
+    // parentheses.
+    let side = |side: &When, and: bool| {
+        let text = words(side, false);
+        match side {
+            When::And(..) if !and => format!("({text})"),
+            When::Or(..) if and => format!("({text})"),
+            _ => text,
+        }
+    };
+    match when {
+        When::Identifier(name) => match (when_phrase(name), negated) {
+            (Some((held, _)), false) => held.to_owned(),
+            (Some((_, not)), true) => not.to_owned(),
+            (None, false) => name.clone(),
+            (None, true) => format!("not {name}"),
+        },
+        When::Not(inner) => words(inner, !negated),
+        When::And(l, r) | When::Or(l, r) => {
+            let and = matches!(when, When::And(..));
+            let joiner = if and { " and " } else { " or " };
+            let joined = format!("{}{joiner}{}", side(l, and), side(r, and));
+            if negated {
+                format!("not ({joined})")
+            } else {
+                joined
+            }
+        }
+    }
+}
+
+/// The condition in the words the Keybindings rows show: "Always", "In the
+/// terminal and agent working". The sentence starts with a capital unless
+/// it starts with a variable's own name.
+pub fn when_words(when: Option<&When>) -> String {
+    let Some(when) = when else {
+        return "Always".into();
+    };
+    let text = words(when, false);
+    let mut first = when;
+    while let When::And(l, _) | When::Or(l, _) = first {
+        first = l;
+    }
+    let own_name = matches!(first, When::Identifier(name) if when_phrase(name).is_none());
+    if own_name {
+        return text;
+    }
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map_or(text.clone(), |c| c.to_uppercase().chain(chars).collect())
+}
+
 /// "fooBar-baz" -> "Foo Bar Baz": a space between a lower-case letter or
 /// digit and a capital, words split at `-`, `_` and white space, each
 /// capitalised.
@@ -881,6 +957,27 @@ pub fn recorded_key(key: i32, modifiers: i32, mac: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_condition_reads_in_words() {
+        let reads = |text: &str| when_words(parse_when(text).as_ref());
+        assert_eq!(reads("terminalFocus"), "In the terminal");
+        assert_eq!(reads("!terminalFocus"), "Outside the terminal");
+        assert_eq!(
+            reads("terminalOpen && !editableFocus"),
+            "Terminal open and outside text fields"
+        );
+        assert_eq!(
+            reads("composerFocus || previewFocus"),
+            "In the composer or in a preview"
+        );
+        assert_eq!(
+            reads("!(terminalFocus || previewFocus) && turnRunning"),
+            "Not (in the terminal or in a preview) and agent working"
+        );
+        assert_eq!(reads("sidebarFocus"), "sidebarFocus");
+        assert_eq!(when_words(None), "Always");
+    }
 
     #[test]
     fn shortcuts_parse_as_written() {

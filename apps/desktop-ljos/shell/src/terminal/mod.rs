@@ -144,6 +144,15 @@ pub struct Terminal {
     pub scroll_offset: f64,
     #[qml(notify, readonly)]
     pub at_bottom: bool,
+    /// Whether the cursor may blink (qml-ghostty's). The cursor is drawn
+    /// steady for now, so this is kept and read back.
+    #[qml(notify)]
+    pub cursor_blink: bool,
+    /// The toolkit's macOS keys (Cmd reported as Control, Control as Meta)
+    /// turned back into the real ones for the program: on by default on
+    /// macOS.
+    #[qml(notify)]
+    pub mac_modifiers: bool,
     #[qml(skip)]
     state: State,
 }
@@ -179,6 +188,8 @@ impl Default for Terminal {
             scroll_total: 24.0,
             scroll_offset: 0.0,
             at_bottom: true,
+            cursor_blink: true,
+            mac_modifiers: cfg!(target_os = "macos"),
             state: State::default(),
         }
     }
@@ -551,7 +562,8 @@ fn key_press(e: &Engine, me: ObjectId, ev: &KeyEvent) -> bool {
     }
     let (app, kitty) =
         vt_mut(e, me, |vt| (vt.application_cursor(), vt.kitty_keyboard())).unwrap_or((false, 0));
-    match encode_key(ev.key, ev.modifiers, &ev.text, app, kitty) {
+    let mods = program_mods(e, me, ev.modifiers);
+    match encode_key(ev.key, mods, &ev.text, app, kitty) {
         Some(bytes) => {
             send(e, me, &bytes, true);
             true
@@ -620,8 +632,32 @@ fn report(
     let Some(encoding) = vt_mut(e, me, |vt| vt.mouse_encoding()) else {
         return;
     };
+    let mods = program_mods(e, me, mods);
     let bytes = encode_mouse(encoding, action, button, mods, at.1, at.0);
     send(e, me, &bytes, false);
+}
+
+/// The modifiers as the program should get them: with `macModifiers`,
+/// Control and Meta traded back (`mac_keys`).
+fn program_mods(e: &Engine, me: ObjectId, mods: Modifiers) -> Modifiers {
+    if item::prop(e, me, Terminal::MAC_MODIFIERS) {
+        mac_keys(mods)
+    } else {
+        mods
+    }
+}
+
+/// Control and Meta swapped: what macOS's Cmd and Control are once the
+/// toolkit has reported Cmd as Control.
+fn mac_keys(mods: Modifiers) -> Modifiers {
+    let mut out = mods - (Modifiers::CONTROL | Modifiers::META);
+    if mods.contains(Modifiers::CONTROL) {
+        out |= Modifiers::META;
+    }
+    if mods.contains(Modifiers::META) {
+        out |= Modifiers::CONTROL;
+    }
+    out
 }
 
 fn button_number(b: Option<MouseButtons>) -> Option<u8> {
@@ -788,7 +824,20 @@ fn wheel(e: &Engine, me: ObjectId, ev: &WheelEvent, at: kurbo::Point) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::paste_bytes;
+    use super::{Modifiers, mac_keys, paste_bytes};
+
+    #[test]
+    fn mac_keys_trade_control_and_meta_back() {
+        let shift = Modifiers::SHIFT;
+        assert_eq!(
+            mac_keys(Modifiers::CONTROL | shift),
+            Modifiers::META | shift
+        );
+        assert_eq!(mac_keys(Modifiers::META), Modifiers::CONTROL);
+        let both = Modifiers::CONTROL | Modifiers::META;
+        assert_eq!(mac_keys(both), both);
+        assert_eq!(mac_keys(Modifiers::ALT), Modifiers::ALT);
+    }
 
     #[test]
     fn a_paste_is_bracketed_when_asked_and_defused() {

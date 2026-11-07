@@ -107,10 +107,24 @@ pub fn timeline_of(engine: &Engine, key: &str) -> Option<ObjectId> {
 /// A time that may be ahead, as the timelines show one (a usage limit's
 /// reset).
 pub fn upcoming(engine: &Engine, at: Option<DateTime<Utc>>) -> String {
+    reading(engine, |clock, format| {
+        time::upcoming_stamp(at, clock, format)
+    })
+}
+
+/// `f` with the timelines' clock and timestampFormat.
+fn reading<R>(engine: &Engine, f: impl FnOnce(&Clock, &str) -> R) -> R {
     let shared = shared(engine);
     let format = shared.timestamp_format.borrow();
     let format = if format.is_empty() { "locale" } else { &format };
-    time::upcoming_stamp(at, &shared.clock.borrow(), format)
+    f(&shared.clock.borrow(), format)
+}
+
+/// A time Format.qml hands over (a Date or an ISO time), in the timelines'
+/// zone.
+fn script_time(engine: &Engine, at: &Atom) -> Option<DateTime<Utc>> {
+    let zone = shared(engine).clock.borrow().zone;
+    time::script_time(at, zone)
 }
 
 /// Runs `f` when another thread is shown (or none), after the store is done.
@@ -323,6 +337,15 @@ impl ThreadStore {
             .and_then(|v| v.as_str().map(str::to_owned))
             .filter(|f| !f.is_empty())
             .unwrap_or_else(|| "locale".into());
+        if let Ok(obj) = Bridge::of(engine).singleton::<ThreadsObject>(engine)
+            && let Err(e) = engine.set_internal(
+                obj,
+                ThreadsObject::TIMESTAMP_FORMAT,
+                Atom::from(format.as_str()),
+            )
+        {
+            engine.log(ljos::prelude::LogLevel::Warning, "Threads", e.to_string());
+        }
         *shared(engine).timestamp_format.borrow_mut() = format;
         for followed in self.threads.values() {
             configure(engine, followed.model);
@@ -835,6 +858,10 @@ pub struct ThreadsObject {
     /// Its TimelineModel, or null.
     #[qml(notify, readonly)]
     timeline: Value,
+    /// The device's timestampFormat ("locale", "12-hour", "24-hour"): read
+    /// by Format.qml, so a binding that formats a time follows it.
+    #[qml(notify, readonly)]
+    timestamp_format: Atom,
 }
 
 impl Default for ThreadsObject {
@@ -842,6 +869,7 @@ impl Default for ThreadsObject {
         ThreadsObject {
             active_thread: Atom::new(""),
             timeline: Value::Null,
+            timestamp_format: Atom::new("locale"),
         }
     }
 }
@@ -872,5 +900,45 @@ impl ThreadsObject {
     fn reload(cx: &Cx, thread_key: Atom) {
         let key = thread_key.to_string();
         later(cx.engine, move |s, e| s.reload(e, &key));
+    }
+
+    /// A time that may be ahead (a usage limit's reset), as the timelines
+    /// read it: "18:05", "tomorrow at 18:05".
+    #[qml(invokable)]
+    fn upcoming(cx: &Cx, at: Atom) -> Atom {
+        Atom::from(upcoming(cx.engine, script_time(cx.engine, &at)).as_str())
+    }
+
+    /// Times as the timelines read them, for Format.qml (plugin pages): the
+    /// time of day, the short date, both, and how long ago. Empty for an
+    /// invalid time.
+    #[qml(invokable)]
+    fn format_time(cx: &Cx, at: Atom) -> Atom {
+        let at = script_time(cx.engine, &at);
+        let text = reading(cx.engine, |clock, format| {
+            at.map(|at| time::time_of_day(clock.zone.local(at), format, &clock.locale))
+        });
+        Atom::from(text.unwrap_or_default().as_str())
+    }
+
+    #[qml(invokable)]
+    fn format_date(cx: &Cx, at: Atom) -> Atom {
+        let at = script_time(cx.engine, &at);
+        Atom::from(reading(cx.engine, |clock, _| time::short_date(at, clock)).as_str())
+    }
+
+    #[qml(invokable)]
+    fn format_date_time(cx: &Cx, at: Atom) -> Atom {
+        let at = script_time(cx.engine, &at);
+        let text = reading(cx.engine, |clock, format| {
+            time::short_date_time(at, clock, format)
+        });
+        Atom::from(text.as_str())
+    }
+
+    #[qml(invokable)]
+    fn format_relative(cx: &Cx, at: Atom) -> Atom {
+        let at = script_time(cx.engine, &at);
+        Atom::from(reading(cx.engine, |clock, _| time::relative_time(at, clock)).as_str())
     }
 }

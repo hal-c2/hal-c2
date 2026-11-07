@@ -59,6 +59,9 @@ notify = "8"
 trash = "5"
 # The composer's Markdown markers (src/highlighter.rs), as desktop-qt's QRegularExpression.
 fancy-regex = "0.19"
+# Code coloured by its language (src/code_highlighter.rs): the crate
+# desktop-qt links.
+hal-c2-syntax = { path = "../../../native/syntax" }
 # The Terminal item's escape-sequence parser and screen (see terminal/mod.rs).
 vt100 = "0.16"
 # The thread view (thread_view/): desktop-qt's QRegularExpression patterns

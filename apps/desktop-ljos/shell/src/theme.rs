@@ -27,6 +27,9 @@ use crate::bridge::Bridge;
 use crate::json::Json;
 use crate::platform_window;
 
+mod roles;
+pub mod tokens;
+
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "Theme", uncreatable)]
 #[qml_singleton]
@@ -53,6 +56,38 @@ pub struct ThemeStore {
     link: Color,
     #[qml(notify, readonly)]
     radius: f64,
+    // The radius scale from `radius` (R): xs R/2, sm 3R/4, md R, lg 3R/2,
+    // xl 2R. Popovers and dialogs are lg; a radius nested in padding p is
+    // the outer one less p.
+    #[qml(notify, readonly)]
+    radius_xs: f64,
+    #[qml(notify, readonly)]
+    radius_sm: f64,
+    #[qml(notify, readonly)]
+    radius_md: f64,
+    #[qml(notify, readonly)]
+    radius_lg: f64,
+    #[qml(notify, readonly)]
+    radius_xl: f64,
+    /// Fully round: a Rectangle clamps its radius to half its shorter side.
+    #[qml(constant, readonly)]
+    radius_pill: f64,
+    #[qml(constant, readonly, rename = "type", object = "ThemeTypeRamp")]
+    type_ramp: Option<ObjectId>,
+    #[qml(constant, readonly, object = "ThemeSpace")]
+    space: Option<ObjectId>,
+    #[qml(constant, readonly, object = "ThemeSizes")]
+    control: Option<ObjectId>,
+    #[qml(constant, readonly, object = "ThemeSizes")]
+    icon: Option<ObjectId>,
+    /// The header line a thread, its right panel and a Space page share:
+    /// each header is this tall, so their hairlines meet.
+    #[qml(constant, readonly)]
+    header_height: i32,
+    /// Whether the interface font is monospaced, where weight barely
+    /// separates and hierarchy is size and ink.
+    #[qml(notify, readonly)]
+    monospace: bool,
     #[qml(notify, readonly)]
     font_ui: Atom,
     #[qml(notify, readonly)]
@@ -96,6 +131,18 @@ impl Default for ThemeStore {
             palette: None,
             link: derived.link,
             radius: derived.radius,
+            radius_xs: (derived.radius * 0.5).round(),
+            radius_sm: (derived.radius * 0.75).round(),
+            radius_md: derived.radius,
+            radius_lg: (derived.radius * 1.5).round(),
+            radius_xl: (derived.radius * 2.0).round(),
+            radius_pill: 9999.0,
+            type_ramp: None,
+            space: None,
+            control: None,
+            icon: None,
+            header_height: 52,
+            monospace: false,
             font_ui: Atom::from(""),
             font_mono: Atom::from(""),
             font_prompt: Atom::from(""),
@@ -115,8 +162,9 @@ impl Default for ThemeStore {
 
 #[qml_impl]
 impl ThemeStore {
-    /// A role's colour (`canvas`, `text`, ...): theme.json's, then the base
-    /// theme's, then `fallback`.
+    /// A role's colour (`canvas`, `ink`, ...): theme.json's, then the base
+    /// theme's, then `fallback`. In each, a role it lacks is read from the
+    /// older role it renames or derived from the ones it has ([`roles`]).
     #[qml(invokable)]
     fn color(cx: &Cx, role: Atom, fallback: Value) -> Value {
         let found = drawn_color(cx.engine, &role);
@@ -136,15 +184,13 @@ impl ThemeStore {
 }
 
 /// A role's colour as the bricks draw it: theme.json's, then the base
-/// theme's. `None` where neither has one.
+/// theme's ([`roles::resolve`]). `None` where neither has one.
 pub fn drawn_color(engine: &Engine, role: &str) -> Option<Color> {
     let state = ThemeState::of(engine);
     let file = state.file.borrow();
     let base = state.base.borrow();
-    [&file.resolved, &base.colors]
-        .into_iter()
-        .filter_map(|colors| colors.get(role).and_then(Json::as_str))
-        .find_map(parse_css_color)
+    let light = Derived::of(&file, &base).appearance == "light";
+    roles::resolve(&file.resolved, &base.colors, light, role)
 }
 
 /// Whether theme.json is loaded (`Theme.loaded`).
@@ -207,6 +253,7 @@ struct ThemeState {
     desktop_font: RefCell<Option<Font>>,
     /// The config directory's watcher, while there is one.
     watcher: RefCell<Option<RecommendedWatcher>>,
+    tokens: RefCell<Option<tokens::Tokens>>,
     changes: Arc<Changes>,
 }
 
@@ -256,7 +303,13 @@ pub fn install(engine: &Engine, config_dir: Option<PathBuf>) {
         .map_or(String::new(), |p| p.to_string_lossy().into_owned());
     let _ = cx.set(ThemeStore::PATH, Atom::from(shown.as_str()));
     let _ = cx.set(ThemeStore::PALETTE, Some(obj));
+    let made = tokens::Tokens::new(engine, obj);
+    let _ = cx.set(ThemeStore::TYPE_RAMP, made.ramp);
+    let _ = cx.set(ThemeStore::SPACE, made.space);
+    let _ = cx.set(ThemeStore::CONTROL, made.control);
+    let _ = cx.set(ThemeStore::ICON, made.icon);
     let state = ThemeState::of(engine);
+    *state.tokens.borrow_mut() = Some(made);
     *state.desktop_font.borrow_mut() = Some(system_font(
         &Font::default(),
         cfg!(target_os = "macos"),
@@ -654,6 +707,25 @@ impl Derived {
     }
 }
 
+/// Whether the interface family is a monospace one (desktop-qt asks
+/// `QFontInfo::fixedPitch`). By its name, as Ljós has no fixed-pitch query
+/// yet: the families such a face goes by.
+fn is_monospace(family: &str) -> bool {
+    const NAMES: [&str; 9] = [
+        "mono",
+        "code",
+        "courier",
+        "consol",
+        "menlo",
+        "monaco",
+        "terminal",
+        "fixed",
+        "typewriter",
+    ];
+    let family = family.to_ascii_lowercase();
+    NAMES.iter().any(|name| family.contains(name))
+}
+
 /// "8", "8px" or "0.5rem" (a 16px root).
 fn file_radius(value: &str) -> Option<f64> {
     let v = value.trim();
@@ -744,6 +816,16 @@ fn show(engine: &Engine) {
         let _ = cx.set(ThemeStore::LAST_ERROR, atom(&file.last_error));
         let _ = cx.set(ThemeStore::LINK, d.link);
         let _ = cx.set(ThemeStore::RADIUS, d.radius);
+        let _ = cx.set(ThemeStore::RADIUS_XS, (d.radius * 0.5).round());
+        let _ = cx.set(ThemeStore::RADIUS_SM, (d.radius * 0.75).round());
+        let _ = cx.set(ThemeStore::RADIUS_MD, d.radius);
+        let _ = cx.set(ThemeStore::RADIUS_LG, (d.radius * 1.5).round());
+        let _ = cx.set(ThemeStore::RADIUS_XL, (d.radius * 2.0).round());
+        let monospace = is_monospace(&d.font_ui);
+        let _ = cx.set(ThemeStore::MONOSPACE, monospace);
+        if let Some(tokens) = &*state.tokens.borrow() {
+            tokens.apply_type(engine, d.font_scale, monospace);
+        }
         let _ = cx.set(ThemeStore::FONT_UI, atom(&d.font_ui));
         let _ = cx.set(ThemeStore::FONT_MONO, atom(&d.font_mono));
         let _ = cx.set(ThemeStore::FONT_PROMPT, atom(&d.font_prompt));
