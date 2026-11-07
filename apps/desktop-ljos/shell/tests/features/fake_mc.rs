@@ -297,6 +297,7 @@ impl FakeMc {
                 "threadPinReorder": true,
                 "threadActiveReorder": true,
                 "threadTitleRegeneration": true,
+                "threadAutoSettleOptOut": true,
                 "pullRequests": true,
                 "threadPullRequests": true,
                 "threadPullRequestLinking": true,

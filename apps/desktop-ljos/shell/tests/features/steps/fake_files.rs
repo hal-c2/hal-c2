@@ -25,6 +25,11 @@ pub struct FakeFiles {
     /// Folders ("" the top) whose next listing fails.
     pub fail_once: HashSet<String>,
     pub cannot_list: bool,
+    /// Folders listed as empty, as gone (`directory_not_found`), and as
+    /// empty in a partial index (`truncated`).
+    pub empty_folders: HashSet<String>,
+    pub gone_folders: HashSet<String>,
+    pub partial_folders: HashSet<String>,
     pub read_fails_once: HashSet<String>,
     /// What the signed addresses serve ([`FakeFiles::downloads`]).
     downloads: Arc<Mutex<Downloads>>,
@@ -46,6 +51,9 @@ impl Default for FakeFiles {
             outside: BTreeMap::new(),
             fail_once: HashSet::new(),
             cannot_list: false,
+            empty_folders: HashSet::new(),
+            gone_folders: HashSet::new(),
+            partial_folders: HashSet::new(),
             read_fails_once: HashSet::new(),
             downloads: Arc::default(),
             searches: 0,
@@ -200,6 +208,19 @@ fn extension(mc: &mut FakeMc) {
                 &folder
             };
             mc.refuse(rpc, &format!("Could not list {what}."));
+            return Ok(());
+        }
+        if fake.gone_folders.contains(&folder) {
+            mc.refuse_with(
+                rpc,
+                &format!("'{folder}' does not exist."),
+                json!({"failure": "directory_not_found"}),
+            );
+            return Ok(());
+        }
+        if fake.empty_folders.contains(&folder) || fake.partial_folders.contains(&folder) {
+            let truncated = fake.partial_folders.contains(&folder);
+            mc.reply(rpc, json!({"entries": [], "truncated": truncated}));
             return Ok(());
         }
         let mut children = BTreeSet::new();

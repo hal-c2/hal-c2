@@ -4365,6 +4365,19 @@
             {
               "name": "expansionChanged",
               "parameters": []
+            },
+            {
+              "name": "treeChanged",
+              "parameters": []
+            },
+            {
+              "name": "fileWanted",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                }
+              ]
             }
           ],
           "methods": [
@@ -4372,6 +4385,36 @@
               "name": "tree",
               "parameters": [],
               "returnType": "var"
+            },
+            {
+              "name": "toggleFolder",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "folderOpen",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "state",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                }
+              ],
+              "returnType": "string"
             },
             {
               "name": "path",
@@ -5543,6 +5586,42 @@
               "notify": "comparedHeadChanged"
             },
             {
+              "name": "baseChoices",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "baseChoicesChanged"
+            },
+            {
+              "name": "baseQuery",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "baseQueryChanged"
+            },
+            {
+              "name": "basesLoading",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "basesLoadingChanged"
+            },
+            {
               "name": "truncated",
               "type": "bool",
               "kind": "value",
@@ -5637,6 +5716,10 @@
               "parameters": []
             },
             {
+              "name": "basesChanged",
+              "parameters": []
+            },
+            {
               "name": "commentRequested",
               "parameters": [
                 {
@@ -5680,6 +5763,51 @@
               "name": "reload",
               "parameters": [],
               "returnType": "void"
+            },
+            {
+              "name": "loadBases",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "chooseBase",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "chooseTypedBase",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "retryFile",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "workspacePath",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
             },
             {
               "name": "revealFile",
@@ -6119,6 +6247,54 @@
               "constant": false,
               "group": false,
               "notify": "saveProblemChanged"
+            },
+            {
+              "name": "trailFolder",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "trailFolderChanged"
+            },
+            {
+              "name": "trailStatus",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "trailStatusChanged"
+            },
+            {
+              "name": "trailEntries",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "trailEntriesChanged"
+            },
+            {
+              "name": "trailProblem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "trailProblemChanged"
             }
           ],
           "signals": [
@@ -6186,6 +6362,16 @@
             {
               "name": "closeFile",
               "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "listTrail",
+              "parameters": [
+                {
+                  "name": "folder",
+                  "type": "string"
+                }
+              ],
               "returnType": "void"
             },
             {
@@ -6466,6 +6652,18 @@
               "notify": "atBottomChanged"
             },
             {
+              "name": "mouseTracking",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "mouseTrackingChanged"
+            },
+            {
               "name": "cursorBlink",
               "type": "bool",
               "kind": "value",
@@ -6557,7 +6755,7 @@
             {
               "name": "copy",
               "parameters": [],
-              "returnType": "void"
+              "returnType": "bool"
             },
             {
               "name": "selectAll",

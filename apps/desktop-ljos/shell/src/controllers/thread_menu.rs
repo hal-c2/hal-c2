@@ -38,6 +38,7 @@ use crate::bridge::Bridge;
 use crate::commands::{Choice, Commands};
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::drafts;
+use crate::controllers::keybindings::Keymap;
 use crate::controllers::menus::{Answer, Item, Menus};
 use crate::controllers::navigation::{self, Navigation, Route};
 use crate::controllers::settings::Settings;
@@ -642,9 +643,10 @@ pub fn open(engine: &Engine, key: &str, x: f64, y: f64, header: bool) -> bool {
         open_selection(engine, selection, x, y);
         return true;
     }
-    let (supports, online, environments) = store::with(engine, |s| {
+    let (supports, auto_settle_opt_out, online, environments) = store::with(engine, |s| {
         (
             s.capabilities(&thread.environment_id),
+            s.supports(&thread.environment_id, "threadAutoSettleOptOut"),
             s.thread_online(key),
             s.environments(),
         )
@@ -668,13 +670,26 @@ pub fn open(engine: &Engine, key: &str, x: f64, y: f64, header: bool) -> bool {
             false,
         );
     }
+    // The keys that run an item, from where the palette reads them, shown only
+    // on the open thread's menu: they act on the open thread, not on another
+    // row the menu was opened from.
+    let viewed = route_thread(engine) == key;
+    let keyed = |mut item: Item, command: &str| {
+        if viewed {
+            item.shortcut = Keymap::of(engine).shortcut_label(engine, command);
+        }
+        item
+    };
     if supports.pinning {
         add(
-            if thread.pinned_at.is_some() {
-                item("unpin", "Unpin thread", "pin-off")
-            } else {
-                item("pin", "Pin thread", "pin")
-            },
+            keyed(
+                if thread.pinned_at.is_some() {
+                    item("unpin", "Unpin thread", "pin-off")
+                } else {
+                    item("pin", "Pin thread", "pin")
+                },
+                "thread.pin",
+            ),
             true,
         );
     }
@@ -694,11 +709,14 @@ pub fn open(engine: &Engine, key: &str, x: f64, y: f64, header: bool) -> bool {
     if supports.settlement {
         let settled = thread.settled_override.as_deref() == Some("settled");
         add(
-            if settled {
-                item("unsettle", "Un-settle thread", "circle-check")
-            } else {
-                item("settle", "Settle thread", "circle-check")
-            },
+            keyed(
+                if settled {
+                    item("unsettle", "Un-settle thread", "circle-check")
+                } else {
+                    item("settle", "Settle thread", "circle-check")
+                },
+                "thread.settle",
+            ),
             true,
         );
     }
@@ -730,6 +748,17 @@ pub fn open(engine: &Engine, key: &str, x: f64, y: f64, header: bool) -> bool {
         add(regenerate, true);
     }
     add(item("mark-unread", "Mark unread", "mail-open"), true);
+    // Whether the MC may settle this thread on its own (pingdotgg/t3code#11846).
+    if auto_settle_opt_out {
+        let enabled = row_text(engine, key, "autoSettleDisabledAt").is_empty();
+        let mut auto_settle = item("auto-settle", "Auto-settle behavior", "timer");
+        let mut on = Item::new("auto-settle:enabled", "Enabled");
+        on.checked = enabled;
+        let mut off = Item::new("auto-settle:disabled", "Disabled");
+        off.checked = !enabled;
+        auto_settle.children = vec![on, off];
+        add(auto_settle, true);
+    }
     let project_key =
         sidebar::logical_project_key(engine, &thread.environment_id, &thread.project_id);
     if !header && let Some(project_key) = &project_key {
@@ -773,6 +802,13 @@ pub fn open(engine: &Engine, key: &str, x: f64, y: f64, header: bool) -> bool {
         );
     }
     add(item("fork", "Fork thread", "git-fork"), true);
+    // The MC writes a page only from its own threads.
+    if controller::mc(engine).is_some_and(|mc| mc.environment() == thread.environment_id) {
+        add(
+            item("page-from-thread", "Create page from thread", "file-text"),
+            true,
+        );
+    }
     // Another machine of the cluster can take the thread.
     if environments.iter().any(|e| *e != thread.environment_id) {
         add(
@@ -1043,6 +1079,21 @@ fn choose(engine: &Engine, key: &str, id: &str, x: f64, y: f64) {
             None,
         ),
         "mark-unread" => dispatch(engine, "thread.markUnread", key),
+        "auto-settle:enabled" | "auto-settle:disabled" => command(
+            engine,
+            key,
+            json!({
+                "type": "thread.auto-settle.set",
+                "threadId": thread.id,
+                "enabled": id == "auto-settle:enabled",
+            }),
+            "Failed to update auto-settle",
+            None,
+        ),
+        // SpaceController's (desktop-qt); the shell has no Spaces yet.
+        "page-from-thread" => {
+            Bridge::of(engine).dispatch(engine, "space.pageFromThread", json!({"threadKey": key}))
+        }
         "filter-by-project" => {
             let project_key =
                 sidebar::logical_project_key(engine, &thread.environment_id, &thread.project_id);
@@ -1682,8 +1733,9 @@ fn present(engine: &Engine) {
             "Copy PR link"
         },
     );
+    // The palette names the thread it copies from, never its id.
     let description = match (&thread, url.is_empty()) {
-        (Some(thread), true) => thread.id.clone(),
+        (Some(thread), true) => thread.title.clone(),
         _ => url,
     };
     commands.set_description(engine, COPY_REFERENCE, &description);

@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use chrono::{DateTime, Duration, SecondsFormat};
+use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::thread_menu::ThreadMenu;
@@ -75,6 +76,22 @@ fn project_command(mc: &mut FakeMc, command: &Value) {
                 "snoozedAt",
             ] {
                 row.remove(key);
+            }
+            // It dismisses the questions the agent asked in the background, too.
+            if row
+                .get("pendingRuntimeRequest")
+                .and_then(|r| r.get("kind"))
+                .and_then(Value::as_str)
+                == Some("user_input")
+            {
+                row.remove("pendingRuntimeRequest");
+            }
+        }
+        "thread.auto-settle.set" => {
+            if command["enabled"].as_bool().unwrap_or(false) {
+                row.remove("autoSettleDisabledAt");
+            } else {
+                row.insert("autoSettleDisabledAt".into(), json!(NOW));
             }
         }
         "thread.mark-unread" => {
@@ -395,6 +412,7 @@ fn item_id(phrase: &str) -> String {
         "regenerate title" => "regenerate-title",
         "mark unread" => "mark-unread",
         "project settings" => "project-settings",
+        "create page from thread" => "page-from-thread",
         other => other,
     }
     .to_owned()
@@ -511,6 +529,29 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    // The right column's keys come from where the palette's do.
+    steps.step(
+        &format!("the menu shows the keys of (\\S+) beside {Q}"),
+        |world, c, _| {
+            let engine = world.engine();
+            let keys = Keymap::of(engine).shortcut_label(engine, &c[0]);
+            let shown = item(world, &c[1]).is_some_and(|entry| text(&entry["shortcut"]) == keys);
+            expect!(
+                !keys.is_empty() && shown,
+                "{} has the keys {keys} and {}",
+                c[0],
+                menu_is(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step("the menu shows no keys", |world, _, _| {
+        let keyed = items(world)
+            .iter()
+            .any(|entry| entry.get("shortcut").is_some());
+        expect!(!keyed, "{}", menu_is(world));
+        Ok(())
+    });
     steps.step(
         &format!("only these of the menu's actions can be chosen: {Q}"),
         |world, c, _| {

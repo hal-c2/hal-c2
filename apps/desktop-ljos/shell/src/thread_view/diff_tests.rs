@@ -239,7 +239,7 @@ fn a_comment_quotes_the_lines_of_one_side() {
 }
 
 #[test]
-fn the_tree_puts_folders_before_files() {
+fn the_tree_keeps_the_diffs_order() {
     let mut diff = Diff::new();
     diff.set_patch(&patch_of(&["z.txt", "src/b.rs", "src/a/c.rs", "a.txt"]));
     let tree: Vec<(String, String, u64)> = diff
@@ -257,15 +257,15 @@ fn the_tree_puts_folders_before_files() {
     assert_eq!(
         tree,
         [
+            row("file", "z.txt", 0),
             row("folder", "src", 0),
+            row("file", "src/b.rs", 1),
             row("folder", "src/a", 1),
             row("file", "src/a/c.rs", 2),
-            row("file", "src/b.rs", 1),
             row("file", "a.txt", 0),
-            row("file", "z.txt", 0),
         ]
     );
-    assert_eq!(diff.tree()[2]["file"], json!(2));
+    assert_eq!(diff.tree()[2]["file"], json!(1));
 }
 
 // ---- tst_WorkspaceDiffProp: the rows while patches, expansion, split and

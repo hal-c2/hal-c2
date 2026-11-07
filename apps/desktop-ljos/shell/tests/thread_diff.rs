@@ -217,7 +217,14 @@ impl Fixture {
     fn show(&self) {
         self.stream(&[("cp-1", 1)]);
         ThreadDiff::update(&self.engine, self.tab, |t| t.set_active(true));
-        ThreadDiff::set_thread(&self.engine, self.tab, "env-1", "t1", Some(self.timeline));
+        ThreadDiff::set_thread(
+            &self.engine,
+            self.tab,
+            "env-1",
+            "t1",
+            Some(self.timeline),
+            "",
+        );
         assert_eq!(text(&self.engine, self.root, "state"), "loading");
         let asked = self.mc.answer(
             &self.engine,

@@ -38,6 +38,9 @@ struct Viewer {
     described: String,
     /// How many times the MC had been asked to open an editor before the step under test.
     editor_calls_before: usize,
+    /// What the folder the path trail opens next is: "empty", "gone" or
+    /// "partial" ("" a plain one).
+    trail_state: String,
 }
 
 fn viewer(world: &mut World) -> &mut Viewer {
@@ -420,6 +423,106 @@ pub fn register(steps: &mut Steps) {
             world.pump()
         },
     );
+
+    steps.step(&format!("{Q} is empty"), |world, _, _| {
+        viewer(world).trail_state = "empty".into();
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} was deleted after the file was opened"),
+        |world, _, _| {
+            viewer(world).trail_state = "gone".into();
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the project index is partial and has nothing in {Q}"),
+        |world, _, _| {
+            viewer(world).trail_state = "partial".into();
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user opens the folder {Q} in the path trail"),
+        |world, c, _| {
+            let fake = fake_files(&mut world.mc);
+            fake.files
+                .insert("src/lib/util/round.ts".into(), "round\n".into());
+            fake.files.insert("src/lib/tax.ts".into(), "tax\n".into());
+            let failing = fake.fail_once.remove(&c[0]);
+            if open_path(world).is_empty() {
+                view(world, "src/lib/cart.ts")?;
+            }
+            let folder = trail_folder_named(world, &c[0])?;
+            let state = std::mem::take(&mut viewer(world).trail_state);
+            let fake = fake_files(&mut world.mc);
+            if failing {
+                fake.fail_once.insert(folder.clone());
+            }
+            match state.as_str() {
+                "empty" => fake.empty_folders.insert(folder.clone()),
+                "gone" => fake.gone_folders.insert(folder.clone()),
+                "partial" => fake.partial_folders.insert(folder.clone()),
+                _ => false,
+            };
+            brick::shown(world)?.click(world, &format!("filePathPart-{folder}"))?;
+            world.wait_for_with(
+                |w| {
+                    text_prop(w, "trailFolder") == folder
+                        && text_prop(w, "trailStatus") != "loading"
+                },
+                |w| format!("the folder to be listed: {}", text_prop(w, "trailStatus")),
+            )?;
+            world.pump()
+        },
+    );
+    steps.step(
+        &format!("the files and folders of {Q} are listed, folders first"),
+        |world, _, _| {
+            let names: Vec<String> = trail_entries(world)
+                .iter()
+                .map(|entry| text(&entry["name"]))
+                .collect();
+            expect!(
+                names == ["util", "cart.ts", "tax.ts"],
+                "{}",
+                names.join(", ")
+            );
+            let brick = brick::shown(world)?;
+            expect!(
+                menu_entry(
+                    world,
+                    brick,
+                    "filePathSiblings",
+                    "filePathSibling-src/lib/util"
+                )
+                .is_some(),
+                "the menu does not draw the folder"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the folder that is open is marked", |world, _, _| {
+        let brick = brick::shown(world)?;
+        let part = brick.item(world, "filePathPart-src/lib")?;
+        expect!(
+            brick.flag(world, part, "checked"),
+            "the trail does not mark the folder"
+        );
+        let Some(entry) = menu_entry(
+            world,
+            brick,
+            "filePathSiblings",
+            "filePathSibling-src/lib/cart.ts",
+        ) else {
+            fail!("the menu does not list the open file")
+        };
+        expect!(
+            brick.flag(world, entry, "current"),
+            "the list does not mark the open file"
+        );
+        Ok(())
+    });
 
     // Editors.
     steps.step(
@@ -999,6 +1102,34 @@ fn held_outside(world: &World, path: &str) -> bool {
     let files = world.mc.peek::<FakeFiles>();
     matches!((typed, files), (Some(typed), Some(fake))
         if fake.outside.get(path).is_some_and(|contents| contents.contains(&typed)))
+}
+
+/// The folder on the open file's path whose last part is `name`.
+fn trail_folder_named(world: &World, name: &str) -> Outcome<String> {
+    let path = open_path(world);
+    let mut folder = String::new();
+    for part in path.split('/') {
+        if !folder.is_empty() {
+            folder.push('/');
+        }
+        folder.push_str(part);
+        if part == name {
+            return Ok(folder);
+        }
+    }
+    fail!("\"{name}\" is not on the path \"{path}\"")
+}
+
+/// What the path trail lists of its open folder.
+fn trail_entries(world: &World) -> Vec<Json> {
+    let Ok(object) = files(world) else {
+        return Vec::new();
+    };
+    let engine = world.engine();
+    match hal_c2_shell::json::from_value(engine, &engine.read_by_name(object, "trailEntries")) {
+        Json::Array(entries) => entries,
+        _ => Vec::new(),
+    }
 }
 
 /// The entry named `entry` of the menu `menu_name` the panel keeps.

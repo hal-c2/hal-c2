@@ -49,11 +49,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
-use ljos::prelude::{ConnectionId, EngineError, RowKey};
+use ljos::prelude::{ConnectionId, EngineError, QmlValue, RowKey};
 use serde_json::json;
 
 use super::file_render::{self, CSV_ROW_LIMIT};
-use super::file_tree::{Entry, FileTree, FileTreeModel};
+use super::file_tree::{Entry, FileTree, FileTreeModel, name_of};
 use super::rows::{ListRows, RowChange, RowSource, int};
 use super::timeline_model::TimelineModel;
 use crate::json::Json;
@@ -200,6 +200,8 @@ impl TextLinesModel {
 pub enum Then {
     Search(u32),
     Read(u32),
+    /// The folder the path trail lists, for the listing `request`.
+    Trail(u32),
     /// A media file's URL, for the file read `request`.
     Sign(u32),
     Write {
@@ -274,6 +276,10 @@ pub struct Facts {
     pub editing: bool,
     pub unsaved: bool,
     pub save_problem: String,
+    pub trail_folder: String,
+    pub trail_status: &'static str,
+    pub trail_entries: Vec<Json>,
+    pub trail_problem: String,
 }
 
 /// The viewer, the search and the save of the Files tab.
@@ -325,6 +331,14 @@ pub struct Files {
     save_problem: String,
     wrap: Option<bool>,
     default_wrap: bool,
+    /// The folder the path trail lists: loading, ready, gone or error ("" when
+    /// it lists none), its `{path, name, directory}` entries, folders first,
+    /// and why it has none.
+    trail_request: u32,
+    trail_folder: String,
+    trail_status: &'static str,
+    trail_entries: Vec<Json>,
+    trail_problem: String,
     effects: Vec<Effect>,
     signals: Vec<Sig>,
 }
@@ -411,6 +425,11 @@ impl Files {
             save_problem: String::new(),
             wrap: None,
             default_wrap: false,
+            trail_request: 0,
+            trail_folder: String::new(),
+            trail_status: "",
+            trail_entries: Vec::new(),
+            trail_problem: String::new(),
             effects: Vec::new(),
             signals: Vec::new(),
         }
@@ -500,6 +519,76 @@ impl Files {
             editing: self.editing,
             unsaved: self.pending,
             save_problem: self.save_problem.clone(),
+            trail_folder: self.trail_folder.clone(),
+            trail_status: self.trail_status,
+            trail_entries: self.trail_entries.clone(),
+            trail_problem: self.trail_problem.clone(),
+        }
+    }
+
+    /// Lists `folder` ("" the workspace) for the path trail.
+    pub fn list_trail(&mut self, folder: &str) {
+        self.trail_request += 1;
+        folder.clone_into(&mut self.trail_folder);
+        self.trail_status = "loading";
+        self.trail_problem.clear();
+        self.trail_entries.clear();
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: "projects.listEntries",
+            payload: json!({"cwd": self.root, "directoryPath": folder}),
+            then: Then::Trail(self.trail_request),
+        });
+    }
+
+    /// The path trail lists nothing; a listing on its way is dropped.
+    fn clear_trail(&mut self) {
+        self.trail_request += 1;
+        self.trail_folder.clear();
+        self.trail_status = "";
+        self.trail_problem.clear();
+        self.trail_entries.clear();
+    }
+
+    fn trail_listed(&mut self, result: Result<Json, McError>) {
+        match result {
+            Err(e) => {
+                let gone =
+                    e.detail.get("failure").and_then(Json::as_str) == Some("directory_not_found");
+                self.trail_status = if gone { "gone" } else { "error" };
+                self.trail_problem = if gone {
+                    "This folder is no longer available.".to_owned()
+                } else {
+                    defaulted(&e.message, "Unable to load folder.")
+                };
+            }
+            Ok(reply) => {
+                let mut entries = entries_of(&reply);
+                entries.sort_by(|a, b| {
+                    b.directory.cmp(&a.directory).then_with(|| {
+                        name_of(&a.path)
+                            .to_lowercase()
+                            .cmp(&name_of(&b.path).to_lowercase())
+                    })
+                });
+                self.trail_entries = entries
+                    .iter()
+                    .map(|e| json!({"path": e.path, "name": name_of(&e.path), "directory": e.directory}))
+                    .collect();
+                self.trail_status = "ready";
+                if self.trail_entries.is_empty() {
+                    let truncated = reply
+                        .get("truncated")
+                        .and_then(Json::as_bool)
+                        .unwrap_or(false);
+                    self.trail_problem = if truncated {
+                        "No entries from this folder are available in the partial workspace index."
+                    } else {
+                        "This folder is empty."
+                    }
+                    .to_owned();
+                }
+            }
         }
     }
 
@@ -695,6 +784,7 @@ impl Files {
         self.root = root.to_owned();
         // Answers about the workspace left are dropped.
         self.search_request += 1;
+        self.clear_trail();
         self.revealing.clear();
         self.query.clear();
         self.effects.push(Effect::SearchTimer(false));
@@ -871,6 +961,7 @@ impl Files {
         }
         self.file_request += 1;
         let had = !self.open_path.is_empty() || self.file_status != "none";
+        self.clear_trail();
         self.open_path.clear();
         self.open_line = 0;
         self.reveal_line = 0;
@@ -993,6 +1084,11 @@ impl Files {
     /// dropped.
     pub fn answer(&mut self, then: Then, result: Result<Json, McError>) {
         match then {
+            Then::Trail(request) => {
+                if request == self.trail_request {
+                    self.trail_listed(result);
+                }
+            }
             Then::Search(request) => {
                 if request != self.search_request {
                     return;
@@ -1303,6 +1399,17 @@ pub struct WorkspaceFiles {
     unsaved: bool,
     #[qml(readonly, notify)]
     save_problem: Atom,
+    /// The folder the path trail lists (`listTrail`), how it is (loading,
+    /// ready, gone, error, or "" when none), its `{path, name, directory}`
+    /// entries, folders first, and why it has none.
+    #[qml(readonly, notify)]
+    trail_folder: Atom,
+    #[qml(readonly, notify)]
+    trail_status: Atom,
+    #[qml(readonly, notify)]
+    trail_entries: Value,
+    #[qml(readonly, notify)]
+    trail_problem: Atom,
     #[qml(skip)]
     inner: Rc<Inner>,
 }
@@ -1376,6 +1483,10 @@ impl WorkspaceFiles {
             editing: facts.editing,
             unsaved: facts.unsaved,
             save_problem: atom(&facts.save_problem),
+            trail_folder: atom(&facts.trail_folder),
+            trail_status: atom(facts.trail_status),
+            trail_entries: Json::Array(Vec::new()).to_value(),
+            trail_problem: atom(&facts.trail_problem),
             inner: inner.clone(),
         };
         let obj = engine.create_native(files, owner)?;
@@ -1746,6 +1857,15 @@ fn write(
     );
     set!(unsaved, UNSAVED, after.unsaved);
     set!(save_problem, SAVE_PROBLEM, atom(&after.save_problem));
+    set!(trail_folder, TRAIL_FOLDER, atom(&after.trail_folder));
+    set!(
+        trail_entries,
+        TRAIL_ENTRIES,
+        Json::Array(after.trail_entries.clone()).to_value()
+    );
+    set!(trail_problem, TRAIL_PROBLEM, atom(&after.trail_problem));
+    // After the entries and the problem: the trail's menu reads them on it.
+    set!(trail_status, TRAIL_STATUS, atom(after.trail_status));
     // Last: its signal finds the rest in place.
     set!(rendered, RENDERED, after.rendered);
     warned(engine, result);
@@ -2036,6 +2156,12 @@ impl WorkspaceFiles {
     #[qml(invokable)]
     fn close_file(cx: &Cx) {
         WorkspaceFiles::update(cx.engine, cx.this, Files::close_file);
+    }
+
+    /// Lists `folder` ("" the workspace) for the path trail.
+    #[qml(invokable)]
+    fn list_trail(cx: &Cx, folder: Atom) {
+        WorkspaceFiles::update(cx.engine, cx.this, |f| f.list_trail(&folder));
     }
 
     /// Reads the open file again.

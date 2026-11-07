@@ -12,8 +12,21 @@
 //! The checkout itself can be reviewed too (`review.getDiffPreview`):
 //! [`WORKING_TREE`] is its uncommitted changes, [`BRANCH`] the whole branch
 //! against its base, which is the MC's choice until `baseRef` names another.
-//! A thread with no finished turn opens on the working tree. These do not
-//! follow the checkout: `reload()` asks again.
+//! `baseChoices` offers the checkout's refs for it (`vcs.listRefs`). A
+//! thread with no finished turn opens on the working tree. `reload()` asks
+//! again.
+//!
+//! While the user has not picked the latest turn, a latest turn whose
+//! checkpoint lists no changed files opens on all changes when an earlier
+//! turn changed some.
+//!
+//! A review the MC cut short (`truncated`) but whose files it counted lists
+//! those files without their changes, and each file's are loaded when it is
+//! opened ([`DiffModel`]'s fileWanted): one file's patch is
+//! `review.getDiffPreview` with `file`.
+//!
+//! Each thread keeps its own selection and base, for as long as the app
+//! runs.
 //!
 //! Opening one changed file from a reply shows that file alone
 //! (`focusPath`) until the user asks for all of the selection's files again
@@ -29,7 +42,7 @@
 //! thread's [`TimelineModel`].
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -39,10 +52,10 @@ use ljos::prelude::{EngineError, RowKey};
 use regex::Regex;
 use serde_json::json;
 
-use super::diff::{AsDiff, Diff, DiffModel};
+use super::diff::{AsDiff, Diff, DiffModel, without_truncated_marker};
 use super::rows::{ListRows, RowChange, RowSource, int};
 use super::summary::Obj;
-use super::timeline::Out;
+use super::timeline::{Out, Timeline};
 use super::timeline_model::TimelineModel;
 use crate::json::Json;
 use crate::mc::{Mc, McError};
@@ -54,6 +67,8 @@ pub const BRANCH: i32 = -3;
 
 const LOADING_TURNS: &str = "Loading checkpoint diff...";
 const COULD_NOT_LOAD: &str = "Could not load the diff.";
+const NO_PATCH: &str = "No patch available for this selection.";
+const GONE: &str = "Diff no longer available. Refresh the comparison.";
 
 /// What a reply answers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +79,10 @@ pub enum Then {
     Review { request: u64, selection: i32 },
     /// The revert to after `turn` of `thread`.
     Revert { turn: i32, thread: String },
+    /// The checkout's refs, for the base picker.
+    Bases { request: u64 },
+    /// One file of a review cut short, of the files listed `listing`.
+    File { listing: u64, path: String },
 }
 
 /// What the tab asks of the world.
@@ -110,6 +129,8 @@ pub enum Signal {
     Revert,
     /// ignoreWhitespace, wrap.
     Options,
+    /// baseChoices, baseQuery, basesLoading.
+    Bases,
 }
 
 /// What the properties show; [`Facts::signals`] compares two.
@@ -134,6 +155,8 @@ pub struct Facts {
     pub reverting: bool,
     pub ignore_whitespace: bool,
     pub wrap: bool,
+    /// The refs read, what is searched, whether they are being read.
+    pub bases: (u64, String, bool),
 }
 
 impl Facts {
@@ -182,6 +205,11 @@ impl Facts {
             self.ignore_whitespace != before.ignore_whitespace || self.wrap != before.wrap,
             Signal::Options,
         );
+        // The branch under review is left out of the bases.
+        say(
+            self.bases != before.bases || self.compared_head != before.compared_head,
+            Signal::Bases,
+        );
         signals
     }
 }
@@ -198,7 +226,32 @@ pub struct DiffTab {
     /// Turn number -> its ready checkpoint.
     turns: BTreeMap<i32, Obj>,
     selection: i32,
+    /// The user picked the latest turn, so it is shown even when it changed
+    /// nothing.
+    latest_picked: bool,
+    /// What each other thread shows ("environment:thread"): selection,
+    /// base, latest picked.
+    remembered: HashMap<String, (i32, String, bool)>,
     cwd: String,
+    /// The checkout's refs for the base picker, and how often they were
+    /// read.
+    refs: Vec<Json>,
+    refs_read: u64,
+    base_query: String,
+    bases_loading: bool,
+    bases_request: u64,
+    /// A load following the checkout keeps what is shown until answered.
+    quiet: bool,
+    /// The review's source shown, by its kind and hash: the same answer
+    /// again leaves the diff (opened files, loaded patches) alone.
+    source_key: String,
+    /// The focus the diff was last filled for.
+    presented: String,
+    /// The files are listed without their changes, each loaded when opened.
+    lazy: bool,
+    /// Counts the files listed, for an answer to tell its own.
+    listing: u64,
+    lazy_kind: &'static str,
     base_ref: String,
     compared_base: String,
     compared_head: String,
@@ -233,7 +286,20 @@ impl Default for DiffTab {
             working: false,
             turns: BTreeMap::new(),
             selection: -1,
+            latest_picked: false,
+            remembered: HashMap::new(),
             cwd: String::new(),
+            refs: Vec::new(),
+            refs_read: 0,
+            base_query: String::new(),
+            bases_loading: false,
+            bases_request: 0,
+            quiet: false,
+            source_key: String::new(),
+            presented: String::new(),
+            lazy: false,
+            listing: 0,
+            lazy_kind: "",
             base_ref: String::new(),
             compared_base: String::new(),
             compared_head: String::new(),
@@ -275,7 +341,7 @@ impl DiffTab {
             choices: self.choices(),
             latest_turn: self.latest_turn(),
             latest_checkpoint: self.latest_checkpoint(),
-            selection: self.selection,
+            selection: self.selection(),
             shown_turn: self.shown_turn(),
             reviewing: self.reviewing(),
             status: self.status,
@@ -291,19 +357,33 @@ impl DiffTab {
             reverting: self.reverting,
             ignore_whitespace: self.ignore_whitespace(),
             wrap: self.wrap(),
+            bases: (self.refs_read, self.base_query.clone(), self.bases_loading),
         }
     }
 
-    /// The thread shown, and its timeline's checkpoints and whether it is
-    /// working (`None`: the timeline is not there yet). The caller skips
-    /// this when neither the thread nor its timeline changed.
+    /// The thread shown, its timeline's checkpoints and whether it is
+    /// working (`None`: the timeline is not there yet), and its checkout.
+    /// Another thread's selection and base are checked against its own
+    /// checkout. The caller passes only the checkout when neither the thread
+    /// nor its timeline changed.
     pub fn set_thread(
         &mut self,
         environment: &str,
         thread: &str,
         timeline: Option<(Vec<Obj>, bool)>,
+        cwd: &str,
     ) {
         if environment != self.environment || thread != self.thread {
+            if !self.thread.is_empty() {
+                self.remembered.insert(
+                    format!("{}:{}", self.environment, self.thread),
+                    (self.selection, self.base_ref.clone(), self.latest_picked),
+                );
+            }
+            let (selection, base_ref, latest_picked) = self
+                .remembered
+                .remove(&format!("{environment}:{thread}"))
+                .unwrap_or((-1, String::new(), false));
             environment.clone_into(&mut self.environment);
             thread.clone_into(&mut self.thread);
             self.request += 1;
@@ -318,9 +398,19 @@ impl DiffTab {
             self.truncated = false;
             self.revert_turn = 0;
             self.reverting = false;
-            self.selection = -1;
+            self.selection = selection;
+            self.base_ref = base_ref;
+            self.latest_picked = latest_picked;
+            self.source_key.clear();
+            self.lazy = false;
+            self.refs.clear();
+            self.refs_read += 1;
+            self.base_query.clear();
+            self.bases_request += 1;
+            self.bases_loading = false;
             self.set_status("idle", "");
         }
+        cwd.clone_into(&mut self.cwd);
         self.timeline = timeline.is_some();
         let (checkpoints, working) = timeline.unwrap_or_default();
         self.working = working;
@@ -352,13 +442,27 @@ impl DiffTab {
         self.load();
     }
 
+    /// The agent changed the checkout: what is shown of it is asked for
+    /// again, keeping a shown diff until the answer comes (the same answer
+    /// leaves it as it is).
+    pub fn follow(&mut self) {
+        if !self.reviewing() {
+            return;
+        }
+        // A hidden tab loads when it is shown again.
+        self.loaded.clear();
+        self.quiet = self.status == "ready";
+        self.load();
+        self.quiet = false;
+    }
+
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
         self.load();
     }
 
     fn take_checkpoints(&mut self, checkpoints: Vec<Obj>) {
-        let mut turns = BTreeMap::new();
+        let mut counted = Vec::new();
         for checkpoint in checkpoints {
             // The thread's baseline has no turn; one that failed or went
             // missing has no diff.
@@ -368,14 +472,19 @@ impl DiffTab {
             if text(&checkpoint, "status") != "ready" {
                 continue;
             }
-            #[allow(clippy::cast_possible_truncation)]
-            turns.insert(ordinal as i32, checkpoint);
+            counted.push((ordinal, checkpoint));
         }
+        // As the MC counts getTurnDiff's turns: the ready checkpoints in
+        // order, one still being written having no number yet.
+        counted.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let turns: BTreeMap<i32, Obj> = (1..).zip(counted.into_iter().map(|(_, c)| c)).collect();
         self.turns = turns;
         // A turn that went away (rewound) leaves the picker on the latest
-        // one, as does all changes once no turn is left.
+        // one, as does all changes once no turn is left, and the checkout's
+        // choices without one.
         if (self.selection > 0 && !self.turns.contains_key(&self.selection))
             || (self.selection == 0 && self.turns.is_empty())
+            || (self.selection <= WORKING_TREE && self.cwd.is_empty())
         {
             self.selection = -1;
         }
@@ -411,16 +520,39 @@ impl DiffTab {
     }
 
     pub fn selection(&self) -> i32 {
-        self.selection
+        if self.selection == -1 && self.opens_on_all_changes() {
+            0
+        } else {
+            self.selection
+        }
+    }
+
+    /// The default shows all changes: the latest turn changed no files, an
+    /// earlier one did, and the user has not picked the latest turn.
+    fn opens_on_all_changes(&self) -> bool {
+        if self.latest_picked || self.turns.len() < 2 {
+            return false;
+        }
+        let changed = |checkpoint: &Obj| {
+            checkpoint
+                .get("files")
+                .and_then(Json::as_array)
+                .is_some_and(|files| !files.is_empty())
+        };
+        if self.turns.values().next_back().is_some_and(changed) {
+            return false;
+        }
+        self.turns.values().any(changed)
     }
 
     /// The selection shown: the working tree stands in for the latest turn
-    /// of a thread that has none.
+    /// of a thread that has none, and all changes for one that changed
+    /// nothing.
     fn effective_selection(&self) -> i32 {
         if self.selection == -1 && self.turns.is_empty() && !self.cwd.is_empty() {
             WORKING_TREE
         } else {
-            self.selection
+            self.selection()
         }
     }
 
@@ -436,10 +568,16 @@ impl DiffTab {
         } else {
             selection
         };
-        if selection == self.selection {
+        // Picking the latest turn shows it from then on, even when it
+        // changed nothing.
+        if selection == self.selection && !(selection == -1 && self.opens_on_all_changes()) {
+            if selection == -1 {
+                self.latest_picked = true;
+            }
             return;
         }
         self.selection = selection;
+        self.latest_picked = selection == -1;
         // Another selection is shown whole, even when it is the same diff.
         if !self.focus.is_empty() {
             self.focus.clear();
@@ -465,10 +603,11 @@ impl DiffTab {
 
     /// The turn shown (0: all changes, or the checkout).
     pub fn shown_turn(&self) -> i32 {
-        if self.selection == 0 || self.reviewing() {
+        let selection = self.effective_selection();
+        if selection == 0 || self.reviewing() {
             0
-        } else if self.selection > 0 {
-            self.selection
+        } else if selection > 0 {
+            selection
         } else {
             self.latest_turn()
         }
@@ -591,7 +730,7 @@ impl DiffTab {
         // The checkpoints the diff is between: a rewound turn's number comes
         // back with another checkpoint, and one being written becomes ready
         // later.
-        let all = self.selection == 0;
+        let all = self.effective_selection() == 0;
         let to = if all {
             self.latest_turn()
         } else {
@@ -632,6 +771,8 @@ impl DiffTab {
         if self.turns.is_empty() {
             self.forget();
             self.patch.clear();
+            self.lazy = false;
+            self.source_key.clear();
             self.file_total = 0;
             self.diff.clear();
             return self.set_status("empty", "No completed turns yet.");
@@ -645,7 +786,7 @@ impl DiffTab {
         let turn = self.shown_turn();
         let mut payload =
             json!({"threadId": self.thread, "ignoreWhitespace": self.ignore_whitespace()});
-        let method = if self.selection == 0 {
+        let method = if self.effective_selection() == 0 {
             payload["toTurnCount"] = json!(self.latest_turn());
             "orchestration.getFullThreadDiff"
         } else {
@@ -677,7 +818,9 @@ impl DiffTab {
         if selection == BRANCH && !self.base_ref.is_empty() {
             payload["baseRef"] = json!(self.base_ref);
         }
-        self.set_status("loading", "Loading changes...");
+        if !self.quiet {
+            self.set_status("loading", "Loading changes...");
+        }
         self.effects.push(Effect::Call {
             environment: self.environment.clone(),
             method: "review.getDiffPreview",
@@ -730,6 +873,241 @@ impl DiffTab {
                 };
                 self.effects.push(effect);
             }
+            Then::Bases { request } => {
+                if request != self.bases_request {
+                    return;
+                }
+                self.bases_loading = false;
+                if let Ok(result) = result {
+                    self.refs = result
+                        .get("refs")
+                        .and_then(Json::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                }
+                self.refs_read += 1;
+            }
+            Then::File { listing, path } => self.file_listed(listing, &path, result),
+        }
+    }
+
+    // One file's patch of a review cut short came.
+    fn file_listed(&mut self, listing: u64, path: &str, result: Result<Json, String>) {
+        // Another diff is shown meanwhile.
+        if listing != self.listing || !self.lazy {
+            return;
+        }
+        let Some(file) = self.diff.file_of(path) else {
+            return;
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                let error = if error.is_empty() {
+                    COULD_NOT_LOAD
+                } else {
+                    &error
+                };
+                return self.diff.set_file_state(file, "error", error);
+            }
+        };
+        let kind = self.lazy_kind;
+        let source = result
+            .get("sources")
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Json::as_object)
+            .find(|s| text(s, "kind") == kind);
+        // The checkout no longer has what was listed.
+        let Some(source) = source else {
+            return self.diff.set_file_state(file, "gone", GONE);
+        };
+        let partial = source.get("truncated").and_then(Json::as_bool) == Some(true);
+        let patch = without_truncated_marker(text(source, "diff"));
+        if !self.diff.set_file_patch(file, &patch, partial) {
+            self.diff
+                .set_file_state(file, "missing", "No patch available for this file.");
+        }
+    }
+
+    /// Loads one file's changes of a review cut short, as its opening asks.
+    pub fn load_file(&mut self, file: usize) {
+        if !self.lazy || file >= self.diff.file_count() {
+            return;
+        }
+        let path = self.diff.path(file).unwrap_or_default().to_owned();
+        let previous = self.diff.previous_path(file).unwrap_or_default();
+        let previous = if previous.is_empty() {
+            Json::Null
+        } else {
+            json!(previous)
+        };
+        let mut payload = json!({
+            "cwd": self.cwd,
+            "ignoreWhitespace": self.ignore_whitespace(),
+            "file": {"path": path, "previousPath": previous, "sourceKind": self.lazy_kind},
+        });
+        if self.lazy_kind == "branch-range" && !self.base_ref.is_empty() {
+            payload["baseRef"] = json!(self.base_ref);
+        }
+        self.diff.set_file_state(file, "loading", "");
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: "review.getDiffPreview",
+            payload,
+            then: Then::File {
+                listing: self.listing,
+                path,
+            },
+        });
+    }
+
+    /// Loads one file's changes of a review cut short again (after an
+    /// error).
+    pub fn retry_file(&mut self, path: &str) {
+        if let Some(file) = self.diff.file_of(path) {
+            self.load_file(file);
+        }
+    }
+
+    /// The refs the branch can be compared against, as `base_query` filters
+    /// them: `{id, label, ref, remoteOnly}`, "Automatic" (id "automatic",
+    /// ref "") first while nothing is searched. A local branch and its
+    /// remote one are one choice, compared as the local; the branch under
+    /// review is not offered.
+    pub fn base_choices(&self) -> Vec<Json> {
+        let name = |r: &Json| {
+            r.get("name")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        let remote_of = |r: &Json| {
+            r.get("remoteName")
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        // "origin/release" -> "release".
+        let branch = |r: &Json| {
+            let (name, remote) = (name(r), remote_of(r));
+            match name.strip_prefix(&format!("{remote}/")) {
+                Some(rest) if !remote.is_empty() => rest.to_owned(),
+                _ => name,
+            }
+        };
+        let (remotes, locals): (Vec<&Json>, Vec<&Json>) = self
+            .refs
+            .iter()
+            .partition(|r| r.get("isRemote").and_then(Json::as_bool) == Some(true));
+        let mut used = vec![false; remotes.len()];
+        // (id, label, local, remote)
+        let mut entries: Vec<(String, String, String, String)> = Vec::new();
+        for local in locals.into_iter().filter(|r| name(r) != self.compared_head) {
+            let local = name(local);
+            // Its remote one, origin's first.
+            let mut found: Option<usize> = None;
+            for (i, remote) in remotes.iter().enumerate() {
+                if used[i] || branch(remote) != local {
+                    continue;
+                }
+                if found.is_none() || remote_of(remote) == "origin" {
+                    found = Some(i);
+                }
+            }
+            let remote = found.map_or_else(String::new, |i| {
+                used[i] = true;
+                name(remotes[i])
+            });
+            entries.push((format!("local:{local}"), local.clone(), local, remote));
+        }
+        for (i, remote) in remotes.iter().enumerate() {
+            if !used[i] {
+                let remote = name(remote);
+                entries.push((
+                    format!("remote:{remote}"),
+                    remote.clone(),
+                    String::new(),
+                    remote,
+                ));
+            }
+        }
+        let query = self.base_query.trim().to_lowercase();
+        let mut out = Vec::new();
+        if query.is_empty() {
+            out.push(
+                json!({"id": "automatic", "label": "Automatic", "ref": "", "remoteOnly": false}),
+            );
+        }
+        for (id, label, local, remote) in entries {
+            let matches = [&label, &local, &remote]
+                .iter()
+                .any(|s| s.to_lowercase().contains(&query));
+            if !query.is_empty() && !matches {
+                continue;
+            }
+            let remote_only = local.is_empty();
+            let reference = if remote_only { remote } else { local };
+            out.push(
+                json!({"id": id, "label": label, "ref": reference, "remoteOnly": remote_only}),
+            );
+        }
+        out
+    }
+
+    pub fn base_query(&self) -> &str {
+        &self.base_query
+    }
+
+    pub fn set_base_query(&mut self, query: &str) {
+        query.clone_into(&mut self.base_query);
+    }
+
+    pub fn bases_loading(&self) -> bool {
+        self.bases_loading
+    }
+
+    /// Asks the checkout for its refs again (the base picker opening).
+    pub fn load_bases(&mut self) {
+        if self.cwd.is_empty() || self.thread.is_empty() {
+            return;
+        }
+        self.bases_request += 1;
+        self.bases_loading = true;
+        // Every ref at once, filtered here: "origin/release" finds the
+        // local "release".
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: "vcs.listRefs",
+            payload: json!({"cwd": self.cwd, "limit": 500, "includeMatchingRemoteRefs": true}),
+            then: Then::Bases {
+                request: self.bases_request,
+            },
+        });
+    }
+
+    /// Compares against the choice `id` of [`DiffTab::base_choices`].
+    pub fn choose_base(&mut self, id: &str) {
+        let choice = self.base_choices().into_iter().find(|c| c["id"] == id);
+        if let Some(choice) = choice {
+            self.set_base_ref(choice["ref"].as_str().unwrap_or(""));
+        }
+    }
+
+    /// What the user typed: the choice labelled so, else the ref as typed.
+    pub fn choose_typed_base(&mut self, typed: &str) {
+        let typed = typed.trim();
+        if typed.is_empty() || typed.eq_ignore_ascii_case("automatic") {
+            return self.set_base_ref("");
+        }
+        let choice = self
+            .base_choices()
+            .into_iter()
+            .find(|c| c["label"] == typed);
+        match choice {
+            Some(choice) => self.set_base_ref(choice["ref"].as_str().unwrap_or("")),
+            None => self.set_base_ref(typed),
         }
     }
 
@@ -737,6 +1115,8 @@ impl DiffTab {
         // Asking again (reload, another turn) tries once more.
         self.loaded.clear();
         self.patch.clear();
+        self.lazy = false;
+        self.source_key.clear();
         self.file_total = 0;
         self.diff.clear();
         let error = if error.is_empty() {
@@ -750,14 +1130,22 @@ impl DiffTab {
     /// A diff came: a turn's (`selection` none) or the checkout's.
     fn listed(&mut self, result: &Json, selection: Option<i32>) {
         let Some(selection) = selection else {
-            self.patch = result
+            let diff = result
                 .get("diff")
                 .and_then(Json::as_str)
-                .unwrap_or_default()
-                .to_owned();
+                .unwrap_or_default();
+            // Something came back, but no file of it can be shown.
+            let why = if diff.trim().is_empty() {
+                "No net changes in this selection."
+            } else {
+                NO_PATCH
+            };
+            self.patch = diff.to_owned();
+            self.lazy = false;
+            self.source_key.clear();
             self.present();
             if self.diff.file_count() == 0 {
-                self.set_status("empty", "No net changes in this selection.");
+                self.set_status("empty", why);
             } else {
                 self.set_status("ready", "");
             }
@@ -775,21 +1163,53 @@ impl DiffTab {
             .into_iter()
             .flatten()
             .filter_map(Json::as_object)
-            .rfind(|s| text(s, "kind") == kind)
-            .unwrap_or(&none);
+            .rfind(|s| text(s, "kind") == kind);
+        let found = source.is_some();
+        let source = source.unwrap_or(&none);
         text(source, "baseRef").clone_into(&mut self.compared_base);
         text(source, "headRef").clone_into(&mut self.compared_head);
         self.truncated = source.get("truncated").and_then(Json::as_bool) == Some(true);
-        text(source, "diff").clone_into(&mut self.patch);
-        self.present();
+        let files = source
+            .get("files")
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let diff = text(source, "diff");
+        let hash = text(source, "diffHash");
+        let key = if found && !hash.is_empty() {
+            format!("{kind} {hash} {}", self.truncated)
+        } else {
+            String::new()
+        };
+        // The same answer again leaves what the user opened as it is; a
+        // file focused or let go meanwhile changes what is shown of it.
+        if key.is_empty() || key != self.source_key || self.focus != self.presented {
+            self.source_key = key;
+            // Cut short with every file counted: each file's changes come
+            // when it is opened.
+            self.lazy = self.truncated && !files.is_empty();
+            self.lazy_kind = kind;
+            if self.lazy {
+                self.patch.clear();
+                self.listing += 1;
+                self.diff.set_files(&files);
+                self.file_total = self.diff.file_count();
+            } else {
+                self.patch = without_truncated_marker(diff);
+            }
+            self.present();
+        }
         if self.diff.file_count() > 0 {
             self.set_status("ready", "");
+        } else if !found {
+            self.set_status("empty", NO_PATCH);
+        } else if selection == BRANCH && self.compared_base.is_empty() {
+            self.set_status("empty", "This branch has no base to compare against.");
+        } else if !diff.trim().is_empty() {
+            // Something came back, but no file of it can be shown.
+            self.set_status("empty", NO_PATCH);
         } else if selection == BRANCH {
-            let why = if self.compared_base.is_empty() {
-                "This branch has no base to compare against.".to_owned()
-            } else {
-                format!("No changes against {}.", self.compared_base)
-            };
+            let why = format!("No changes against {}.", self.compared_base);
             self.set_status("empty", &why);
         } else {
             self.set_status("empty", "No uncommitted changes.");
@@ -798,9 +1218,16 @@ impl DiffTab {
 
     /// Puts the loaded patch, or its focused file, in the diff.
     fn present(&mut self) {
+        // A review cut short lists every file and shows none alone.
+        if self.lazy {
+            self.focus.clear();
+            self.presented.clear();
+            return;
+        }
         self.diff.set_patch(&self.patch);
         self.file_total = self.diff.file_count();
         if self.focus.is_empty() {
+            self.presented.clear();
             return;
         }
         // The focused file's part of the patch: from its header to the next
@@ -818,6 +1245,7 @@ impl DiffTab {
             }
             _ => self.focus.clear(),
         }
+        self.presented.clone_from(&self.focus);
     }
 
     /// Shows only `path`'s file of the selection; one the selection did not
@@ -958,6 +1386,13 @@ impl DiffTab {
         });
     }
 
+    /// A diff path as the thread's workspace has it: the diff's paths are
+    /// the repository's, and the shell knows no folder of the project
+    /// inside its repository yet, so every path is the workspace's.
+    pub fn workspace_path<'a>(&self, path: &'a str) -> &'a str {
+        path
+    }
+
     pub fn take_effects(&mut self) -> Vec<Effect> {
         std::mem::take(&mut self.effects)
     }
@@ -1008,6 +1443,9 @@ struct Inner {
     /// The timelines followed: observers stay, so each is followed once
     /// and heard only while it is the one shown.
     observed: RefCell<HashSet<ObjectId>>,
+    /// What the agent last did to the shown thread's checkout
+    /// ([`workspace_mutation`]).
+    mutation: RefCell<String>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -1057,6 +1495,14 @@ pub struct ThreadDiff {
     compared_base: Atom,
     #[qml(readonly, notify)]
     compared_head: Atom,
+    /// `[{id, label, ref, remoteOnly}]`: [`DiffTab::base_choices`].
+    #[qml(readonly, notify)]
+    base_choices: Value,
+    /// QML writes it.
+    #[qml(notify)]
+    base_query: Atom,
+    #[qml(readonly, notify)]
+    bases_loading: bool,
     #[qml(readonly, notify)]
     truncated: bool,
     /// QML writes it.
@@ -1081,11 +1527,54 @@ fn inner_of(engine: &Engine, obj: ObjectId) -> Option<Rc<Inner>> {
 
 fn checkpoints_of(engine: &Engine, timeline: ObjectId) -> Option<(Vec<Obj>, bool)> {
     TimelineModel::read(engine, timeline, |t| {
-        (
-            t.entities("checkpoint").values().cloned().collect(),
-            t.working(),
-        )
+        let runs = t.entities("run");
+        // A checkpoint counts as a diff turn only for a completed run, as the
+        // MC counts getTurnDiff's turns; a run the timeline does not hold is
+        // not evidence against it.
+        let counted = t
+            .entities("checkpoint")
+            .values()
+            .filter(|c| {
+                runs.get(text(c, "runId"))
+                    .is_none_or(|run| text(run, "status") == "completed")
+            })
+            .cloned()
+            .collect();
+        (counted, t.working())
     })
+}
+
+/// The agent's last finished command or file change and every checkpoint's
+/// status: when it changes, the checkout may have.
+pub(super) fn mutation_of(t: &Timeline) -> String {
+    let mut item = "";
+    let mut ordinal = -1.0;
+    for (id, entry) in t.entities("turn-item") {
+        if !matches!(text(entry, "type"), "command_execution" | "file_change")
+            || matches!(text(entry, "status"), "pending" | "running" | "waiting")
+        {
+            continue;
+        }
+        let at = entry.get("ordinal").and_then(Json::as_f64).unwrap_or(0.0);
+        if at > ordinal {
+            ordinal = at;
+            item = id;
+        }
+    }
+    let mut checkpoints: Vec<String> = t
+        .entities("checkpoint")
+        .iter()
+        .map(|(id, c)| format!("{id}={}", text(c, "status")))
+        .collect();
+    checkpoints.sort();
+    format!("{item}\n{}", checkpoints.join(","))
+}
+
+/// [`mutation_of`] the timeline shown; empty without one.
+fn workspace_mutation(engine: &Engine, timeline: Option<ObjectId>) -> String {
+    timeline
+        .and_then(|timeline| TimelineModel::read(engine, timeline, mutation_of))
+        .unwrap_or_default()
 }
 
 impl ThreadDiff {
@@ -1105,6 +1594,7 @@ impl ThreadDiff {
             model: Cell::new(None),
             shown: RefCell::default(),
             observed: RefCell::default(),
+            mutation: RefCell::default(),
         });
         let tab = ThreadDiff {
             model: Value::Null,
@@ -1120,6 +1610,9 @@ impl ThreadDiff {
             base_ref: Atom::new(""),
             compared_base: Atom::new(""),
             compared_head: Atom::new(""),
+            base_choices: Value::Undefined,
+            base_query: Atom::new(""),
+            bases_loading: false,
             truncated: false,
             ignore_whitespace: true,
             wrap: false,
@@ -1134,6 +1627,7 @@ impl ThreadDiff {
         engine.set_internal(obj, ThreadDiff::MODEL, Value::Object(model))?;
         let facts = inner.rows.read(DiffTab::facts);
         write(engine, obj, &facts);
+        write_bases(engine, obj, &inner);
         // What QML writes goes through the tab, which may keep it as it
         // was (or trimmed).
         engine.connect_by_name(obj, "baseRefChanged", move |engine, _| {
@@ -1147,6 +1641,21 @@ impl ThreadDiff {
                     let set = engine.set_internal(obj, ThreadDiff::BASE_REF, Atom::new(&kept));
                     warn(engine, set);
                 }
+            }
+        })?;
+        engine.connect_by_name(obj, "baseQueryChanged", move |engine, _| {
+            if let Ok(query) = engine.get(obj, ThreadDiff::BASE_QUERY) {
+                ThreadDiff::update(engine, obj, |t| t.set_base_query(&query));
+            }
+        })?;
+        // A file opened without its changes asks for them.
+        engine.connect_by_name(model, "fileWanted", move |engine, args| {
+            let file = match args.first() {
+                Some(Value::Int(i)) => usize::try_from(*i).ok(),
+                _ => None,
+            };
+            if let Some(file) = file {
+                ThreadDiff::update(engine, obj, |t| t.load_file(file));
             }
         })?;
         engine.connect_by_name(obj, "ignoreWhitespaceChanged", move |engine, _| {
@@ -1167,25 +1676,29 @@ impl ThreadDiff {
         inner_of(engine, obj)?.model.get()
     }
 
-    /// The thread shown, and its timeline (for its checkpoints and whether
-    /// it is working; it may come later than the thread). The right panel
-    /// passes these, and the checkout, whether the tab shows and the
-    /// whitespace and wrap settings through `update`.
+    /// The thread shown, its timeline (for its checkpoints, whether it is
+    /// working and what the agent does to the checkout; it may come later
+    /// than the thread) and its checkout. The right panel passes these, and
+    /// whether the tab shows and the whitespace and wrap settings through
+    /// `update`.
     pub fn set_thread(
         engine: &Engine,
         obj: ObjectId,
         environment: &str,
         thread: &str,
         timeline: Option<ObjectId>,
+        cwd: &str,
     ) {
         let Some(inner) = inner_of(engine, obj) else {
             return;
         };
         let next = (environment.to_owned(), thread.to_owned(), timeline);
         if *inner.shown.borrow() == next {
+            ThreadDiff::update(engine, obj, |t| t.set_checkout(cwd));
             return;
         }
         *inner.shown.borrow_mut() = next;
+        *inner.mutation.borrow_mut() = workspace_mutation(engine, timeline);
         if let Some(timeline) = timeline
             && inner.observed.borrow_mut().insert(timeline)
         {
@@ -1205,12 +1718,21 @@ impl ThreadDiff {
                         let working = checkpoints_of(engine, timeline).is_some_and(|(_, w)| w);
                         ThreadDiff::update(engine, obj, |t| t.set_working(working));
                     }
+                    Out::WorkspaceChanged => {
+                        let now = workspace_mutation(engine, Some(timeline));
+                        if now != std::mem::replace(&mut *inner.mutation.borrow_mut(), now.clone())
+                        {
+                            ThreadDiff::update(engine, obj, DiffTab::follow);
+                        }
+                    }
                     _ => {}
                 }
             });
         }
         let facts = timeline.and_then(|timeline| checkpoints_of(engine, timeline));
-        ThreadDiff::update(engine, obj, |t| t.set_thread(environment, thread, facts));
+        ThreadDiff::update(engine, obj, |t| {
+            t.set_thread(environment, thread, facts, cwd)
+        });
     }
 
     /// Runs `f` on the tab of `obj`, then tells the views and the
@@ -1234,6 +1756,9 @@ impl ThreadDiff {
         if !signals.is_empty() {
             write(engine, obj, &after);
         }
+        if signals.contains(&Signal::Bases) {
+            write_bases(engine, obj, &inner);
+        }
         let cx = Cx::new(engine, obj);
         let told = signals.iter().try_for_each(|signal| match signal {
             Signal::Turns => ThreadDiff::emit_turns_changed(&cx),
@@ -1241,6 +1766,7 @@ impl ThreadDiff {
             Signal::Revert => ThreadDiff::emit_revert_changed(&cx),
             Signal::Options => ThreadDiff::emit_options_changed(&cx),
             Signal::Focus => ThreadDiff::emit_focus_changed(&cx),
+            Signal::Bases => ThreadDiff::emit_bases_changed(&cx),
             // The properties' own signals.
             Signal::Selection | Signal::Status => Ok(()),
         });
@@ -1265,6 +1791,26 @@ fn warn(engine: &Engine, result: Result<(), EngineError>) {
             e.to_string(),
         );
     }
+}
+
+/// Writes the base picker's properties.
+fn write_bases(engine: &Engine, obj: ObjectId, inner: &Inner) {
+    let (choices, query, loading) = inner.rows.read(|t| {
+        (
+            t.base_choices(),
+            t.base_query().to_owned(),
+            t.bases_loading(),
+        )
+    });
+    let result = engine
+        .set_internal(
+            obj,
+            ThreadDiff::BASE_CHOICES,
+            Json::Array(choices).to_value(),
+        )
+        .and_then(|()| engine.set_internal(obj, ThreadDiff::BASE_QUERY, Atom::new(&query)))
+        .and_then(|()| engine.set_internal(obj, ThreadDiff::BASES_LOADING, loading));
+    warn(engine, result);
 }
 
 /// Writes the properties; each says so only when it changed.
@@ -1349,6 +1895,9 @@ impl ThreadDiff {
     fn revert_changed();
     #[qml(signal)]
     fn options_changed();
+    /// baseChoices, baseQuery or basesLoading changed.
+    #[qml(signal)]
+    fn bases_changed();
     /// A review comment for the composer (`composer.reviewComment.add`).
     #[qml(signal)]
     fn comment_requested(comment: Value);
@@ -1370,6 +1919,38 @@ impl ThreadDiff {
     #[qml(invokable)]
     fn reload(cx: &Cx) {
         ThreadDiff::update(cx.engine, cx.this, DiffTab::reload);
+    }
+
+    /// Asks the checkout for its refs again (the base picker opening).
+    #[qml(invokable)]
+    fn load_bases(cx: &Cx) {
+        ThreadDiff::update(cx.engine, cx.this, DiffTab::load_bases);
+    }
+
+    /// Compares against the choice `id` of baseChoices.
+    #[qml(invokable)]
+    fn choose_base(cx: &Cx, id: Atom) {
+        ThreadDiff::update(cx.engine, cx.this, |t| t.choose_base(&id));
+    }
+
+    /// What the user typed: the choice labelled so, else the ref as typed.
+    #[qml(invokable)]
+    fn choose_typed_base(cx: &Cx, text: Atom) {
+        ThreadDiff::update(cx.engine, cx.this, |t| t.choose_typed_base(&text));
+    }
+
+    /// Loads one file's changes of a review cut short again.
+    #[qml(invokable)]
+    fn retry_file(cx: &Cx, path: Atom) {
+        ThreadDiff::update(cx.engine, cx.this, |t| t.retry_file(&path));
+    }
+
+    /// A diff path as the thread's workspace has it, or empty for a file
+    /// outside it.
+    #[qml(invokable)]
+    fn workspace_path(cx: &Cx, path: Atom) -> String {
+        ThreadDiff::read(cx.engine, cx.this, |t| t.workspace_path(&path).to_owned())
+            .unwrap_or_default()
     }
 
     /// Scrolls the view to `path`'s file, expanding it.

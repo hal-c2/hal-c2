@@ -4,7 +4,7 @@
 //!
 //! Publishes `attachmentViewer`, null while closed: {id, name, mimeType,
 //! kind (image | markdown | text | unsupported), url, text, origin
-//! ("Draft")}. Actions: `attachment.view {id}` (a draft attachment's),
+//! ("Draft"), removable}. Actions: `attachment.view {id}` (a draft attachment's),
 //! `attachment.viewer.close`, and `attachment.viewer.remove`, which takes
 //! the attachment off its draft and closes. The viewer closes when its
 //! attachment leaves the draft any other way (sent, removed from its chip).
@@ -97,6 +97,8 @@ impl Controller for AttachmentViewer {
                 self.viewing = preview["id"].as_str().unwrap_or_default().to_owned();
                 preview["kind"] = json!(kind_of(&preview));
                 preview["origin"] = json!("Draft");
+                // A draft's can be taken off the draft from the viewer.
+                preview["removable"] = json!(true);
                 self.bridge.publish(engine, KEY, preview);
             }
             "attachment.viewer.close" => self.close(engine),

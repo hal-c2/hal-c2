@@ -2,15 +2,16 @@
 //! comment and revert flows, and tst_WorkspaceThreadDiffProp's state
 //! machine against an MC that answers in any order.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use serde_json::json;
 
+use super::super::diff::{AsDiff, DiffNote};
 use super::super::rows::Mirror;
 use super::super::summary::Obj;
 use super::super::timeline::{Out, Timeline};
-use super::{BRANCH, DiffTab, Effect, Json, Signal, Then, WORKING_TREE};
+use super::{BRANCH, DiffTab, Effect, Json, Signal, Then, WORKING_TREE, mutation_of};
 
 const ENV: &str = "env-a";
 
@@ -69,7 +70,7 @@ fn diff(files: &[&str]) -> Result<Json, String> {
 fn shown(checkpoints: Vec<Obj>) -> DiffTab {
     let mut tab = DiffTab::new();
     tab.set_active(true);
-    tab.set_thread(ENV, "t1", Some((checkpoints, false)));
+    tab.set_thread(ENV, "t1", Some((checkpoints, false)), "");
     tab
 }
 
@@ -98,9 +99,10 @@ fn a_turn_is_diffed_again_when_the_turn_before_it_is_ready() {
     let mut tab = shown(vec![checkpoint("cp-1", 1, "pending", 0), ready("cp-2", 2)]);
     let (method, payload, then) = only(&mut tab);
     assert_eq!(method, "orchestration.getTurnDiff");
+    // As the MC counts turns, the one being written has no number yet.
     assert_eq!(
         payload,
-        json!({"threadId": "t1", "ignoreWhitespace": true, "fromTurnCount": 1, "toTurnCount": 2})
+        json!({"threadId": "t1", "ignoreWhitespace": true, "fromTurnCount": 0, "toTurnCount": 1})
     );
     tab.answer(then, diff(&["a.txt"]));
     assert_eq!(tab.status(), "ready");
@@ -179,13 +181,13 @@ fn a_timeline_that_comes_back_loads_again() {
     let mut tab = shown(vec![ready("cp-1", 1)]);
     let (_, _, then) = only(&mut tab);
     tab.answer(then, diff(&["a.txt"]));
-    tab.set_thread(ENV, "t1", None);
+    tab.set_thread(ENV, "t1", None, "");
     assert_eq!(
         (tab.status(), tab.message()),
         ("loading", "Loading checkpoint diff...")
     );
     assert!(asked(&mut tab).is_empty());
-    tab.set_thread(ENV, "t1", Some((vec![ready("cp-1", 1)], false)));
+    tab.set_thread(ENV, "t1", Some((vec![ready("cp-1", 1)], false)), "");
     let (method, _, then) = only(&mut tab);
     assert_eq!(method, "orchestration.getTurnDiff");
     tab.answer(then, diff(&["a.txt"]));
@@ -208,12 +210,25 @@ fn another_thread_forgets_the_compared_refs() {
         ("main", "feature", true)
     );
     let before = tab.facts();
-    tab.set_thread(ENV, "t2", Some((Vec::new(), false)));
+    tab.set_thread(ENV, "t2", Some((Vec::new(), false)), "/c");
     assert!(tab.facts().signals(&before).contains(&Signal::Review));
     assert_eq!(
         (tab.compared_base(), tab.compared_head(), tab.truncated()),
         ("", "", false)
     );
+}
+
+/// Opening a thread checked its saved choice against the last thread's
+/// checkout: coming back from a thread with none lost the branch.
+#[test]
+fn a_thread_keeps_its_branch_after_one_without_a_checkout() {
+    let mut tab = DiffTab::new();
+    tab.set_thread(ENV, "t1", Some((Vec::new(), false)), "/c");
+    tab.select(BRANCH);
+    tab.set_thread(ENV, "t2", Some((Vec::new(), false)), "");
+    assert_eq!(tab.selection(), -1);
+    tab.set_thread(ENV, "t1", Some((Vec::new(), false)), "/c");
+    assert_eq!(tab.selection(), BRANCH);
 }
 
 #[test]
@@ -235,6 +250,7 @@ fn a_branch_with_nothing_to_compare_says_why() {
     assert_eq!(tab.message(), "No changes against main.");
     tab.select(WORKING_TREE);
     let (_, _, then) = only(&mut tab);
+    let source = json!({"kind": "working-tree", "diff": ""});
     tab.answer(then, Ok(json!({"sources": [source]})));
     assert_eq!(tab.message(), "No uncommitted changes.");
 }
@@ -259,12 +275,13 @@ fn picking_the_same_diff_shows_all_its_files() {
 }
 
 #[test]
-fn another_thread_in_the_same_state_changes_nothing() {
+fn another_thread_in_the_same_state_changes_nothing_but_its_bases() {
     let mut tab = shown(Vec::new());
     assert_eq!(tab.status(), "empty");
     let before = tab.facts();
-    tab.set_thread(ENV, "t2", Some((Vec::new(), false)));
-    assert_eq!(tab.facts().signals(&before), []);
+    tab.set_thread(ENV, "t2", Some((Vec::new(), false)), "");
+    // The bases are the new thread's to read, as desktop-qt tells them.
+    assert_eq!(tab.facts().signals(&before), [Signal::Bases]);
 }
 
 #[test]
@@ -293,7 +310,7 @@ fn a_failed_diff_says_why_and_is_asked_again() {
 #[test]
 fn a_hidden_tab_loads_when_shown() {
     let mut tab = DiffTab::new();
-    tab.set_thread(ENV, "t1", Some((vec![ready("cp-1", 1)], false)));
+    tab.set_thread(ENV, "t1", Some((vec![ready("cp-1", 1)], false)), "");
     tab.set_ignore_whitespace(false);
     assert!(asked(&mut tab).is_empty());
     assert_eq!(tab.status(), "idle");
@@ -438,13 +455,26 @@ struct Cp {
 
 type Mcs = BTreeMap<String, Vec<Cp>>;
 
-/// Turn number -> the ready checkpoint's id.
+/// What of the checkpoints says the agent changed the checkout.
+fn mutation(checkpoints: &[Cp]) -> Vec<String> {
+    let mut out: Vec<String> = checkpoints
+        .iter()
+        .map(|c| format!("{}={}", c.id, c.status))
+        .collect();
+    out.sort();
+    out
+}
+
+/// Turn number -> the ready checkpoint's id. As the MC counts them, turns
+/// are the ready checkpoints in order: one still being written has no
+/// number yet.
 fn ready_turns(checkpoints: &[Cp]) -> BTreeMap<i32, String> {
-    checkpoints
+    let by_ordinal: BTreeMap<i32, String> = checkpoints
         .iter()
         .filter(|c| c.status == "ready")
         .map(|c| (c.turn, c.id.clone()))
-        .collect()
+        .collect();
+    (1..).zip(by_ordinal.into_values()).collect()
 }
 
 /// What the MC is asked. `selection` only says which source of a review
@@ -459,15 +489,26 @@ struct Req {
     cwd: String,
     base: String,
     selection: i32,
+    /// One file's changes of a review cut short.
+    file: String,
     /// Which of the client's requests it was: only the newest is shown.
     number: u64,
+    /// Which listing of a review cut short a file's request is for.
+    listing: u64,
 }
 
 impl Req {
     fn asked(&self) -> String {
         format!(
-            "{} {} {}..{} ws={} cwd={} base={}",
-            self.method, self.thread, self.from, self.to, self.whitespace, self.cwd, self.base
+            "{} {} {}..{} ws={} cwd={} base={} file={}",
+            self.method,
+            self.thread,
+            self.from,
+            self.to,
+            self.whitespace,
+            self.cwd,
+            self.base,
+            self.file
         )
     }
 }
@@ -484,6 +525,12 @@ struct Answer {
 /// What the MC answers to `req` from the checkpoints it has now.
 fn answer_of(req: &Req, mc: &Mcs) -> Answer {
     let ws = if req.whitespace { "-ws" } else { "" };
+    if !req.file.is_empty() {
+        return Answer {
+            files: vec![req.file.clone()],
+            ..Answer::default()
+        };
+    }
     if req.method == "review.getDiffPreview" {
         let branch = req.selection == BRANCH;
         let base = if req.base.is_empty() {
@@ -557,9 +604,29 @@ struct Model {
     timeline: bool,
     active: bool,
     selection: i32,
+    /// The user picked the latest turn, so it is shown even when it changed
+    /// nothing.
+    latest_picked: bool,
     cwd: String,
     base: String,
     whitespace: bool,
+    /// What each other thread had selected, its base, and whether the
+    /// latest turn was picked.
+    remembered: BTreeMap<String, (i32, String, bool)>,
+    /// A load following the checkout keeps a shown diff until it is
+    /// answered.
+    quiet: bool,
+    /// The review answer shown (its kind and files), and the focus shown of
+    /// it: the same again changes nothing.
+    source_key: String,
+    presented: String,
+    /// A review cut short: its files, how far each one's changes are, and
+    /// which the user opened.
+    lazy: bool,
+    lazy_kind: &'static str,
+    listing: u64,
+    file_states: BTreeMap<String, &'static str>,
+    opened: BTreeSet<String>,
     status: &'static str,
     message: String,
     files: Vec<String>,
@@ -582,9 +649,19 @@ impl Default for Model {
             timeline: false,
             active: false,
             selection: -1,
+            latest_picked: false,
             cwd: String::new(),
             base: String::new(),
             whitespace: true,
+            remembered: BTreeMap::new(),
+            quiet: false,
+            source_key: String::new(),
+            presented: String::new(),
+            lazy: false,
+            lazy_kind: "",
+            listing: 0,
+            file_states: BTreeMap::new(),
+            opened: BTreeSet::new(),
             status: "idle",
             message: String::new(),
             files: Vec::new(),
@@ -673,11 +750,41 @@ impl Model {
             .cloned()
     }
 
+    /// How many files the summary of turn `turn`'s checkpoint lists.
+    fn files_of(&self, turn: i32) -> usize {
+        let Some(id) = self.turns().get(&turn).cloned() else {
+            return 0;
+        };
+        self.mc
+            .get(&self.thread)
+            .and_then(|c| c.iter().find(|c| c.id == id))
+            .map_or(0, |c| c.files)
+    }
+
+    /// The default shows all changes when the latest turn changed no files
+    /// and an earlier one did.
+    fn opens_on_all_changes(&self) -> bool {
+        let latest = self.latest_turn();
+        if self.latest_picked || self.turns().len() < 2 || self.files_of(latest) > 0 {
+            return false;
+        }
+        (1..latest).any(|turn| self.files_of(turn) > 0)
+    }
+
+    /// What the picker shows.
+    fn picked(&self) -> i32 {
+        if self.selection == -1 && self.opens_on_all_changes() {
+            0
+        } else {
+            self.selection
+        }
+    }
+
     fn effective(&self) -> i32 {
         if self.selection == -1 && self.turns().is_empty() && !self.cwd.is_empty() {
             WORKING_TREE
         } else {
-            self.selection
+            self.picked()
         }
     }
 
@@ -686,10 +793,11 @@ impl Model {
     }
 
     fn shown_turn(&self) -> i32 {
-        if self.selection == 0 || self.reviewing() {
+        let effective = self.effective();
+        if effective == 0 || self.reviewing() {
             0
-        } else if self.selection > 0 {
-            self.selection
+        } else if effective > 0 {
+            effective
         } else {
             self.latest_turn()
         }
@@ -713,7 +821,7 @@ impl Model {
             choices: self.choices(),
             latest_turn: self.latest_turn(),
             latest_checkpoint: self.latest_checkpoint(),
-            selection: self.selection,
+            selection: self.picked(),
             shown_turn: self.shown_turn(),
             reviewing: self.reviewing(),
             status: self.status,
@@ -744,7 +852,7 @@ impl Model {
             if req.selection == BRANCH {
                 req.base = self.base.clone();
             }
-        } else if self.selection == 0 {
+        } else if self.effective() == 0 {
             req.method = "orchestration.getFullThreadDiff".into();
             req.to = self.latest_turn().into();
         } else {
@@ -791,6 +899,7 @@ impl Model {
         if !self.reviewing() && self.turns().is_empty() {
             self.request += 1;
             self.loaded = None;
+            self.drop_review();
             self.clear_diff();
             return self.set_status("empty", "No completed turns yet.");
         }
@@ -803,6 +912,9 @@ impl Model {
         self.request += 1;
         next.number = self.request;
         self.pending.push(next);
+        if self.reviewing() && self.quiet {
+            return;
+        }
         let why = if self.reviewing() {
             "Loading changes..."
         } else {
@@ -811,11 +923,44 @@ impl Model {
         self.set_status("loading", why);
     }
 
+    /// The agent changed the checkout: what is shown of it is asked for
+    /// again.
+    fn follow(&mut self) {
+        if !self.reviewing() {
+            return;
+        }
+        self.loaded = None;
+        self.quiet = self.status == "ready";
+        self.load();
+        self.quiet = false;
+    }
+
+    /// The thread's checkpoints changed in its stream.
+    fn streamed(&mut self, thread: &str, next: Vec<Cp>) {
+        let before = mutation(self.mc.get(thread).map_or(&[][..], Vec::as_slice));
+        let after = mutation(&next);
+        self.mc.insert(thread.to_owned(), next);
+        if thread != self.thread {
+            return;
+        }
+        self.read_checkpoints();
+        if self.timeline && after != before {
+            self.follow();
+        }
+    }
+
+    fn drop_review(&mut self) {
+        self.source_key.clear();
+        self.lazy = false;
+    }
+
     fn present(&mut self, files: Vec<String>) {
         self.file_total = files.len();
-        if !self.focus.is_empty() && !files.contains(&self.focus) {
+        // A review cut short shows every file it lists.
+        if self.lazy || (!self.focus.is_empty() && !files.contains(&self.focus)) {
             self.focus.clear();
         }
+        self.presented.clone_from(&self.focus);
         self.files = files;
     }
 
@@ -828,22 +973,62 @@ impl Model {
     }
 
     fn answer(&mut self, req: &Req, answer: Answer) {
+        if !req.file.is_empty() {
+            // A file's changes are taken while its listing is shown.
+            if req.listing != self.listing || !self.lazy {
+                return;
+            }
+            if let Some(state) = self.file_states.get_mut(&req.file)
+                && !state.is_empty()
+            {
+                *state = if answer.error.is_some() { "error" } else { "" };
+            }
+            return;
+        }
         if req.number != self.request {
             return;
         }
         if let Some(error) = answer.error {
             self.loaded = None;
+            self.drop_review();
             self.clear_diff();
             return self.set_status("error", &error);
         }
         let review = req.method == "review.getDiffPreview";
+        let empty = answer.files.is_empty();
         if review {
             self.compared_base = answer.base;
             self.compared_head = answer.head;
             self.truncated = answer.truncated;
+            let kind = if req.selection == BRANCH {
+                "branch-range"
+            } else {
+                "working-tree"
+            };
+            let key = format!(
+                "{kind} {}{}",
+                answer.files.join(","),
+                if answer.truncated { " cut" } else { "" }
+            );
+            if key != self.source_key || self.focus != self.presented {
+                self.source_key = key;
+                self.lazy = answer.truncated && !answer.files.is_empty();
+                self.lazy_kind = kind;
+                if self.lazy {
+                    self.listing += 1;
+                    self.file_states = answer
+                        .files
+                        .iter()
+                        .map(|f| (f.clone(), "unloaded"))
+                        .collect();
+                    self.opened.clear();
+                }
+                self.present(answer.files);
+            }
+        } else {
+            self.drop_review();
+            self.present(answer.files);
         }
-        let empty = answer.files.is_empty();
-        self.present(answer.files);
         if !empty {
             self.set_status("ready", "");
         } else if !review {
@@ -859,8 +1044,11 @@ impl Model {
     /// The shown thread's timeline read its checkpoints again.
     fn read_checkpoints(&mut self) {
         let turns = self.turns();
+        // All changes of a thread with no turns is not a choice, nor the
+        // checkout without one.
         if (self.selection > 0 && !turns.contains_key(&self.selection))
             || (self.selection == 0 && turns.is_empty())
+            || (self.selection <= WORKING_TREE && self.cwd.is_empty())
         {
             self.selection = -1;
         }
@@ -874,6 +1062,8 @@ struct Sut {
     mirror: Mirror,
     timelines: BTreeMap<String, Timeline>,
     shown: Option<(String, bool)>,
+    /// The shown timeline's workspace mutation, as ThreadDiff follows it.
+    mutation: String,
     held: Vec<(Req, Then)>,
     mc: Mcs,
 }
@@ -890,6 +1080,7 @@ impl Sut {
                 .map(|t| ((*t).to_owned(), Timeline::new(&format!("{ENV}:{t}"))))
                 .collect(),
             shown: None,
+            mutation: String::new(),
             held: Vec::new(),
             mc: Mcs::new(),
         }
@@ -917,6 +1108,10 @@ impl Sut {
                 whitespace: payload["ignoreWhitespace"].as_bool().unwrap_or(false),
                 cwd: text("cwd"),
                 base: text("baseRef"),
+                file: payload["file"]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
                 ..Req::default()
             };
             self.held.push((req, then));
@@ -951,20 +1146,49 @@ impl Sut {
         timeline.receive(&frame);
         let out = timeline.take_out();
         // ThreadDiff hears the timeline it was given.
-        if self.shown == Some((thread.to_owned(), true)) && out.contains(&Out::CheckpointsChanged) {
+        if self.shown != Some((thread.to_owned(), true)) {
+            return;
+        }
+        if out.contains(&Out::CheckpointsChanged) {
             let checkpoints = self.checkpoints(thread);
             self.tab.set_checkpoints(checkpoints);
         }
+        if out.contains(&Out::WorkspaceChanged) {
+            let now = mutation_of(&self.timelines[thread]);
+            if now != std::mem::replace(&mut self.mutation, now.clone()) {
+                self.tab.follow();
+            }
+        }
     }
 
-    fn set_thread(&mut self, thread: &str, timeline: bool) {
+    fn set_thread(&mut self, thread: &str, timeline: bool, cwd: &str) {
         let next = Some((thread.to_owned(), timeline));
         if self.shown == next {
-            return;
+            return self.tab.set_checkout(cwd);
         }
         self.shown = next;
+        self.mutation = if timeline {
+            mutation_of(&self.timelines[thread])
+        } else {
+            String::new()
+        };
         let checkpoints = timeline.then(|| (self.checkpoints(thread), false));
-        self.tab.set_thread(ENV, thread, checkpoints);
+        self.tab.set_thread(ENV, thread, checkpoints, cwd);
+    }
+
+    /// Opens a file of a review cut short, which asks for its changes; a
+    /// failed one opened already is retried.
+    fn open_file(&mut self, path: &str, opened: bool) {
+        if opened {
+            return self.tab.retry_file(path);
+        }
+        let file = self.tab.diff().file_of(path).expect("the file is listed");
+        self.tab.diff_mut().set_expanded(file, true);
+        for note in self.tab.diff_mut().take_notes() {
+            if let DiffNote::FileWanted(file) = note {
+                self.tab.load_file(file);
+            }
+        }
     }
 
     fn answer(&mut self, req: &Req, mut rank: usize, ok: bool) {
@@ -983,6 +1207,14 @@ impl Sut {
         let (asked, then) = self.held.remove(at);
         let result = if !ok {
             Err("no".to_owned())
+        } else if !asked.file.is_empty() {
+            // One file's changes, from either source.
+            let patch = patch_of(&[&asked.file]);
+            let sources: Vec<Json> = ["working-tree", "branch-range"]
+                .iter()
+                .map(|kind| json!({"kind": kind, "diff": patch, "truncated": false}))
+                .collect();
+            Ok(json!({ "sources": sources }))
         } else if asked.method == "review.getDiffPreview" {
             let source = |kind: &str, selection: i32| {
                 let answer = answer_of(
@@ -992,7 +1224,20 @@ impl Sut {
                     },
                     &self.mc,
                 );
-                json!({"kind": kind, "diff": patch_of(&answer.files), "baseRef": answer.base, "headRef": answer.head, "truncated": answer.truncated})
+                // A source cut short counts every file.
+                let stats: Vec<Json> = answer
+                    .files
+                    .iter()
+                    .map(|f| json!({"path": f, "previousPath": null, "additions": 1, "deletions": 1}))
+                    .collect();
+                let patch = patch_of(&answer.files);
+                let hash = {
+                    use std::hash::{DefaultHasher, Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    patch.hash(&mut hasher);
+                    format!("{:x}", hasher.finish())
+                };
+                json!({"kind": kind, "diff": patch, "diffHash": hash, "baseRef": answer.base, "headRef": answer.head, "truncated": answer.truncated, "files": stats})
             };
             Ok(
                 json!({"sources": [source("working-tree", WORKING_TREE), source("branch-range", BRANCH)]}),
@@ -1019,7 +1264,9 @@ enum Action {
     Summarize(usize, usize, usize),
     /// The thread is rewound to after the turn.
     Rewind(usize, i32),
-    SetThread(usize, bool),
+    /// The thread is opened (its timeline sometimes not there yet) on a
+    /// checkout.
+    SetThread(usize, bool, usize),
     SetActive(bool),
     SetCheckout(usize),
     Select(i32),
@@ -1028,6 +1275,8 @@ enum Action {
     Focus(usize),
     Reload,
     AnswerOne(usize, bool),
+    /// A file of a review cut short is opened, or retried after it failed.
+    OpenFile(usize),
 }
 
 fn action() -> impl Strategy<Value = Action> {
@@ -1038,7 +1287,8 @@ fn action() -> impl Strategy<Value = Action> {
         1 => (thread.clone(), any::<usize>(), 1..4usize)
             .prop_map(|(t, at, n)| Action::Summarize(t, at, n)),
         1 => (thread.clone(), 0..4i32).prop_map(|(t, turn)| Action::Rewind(t, turn)),
-        1 => (thread, prop::bool::weighted(0.8)).prop_map(|(t, tl)| Action::SetThread(t, tl)),
+        1 => (thread, prop::bool::weighted(0.8), 0..CHECKOUTS.len())
+            .prop_map(|(t, tl, cwd)| Action::SetThread(t, tl, cwd)),
         2 => any::<bool>().prop_map(Action::SetActive),
         1 => (0..CHECKOUTS.len()).prop_map(Action::SetCheckout),
         2 => (-4..5i32).prop_map(Action::Select),
@@ -1048,6 +1298,7 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::Reload),
         4 => (any::<usize>(), prop::bool::weighted(5.0 / 6.0))
             .prop_map(|(at, ok)| Action::AnswerOne(at, ok)),
+        2 => any::<usize>().prop_map(Action::OpenFile),
     ]
 }
 
@@ -1056,11 +1307,21 @@ fn action() -> impl Strategy<Value = Action> {
 fn change(model: &mut Model, sut: &mut Sut, thread: &str, f: impl FnOnce(&mut Vec<Cp>)) {
     let mut next = model.mc.get(thread).cloned().unwrap_or_default();
     f(&mut next);
-    model.mc.insert(thread.to_owned(), next.clone());
-    if thread == model.thread {
-        model.read_checkpoints();
-    }
+    model.streamed(thread, next.clone());
     sut.stream(thread, next);
+}
+
+/// The thread's checkout becomes `cwd`; the checkout's own choices go with
+/// it.
+fn check_out(model: &mut Model, cwd: &str) {
+    if cwd == model.cwd {
+        return;
+    }
+    cwd.clone_into(&mut model.cwd);
+    if cwd.is_empty() && model.selection <= WORKING_TREE {
+        model.selection = -1;
+    }
+    model.load();
 }
 
 /// Runs one action on both; false when it does not apply.
@@ -1137,10 +1398,21 @@ fn act(model: &mut Model, sut: &mut Sut, action: &Action) -> bool {
                 }
             });
         }
-        Action::SetThread(t, timeline) => {
+        Action::SetThread(t, timeline, at) => {
             let thread = THREADS[t];
-            if thread != model.thread || timeline != model.timeline {
+            let cwd = CHECKOUTS[at];
+            if thread == model.thread && timeline == model.timeline {
+                check_out(model, cwd);
+            } else {
                 if thread != model.thread {
+                    if !model.thread.is_empty() {
+                        let choices = (model.selection, model.base.clone(), model.latest_picked);
+                        model.remembered.insert(model.thread.clone(), choices);
+                    }
+                    let (selection, base, latest_picked) = model
+                        .remembered
+                        .remove(thread)
+                        .unwrap_or((-1, String::new(), false));
                     thread.clone_into(&mut model.thread);
                     model.request += 1;
                     model.loaded = None;
@@ -1149,13 +1421,18 @@ fn act(model: &mut Model, sut: &mut Sut, action: &Action) -> bool {
                     model.compared_base.clear();
                     model.compared_head.clear();
                     model.truncated = false;
-                    model.selection = -1;
+                    model.drop_review();
+                    model.selection = selection;
+                    model.base = base;
+                    model.latest_picked = latest_picked;
                     model.set_status("idle", "");
                 }
                 model.timeline = timeline;
+                // The thread's choice is checked against its own checkout.
+                cwd.clone_into(&mut model.cwd);
                 model.read_checkpoints();
             }
-            sut.set_thread(thread, timeline);
+            sut.set_thread(thread, timeline, cwd);
         }
         Action::SetActive(active) => {
             model.active = active;
@@ -1164,13 +1441,7 @@ fn act(model: &mut Model, sut: &mut Sut, action: &Action) -> bool {
         }
         Action::SetCheckout(at) => {
             let cwd = CHECKOUTS[at];
-            if cwd != model.cwd {
-                cwd.clone_into(&mut model.cwd);
-                if cwd.is_empty() && model.selection <= WORKING_TREE {
-                    model.selection = -1;
-                }
-                model.load();
-            }
+            check_out(model, cwd);
             sut.tab.set_checkout(cwd);
         }
         Action::Select(selection) => {
@@ -1184,8 +1455,15 @@ fn act(model: &mut Model, sut: &mut Sut, action: &Action) -> bool {
                 } else {
                     selection
                 };
-                if next != model.selection {
+                // Picking the latest turn shows it from then on, even when
+                // it changed nothing.
+                if next == model.selection && !(next == -1 && model.opens_on_all_changes()) {
+                    if next == -1 {
+                        model.latest_picked = true;
+                    }
+                } else {
                     model.selection = next;
+                    model.latest_picked = next == -1;
                     model.focus.clear();
                     model.load();
                 }
@@ -1248,6 +1526,36 @@ fn act(model: &mut Model, sut: &mut Sut, action: &Action) -> bool {
             model.answer(&req, answer);
             sut.answer(&req, rank, ok);
         }
+        Action::OpenFile(at) => {
+            let paths: Vec<String> = model
+                .file_states
+                .iter()
+                .filter(|(_, state)| matches!(**state, "unloaded" | "error"))
+                .map(|(path, _)| path.clone())
+                .collect();
+            if !model.lazy || model.status != "ready" || paths.is_empty() {
+                return false;
+            }
+            let path = paths[at % paths.len()].clone();
+            let opened = model.opened.contains(&path);
+            model.file_states.insert(path.clone(), "loading");
+            model.opened.insert(path.clone());
+            let mut req = Req {
+                method: "review.getDiffPreview".into(),
+                from: -1,
+                to: -1,
+                whitespace: model.whitespace,
+                cwd: model.cwd.clone(),
+                file: path.clone(),
+                listing: model.listing,
+                ..Req::default()
+            };
+            if model.lazy_kind == "branch-range" {
+                req.base = model.base.clone();
+            }
+            model.pending.push(req);
+            sut.open_file(&path, opened);
+        }
     }
     sut.hold();
     true
@@ -1273,7 +1581,7 @@ fn check(
     let choices: Vec<i32> = tab.choices().iter().map(|(v, _)| *v).collect();
     prop_assert_eq!(&choices, &model.choices());
     prop_assert_eq!(tab.latest_turn(), model.latest_turn());
-    prop_assert_eq!(tab.selection(), model.selection);
+    prop_assert_eq!(tab.selection(), model.picked());
     // The picker shows the selection: one of the choices, or the first.
     prop_assert!(tab.selection() == -1 || choices.contains(&tab.selection()));
     prop_assert_eq!(tab.shown_turn(), model.shown_turn());
@@ -1293,6 +1601,17 @@ fn check(
     }
     if matches!(model.status, "empty" | "error") {
         prop_assert!(paths.is_empty());
+    }
+    if model.status == "ready" && model.lazy {
+        let diff = tab.diff();
+        for f in 0..diff.file_count() {
+            let path = diff.path(f).unwrap_or_default();
+            prop_assert_eq!(
+                diff.state(f),
+                model.file_states.get(path).copied().unwrap_or("")
+            );
+            prop_assert_eq!(diff.expanded(f), model.opened.contains(path));
+        }
     }
     // What a shown tab settles on is what the MC says now.
     let settled = matches!(model.status, "ready" | "empty");
@@ -1324,7 +1643,9 @@ fn check(
         .facts()
         .signals(tab_before)
         .into_iter()
-        .filter(|s| !matches!(s, Signal::Revert | Signal::Options))
+        // As desktop-qt's property, the bases list is left out: it is
+        // told again on every thread switch.
+        .filter(|s| !matches!(s, Signal::Revert | Signal::Options | Signal::Bases))
         .collect();
     prop_assert_eq!(said, after.signals(before));
     sut.mirror.follow(&mut sut.tab);

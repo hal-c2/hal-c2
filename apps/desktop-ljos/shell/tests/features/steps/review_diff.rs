@@ -14,7 +14,7 @@ use ljos::prelude::{ObjectId, Value as Js};
 use serde_json::{Value, json};
 
 use crate::brick::{Brick, Shown, shown};
-use crate::harness::{Outcome, Q, Steps, at, show};
+use crate::harness::{Failure, Outcome, Q, Steps, at, show};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -234,13 +234,50 @@ fn panel(world: &mut World) -> Outcome<View> {
         fail!("the panel has no diff to review");
     };
     view.wait_loaded(world)?;
-    let reviewing = view.tab(world, |t| t.reviewing()).unwrap_or(false);
-    expect!(
-        view.status(world) == "ready" && reviewing,
-        "{}",
-        view.describe(world)
-    );
     Ok(view)
+}
+
+/// The header of `path`'s file, scrolled into view as the user would.
+fn file_header(world: &mut World, view: View, path: &str) -> Outcome<ObjectId> {
+    let Some(file) = view.paths(world).iter().position(|p| p == path) else {
+        fail!("the diff does not show {path}: {}", view.describe(world));
+    };
+    let row = view
+        .diff(world, |d| d.row_of_file(file))
+        .flatten()
+        .unwrap_or(0);
+    let rows = view.rows(world)?;
+    world
+        .engine()
+        .invoke_by_name(
+            rows,
+            "positionViewAtIndex",
+            &[Js::Int(row as i32), Js::Int(0)],
+        )
+        .map_err(|e| Failure(format!("positionViewAtIndex: {e:?}")))?;
+    world.sync()?;
+    let brick = view.brick;
+    let name = format!("diffFile-{path}");
+    world.wait_for(&format!("the header of {path} to be shown"), |w| {
+        matches!(brick.find_visible(w, &name), Ok(Some(_)))
+    })?;
+    match brick.find_visible(world, &name)? {
+        Some(header) => Ok(header),
+        None => fail!("the header of {path} went away"),
+    }
+}
+
+/// The list of bases to compare the branch against, open and loaded.
+fn open_bases(world: &mut World, view: View) -> Outcome<ObjectId> {
+    let brick = view.brick;
+    let bases = brick.item(world, "diffBases")?;
+    if !brick.flag(world, bases, "opened") {
+        brick.click(world, "diffBasePicker")?;
+    }
+    world.wait_for("the list of bases to open", |w| {
+        brick.flag(w, bases, "opened") && !view.tab(w, |t| t.bases_loading()).unwrap_or(true)
+    })?;
+    Ok(bases)
 }
 
 /// An entry of the panel's options menu.
@@ -355,7 +392,7 @@ pub fn register(steps: &mut Steps) {
             super::workspace::have_editor(world, &c[0])?;
             let view = panel(world)?;
             let brick = view.brick;
-            let header = brick.item(world, &format!("diffFile-{}", c[0]))?;
+            let header = file_header(world, view, &c[0])?;
             let button = brick.find_under(world, header, "diffOpenInEditor")?;
             let Some(button) = button.filter(|b| brick.flag(world, *b, "visible")) else {
                 fail!("{} cannot be opened from the diff", c[0]);
@@ -439,14 +476,29 @@ pub fn register(steps: &mut Steps) {
                 view.describe(world)
             );
             let brick = view.brick;
-            world.wait_for("the base to be offered", |w| {
-                matches!(brick.find(w, "diffBaseRef"), Ok(Some(item)) if brick.flag(w, item, "visible"))
-            })?;
-            brick.click(world, "diffBaseRef")?;
-            world.type_text(&c[0])?;
-            brick.press(world, "enter")?;
+            let bases = open_bases(world, view)?;
+            let wanted = &c[0];
+            if wanted != "Automatic" {
+                brick.click(world, "diffBaseRef")?;
+                world.type_text(wanted)?;
+                world.sync()?;
+            }
+            match brick.find_visible(world, &format!("diffBaseChoice-{wanted}"))? {
+                Some(choice) => {
+                    let (x, y) = brick.at(world, choice, 0.5, 0.5)?;
+                    world.click_at(x, y)?;
+                }
+                None => {
+                    brick.press(world, "enter")?;
+                }
+            }
             world.sync()?;
-            view.wait_loaded(world)
+            view.wait_loaded(world)?;
+            expect!(
+                !brick.flag(world, bases, "opened"),
+                "the list of bases stayed open"
+            );
+            Ok(())
         },
     );
     steps.step(

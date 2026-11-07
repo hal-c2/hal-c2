@@ -771,8 +771,7 @@ impl RightPanel {
             });
             let timeline = threads::timeline_of(engine, &thread_key);
             if let Some(diff) = self.diff {
-                ThreadDiff::set_thread(engine, diff, environment, &thread_id, timeline);
-                ThreadDiff::update(engine, diff, |t| t.set_checkout(&root));
+                ThreadDiff::set_thread(engine, diff, environment, &thread_id, timeline, &root);
             }
             if let Some(agents) = self.agents {
                 AgentsModel::set_thread(engine, agents, environment, timeline);

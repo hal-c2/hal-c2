@@ -346,6 +346,10 @@ files/file-viewer-and-editing.feature: A file outside the project the agent left
 files/file-viewer-and-editing.feature: A file outside the project the agent left can be edited [on this computer]
 files/file-viewer-and-editing.feature: A file outside the project turns read-only when the MC refuses to save it
 files/file-viewer-and-editing.feature: A file that fails to load can be retried
+files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing ["lib" is empty, This folder is empty.]
+files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing ["lib" was deleted after the file was opened, This folder is no longer available.]
+files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing [the project index is partial and has nothing in "lib", No entries from this folder are available in the partial workspace index.]
+files/file-viewer-and-editing.feature: A folder in the path trail lists what is in it
 files/file-viewer-and-editing.feature: A media preview that fails to load can be retried [assets/logo.png, image, is shown]
 files/file-viewer-and-editing.feature: A partial preview says how much of the file is shown
 files/file-viewer-and-editing.feature: A requested line is revealed even when it is past the end of the file
@@ -1984,6 +1988,7 @@ threads/menu-actions.feature: A refused action is reported [regenerate-title, th
 threads/menu-actions.feature: A refused move is reported
 threads/menu-actions.feature: A thread on an offline environment offers only what needs no environment
 threads/menu-actions.feature: A thread's menu lists what can be done to it
+threads/menu-actions.feature: Another thread's menu shows no keys, since they act on the open thread
 threads/menu-actions.feature: Cancelling the question keeps the thread
 threads/menu-actions.feature: Confirming the question deletes the thread
 threads/menu-actions.feature: Forking opens the fork
@@ -1993,6 +1998,7 @@ threads/menu-actions.feature: Moving the open thread follows it to its new machi
 threads/menu-actions.feature: Renaming from the menu opens the thread and starts the header's rename
 threads/menu-actions.feature: The copy shortcut copies the open thread's id
 threads/menu-actions.feature: The header's title opens the open thread's menu without the project filter
+threads/menu-actions.feature: The open thread's menu shows the keys that pin and settle it
 threads/menu-actions.feature: The pin shortcut pins and unpins the open thread
 threads/menu-actions.feature: The undo shortcut runs the newest Undo on offer
 threads/menu-and-selection.feature: A failed copy is reported

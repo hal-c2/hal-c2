@@ -36,6 +36,11 @@ pub struct Item {
     pub destructive: bool,
     pub separator_before: bool,
     pub children: Vec<Item>,
+    /// A second line, for a sheet of rows a finger wide (the phone's).
+    pub subtitle: String,
+    /// The keys that do the same, as the user reads them ("Ctrl+Shift+P"),
+    /// drawn in the row's right column; empty when no key does.
+    pub shortcut: String,
 }
 
 impl Item {
@@ -61,6 +66,12 @@ impl Item {
         });
         if !self.children.is_empty() {
             entry["children"] = Json::Array(self.children.iter().map(Item::json).collect());
+        }
+        if !self.subtitle.is_empty() {
+            entry["subtitle"] = json!(self.subtitle);
+        }
+        if !self.shortcut.is_empty() {
+            entry["shortcut"] = json!(self.shortcut);
         }
         entry
     }
