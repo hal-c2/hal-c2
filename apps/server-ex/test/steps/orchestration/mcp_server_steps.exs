@@ -321,6 +321,12 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     Map.put(context, :mcp_result, result)
   end
 
+  step "it receives thread {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    assert {:ok, %{"thread" => %{"threadId" => ^id}}} = context.mcp_result
+    context
+  end
+
   # --- access rules ----------------------------------------------------------------
 
   step("{string} has no run starting, running or waiting", %{args: [thread]} = context,
