@@ -206,7 +206,9 @@ for line in sys.stdin:
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
         send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_streaming", "session_id": session})
         send({"type": "assistant", "session_id": session, "message": {"id": "m-steer", "role": "assistant", "content": [{"type": "text", "text": "steered: " + steer_text}]}})
-        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        # The answer names only the steer's prompt, not the one the turn started with.
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session,
+              **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         continue
     turn += 1
     text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
