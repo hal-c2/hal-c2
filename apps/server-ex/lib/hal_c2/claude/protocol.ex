@@ -109,6 +109,8 @@ defmodule HalC2.Claude.Protocol do
 
     # "now" steers the running turn instead of waiting for it to end.
     message = if opts[:priority], do: Map.put(message, "priority", opts[:priority]), else: message
+    # Claude names the prompt by its uuid in its command_lifecycle messages.
+    message = if opts[:uuid], do: Map.put(message, "uuid", opts[:uuid]), else: message
     JSON.encode_to_iodata!(message)
   end
 

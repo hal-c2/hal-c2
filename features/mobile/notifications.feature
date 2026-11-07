@@ -91,6 +91,7 @@ Feature: Push notifications and live agent activity
       | needs the user's input   |
 
   # The MC pushes on its own, so a restart must not replay work it already reported.
+  # Upstream #13340: stopped the server replaying old agent alerts on restart
   @mc @mobile
   Scenario: A restarted MC does not alert about work that finished before it started
     Given "My MacBook" has several threads whose turns finished days ago
@@ -100,7 +101,9 @@ Feature: Push notifications and live agent activity
 
   # What a machine had when it joined the cluster is not news either, but its first
   # finished turn is, even when it joined with no threads at all.
-  @mc @mobile
+  # The phone sees only one environment, so it cannot join a second machine to the
+  # cluster yet (#1092); the MC's half runs under features/mc.
+  @mc @mobile @backlog-mobile
   Scenario: A machine that joins the cluster with no threads alerts about its first finished turn
     Given device notifications are on
     And "Studio" joins the cluster with no threads
@@ -625,12 +628,14 @@ Feature: Push notifications and live agent activity
     When an agent needs approval during quiet hours
     Then the phone shows an alert
 
+  # Upstream #12048: stacked agent alerts by thread on both platforms
   @backlog @mobile
   Scenario: Agent alerts stack by thread
     Given a thread sends many alerts
     Then they group into one stack for that thread
     And other threads' alerts are not pushed out of the notification list
 
+  # Upstream #12052: Android suppresses only the on-screen thread's alert
   @backlog @mobile
   Scenario: Only the open thread's alert is suppressed
     Given the app is in the foreground on a thread

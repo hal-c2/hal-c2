@@ -135,6 +135,7 @@ Feature: Viewing and editing files
       Then the file's contents are returned
       And the file comes back under its full path
 
+    # Upstream #15045: folder crumbs list and open host folders outside the project
     @mc @backlog @priority-low
     Scenario: A folder on the host outside the project and its parent can be listed
       Given the host has the folder "/home/sam/study" with "notes.md" in it
@@ -142,6 +143,7 @@ Feature: Viewing and editing files
       Then each listing returns that folder's entries
       And a listing that climbs out of the folder it was given with ".." is refused
 
+    # Upstream #15045: folder crumbs list and open host folders outside the project
     @shared @backlog @priority-low
     Scenario: A link to a folder outside the project opens that folder
       Given the agent linked "/home/sam/study"
@@ -149,6 +151,7 @@ Feature: Viewing and editing files
       Then the files panel shows a tree rooted at "/home/sam/study"
       And its files open read-only
 
+    # Upstream #15045: folder breadcrumbs navigate to parent folders
     @shared @backlog
     Scenario: Each folder in the path moves to that folder
       Given the files panel shows "/home/sam/study/data/raw.csv"
@@ -157,12 +160,14 @@ Feature: Viewing and editing files
       And "data" and "raw.csv" stay in the path, dimmed, and lead back down
       And "raw.csv" keeps its tab
 
+    # Upstream #15045: the project crumb goes to the Files explorer
     @shared @backlog
     Scenario: The project in the path leads to the file explorer
       Given the files panel shows "src/lib/util.ts" in the project
       When the user chooses the project in its path
       Then the file explorer is shown
 
+    # Upstream #15045: walking up the crumbs stops at the top
     @shared @backlog @priority-low
     Scenario Outline: Walking up stops at the top of the path
       Given the files panel shows a file under "<top>"
@@ -174,6 +179,7 @@ Feature: Viewing and editing files
         | C:\            |
         | \\server\share |
 
+    # Upstream #15045: a host folder gets a file tree of its own
     @shared @backlog @priority-low
     Scenario: Searching a host folder's tree filters only the folders already loaded
       Given the files panel shows a tree rooted at "/home/sam"
@@ -279,6 +285,7 @@ Feature: Viewing and editing files
       Then the file is previewed as an image
       And the image comes from the machine the thread is on
 
+    # Upstream #17352: images, video, HTML and PDF preview before a thread's first message
     @backlog @desktop @mobile
     Scenario Outline: Media files are previewed in a new thread before its first message
       Given a new thread in "shop" that has no message yet
@@ -292,6 +299,7 @@ Feature: Viewing and editing files
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
+    # Upstream #16950: file previews handle downloads
     @backlog @desktop @mobile @priority-low
     Scenario: A download link in a previewed web page downloads its file
       Given "public/report.html" has a link that downloads "report.csv"
@@ -299,6 +307,7 @@ Feature: Viewing and editing files
       Then "report.csv" is downloaded
       And the page still cannot open dialogs or reach the app
 
+    # Upstream #17555: copy images from HTML previews
     @backlog @desktop @priority-low
     Scenario Outline: An image in a previewed web page can be copied
       Given "public/index.html" shows <image>
@@ -311,6 +320,7 @@ Feature: Viewing and editing files
         | an animated GIF                         |
         | a WebP image given inline as data       |
 
+    # Upstream #16950: file previews handle in-page links
     @backlog @desktop @mobile @priority-low
     Scenario: A table of contents link in a Markdown preview moves within the file
       Given "docs/plan.md" has a heading "1. Operating model" and a contents link to "#1-operating-model"
@@ -319,6 +329,7 @@ Feature: Viewing and editing files
       And the thread and the file stay open
       And a contents link to a heading that does not exist does nothing
 
+    # Upstream #16950: file previews resolve repo paths
     @backlog @desktop @mobile
     Scenario Outline: A path in inline code in a Markdown preview is found from where it is written
       Given the user previews "docs/ai/plans.md"
@@ -401,6 +412,7 @@ Feature: Viewing and editing files
       And a leading byte order mark is not shown as text
 
     # Legacy: packages/shared/src/delimitedPreview.ts (a final quoted empty record with no line ending)
+    # Upstream #11425: preserve final quoted empty CSV records
     @desktop
     Scenario: A table keeps a final quoted empty row that has no line ending
       Given "data/orders.csv" ends with a row whose only cell is an empty quoted value and no line ending
@@ -639,6 +651,7 @@ Feature: Viewing and editing files
       Then "VS Code" opens the thread's workspace folder on the environment
       And "VS Code" stays the preferred editor for next time
 
+    # Upstream #19078: remember editor selections before opening folders
     @backlog @shared
     Scenario: Picking an editor in the toolbar sets the preference without opening the folder
       Given the user has picked "VS Code" as their preferred editor
@@ -663,6 +676,7 @@ Feature: Viewing and editing files
       Then "VS Code" and "Zed" are offered
       And "Sublime Text" is not among them
 
+    # Upstream #17271: open remote projects in JetBrains IDEs over SSH
     @backlog @desktop @priority-low
     Scenario: A remote environment's workspace opens in a JetBrains IDE over SSH
       Given the thread's environment is on another machine reachable over SSH as "devbox"
@@ -702,6 +716,7 @@ Feature: Viewing and editing files
         | an MC on another machine the client is paired with | opens "src/app.ts" in an editor |
         | an MC reached through an SSH port forward          | opens "src/app.ts" in an editor |
 
+    # Upstream #10311: classify workspace previews by literal filenames
     @backlog @shared
     Scenario: An image or browser document is recognised by its file name's own extension
       Given a project file named "photo.png" and another named "report.final.html"

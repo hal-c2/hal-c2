@@ -96,6 +96,7 @@ defmodule HalC2.Projects do
 
       {threads, _} ->
         with :ok <- delete_threads(threads, m["commandId"] || "project.delete:#{id}"),
+             :ok <- HalC2.ProjectClones.discard(id),
              do:
                update(
                  id,
@@ -189,16 +190,25 @@ defmodule HalC2.Projects do
 
   # The other live project whose workspace is `root`, if any.
   defp owner(root, id) do
+    Enum.find_value(stored(), fn project ->
+      if project["id"] != id and project["workspaceRoot"] == root, do: project["id"]
+    end)
+  end
+
+  @doc """
+  The workspace roots of this MC's projects as stored, a project created a moment
+  ago included (`roots/0` follows the sidebar, which catches up after).
+  """
+  def stored_roots, do: Enum.map(stored(), & &1["workspaceRoot"])
+
+  # The projects not deleted, as stored.
+  defp stored do
     path = HalC2.Store.path()
 
-    Enum.find_value(HalC2.Store.list_streams(path), fn
-      %{id: other, kind: "project"} when other != id ->
-        project = StreamState.get(StreamState.load(path, other), "project")[other]
-        if project && project["deletedAt"] == nil && project["workspaceRoot"] == root, do: other
-
-      _ ->
-        nil
-    end)
+    for %{id: id, kind: "project"} <- HalC2.Store.list_streams(path),
+        project = StreamState.get(StreamState.load(path, id), "project")[id],
+        project && project["deletedAt"] == nil,
+        do: project
   end
 
   # The project's threads not yet deleted, archived ones included.
@@ -358,6 +368,9 @@ defmodule HalC2.Projects do
         {:error, "cannot read #{parent}: #{:file.format_error(reason)}"}
     end
   end
+
+  @doc "A folder as a user typed it, with a leading `~` as `$HOME`."
+  def expand_home(path), do: expand(path)
 
   defp expand("~"), do: home()
   defp expand("~/" <> rest), do: Path.join(home(), rest)

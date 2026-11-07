@@ -80,6 +80,7 @@ Feature: The desktop shell draws the thread in the window's centre
     Scenario: Jump to latest is a command
       Then "Jump to latest" is a command the shell runs
 
+  # Upstream #15207: reopen closed tabs across the app
   Rule: Closed tabs can be reopened
 
   @backlog @desktop @priority-high
@@ -98,6 +99,7 @@ Feature: The desktop shell draws the thread in the window's centre
     Then it opens the saved page, profile and viewport in a new session
     And incognito tabs are not kept across a restart
 
+  # Upstream #15686: open the right panel tab menu with Mod+T
   @backlog @desktop @priority-low
   Scenario: A shortcut opens the menu for a new side-panel tab
     Given the side panel is open and the terminal does not have focus

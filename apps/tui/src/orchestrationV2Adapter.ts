@@ -605,6 +605,9 @@ export interface TuiQueuedMessage {
   readonly held: boolean;
 }
 
+/** How a user's message reached the agent: queued, steered, or queued then promoted. */
+export type TuiMessageIntent = "queued_turn" | "steer" | "promoted_queued_to_steer";
+
 type ProjectedMessage = OrchestrationV2ThreadProjection["messages"][number];
 
 // <delegated_task_result taskId="…" title="…" status="…" childThreadId="…">
@@ -698,6 +701,12 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       .filter((run) => run.status === "queued")
       .map((run) => [run.id as string, run] as const),
   );
+  const intents = new Map<string, TuiMessageIntent>();
+  for (const turnItem of projection.turnItems) {
+    if (turnItem.type !== "user_message") continue;
+    const intent = turnItem.inputIntent;
+    if (intent !== "turn_start") intents.set(turnItem.messageId as string, intent);
+  }
   // The provider thread carries the context it has used; a model change keeps the thread.
   const providerThread =
     projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
@@ -820,6 +829,7 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
       updatedAt: iso(message.updatedAt),
       // Another agent's thread sent this message (a subagent reporting to its parent).
       ...(message.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
+      ...(intents.has(message.id) ? { intent: intents.get(message.id)! } : {}),
       // Still waiting for its turn.
       ...(message.runId !== null && queuedRuns.has(message.runId)
         ? {

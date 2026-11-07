@@ -91,7 +91,7 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
     Then the message is marked "<marker>"
@@ -140,7 +140,7 @@ Feature: Runs, interruptions and the queue
     When the MC acknowledges the message
     Then the message shows the time it was sent
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A sent message shows its images
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
@@ -278,8 +278,8 @@ Feature: Runs, interruptions and the queue
       | chooses to resume at reset | the thread continues at 3 pm             |
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
-  # TUI: renders the meter from apps/tui/src/contextWindow.ts, but the MC does not report context usage yet.
-  @shared @backlog @priority-high
+  # The MC reports contextUsage and the TUI draws the meter (apps/tui/src/contextWindow.ts); the Qt clients do not show it yet.
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>
     Then the context window reads "<reading>"
@@ -290,7 +290,7 @@ Feature: Runs, interruptions and the queue
       | of an unknown window      | 144k used       |
 
   # Upstream #17539: counts just under a million rounded up inside the thousands and read "1000k".
-  @shared @backlog @priority-low
+  @shared @backlog-desktop @backlog-mobile @priority-low
   Scenario Outline: A context count that rounds up to a million reads as a million
     Given the agent has used <tokens> tokens of an unknown window
     Then the context window reads "<reading>"

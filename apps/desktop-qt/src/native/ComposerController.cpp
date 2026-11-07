@@ -2314,7 +2314,10 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
   if (!thread || m_queuedEdit->saving) return true;
   const QList<Attachment> added = m_drafts.value(target).attachments;
   // The MC refuses a message left with nothing in it.
-  if (text.trimmed().isEmpty() && m_queuedEdit->sent.isEmpty() && added.isEmpty()) return true;
+  if (text.trimmed().isEmpty() && m_queuedEdit->sent.isEmpty() && added.isEmpty()) {
+    toast(tr("A queued message cannot be left empty."), {});
+    return true;
+  }
   if (filesBlock(added, QStringLiteral("saving"))) return true;
   m_queuedEdit->saving = true;
   const QString runId = m_queuedEdit->runId;

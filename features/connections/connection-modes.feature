@@ -178,6 +178,7 @@ Feature: How clients reach an environment
     When the user connects to the SSH environment
     Then the server starts on the next free port after it
 
+  # Upstream #19372: an SSH launch no longer picks a port another server answers on
   @backlog @desktop
   Scenario: An SSH launch skips a port another server already answers on
     Given another server on the host listens on every address on the port the launch would pick
@@ -304,6 +305,7 @@ Feature: How clients reach an environment
     When the user removes it
     Then that server keeps running
 
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
   @backlog @desktop @priority-high
   Scenario: Reconnecting reuses the server the app launched
     Given an SSH environment whose server the desktop app launched
@@ -312,6 +314,7 @@ Feature: How clients reach an environment
     Then the app connects to the same server
     And the agents running on the host keep running
 
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
   @backlog @desktop
   Scenario: Reconnecting waits for a busy server instead of replacing it
     Given an SSH environment whose launched server is slow to answer but still running
@@ -320,6 +323,7 @@ Feature: How clients reach an environment
     And if the server still does not answer the reconnect fails and can be retried
     And the server keeps running
 
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
   @backlog @desktop
   Scenario: Replacing a dead forward closes only the local tunnel
     Given an SSH environment whose local forward died while the network was down
@@ -327,6 +331,7 @@ Feature: How clients reach an environment
     Then a new forward is opened to the same server
     And the server on the host is not stopped
 
+  # Upstream #19432: reconnecting keeps the remote server and its agents running
   @backlog @desktop @priority-high
   Scenario: A crashed launched server is replaced on reconnect
     Given an SSH environment whose launched server crashed and was not reaped
@@ -499,6 +504,7 @@ Feature: How clients reach an environment
     When the hosted app tries to connect
     Then the browser blocks the connection
 
+  # Upstream #15468: clients learn an environment's LAN and tailnet addresses
   @backlog @mc @shared
   Scenario: A client learns an environment's other addresses once connected
     Given an MC bound to a LAN address and a tailnet address
@@ -508,6 +514,7 @@ Feature: How clients reach an environment
     And the client saves the new ones as routes marked as found automatically, ranked by kind
     And a loopback-only MC reports none
 
+  # Upstream #15468: clients learn an environment's LAN and tailnet addresses
   @backlog @shared
   Scenario: A learned route follows the host's address
     Given a client holds a route it learned from the MC
@@ -516,6 +523,7 @@ Feature: How clients reach an environment
     And a route the user paired is never rewritten
     And the live session is not replaced by the change, only by the better-route check
 
+  # Upstream #17158: Cloudflare and other VPN addresses no longer show as Tailscale
   @backlog @mc @priority-low
   Scenario Outline: An address in the shared 100.64/10 range is a tailnet address only on Tailscale's own interface
     Given the MC's machine has the address "100.96.0.1" on <interface>
@@ -527,6 +535,7 @@ Feature: How clients reach an environment
       | Tailscale's network interface            | a tailnet address       |
       | a Cloudflare WARP or other VPN interface | a local network address |
 
+  # Upstream #17158: Cloudflare and other VPN addresses no longer show as Tailscale
   @backlog @shared @priority-low
   Scenario Outline: A route is labelled Tailscale only with proof
     Given a client has a route to "<host>"

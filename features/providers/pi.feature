@@ -185,6 +185,7 @@ Feature: Pi
     When the Pi process exits unexpectedly
     Then the turn fails saying Pi exited unexpectedly
 
+  # Upstream #18639: Pi turn-start prompts are queued while native extension work is running
   @backlog
   Scenario: A message sent while Pi resumes extension work on its own is queued
     Given Pi has resumed extension work before HAL-C2 heard that it woke
@@ -192,6 +193,7 @@ Feature: Pi
     Then Pi takes the message after its current work
     And the turn does not fail with "Agent is already processing"
 
+  # Upstream #18643: HAL-C2 tool schemas load for models behind completions gateways
   @backlog
   Scenario: HAL-C2 tools are usable by a Pi model behind an OpenAI-compatible completions gateway
     Given Pi runs a model through an "openai-completions" gateway
@@ -217,6 +219,7 @@ Feature: Pi
     When the user sends "/compact keep the database notes" to a Pi thread
     Then Pi compacts its conversation following "keep the database notes"
 
+  # Upstream #17194: Pi loads every selected skill without losing prompt text
   @backlog
   Scenario: Every skill a Pi message mentions is loaded and the message keeps its words
     Given Pi has the skills "deploy" and "review"
@@ -224,12 +227,14 @@ Feature: Pi
     Then Pi loads both "review" and "deploy"
     And Pi receives the user's text as written, with any images it carries
 
+  # Upstream #17194: Pi loads every selected skill without losing prompt text
   @backlog
   Scenario: A dollar word that is not a Pi skill is left as written
     Given Pi has the skill "deploy"
     When the user sends "the price is $5 and $deploy it" to a Pi thread
     Then Pi loads "deploy" and nothing for "$5"
 
+  # Upstream #17194: Pi loads every selected skill without losing prompt text
   @backlog
   Scenario: A skill mentioned twice is expanded once
     Given Pi has the skill "deploy"
@@ -275,7 +280,7 @@ Feature: Pi
     Then Pi runs with every tool and extension turned off
     And no Pi session file is left behind
 
-  @backlog
+  @backlog @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
     Given the MC itself was started by an agent that holds a HAL-C2 tools credential
     When a Pi thread starts
@@ -464,6 +469,7 @@ Feature: Pi
       | a line of text     |
       | a longer text edit |
 
+  # Upstream #17206: Pi editor dialogs prefill the answer composer
   @backlog
   Scenario: A Pi extension's text edit starts the answer from what is there now
     When a Pi extension asks the user to edit a text that already has content
@@ -793,18 +799,21 @@ Feature: Pi
     Then a process of "pi-work" runs that turn in place of the first instance's
     And another message to "pi-work" stays in that process
 
+  # Upstream #16210: Pi thread titles use the linked pull request's context
   @backlog @mc @plugin-pi
   Scenario: A Pi thread title takes the linked pull request into account
     Given a Pi thread is linked to a pull request
     When Pi writes the thread's title
     Then the pull request's context is part of what Pi is asked
 
+  # Upstream #16661: discovered Pi models keep their provider identity
   @backlog @mc @shared @plugin-pi
   Scenario: Pi's discovered models show and search by their underlying provider
     Given Pi discovered models from the providers "openai" and "anthropic"
     When the user opens the model picker and searches for "anthropic"
     Then the models from that provider are listed with its name
 
+  # Upstream #17214: Pi extension wakes get an owned continuation turn
   @backlog @mc @plugin-pi
   Scenario: Work a Pi extension starts after a turn settled runs as its own turn
     Given a Pi thread whose last turn has finished
@@ -812,12 +821,14 @@ Feature: Pi
     Then the thread gets a new turn that shows Pi's work
     And Pi is not prompted a second time for it
 
+  # Upstream #17214: a joining prompt claims the outstanding extension wake
   @backlog @mc @plugin-pi
   Scenario: A message sent while an extension's wake is pending joins that work
     Given a Pi extension has woken Pi after the last turn
     When the user sends a message to the Pi thread before the wake's turn starts
     Then the message's turn shows the extension's work and the reply to the message
 
+  # Upstream #17214: rollback does not replay output from a discarded session
   @backlog @mc @plugin-pi
   Scenario: Reverting a Pi thread does not replay work from the discarded conversation
     Given a Pi extension has woken Pi after the last turn
@@ -825,6 +836,7 @@ Feature: Pi
     Then the revert is refused until the woken work is settled or stopped
     And nothing from the discarded conversation appears in the thread afterwards
 
+  # Upstream #17220: Pi discovers the optional tools on demand
   @backlog @mc @plugin-pi
   Scenario Outline: Pi is offered the HAL-C2 tools the way its version can find them
     Given Pi <version> is installed
@@ -837,6 +849,7 @@ Feature: Pi
       | 0.99 or newer   | Pi finds the optional HAL-C2 tools by searching, and the delegation tools are offered directly |
       | older than 0.99 | every HAL-C2 tool is offered directly                                                          |
 
+  # Upstream #17190: Pi discovers workspace skills and commands
   @backlog @mc @plugin-pi
   Scenario: Pi offers the skills and commands of the thread's own workspace
     Given the project "web" has its own Pi skill "release" and prompt template "triage"
@@ -844,12 +857,14 @@ Feature: Pi
     Then "release" and "triage" are offered
     And a Pi thread of another project does not offer them
 
+  # Upstream #17190: Pi discovers workspace skills and commands
   @backlog @mc @plugin-pi
   Scenario: A workspace whose Pi commands cannot be found keeps the ones it had
     Given a Pi thread of "web" offered the skill "release"
     When finding the workspace's Pi commands fails
     Then "release" is still offered
 
+  # Upstream #13839: Pi native session rewinds are reconciled
   @backlog @mc @plugin-pi
   Scenario: A rewind made inside Pi drops the abandoned turns from the thread
     Given a Pi thread with three turns
@@ -857,18 +872,21 @@ Feature: Pi
     Then the thread no longer counts the second and third turns as Pi's history
     And reverting the thread afterwards only offers turns Pi still has
 
+  # Upstream #17851: Pi tool images and structured results are preserved
   @backlog @mc @plugin-pi
   Scenario: An image a Pi tool returns is shown as an image
     When a Pi tool returns a screenshot alongside structured results
     Then the tool call shows the screenshot as an image, not as text
     And its structured results are kept in the tool's details
 
+  # Upstream #17853: Pi native abort outcomes are preserved
   @backlog @mc @plugin-pi
   Scenario: A turn Pi aborts on its own reads as interrupted
     When Pi aborts a turn itself, for an extension, a compaction or a session replacement
     Then the turn reads as interrupted, not completed
     And the next turn Pi starts reads as its own outcome
 
+  # Upstream #17835: thinking defaults are specific to each model
   @backlog @mc @plugin-pi
   Scenario: Only the model Pi is set to marks Pi's thinking level as its default
     Given Pi is set to model "a" at thinking level high
@@ -876,6 +894,7 @@ Feature: Pi
     Then no level is marked as Pi's default for "b"
     And for "a" high is marked as the default
 
+  # Upstream #17834: Pi shell command exit codes are preserved
   @backlog @mc @plugin-pi
   Scenario Outline: A Pi shell command keeps its exit code
     When Pi runs <shell> on a Pi version that reports the exit code <where>
@@ -887,6 +906,7 @@ Feature: Pi
       | a bash command     | in its details, as older Pi does   |
       | a PowerShell command | in its structured result         |
 
+  # Upstream #17840: extension approvals expire and cancel
   @backlog @mc @plugin-pi
   Scenario: A Pi extension's approval goes away when Pi stops waiting for it
     Given a Pi extension asked the user to approve with a time limit
@@ -894,6 +914,7 @@ Feature: Pi
     Then the approval is no longer pending
     And an answer the user sends afterwards is refused and not remembered
 
+  # Upstream #17852: known read-only tools skip approval
   @backlog @mc @plugin-pi
   Scenario Outline: Pi asks before HAL-C2's tools only when they change something
     Given the thread runs Pi in approval required

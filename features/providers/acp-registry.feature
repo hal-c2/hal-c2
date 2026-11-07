@@ -679,7 +679,7 @@ Feature: ACP registry agents
     When another client opens the sign-in
     Then it receives the last 16,384 characters and where they start in the output
 
-  @backlog
+  @backlog @priority-high
   Scenario: A sign-in address that is not a web address is declined
     When "acme" asks the user to open a sign-in address that is not http or https
     Then the request is declined without being shown to the user
@@ -873,7 +873,7 @@ Feature: ACP registry agents
       | Linux or macOS without that                                | every process the MC saw the agent start is asked to stop, then killed after one second  |
       | Windows                                                    | the agent's whole process tree is force-stopped                                          |
 
-  @backlog
+  @backlog @priority-high
   Scenario: Stopping an agent never signals a process the agent did not start
     Given a helper of "acme" exited and its process id was reused by an unrelated program
     When the session ends
@@ -899,7 +899,7 @@ Feature: ACP registry agents
     Then the turn fails naming the exit code and the last 4,096 characters the agent wrote to its error output
     And requests still waiting on the agent fail instead of hanging
 
-  @backlog
+  @backlog @priority-high
   Scenario Outline: An agent's error output is shown without secrets
     When the error output of "acme" contains <content>
     Then the failure shows <shown>
@@ -2086,13 +2086,13 @@ Feature: ACP registry agents
     When the MC restarts
     Then "acme" is not shown as signed in until it is checked again
 
-  @backlog
+  @backlog @priority-high
   Scenario: Signing in to one instance does not sign in another instance of the same agent
     Given two instances of "acme"
     When the user signs in to the first from HAL-C2
     Then the second is not shown as signed in
 
-  @backlog
+  @backlog @priority-high
   Scenario: The record of a confirmed sign-in holds none of the instance's secrets
     Given an instance of "acme" with a secret environment variable
     When the user signs in to it from HAL-C2

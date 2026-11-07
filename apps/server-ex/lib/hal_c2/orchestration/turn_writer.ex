@@ -10,7 +10,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{CommandOutput, Entities, TurnWatch}
+  alias HalC2.Orchestration.{CommandOutput, Entities, TurnWatch, UserFacingErrors}
   alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
@@ -582,6 +582,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
   def finish(state, status, failure) do
     at = Entities.now()
+    failure = UserFacingErrors.sanitize_failure(failure)
 
     # Ending a run is at-least-once (a restart can ask again): a run that has
     # already ended keeps the checkpoint its first ending captured, so the
@@ -620,7 +621,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
           {Enum.filter(changes, &is_tuple/1), {:ended, queue_starts?(stream, state.thread_id)}}
         else
-          {[], :already}
+          {[], {:already, recorded?(stream, checkpoint)}}
         end
       end)
 
@@ -629,11 +630,26 @@ defmodule HalC2.Orchestration.TurnWriter do
         finished(state, status, failure, queue?)
 
       # Deleted, or abandoned, before the provider's turn ended: that end stands.
-      :already ->
+      {:already, recorded?} ->
+        unless recorded?, do: drop_capture(state.turn.cwd, checkpoint)
         TurnWatch.release(state.turn.ids.run)
         :ok
     end
   end
+
+  # Whether the thread recorded `checkpoint` (captured before a transaction that found
+  # its run already ended): the run's ref is the end that won's, else nobody's.
+  defp recorded?(_stream, nil), do: true
+
+  defp recorded?(stream, checkpoint),
+    do: StreamState.get(stream, "checkpoint")[checkpoint["id"]] != nil
+
+  # A capture for a run another end settled without one: its ref would point at a
+  # checkpoint the thread never recorded.
+  defp drop_capture(cwd, %{"ref" => ref}) when is_binary(cwd),
+    do: HalC2.Checkpoint.delete_ref(cwd, ref)
+
+  defp drop_capture(_cwd, _checkpoint), do: :ok
 
   defp active?(stream, run_id),
     do: (StreamState.get(stream, "run")[run_id] || %{})["status"] in @active_runs
@@ -753,33 +769,41 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
   def abandon(thread_id, run_id, status, failure) do
     at = Entities.now()
+    failure = UserFacingErrors.sanitize_failure(failure)
+    {scope_id, checkpoint, cwd} = stopped_checkpoint(thread_id, run_id, status, at)
 
     abandoned =
       HalC2.Streams.transact(thread_id, :thread, fn stream ->
         case StreamState.get(stream, "run")[run_id] do
           %{"status" => active} = run when active in @active_runs ->
             state = abandoned_turn(stream, thread_id, run)
+            turn = Map.put(state.turn, :scope_id, scope_id)
+            baselines = if checkpoint, do: baselines(turn, at), else: []
 
             changes =
-              left_open(stream, run, status, at) ++
-                ended(stream, state.turn.ids, status, failure, nil, at)
+              baseline_changes(stream, baselines) ++
+                checkpoint_changes(stream, turn, checkpoint, at) ++
+                left_open(stream, run, status, at) ++
+                ended(stream, state.turn.ids, status, failure, checkpoint, at)
 
             {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
 
           _ ->
-            {[], nil}
+            {[], {:already, recorded?(stream, checkpoint)}}
         end
       end)
 
     case abandoned do
+      # Its checkpoint was captured before another end won the run.
+      {:already, recorded?} ->
+        unless recorded?, do: drop_capture(cwd, checkpoint)
+        :ok
+
       {state, queue?} ->
         # A start still in flight for the run (its runtime stopped answering)
         # must not hold the thread's work behind it.
         HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
         finished(state, status, failure, queue?)
-
-      nil ->
-        :ok
     end
   end
 
@@ -817,6 +841,26 @@ defmodule HalC2.Orchestration.TurnWriter do
       nil -> :ok
     end
   end
+
+  # A run the user stopped that nothing drove keeps what it changed: its checkpoint is
+  # captured from the folder it worked in, as a completed run's is.
+  defp stopped_checkpoint(thread_id, run_id, "interrupted", at) do
+    stream = HalC2.Streams.state(thread_id)
+    scope_id = HalC2.Checkpoint.scope_id(thread_id)
+
+    case StreamState.get(stream, "run")[run_id] do
+      %{"status" => active} = run when active in @active_runs ->
+        turn = Map.put(abandoned_turn(stream, thread_id, run).turn, :scope_id, scope_id)
+        checkpoint = if turn.cwd && File.dir?(turn.cwd), do: capture_checkpoint(turn, at)
+        {scope_id, checkpoint, turn.cwd}
+
+      _ ->
+        {scope_id, nil, nil}
+    end
+  end
+
+  defp stopped_checkpoint(thread_id, _run_id, _status, _at),
+    do: {HalC2.Checkpoint.scope_id(thread_id), nil, nil}
 
   # The runtime state `finish/3` needs, rebuilt from the run.
   defp abandoned_turn(stream, thread_id, run) do
