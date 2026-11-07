@@ -2850,7 +2850,9 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    * settled threads of each of its projects (by `settledAt`) and the older ones that
    * are pinned or snoozed. That MC's entry in the `shell` frame, or the `shell.rows`
    * reset, then carries `settledLeftOut`: `{ [projectId]: count }` of the settled
-   * threads it did not send. Later changes come as usual, a left-out thread's included.
+   * threads it did not send, as of that send. Later changes come as usual, a left-out
+   * thread's included: the count still holds such a thread, so a client subtracts one
+   * for each settled row of that project it later receives that the full send left out.
    * Without it every row is sent.
    */
   settledLimit: Schema.optionalKey(PositiveInt),
