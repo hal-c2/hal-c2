@@ -151,7 +151,7 @@ Feature: MC authentication and scopes
 
   # Upstream #24554: a socket ticket opened any ticket route, and a DPoP session's ticket
   # worked for anyone holding the string.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A socket ticket opens only the route it was bought for
     Given a client bought a socket ticket for <route>
     When it opens <other> with that ticket
@@ -162,7 +162,7 @@ Feature: MC authentication and scopes
       | the RPC socket     | a media stream     |
       | media streams      | the RPC socket     |
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A DPoP session's RPC ticket needs a fresh proof from the session's key
     Given a DPoP client bought an RPC socket ticket
     When the socket is opened with <proof>
@@ -175,7 +175,7 @@ Feature: MC authentication and scopes
       | a proof from another key                | refuses it       |
       | a proof that was already used           | refuses it       |
 
-  @backlog @mc
+  @mc
   Scenario: A ticket bought without naming a route still opens either
     Given an older client bought a socket ticket without naming a route
     Then it can open the RPC socket or a media stream with it

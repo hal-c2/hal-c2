@@ -283,13 +283,24 @@ defmodule HalC2.Auth do
     end
   end
 
-  @doc "A WebSocket ticket for an access token, or for a session `request_session/1` found."
-  @spec issue_ticket(String.t() | map) :: {:ok, String.t(), integer} | :error
-  def issue_ticket(%{id: id} = session) do
+  @doc """
+  A WebSocket ticket for an access token, or for a session `request_session/1` found.
+  `use` names the route it opens: `:rpc` (the client socket, `/ws`), `:media` (the
+  device hub's streams and images, `ticket_scopes/1`), or nil for either, as clients
+  that predate routes buy them. A DPoP session's RPC ticket is bound to its key, so the
+  socket needs a fresh proof from it (`take_ticket/3`). Media tickets stay unbound: one
+  serves every image and stream of a panel.
+  """
+  @spec issue_ticket(String.t() | map, nil | :rpc | :media) ::
+          {:ok, String.t(), integer} | :error
+  def issue_ticket(session_or_token, use \\ nil)
+
+  def issue_ticket(%{id: id} = session, use) do
     ticket = random_token()
     # A ticket never outlives the session it opens a socket for.
     expires_at = min(now() + @ticket_ttl, session[:expires_at] || @dev_expires_at)
-    :ets.insert(@tickets, {ticket, expires_at, id})
+    jkt = if use == :rpc, do: session[:proof_jkt]
+    :ets.insert(@tickets, {ticket, expires_at, id, use, jkt})
 
     # The session may have been revoked after this request read it, and the revoke may
     # have swept the tickets before this one was inserted: so check once it is in.
@@ -301,8 +312,8 @@ defmodule HalC2.Auth do
     end
   end
 
-  def issue_ticket(access_token) do
-    with {:ok, session} <- session(access_token), do: issue_ticket(session)
+  def issue_ticket(access_token, use) do
+    with {:ok, session} <- session(access_token), do: issue_ticket(session, use)
   end
 
   @doc """
@@ -333,17 +344,38 @@ defmodule HalC2.Auth do
   """
   def revoke_session(path, id), do: revoke(path, "id = ?1", [id]) != []
 
-  @doc "Consumes a WebSocket ticket; each ticket opens one socket, for its session."
-  @spec take_ticket(String.t()) :: {:ok, String.t() | nil} | :error
-  def take_ticket(ticket) do
-    case :ets.take(@tickets, ticket) do
-      [{_, expires_at, session_id}] -> if expires_at > now(), do: {:ok, session_id}, else: :error
-      [] -> :error
+  @doc """
+  Consumes a ticket that opens the client socket; each ticket opens one socket, for its
+  session. A ticket bound to a DPoP key needs `proof`, `{dpop_proof, method, url}` of the
+  upgrade request, signed by that key and naming the ticket (`ath`). A refused ticket
+  stays usable by its owner.
+  """
+  @spec take_ticket(String.t(), {String.t(), String.t(), String.t()} | nil) ::
+          {:ok, String.t() | nil} | :error
+  def take_ticket(ticket, proof \\ nil) do
+    now = now()
+
+    with [{_, expires_at, session_id, use, jkt}] when expires_at > now and use != :media <-
+           :ets.lookup(@tickets, ticket),
+         :ok <- ticket_proof(jkt, ticket, proof),
+         [_] <- :ets.take(@tickets, ticket) do
+      {:ok, session_id}
+    else
+      _ -> :error
     end
   end
 
+  defp ticket_proof(nil, _ticket, _proof), do: :ok
+  defp ticket_proof(_jkt, _ticket, nil), do: :error
+
+  defp ticket_proof(jkt, ticket, {proof, method, url}) do
+    with {:ok, _} <-
+           HalC2.Auth.Dpop.verify(proof, method, url, thumbprint: jkt, access_token: ticket),
+         do: :ok
+  end
+
   @doc """
-  A WebSocket ticket's session scopes, leaving the ticket usable: `{:ok, scopes}`.
+  A media ticket's session scopes, leaving the ticket usable: `{:ok, scopes}`.
   The device hub proxy (`HalC2.Devices.Proxy`) authenticates every stream and image
   of a Device panel with one ticket.
   """
@@ -352,17 +384,21 @@ defmodule HalC2.Auth do
     now = now()
 
     case :ets.lookup(@tickets, ticket) do
-      [{_, expires_at, _}] when expires_at <= now ->
+      [{_, expires_at, _, _, _}] when expires_at <= now ->
+        :error
+
+      # An RPC ticket opens only the client socket.
+      [{_, _, _, :rpc, _}] ->
         :error
 
       # A ticket bought with the MC's access token (`local_session/0`).
-      [{_, _, nil}] ->
+      [{_, _, nil, _, _}] ->
         {:ok, @admin_scopes}
 
-      [{_, _, session_id}] ->
+      [{_, _, session_id, _, _}] ->
         session_scopes(session_id)
 
-      [] ->
+      _ ->
         :error
     end
   end
@@ -774,7 +810,12 @@ defmodule HalC2.Auth do
 
     # Counted first: a ticket never outlives its session, so the ones of a session that
     # ran out are among the expired, and `drop_tickets/1` would leave nothing to count.
-    tickets = :ets.select_delete(@tickets, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
+    # Three-element tickets are from before tickets named their route.
+    tickets =
+      :ets.select_delete(@tickets, [
+        {{:_, :"$1", :_, :_, :_}, [{:"=<", :"$1", now}], [true]},
+        {{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}
+      ])
 
     # A session that ran out takes the sockets it opened with it.
     drop_tickets(expired)
@@ -996,7 +1037,7 @@ defmodule HalC2.Auth do
   # The tickets a revoked session already bought go with it: a ticket opens a socket
   # for its session, so one outliving the session would let a revoked client in.
   defp drop_tickets(ids) do
-    for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id})
+    for id <- ids, do: :ets.match_delete(@tickets, {:_, :_, id, :_, :_})
     ids
   end
 

@@ -2093,4 +2093,119 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     assert line =~ result
     context
   end
+
+  # --- tickets per route (upstream #24554) ----------------------------------------------
+
+  defp buy_ticket(context, path, headers) do
+    assert {200, _, %{"ticket" => ticket}} =
+             Mc.request(context.mc, :post, path, headers: headers)
+
+    ticket
+  end
+
+  # A media stream: the device hub's routes take a ticket and refuse it before reaching a hub.
+  defp media_opens?(context, ticket) do
+    {status, _, _} =
+      Mc.request(
+        context.mc,
+        :get,
+        HalC2.Devices.hub_base_path() <> "/api/devices?wsTicket=#{ticket}"
+      )
+
+    status not in [401, 403]
+  end
+
+  defp rpc_opens?(context, query) do
+    case Mc.ws_client().connect(context.mc.port, "/ws?" <> query) do
+      {:ok, _client} -> true
+      {:error, _} -> false
+    end
+  end
+
+  step ~r/^a client bought a socket ticket for (?<route>the RPC socket|media streams)$/,
+       %{args: [route]} = context do
+    path = if route == "the RPC socket", do: "/rpc", else: "/media"
+    access = standard!(context)
+    ticket = buy_ticket(context, token_path() <> path, [{"authorization", "Bearer #{access}"}])
+    Map.put(context, :ticket, ticket)
+  end
+
+  step ~r/^it opens (?<other>a media stream|the RPC socket) with that ticket$/,
+       %{args: [other]} = context do
+    opened =
+      if other == "a media stream",
+        do: media_opens?(context, context.ticket),
+        else: rpc_opens?(context, "wsTicket=#{context.ticket}")
+
+    Map.put(context, :opened, opened)
+  end
+
+  step "the MC refuses the socket", context do
+    refute context.opened
+    context
+  end
+
+  step "a DPoP client bought an RPC socket ticket", context do
+    key = dpop_key()
+    token = HalC2.Auth.create_pairing_token(context.mc.store)
+
+    form = %{
+      "grant_type" => "urn:ietf:params:oauth:grant-type:token-exchange",
+      "subject_token" => token,
+      "subject_token_type" => "urn:hal-c2:params:oauth:token-type:environment-bootstrap"
+    }
+
+    proof = dpop_proof(key, "POST", url(context, "/oauth/token"))
+
+    assert {200, _, %{"token_type" => "DPoP", "access_token" => access}} =
+             Mc.request(context.mc, :post, "/oauth/token", form: form, headers: [{"dpop", proof}])
+
+    path = token_path() <> "/rpc"
+    proof = dpop_proof(key, "POST", url(context, path), access)
+    ticket = buy_ticket(context, path, dpop_headers(access, proof))
+    Map.merge(context, %{key: key, access: access, ticket: ticket})
+  end
+
+  step ~r/^the socket is opened with (?<proof>a fresh proof from the client's key|no proof|a proof from another key|a proof that was already used)$/,
+       %{args: [proof]} = context do
+    socket_proof = &dpop_proof(&1, "GET", url(context, "/ws"), context.ticket)
+
+    query =
+      case proof do
+        "a fresh proof from the client's key" ->
+          "&dpop=" <> socket_proof.(context.key)
+
+        "no proof" ->
+          ""
+
+        "a proof from another key" ->
+          "&dpop=" <> socket_proof.(dpop_key())
+
+        "a proof that was already used" ->
+          used = socket_proof.(context.key)
+          {:ok, _} = HalC2.Auth.Dpop.verify(used, "GET", url(context, "/ws"))
+          "&dpop=" <> used
+      end
+
+    Map.put(context, :opened, rpc_opens?(context, "wsTicket=#{context.ticket}" <> query))
+  end
+
+  step ~r/^the MC (?<answer>opens the socket|refuses it)$/, %{args: [answer]} = context do
+    assert context.opened == (answer == "opens the socket")
+    context
+  end
+
+  step "an older client bought a socket ticket without naming a route", context do
+    access = standard!(context)
+    headers = [{"authorization", "Bearer #{access}"}]
+    tickets = for _ <- 1..2, do: buy_ticket(context, token_path(), headers)
+    Map.put(context, :tickets, tickets)
+  end
+
+  step "it can open the RPC socket or a media stream with it", context do
+    [rpc, media] = context.tickets
+    assert rpc_opens?(context, "wsTicket=#{rpc}")
+    assert media_opens?(context, media)
+    context
+  end
 end
