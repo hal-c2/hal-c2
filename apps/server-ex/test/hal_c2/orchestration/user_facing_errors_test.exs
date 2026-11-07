@@ -44,6 +44,8 @@ defmodule HalC2.Orchestration.UserFacingErrorsTest do
           "basic auth failed",
           "Basic plan quota exceeded",
           "Basic Authentication is not enabled",
+          "The server requires Basic authentication.",
+          "expected Bearer authorization/token",
           "a bearer token is required"
         ],
         do: assert(sanitize_failure(text) == text)
