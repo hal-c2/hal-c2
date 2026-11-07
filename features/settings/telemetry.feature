@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/30033
 #   docs/user/telemetry.md
 #   docs/internals/product-analytics.md
 #   apps/server/src/telemetry (PostHog delivery, not present in apps/server-ex)
@@ -57,6 +58,15 @@ Feature: Product telemetry
     When turns finish
     Then their events are kept and sent once it is reachable again
     But when more than 1,000 events are waiting the oldest are dropped
+
+  # Upstream #30033: every quit and update restart waited on a final send with no time limit, so an
+  # endpoint that never answered held up the quit.
+  @backlog @mc @priority-low
+  Scenario: Quitting waits at most a second to send the last events
+    Given the analytics service never answers
+    When the MC quits or restarts for an update
+    Then it stops trying to send the last events after 1 second
+    And the events still unsent are dropped
 
   @backlog @mc @priority-low
   Scenario: An event is tied to the Codex account, then the Claude account, then an installation id

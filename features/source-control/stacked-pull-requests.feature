@@ -6,6 +6,7 @@
 #   https://github.com/pingdotgg/t3code/pull/17116
 #   https://github.com/pingdotgg/t3code/pull/17559
 #   https://github.com/pingdotgg/t3code/pull/16551
+#   https://github.com/pingdotgg/t3code/pull/29919
 #   docs/user/source-control.md (GitHub stacks)
 #   packages/contracts/src/pullRequest.ts (PullRequestStack, expectedStackHeads)
 #   packages/contracts/src/rpc.ts (pullRequests.stack, pullRequests.runAction)
@@ -76,6 +77,15 @@ Feature: Stacked pull requests
     When the user rebases the stack
     Then 41 and 42 stay rebased
     And the user is told how many layers finished before the failure
+
+  # Upstream #29919: after a squash merge of a lower layer, the layer above replayed its commits
+  # onto the squash commit and conflicted.
+  @backlog @mc @priority-high
+  Scenario: Rebasing a stack whose bottom layer was squash-merged
+    Given pull request 41 was squash-merged into "main" and 42 and 43 are still open
+    When the user rebases the stack
+    Then 42 and 43 are rebased onto "main" without 41's own commits
+    And no conflict is reported
 
   @mc
   Scenario: Linking a layer links the stack

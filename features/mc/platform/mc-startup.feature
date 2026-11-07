@@ -42,6 +42,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15795
 #   https://github.com/pingdotgg/t3code/pull/22559
 #   https://github.com/pingdotgg/t3code/pull/7295
+#   https://github.com/pingdotgg/t3code/pull/27938
 
 Feature: Starting the MC
   An MC is one Elixir release that keeps its files in the user's XDG directories, or under
@@ -297,6 +298,14 @@ Feature: Starting the MC
     When the MC starts with a short PATH
     Then the MC gives up on the login shell after 5 seconds and starts
     And the login shell it started is not left running
+
+  # Upstream #27938: on Windows a PowerShell stuck in the kernel (a drive that stopped answering)
+  # ignored being killed and kept its output open, so startup never finished.
+  @backlog @mc @desktop @priority-low
+  Scenario: A Windows shell that cannot even be killed does not hold up startup
+    Given the PowerShell that reads the user's environment on Windows is stuck and cannot be stopped
+    When the MC or the desktop starts
+    Then it gives up on the shell after its time limit and starts with the environment it has
 
   # Upstream #21913: a login shell that printed a lot of startup messages filled the unread error
   # pipe and stalled until the time limit, so its PATH was missed.

@@ -93,6 +93,9 @@
 #   https://github.com/pingdotgg/t3code/pull/25496
 #   https://github.com/pingdotgg/t3code/pull/26432
 #   https://github.com/pingdotgg/t3code/pull/23732
+#   https://github.com/pingdotgg/t3code/pull/30601
+#   https://github.com/pingdotgg/t3code/pull/30706
+#   https://github.com/pingdotgg/t3code/pull/29360
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -246,6 +249,14 @@ Feature: Viewing and editing files
       Then the files panel shows "/home/sam/study" with "data" expanded and chosen
       And "data" and "raw.csv" stay in the path, dimmed, and lead back down
       And "raw.csv" keeps its tab
+
+    # Upstream #30706: a folder tab closed and reopened came back without the dimmed trail back down,
+    # and at the project's top without its path at all.
+    @backlog @desktop @priority-low
+    Scenario: A reopened folder tab keeps the trail back down
+      Given the user moved from "src/cli" up to "src" in the files panel
+      When the user closes that tab and reopens it
+      Then the files panel shows "src" with "cli" still in the path, dimmed, leading back down
 
     # Upstream #15045: the project crumb goes to the Files explorer
     @shared @backlog
@@ -603,6 +614,19 @@ Feature: Viewing and editing files
         | data/a.csv    | application/json          | the file is not shown as a table         |
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
+
+    # Upstream #30601: a CSV or TSV labelled with a generic type other than application/octet-stream
+    # opened as raw text.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A CSV or TSV under a generic file type is shown as a table
+      When the user opens "<path>" of type "<type>" rendered
+      Then <outcome>
+
+      Examples:
+        | path       | type                     | outcome                            |
+        | data/a.csv | binary/octet-stream      | the file is shown as a comma table |
+        | data/a.tsv | application/unknown      | the file is shown as a tab table   |
+        | data/a.csv | application/octet-stream | the file is shown as a comma table |
 
     # Upstream #27497: a cell cut where an emoji's two halves met ended in a broken character.
     @backlog @desktop @mobile @priority-low
@@ -1457,6 +1481,21 @@ Feature: Viewing and editing files
         | cart.ts   | coloured as TypeScript |
         | notes.txt | plain                  |
 
+    # Upstream #29360: an Office file, archive or SQLite database labelled "binary/octet-stream" or
+    # "application/unknown" said "No preview for this file"; only "application/octet-stream" fell back
+    # to the file's name.
+    @backlog @desktop @priority-low
+    Scenario Outline: An attachment of a generic file type is previewed by its name
+      Given the user has attached "<file>" of type "<type>" to a draft
+      When the user opens the attachment from the draft
+      Then it is previewed as the kind its name says
+
+      Examples:
+        | file       | type                |
+        | plan.docx  | binary/octet-stream |
+        | export.zip | application/unknown |
+        | shop.sqlite | binary/octet-stream |
+
     @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer
       Given a sent message carries the attachment "invoice.pdf"
@@ -1655,7 +1694,7 @@ Feature: Viewing and editing files
 
       Examples:
         | state                                         | message                                  |
-        | the environment is unreachable                | Reconnect to the environment and try again. |
+        | the attachment's environment is unreachable   | Reconnect to the environment and try again. |
         | the environment no longer has the attachment  | The attachment is unavailable.           |
 
     @desktop

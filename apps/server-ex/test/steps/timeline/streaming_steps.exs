@@ -63,7 +63,7 @@ defmodule HalC2.Steps.Timeline.Streaming do
         plan = Enum.find(StreamState.list(state, "plan"), & &1["steps"])
 
         # The command's output and the plan are already there; the text is not.
-        if tool && tool["output"] == "a.txt\n" && plan && texts[:during_tool] == nil do
+        if tool && tool["outputSize"] == 6 && plan && texts[:during_tool] == nil do
           World.open_gate(context, "go-1")
           record(state, Map.put(texts, :during_tool, reply(state)))
         else

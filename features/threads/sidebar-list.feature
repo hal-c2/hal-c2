@@ -64,6 +64,8 @@
 #   https://github.com/pingdotgg/t3code/pull/28179
 #   https://github.com/pingdotgg/t3code/pull/28605
 #   https://github.com/pingdotgg/t3code/pull/22887
+#   https://github.com/pingdotgg/t3code/pull/31269
+#   https://github.com/pingdotgg/t3code/pull/27231
 
 Feature: The thread list
   The thread list shows every thread the user can act on, grouped by how much attention
@@ -83,6 +85,16 @@ Feature: The thread list
     Given "Alpha" was created before "Beta"
     When the user looks at the thread list
     Then "Beta" is listed above "Alpha"
+
+  # Upstream #27231: opening Settled with two or more projects in the project filter made the list
+  # loop until the app crashed, and it crashed again on every start since the shelf stayed open.
+  @backlog @desktop @mobile @priority-high
+  Scenario: The settled section opens with several projects filtered
+    Given the project filter holds "shop" and "docs"
+    And "docs" has only settled threads older than the rest of the list
+    When the user opens the settled section
+    Then the settled threads of "shop" and "docs" are listed
+    And the list stays still
 
   @desktop @mobile @backlog-mobile
   Scenario: Settled threads are listed by when they settled
@@ -973,13 +985,22 @@ Feature: The thread list
 
   # Upstream #26195: a thread on an environment that stopped answering kept its last running
   # state and stayed hidden in the collapsed Working section.
-  @backlog @desktop @mobile
+  # Dropped: upstream reverted it in #31269. Threads left the Working section while their rows
+  # still said "Working 39m", so the list contradicted itself; see the scenario below.
+  @dropped @desktop @mobile
   Scenario: A thread whose environment stopped answering leaves the Working section
     Given the Working section is on and collapsed
     And "Fix login" is working on an environment that then stops answering
     Then "Fix login" is listed in the inbox where the user can see it
     And it goes back into the Working section once the environment reconnects and reports it working
     And threads keep their place while their environment is connecting for the first time
+
+  # Upstream #31269: reverts #26195; the Working section follows the thread's working state only.
+  @backlog @desktop @mobile
+  Scenario: A working thread stays in the Working section while its environment is disconnected
+    Given the Working section is on
+    And "Fix login" is working on an environment that then stops answering
+    Then "Fix login" stays in the Working section while it still says it is working
 
   # Upstream #24610: background shells never held a thread in Working and monitors always did,
   # but either can be a wait or a process left running, and only the agent knows which.

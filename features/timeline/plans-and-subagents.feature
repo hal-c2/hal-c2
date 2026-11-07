@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/22064
+#   https://github.com/pingdotgg/t3code/pull/31888
 #   https://github.com/pingdotgg/t3code/pull/28446
 #   https://github.com/pingdotgg/t3code/pull/26762
 #   https://github.com/pingdotgg/t3code/pull/18642
@@ -80,6 +81,10 @@
 #   https://github.com/pingdotgg/t3code/pull/26434
 #   https://github.com/pingdotgg/t3code/pull/23538
 #   https://github.com/pingdotgg/t3code/pull/22141
+#   https://github.com/pingdotgg/t3code/pull/24684
+#   https://github.com/pingdotgg/t3code/pull/28592
+#   https://github.com/pingdotgg/t3code/pull/30391
+#   https://github.com/pingdotgg/t3code/pull/28995
 
 Feature: Plans and subagents
   An agent in plan mode proposes a plan the user can refine or implement. An agent can
@@ -125,6 +130,25 @@ Feature: Plans and subagents
     When the user sends "split the migration into its own step" as feedback
     Then the feedback is no longer shown as a sent message
     And the thread shows the reason, or "Failed to send plan follow-up." when none is given
+
+  # Upstream #24684: a failed plan follow-up put the feedback back over the draft the user had
+  # started since sending it, and over another thread's composer once the user moved on.
+  @backlog @desktop @mobile
+  Scenario: A failed plan follow-up does not replace the draft written since
+    Given the agent has proposed a plan
+    And the user sent "split the migration into its own step" as feedback
+    And the user has typed "also rename the table" while it was being sent
+    When the feedback fails to send
+    Then the draft still reads "also rename the table"
+
+  # Upstream #24684
+  @backlog @desktop @mobile @priority-low
+  Scenario: A failed plan follow-up returns to its own thread's draft
+    Given the agent has proposed a plan in "Plan billing"
+    And the user sent feedback and opened "Deploy" while it was being sent
+    When the feedback fails to send
+    Then the draft of "Deploy" is unchanged
+    And the feedback is waiting in the draft of "Plan billing"
 
   @desktop
   Scenario: No plan is offered while the agent is still working
@@ -314,6 +338,15 @@ Feature: Plans and subagents
     When the user switches to thread B and back to thread A
     Then the task list is closed and only its summary is shown
 
+  # Upstream #31888: an unfinished task list update in the timeline looked like a running
+  # tool, though the tools it was waiting on were shown below it.
+  @backlog @shared @priority-low
+  Scenario: A task list update in the timeline does not look like running work
+    Given the agent updated its task list with "Write tests" in progress and then started a command
+    When the user looks at the timeline
+    Then the task list update is shown at rest
+    And only the command is shown as running
+
   @mc
   Scenario: A delegated task appears in the parent's timeline
     Given the agent is working
@@ -441,6 +474,14 @@ Feature: Plans and subagents
   Scenario: A working subagent shows its latest progress
     Given a subagent that is still working after reporting "Reading the tax code"
     Then the subagent's row reads "Reading the tax code"
+
+  # Upstream #30391: a preview cut at 280 characters could keep half an emoji, and the hover card
+  # always showed the preview's end.
+  @backlog @shared @priority-low
+  Scenario: A long subagent preview is cut before an emoji, not through it
+    Given a subagent that reported 300 characters of progress with an emoji at the 280th
+    When the user reads the subagent's preview
+    Then the preview is cut before the emoji and ends in "…"
 
   # Upstream #23538: the phone's subagent previews kept an image's "!" and cut links whose address
   # held parentheses, in the transcript row and the Agents sheet alike.
@@ -616,6 +657,15 @@ Feature: Plans and subagents
     When the user answers it
     Then the subagent continues with the answer
 
+  # Upstream #28592: a subagent on another environment needing an answer was opened, from the
+  # parent, on the parent's environment; HAL-C2 reads this as another machine of the cluster.
+  @backlog @shared
+  Scenario: A subagent's approval on another machine opens where the subagent runs
+    Given the MC is clustered with "mc-c", which serves "env-c"
+    And a subagent the parent delegated on "env-c" asks for approval to run a command
+    When the user opens the approval from the parent thread
+    Then the subagent's thread on "env-c" is opened with its approval
+
   # Upstream #28516
   @backlog @shared
   Scenario: A failed answer to a subagent's approval from the parent can be tried again
@@ -652,6 +702,26 @@ Feature: Plans and subagents
       | the context is handed to another agent | Context handoff   |
       | the agent creates a thread             | Created thread    |
       | the context is compacted               | Context compacted |
+
+  # Upstream #28995: changing model or effort with the same provider left no trace in the thread.
+  @backlog @mc @shared
+  Scenario Outline: A change of model or effort is marked above the message it took effect on
+    Given the thread's last message was sent with Opus 5.5 at High effort
+    When the user sends the next message with <next>
+    Then the timeline marks "<marker>" above that message
+
+    Examples:
+      | next                        | marker                            |
+      | Sonnet 5.5 at High effort   | Opus 5.5 → Sonnet 5.5             |
+      | Opus 5.5 at Low effort      | High → Low                        |
+      | Sonnet 5.5 at Medium effort | Opus 5.5 High → Sonnet 5.5 Medium |
+
+  @backlog @mc @shared @priority-low
+  Scenario: A change of provider is still marked as a context handoff only
+    Given the thread's last message was sent with Claude
+    When the user sends the next message with Codex
+    Then the timeline marks "Context handoff"
+    And no model change is marked
 
   @desktop
   Scenario Outline: A context compaction says how it stands

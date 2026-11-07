@@ -25,6 +25,8 @@
 #   packages/contracts/src/settings.ts (storageCleanup, project worktree cleanup)
 #   apps/tui/src/host/sections/storage.ts
 #   https://github.com/pingdotgg/t3code/pull/21545
+#   https://github.com/pingdotgg/t3code/pull/27175
+#   https://github.com/pingdotgg/t3code/pull/30026
 
 Feature: Storage cleanup
   The MC can remove worktrees and old files it created so disk use does not
@@ -69,6 +71,16 @@ Feature: Storage cleanup
       Then the worktree is kept so the project's settle script can run in it
       And the next sweep after that minute removes it
 
+    # Upstream #30026: a finished subagent's worktree was kept forever, because the subagent's own
+    # thread never settles when its parent does.
+    @backlog @mc
+    Scenario: A subagent's worktree is removed once the thread that started it has settled
+      Given the user turned on only deleting worktrees of threads settled for 0 days
+      And a finished subagent of "parent" has a worktree of its own
+      When "parent" settles and the MC sweeps storage after the settle script's minute
+      Then the subagent's worktree is removed
+      But it is kept while the subagent or any thread between it and "parent" is still working
+
     @backlog @mc
     Scenario: Delete now runs when settled retention is the only rule on
       Given the only cleanup rule on is deleting worktrees of settled threads
@@ -105,6 +117,22 @@ Feature: Storage cleanup
         | user                 |
         | a terminal           |
         | a live agent session |
+
+    # Upstream #27175: in a repository with no remote, unchanged-worktree cleanup failed with
+    # "No git remote is configured" and left the worktrees behind.
+    @backlog @mc
+    Scenario Outline: Unchanged worktrees of a repository without a remote are compared with its checkout
+      Given "api" has no remote and its own checkout is on <checkout>
+      And the user turned on deleting unchanged worktrees
+      And an idle thread's worktree <commits>
+      When the MC sweeps storage
+      Then the worktree is <outcome>
+
+      Examples:
+        | checkout          | commits                           | outcome |
+        | the branch "main" | has no commits beyond "main"      | removed |
+        | the branch "main" | has a commit "main" does not have | kept    |
+        | a detached HEAD   | has no commits of its own         | kept    |
 
     # Upstream #17563 made what counts as local changes a choice, and its default no longer
     # keeps a worktree for ignored files such as ".env" alone; the row above is then true

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/30187
+#   https://github.com/pingdotgg/t3code/pull/32231
+#   https://github.com/pingdotgg/t3code/pull/32389
+#   https://github.com/pingdotgg/t3code/pull/24388
 #   https://github.com/pingdotgg/t3code/pull/27539
 #   https://github.com/pingdotgg/t3code/pull/27521
 #   https://github.com/pingdotgg/t3code/pull/27514
@@ -34,6 +38,10 @@
 #   https://github.com/pingdotgg/t3code/pull/16210
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/21822
+#   https://github.com/pingdotgg/t3code/pull/28400
+#   https://github.com/pingdotgg/t3code/pull/29768
+#   https://github.com/pingdotgg/t3code/pull/30025
+#   https://github.com/pingdotgg/t3code/pull/23901
 #   docs/user/providers-pi.md
 #   docs/internals/providers.md (Pi RPC mode, forks through the CLI in the destination directory)
 #   apps/server-ex/lib/hal_c2/pi.ex, apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (Pi RPC mode)
@@ -113,6 +121,14 @@ Feature: Pi
       | the pi version check exits with an error           | Pi CLI is installed but failed to run.                                                                        |
       | pi prints no version                               | HAL-C2 could not determine the Pi version. Pi 0.80.5 or newer is required.                                    |
 
+  # Upstream #28400: "pi --version" had 4 seconds, so a healthy CLI that started slowly showed as
+  # unavailable. The sign-in check keeps its 4 seconds.
+  @backlog
+  Scenario: A Pi whose version check takes 8 seconds is not shown as unavailable
+    Given "pi --version" takes 8 seconds to answer
+    When the user refreshes provider status
+    Then Pi is not reported as timed out
+
   @backlog
   Scenario: Pi stays available when its models and commands cannot be refreshed
     Given Pi discovery of its models and commands fails
@@ -147,6 +163,15 @@ Feature: Pi
     When the user opens the options for that model
     Then off, minimal, low, medium, high and extra high are offered
     And Pi's configured level is marked as the default
+
+  # Upstream #32389: switching models between turns let Pi apply the new model's default
+  # thinking level over the one the user had chosen.
+  @backlog
+  Scenario: A thinking level the user chose is kept when the Pi model changes
+    Given a Pi thread runs model "A" with thinking set to high by the user
+    When the user switches the thread to model "B" and sends the next message
+    Then Pi runs the turn on "B" with thinking high
+    And switching back to Pi's default model with Pi's default thinking uses that model's own level
 
   Scenario Outline: Pi access modes decide which tools ask first
     Given the thread runs Pi in <mode>
@@ -184,6 +209,17 @@ Feature: Pi
   Scenario: Pi extension dialogs appear in the composer
     When a Pi extension asks the user to pick from a list
     Then the choices appear in the composer and the answer goes back to the extension
+
+  # Upstream #29768: an error from a folder extension was titled "index", after its entry file.
+  @backlog
+  Scenario Outline: A Pi extension's error names the extension
+    Given the Pi extension at "<path>" throws during a turn
+    Then the turn shows an error titled "<title>"
+
+    Examples:
+      | path                                     | title     |
+      | ~/.pi/agent/extensions/notes/index.ts    | notes     |
+      | ~/.pi/agent/extensions/lint.ts           | lint      |
 
   Scenario: A Pi thread can be resumed in the Pi terminal app
     Given a Pi thread in HAL-C2
@@ -444,6 +480,15 @@ Feature: Pi
       | macOS    | Pi is asked to stop and is killed if still alive a second later |
       | Windows  | the whole process tree is ended at once                         |
 
+  # Upstream #30025: Pi's input was closed before it was asked to stop, so Pi quit mid-shutdown and
+  # an extension's shutdown work never finished.
+  @backlog
+  Scenario: Stopping Pi lets its extensions finish their shutdown work
+    Given a Pi extension does work of its own when its session shuts down
+    When the Pi session is stopped
+    Then Pi is asked to stop before its input is closed
+    And the extension's shutdown work finishes before Pi exits
+
   @backlog
   Scenario: A Pi that fails while starting is not left running
     When Pi starts but the session cannot finish setting up
@@ -507,6 +552,14 @@ Feature: Pi
   Scenario: The HAL-C2 tools appear in Pi under the hal-c2 name
     When a Pi thread starts with the HAL-C2 tools
     Then Pi lists each of them as "mcp__hal-c2__" followed by the tool's name
+
+  # Upstream #32231: the file that gives Pi the HAL-C2 tools was truncated and rewritten in place,
+  # so a Pi session starting during the write loaded an empty or partial extension.
+  @backlog
+  Scenario: A Pi session that starts while another writes the HAL-C2 tools still gets them
+    Given one Pi thread is writing out the HAL-C2 tools for Pi
+    When another Pi session starts at that moment
+    Then it loads the HAL-C2 tools whole, as they were before the write or after it
 
   @backlog
   Scenario: HAL-C2's instructions do not stop a Pi slash command from expanding
@@ -661,6 +714,19 @@ Feature: Pi
     When the user stops the turn
     Then Pi is given 2 seconds to stop the compaction and is then restarted
     And the thread can take the next message
+
+  # Upstream #24388: a message sent while Pi compacted its context could be rejected and lost.
+  @backlog
+  Scenario Outline: A message sent while Pi compacts is delivered once compaction ends
+    Given Pi is compacting the conversation after a finished turn
+    When the user <sends> "now add the tests"
+    Then Pi receives "now add the tests" once, after the compaction ends
+    And a message whose turn the user stops before then is not sent
+
+    Examples:
+      | sends               |
+      | sends               |
+      | steers the turn with |
 
   @backlog
   Scenario Outline: A Pi retry shows its attempt and how it ended
@@ -904,11 +970,30 @@ Feature: Pi
       | exits with a code other than zero  | failed      |
       | stops on an error                  | failed      |
 
+  # Upstream #23901 moved the status line out of this list: Pi extension statuses are now shown.
   @backlog
   Scenario: Requests that only dress Pi's own terminal are ignored
-    When a Pi extension sets a status line, a widget, the window title or the editor's text
+    When a Pi extension sets a widget, the window title or the editor's text
     Then nothing is shown in the thread
     And the turn carries on
+
+  # Upstream #23901: Pi extensions publish keyed status text, which was thrown away.
+  @backlog @shared
+  Scenario: A Pi extension's status shows above the composer
+    When a Pi extension sets its status "plan" to "Planning step 2 of 4"
+    Then the thread shows "Planning step 2 of 4" above the composer, on the phone in its floating control
+    When the extension sets "plan" to "Planning step 3 of 4"
+    Then that status reads "Planning step 3 of 4" in place of the old one
+    When the extension clears "plan"
+    Then the status is gone
+
+  # Upstream #23901: statuses outlive a failed turn the session can reuse, and go with the session.
+  @backlog @priority-low
+  Scenario: A Pi extension's status lasts as long as its session
+    Given a Pi extension set a status in the thread
+    When a turn fails and Pi's session can still be used
+    Then the status is still shown, and an idle thread does not read "Working"
+    But once Pi's session ends, or the MC restarts with that session dead, the status is gone
 
   @backlog
   Scenario: Allowing a Pi request for the session does not cover a different request
@@ -1098,3 +1183,12 @@ Feature: Pi
     When the user opens each thread
     Then "t1" shows its own notice
     And "t2" shows its own notice
+
+  # Upstream #30187: Pi renews expired logins in the background as it starts, and the MC stopped
+  # its short-lived Pi processes mid-renewal, leaving a spent token so the next sign-in failed.
+  @backlog
+  Scenario: A short-lived Pi process does not spend the user's login renewal
+    Given the user's Pi login has expired and is renewed with a single-use token
+    When the MC starts Pi only to check its status, write a title or fork a session
+    Then that Pi process starts without refreshing its catalog or logins
+    And the user's next Pi turn still signs in

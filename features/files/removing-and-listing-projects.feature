@@ -15,6 +15,7 @@
 #     unrouted names, dropped in parity/rpc.feature)
 #   apps/server/src/cli/project.ts (hal-c2 project add, remove, rename; live server or stored state)
 #   https://github.com/pingdotgg/t3code/pull/22867
+#   https://github.com/pingdotgg/t3code/pull/30562
 
 Feature: Removing and updating projects
   A project entry can be renamed, changed, and removed. Removing a project clears its
@@ -197,6 +198,22 @@ Feature: Removing and updating projects
       Given the folder "/home/sam/shop" no longer exists
       When the operator runs "hal-c2 project remove /home/sam/shop"
       Then "shop" is no longer listed for "laptop"
+
+    # Upstream #30562: once the folder was gone, only the exact stored absolute path found the
+    # project; a relative path or a trailing slash said no active project was found.
+    @backlog @mc @priority-low
+    Scenario Outline: A project whose folder is gone is found by any spelling of its folder
+      Given the folder "/home/sam/shop" no longer exists
+      And the operator is in "/home/sam"
+      When the operator runs "hal-c2 project remove <folder>"
+      Then "shop" is no longer listed for "laptop"
+
+      Examples:
+        | folder          |
+        | shop            |
+        | ./shop/         |
+        | ~/shop/         |
+        | /home/sam/shop/ |
 
     @backlog @mc @priority-low
     Scenario: Renaming a project to its own title changes nothing
