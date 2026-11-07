@@ -262,11 +262,14 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   }
   if (thread.latestRunId || present(row, "activeProviderThreadId")) {
     RuntimeSummary runtime;
-    // Background tasks still open after the run park the runtime at idle ("Waiting").
-    runtime.status = thread.pendingBackgroundTasks > 0 ? QStringLiteral("idle")
-                                                       : thread.activityRunStatus.value_or(status);
-    runtime.activeRunId = thread.activeRunId;
     runtime.lastErrorClass = stringField(row, "lastErrorClass");
+    // Background tasks still open after the run park the runtime at idle
+    // ("Waiting"), unless the run stopped on a usage limit: the limit is
+    // what needs the user (its recovery actions), the tasks are not.
+    const bool limited = status == QLatin1String("failed") && runtime.lastErrorClass.value_or(QString()) == QLatin1String("usage_limit");
+    runtime.status = thread.pendingBackgroundTasks > 0 && !limited ? QStringLiteral("idle")
+                                                                    : thread.activityRunStatus.value_or(status);
+    runtime.activeRunId = thread.activeRunId;
     runtime.updatedAt = thread.updatedAt;
     thread.runtime = runtime;
   }
@@ -401,7 +404,11 @@ Nullable statusLabel(const Thread& thread) {
       runtime == QLatin1String("queued")) {
     return QStringLiteral("Connecting");
   }
-  if (thread.pendingBackgroundTasks > 0) return QStringLiteral("Waiting");
+  // A run stopped on a usage limit needs the user, not its background work:
+  // as in threadFromRow, the limit wins over the work it still waits on.
+  if (thread.pendingBackgroundTasks > 0 && status(thread) != QLatin1String("limited")) {
+    return QStringLiteral("Waiting");
+  }
   if (thread.interactionMode == QLatin1String("plan") && latestRunSettled(thread) &&
       thread.hasActionableProposedPlan) {
     return QStringLiteral("Plan Ready");
@@ -424,6 +431,9 @@ Nullable visibleWokeAt(const Thread& thread, qint64 nowMs) {
 
 bool working(const Thread& thread) {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  // A thread returns to the inbox when its run fails on a usage limit, even
+  // with background work it waits on still open.
+  if (status(thread) == QLatin1String("limited")) return false;
   const bool busy = (thread.runtime && activeRunStatus(thread.runtime->status)) || thread.pendingBackgroundTasks > 0;
   if (!busy) return false;
   return !(thread.interactionMode == QLatin1String("plan") && thread.hasActionableProposedPlan && latestRunSettled(thread));

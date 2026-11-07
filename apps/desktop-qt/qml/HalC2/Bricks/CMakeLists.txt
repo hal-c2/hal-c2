@@ -96,6 +96,7 @@ set(hal_c2_bricks_qml_files
     ThreadErrorBanner.qml
     ProviderStatusBanner.qml
     ThreadNotice.qml
+    NoticeStackPeek.qml
     ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml
