@@ -66,7 +66,7 @@ Feature: Answering the agent's questions from the composer
     When the agent asks two long questions in place of the first
     Then each question, its options and the answer button sit above the composer's editor as the user steps through them
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A question can be dismissed without an answer
     When the user dismisses the question without answering
     Then the agent is told the question was dismissed
@@ -100,7 +100,7 @@ Feature: Answering the agent's questions from the composer
     When the user tries to attach a file
     Then the user is told this question cannot accept attachments
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A failed answer keeps what the user wrote
     Given the user typed "MySQL"
     When submitting the answer fails
@@ -112,7 +112,7 @@ Feature: Answering the agent's questions from the composer
     When the user chooses to implement the plan
     Then a turn starts that carries out the plan
 
-  @backlog @mobile
+  @mobile
   Scenario: The question panel can be folded away to read the conversation
     Given the agent is waiting for the user's answer
     When the user folds the question panel away
@@ -128,12 +128,12 @@ Feature: Answering the agent's questions from the composer
     Then the composer stays expanded while the question waits
     And it collapses again once the question is answered
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A question that can no longer be answered disables its controls
     Given the agent asked a question and its session can no longer take the answer
     Then the user cannot submit an answer to it
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A question already being answered cannot be submitted twice
     Given the user submitted the answer to "Which database?"
     And the answer is still on its way to the agent
@@ -284,20 +284,20 @@ Feature: Answering the agent's questions from the composer
     Then "Postgres" is shown as picked
     And the typed answer is empty
 
-  @backlog @mobile
+  @mobile
   Scenario: Picking an option again takes it back when a question allows several answers
     Given the question allows several answers
     And the user picked "Postgres" and "SQLite"
     When the user picks "SQLite" again
     Then only "Postgres" is picked
 
-  @backlog @mobile
+  @mobile
   Scenario: A question that does not allow a typed answer ignores typed text
     Given the question allows only its listed options
     When the user submits without picking an option
     Then nothing is sent
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Questions in one request are sent only when each has an answer
     Given the agent asked "Which database?" and "Which cache?" in one request
     And the user answered only "Which database?"
