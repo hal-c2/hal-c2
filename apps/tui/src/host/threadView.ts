@@ -263,15 +263,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     };
   };
 
-  /**
-   * The error the thread's shell row reports for its latest run. The session keeps a
-   * failed run's error after later runs, so it shows only while that run is the latest.
-   */
+  /** The error the thread's shell row reports for its latest run. */
   const threadError = () => {
     const row = detail ? shellThread(detail.id) : null;
     const message = row?.session?.lastError;
     if (!detail || !row || !message) return null;
-    if (row.latestTurn && row.latestTurn.state !== "error") return null;
     const key = `${row.latestTurn?.turnId ?? ""}\u0000${message}`;
     return {
       message,

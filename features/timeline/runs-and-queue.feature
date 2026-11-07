@@ -299,7 +299,7 @@ Feature: Runs, interruptions and the queue
     When a later run of the thread fails with "Rate limited"
     Then the thread shows "Rate limited" as its error
 
-  # The session keeps a failed run's error; a run that succeeds after it has none.
+  # A failed run's error goes once a later run succeeds.
   @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A later run that succeeds does not bring a dismissed error back
     Given the thread shows the error "Rate limited"

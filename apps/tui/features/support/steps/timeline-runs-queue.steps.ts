@@ -213,10 +213,10 @@ step("a later run of the thread fails with {string}", async (ctx: ThreadWorld, e
   await showError(ctx, error, { latestTurn: laterRun("error") });
 });
 
-// The session keeps its last error after a run succeeds: the MC never clears it.
+// The MC's row once a later run completes: the failed run's error is gone.
 step("a later run of the thread completes", async (ctx: ThreadWorld) => {
   await showError(ctx, "Rate limited", {
-    session: { status: "ready", lastError: "Rate limited" },
+    session: { status: "ready", lastError: null },
     latestTurn: laterRun("completed"),
   });
 });
