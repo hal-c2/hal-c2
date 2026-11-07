@@ -197,6 +197,134 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
+  # --- trace files written straight into the trace file ----------------------------------
+
+  step "the MC recorded warning and error logs inside its spans", context do
+    now = System.system_time(:nanosecond)
+
+    trace_file([
+      effect_span("git.status", now - 3_000_000_000, 20,
+        events: [log("Info", "fine", now - 2_990_000_000)]
+      ),
+      effect_span("provider.start", now - 2_000_000_000, 30,
+        events: [
+          log("Warning", "slow start", now - 1_990_000_000),
+          log("Error", "spawn failed", now - 1_980_000_000)
+        ]
+      )
+    ])
+
+    context
+  end
+
+  step "the latest warnings and errors are listed with the span they happened in", context do
+    assert {:ok, traces} = context.reply
+
+    assert [
+             %{"spanName" => "provider.start", "level" => "Error", "message" => "spawn failed"},
+             %{"spanName" => "provider.start", "level" => "Warning", "message" => "slow start"}
+           ] = traces["latestWarningAndErrorLogs"]
+
+    assert traces["logLevelCounts"] == %{"Info" => 1, "Warning" => 1, "Error" => 1}
+    context
+  end
+
+  step "the MC recorded a warning with no time inside a span that ended before a later error",
+       context do
+    now = System.system_time(:nanosecond)
+    untimed = %{"name" => "no clock", "attributes" => %{"effect.logLevel" => "Warning"}}
+
+    trace_file([
+      effect_span("git.status", now - 3_000_000_000, 20, events: [untimed]),
+      effect_span("provider.start", now - 2_000_000_000, 30,
+        events: [log("Error", "spawn failed", now - 1_990_000_000)]
+      )
+    ])
+
+    Map.put(context, :untimed_span_end, div(now - 3_000_000_000 + 20_000_000, 1_000_000))
+  end
+
+  step "the warning is listed after the later error, at its span's end", context do
+    assert {:ok, traces} = context.reply
+
+    assert [
+             %{"spanName" => "provider.start", "message" => "spawn failed"},
+             %{"spanName" => "git.status", "message" => "no clock", "seenAt" => seen}
+           ] = traces["latestWarningAndErrorLogs"]
+
+    {:ok, at, 0} = DateTime.from_iso8601(seen)
+    assert DateTime.to_unix(at, :millisecond) == context.untimed_span_end
+    context
+  end
+
+  step "the MC recorded spans that took under a second and spans that took a second or more",
+       context do
+    now = System.system_time(:nanosecond)
+
+    trace_file([
+      effect_span("a", now - 5_000_000_000, 999),
+      effect_span("b", now - 4_000_000_000, 1_000),
+      effect_span("c", now - 3_000_000_000, 4_000)
+    ])
+
+    context
+  end
+
+  step "the slow span count includes only the spans that took a second or more", context do
+    assert {:ok, %{"recordCount" => 3, "slowSpanCount" => 2, "slowSpanThresholdMs" => 1000}} =
+             context.reply
+
+    context
+  end
+
+  step "the trace file has lines that are not trace records", context do
+    now = System.system_time(:nanosecond)
+    trace_file([effect_span("a", now - 1_000_000_000, 5)], ["not json", ~s({"name":"x"})])
+    context
+  end
+
+  step "the unreadable lines are left out and their count is reported", context do
+    assert {:ok, %{"recordCount" => 1, "parseErrorCount" => 2}} = context.reply
+    context
+  end
+
+  step "tracing is on but the MC has not written a trace file", context do
+    World.put_app_env(:trace, true)
+    refute File.exists?(HalC2.Traces.path())
+    context
+  end
+
+  # A trace file as the MC wrote it: spans, then any `raw` lines.
+  defp trace_file(spans, raw \\ []) do
+    World.put_app_env(:trace, true)
+    path = HalC2.Traces.path()
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, Enum.map(spans, &[JSON.encode!(&1), ?\n]) ++ Enum.map(raw, &[&1, ?\n]))
+  end
+
+  defp effect_span(name, start, ms, opts \\ []) do
+    %{
+      "type" => "effect-span",
+      "name" => name,
+      "traceId" => Base.encode16(:crypto.strong_rand_bytes(16), case: :lower),
+      "spanId" => Base.encode16(:crypto.strong_rand_bytes(8), case: :lower),
+      "startTimeUnixNano" => "#{start}",
+      "endTimeUnixNano" => "#{start + ms * 1_000_000}",
+      "durationMs" => ms * 1.0,
+      "attributes" => %{},
+      "events" => opts[:events] || [],
+      "exit" => %{"_tag" => "Success"}
+    }
+  end
+
+  defp log(level, message, at) do
+    %{
+      "name" => message,
+      "startTimeUnixNano" => "#{at}",
+      "attributes" => %{"effect.logLevel" => level}
+    }
+  end
+
   # An OTLP JSON span that ended `ms` after `start` (unix ns), failing with `{code, message}`.
   defp span(name, start, ms, status \\ {1, nil}) do
     {code, message} = status
