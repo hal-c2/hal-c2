@@ -605,24 +605,26 @@ Feature: The thread list
 
   # The legacy per-project tree: the user's switch to it is the "Sidebar (legacy)" setting.
   # Keep-or-drop is the maintainers' call; see the audit report.
-  # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/js/settingsRows.js (legacySidebarEnabled)
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The user can switch the thread list to one tree of threads per project
-    Given the user has not turned on the legacy sidebar
+    Given "shop" has 2 threads
+    And "docs" has 2 threads
+    And the user has not turned on the legacy sidebar
     When the user turns on "Sidebar (legacy)" in settings
     Then the thread list shows each project with its own threads beneath it
-    When the user turns it off
+    When the user turns off "Sidebar (legacy)" in settings
     Then the thread list is grouped by attention again
 
-  @backlog @desktop
+  @desktop
   Scenario: A project in the tree folds and unfolds its threads
     Given the user has turned on the legacy sidebar
+    And "shop" has 2 threads
     When the user folds "shop" in the thread list
     Then the threads of "shop" are hidden
     When the user unfolds "shop"
     Then the threads of "shop" are shown again
 
-  @backlog @desktop
+  @desktop
   Scenario: A project in the tree shows a few threads and offers the rest
     Given the user has turned on the legacy sidebar
     And "shop" has 10 threads and the list shows 6 threads per project
@@ -635,9 +637,10 @@ Feature: The thread list
     When the user asks to show less
     Then only 6 threads of "shop" are shown
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: The number of threads a project shows is limited to a sensible range
     Given the user has turned on the legacy sidebar
+    And "shop" has 20 threads
     When the user sets the visible thread count to <typed>
     Then each project shows <shown> threads before offering more
 
@@ -647,10 +650,11 @@ Feature: The thread list
       | 8     | 8     |
       | 40    | 15    |
 
-  # Likely already implemented: apps/desktop-qt/src/native/SidebarController.cpp (sidebarProjectSortOrder, sidebarThreadSortOrder)
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: The user chooses how projects and threads are sorted
     Given the user has turned on the legacy sidebar
+    And "shop", "docs" and "blog" have threads started and written at different times
+    And the user once arranged the projects "blog", "shop" and "docs" by hand
     When the user sorts <what> by "<order>"
     Then <what> are listed <result>
 
@@ -662,17 +666,17 @@ Feature: The thread list
       | threads  | Last user message | by the latest message the user sent in each     |
       | threads  | Created at        | by when each thread was started                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: Projects are dragged into place only when they are sorted by hand
     Given the user has turned on the legacy sidebar
     And projects are sorted "Manual"
-    When the user drags "docs" above "shop"
-    Then "docs" is listed above "shop"
+    When the user drags "shop" above "docs"
+    Then "shop" is listed above "docs"
     And the user's order is remembered
     When the user sorts projects by "Created at"
     Then dragging a project does not move it
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Renaming a project from its menu
     Given the user has turned on the legacy sidebar
     When the user renames "shop" from its menu to "<title>"
@@ -684,17 +688,18 @@ Feature: The thread list
       | shop       | nothing is sent and the dialog closes                        |
       |            | the user is told "Project title cannot be empty"             |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: A project rename the environment refuses is reported
     Given the user has turned on the legacy sidebar
     And the environment refuses to rename "shop"
     When the user renames "shop" from its menu to "store"
     Then the user is told "Failed to rename project"
 
-  # Likely already implemented: apps/desktop-qt/src/native/SidebarController.cpp (sidebarProjectGroupingOverrides)
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A project chooses how it is grouped regardless of the device's default
     Given the user has turned on the legacy sidebar
+    And "shop" sits in the repository folder "acme", as "shop-copy" does in another copy of it
+    And the device groups projects by repository path
     When the user groups "shop" by "<choice>" from its menu
     Then "shop" is grouped <result>
 
@@ -754,7 +759,7 @@ Feature: The thread list
     When the user looks at the thread list
     Then the folder is grouped by that repository
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Removing a project that still has threads asks first
     Given the user has turned on the legacy sidebar
     And "shop" has 3 threads

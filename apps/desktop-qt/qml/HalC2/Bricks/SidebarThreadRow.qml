@@ -21,6 +21,8 @@ Item {
     property bool projectInDetail: true
     // The project's icon as `projectIcons` publishes it; null draws a folder.
     property var projectIcon: null
+    // Whether the row draws its project's mark (the legacy tree's rows sit under their project).
+    property bool markShown: true
     // Which sidebar group the row sits in: pinned, active, snoozed, settled
     // or draft. Decides the hover actions.
     property string section: "active"
@@ -400,6 +402,7 @@ Item {
             size: Theme.icon.sm + Theme.space.xxs
             icon: row.projectIcon
             name: row.projectName
+            visible: row.markShown && kind.length > 0
         }
 
         ColumnLayout {

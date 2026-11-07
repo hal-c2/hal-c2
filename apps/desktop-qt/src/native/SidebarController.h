@@ -123,6 +123,20 @@ public:
   static QString snoozeLabel(const sidebar::SnoozePreset& preset);
   void snooze(const QString& key, const QString& snoozedUntil);
 
+  // The legacy tree (legacySidebarEnabled, sidebar::Tree), as the removed web
+  // LegacySidebar: `sidebar.project.fold {projectKey}` folds or unfolds a
+  // project (sidebarFoldedProjects, logical keys, on this device);
+  // `sidebar.project.more` / `.less {projectKey}` lists all its threads or
+  // the first sidebarThreadPreviewCount again, until the app restarts;
+  // `sidebar.project.drop {projectKey, targetKey}` puts a dragged project
+  // where the target is when projects are sorted by hand
+  // (sidebarProjectOrder, physical keys, sidebar::reorderProjects);
+  // `sidebar.project.menu {projectKey, x, y}` is the project's menu (Rename,
+  // Group into, Copy Path, Project settings, Remove, each per folder of a
+  // grouped project); `sidebar.options {x, y}` sorts projects and threads.
+  static inline const QString kFoldedProjects = QStringLiteral("sidebarFoldedProjects");
+  static inline const QString kProjectOrder = QStringLiteral("sidebarProjectOrder");
+
 signals:
   // The logical projects were grouped differently: one came, went, or took
   // other folders (a checkout, or a change of grouping).
@@ -142,6 +156,9 @@ private:
   // `pinning`, the thread is pinned with its key instead of reordered.
   void arrange(const QString& section, const QStringList& ordered, const QString& key, bool pinning = false);
   void drop(const QString& key, const QString& section, const QString& beforeKey);
+  void dropProject(const QString& key, const QString& targetKey);
+  void openProjectMenu(const QString& key, double x, double y);
+  void openSortMenu(double x, double y);
   ToastController* toasts() const;
   // The client settings grouping, ordering and time labels read, from this
   // device's preferences (SettingsController), else their defaults.
@@ -174,6 +191,10 @@ private:
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");
   bool m_showSettledPluginThreads = false;
+  // The legacy tree, when legacySidebarEnabled; the projects listing all
+  // their threads last the session, as the web's did.
+  std::optional<sidebar::Tree> m_tree;
+  QSet<QString> m_showingAll;
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   sidebar::View m_view;

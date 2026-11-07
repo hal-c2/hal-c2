@@ -61,6 +61,7 @@ set(hal_c2_bricks_qml_files
     SidebarUpdateButton.qml
     DesktopUpdateSettings.qml
     SidebarThreadRow.qml
+    SidebarProjectHeader.qml
     HalC2Wordmark.qml
     StagePill.qml
     KeybindingsSettings.qml
@@ -84,6 +85,7 @@ set(hal_c2_bricks_qml_files
     ThemeInspector.qml
     TurnRequests.qml
     ProjectRemovalDialog.qml
+    ProjectRenameDialog.qml
     ConfirmDialog.qml
     CustomSnoozeDialog.qml
     PullRequestThreadDialog.qml

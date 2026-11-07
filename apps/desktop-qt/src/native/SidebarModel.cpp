@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -544,6 +545,71 @@ double threadSortTimestamp(const Thread& thread, const QString& sortOrder) {
   return firstTimestamp(thread.updatedAt, thread.createdAt);
 }
 
+// The legacy tree's projects (Tree), each {key, displayName, environmentId,
+// projectId, workspaceRoot, memberKeys, threadCount, status, expanded,
+// threads, more ("more", "less", or null when every thread shows)}. `row`
+// makes a thread's row, adding it to the view's order.
+QVariantList buildTree(const Input& input, const Tree& tree, const Partition& sections, const ProjectGroup* scoped,
+                       const QHash<QString, QString>& logicalKeyByPhysicalKey, const QHash<QString, int>& threadCounts,
+                       const QHash<QString, QStringList>& threadStatuses,
+                       const std::function<QVariant(const Thread&, bool snoozed, bool parked)>& row) {
+  QHash<QString, QList<const Thread*>> byProject;
+  QSet<const Thread*> snoozed;
+  QSet<const Thread*> parked;
+  for (const QList<Thread>* section : {&sections.pinned, &sections.active, &sections.snoozed, &sections.settled}) {
+    for (const Thread& thread : *section) {
+      const QString physical = thread.environmentId + QLatin1Char(':') + thread.projectId;
+      const auto logical = logicalKeyByPhysicalKey.constFind(physical);
+      if (logical == logicalKeyByPhysicalKey.constEnd()) continue;
+      byProject[*logical].append(&thread);
+      if (section == &sections.snoozed) snoozed.insert(&thread);
+      if (section == &sections.snoozed || section == &sections.settled) parked.insert(&thread);
+    }
+  }
+  const QString open = input.activeThreadKey.value_or(QString());
+  const int limit = clampThreadPreviewCount(tree.previewCount);
+  QVariantList projects;
+  for (const ProjectGroup& group : input.projects) {
+    if (scoped && group.key != scoped->key) continue;
+    QList<const Thread*> listed = byProject.value(group.key);
+    QHash<const Thread*, double> at;
+    for (const Thread* thread : std::as_const(listed)) at.insert(thread, threadSortTimestamp(*thread, tree.threadSortOrder));
+    // Newest first; ties go to the greater id, as the web's sortThreads.
+    std::stable_sort(listed.begin(), listed.end(), [&at](const Thread* left, const Thread* right) {
+      if (at.value(left) != at.value(right)) return at.value(left) > at.value(right);
+      return left->id > right->id;
+    });
+    const bool expanded = !tree.folded.contains(group.key);
+    const bool all = tree.showingAll.contains(group.key);
+    const bool overflowing = listed.size() > limit;
+    QVariantList rows;
+    for (qsizetype i = 0; i < listed.size(); ++i) {
+      const Thread* thread = listed.at(i);
+      // Folded, the open thread still shows under its project.
+      const bool shown = expanded ? (all || i < limit) : thread->key() == open;
+      if (!shown) continue;
+      QVariantMap made = row(*thread, snoozed.contains(thread), parked.contains(thread)).toMap();
+      // The section it would sit in, for the row's actions.
+      made.insert(QStringLiteral("section"), snoozed.contains(thread)  ? QStringLiteral("snoozed")
+                                             : parked.contains(thread) ? QStringLiteral("settled")
+                                             : thread->pinnedAt        ? QStringLiteral("pinned")
+                                                                       : QStringLiteral("active"));
+      rows.append(made);
+    }
+    QVariantMap project = group.summary;
+    project.insert(QStringLiteral("memberKeys"), group.memberKeys);
+    project.insert(QStringLiteral("threadCount"), threadCounts.value(group.key));
+    project.insert(QStringLiteral("status"), mostUrgentStatus(threadStatuses.value(group.key)));
+    project.insert(QStringLiteral("expanded"), expanded);
+    project.insert(QStringLiteral("draggable"), tree.manual);
+    project.insert(QStringLiteral("threads"), rows);
+    project.insert(QStringLiteral("more"), !expanded || !overflowing ? QVariant::fromValue(nullptr)
+                                                                     : QVariant(all ? QStringLiteral("less") : QStringLiteral("more")));
+    projects.append(project);
+  }
+  return projects;
+}
+
 }  // namespace
 
 QString normalizePath(const QString& path) {
@@ -558,8 +624,19 @@ QString physicalKey(const Project& project) {
   return project.environmentId + QLatin1Char(':') + normalizePath(project.workspaceRoot);
 }
 
-QList<ProjectGroup> groupProjects(const QList<Project>& projects, const GroupingSettings& settings,
+QList<ProjectGroup> groupProjects(const QList<Project>& given, const GroupingSettings& settings,
                                   const QString& preferredEnvironmentId, const QList<Thread>& threads) {
+  // By hand, the folders the user arranged lead in that order; the rest keep theirs.
+  QList<Project> arranged;
+  const bool byHand = settings.sortOrder == QLatin1String("manual") && !settings.manualOrder.isEmpty();
+  if (byHand) {
+    arranged = given;
+    QHash<QString, qsizetype> place;
+    for (qsizetype i = 0; i < settings.manualOrder.size(); ++i) place.insert(settings.manualOrder.at(i), i);
+    const auto rank = [&place](const Project& project) { return place.value(physicalKey(project), place.size()); };
+    std::stable_sort(arranged.begin(), arranged.end(), [&rank](const Project& left, const Project& right) { return rank(left) < rank(right); });
+  }
+  const QList<Project>& projects = byHand ? arranged : given;
   // Folders in first-seen order, each with every project row claiming it.
   QStringList folderOrder;
   QHash<QString, QList<Project>> byFolder;
@@ -716,6 +793,37 @@ std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const Q
   return best ? std::optional<QString>(best->key()) : std::nullopt;
 }
 
+int clampThreadPreviewCount(int count) {
+  return std::clamp(count, kMinThreadPreviewCount, kMaxThreadPreviewCount);
+}
+
+QStringList reorderProjects(const QStringList& order, const QStringList& dragged, const QStringList& target) {
+  // As the web's uiStateStore reorderProjects, which dnd-kit's drop over a
+  // project feeds.
+  const QSet<QString> draggedSet(dragged.cbegin(), dragged.cend());
+  const QSet<QString> targetSet(target.cbegin(), target.cend());
+  if (dragged.isEmpty() || targetSet.contains(draggedSet)) return order;
+  const auto found = std::find_if(order.cbegin(), order.cend(), [&targetSet](const QString& key) { return targetSet.contains(key); });
+  if (found == order.cend()) return order;
+  const qsizetype targetIndex = found - order.cbegin();
+  QStringList next;
+  QStringList removed;
+  qsizetype draggedBeforeTarget = 0;
+  for (qsizetype i = 0; i < order.size(); ++i) {
+    if (!draggedSet.contains(order.at(i))) {
+      next.append(order.at(i));
+      continue;
+    }
+    removed.append(order.at(i));
+    if (i < targetIndex) ++draggedBeforeTarget;
+  }
+  if (removed.isEmpty()) return order;
+  // Past the end appends, as the web's splice: a dragged folder can be the target's first.
+  const qsizetype insertAt = std::min(next.size(), targetIndex - std::max<qsizetype>(0, draggedBeforeTarget - 1));
+  for (qsizetype i = 0; i < removed.size(); ++i) next.insert(insertAt + i, removed.at(i));
+  return next;
+}
+
 const ProjectGroup* Input::group(const QString& key) const {
   for (const ProjectGroup& group : projects) {
     if (group.key == key) return &group;
@@ -822,10 +930,17 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
     return rows;
   };
   const qsizetype unlimited = std::numeric_limits<qsizetype>::max();
-  const QVariantList pinned = convert(sections.pinned, false, false, unlimited);
-  const QVariantList active = convert(sections.active, false, false, unlimited);
-  const QVariantList snoozed = convert(sections.snoozed, true, true, unlimited);
-  const QVariantList settled = convert(sections.settled, false, true, input.settledLimit);
+  QVariantList pinned, active, snoozed, settled, tree;
+  if (input.tree) {
+    tree = buildTree(input, *input.tree, sections, scoped, logicalKeyByPhysicalKey, threadCounts, threadStatuses,
+                     [&](const Thread& thread, bool isSnoozed, bool parked) { return convert({thread}, isSnoozed, parked, unlimited).value(0); });
+    sections = {};
+  } else {
+    pinned = convert(sections.pinned, false, false, unlimited);
+    active = convert(sections.active, false, false, unlimited);
+    snoozed = convert(sections.snoozed, true, true, unlimited);
+    settled = convert(sections.settled, false, true, input.settledLimit);
+  }
 
   QVariantList projects;
   for (const ProjectGroup& group : input.projects) {
@@ -870,6 +985,8 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("drafts"), drafts},
       {QStringLiteral("activeThreadKey"), nullable(input.activeThreadKey)},
       {QStringLiteral("activeDraftId"), input.activeDraftId},
+      {QStringLiteral("mode"), input.tree ? QStringLiteral("tree") : QStringLiteral("attention")},
+      {QStringLiteral("tree"), tree},
   };
   // In the order the rows render.
   QStringList selected;

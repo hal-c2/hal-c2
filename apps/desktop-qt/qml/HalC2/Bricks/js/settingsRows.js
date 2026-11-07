@@ -129,6 +129,8 @@ var general = [
       description: "Shows context window usage as a circular indicator in the composer." },
     { key: "legacySidebarEnabled", kind: "switch", title: "Sidebar",
       description: "Restore per-project thread trees instead of the default flat sidebar." },
+    { key: "sidebarThreadPreviewCount", kind: "number", title: "Visible threads", min: 1, max: 15, step: 1,
+      description: "How many threads each project in the legacy sidebar shows before offering more." },
 ];
 
 var appearance = [
