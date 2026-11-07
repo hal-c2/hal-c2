@@ -233,6 +233,10 @@ defmodule HalC2.CheckpointTest do
       assert Checkpoint.transient?(message), message
     end
 
+    refute Checkpoint.transient?(
+             "error: 'nested/' does not have a commit checked out\nerror: unable to index file 'nested/'"
+           )
+
     refute Checkpoint.transient?("fatal: not a git repository (or any of the parent directories)")
     refute Checkpoint.transient?("fatal: cannot change to '/gone': No such file or directory")
   end

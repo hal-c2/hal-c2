@@ -331,7 +331,11 @@ defmodule HalC2.Checkpoint do
 
   @doc false
   # The git messages a capture is tried again for (exposed for the test).
-  def transient?(message), do: Regex.match?(@transient, message)
+  # A folder that is a repository with no commit also ends in `unable to index file`, but
+  # no retry changes that (recovery from it has its own time budget, paid per attempt).
+  def transient?(message),
+    do:
+      Regex.match?(@transient, message) and not (message =~ "does not have a commit checked out")
 
   @doc """
   Commits the whole worktree (tracked and untracked, minus ignored) to `ref`, trying
