@@ -400,14 +400,30 @@ defmodule HalC2.Orchestration do
   # `hal_c2_thread_interrupt`, a scheduled prompt's clean-up, a move) leaves them working.
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
     with :ok <- interrupt_policy(thread_id, command["runId"]) do
-      HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
+      limited? =
+        HalC2.Streams.transact(thread_id, :thread, fn state ->
+          {resume, limited?} = cancel_scheduled_resume(state, command["runId"])
+          {interrupt_request(state, command) ++ resume, limited?}
+        end)
+
       # Stopping a turn also stops its delegated tasks from waking it later.
       HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
 
       if command["stopDelegated"] == true,
         do: HalC2.Orchestration.Delegation.stop_delegated(thread_id)
 
-      interrupted = interrupt_any(thread_id, command["runId"])
+      active? =
+        thread_id
+        |> HalC2.Streams.state()
+        |> StreamState.list("run")
+        |> Enum.any?(&(&1["status"] in @active_statuses))
+
+      # A limited thread has no turn to stop; stopping it only gives up its resume.
+      interrupted =
+        if limited? and not active?,
+          do: :ok,
+          else: interrupt_any(thread_id, command["runId"])
+
       HalC2.Orchestration.Delegation.child_stopped(thread_id)
 
       with :ok <- interrupted, do: {:ok, %{"sequence" => sequence(thread_id)}}
@@ -726,13 +742,24 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # After a restart the queue waits until the user resumes it.
-  def dispatch(%{"type" => "queue.resume", "threadId" => thread_id}) do
+  # After a restart the queue waits until the user resumes it. The limit recovery's
+  # resume names the stopped run it continues (`usageLimitContinuationOfRunId`), which
+  # the run it starts carries, as a resume's message does (`TurnWriter`'s `kept_reset/3`).
+  def dispatch(%{"type" => "queue.resume", "threadId" => thread_id} = command) do
+    continued = command["usageLimitContinuationOfRunId"]
+
     with :ok <- unarchived(thread_id),
          {:ok, result} <-
            queue_change(thread_id, fn state ->
-             for run <- queued_runs(state),
-                 do: upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", false))
+             for {run, index} <- Enum.with_index(queued_runs(state)),
+                 do:
+                   upsert(state, "run", run["id"], fn run ->
+                     run = Map.put(run, "queueHeld", false)
+
+                     if index == 0 and is_binary(continued),
+                       do: Map.put(run, "usageLimitContinuationOfRunId", continued),
+                       else: run
+                   end)
            end) do
       start_next(thread_id)
       {:ok, result}
@@ -2869,6 +2896,48 @@ defmodule HalC2.Orchestration do
 
   defp shell_version(_type), do: %{}
 
+  # Stopping a thread that sits on a usage limit gives up the resume for its reset for
+  # good, scheduled or not yet armed; a snooze it had is kept, and the user can choose to
+  # resume again. Returns the changes and whether the thread was limited.
+  defp cancel_scheduled_resume(state, named_run) do
+    thread = StreamState.list(state, "thread") |> List.first()
+    runs = StreamState.list(state, "run")
+    run = HalC2.Projection.Shell.latest_run(runs)
+
+    failure =
+      run &&
+        HalC2.Projection.ThreadError.latest_root_provider_failure(
+          run,
+          StreamState.list(state, "turn-item")
+        )
+
+    if thread && thread["deletedAt"] == nil && run && run["status"] == "failed" &&
+         (named_run == nil or named_run == run["id"]) && failure["class"] == "usage_limit" &&
+         failure["resetAt"] != nil do
+      previous = thread["limitRecovery"]
+
+      same? =
+        previous != nil and previous["runId"] == run["id"] and
+          previous["resetAt"] == failure["resetAt"]
+
+      recovery =
+        if same?,
+          do: %{previous | "autoResume" => false},
+          else: %{
+            "runId" => run["id"],
+            "resetAt" => failure["resetAt"],
+            "autoResume" => false,
+            "snooze" => false
+          }
+
+      # A second stop changes nothing, and `upsert/4` returns nil for that.
+      {List.wrap(upsert(state, "thread", thread["id"], &Map.put(&1, "limitRecovery", recovery))),
+       true}
+    else
+      {[], false}
+    end
+  end
+
   defp interrupt_request(state, command) do
     runs = StreamState.get(state, "run")
 
@@ -3000,7 +3069,14 @@ defmodule HalC2.Orchestration do
   defp with_message_fields(message, command) do
     message
     |> with_context(command)
-    |> Map.merge(Map.take(command, ["delegatedCompletion", "providerWake", "notification"]))
+    |> Map.merge(
+      Map.take(command, [
+        "delegatedCompletion",
+        "providerWake",
+        "notification",
+        "usageLimitContinuationOfRunId"
+      ])
+    )
   end
 
   # Uploads claimed into the thread, with the context records that name them.
@@ -3538,7 +3614,9 @@ defmodule HalC2.Orchestration do
           Map.merge(update, %{
             "autoResume" => choice(update, previous, same?, "autoResume"),
             "snooze" => choice(update, previous, same?, "snooze"),
-            "requestId" => command["commandId"]
+            "requestId" => command["commandId"],
+            # The agent the choice was made for; switching agents ends it.
+            "instanceId" => get_in(thread, ["modelSelection", "instanceId"])
           })
 
       cond do
