@@ -107,7 +107,7 @@ Feature: The protocol 3 WebSocket
 
   # Upstream #14859: a slow client was owed every state of a project or thread in its list, so
   # repeated updates used up its budget.
-  @mc @backlog
+  @mc
   Scenario: A slow client is sent only the latest state of each listed thread
     Given the client subscribed to the thread list and is slow to take updates
     When "Fix checkout" changes 50 times before the client takes any

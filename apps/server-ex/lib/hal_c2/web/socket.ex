@@ -2235,14 +2235,22 @@ defmodule HalC2.Web.Socket do
   end
 
   # A later row of a stream replaces an earlier one, so the frame carries the same
-  # changes as the messages did. After a `reset` the MC's earlier rows are gone,
-  # buffered or held; rows merged on top of it keep the frame a reset.
+  # changes as the messages did, in the order each row last changed (`order`). After
+  # a `reset` the MC's earlier rows are gone, buffered or held; rows merged on top of
+  # it keep the frame a reset.
   defp buffer_shell_rows(state, mc, rows, %{epoch: epoch, rev: rev, reset: reset?}) do
     buffer = Map.get(state.shell, mc, %{rows: %{}, reset: false})
-    kept = if reset?, do: %{}, else: buffer.rows
+    {kept, order} = if reset?, do: {%{}, %{}}, else: {buffer.rows, Map.get(buffer, :order, %{})}
+    last = Map.get(buffer, :last, 0)
 
     buffer = %{
       rows: Map.merge(kept, Map.new(rows)),
+      order:
+        Map.merge(
+          order,
+          Map.new(Enum.with_index(rows, last + 1), fn {{sid, _}, n} -> {sid, n} end)
+        ),
+      last: last + length(rows),
       epoch: epoch,
       rev: rev,
       reset: reset? or buffer.reset
@@ -2258,13 +2266,19 @@ defmodule HalC2.Web.Socket do
       case shell_sub(state) do
         {id, _} ->
           for {mc, buffer} <- Enum.sort(state.shell),
-              do: Protocol.encode(shell_message(id, {:rows, mc, Enum.sort(buffer.rows), buffer}))
+              do: Protocol.encode(shell_message(id, {:rows, mc, in_order(buffer), buffer}))
 
         nil ->
           []
       end
 
     {frames, %{state | shell: %{}}}
+  end
+
+  # Rows buffered before their order was kept go first, by id.
+  defp in_order(buffer) do
+    order = Map.get(buffer, :order, %{})
+    Enum.sort_by(buffer.rows, fn {sid, _} -> {Map.get(order, sid, 0), sid} end)
   end
 
   # The socket's one shell subscription, as `{id, :shell}`.

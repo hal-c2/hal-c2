@@ -264,6 +264,57 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  step "the client subscribed to the thread list and is slow to take updates", context do
+    context =
+      Enum.reduce(["Alpha", "Fix checkout", "Beta"], context, &World.create_thread(&2, &1))
+
+    # The steps wait for the sidebar to have each change.
+    if :ets.lookup(HalC2.Shell.Subscribers, self()) == [], do: HalC2.Shell.subscribe(self())
+    before = shell_clients()
+    client = World.client(context) |> Mc.sub(1, %{"type" => "shell"})
+    {%{"t" => "shell"}, client} = Mc.await(client, &(&1["t"] == "shell"))
+    [socket] = shell_clients() -- before
+    :ok = :sys.suspend(socket)
+    ExUnit.Callbacks.on_exit(fn -> resume(socket) end)
+    context |> Map.put(:socket, socket) |> World.put_client(client)
+  end
+
+  # Between a change to the first listed thread and one to the last, so the order
+  # they happened in is not the order of their ids.
+  step ~r/^"(?<title>[^"]+)" changes 50 times before the client takes any$/,
+       %{args: [title]} = context do
+    rename(context, "Alpha", "Alpha 1")
+    for n <- 1..50, do: rename(context, title, "#{title} #{n}")
+    rename(context, "Beta", "Beta 1")
+    :ok = :sys.resume(context.socket)
+    context
+  end
+
+  step ~r/^the client is sent the latest state of "(?<title>[^"]+)" once$/,
+       %{args: [title]} = context do
+    beta = World.thread_id(context, "Beta")
+
+    {last, frames, client} =
+      WsClient.recv_until(World.client(context), fn frame ->
+        frame["t"] == "shell.rows" and Enum.any?(frame["rows"], &match?([^beta | _], &1))
+      end)
+
+    listed =
+      for %{"t" => "shell.rows", "rows" => rows} <- frames ++ [last],
+          [sid, "thread", row] <- rows,
+          do: {sid, row["title"]}
+
+    id = World.thread_id(context, title)
+    assert for({^id, title} <- listed, do: title) == ["#{title} 50"]
+    context |> Map.put(:listed, listed) |> World.put_client(client)
+  end
+
+  step "the other listed threads' updates arrive in the order they happened", context do
+    ids = for title <- ["Alpha", "Fix checkout", "Beta"], do: World.thread_id(context, title)
+    assert for({sid, _} <- context.listed, sid in ids, do: sid) == ids
+    context
+  end
+
   step "the client subscribed to a busy thread", context do
     follow_thread(context)
   end
@@ -1399,6 +1450,16 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
         :error -> Application.delete_env(:hal_c2, :progress_hold_ms)
       end
     end)
+  end
+
+  defp shell_clients,
+    do: for({pid, :client} <- :ets.tab2list(HalC2.Shell.Subscribers), do: pid)
+
+  # Renames a listed thread and waits until the sidebar has it.
+  defp rename(context, title, to) do
+    id = World.thread_id(context, title)
+    {:ok, _} = HalC2.Streams.commit(id, :thread, [{"thread", id, %{"s" => %{"title" => to}}}])
+    World.await_row(id, &(&1["title"] == to))
   end
 
   defp keybinding(context, method, rule) do
