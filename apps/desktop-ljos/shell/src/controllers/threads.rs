@@ -120,11 +120,29 @@ fn reading<R>(engine: &Engine, f: impl FnOnce(&Clock, &str) -> R) -> R {
     f(&shared.clock.borrow(), format)
 }
 
-/// A time Format.qml hands over (a Date or an ISO time), in the timelines'
-/// zone.
+/// An ISO time (or a browser's Date text) in the timelines' zone.
 fn script_time(engine: &Engine, at: &Atom) -> Option<DateTime<Utc>> {
     let zone = shared(engine).clock.borrow().zone;
     time::script_time(at, zone)
+}
+
+/// [`script_time`] of what a script passes: a `Date` (Format.qml's), an ISO
+/// 8601 string or milliseconds since the epoch.
+fn value_time(engine: &Engine, at: &Value) -> Option<DateTime<Utc>> {
+    let ms = match at {
+        Value::Int(ms) => f64::from(*ms),
+        Value::Real(ms) => *ms,
+        // A Date's own milliseconds: its text differs by engine and zone.
+        Value::Js(_) => engine
+            .eval_js("(function (at) { return at instanceof Date ? at.getTime() : NaN; })")
+            .ok()
+            .and_then(|time| engine.call_js(&time, std::slice::from_ref(at)))?
+            .to_number(),
+        _ => return script_time(engine, &engine.to_js_string(at)),
+    };
+    ms.is_finite()
+        .then(|| DateTime::from_timestamp_millis(ms as i64))
+        .flatten()
 }
 
 /// Runs `f` when another thread is shown (or none), after the store is done.
@@ -913,8 +931,8 @@ impl ThreadsObject {
     /// time of day, the short date, both, and how long ago. Empty for an
     /// invalid time.
     #[qml(invokable)]
-    fn format_time(cx: &Cx, at: Atom) -> Atom {
-        let at = script_time(cx.engine, &at);
+    fn format_time(cx: &Cx, at: Value) -> Atom {
+        let at = value_time(cx.engine, &at);
         let text = reading(cx.engine, |clock, format| {
             at.map(|at| time::time_of_day(clock.zone.local(at), format, &clock.locale))
         });
@@ -922,14 +940,14 @@ impl ThreadsObject {
     }
 
     #[qml(invokable)]
-    fn format_date(cx: &Cx, at: Atom) -> Atom {
-        let at = script_time(cx.engine, &at);
+    fn format_date(cx: &Cx, at: Value) -> Atom {
+        let at = value_time(cx.engine, &at);
         Atom::from(reading(cx.engine, |clock, _| time::short_date(at, clock)).as_str())
     }
 
     #[qml(invokable)]
-    fn format_date_time(cx: &Cx, at: Atom) -> Atom {
-        let at = script_time(cx.engine, &at);
+    fn format_date_time(cx: &Cx, at: Value) -> Atom {
+        let at = value_time(cx.engine, &at);
         let text = reading(cx.engine, |clock, format| {
             time::short_date_time(at, clock, format)
         });
@@ -937,8 +955,8 @@ impl ThreadsObject {
     }
 
     #[qml(invokable)]
-    fn format_relative(cx: &Cx, at: Atom) -> Atom {
-        let at = script_time(cx.engine, &at);
+    fn format_relative(cx: &Cx, at: Value) -> Atom {
+        let at = value_time(cx.engine, &at);
         Atom::from(reading(cx.engine, |clock, _| time::relative_time(at, clock)).as_str())
     }
 }

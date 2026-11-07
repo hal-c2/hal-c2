@@ -200,6 +200,35 @@ fn times_follow_the_applications_locale() {
     assert_eq!(told.get(), 1);
 }
 
+/// Format.qml hands `Threads` a Date; a plugin page may hand it the ISO
+/// string or the milliseconds the MC sent. Each reads as the same time.
+#[test]
+fn a_date_a_string_and_milliseconds_format_alike() {
+    let hub = Hub::new();
+    let source = crate::common::compile(
+        &[(
+            "Times",
+            "import QtQuick\nimport HalC2.Shell\nItem {\n\
+             property string date: Threads.formatDateTime(new Date(\"2026-10-07T09:30:00Z\"))\n\
+             property string iso: Threads.formatDateTime(\"2026-10-07T09:30:00Z\")\n\
+             property string ms: Threads.formatDateTime(Date.UTC(2026, 9, 7, 9, 30))\n\
+             property string time: Threads.formatTime(new Date(\"2026-10-07T09:30:00Z\"))\n\
+             }",
+        )],
+        &[],
+    );
+    let (root, _window) = hub.show(source, "Times");
+    let read = |name: &str| {
+        hub.engine
+            .to_js_string(&hub.engine.read_by_name(root, name))
+            .to_string()
+    };
+    assert!(!read("iso").is_empty());
+    assert_eq!(read("date"), read("iso"));
+    assert_eq!(read("ms"), read("iso"));
+    assert!(!read("time").is_empty());
+}
+
 #[test]
 fn a_thread_the_sidebar_does_not_list_yet_is_followed_once_it_does() {
     let hub = hub(&[]);

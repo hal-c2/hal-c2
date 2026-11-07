@@ -417,8 +417,19 @@ pub fn register(steps: &mut Steps) {
             let publish_button = shown_named(world, "codeReviewPublish")?;
             click(world, publish_button)?;
             world.wait_for_with(
-                |w| text_now(w, "codeReviewStatus", brick).starts_with("Published"),
-                |w| text_now(w, "codeReviewStatus", brick),
+                // "Published 10/7 11:30 AM": with when.
+                |w| {
+                    text_now(w, "codeReviewStatus", brick)
+                        .strip_prefix("Published ")
+                        .is_some_and(|when| !when.trim().is_empty())
+                },
+                |w| {
+                    format!(
+                        "the status says \"{}\" with the review published {} time(s)",
+                        text_now(w, "codeReviewStatus", brick),
+                        asked(&w.mc, "publish").len()
+                    )
+                },
             )?;
             expect!(
                 asked(&world.mc, "publish") == [json!({"key": key(13)})],
