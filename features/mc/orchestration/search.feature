@@ -122,6 +122,7 @@ Feature: Searching threads by what was said
     Then the request is rejected as invalid
 
   # Find in thread: one thread, every occurrence, for a client to move through.
+  # Upstream #10439: find messages and plans in the current thread
   @backlog @mc
   Scenario: Finding in a thread counts every occurrence the user can see
     Given thread "t1" was forked from "t0", whose messages mention "deploy" twice
@@ -132,12 +133,14 @@ Feature: Searching threads by what was said
     Then the MC answers with 4 matches
     And the answer names the selected match without any message text
 
+  # Upstream #10439: find messages and plans in the current thread
   @backlog @mc
   Scenario: An answer a question card folded in is found in its card
     Given the user answered a question in "t1" with "deploy on Friday"
     When a client finds "Friday" in "t1"
     Then the match is the question card
 
+  # Upstream #10439: find messages and plans in the current thread
   @backlog @mc
   Scenario: A finished turn changes the count of a find in that thread
     Given a client found "deploy" 3 times in "t1"

@@ -231,6 +231,8 @@ Feature: Home screen and thread list on a phone
         | the only environment is still connecting       | Connecting to environment     |
         | the only environment is unavailable            | Environment unavailable       |
 
+    # Upstream #16693: a thread with a queued turn gets the Waiting label
+    # Upstream #17368: status labels match web's
     @mobile @priority-high
     Scenario Outline: Each thread shows the status that needs the user most
       Given a thread <state>
@@ -246,6 +248,7 @@ Feature: Home screen and thread list on a phone
         | hit a provider usage limit               | Limited  |
         | finished work the user has not looked at | Done     |
 
+    # Upstream #17368: working and waiting rows fade, the selected row never does
     @backlog @mobile
     Scenario: Threads that are only working recede so the ones that need the user stand out
       Given "Fix cart" has a turn running and "Fix tax" waits for the user to approve a command

@@ -22,6 +22,7 @@ defmodule HalC2.Devices do
   require Logger
 
   alias HalC2.Devices.Actions
+  alias HalC2.Devices.HubRestarts
 
   @local "local"
   @tools %{
@@ -29,8 +30,8 @@ defmodule HalC2.Devices do
     "agent" => %{name: "agent-device", version: "0.21.12", entry: ~w(bin agent-device.mjs)}
   }
   @hub_ready_timeout 30_000
+  @off_while_starting "Device support was turned off while it was starting."
   @daemon_ready_timeout 30_000
-  @boot_timeout 180_000
   @screenshot_timeout 20_000
   @install_timeout 600_000
   @agent_unavailable "Agent device access requires enabled device support, agent access, and an available simulator platform on this host."
@@ -112,7 +113,7 @@ defmodule HalC2.Devices do
          {:ok, hub} <- ready(),
          {:ok, view} <- refresh(hub),
          {:ok, device} <- find(view, id),
-         {:ok, device} <- bring_up(hub, device, thread, input["boot"] != false) do
+         {:ok, device} <- hub |> bring_up(device, thread, input["boot"] != false) |> opening() do
       session = %{
         "threadId" => thread,
         "hostId" => @local,
@@ -124,6 +125,16 @@ defmodule HalC2.Devices do
       GenServer.call(__MODULE__, {:open, session})
     end
   end
+
+  # Turning device support off stops the hub under a boot, which then fails for
+  # want of a hub; the user is told why instead.
+  defp opening({:error, _} = error) do
+    if state()["hostStatus"] == "disabled",
+      do: host_unavailable(@local, "Device support was turned off while the device was opening."),
+      else: error
+  end
+
+  defp opening(result), do: result
 
   @doc "`device.close`: closes the thread's sessions (one device, or all), optionally powering off."
   def close(%{"threadId" => _} = input) do
@@ -275,9 +286,19 @@ defmodule HalC2.Devices do
   defp bring_up(_hub, device, _thread, _boot), do: {:ok, device}
 
   defp boot(hub, device) do
-    body = Map.take(device, ~w(platform id name))
+    body = JSON.encode!(Map.take(device, ~w(platform id name)))
 
-    case hub_json(hub, :post, "/api/devices/boot", body, "boot", @boot_timeout) do
+    case http(:post, hub["origin"] <> "/api/devices/boot", body, boot_timeout()) do
+      {:error, :timeout} ->
+        {:error, boot_error(device["id"], %{"error" => "Boot timed out."})}
+
+      response ->
+        boot_result(hub, device, decode_hub(response, "boot"))
+    end
+  end
+
+  defp boot_result(hub, device, result) do
+    case result do
       {:ok, %{"ok" => true} = result} ->
         id = result["serial"] || result["id"] || device["id"]
 
@@ -293,18 +314,20 @@ defmodule HalC2.Devices do
     end
   end
 
-  # The grid start boots serve-sim's helper for the simulator; it is idempotent.
+  # The grid start boots serve-sim's helper for the simulator; it is idempotent. It waits
+  # as long as a boot does, and running out of that is a boot that timed out.
   defp attach_ios(hub, udid, operation) do
-    case hub_json(
-           hub,
-           :post,
-           "/vendor/serve-sim/grid/api/start",
-           %{"udid" => udid},
-           operation,
-           @boot_timeout
-         ) do
-      {:ok, _} -> :ok
-      error -> error
+    response =
+      http(
+        :post,
+        hub["origin"] <> "/vendor/serve-sim/grid/api/start",
+        JSON.encode!(%{"udid" => udid}),
+        boot_timeout()
+      )
+
+    case response do
+      {:error, :timeout} -> {:error, boot_error(udid, %{"error" => "Boot timed out."})}
+      response -> with {:ok, _} <- decode_hub(response, operation), do: :ok
     end
   end
 
@@ -447,6 +470,10 @@ defmodule HalC2.Devices do
       %{root: root, emulator: false} ->
         "Android Emulator is missing from #{root}. Install it in Android Studio's SDK Manager."
 
+      %{root: root, avdmanager: false, legacy_avdmanager: true} ->
+        "The Android SDK command-line tools in #{root} appear to be an older, unsupported version. " <>
+          "Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools."
+
       %{root: root, avdmanager: false} ->
         "Android SDK Command-line Tools (latest) are missing from #{root}. Install them in Android Studio's SDK Manager."
 
@@ -454,6 +481,9 @@ defmodule HalC2.Devices do
         nil
     end
   end
+
+  # Three minutes; tests shorten it with `config :hal_c2, :device_boot_timeout`.
+  defp boot_timeout, do: Application.get_env(:hal_c2, :device_boot_timeout, 180_000)
 
   # Tests stand in for a Mac with `config :hal_c2, :os_type`.
   defp os_type, do: Application.get_env(:hal_c2, :os_type) || :os.type()
@@ -512,7 +542,16 @@ defmodule HalC2.Devices do
         avdmanager =
           File.exists?(Path.join([root, "cmdline-tools", "latest", "bin", "avdmanager"]))
 
-        %{root: root, adb: adb, emulator: emulator, avdmanager: avdmanager}
+        # The SDK Tools package before cmdline-tools; its avdmanager needs Java 8.
+        legacy = not avdmanager and File.exists?(Path.join([root, "tools", "bin", "avdmanager"]))
+
+        %{
+          root: root,
+          adb: adb,
+          emulator: emulator,
+          avdmanager: avdmanager,
+          legacy_avdmanager: legacy
+        }
       end
     end)
   end
@@ -597,12 +636,36 @@ defmodule HalC2.Devices do
     end
   end
 
+  # The emulator keeps its gRPC token under XDG_RUNTIME_DIR, which a service manager
+  # can start the MC without; the user's own /run/user/<uid> stands in. The root is
+  # `config :hal_c2, :runtime_dir_root` in tests.
+  defp runtime_env do
+    root = Application.get_env(:hal_c2, :runtime_dir_root, "/run/user")
+
+    with {:unix, :linux} <- os_type(),
+         nil <- System.get_env("XDG_RUNTIME_DIR"),
+         {out, 0} <- System.cmd("id", ["-u"]),
+         uid = String.trim(out),
+         dir = Path.join(root, uid),
+         {:ok, %File.Stat{type: :directory, uid: owner}} <- File.stat(dir),
+         true <- Integer.to_string(owner) == uid do
+      [{"XDG_RUNTIME_DIR", dir}]
+    else
+      _ -> []
+    end
+  end
+
   # --- hub HTTP ------------------------------------------------------------------------
 
-  defp hub_json(hub, method, path, body, operation, timeout \\ 15_000) do
-    with {:ok, 200, response} <-
-           http(method, hub["origin"] <> path, body && JSON.encode!(body), timeout),
-         {:ok, decoded} <- JSON.decode(response) do
+  defp hub_json(hub, method, path, body, operation, timeout \\ 15_000),
+    do:
+      decode_hub(
+        http(method, hub["origin"] <> path, body && JSON.encode!(body), timeout),
+        operation
+      )
+
+  defp decode_hub(response, operation) do
+    with {:ok, 200, body} <- response, {:ok, decoded} <- JSON.decode(body) do
       {:ok, decoded}
     else
       other -> {:error, operation_error(operation, "request_failed", other)}
@@ -785,22 +848,33 @@ defmodule HalC2.Devices do
            }
          }}
       else
-        _ -> host_unavailable(@local, "Device support failed while starting the device hub.")
+        # The server restarts a hub that exited; one that never answered stays down.
+        :exited ->
+          {:error, :exited}
+
+        _ ->
+          host_unavailable(@local, "Device support failed while starting the device hub.")
       end
     end
   end
 
+  # Only this job starts a hub, so a hub process gone while it waits is the one it started.
   defp await_hub(origin, deadline) do
     case http(:get, origin <> "/readyz", nil, 1_000) do
       {:ok, 200, _} ->
         :ok
 
       _ ->
-        if System.monotonic_time(:millisecond) > deadline do
-          :timeout
-        else
-          Process.sleep(100)
-          await_hub(origin, deadline)
+        cond do
+          not GenServer.call(__MODULE__, :hub_running?) ->
+            :exited
+
+          System.monotonic_time(:millisecond) > deadline ->
+            :timeout
+
+          true ->
+            Process.sleep(100)
+            await_hub(origin, deadline)
         end
     end
   end
@@ -1091,6 +1165,9 @@ defmodule HalC2.Devices do
       watchers: %{},
       hub: nil,
       hub_process: nil,
+      hub_exited: false,
+      restarts: HubRestarts.new(Application.get_env(:hal_c2, :device_hub_restart_base, 1_000)),
+      restart_timer: nil,
       agent: nil,
       jobs: %{}
     }
@@ -1149,6 +1226,8 @@ defmodule HalC2.Devices do
     end
   end
 
+  def handle_call(:hub_running?, _from, state), do: {:reply, state.hub_process != nil, state}
+
   def handle_call({:spawn_hub, node, entry}, _from, state) do
     port = free_port()
 
@@ -1163,10 +1242,15 @@ defmodule HalC2.Devices do
       "--hide-boot-device"
     ]
 
-    case HalC2.Subprocess.start(cmd, env: host_env() ++ [{"FORCE_COLOR", "0"}, {"NO_COLOR", "1"}]) do
+    case HalC2.Subprocess.start(cmd,
+           env: host_env() ++ runtime_env() ++ [{"FORCE_COLOR", "0"}, {"NO_COLOR", "1"}]
+         ) do
       {:ok, sub} ->
-        stop_hub(state.hub_process)
-        {:reply, {:ok, "http://127.0.0.1:#{port}"}, %{state | hub_process: sub}}
+        stop_hub(state)
+        restarts = HubRestarts.started(state.restarts, monotonic())
+
+        {:reply, {:ok, "http://127.0.0.1:#{port}"},
+         %{state | hub_process: sub, hub_exited: false, restarts: restarts}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -1275,29 +1359,36 @@ defmodule HalC2.Devices do
     {:noreply, state}
   end
 
-  def handle_info({:subprocess_eof, reader}, %{hub_process: %{reader: reader} = sub} = state) do
-    stop_hub(sub)
-    state = %{state | hub: nil, hub_process: nil}
-
-    state =
-      if state.settings.enabled,
-        do:
-          publish(
-            state,
-            &put_status(
-              &1,
-              "failed",
-              "The device hub stopped. Refresh devices to start it again."
-            )
-          ),
-        else: state
-
-    {:noreply, state}
+  # A hub that exits on its own is restarted after a wait that grows while it keeps exiting
+  # soon after starting (`HalC2.Devices.HubRestarts`); a refresh in the meantime starts it
+  # at once. A hub still starting is the hub job's to report, which it does once it sees
+  # the hub gone.
+  def handle_info({:subprocess_eof, reader}, %{hub_process: %{reader: reader}} = state) do
+    stop_hub(state)
+    state = %{state | hub: nil, hub_process: nil, hub_exited: false}
+    {:noreply, if(state.jobs[:hub], do: state, else: elem(restart_later(state), 0))}
   end
 
-  def handle_info({ref, result}, state) when is_reference(ref) do
-    Process.demonitor(ref, [:flush])
-    {:noreply, finish_job(state, ref, result)}
+  def handle_info(:restart_hub, state) do
+    state = %{state | restart_timer: nil}
+
+    if state.settings.enabled and state.hub == nil and state.jobs[:hub] == nil do
+      %Task{ref: ref} = Task.async(&hub_job/0)
+      {:noreply, put_in(state.jobs[:hub], {ref, []})}
+    else
+      {:noreply, state}
+    end
+  end
+
+  # The hub's exit status can come before its output ends, and `stop_hub/1` cannot reap a
+  # hub whose status was taken from the mailbox, so it is noted here instead.
+  def handle_info({ref, result} = message, state) when is_reference(ref) do
+    if state.hub_process && HalC2.Subprocess.exit_status(state.hub_process, message) != :error do
+      {:noreply, %{state | hub_exited: true}}
+    else
+      Process.demonitor(ref, [:flush])
+      {:noreply, finish_job(state, ref, result)}
+    end
   end
 
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
@@ -1315,7 +1406,7 @@ defmodule HalC2.Devices do
 
   @impl true
   def terminate(_reason, state) do
-    stop_hub(state.hub_process)
+    stop_hub(state)
     if state.agent, do: stop_daemon(state.agent)
     :ok
   end
@@ -1342,19 +1433,30 @@ defmodule HalC2.Devices do
         {state, result} =
           case {kind, result, state.settings.enabled} do
             {_, {:ok, _}, false} ->
-              {shut_down(state),
-               host_unavailable(@local, "Device support was turned off while it was starting.")}
+              {shut_down(state), host_unavailable(@local, @off_while_starting)}
+
+            # Turning support off stops the hub the job waits for.
+            {:hub, {:error, :exited}, false} ->
+              {state, host_unavailable(@local, @off_while_starting)}
+
+            # The hub can exit after it answered and before its job's result is handled.
+            {:hub, {:ok, _}, _} when state.hub_process == nil ->
+              hub_exited(state)
+
+            {:hub, {:error, :exited}, _} ->
+              hub_exited(state)
 
             {:hub, {:ok, hub}, _} ->
-              {publish(%{state | hub: hub}, &put_status(&1, "ready", nil)), result}
+              state = %{state | hub: hub}
+              {publish(state, &put_status(&1, "ready", nil)), result}
 
             {:agent, {:ok, agent}, _} ->
               state = %{state | agent: agent}
               {publish(state, &(&1 |> with_hosts(state) |> put_status("ready", nil))), result}
 
             {:hub, {:error, error}, _} ->
-              stop_hub(state.hub_process)
-              state = %{state | hub_process: nil}
+              stop_hub(state)
+              state = %{state | hub_process: nil, hub_exited: false}
               {publish(state, &put_status(&1, "failed", reason(error))), result}
 
             {:agent, {:error, error}, _} ->
@@ -1406,17 +1508,44 @@ defmodule HalC2.Devices do
   end
 
   defp shut_down(state) do
-    stop_hub(state.hub_process)
-    %{stop_agent(state) | hub: nil, hub_process: nil}
+    stop_hub(state)
+    if state.restart_timer, do: Process.cancel_timer(state.restart_timer)
+    %{stop_agent(state) | hub: nil, hub_process: nil, hub_exited: false, restart_timer: nil}
   end
+
+  # A hub that exited while its job ran: the job's waiters hear when it restarts.
+  defp hub_exited(state) do
+    {state, detail} = restart_later(state)
+    {state, host_unavailable(@local, detail)}
+  end
+
+  # Schedules the restart of a hub that exited, with what clients are told; nothing while
+  # device support is off. It replaces any restart still waiting, so each exit's wait counts.
+  defp restart_later(%{settings: %{enabled: false}} = state), do: {state, nil}
+
+  defp restart_later(state) do
+    if state.restart_timer, do: Process.cancel_timer(state.restart_timer)
+    {delay, restarts} = HubRestarts.exited(state.restarts, monotonic())
+    timer = Process.send_after(self(), :restart_hub, delay)
+    detail = "The device hub stopped. Restarting it in #{seconds(delay)}."
+    state = %{state | restarts: restarts, restart_timer: timer}
+    {publish(state, &put_status(&1, "failed", detail)), detail}
+  end
+
+  defp monotonic, do: System.monotonic_time(:millisecond)
+
+  defp seconds(ms) when ms < 1_000, do: "#{ms} ms"
+  defp seconds(1_000), do: "1 second"
+  defp seconds(ms), do: "#{div(ms, 1_000)} seconds"
 
   defp stop_agent(state) do
     if state.agent, do: stop_daemon(state.agent)
     %{state | agent: nil}
   end
 
-  defp stop_hub(nil), do: :ok
-  defp stop_hub(sub), do: HalC2.Subprocess.stop(sub)
+  defp stop_hub(%{hub_process: nil}), do: :ok
+  defp stop_hub(%{hub_exited: true}), do: :ok
+  defp stop_hub(%{hub_process: sub}), do: HalC2.Subprocess.stop(sub)
 
   # This machine, then each configured SSH host, reported unavailable.
   defp with_hosts(view, state) do

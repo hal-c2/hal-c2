@@ -5,7 +5,11 @@ import type {
   TimestampFormat,
 } from "@hal-c2/contracts";
 
-import type { TuiQueuedMessage, TuiThreadExtras } from "../orchestrationV2Adapter.ts";
+import type {
+  TuiMessageIntent,
+  TuiQueuedMessage,
+  TuiThreadExtras,
+} from "../orchestrationV2Adapter.ts";
 import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
 
 import { CHAT_CONTENT_MAX_WIDTH } from "../layout.ts";
@@ -529,6 +533,16 @@ const ATTACHMENT_TAIL_WIDTH = 28;
 
 type ImageAttachment = { readonly id: string; readonly name: string; readonly sizeBytes: number };
 
+/** What a message's input intent reads as; a plain turn start says nothing. */
+function intentMarker(intent: TuiMessageIntent | undefined): string | null {
+  if (intent === "queued_turn") return "Queued behind the active turn";
+  if (intent === "steer") return "Steered the active turn";
+  if (intent === "promoted_queued_to_steer") {
+    return "Originally queued, then promoted to steer the active turn";
+  }
+  return null;
+}
+
 /** `▣ name · 12 KB`: what an image attachment is called everywhere. */
 export function attachmentLabel(attachment: Pick<ImageAttachment, "name" | "sizeBytes">): string {
   const sizeKb = Math.max(1, Math.round(attachment.sizeBytes / 1024));
@@ -679,6 +693,8 @@ function pushFoldable(
     const waiting = queued
       ? `⏸ queued${queued.position === null ? "" : ` · ${queued.position}`}${queued.held ? " · held" : ""}`
       : null;
+    // A message that has gone out says how it reached the agent.
+    const marker = intentMarker((message as { intent?: TuiMessageIntent }).intent);
     const canCollapse = shouldCollapseUserMessage(rawBody);
     const expanded = ctx.view.expandedMessages.has(message.id);
     const toggle = expanded ? "⌃ Show less" : "⌄ Show full message";
@@ -691,6 +707,7 @@ function pushFoldable(
           longest,
           sender ? Bun.stringWidth(sender) : 0,
           waiting ? Bun.stringWidth(waiting) : 0,
+          marker && !waiting ? Bun.stringWidth(marker) : 0,
         ) + 4,
       ),
     );
@@ -701,6 +718,7 @@ function pushFoldable(
     );
     const head = [
       ...(waiting ? [line(styled(chunk(waiting, { fg: palette.warning })))] : []),
+      ...(marker && !waiting ? [line(styled(chunk(marker, { fg: palette.dim })))] : []),
       ...(sender && senderThreadId
         ? [
             line(styled(chunk(sender, { fg: palette.dim })), "thread.open", {

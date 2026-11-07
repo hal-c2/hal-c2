@@ -50,7 +50,7 @@ Feature: Writing to an agent from a phone
     Then the message being written stays visible above the keyboard
     And the latest messages stay visible above the composer
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario: Dismissing the keyboard keeps the draft
     Given the user has typed "add a test"
     When the user dismisses the keyboard
@@ -75,7 +75,7 @@ Feature: Writing to an agent from a phone
       | Insert new line | Return       | a new line is inserted     |
       | Insert new line | Cmd-Return   | the message is sent        |
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario Outline: A message sent while the agent works can run later, steer or restart
     Given the agent is working on a turn
     When the user sends "also update docs" to <mode>
@@ -85,9 +85,15 @@ Feature: Writing to an agent from a phone
       | mode                          | outcome                                         |
       | run after the current turn    | the message waits until the current turn ends   |
       | steer now                     | the agent receives the message during the turn  |
-      | restart the turn              | the current turn stops and a new one starts     |
 
+  # The composer has no way to restart a turn with a message yet; the MC does (features/mc/orchestration/queue-and-steering.feature).
   @backlog @mobile @priority-high
+  Scenario: A message sent while the agent works can restart the turn
+    Given the agent is working on a turn
+    When the user sends "also update docs" to restart the turn
+    Then the current turn stops and a new one starts
+
+  @mobile
   Scenario Outline: The send control names what sending will do
     Given <situation>
     Then the send control reads "<label>"
@@ -95,10 +101,16 @@ Feature: Writing to an agent from a phone
     Examples:
       | situation                                                           | label                  |
       | the agent is idle and the message leaves at once                    | Send                   |
-      | the agent is idle but the message must wait for a connection        | Queue                  |
       | the agent is working and the follow-up setting is queue             | Queue                  |
       | the agent is working and the follow-up setting is steer             | Steer                  |
       | the user is editing a queued message                                | Update queued message  |
+
+  # A message written with no connection is not queued by the composer yet: it stays in the draft
+  # with a "Not connected" notice (see "A message written with no connection is sent once the connection returns").
+  @backlog @mobile @priority-high
+  Scenario: The send control reads Queue when the message must wait for a connection
+    Given the agent is idle but the message must wait for a connection
+    Then the send control reads "Queue"
 
   @backlog @mobile @priority-high
   Scenario: An agent that cannot take a steer is only offered the queue
@@ -123,13 +135,13 @@ Feature: Writing to an agent from a phone
     And the result of the delegated task "Tax tests" is waiting for the current turn
     Then the composer lists "also update docs" with "Tax tests finished" waiting behind it
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario: The user edits a queued message before it runs
     Given the message "also update docs" is waiting for the current turn
     When the user edits it to "also update the changelog"
     Then "also update the changelog" runs after the current turn
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario: The user cancels a queued message
     Given the message "also update docs" is waiting for the current turn
     When the user cancels it
@@ -713,13 +725,9 @@ Feature: Writing to an agent from a phone
     Then the queued messages close
     And the user is back in the thread
 
-  # The phone already gains "Queue held / Resume queue" in its thread screen
-  # through the shared Composer brick (ThreadScreen.qml uses Composer, which
-  # stacks TurnRequests); that path is exercised by the @desktop scenarios in
-  # features/composer/queue-and-steer.feature over the same brick and native
-  # controller. This scenario stays @backlog because it describes the old
-  # dedicated queued-messages screen, which the QML phone does not have.
-  @backlog @mobile @priority-high
+  # The shared Composer brick stacks the held queue (TurnRequests), so the phone has no queued-messages
+  # screen of its own: "opens the queued messages" is the card under the thread's composer.
+  @mobile
   Scenario: A queue held after a restart is resumed from the queued messages
     Given "also update docs" was queued when "My MacBook" restarted
     When the user opens the queued messages
@@ -874,7 +882,7 @@ Feature: Writing to an agent from a phone
     When the user pastes text that cannot be attached
     Then the user is told to remove an attachment or paste less text and try again
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario: A queued message cannot be saved empty
     Given the user is editing the queued message "also update docs"
     When the user clears the text and saves
@@ -896,9 +904,9 @@ Feature: Writing to an agent from a phone
     Then the user is told the message may already have started
     And the edit is still in the composer
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario: A queued message that starts running while it is edited keeps the edit when the draft was empty
-    Given the user is editing the queued message "also update docs"
+    Given the user is editing the queued message "also update docs" and has changed its text
     And the composer's own draft is empty
     When the message starts running on another device
     Then the edit mode ends
@@ -914,7 +922,7 @@ Feature: Writing to an agent from a phone
     And the composer still reads "also check lint"
     And the user is told the message already started so the edit was discarded
 
-  @backlog @mobile @priority-high
+  @mobile
   Scenario: A queued message edit does not come back after the app restarts
     Given the user is editing the queued message "also update docs" and has changed its text
     When the app restarts

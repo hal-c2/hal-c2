@@ -220,6 +220,8 @@ Feature: Protocol 3 wire parity
     When it connects to the MC's socket
     Then the MC serves its requests
 
+  # Upstream #15951: clients tolerate union members they do not know yet
+  # Upstream #16118: project icons decode forward-compatibly
   @backlog @shared
   Scenario: A newer MC's unknown union member does not break an older client
     Given the MC sends a thread item, event, attachment or project icon kind the client does not know
