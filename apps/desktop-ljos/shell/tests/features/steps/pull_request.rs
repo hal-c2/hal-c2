@@ -1570,6 +1570,76 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+    // Two repositories' pull requests of one number.
+    steps.step(
+        &format!("{Q} links pull request (\\d+) of {Q} and pull request (\\d+) of {Q}"),
+        |world, c, _| {
+            look_at(world, &c[0])?;
+            let (first, second) = (c[1].parse().unwrap_or(0), c[3].parse().unwrap_or(0));
+            set_links(
+                world,
+                vec![
+                    link_of(&c[2], first, "manual", LINKED_AT),
+                    link_of(&c[4], second, "manual", LINKED_AT),
+                ],
+            )?;
+            world.wait_for_with(
+                |w| read_tab(w, |tab| tab.row_count() == 2).unwrap_or(false),
+                describe,
+            )
+        },
+    );
+    steps.step(
+        "the user looks at the thread's linked pull requests",
+        |world, _, _| open_panel(world).map(|_| ()),
+    );
+    steps.step(
+        "each row names its pull request's repository",
+        |world, _, _| {
+            let brick = open_panel(world)?;
+            // Each model row's (number, repository), and the rows that show it:
+            // a row whose `repository` is its own and whose repository line names it.
+            let named = move |w: &World| -> Vec<String> {
+                let wanted: Vec<(String, String)> = read_tab(w, |tab| {
+                    (0..tab.row_count())
+                        .map(|row| {
+                            (
+                                role_text(tab, row, "number"),
+                                role_text(tab, row, "repository"),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+                let mut named = Vec::new();
+                for (number, repository) in &wanted {
+                    let row = format!("pullRequestRow-{number}");
+                    for n in 0..wanted.len() {
+                        let Some(item) = brick.find_visible_nth(w, &row, n).ok().flatten() else {
+                            break;
+                        };
+                        if brick.text_of(w, item, "repository") != *repository {
+                            continue;
+                        }
+                        let text = brick
+                            .visible_in(w, item, "pullRequestRepository")
+                            .ok()
+                            .flatten()
+                            .map(|line| brick.text_of(w, line, "text"))
+                            .unwrap_or_default();
+                        if text.contains(repository.as_str()) {
+                            named.push(text);
+                        }
+                    }
+                }
+                named
+            };
+            world.wait_for_with(
+                move |w| named(w).len() == 2,
+                move |w| format!("{}, the rows say {}", describe(w), named(w).join("; ")),
+            )
+        },
+    );
     steps.step(
         &format!("pull request (\\d+) was linked to {Q} by the user an hour ago"),
         |world, c, _| {

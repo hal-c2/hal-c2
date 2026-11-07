@@ -183,6 +183,9 @@ fn answer(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
             }
         }
         review["comments"] = json!(comments);
+    } else if method == "retry" {
+        review["status"] = json!("queued");
+        review["elsewhere"] = Json::Null;
     } else if method == "publish" {
         review["status"] = json!("published");
         review["publishedAt"] = json!("2026-10-07T09:30:00Z");
@@ -438,6 +441,95 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+
+    steps.step(
+        "the review of #(\\d+) is waiting with a check its machine blocked",
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            let review = add(&mut world.mc, number, "waiting", "Add rate limits");
+            finish(review, "waiting", "comment");
+            review["headline"] = json!("2 findings.");
+            review["validation"] = json!({
+                "ran": [{"command": "mix test", "result": "412 passed"}],
+                "notRun": [],
+                "blocked": [{"check": "the e2e tests", "error": "STRIPE_KEY is not set"}]
+            });
+            publish(&mut world.mc)
+        },
+    );
+    steps.step(
+        "the blocked check is shown as something to fix on the MC's machine, apart from the verdict",
+        |world, _, _| {
+            let blocked = text_of(world, "codeReviewBlockedText")?;
+            expect!(
+                blocked.contains("the e2e tests: STRIPE_KEY is not set")
+                    && blocked.contains("on the MC's machine"),
+                "the blocked check reads {blocked}"
+            );
+            wait_text(world, "codeReviewVerdict", "Comment")?;
+            wait_text(world, "codeReviewHeadline", "2 findings.")?;
+            let ran = text_of(world, "codeReviewValidationLines:ran")?;
+            expect!(
+                ran.contains("mix test: 412 passed"),
+                "what ran reads {ran}"
+            );
+            Ok(())
+        },
+    );
+
+    // A review another machine holds: here it is not queued, and says where it runs.
+    steps.step(
+        &format!("the review of #(\\d+) is running on the user's machine {Q}(, which is out of reach)?"),
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            let mut elsewhere = json!({"machine": c[1], "node": format!("hal_c2_{}@127.0.0.1", c[1]),
+                                       "status": "running"});
+            if !c[2].is_empty() {
+                elsewhere["claimed"] = json!(true);
+                elsewhere["away"] = json!(true);
+            }
+            add(&mut world.mc, number, "ready", "Add rate limits")["elsewhere"] = elsewhere;
+            publish(&mut world.mc)
+        },
+    );
+    steps.step(&format!("the review says {Q}"), |world, c, _| {
+        wait_text(world, "codeReviewProblem", &c[0])?;
+        let at = last_review(&mut world.mc)?;
+        let number = state(&mut world.mc).reviews[&at]["number"]
+            .as_i64()
+            .unwrap_or(0);
+        let listed = row(world, number)?;
+        expect!(
+            draws_text(world, listed, &c[0])?,
+            "the row of #{number} does not say {}",
+            c[0]
+        );
+        Ok(())
+    });
+    steps.step(
+        "it cannot be reviewed again on this machine",
+        |world, _, _| {
+            shown_named(world, "codeReviewProblem")?;
+            world.sync()?;
+            let brick = shell(world)?;
+            let retry = brick.find(world, "codeReviewRetry")?;
+            expect!(
+                retry.is_some_and(|retry| !brick.flag(world, retry, "visible")),
+                "the review can be started here"
+            );
+            Ok(())
+        },
+    );
+    steps.step("it can be reviewed on this machine", |world, _, _| {
+        let at = last_review(&mut world.mc)?;
+        let retry = shown_named(world, "codeReviewRetry")?;
+        click(world, retry)?;
+        world.wait_for_with(
+            |w| asked(&w.mc, "retry") == [json!({"key": at})],
+            |_| "the MC to be asked to review it here".to_owned(),
+        )?;
+        wait_text(world, "codeReviewStatus", "Queued")
+    });
 
     steps.step(
         &format!("the review of #(\\d+) finished with the verdict {Q}"),

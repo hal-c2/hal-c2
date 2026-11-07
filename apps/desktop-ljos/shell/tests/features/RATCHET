@@ -1590,8 +1590,11 @@ settings/usage.feature: Without limits to show the page says so
 source-control/agent-code-review.feature: A review thread is marked as a review in the thread list
 source-control/agent-code-review.feature: A review thread shows the pull request and the verdict above the conversation
 source-control/agent-code-review.feature: Resetting the prompt leaves the user's other changes unsaved
+source-control/agent-code-review.feature: The reviews page lets the user review here what a machine out of reach had
 source-control/agent-code-review.feature: The reviews page lists reviews by state
+source-control/agent-code-review.feature: The reviews page shows a check the machine blocked as a problem of the machine
 source-control/agent-code-review.feature: The reviews page shows a review's findings and publishes them
+source-control/agent-code-review.feature: The reviews page shows which machine reviews a pull request
 source-control/agent-code-review.feature: The settings offer each source control host
 source-control/agent-code-review.feature: The user starts a review from the reviews page
 source-control/checkpoint-diffs.feature: A diff can be shown side by side or as one column
@@ -1708,6 +1711,7 @@ source-control/pull-request-threads.feature: An Azure DevOps pull request needs 
 source-control/pull-request-threads.feature: An environment without several links per thread says so
 source-control/pull-request-threads.feature: Choosing waits until the pull request is resolved
 source-control/pull-request-threads.feature: Clearing the reference asks for one
+source-control/pull-request-threads.feature: Each linked pull request names its repository, even when two share a number
 source-control/pull-request-threads.feature: Linked pull requests of an unreachable environment stay as last synced
 source-control/pull-request-threads.feature: Linked pull requests stay current
 source-control/pull-request-threads.feature: Linking a pull request to a thread
