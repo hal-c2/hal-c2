@@ -17,7 +17,7 @@
 # GET /session/:id/message[?limit=n], PATCH /session/:id ({title}) and POST /session/:id/fork ({messageID}: the
 # messages before it, with new ids, less any marked "lostOnFork") are served; each request is traced as
 # {"http": {method, path, body}}.
-import base64, json, os, re, sys, tempfile, threading, time
+import base64, json, os, re, signal, sys, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -203,6 +203,23 @@ class Api(BaseHTTPRequestHandler):
 if PORT:
     api = ThreadingHTTPServer(("127.0.0.1", PORT), Api)
     threading.Thread(target=api.serve_forever, daemon=True).start()
+
+# A waiting prompt notes this process's pid in `<FAKE_ACP_TRACE>.waiting`; SIGUSR1 then fails
+# it with the JSON-RPC error in `<FAKE_ACP_TRACE>.stop`, as OpenCode fails a prompt whose
+# model request failed.
+def stop_waiting(*_):
+    global waiting
+    if waiting and TRACE and os.path.exists(TRACE + ".stop"):
+        with open(TRACE + ".stop") as f:
+            send({"id": waiting[0], "error": json.load(f)})
+        waiting = None
+
+def note_waiting():
+    if TRACE:
+        with open(TRACE + ".waiting", "w") as f:
+            f.write(str(os.getpid()))
+
+signal.signal(signal.SIGUSR1, stop_waiting)
 
 def steered_end(text):
     """How a waiting prompt's loop ends as a steer lands, if it does."""
@@ -434,6 +451,7 @@ for line in sys.stdin:
                          "kind": "execute", "title": "ls", "rawInput": {"command": "ls"},
                          "content": [{"type": "content", "content": {"type": "text", "text": "a.txt\n"}}]})
             waiting = (mid, sid, steered_end(text))
+            note_waiting()
         elif "approve" in text:
             pending = (mid, sid)
             asked += 1

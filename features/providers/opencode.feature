@@ -532,7 +532,6 @@ Feature: OpenCode
 
   # Upstream #18315: OpenCode's quota and rate-limit stops read as provider errors; they are now
   # usage limits, with no reset time made up.
-  @backlog
   Scenario Outline: An OpenCode stop for <reason> shows as a usage limit
     Given an OpenCode turn is running
     When OpenCode stops it for <reason>
@@ -546,7 +545,6 @@ Feature: OpenCode
 
   # Upstream #29301: a spent Claude plan used through OpenCode's Claude provider failed as a plain
   # provider error, so Snooze until reset and auto-resume never turned on.
-  @backlog
   Scenario Outline: A Claude plan limit reached through OpenCode is a usage limit
     Given an OpenCode turn is running on OpenCode's Claude provider
     When OpenCode fails it with "<message>"

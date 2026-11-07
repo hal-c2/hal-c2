@@ -866,12 +866,81 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "an OpenCode turn is running", context do
+    running(context)
+  end
+
+  defp running(context) do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "wait for me")
 
     World.await_running(context, @thread)
     # The shared follow-up step sends to `running.thread` outside the provider features.
     Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
+  end
+
+  # OpenCode on its Claude provider: the turn runs as any other, on an Anthropic model.
+  step "an OpenCode turn is running on OpenCode's Claude provider", context do
+    running(context)
+  end
+
+  # OpenCode 2 fails the prompt with the step's error, naming its kind in `data.errorName`.
+  step ~r/^OpenCode stops it for (?<reason>an exhausted quota|a rate limit)$/,
+       %{args: [reason]} = context do
+    {name, message} =
+      case reason do
+        "an exhausted quota" -> {"provider.quota", "Quota exceeded for this model."}
+        "a rate limit" -> {"provider.rate-limit", "Rate limit exceeded. Try again shortly."}
+      end
+
+    fail_waiting(context, %{
+      "code" => -32603,
+      "message" => message,
+      "data" => %{"service" => "session", "errorName" => name}
+    })
+  end
+
+  # A Claude plan limit reaches OpenCode as a provider error with Claude's own message.
+  step ~r/^OpenCode fails it with "(?<message>[^"]+)"$/, %{args: [message]} = context do
+    fail_waiting(context, %{
+      "code" => -32603,
+      "message" => message,
+      "data" => %{"service" => "session", "errorName" => "provider.unknown"}
+    })
+  end
+
+  step "the turn shows it hit a usage limit, not a provider error", context do
+    row = limited(context)
+    assert row["lastError"] =~ "exceeded"
+    Map.put(context, :limited, row)
+  end
+
+  step "no reset time is given", context do
+    assert context.limited["usageLimitResetAt"] == nil
+    context
+  end
+
+  step "the turn shows it hit a usage limit that resets at {word}", %{args: [at]} = context do
+    {:ok, reset, _} = DateTime.from_iso8601(at)
+    {:ok, shown, _} = DateTime.from_iso8601(limited(context)["usageLimitResetAt"])
+    assert DateTime.compare(shown, reset) == :eq
+    context
+  end
+
+  step "the turn shows it hit a usage limit with no reset time given", context do
+    assert limited(context)["usageLimitResetAt"] == nil
+    context
+  end
+
+  # Fails the running fake's waiting prompt with `error` (see fake_acp.py).
+  defp fail_waiting(context, error) do
+    trace = context.fakes.logs["acp"]
+    File.write!(trace <> ".stop", JSON.encode!(error))
+    {_, 0} = System.cmd("kill", ["-USR1", File.read!(trace <> ".waiting")])
+    context
+  end
+
+  defp limited(context) do
+    World.await_row(context.running.thread, &(&1["lastErrorClass"] == "usage_limit"))
   end
 
   # OpenCode ends (or fails) the turn's loop as the steer lands, and answers it in a

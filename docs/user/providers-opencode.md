@@ -49,3 +49,10 @@ restart before HAL-C2 can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## Usage limits
+
+When OpenCode stops a turn because a model's quota, rate limit or plan ran out,
+the thread shows a usage limit rather than a provider error. OpenCode does not
+say when its own limits reset, so no wait is shown for them. A Claude plan used
+through OpenCode shows its reset time when Claude names one.

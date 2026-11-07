@@ -854,15 +854,28 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp answered(state, result) do
     {status, failure} =
       case result do
-        _ when state.interrupted -> {"interrupted", nil}
-        {:ok, %{"stopReason" => "cancelled"}} -> {"interrupted", nil}
-        {:ok, %{"stopReason" => _}} -> {"completed", nil}
+        _ when state.interrupted ->
+          {"interrupted", nil}
+
+        {:ok, %{"stopReason" => "cancelled"}} ->
+          {"interrupted", nil}
+
+        {:ok, %{"stopReason" => _}} ->
+          {"completed", nil}
+
         # xAI's rate limit.
-        {:error, %{"code" => -32003}} -> {"failed", "Grok usage limit reached. Try again later."}
-        {:error, %{"message" => message}} -> {"failed", message}
+        {:error, %{"code" => -32003}} ->
+          {"failed", "Grok usage limit reached. Try again later."}
+
+        {:error, %{"message" => message} = error} ->
+          {"failed", usage_limit(state, error) || message}
+
         # The agent's process went away before it answered.
-        {:error, :closed} -> {"failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"}
-        {:error, reason} -> {"failed", format(reason)}
+        {:error, :closed} ->
+          {"failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"}
+
+        {:error, reason} ->
+          {"failed", format(reason)}
       end
 
     {status, failure} =
@@ -876,6 +889,38 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
     {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
+  end
+
+  # OpenCode 2 names why a prompt failed (`data.errorName`): its quota, rate-limit and
+  # plan-limit stops are usage limits, with no reset time it does not give. A Claude plan
+  # spent through OpenCode says so only in its message, with the reset time it names.
+  @opencode_limits ~w(provider.quota provider.rate-limit provider.free-limit provider.go-limit
+                      provider.budget-limit provider.model-budget-limit provider.chatgpt-limit)
+
+  defp usage_limit(state, %{"message" => message} = error) when is_binary(message) do
+    name = get_in(error, ["data", "errorName"])
+
+    if HalC2.Acp.driver(state.agent) == "opencode" and
+         (name in @opencode_limits or message =~ ~r/\bYou've hit your \w+ limit\b/) do
+      %{
+        "class" => "usage_limit",
+        "message" => message,
+        "code" => name || "usage_limit",
+        "retryable" => nil,
+        "resetAt" => reset_at(message)
+      }
+    end
+  end
+
+  defp usage_limit(_state, _error), do: nil
+
+  defp reset_at(message) do
+    with [_, at] <- Regex.run(~r/Resets at (\d{4}-\d\d-\d\dT\S+Z)/, message),
+         {:ok, reset, _} <- DateTime.from_iso8601(at) do
+      HalC2.Projection.JS.iso(DateTime.to_unix(reset, :millisecond))
+    else
+      _ -> nil
+    end
   end
 
   # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
