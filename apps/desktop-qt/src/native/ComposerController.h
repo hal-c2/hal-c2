@@ -286,6 +286,9 @@ private:
     // {filePath, sectionId, sectionTitle, startIndex, endIndex, rangeLabel,
     // diff}; `text` is then the note and the lines are the file's.
     QJsonObject review;
+    // Set for another thread carried as context instead (a `thread`
+    // record): {environmentId, threadId, title}; its link is in the text.
+    QJsonObject thread;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's

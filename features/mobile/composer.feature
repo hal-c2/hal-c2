@@ -790,7 +790,7 @@ Feature: Writing to an agent from a phone
     Then "/plan" and "/default" are not offered
     And "/model" is still offered
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Another thread or a pull request is attached as context from the composer
     Given the environment has the thread "Auth refactor"
     When the user chooses "Auth refactor" after typing "@" in the composer
@@ -1156,7 +1156,7 @@ Feature: Writing to an agent from a phone
     Then the user is told to remove some context from the draft
     And the comment is not added
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A model that has not been set up cannot be sent to
     Given the thread uses an Antigravity model that "My MacBook" has not set up
     When the user sends "add a test"
@@ -1635,7 +1635,7 @@ Feature: Writing to an agent from a phone
     Then the menu is shown
     And the keyboard stays open
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message the MC rejects says why in the thread
     Given the MC refuses a sent message
     When the text returns to the composer

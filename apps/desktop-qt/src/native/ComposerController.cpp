@@ -615,7 +615,13 @@ QString ComposerController::carryProblem(const QList<Attachment>& attachments, c
   qsizetype records = 0;
   qsizetype chars = 0;
   for (const Excerpt& context : contexts) {
-    if (!context.citation.isEmpty() || context.text.trimmed().isEmpty()) continue;
+    if (!context.citation.isEmpty()) continue;
+    if (!context.thread.isEmpty()) {
+      ++records;
+      chars += context.thread.value(QLatin1String("title")).toString().size();
+      continue;
+    }
+    if (context.text.trimmed().isEmpty()) continue;
     ++records;
     chars += context.text.size() + context.terminalLabel.size();
   }
@@ -821,6 +827,17 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
                                   bool fromDraft) {
   const auto thread = m_store->thread(target);
   if (!thread) return false;
+  // An Antigravity model its environment has not set up cannot be sent to:
+  // its setup lives on the desktop, so say so instead of dispatching.
+  const QJsonObject chosen = selection(target);
+  if (const composer::Instance* instance = instanceOf(chosen);
+      instance && instance->driver == QLatin1String("antigravity") &&
+      (!instance->ready() ||
+       (!str(chosen, QLatin1String("model")).isEmpty() && composer::findModel(*instance, str(chosen, QLatin1String("model"))).isEmpty()))) {
+    toast(QStringLiteral("Antigravity model unavailable"),
+          QStringLiteral("Set up Antigravity on the desktop, or choose another model."));
+    return true;
+  }
   // The outbox takes a message the MC cannot be reached for, one whose files
   // are still going up, and one written behind a message still waiting there,
   // which must go first.
@@ -1917,6 +1934,7 @@ QJsonObject ComposerController::excerptJson(const Excerpt& excerpt) {
                    {QStringLiteral("lineEnd"), excerpt.lineEnd}, {QStringLiteral("text"), excerpt.text}};
   if (!excerpt.citation.isEmpty()) kept.insert(QStringLiteral("citation"), excerpt.citation);
   if (!excerpt.review.isEmpty()) kept.insert(QStringLiteral("review"), excerpt.review);
+  if (!excerpt.thread.isEmpty()) kept.insert(QStringLiteral("thread"), excerpt.thread);
   return kept;
 }
 
@@ -1924,7 +1942,7 @@ ComposerController::Excerpt ComposerController::excerptOf(const QJsonObject& kep
   return {str(kept, QLatin1String("id")), str(kept, QLatin1String("terminalId")), str(kept, QLatin1String("terminalLabel")),
           kept.value(QLatin1String("lineStart")).toInt(1), kept.value(QLatin1String("lineEnd")).toInt(1),
           str(kept, QLatin1String("text")), kept.value(QLatin1String("citation")).toObject(),
-          kept.value(QLatin1String("review")).toObject()};
+          kept.value(QLatin1String("review")).toObject(), kept.value(QLatin1String("thread")).toObject()};
 }
 
 void ComposerController::dispatchAll(const Send& send, qsizetype index, Dispatched done) {
@@ -2513,6 +2531,17 @@ void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>
       links.append(citationLink(context.citation));
       continue;
     }
+    if (!context.thread.isEmpty()) {
+      // A thread carried as context: its link is already in the text where
+      // it was chosen; the record says which thread it names.
+      records.append(QJsonObject{{QStringLiteral("version"), 1},
+                                 {QStringLiteral("contextId"), QStringLiteral("thread_") + context.id},
+                                 {QStringLiteral("kind"), QStringLiteral("thread")},
+                                 {QStringLiteral("environmentId"), context.thread.value(QLatin1String("environmentId"))},
+                                 {QStringLiteral("threadId"), context.thread.value(QLatin1String("threadId"))},
+                                 {QStringLiteral("title"), context.thread.value(QLatin1String("title"))}});
+      continue;
+    }
     if (!context.review.isEmpty()) {
       // reviewCommentRecord: the note with the file, the lines and their text.
       const QString filePath = context.review.value(QLatin1String("filePath")).toString();
@@ -2550,11 +2579,14 @@ void ComposerController::withExcerpts(QJsonObject& message, const QList<Excerpt>
         {QStringLiteral("text"), context.text},
     });
   }
-  // A quote is a link with no record, so the links decide whether anything is added.
-  if (links.isEmpty()) return;
-  const QString text = message.value(QLatin1String("text")).toString();
-  const QString joined = links.join(QLatin1Char(' '));
-  message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);
+  // A quote is a link with no record, and a thread's record has its link
+  // already in the text: either alone adds its half.
+  if (links.isEmpty() && records.isEmpty()) return;
+  if (!links.isEmpty()) {
+    const QString text = message.value(QLatin1String("text")).toString();
+    const QString joined = links.join(QLatin1Char(' '));
+    message.insert(QStringLiteral("text"), text.isEmpty() ? joined : text + QStringLiteral("\n\n") + joined);
+  }
   if (records.isEmpty()) return;
   QJsonObject context = message.value(QLatin1String("context")).toObject();
   QJsonArray existing = context.value(QLatin1String("records")).toArray();
@@ -3759,7 +3791,35 @@ bool ComposerController::selectSuggestion(const QString& target, const QString& 
   const QList<composer::Suggestion> offered = suggestions(target, trigger);
   const auto chosen = std::find_if(offered.cbegin(), offered.cend(), [&](const composer::Suggestion& item) { return item.id == id; });
   if (chosen == offered.cend()) return false;
-  const QString replacement = chosen->replacement;
+  QString replacement = chosen->replacement;
+  if (chosen->kind == QLatin1String("thread")) {
+    // The draft carries the thread as context; the text names it with the
+    // record's link. Choosing it again reuses the same reference.
+    const QString named = id.mid(QStringLiteral("thread:").size());
+    const qsizetype split = named.indexOf(u':');
+    const QString environmentId = named.left(split);
+    const QString threadId = named.mid(split + 1);
+    QList<Excerpt>& excerpts = m_drafts[target].excerpts;
+    const auto held = std::find_if(excerpts.cbegin(), excerpts.cend(), [&](const Excerpt& context) {
+      return context.thread.value(QLatin1String("environmentId")).toString() == environmentId &&
+             context.thread.value(QLatin1String("threadId")).toString() == threadId;
+    });
+    QString excerptId;
+    if (held != excerpts.cend()) {
+      excerptId = held->id;
+    } else {
+      excerptId = newId();
+      Excerpt excerpt;
+      excerpt.id = excerptId;
+      excerpt.thread = QJsonObject{{QStringLiteral("environmentId"), environmentId},
+                                   {QStringLiteral("threadId"), threadId},
+                                   {QStringLiteral("title"), chosen->label}};
+      excerpts.append(excerpt);
+    }
+    QString label = chosen->label;
+    label.replace(u'[', u' ').replace(u']', u' ');
+    replacement = QStringLiteral("[@%1](hal-c2-context://v1/thread/thread_%2) ").arg(label.trimmed(), excerptId);
+  }
   int end = trigger->end;
   if (replacement.endsWith(u' ') && end < text.size() && text.at(end) == u' ') ++end;
   const QString next = text.left(trigger->start) + replacement + text.mid(end);
@@ -3781,8 +3841,26 @@ QList<composer::Suggestion> ComposerController::suggestions(const QString& targe
                                 draft(target).trimmed() == u'/' + trigger->query);
   }
   if (trigger->kind == QLatin1String("skill")) return composer::skillItems(instance, *trigger);
-  if (trigger->kind == QLatin1String("path") && m_paths.target == target && m_paths.query == trigger->query) {
-    return composer::pathItems(m_paths.entries);
+  if (trigger->kind == QLatin1String("path")) {
+    QList<composer::Suggestion> items;
+    if (m_paths.target == target && m_paths.query == trigger->query) items = composer::pathItems(m_paths.entries);
+    // Threads can be carried as context from the same menu, ranked by title.
+    QList<std::pair<int, composer::Suggestion>> scored;
+    const QString query = trigger->query.toLower();
+    for (const sidebar::Thread& thread : m_store->threads()) {
+      if (thread.archivedAt || thread.title.isEmpty()) continue;
+      if (thread.environmentId + QLatin1Char(':') + thread.id == target) continue;
+      const std::optional<int> score =
+          query.isEmpty() ? std::optional<int>(0)
+                          : composer::scoreQueryMatch(thread.title.toLower(), query, 0, 2, 4, 6, 100);
+      if (!score) continue;
+      scored.append({*score,
+                     {QStringLiteral("thread:%1:%2").arg(thread.environmentId, thread.id), QStringLiteral("thread"),
+                      thread.title, QStringLiteral("Thread"), QStringLiteral("@%1 ").arg(thread.title)}});
+    }
+    std::stable_sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [score, item] : scored.mid(0, 10)) items.append(item);
+    return items;
   }
   return {};
 }
@@ -3967,6 +4045,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const QVariantList attachments = shownSent() + shownAttachments(kept.attachments, true);
   QVariantList terminalContexts;
   QVariantList reviewComments;
+  QVariantList threadContexts;
   QVariantList citations;
   for (const Excerpt& context : kept.excerpts) {
     if (!context.citation.isEmpty()) {
@@ -3985,6 +4064,13 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
                                         {QStringLiteral("lineStart"), context.lineStart},
                                         {QStringLiteral("lineEnd"), context.lineEnd},
                                         {QStringLiteral("text"), context.text}});
+      continue;
+    }
+    if (!context.thread.isEmpty()) {
+      threadContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
+                                        {QStringLiteral("label"), context.thread.value(QLatin1String("title")).toString()},
+                                        {QStringLiteral("threadId"), context.thread.value(QLatin1String("threadId")).toString()},
+                                        {QStringLiteral("environmentId"), context.thread.value(QLatin1String("environmentId")).toString()}});
       continue;
     }
     terminalContexts.append(QVariantMap{{QStringLiteral("id"), context.id},
@@ -4085,6 +4171,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("attachments"), attachments},
       {QStringLiteral("terminalContexts"), terminalContexts},
       {QStringLiteral("reviewComments"), reviewComments},
+      {QStringLiteral("threadContexts"), threadContexts},
       {QStringLiteral("citations"), citations},
       {QStringLiteral("placeholder"), placeholder},
       {QStringLiteral("editorDisabled"), !approvals.isEmpty() || choiceOnly},
@@ -4215,6 +4302,7 @@ QVariantMap ComposerController::imagesComposerState() const {
       {QStringLiteral("attachments"), QVariantList()},
       {QStringLiteral("terminalContexts"), QVariantList()},
       {QStringLiteral("reviewComments"), QVariantList()},
+      {QStringLiteral("threadContexts"), QVariantList()},
       {QStringLiteral("citations"), QVariantList()},
       {QStringLiteral("placeholder"), answered && !able
                                           ? QStringLiteral("No provider here can generate images. Set up Codex or Grok in Settings.")

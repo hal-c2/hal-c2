@@ -864,7 +864,7 @@ Rectangle {
 
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(attachmentsFlow.implicitHeight, Theme.control.md * 3)
-                        visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
+                        visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || (composer.model.threadContexts ?? []).length > 0 || composer.citations.length > 0)
                         clip: true
                         contentWidth: availableWidth
                         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -932,6 +932,25 @@ Rectangle {
                                 text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
                                 font.pixelSize: Theme.type.meta.size
                                 Accessible.name: qsTr("Remove terminal selection %1").arg(text)
+                                onClicked: Shell.dispatch("composer.terminalContext.remove", {
+                                    id: modelData.id
+                                })
+                            }
+                        }
+
+                        // Threads carried as context; a click takes one off.
+                        Repeater {
+                            model: composer.ready ? composer.model.threadContexts ?? [] : []
+
+                            delegate: ShellButton {
+                                required property var modelData
+
+                                objectName: "threadContext-" + modelData.id
+                                implicitHeight: Theme.control.sm
+                                iconName: "message-square"
+                                text: modelData.label
+                                font.pixelSize: Theme.type.meta.size
+                                Accessible.name: qsTr("Remove the thread %1").arg(text)
                                 onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                     id: modelData.id
                                 })

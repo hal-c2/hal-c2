@@ -480,6 +480,121 @@ const Steps phoneSteps([] {
         });
   });
 
+  // Another thread carried as context from the @ menu.
+  step(S("the environment has the thread %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    haveThread(world, c[0]);
+    world.sync();
+  });
+  step(S("the user chooses %1 after typing \"@\" in the composer").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    world.type(S("@"));
+    QVariantMap chosen;
+    world.waitFor(
+        [&] {
+          for (const QVariant& entry : world.state(S("composer")).toMap().value(S("suggestions")).toList()) {
+            if (entry.toMap().value(S("label")).toString() == c[0]) chosen = entry.toMap();
+          }
+          return !chosen.isEmpty();
+        },
+        [&] { return S("%1 among the suggestions; they are %2").arg(c[0], show(world.state(S("composer")).toMap().value(S("suggestions")))); });
+    // The row the list shows for it, tapped as a finger does.
+    QQuickItem* row = nullptr;
+    world.waitFor(
+        [&] {
+          row = world.findWhere([&](QQuickItem* item) {
+            return item->property("text").toString() == c[0] && item->isVisible();
+          });
+          return row != nullptr;
+        },
+        S("the suggestion row"));
+    world.tap(row);
+    world.sync();
+  });
+  step(S("the draft references %1 and carries it as context").arg(kQuoted), [dispatched](World& world, const Captures& c, const Table&) {
+    world.waitFor(
+        [&] {
+          const QVariantMap composerState = world.state(S("composer")).toMap();
+          return composerState.value(S("text")).toString().contains(S("[@") + c[0] + S("](hal-c2-context://v1/thread/")) &&
+                 composerState.value(S("threadContexts")).toList().size() == 1 &&
+                 composerState.value(S("threadContexts")).toList().constFirst().toMap().value(S("label")).toString() == c[0];
+        },
+        [&] { return S("the reference; the composer is %1").arg(show(world.state(S("composer")))); });
+    world.tap(S("primaryAction"));
+    world.waitFor([&] { return dispatched(world).size() == 1; }, S("the message to be sent"));
+    const QJsonArray records = dispatched(world).constFirst().value(QLatin1String("context")).toObject().value(QLatin1String("records")).toArray();
+    expect(records.size() == 1 && records.at(0).toObject().value(QLatin1String("kind")) == QLatin1String("thread") &&
+               records.at(0).toObject().value(QLatin1String("title")) == c[0],
+           S("the message carries %1").arg(show(records.toVariantList())));
+  });
+
+  // A send the MC refuses: the words come back and the reason is the thread's.
+  step(S("the MC refuses a sent message"), [](World& world, const Captures&, const Table&) {
+    world.mc.refusals.insert(S("message.dispatch"), S("Provider unavailable"));
+  });
+  step(S("the text returns to the composer"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    world.type(S("add a test"));
+    world.tap(S("primaryAction"));
+    // The returning text is the refusal's doing, not the typing never sent:
+    // wait for the MC's no (its toast) before reading the composer back.
+    world.waitFor(
+        [&] {
+          for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
+            if (toast.toMap().value(S("description")).toString().contains(S("Provider unavailable"))) return true;
+          }
+          return false;
+        },
+        S("the refusal"));
+    expect(!world.mc.commands.isEmpty(), S("the MC was never asked"));
+    world.waitFor([&] { return world.state(S("composer")).toMap().value(S("text")).toString() == QLatin1String("add a test"); },
+                  [&] { return S("the text back; the composer is %1").arg(show(world.state(S("composer")))); });
+  });
+  step(S("the reason shows above that thread's composer"), [told](World& world, const Captures&, const Table&) {
+    told(world, S("Provider unavailable"));
+    // The phone's toasts rise above the thread's composer (MobileShell).
+    QQuickItem* card = nullptr;
+    world.waitFor(
+        [&] {
+          card = world.findWhere([](QQuickItem* item) {
+            return item->isVisible() && item->property("text").toString().contains(S("Provider unavailable"));
+          });
+          return card != nullptr;
+        },
+        S("the reason over the composer"));
+  });
+  step(S("it is not shown on the add-environment screen"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(S("pairing.add"), {});
+    world.waitFor([&] { return world.find(S("pairingScreen")) != nullptr; }, S("the add-environment screen"));
+    expect(world.find(S("toasts")) == nullptr, S("the pairing screen has the thread's toasts"));
+    expect(world.findWhere([](QQuickItem* item) {
+             return item->isVisible() && item->property("text").toString().contains(S("Provider unavailable"));
+           }) == nullptr,
+           S("the reason followed the user to the pairing screen"));
+  });
+
+  // An Antigravity model that has not been set up cannot be sent to.
+  step(S("the thread uses an Antigravity model that %1 has not set up").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+    offerProviders(world.mc, {QJsonObject{{S("instanceId"), S("antigravity")},
+                                          {S("driver"), S("antigravity")},
+                                          {S("displayName"), S("Antigravity")},
+                                          {S("enabled"), true},
+                                          {S("installed"), false},
+                                          {S("status"), S("error")},
+                                          {S("models"), QJsonArray{QJsonObject{{S("slug"), S("gemini-3")}, {S("name"), S("Gemini 3")}}}}}});
+    updateRow(world.mc, world.thread,
+              {{S("modelSelection"), QJsonObject{{S("instanceId"), S("antigravity")}, {S("model"), S("gemini-3")}}}});
+    world.sync();
+    world.waitFor([&] { return world.state(S("composer")).toMap().value(S("selectedModel")).toString() == QLatin1String("gemini-3"); },
+                  [&] { return S("the Antigravity model; the composer is %1").arg(show(world.state(S("composer")))); });
+  });
+  step(S("the user is told to set Antigravity up on the desktop or choose another model"), [told](World& world, const Captures&, const Table&) {
+    told(world, S("Set up Antigravity on the desktop, or choose another model"));
+  });
+
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.waitFor(
         [&] {
