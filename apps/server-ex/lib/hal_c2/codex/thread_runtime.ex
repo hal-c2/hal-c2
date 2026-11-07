@@ -328,7 +328,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     # `%{sub: NativeSubagent handle, done: bool}`.
     state =
       Map.merge(state, %{
-        subagents: %{},
+        # Subagents an earlier turn left running carry on in their own threads:
+        # their reports still land, and a later finish can still wake this one.
+        subagents:
+          Map.filter(Map.get(state, :subagents, %{}), fn {_thread, entry} -> not entry.done end),
+        file_changes: %{},
+        sharing_limit: false,
         final_first: nil,
         finals: %{},
         final_texts: %{},
@@ -346,6 +351,10 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:error, %{"message" => "Codex App Server process exited" <> _} = exit, state} ->
         Logger.warning("codex turn failed to start: the app-server exited\n#{exit["stderr"]}")
         finish(state, "failed", stopped_while_starting(exit))
+        {:reply, :ok, %{state | turn: nil}}
+
+      {:error, {:broken_version, message}, state} ->
+        finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil}}
 
       # The app-server exited before the turn began.
@@ -612,7 +621,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           {"command", reason_or(params, params["command"])}
 
         "item/fileChange/requestApproval" ->
-          {"file-change", file_change_prompt(params)}
+          {"file-change", file_change_prompt(state, params)}
 
         # An older Codex's approvals: its command is a list of words, and its patch
         # lists the files the way `file_change_prompt/1` reads them.
@@ -626,7 +635,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           {"command", reason_or(params, command)}
 
         "applyPatchApproval" ->
-          {"file-change", file_change_prompt(params)}
+          {"file-change", file_change_prompt(state, params)}
 
         _ ->
           {permissions_kind(params["permissions"]), params["reason"]}
@@ -721,11 +730,20 @@ defmodule HalC2.Codex.ThreadRuntime do
     state = %{state | conn: nil}
 
     # A stream the MC itself ends while shutting down is not the provider failing the
-    # turn: the run stays as it is for the next boot's recovery to settle.
+    # turn: the run stays as it is for the next boot's recovery to settle. With no
+    # turn active, subagents an earlier turn left running still end with the stream:
+    # the app-server that held their threads is gone, so nothing will report them.
     state =
-      if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
-        do: end_turn(state, "failed", "Codex exited unexpectedly"),
-        else: state
+      cond do
+        HalC2.Orchestration.Recovery.stopping?() ->
+          state
+
+        state.turn ->
+          end_turn(state, "failed", "Codex exited unexpectedly", :ended)
+
+        true ->
+          finish_subagents(state, "failed")
+      end
 
     # Its terminals went with it (and, when stopping, are left marked for the next boot).
     state =
@@ -752,10 +770,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     stop_conn(conn)
     state = %{state | conn: nil, native_thread_id: nil}
 
+    # As when the app-server exits, subagents an earlier turn left running end
+    # with the stream even when no turn is active.
     state =
       if state.turn,
-        do: end_turn(state, "failed", "Codex sent output that is not a protocol message"),
-        else: state
+        do: end_turn(state, "failed", "Codex sent output that is not a protocol message", :ended),
+        else: finish_subagents(state, "failed")
 
     {:noreply, end_background(state, "failed")}
   end
@@ -808,6 +828,8 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:suppressed, %{})
      |> Map.put_new(:commentary, %{})
      |> Map.put_new(:persistent, %{})
+     |> Map.put_new(:last_turn, nil)
+     |> Map.put_new(:file_changes, %{})
      |> Map.put_new(:interrupting, nil)
      |> Map.put_new(:stopped, false)
      |> Map.put_new(:usage_failure, nil)
@@ -827,12 +849,21 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # A permissions request: file writes are a file change,
-  # file reads a file read; anything else stays a plain permission.
+  # file reads a file read; anything else stays a plain permission. Paths may
+  # come as read/write lists or as entries naming a glob or special path: only
+  # the access they ask for decides the kind.
   defp permissions_kind(%{"fileSystem" => %{} = fs}) do
+    entries = fs["entries"] || []
+
     cond do
-      (fs["write"] || []) != [] -> "file-change"
-      (fs["read"] || []) != [] -> "file-read"
-      true -> "permission"
+      (fs["write"] || []) != [] or Enum.any?(entries, &(&1["access"] == "write")) ->
+        "file-change"
+
+      (fs["read"] || []) != [] or Enum.any?(entries, &(&1["access"] == "read")) ->
+        "file-read"
+
+      true ->
+        "permission"
     end
   end
 
@@ -868,8 +899,25 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # --- turn lifecycle -------------------------------------------------------------
 
+  # A Codex this release marks broken fails the turn saying so (and what to
+  # update to), instead of failing inside a protocol it no longer speaks.
+  defp version_gate(state, turn) do
+    case HalC2.Codex.Provider.broken_version(resolved_instance(Entities.instance(turn.ids))) do
+      nil ->
+        {:ok, state}
+
+      {version, recommended} ->
+        update = if recommended, do: " Update Codex to #{recommended}, then retry."
+
+        {:error,
+         {:broken_version, "Codex #{version} does not work with this HAL-C2 release.#{update}"},
+         state}
+    end
+  end
+
   defp begin_turn(state, turn) do
-    with {:ok, state} <- connect(state, turn),
+    with {:ok, state} <- version_gate(state, turn),
+         {:ok, state} <- connect(state, turn),
          {:ok, state, turn} <- open_thread(state, turn),
          {:ok, native_turn, state} <- start_native_turn(state, turn) do
       at = Entities.now()
@@ -927,7 +975,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       end)
       |> case do
         :ok ->
-          {:ok, %{state | turn: turn}}
+          {:ok, state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)}
 
         # The run ended while Codex started its turn: nothing wants the turn now.
         :ended ->
@@ -946,21 +994,50 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rewind(state, plan) do
     thread = state.native_thread_id
 
-    with {:error, _} <-
-           if(plan.first_dropped,
-             do:
-               Connection.call(state.conn, "thread/revert", %{
-                 "threadId" => thread,
-                 "beforeTurnId" => plan.first_dropped
-               }),
-             else: {:error, :no_turn_id}
-           ),
-         do:
-           Connection.call(state.conn, "thread/rollback", %{
-             "threadId" => thread,
-             "numTurns" => plan.drop
-           })
+    revert =
+      if plan.first_dropped,
+        do:
+          Connection.call(state.conn, "thread/revert", %{
+            "threadId" => thread,
+            "beforeTurnId" => plan.first_dropped
+          }),
+        else: {:error, :no_turn_id}
+
+    case revert do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, reason} ->
+        if revert_unavailable?(reason),
+          do:
+            Connection.call(state.conn, "thread/rollback", %{
+              "threadId" => thread,
+              "numTurns" => plan.drop
+            }),
+          else: {:error, reason}
+    end
   end
+
+  # An app-server without `thread/revert` (older Codex) says the method does
+  # not exist, and dropping by count is then the only way. It says so two
+  # ways: -32601, or -32600 naming `thread/revert` as an unknown variant,
+  # since a method it cannot deserialize into its request type never
+  # reaches dispatch. A refusal of the revert itself — a legacy-history
+  # thread on a Codex that has no `thread/rollback` either — is Codex's
+  # answer, not a cue to fall back.
+  defp revert_unavailable?(:no_turn_id), do: true
+  defp revert_unavailable?(%{"code" => -32601}), do: true
+
+  defp revert_unavailable?(%{"code" => -32600, "message" => message})
+       when is_binary(message) do
+    message = String.downcase(message)
+
+    String.contains?(message, "thread/revert") and
+      (String.contains?(message, "unknown variant") or
+         String.contains?(message, "unknown method"))
+  end
+
+  defp revert_unavailable?(_reason), do: false
 
   # An approval's reason when Codex gave one, else what it wants to do.
   defp reason_or(params, fallback) do
@@ -972,31 +1049,23 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # What a file-change approval is for when Codex gives no reason: each file with
   # what would be done to it (the first 20, the rest counted), or the folder it
-  # wants to write under (`codexFileChangeApprovalPrompt`).
-  defp file_change_prompt(params) do
+  # wants to write under (`codexFileChangeApprovalPrompt`). The request itself
+  # may name no files: they are the ones Codex listed when it started the change
+  # the request belongs to (`item/started`, kept in `state.file_changes`).
+  defp file_change_prompt(state, params) do
     case reason_or(params, nil) do
       reason when is_binary(reason) ->
         reason
 
       _ ->
-        entries =
-          (params["fileChanges"] || %{})
-          |> Enum.sort_by(fn {path, _change} -> path end)
+        lines = file_change_lines(state, params)
 
         cond do
-          entries != [] ->
-            described =
-              for {path, change} <- Enum.take(entries, 20) do
-                move = if change["type"] == "update", do: change["move_path"]
-
-                if move,
-                  do: "#{change["type"]} #{path} -> #{move}",
-                  else: "#{change["type"]} #{path}"
-              end
-
-            remaining = length(entries) - length(described)
-            lines = Enum.join(described, "\n")
-            if remaining > 0, do: "#{lines}\n+#{remaining} more", else: lines
+          lines != [] ->
+            described = Enum.take(lines, 20)
+            remaining = length(lines) - length(described)
+            text = Enum.join(described, "\n")
+            if remaining > 0, do: "#{text}\n+#{remaining} more", else: text
 
           is_binary(params["grantRoot"]) and String.trim(params["grantRoot"]) != "" ->
             String.trim(params["grantRoot"])
@@ -1004,6 +1073,24 @@ defmodule HalC2.Codex.ThreadRuntime do
           true ->
             nil
         end
+    end
+  end
+
+  defp file_change_lines(_state, %{"fileChanges" => %{} = changes}) when map_size(changes) > 0 do
+    for {path, change} <- Enum.sort_by(changes, fn {path, _change} -> path end) do
+      move = if change["type"] == "update", do: change["move_path"]
+      if move, do: "#{change["type"]} #{path} -> #{move}", else: "#{change["type"]} #{path}"
+    end
+  end
+
+  defp file_change_lines(state, params) do
+    for change <- Map.get(state, :file_changes, %{})[params["itemId"]] || [] do
+      kind = change["kind"] || %{}
+      move = if kind["type"] == "update", do: kind["move_path"]
+
+      if move,
+        do: "#{kind["type"]} #{change["path"]} -> #{move}",
+        else: "#{kind["type"]} #{change["path"]}"
     end
   end
 
@@ -1053,6 +1140,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rpc_message(%{"message" => message}) when is_binary(message), do: message
   defp rpc_message(reason), do: inspect(reason)
 
+  # The app-server request id a pending request is waiting to answer.
+  defp request_rpc_id({:question, id, _question_ids}), do: id
+  defp request_rpc_id({:elicitation, id, _params}), do: id
+  defp request_rpc_id({:legacy, id}), do: id
+  defp request_rpc_id(id), do: id
+
   defp connect(%{conn: nil} = state, %{ids: ids} = turn) do
     instance = Entities.instance(ids)
 
@@ -1094,7 +1187,10 @@ defmodule HalC2.Codex.ThreadRuntime do
              }
            }) do
       Connection.notify(conn, "initialized", nil)
-      {:ok, %{state | conn: conn, conn_instance: instance}}
+      # A new app-server's turns are its own: an id an earlier connection used
+      # is not an earlier run's turn here.
+      {:ok,
+       state |> Map.put(:last_turn, nil) |> Map.merge(%{conn: conn, conn_instance: instance})}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -1211,6 +1307,30 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
   end
 
+  # A session Codex archived outside HAL-C2 (its own app, say) is unarchived
+  # and the fork tried once more; any other failure is the fork's own.
+  defp fork_call(state, params, source) do
+    case Connection.call(state.conn, "thread/fork", params) do
+      {:error, reason} = error ->
+        if archived_error?(reason) and unarchive(state, source) == :ok,
+          do: Connection.call(state.conn, "thread/fork", params),
+          else: error
+
+      result ->
+        result
+    end
+  end
+
+  defp archived_error?(reason),
+    do: reason |> rpc_message() |> String.downcase() |> String.contains?("archived")
+
+  defp unarchive(state, thread_id) do
+    case Connection.call(state.conn, "thread/unarchive", %{"threadId" => thread_id}) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   # A live native thread keeps its session while its MCP credential still
   # matches the access settings; a flip resumes it with fresh config below,
   # so its tool calls never carry a rotated-away token.
@@ -1242,7 +1362,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> then(&if(last, do: Map.put(&1, "lastTurnId", last), else: &1))
       |> then(&if(fork[:path], do: Map.put(&1, "path", fork[:path]), else: &1))
 
-    case Connection.call(state.conn, "thread/fork", params) do
+    case fork_call(state, params, source) do
       {:ok, %{"thread" => %{"id" => id}}} -> trim_fork(state, fork, source, id)
       {:error, reason} -> {:error, reason, state}
     end
@@ -1252,15 +1372,32 @@ defmodule HalC2.Codex.ThreadRuntime do
     state = workers_only(state, turn)
     params = thread_params(state, turn)
 
+    resume = fn ->
+      Connection.call(
+        state.conn,
+        "thread/resume",
+        Map.merge(params, %{"threadId" => turn.native_thread_id, "excludeTurns" => true})
+      )
+    end
+
     result =
       if turn.native_thread_id,
-        do:
-          Connection.call(
-            state.conn,
-            "thread/resume",
-            Map.merge(params, %{"threadId" => turn.native_thread_id, "excludeTurns" => true})
-          ),
+        do: resume.(),
         else: Connection.call(state.conn, "thread/start", params)
+
+    # A session Codex archived outside HAL-C2 is unarchived and resumed once:
+    # the same session, not a fresh conversation. Any other resume error is
+    # shown as it is below.
+    result =
+      case result do
+        {:error, reason} when turn.native_thread_id != nil ->
+          if archived_error?(reason) and unarchive(state, turn.native_thread_id) == :ok,
+            do: resume.(),
+            else: result
+
+        _ ->
+          result
+      end
 
     case result do
       {:ok, %{"thread" => %{"id" => id}}} ->
@@ -1437,8 +1574,18 @@ defmodule HalC2.Codex.ThreadRuntime do
     params = Map.merge(params, selected_options(Map.get(turn, :options, %{})))
 
     case Connection.call(state.conn, "turn/start", params) do
-      {:ok, %{"turn" => %{"id" => id}}} -> {:ok, id, remember_context(state, plan?, context)}
-      {:error, reason} -> {:error, reason, state}
+      # Codex answering a new run's start with an earlier run's turn has not
+      # started this run's turn: taking that turn as its own would leave the
+      # run running on a turn that already ended.
+      {:ok, %{"turn" => %{"id" => id}}} ->
+        if id != nil and id == Map.get(state, :last_turn) do
+          {:error, "Codex answered the new turn with an earlier run's turn", state}
+        else
+          {:ok, id, remember_context(state, plan?, context)}
+        end
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 
@@ -1591,6 +1738,29 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{state | memory_threads: Map.delete(state.memory_threads, thread)}
   end
 
+  # Codex closing its native thread ends the commands a finished turn left
+  # running in it: they read as interrupted, the turn that left them stays as
+  # it ended, and a late completion for one finds nothing to revive. The next
+  # turn resumes the thread Codex no longer has loaded.
+  defp notification("thread/closed", %{"threadId" => thread}, %{native_thread_id: thread} = state)
+       when is_binary(thread) do
+    %{end_background(state, "interrupted") | native_thread_id: nil}
+  end
+
+  # Codex settling a request itself (its own timeout, say) frees the MC's wait
+  # on the user for it: the request closes without an answer going back, and
+  # answering it afterwards finds nothing pending.
+  defp notification("serverRequest/resolved", %{"requestId" => rpc_id}, state) do
+    case Enum.find(state.requests, fn {_id, stored} -> request_rpc_id(stored) == rpc_id end) do
+      {request_id, _stored} ->
+        state = %{state | requests: Map.delete(state.requests, request_id)}
+        if state.turn, do: resolve_request(state, request_id, nil, "cancelled"), else: state
+
+      nil ->
+        state
+    end
+  end
+
   defp notification(_method, %{"threadId" => thread}, state)
        when is_map_key(state.memory_threads, thread),
        do: state
@@ -1610,8 +1780,6 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     %{state | subagents: Map.put(subagents, thread, entry)}
   end
-
-  defp notification(_method, _params, %{turn: nil} = state), do: state
 
   # A subagent's own thread reports under its thread id: its answer goes to its child
   # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
@@ -1638,7 +1806,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           entity =
             HalC2.StreamState.get(HalC2.Streams.state(state.thread_id), "subagent")[entry.sub.id]
 
-          if text != "" and entity do
+          if text != "" and is_map(entity) and state.turn do
             sub = HalC2.Orchestration.NativeSubagent.resume(state.turn.ids, entity, text)
             %{entry | sub: sub, done: false, final: nil}
           else
@@ -1740,8 +1908,16 @@ defmodule HalC2.Codex.ThreadRuntime do
          state
        )
        when event in ["started", "completed"] do
-    state |> flush() |> spawned(item) |> subagent_states(item)
+    # Between turns only their states still land (a subagent finishing after
+    # its parent's turn): nothing new is spawned for a turn that has ended.
+    if state.turn,
+      do: state |> flush() |> spawned(item) |> subagent_states(item),
+      else: subagent_states(state, item)
   end
+
+  # Between turns, everything above (background commands, memory threads,
+  # subagents) still lands; a turn's own notifications need its turn.
+  defp notification(_method, _params, %{turn: nil} = state), do: state
 
   # Another turn's item that is not running any more (a command stopped with its
   # turn, say) is not this turn's.
@@ -1779,6 +1955,29 @@ defmodule HalC2.Codex.ThreadRuntime do
       _ ->
         ensure_item(state, native, :assistant)
     end
+  end
+
+  # A compaction Codex starts is an item of the turn: if the turn ends before
+  # Codex reports it finished, it settles with the turn (stopped, failed).
+  defp notification(
+         "item/started",
+         %{"item" => %{"type" => "contextCompaction", "id" => native}},
+         state
+       ),
+       do:
+         ensure_item(state, native, :compaction, %{
+           "driver" => "codex",
+           "title" => "Compacting context..."
+         })
+
+  # The files a change will touch, kept for the approval Codex may ask for it:
+  # that request names only the change, not its files.
+  defp notification("item/started", %{"item" => %{"type" => "fileChange"} = item}, state) do
+    Map.put(
+      state,
+      :file_changes,
+      Map.put(Map.get(state, :file_changes, %{}), item["id"], item["changes"] || [])
+    )
   end
 
   defp notification("item/started", %{"item" => %{"type" => "commandExecution"} = item}, state) do
@@ -1944,9 +2143,16 @@ defmodule HalC2.Codex.ThreadRuntime do
       params["willRetry"] == true ->
         retry_item(state, error)
 
+      # A used-up ChatGPT sharing allowance arrives as a disconnect: it is a
+      # usage limit with no reset of its own, not a failed turn.
+      sharing_limit?(error) ->
+        state
+        |> Map.put(:sharing_limit, true)
+        |> Map.put(:failure, sharing_failure(error))
+
       # A structured `usage_limit` failure, as Claude's: the thread reads its error class
       # and reset from it, and its queue waits (`TurnWriter.finish/3`).
-      error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] ->
+      usage_limit_error?(error) ->
         snapshot = Map.get(state, :rate_limits)
         at = DateTime.utc_now()
 
@@ -1986,11 +2192,22 @@ defmodule HalC2.Codex.ThreadRuntime do
         do: "interrupted",
         else: status
 
-    end_turn(
-      state,
-      status,
-      state.failure || if(turn["error"], do: error_text(turn["error"]))
-    )
+    {state, failure} =
+      cond do
+        state.failure ->
+          {state, state.failure}
+
+        sharing_limit?(turn["error"] || %{}) ->
+          {Map.put(state, :sharing_limit, true), sharing_failure(turn["error"])}
+
+        turn["error"] ->
+          {state, error_text(turn["error"])}
+
+        true ->
+          {state, nil}
+      end
+
+    end_turn(state, status, failure)
   end
 
   defp notification(_method, _params, state), do: state
@@ -2096,7 +2313,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     state
   end
 
-  defp end_turn(state, status, failure) do
+  # `stream` is `:ended` when the turn ends because its app-server (and with
+  # it the event stream) is gone, not because Codex reported the turn's end.
+  defp end_turn(state, status, failure, stream \\ :open) do
     state = flush(state)
 
     state =
@@ -2122,37 +2341,34 @@ defmodule HalC2.Codex.ThreadRuntime do
           if status == "interrupted", do: end_background(state, status), else: state
       end
 
-    # The turn's subagents end with an interrupted or failed turn; a completed
-    # turn's were settled by Codex's own reports of them.
+    # The turn's subagents end with an interrupted turn (Stop stops them too)
+    # and with a turn whose stream ended: the app-server that held their
+    # threads is gone, so nothing will report them again. A failed or
+    # completed turn Codex itself reported leaves them carrying on in their
+    # own threads, settled by Codex's own reports of them.
     state =
-      if status in ["interrupted", "failed"] do
-        subagents =
-          for {thread, entry} <- Map.get(state, :subagents, %{}), into: %{} do
-            if entry.done do
-              {thread, entry}
-            else
-              sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, status, entry[:final])
-              {thread, %{entry | sub: sub, done: true}}
-            end
-          end
-
-        Map.put(state, :subagents, subagents)
-      else
-        state
-      end
+      if status == "interrupted" or stream == :ended,
+        do: finish_subagents(state, status),
+        else: state
 
     # A usage-limit stop whose reset Codex had not named learns it from a later
     # report (`notification("account/rateLimits/updated", ...)`).
     state =
       case failure do
         %{"class" => "usage_limit", "resetAt" => nil} ->
-          item =
-            HalC2.Orchestration.TurnWriter.item_id(
-              state.turn.ids,
-              "terminal-failure:#{Map.get(state.turn.ids, :provider_turn, state.turn.ids.run)}"
-            )
+          # A sharing limit has no reset of its own: an ordinary usage
+          # window's reset reported later is not taken as its.
+          if Map.get(state, :sharing_limit) do
+            state
+          else
+            item =
+              HalC2.Orchestration.TurnWriter.item_id(
+                state.turn.ids,
+                "terminal-failure:#{Map.get(state.turn.ids, :provider_turn, state.turn.ids.run)}"
+              )
 
-          Map.put(state, :usage_failure, %{item: item})
+            Map.put(state, :usage_failure, %{item: item})
+          end
 
         _ ->
           state
@@ -2160,7 +2376,26 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     state = close_open_items(state, status)
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, requests: %{}, interrupting: nil}
+
+    state
+    |> Map.merge(%{turn: nil, items: %{}, requests: %{}, interrupting: nil})
+    |> Map.put(:last_turn_status, status)
+  end
+
+  # Ends every subagent still running, each in its own thread; ones that had
+  # already ended keep how they ended.
+  defp finish_subagents(state, status) do
+    subagents =
+      for {thread, entry} <- Map.get(state, :subagents, %{}), into: %{} do
+        if entry.done do
+          {thread, entry}
+        else
+          sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, status, entry[:final])
+          {thread, %{entry | sub: sub, done: true}}
+        end
+      end
+
+    Map.put(state, :subagents, subagents)
   end
 
   # Tool calls Codex marked persistent outlive a completed turn: they leave its
@@ -2187,6 +2422,44 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp error_code(code) when is_binary(code), do: code
   defp error_code(%{} = info) when map_size(info) > 0, do: info |> Map.keys() |> hd()
   defp error_code(_), do: nil
+
+  # A usage limit by its code, or by Codex giving up after repeated 429s.
+  defp usage_limit_error?(error) do
+    error_code(error["codexErrorInfo"]) in ["usageLimitExceeded", "rateLimitExceeded"] or
+      http_429?(error)
+  end
+
+  # Only the structured status counts: a message that merely contains the
+  # characters "429" ("context exceeds 14290 tokens") is an ordinary failure,
+  # and calling it a usage limit would hold the queue for a reset that never
+  # comes.
+  defp http_429?(error) do
+    case error["codexErrorInfo"] do
+      %{} = info ->
+        info["httpStatusCode"] == 429 or
+          Enum.any?(Map.values(info), &match?(%{"httpStatusCode" => 429}, &1))
+
+      _ ->
+        false
+    end
+  end
+
+  defp sharing_limit?(error) when is_map(error) do
+    message = String.downcase(error["message"] || "")
+    String.contains?(message, "sharing") and String.contains?(message, "usage limit")
+  end
+
+  defp sharing_limit?(_error), do: false
+
+  defp sharing_failure(error) do
+    %{
+      "class" => "usage_limit",
+      "message" => "ChatGPT sharing usage limit reached.",
+      "code" => error_code(error["codexErrorInfo"]),
+      "retryable" => nil,
+      "resetAt" => nil
+    }
+  end
 
   # Instead of Codex's own sentence (which on a workspace blames credits for a window
   # that simply ran out): the used-up window resetting last, and what to do next.
@@ -2483,10 +2756,39 @@ defmodule HalC2.Codex.ThreadRuntime do
     |> finish_item(native, command_status(item), &command_result(&1, item))
   end
 
-  defp complete_item(state, %{"type" => "fileChange", "id" => native, "changes" => [change | _]}) do
+  defp complete_item(state, %{"type" => "contextCompaction", "id" => native}) do
+    if Map.has_key?(state.items, native),
+      do: finish_item(state, native, "completed", &Map.put(&1, "title", "Context compacted")),
+      else: state
+  end
+
+  # One patch can touch several files: every one is listed on the item (a
+  # rename under its new path, with where it came from), not only the first,
+  # and `diffStr` carries every file's diff, as the clients render that one
+  # string.
+  defp complete_item(state, %{
+         "type" => "fileChange",
+         "id" => native,
+         "changes" => [_ | _] = changes
+       }) do
     ids = state.turn.ids
     at = Entities.now()
     item_id = item_id(ids, native)
+
+    details =
+      for change <- changes do
+        kind = change["kind"] || %{}
+        move = if kind["type"] == "update", do: kind["move_path"]
+
+        %{"operation" => kind["type"] || "update", "path" => move || change["path"] || "file"}
+        |> then(&if(move, do: Map.put(&1, "oldPath", change["path"]), else: &1))
+      end
+
+    diff =
+      changes
+      |> Enum.zip(details)
+      |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
+      |> Enum.join()
 
     commit(state, fn stream ->
       [
@@ -2501,15 +2803,20 @@ defmodule HalC2.Codex.ThreadRuntime do
             "completed",
             at,
             %{
-              "fileName" => change["path"] || "file",
-              "diffStr" => change["diff"] || ""
+              "fileName" => hd(details)["path"],
+              "diffStr" => diff,
+              "changes" => details
             }
           )
         )
       ]
     end)
 
-    state
+    Map.put(
+      state,
+      :file_changes,
+      Map.delete(Map.get(state, :file_changes, %{}), native)
+    )
   end
 
   defp complete_item(state, %{"type" => "webSearch", "id" => native} = item) do
@@ -2531,6 +2838,54 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, _item), do: state
+
+  # Codex sends each change's `diff` without file headers: bare `@@` hunks for
+  # an update, the file's content for an add or delete. The clients split a
+  # multi-file diff on its `diff --git` lines and read each file's paths from
+  # `---`/`+++`, so every change gets those headers (`/dev/null` for the side
+  # an add or delete has none of) and its content becomes a `+`/`-` hunk.
+  defp file_diff(change, detail) do
+    raw = if is_binary(change["diff"]), do: change["diff"], else: ""
+    path = detail["path"]
+    old = detail["oldPath"] || path
+
+    body =
+      case detail["operation"] do
+        "add" -> content_hunk(raw, "+")
+        "delete" -> content_hunk(raw, "-")
+        _ -> raw
+      end
+
+    if String.trim(body) == "" do
+      ""
+    else
+      """
+      diff --git a/#{old} b/#{path}
+      --- #{if detail["operation"] == "add", do: "/dev/null", else: "a/" <> old}
+      +++ #{if detail["operation"] == "delete", do: "/dev/null", else: "b/" <> path}
+      """ <> if(String.ends_with?(body, "\n"), do: body, else: body <> "\n")
+    end
+  end
+
+  # An add's or delete's content as one hunk; a change already sent as hunks
+  # keeps them.
+  defp content_hunk(raw, sign) do
+    lines =
+      case String.replace_suffix(raw, "\n", "") do
+        "" -> []
+        text -> String.split(text, "\n")
+      end
+
+    cond do
+      raw |> String.trim_leading() |> String.starts_with?("@@") -> raw
+      lines == [] -> ""
+      sign == "+" -> "@@ -0,0 +1,#{length(lines)} @@\n" <> prefix_lines(lines, sign)
+      true -> "@@ -1,#{length(lines)} +0,0 @@\n" <> prefix_lines(lines, sign)
+    end
+  end
+
+  defp prefix_lines(lines, sign),
+    do: Enum.map_join(lines, "", &(sign <> &1 <> "\n"))
 
   defp spawned(state, %{"tool" => "spawnAgent", "id" => id} = item) do
     known = Map.get(state, :subagents, %{})
@@ -2567,14 +2922,14 @@ defmodule HalC2.Codex.ThreadRuntime do
   # Where each agent of a collab tool call stands; one that ended ends its subagent
   # with what it said last, and a late older report does not reopen it.
   defp subagent_states(state, item) do
-    subagents =
-      for {thread, agent} <- item["agentsStates"] || %{}, reduce: state.subagents do
-        subagents ->
+    {subagents, finished} =
+      for {thread, agent} <- item["agentsStates"] || %{}, reduce: {state.subagents, []} do
+        {subagents, finished} ->
           with %{done: false, sub: sub} = entry <- subagents[thread],
                status when is_binary(status) <- @agent_status[agent["status"]] do
             if status in ["pending", "running"] do
               sub = HalC2.Orchestration.NativeSubagent.show(sub, status)
-              Map.put(subagents, thread, %{entry | sub: sub})
+              {Map.put(subagents, thread, %{entry | sub: sub}), finished}
             else
               sub =
                 HalC2.Orchestration.NativeSubagent.finish(
@@ -2583,14 +2938,54 @@ defmodule HalC2.Codex.ThreadRuntime do
                   agent["message"] || entry[:final]
                 )
 
-              Map.put(subagents, thread, %{entry | sub: sub, done: true})
+              finished =
+                if status == "completed",
+                  do: [agent["message"] || entry[:final] | finished],
+                  else: finished
+
+              {Map.put(subagents, thread, %{entry | sub: sub, done: true}), finished}
             end
           else
-            _ -> subagents
+            _ -> {subagents, finished}
           end
       end
 
-    %{state | subagents: subagents}
+    %{state | subagents: subagents} |> wake_finished_subagents(finished)
+  end
+
+  # A subagent finishing after its parent's turn completed wakes the parent
+  # with its result, as a finished background command does: the result would
+  # otherwise sit unseen. Not after a stop or a failure, not while a turn is
+  # already running (the result is that turn's), and not into a thread that is
+  # itself a subagent (its own parent is told through its states).
+  defp wake_finished_subagents(state, []), do: state
+
+  defp wake_finished_subagents(state, finished) do
+    if state.turn == nil and Map.get(state, :last_turn_status) == "completed" and
+         not Map.get(state, :stopped) and not native_subagent_thread?(state) do
+      for result <- finished do
+        text =
+          if result in [nil, ""],
+            do: "A subagent finished.",
+            else: "A subagent finished. Its result:\n\n#{result}"
+
+        HalC2.Orchestration.Wake.deliver(state.thread_id, %{"text" => text},
+          instance: state.conn_instance
+        )
+      end
+    end
+
+    state
+  end
+
+  defp native_subagent_thread?(state) do
+    thread =
+      state.thread_id
+      |> HalC2.Streams.state()
+      |> HalC2.StreamState.get("thread")
+      |> Map.get(state.thread_id, %{})
+
+    get_in(thread, ["lineage", "relationshipToParent"]) == "subagent"
   end
 
   # What a web search looked for.

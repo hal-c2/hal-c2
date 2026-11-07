@@ -254,6 +254,7 @@ defmodule HalC2.Orchestration.Delegation do
       interrupt = %{
         "type" => "run.interrupt",
         "threadId" => task["childThreadId"],
+        "holdQueue" => false,
         "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
       }
 

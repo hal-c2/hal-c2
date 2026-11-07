@@ -38,6 +38,7 @@ defmodule HalC2.Orchestration do
   ]
   # The input of a prepared run's workspace preparation item.
   @preparing_workspace "Preparing workspace"
+  @stopping "The running turn is being stopped and cannot be steered into. Queue the message instead."
 
   @thread_updates ~w(thread.archive thread.unarchive thread.delete thread.settle thread.unsettle
                      thread.snooze thread.unsnooze thread.pin thread.unpin thread.pin.reorder
@@ -228,6 +229,11 @@ defmodule HalC2.Orchestration do
   def dispatch_once(command), do: dispatch(command)
 
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
+  # Only a launch defers a message's start, for the worktree it makes (`in_worktree`):
+  # sent on its own, the run would wait for a preparation nothing runs.
+  def dispatch(%{"type" => "message.dispatch", "dispatchMode" => %{"type" => "defer_start"}}),
+    do: {:error, "Only a thread launch can defer a message's start."}
+
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
     # A resend of a message the thread already has was delivered, plan and all.
     ref = command["sourcePlanRef"]
@@ -408,7 +414,9 @@ defmodule HalC2.Orchestration do
   end
 
   # The user's stop shows in the transcript as a request, paired with the run's
-  # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`).
+  # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`). It holds
+  # the queue, as a restart does, until the user resumes it or sends a message;
+  # the MC stopping a turn to clean up after itself passes `"holdQueue" => false`.
   # `stopDelegated` marks the user's Stop, which the clients' Stop button sends: it also
   # stops the subagents still working on what the thread delegated, from any turn, even
   # when nothing on the thread itself is left to stop. Any other interrupt (an agent's
@@ -418,7 +426,7 @@ defmodule HalC2.Orchestration do
       limited? =
         HalC2.Streams.transact(thread_id, :thread, fn state ->
           {resume, limited?} = cancel_scheduled_resume(state, command["runId"])
-          {interrupt_request(state, command) ++ resume, limited?}
+          {stop_request(state, command) ++ resume, limited?}
         end)
 
       # Stopping a turn also stops its delegated tasks from waking it later.
@@ -744,6 +752,10 @@ defmodule HalC2.Orchestration do
 
       agent_message?(message) ->
         users_run(state, queued["id"], "promoted to Steer")
+
+      # It keeps its place, and its hold.
+      Enum.any?(Map.values(runs), &stopping?(state, &1)) ->
+        {:error, @stopping}
 
       # Steered in or started next, it would run on a provider the project turned off.
       reason =
@@ -1572,6 +1584,8 @@ defmodule HalC2.Orchestration do
     }
 
   defp start_turn_now(thread_id, turn) do
+    turn = refresh_provider_thread(thread_id, turn)
+
     case restore_worktree(thread_id) do
       :ok ->
         :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
@@ -1620,6 +1634,41 @@ defmodule HalC2.Orchestration do
   catch
     :exit, {reason, _} when reason in [{:shutdown, :released}, :noproc] ->
       runtime(turn.ids.instance).start_turn(thread_id, turn)
+  end
+
+  # A turn resumes the provider conversation where it stands when the turn
+  # starts, not where it stood when its message was decided: a rewind in
+  # between (an earlier effect on this thread's lane, so it has settled by
+  # now) moved it, and resuming the decided native thread would put the
+  # rewound history back. The head is the exception: deciding the run
+  # consumed it (and cleared it on the provider thread), so a head that is
+  # only missing again is the decide's own doing, while one a settled rewind
+  # wrote since — or a native thread that changed under the turn — replaces
+  # the decided one. A native thread the decide itself supplied, carried
+  # from another instance sharing the provider's home on a foreign takeover
+  # (`native_carried`), is the other exception: the decide stored none on
+  # the taken-over provider thread, so the stored nil is its own doing too,
+  # and refreshing from it would open a fresh conversation.
+  defp refresh_provider_thread(thread_id, turn) do
+    with id when is_binary(id) <- Map.get(turn.ids, :provider_thread),
+         %{} = provider_thread <-
+           thread_id |> HalC2.Streams.state() |> StreamState.get("provider-thread") |> Map.get(id) do
+      head = get_in(provider_thread, ["nativeConversationHeadRef", "nativeId"])
+      decided_native = turn[:native_thread_id]
+
+      native =
+        if turn[:native_carried],
+          do: decided_native,
+          else: get_in(provider_thread, ["nativeThreadRef", "nativeId"])
+
+      turn = Map.put(turn, :native_thread_id, native)
+
+      if head != nil or native != decided_native,
+        do: Map.put(turn, :head, head),
+        else: turn
+    else
+      _ -> turn
+    end
   end
 
   # A worktree the storage sweep (or the user) removed comes back at the same path
@@ -1798,7 +1847,12 @@ defmodule HalC2.Orchestration do
     queued = cancel_queued(thread_id)
 
     if active && active != asked do
-      dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
+      dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => thread_id,
+        "runId" => active,
+        "holdQueue" => false
+      })
     end
 
     released = if active || queued, do: :busy, else: release_session(thread_id)
@@ -2035,6 +2089,7 @@ defmodule HalC2.Orchestration do
         command
         |> claimed(attachments)
         |> Map.put("dispatchMode", %{"type" => "defer_start"})
+        |> Map.put("workspacePreparation", %{"type" => "worktree"})
 
       {:ok, project, command}
     end
@@ -2245,7 +2300,8 @@ defmodule HalC2.Orchestration do
   failure (`OrchestrationV2ProviderFailure`) is shown on the preparation item and as
   an error item, as `prepared-run.fail` does. With `hold_queue: true` (a worktree
   that is not there) the messages queued behind it are held rather than run in the
-  project's own checkout; retrying the run lets them follow it again.
+  project's own checkout; retrying the run lets them follow it again. Without the
+  option, that is a worktree preparation on a thread that has no worktree yet.
   """
   def fail_prepared(thread_id, run_id, status, failure \\ nil, opts \\ []) do
     result =
@@ -2294,13 +2350,24 @@ defmodule HalC2.Orchestration do
                 )
               end
 
+            # Without the worktree, what was queued behind it would start in the
+            # project checkout: it waits for the user (`worktree_missing?/2`). A
+            # caller that knows (`HalC2.WorktreeSetup`) passes `hold_queue`; left
+            # to the run and thread (a `prepared-run.fail`), that is a worktree
+            # preparation on a thread that has no worktree yet.
+            thread = StreamState.get(state, "thread")[thread_id] || %{}
+
+            hold_queue =
+              Keyword.get(
+                opts,
+                :hold_queue,
+                get_in(run, ["workspacePreparation", "type"]) == "worktree" and
+                  thread["worktreePath"] == nil
+              )
+
             held =
-              if opts[:hold_queue],
-                do:
-                  for(
-                    run <- queued_runs(state),
-                    do: upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", true))
-                  ),
+              if hold_queue,
+                do: for(queued <- queued_runs(state), do: hold(state, queued)),
                 else: []
 
             {Enum.reject([ended, preparation(state, run_id, item), error | held], &is_nil/1), :ok}
@@ -2334,8 +2401,9 @@ defmodule HalC2.Orchestration do
   Puts a run whose workspace could not be prepared back to waiting for it
   (`HalC2.WorktreeSetup.retry/1`). Only while no other run of the thread ever started:
   one that ran means the thread went on without it, in the worktree a retry works in.
-  The messages still queued behind it follow it again; ones the user took out of the
-  queue stay out. The failure is resolved, so the error item it left goes.
+  The messages still queued behind it (held for the worktree, `worktree_missing?/2`)
+  follow it again; ones the user took out of the queue stay out. The failure is
+  resolved, so the error item it left goes.
   """
   def retry_prepared(thread_id, run_id) do
     HalC2.Streams.transact(thread_id, :thread, fn state ->
@@ -3042,6 +3110,32 @@ defmodule HalC2.Orchestration do
 
   defp shell_version(_type), do: %{}
 
+  # A stop for a run that already ended (a client still showing it) holds nothing.
+  defp stop_request(state, command) do
+    requested = interrupt_request(state, command)
+    runs = StreamState.get(state, "run")
+
+    stopped =
+      runs[command["runId"]] || Enum.find(Map.values(runs), &(&1["status"] in @active_statuses))
+
+    held =
+      if command["holdQueue"] != false and requested != [] and
+           (stopped || %{})["status"] in @active_statuses,
+         do: for(run <- queued_runs(state), do: hold(state, run)),
+         else: []
+
+    Enum.reject(requested ++ held, &is_nil/1)
+  end
+
+  defp hold(state, run), do: upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", true))
+
+  # The run is active and the user asked for it to stop: the provider is still
+  # stopping it, and nothing more goes into it (upstream #16926).
+  defp stopping?(state, %{"status" => status, "id" => id}) when status in @active_statuses,
+    do: StreamState.get(state, "turn-item")["turn-item:run:#{id}:signal:interrupt-request"] != nil
+
+  defp stopping?(_state, _run), do: false
+
   # Stopping a thread that sits on a usage limit gives up the resume for its reset for
   # good, scheduled or not yet armed; a snooze it had is kept, and the user can choose to
   # resume again. Returns the changes and whether the thread was limited.
@@ -3093,7 +3187,9 @@ defmodule HalC2.Orchestration do
 
     item_id = run && "turn-item:run:#{run["id"]}:signal:interrupt-request"
 
-    if run && StreamState.get(state, "turn-item")[item_id] == nil do
+    # A run still queued has no turn to stop: a request left on it would read as a
+    # stop under way once it starts (`stopping?/2`).
+    if run && run["status"] != "queued" && StreamState.get(state, "turn-item")[item_id] == nil do
       at = Entities.now()
 
       ids = %{
@@ -4462,19 +4558,25 @@ defmodule HalC2.Orchestration do
         active_instance = active["providerInstanceId"] || instance
 
         refusal = steer_refusal(state, active, command)
+        stopping = stopping?(state, active)
+        restart = intent == "restart" or mode == "restart_active"
 
         # Steer a running turn that can take it,
         # else queue; a restart (or a steer that cannot be) interrupts and goes first.
         # `/compact` and `/logout` run as turns of their own, and cannot be steered.
+        # Nothing goes into a turn the user is stopping: a message sent then waits.
         auto_steer =
           intent in [nil, "auto"] and mode != "queue_after_active" and
-            active["status"] in ["running", "waiting"] and refusal == nil
+            active["status"] in ["running", "waiting"] and refusal == nil and not stopping
 
         cond do
           steer and refusal != nil ->
             {[], {:error, refusal}}
 
-          intent == "restart" or mode == "restart_active" ->
+          stopping and (steer or restart) ->
+            {[], {:error, @stopping}}
+
+          restart ->
             case HalC2.Orchestration.CommandPolicy.decide_steering(active_instance, true) do
               {:ok, _} -> queue_run(state, thread, runs, command, active["id"])
               {:error, message} -> {[], {:error, message}}
@@ -4497,21 +4599,79 @@ defmodule HalC2.Orchestration do
                      instance,
                      :strong_terminal_status
                    ) do
-              queue_run(state, thread, runs, command, nil)
+              {released, state} = release(state, thread, command)
+              {changes, result} = queue_run(state, thread, runs, command, nil)
+              {released ++ changes, result}
             else
               {:error, message} -> {[], {:error, message}}
             end
         end
 
-      # A message the user queues while the queue is held waits there, held too
-      # (`queue_run/5`), until the user resumes it.
-      queued_by_user?(command) and
-          Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] == true)) ->
-        queue_run(state, thread, runs, command, nil)
-
       true ->
-        new_run(state, thread, runs, command)
+        {released, released_state} = release(state, thread, command)
+
+        # A message the user queues while the queue stays held waits there, held too
+        # (`queue_run/5`), as does one queued after the thread's worktree could not be
+        # made: started, it would run in the project checkout.
+        if released == [] and queued_by_user?(command) and
+             (worktree_missing?(state, thread) or
+                Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] == true))) do
+          {[{"run", id, %{"s" => run}} | rest], result} =
+            queue_run(state, thread, runs, command, nil)
+
+          {[{"run", id, %{"s" => Map.put(run, "queueHeld", true)}} | rest], result}
+        else
+          {changes, result} = new_run(released_state, thread, runs, command)
+          {released ++ changes, result}
+        end
     end
+  end
+
+  # A message the user sends from a client resumes a held queue (upstream #21473),
+  # unless it is held because the thread's worktree could not be made. What the
+  # agent or the MC sends (a scheduled prompt, a continuation after a restart or a
+  # usage limit, another agent's message) and a steer leave it held. Returns the
+  # changes, and the state with them.
+  defp release(state, thread, command) do
+    released =
+      if sent_by_user?(command) and not worktree_missing?(state, thread),
+        do:
+          for(
+            %{"queueHeld" => true} = run <- queued_runs(state),
+            change = upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", false)),
+            do: change
+          ),
+        else: []
+
+    {released, applied(state, released)}
+  end
+
+  defp sent_by_user?(command) do
+    command["createdBy"] in [nil, "user"] and command["creationSource"] in [nil, "web", "mobile"] and
+      command["scheduledTaskId"] == nil and command["fromSteer"] != true and
+      command["deliveryIntent"] not in ["steer", "restart"] and
+      get_in(command, ["dispatchMode", "type"]) not in ["steer_active", "restart_active"]
+  end
+
+  # The thread was to work in a worktree of its own that could not be made, and
+  # still has none: what it was sent waits for one. Only since the last run that
+  # started: a thread the user went on with in the project checkout works there.
+  defp worktree_missing?(state, thread) do
+    {waiting, others} =
+      state
+      |> StreamState.list("run")
+      |> Enum.split_with(
+        &(get_in(&1, ["workspacePreparation", "type"]) == "worktree" and
+            &1["status"] in ~w(preparing failed cancelled interrupted))
+      )
+
+    last_started =
+      others
+      |> Enum.filter(& &1["startedAt"])
+      |> Enum.map(& &1["ordinal"])
+      |> Enum.max(fn -> 0 end)
+
+    thread["worktreePath"] == nil and Enum.any?(waiting, &(&1["ordinal"] > last_started))
   end
 
   # A steer for a turn that completed before it arrived (the client still showed the
@@ -4682,7 +4842,17 @@ defmodule HalC2.Orchestration do
     {changes, {:ok, :queued}} = queue_run(state, thread, runs, command, nil)
 
     [{"run", run_id, %{"s" => run}} | rest] = changes
-    run = Map.merge(run, %{"status" => "preparing", "queuePosition" => nil})
+
+    # The only workspace a run waits for is a worktree (a launch defers its start
+    # for nothing else), so every prepared run carries it: a failure to make it
+    # holds what is queued behind the run (`fail_prepared/5`, `worktree_missing?/2`).
+    run =
+      Map.merge(run, %{
+        "status" => "preparing",
+        "queuePosition" => nil,
+        "workspacePreparation" => command["workspacePreparation"] || %{"type" => "worktree"}
+      })
+
     at = run["requestedAt"]
     message_id = run["userMessageId"]
     ordinal = next_ordinal(state)
@@ -5214,6 +5384,10 @@ defmodule HalC2.Orchestration do
       # confine a run (Claude's `--tools`) honour.
       read_only: command["readOnly"] == true,
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
+      # The decide supplied that native thread itself, carried from another
+      # instance on a foreign takeover, and stored none on the provider
+      # thread (`refresh_provider_thread/2`).
+      native_carried: foreign and carried_ref != nil,
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"]),
       # The last run the provider thread saw before this one, which a run the provider
       # never got the prompt of puts back (`HalC2.Claude.ThreadRuntime`).

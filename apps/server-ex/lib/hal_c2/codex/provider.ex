@@ -89,10 +89,17 @@ defmodule HalC2.Codex.Provider do
       :ok ->
         entry
 
-      %{"message" => message, "installed" => installed} ->
+      # Signed in and usable, but its model list did not arrive: the entry
+      # warns and keeps offering the last list it read.
+      %{"warning" => message} ->
+        Map.merge(entry, %{"status" => "warning", "message" => message})
+
+      %{"message" => message, "installed" => _installed} ->
+        # This branch is only reached with an executable on the path, so Codex
+        # is installed here even when its check could not start it: its version
+        # (and with it any compatibility advisory and update offer) still reads.
         Map.merge(entry, %{
           "status" => "error",
-          "installed" => installed,
           "availability" => "unavailable",
           "message" => message
         })
@@ -199,26 +206,37 @@ defmodule HalC2.Codex.Provider do
                },
                timeout
              ),
-           :ok <- Connection.notify(conn, "initialized", nil),
-           {:ok, %{"data" => [_ | _] = models}} <-
-             Connection.call(conn, "model/list", %{}, timeout) do
-        if id == "codex" do
-          :persistent_term.put(
-            @key,
-            for(
-              m <- models,
-              do: %{
-                "slug" => m["model"] || m["id"],
-                "name" => m["displayName"] || m["model"] || m["id"],
-                "isDefault" => m["isDefault"] == true,
-                "capabilities" => capabilities(m)
-              }
-            )
-          )
-        end
+           :ok <- Connection.notify(conn, "initialized", nil) do
+        # The account and binary checked out; only the model list can still be
+        # slow. That must not throw the successful check away: the entry warns
+        # and keeps the last list (`with_health/3`).
+        result =
+          case model_list(conn, timeout) do
+            {:ok, %{"data" => [_ | _] = models}} ->
+              if id == "codex" do
+                :persistent_term.put(
+                  @key,
+                  for(
+                    m <- models,
+                    do: %{
+                      "slug" => m["model"] || m["id"],
+                      "name" => m["displayName"] || m["model"] || m["id"],
+                      "isDefault" => m["isDefault"] == true,
+                      "capabilities" => capabilities(m)
+                    }
+                  )
+                )
+              end
+
+              :ok
+
+            _ ->
+              {:warning,
+               "Codex did not answer its model list in time; showing the last one it gave."}
+          end
 
         Connection.stop(conn)
-        :ok
+        result
       else
         {:spawn, _reason} ->
           {:spawn, nil}
@@ -251,6 +269,9 @@ defmodule HalC2.Codex.Provider do
       :ok ->
         put_check(id, :ok)
 
+      {:warning, message} ->
+        put_check(id, %{"warning" => message})
+
       {:spawn, _} ->
         put_check(id, %{"installed" => false, "message" => cannot_start(id)})
 
@@ -279,6 +300,13 @@ defmodule HalC2.Codex.Provider do
         "installed" => true,
         "message" => "Codex app-server provider probe failed: invalid response."
       })
+  end
+
+  defp model_list(conn, timeout) do
+    Connection.call(conn, "model/list", %{}, timeout)
+  catch
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, _ -> {:error, :closed}
   end
 
   # Starting the app-server, told apart from it answering badly: a process that
@@ -463,6 +491,49 @@ defmodule HalC2.Codex.Provider do
     "5.3-spark" => "gpt-5.3-codex-spark",
     "gpt-5.3-spark" => "gpt-5.3-codex-spark"
   }
+
+  @doc """
+  `{version, recommended}` when the Codex installed for `instance` is one this
+  HAL-C2 release marks broken, else nil. A broken verdict re-reads the version
+  first: the user may have updated Codex since it was last read, and the next
+  turn should run on the new one.
+  """
+  @spec broken_version(String.t()) :: {String.t(), String.t() | nil} | nil
+  def broken_version(instance \\ "codex") do
+    case advisory_of(instance) do
+      %{"status" => "broken"} ->
+        forget_version(instance)
+
+        case advisory_of(instance) do
+          %{"status" => "broken"} = advisory ->
+            {entry(instance)["version"],
+             advisory["recommendedRange"] || advisory["recommendedVersion"]}
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp advisory_of(instance) do
+    case entry(instance) do
+      %{} = entry -> HalC2.ProviderCompatibility.put(entry)["compatibilityAdvisory"]
+      _ -> nil
+    end
+  end
+
+  defp forget_version(instance) do
+    with [executable | _] <- command(instance),
+         path when is_binary(path) <- System.find_executable(executable) do
+      versions = :persistent_term.get({__MODULE__, :version}, %{})
+      :persistent_term.put({__MODULE__, :version}, Map.delete(versions, path))
+    end
+
+    :ok
+  end
 
   @doc "The name Codex's model list gives `slug`, or nil when the list does not have it."
   def model_name(slug) do

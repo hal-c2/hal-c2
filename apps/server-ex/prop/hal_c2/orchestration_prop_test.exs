@@ -62,8 +62,12 @@ defmodule HalC2.OrchestrationPropTest do
   `turn/steer`) and is in the transcript ahead of the answer it got. A message of the
   MC's own is in the transcript as a notification, never as a user message; it queues
   ahead of the user's messages, and while it is queued it cannot be edited, moved or
-  made to steer, nor a message moved ahead of it. A message the user queues while the
-  queue is held is held too, and the queue of an archived thread cannot be resumed.
+  made to steer, nor a message moved ahead of it. The user stopping a turn holds the
+  queue behind it; a message the user sends (not a restart, nor the MC's own) resumes a
+  held queue, and starts ahead of it when nothing runs (upstream #21473). While a turn
+  is being stopped (its provider slow to answer the stop), a steer or restart into it
+  and a promote are refused, and any other message waits in the queue (#16926). The
+  queue of an archived thread cannot be resumed.
   """
 
   use ExUnit.Case, async: false
@@ -99,6 +103,7 @@ defmodule HalC2.OrchestrationPropTest do
         Process.put(:reject_steer, Path.join(home, "reject-steer"))
         Process.put(:hold_steer, Path.join(home, "hold-steer"))
         Process.put(:hold_interrupt, Path.join(home, "hold-interrupt"))
+        Process.put(:ignore_interrupt, Path.join(home, "ignore-interrupt"))
         Process.put(:refused_steers, [])
         Process.put(:steer_log, {0, []})
 
@@ -109,6 +114,7 @@ defmodule HalC2.OrchestrationPropTest do
           "FAKE_CODEX_LOG=#{log}",
           "FAKE_CODEX_REJECT_STEER=#{Process.get(:reject_steer)}",
           "FAKE_CODEX_HOLD_STEER=#{Process.get(:hold_steer)}",
+          "FAKE_CODEX_IGNORE_INTERRUPT_FILE=#{Process.get(:ignore_interrupt)}",
           "python3",
           "-u",
           @fake_codex
@@ -361,10 +367,23 @@ defmodule HalC2.OrchestrationPropTest do
     running =
       for {t, thread} <- threads, Enum.any?(thread.runs, &(&1.status == :running)), do: t
 
+    stopping =
+      for {t, thread} <- threads, run = running(thread), how <- [:steer, :restart, :auto] do
+        {t, "m#{next}", how, run.instance}
+      end ++
+        for {t, thread} <- threads, running(thread), m <- thread.queue do
+          {t, m, :promote, nil}
+        end
+
     on_running =
       if running == [],
         do: [],
         else: [
+          {8,
+           let(
+             {t, m, how, i} <- oneof(stopping),
+             do: {:call, __MODULE__, :send_stopping, [t, m, how, i]}
+           )},
           {2, {:call, __MODULE__, :crash, [oneof(running)]}},
           {4, {:call, __MODULE__, :end_stream, [oneof(running)]}},
           {4, {:call, __MODULE__, :end_stream_leaving, [oneof(running)]}},
@@ -448,6 +467,11 @@ defmodule HalC2.OrchestrationPropTest do
   def precondition(%{threads: threads}, {:call, _, fun, [tid]})
       when fun in [:end_stream, :end_stream_leaving, :stop_undriven],
       do: threads[tid] != nil and running(threads[tid]) != nil
+
+  def precondition(%{threads: threads}, {:call, _, :send_stopping, [tid, msg, how, _]}),
+    do:
+      match?(%{status: :live}, threads[tid]) and running(threads[tid]) != nil and
+        (how != :promote or msg in threads[tid].queue)
 
   def precondition(%{threads: threads}, {:call, _, :release, [tid]}),
     do: threads[tid] != nil
@@ -702,23 +726,42 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
-  # An agent's stop ends the turn as the user's does; who asked is the wrapper's
-  # to check on the run's interrupt items (`interrupt_by_agent/1`).
+  # An agent's stop ends the turn and holds the queue as the user's does; who asked is
+  # the wrapper's to check on the run's interrupt items (`interrupt_by_agent/1`).
   defp step(state, result, {:call, module, :interrupt_by_agent, [tid]}),
     do: step(state, result, {:call, module, :interrupt, [tid]})
 
+  # The user's stop holds the queue: nothing queued starts until they resume it or send.
   defp step(state, _result, {:call, _, :interrupt, [tid]}) do
     case refusal(state, tid, :interrupt) do
       nil ->
-        # The stop of a limit stop is the user giving up the resume scheduled for it.
+        # The stop of a limit stop is the user giving up the resume scheduled for it;
+        # the stop of a running turn holds the queue.
         update(state, tid, fn thread ->
           thread = if limit_stop(thread), do: %{thread | recovery: nil}, else: thread
+          thread = if running(thread), do: hold_queue(thread), else: thread
           thread |> end_running(:interrupted) |> start_next()
         end)
 
       _ ->
         state
     end
+  end
+
+  # Sent while the stop is under way: a steer, restart or promote is refused; any other
+  # message queues and resumes the held queue, which starts once the turn has stopped.
+  # A message naming an instance the project turned off is refused as any send is.
+  defp step(state, _result, {:call, _, :send_stopping, [tid, msg, how, instance]}) do
+    state = if how == :promote, do: state, else: %{state | next: state.next + 1}
+    queues = how == :auto and off_refusal(state.threads[tid], instance) == nil
+
+    update(state, tid, fn thread ->
+      thread = hold_queue(thread)
+
+      if queues,
+        do: thread |> sent(msg, :queue, instance) |> end_running(:interrupted) |> start_next(),
+        else: end_running(thread, :interrupted)
+    end)
   end
 
   # A plugin's stop ends the turn and starts nothing: what was queued is cancelled.
@@ -740,7 +783,7 @@ defmodule HalC2.OrchestrationPropTest do
   defp step(state, _result, {:call, _, :interrupt_run, [tid, msg]}) do
     cond do
       pinned_running?(state, tid, msg) ->
-        update(state, tid, &(&1 |> end_running(:interrupted) |> start_next()))
+        update(state, tid, &(&1 |> hold_queue() |> end_running(:interrupted)))
 
       # Stopping the limit stop's own run gives up the resume scheduled for it.
       pinned_limited?(state, tid, msg) ->
@@ -1151,6 +1194,17 @@ defmodule HalC2.OrchestrationPropTest do
        else: {:error, "no running turn"}
   end
 
+  defp expected_reply(state, :send_stopping, [tid, msg, how, instance]) do
+    off = how != :promote && off_refusal(state.threads[tid], instance)
+
+    cond do
+      off -> off
+      how == :auto -> :ok
+      how == :promote and agents_own(state, tid, msg) -> {:error, :agents_own}
+      true -> {:error, :stopping}
+    end
+  end
+
   defp expected_reply(state, :release, [tid]),
     do: if(running(state.threads[tid]), do: {:error, :busy}, else: :ok)
 
@@ -1209,6 +1263,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp reply_matches?({:error, :steer_refused}, {:error, message}),
     do: message =~ "did not take the message into its running turn (turn moved on)"
+
+  defp reply_matches?({:error, :stopping}, {:error, message}),
+    do: message =~ "is being stopped and cannot be steered into"
 
   # The provider's runtime refuses a question it no longer waits on.
   defp reply_matches?({:error, :closed}, {:error, message}),
@@ -1492,17 +1549,15 @@ defmodule HalC2.OrchestrationPropTest do
     message = %{text: text, run: msg, shown: false, notice: mode == :notice}
     # The MC's own message names no instance: it is on the thread's.
     instance = if mode == :notice, do: thread.instance, else: instance
-    # A message the user queues while the queue is held is held with it; a restart, or
-    # the agent's own result (`:notice`), is not.
-    held = mode in [:queue, :limit] and held_queue?(thread)
-    run = %{msg: msg, status: :queued, held: held, instance: instance}
+    run = %{msg: msg, status: :queued, held: false, instance: instance}
+    # A message the user sends resumes a held queue; a restart, or the agent's own
+    # result (`:notice`), does not. A steer into the running turn starts no run.
+    by_user? = mode in [:queue, :limit, :auto]
 
     cond do
-      active == nil and held ->
-        %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
-        |> put_in([:messages, msg], message)
-
       active == nil ->
+        thread = if by_user?, do: release_queue(thread), else: thread
+
         %{thread | runs: thread.runs ++ [run], instance: instance}
         |> put_in([:messages, msg], %{message | shown: true})
         |> started(msg)
@@ -1522,10 +1577,18 @@ defmodule HalC2.OrchestrationPropTest do
         |> start_next()
 
       true ->
+        thread = if by_user?, do: release_queue(thread), else: thread
+
         %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
         |> put_in([:messages, msg], message)
     end
   end
+
+  defp hold_queue(thread),
+    do: set_runs(thread, &if(&1.msg in thread.queue, do: %{&1 | held: true}, else: &1))
+
+  defp release_queue(thread),
+    do: set_runs(thread, &if(&1.msg in thread.queue, do: %{&1 | held: false}, else: &1))
 
   defp held_queue?(thread),
     do: Enum.any?(thread.runs, &(&1.held and &1.msg in thread.queue))
@@ -2158,6 +2221,47 @@ defmodule HalC2.OrchestrationPropTest do
         run["id"] in queued,
         run["status"] != "cancelled" or run["startedAt"] != nil,
         do: raise("a run queued at the stop of #{tid} started: #{inspect(run)}")
+  end
+
+  # The user stops the running turn while Codex is slow to stop it (the fake answers no
+  # interrupt while `ignore-interrupt` exists), and sends while it stops: a steer into
+  # it, a restart, a promote of a queued message, or a message as `:auto` sends it. Then
+  # the turn stops.
+  def send_stopping(tid, msg, how, instance) do
+    ending = active_runs(tid)
+    File.touch!(Process.get(:ignore_interrupt))
+    Application.put_env(:hal_c2, :codex_interrupt_deadline_ms, 600_000)
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid})
+
+    result =
+      case how do
+        :promote ->
+          Orchestration.dispatch(%{
+            "type" => "queued-message.promote-to-steer",
+            "threadId" => tid,
+            "queuedRunId" => run_of(tid, msg),
+            "targetRunId" => List.first(ending)
+          })
+
+        :steer ->
+          Orchestration.dispatch(%{
+            message(tid, msg, :auto, instance)
+            | "deliveryIntent" => "steer",
+              "dispatchMode" => %{"type" => "steer_active"}
+          })
+
+        how ->
+          Orchestration.dispatch(message(tid, msg, how, instance))
+      end
+
+    File.rm!(Process.get(:ignore_interrupt))
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, tid)
+    runtime = :sys.get_state(pid)
+    turn = %{"id" => runtime.turn.native_turn_id, "status" => "interrupted"}
+    send(pid, {:json_rpc, runtime.conn, {:notification, "turn/completed", %{"turn" => turn}}})
+    outcome = reply(result, ending)
+    Application.delete_env(:hal_c2, :codex_interrupt_deadline_ms)
+    outcome
   end
 
   def interrupt_run(tid, msg) do

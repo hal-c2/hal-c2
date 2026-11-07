@@ -996,17 +996,22 @@ defmodule HalC2.Mcp.Tools do
         with {:ok, _} <-
                orchestration(
                  Orchestration.dispatch_once(
-                   %{
-                     "type" => "run.interrupt",
-                     "commandId" => command_id,
-                     "threadId" => id,
-                     "runId" => run,
-                     "requestedBy" => "agent"
-                   }
-                   |> then(
-                     &if(is_binary(args["reason"]),
-                       do: Map.put(&1, "reason", args["reason"]),
-                       else: &1
+                   Map.merge(
+                     %{
+                       "type" => "run.interrupt",
+                       "commandId" => command_id,
+                       "threadId" => id,
+                       "runId" => run,
+                       "requestedBy" => "agent"
+                     },
+                     # An agent's Stop holds the queue as the user's does, unless it asks not to.
+                     args
+                     |> Map.take(["holdQueue"])
+                     |> then(
+                       &if(is_binary(args["reason"]),
+                         do: Map.put(&1, "reason", args["reason"]),
+                         else: &1
+                       )
                      )
                    )
                  )
