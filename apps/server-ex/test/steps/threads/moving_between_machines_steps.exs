@@ -1946,12 +1946,46 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
-  step "{string} keeps only a forwarding record of {string}",
-       %{args: [machine, title]} = context do
+  step "{string} keeps only a forwarding record of {string} that names {string}",
+       %{args: [machine, title, holder]} = context do
     assert Machines.machine(context, machine) == :local
     thread = World.thread(context, title)
     assert thread["moving"] == nil
-    assert %{"environmentId" => _} = thread["movedTo"]
+    assert thread["movedTo"]["environmentId"] == Machines.machine(context, holder).environment
+    context
+  end
+
+  # As `HalC2.Cluster.switch/2` on this MC: kept in its member table, the machine stopped.
+  step "{string} is switched off", %{args: [label]} = context do
+    context = Machines.member_table(context)
+    machine = Machines.machine(context, label)
+    Machines.stop(machine)
+    :ok = HalC2.Cluster.switch(machine.environment, false)
+    context
+  end
+
+  step "{string} is switched back on", %{args: [label]} = context do
+    machine = Machines.machine(context, label)
+    :ok = HalC2.Cluster.switch(machine.environment, true)
+
+    context =
+      put_in(context, [:machines, label], Machines.start(context, label, :cluster, machine.home))
+
+    # Its coming back settles the moves to removed machines. These machines are not
+    # named as `HalC2.Cluster.mc_name/1` names them, so this MC finds the one back in
+    # the sidebar, which may hear of it after the settle its connecting set off.
+    await_shell(
+      fn ->
+        Enum.any?(
+          HalC2.Shell.environments(),
+          &(elem(&1, 1)["environmentId"] == machine.environment)
+        )
+      end,
+      "#{label} back"
+    )
+
+    send(HalC2.ThreadMove, {:settle, Machines.machine(context, label).mc})
+    :ok = Machines.moves_settled()
     context
   end
 

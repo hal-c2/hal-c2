@@ -1121,21 +1121,30 @@ defmodule HalC2.ThreadMove do
   # The destination `mc` was removed from the cluster and will not say whether the move
   # arrived, but the thread may have gone on from it. A member that holds the move's
   # record says it arrived (`arrived?/2` stays true once it moved the thread on), and
-  # the move is let go. It is called off only once every other member says it did not;
-  # one taking the thread is asked again, one not reached when it is back. Says whether
-  # to settle again.
+  # the move is let go, its forwarding record naming that member. It is called off only
+  # once every other member says it did not; one taking the thread is asked again, and
+  # one not reached, switched off, or not known (this MC has no member table) when it
+  # is back. Says whether to settle again.
   defp forsake(id, mc, moving) do
-    answers = for other <- members() -- [mc], do: remote(other, :arrived?, [id, moving["id"]])
+    answers =
+      case members() do
+        nil ->
+          [{nil, :unknown}]
+
+        members ->
+          for {other, dest, on} <- members,
+              other != mc,
+              do: {dest, if(on, do: remote(other, :arrived?, [id, moving["id"]]), else: :off)}
+      end
 
     cond do
-      true in answers ->
-        dest = %{mc: mc, label: moving["label"], environment: moving["environmentId"]}
+      dest = Enum.find_value(answers, fn {dest, answer} -> answer == true and dest end) ->
         not let_go(id, moving["id"], dest, %{project: nil})
 
-      :arriving in answers ->
+      Enum.any?(answers, &match?({_, :arriving}, &1)) ->
         true
 
-      Enum.all?(answers, &(&1 == false)) ->
+      Enum.all?(answers, &match?({_, false}, &1)) ->
         call_off(id, moving["id"])
 
       true ->
@@ -1143,14 +1152,23 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  # The other MCs of the cluster, connected or not.
+  # The other members as this MC's member table has them, `{mc, dest, on}`: one switched
+  # off (`HalC2.Cluster.switch/2`) is kept, and may come back holding the thread. nil
+  # when the table cannot be read: this MC's cluster is off.
   defp members do
-    known =
-      if Process.whereis(HalC2.Cluster),
-        do: for({id, _addresses} <- HalC2.Cluster.peers(), do: HalC2.Cluster.mc_name(id)),
-        else: []
+    case Process.whereis(HalC2.Cluster) && HalC2.Cluster.status() do
+      %{"clustered" => true, "members" => members} ->
+        seen = Map.new(Shell.environments(), fn {mc, d} -> {d["environmentId"], {mc, d}} end)
 
-    Enum.uniq(Node.list() ++ known)
+        for %{"id" => environment} = member <- members do
+          {mc, descriptor} = seen[environment] || {HalC2.Cluster.mc_name(environment), member}
+          dest = %{mc: mc, label: descriptor["label"], environment: environment}
+          {mc, dest, not member["off"]}
+        end
+
+      _ ->
+        nil
+    end
   end
 
   # The move `move` to a machine removed from the cluster ends here: the thread stays.

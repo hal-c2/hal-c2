@@ -167,10 +167,11 @@ defmodule HalC2.Cluster do
 
   @doc """
   Whether `id` was a member and was removed (`remove/1`), as this MC's member table has
-  it: not one that is only switched off, which can come back.
+  it: not one that is only switched off, which can come back. False while this MC's
+  cluster is off, which knows no member.
   """
   def removed?(id) when is_binary(id) do
-    Process.whereis(__MODULE__) != nil and GenServer.call(__MODULE__, {:removed?, id})
+    Process.whereis(__MODULE__) != nil and GenServer.call(__MODULE__, {:removed?, id}) == true
   end
 
   @doc """

@@ -97,6 +97,44 @@ defmodule HalC2.Test.Machines do
     end
   end
 
+  @doc """
+  Starts this MC's `HalC2.Cluster`, which scenarios run without, with a member table of
+  the scenario's members as an MC that admitted them keeps (`HalC2.Test.ClusterTable`),
+  so it can remove one or switch it off. Once a scenario: later calls do nothing.
+  """
+  def member_table(context) do
+    if Process.whereis(HalC2.Cluster) == nil do
+      Mc.World.put_app_env(:cluster_transport, HalC2.Test.ClusterTable)
+      Mc.ensure(HalC2.Cluster)
+
+      for {label, %{mode: :cluster, environment: environment}} <- context.machines do
+        fingerprint = :crypto.hash(:sha256, environment) |> Base.encode16(case: :lower)
+        entry = %{"id" => environment, "fingerprint" => fingerprint, "label" => label}
+        {:ok, _} = HalC2.Cluster.admit(Map.put(entry, "addresses", []))
+      end
+    end
+
+    context
+  end
+
+  @doc """
+  Returns once `HalC2.ThreadMove` here settles nothing and has nothing queued: what it
+  was told before this call (a removal, a member back) is settled.
+  """
+  def moves_settled do
+    case :sys.get_state(HalC2.ThreadMove) do
+      %{task: %Task{pid: pid}} ->
+        ref = Process.monitor(pid)
+
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> moves_settled()
+        end
+
+      _idle ->
+        :ok
+    end
+  end
+
   @doc "Takes `label` out of the cluster: it keeps its files and runs on its own."
   def leave(context, label) do
     machine = machine(context, label)

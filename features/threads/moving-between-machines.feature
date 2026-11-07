@@ -11,7 +11,8 @@
 #   apps/server-ex/lib/hal_c2/streams.ex, apps/server-ex/lib/hal_c2/stream_state.ex (a thread is one
 #     event stream owned by one MC)
 #   apps/server-ex/lib/hal_c2/thread_move.ex (the destination asks before it imports, and a move cut
-#     off after that is settled by what the destination says)
+#     off after that is settled by what the destination says, or, removed from the cluster, by what
+#     every other member says, a switched-off one once it is back)
 #   apps/server-ex/lib/hal_c2/thread_archive.ex (what the destination writes of a thread: a plugin's
 #     mark stays behind)
 #   apps/server-ex/lib/hal_c2/project_environment.ex (a session loads the environment of the project it
@@ -537,7 +538,20 @@ Feature: Moving a thread and its agent to another machine
       And "desktop" has not come back
       When "desktop" is removed from the cluster
       Then "Alpha" lives on "server"
-      And "laptop" keeps only a forwarding record of "Alpha"
+      And "laptop" keeps only a forwarding record of "Alpha" that names "server"
+
+    @mc
+    Scenario: A move to a removed machine waits for a member that is switched off
+      Given the cluster also has the machine "server"
+      And a move of "Alpha" was cut off after "desktop" took it
+      And "desktop" moved "Alpha" on to "server"
+      And "desktop" has not come back
+      And "server" is switched off
+      When "desktop" is removed from the cluster
+      Then "Alpha" is still moving to "desktop"
+      When "server" is switched back on
+      Then "Alpha" lives on "server"
+      And "laptop" keeps only a forwarding record of "Alpha" that names "server"
 
     @mc
     Scenario: The source going offline after the destination confirmed does not undo the move

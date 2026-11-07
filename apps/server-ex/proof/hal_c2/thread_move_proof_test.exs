@@ -76,7 +76,11 @@ defmodule HalC2.ThreadMoveProofTest do
       "heal" => "they reach each other again",
       "time-out" => "an :erpc call gives up",
       "drop" => "an answer to a call that gave up is thrown away",
-      "remove" => "an MC is removed from the cluster: it stops, its links break, it never rejoins"
+      "remove" =>
+        "an MC is removed from the cluster: it stops, its links break, it never rejoins",
+      "switch-off" =>
+        "an MC is switched off: it stops and its links break, but it stays in the member table",
+      "switch-on" => "it is switched back on and starts again"
     },
     scenarios: %{
       "threads/moving-between-machines.feature" => [
@@ -86,6 +90,8 @@ defmodule HalC2.ThreadMoveProofTest do
         "A destination that was cut off while copying does not take the thread afterwards",
         "A move cut off while the destination takes the thread waits for the destination",
         "A move to a machine that is removed from the cluster is called off",
+        "A move to a removed machine that passed the thread on is not called off",
+        "A move to a removed machine waits for a member that is switched off",
         "The source restarting while the destination takes the thread does not undo the move",
         "The source going offline after the destination confirmed does not undo the move",
         "A thread cannot be moved twice at once"
@@ -93,10 +99,10 @@ defmodule HalC2.ThreadMoveProofTest do
     }
 
   # Rules the environment may or may not take; the code's own may not stop.
-  @faults ~w(crash partition time-out mover-died remove)
+  @faults ~w(crash partition time-out mover-died remove switch-off)
   @fair ~w(begin moved forward called-off broke-off taking taking-gone stage
            take import import-failed refused gave-up answer settle let-go again release forsake found
-           restart heal drop)
+           restart heal drop switch-on)
 
   # Each searches every state for all of twice, lost, hurts and wrong at once.
   for init <- ["two(2, 2)", "three(2, 2)"] do
