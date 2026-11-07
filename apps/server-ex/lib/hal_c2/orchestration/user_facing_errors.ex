@@ -38,9 +38,10 @@ defmodule HalC2.Orchestration.UserFacingErrors do
   # An `Authorization` header's value, with its scheme kept.
   @authorization ~r/((?i:authorization)["']?\s*[:=]\s*["']?(?:(?i:bearer|basic|token)\s+)?)[^\s"',\}\[]+/
 
-  # A bearer or basic credential outside a header: token-shaped (eight or more token
-  # characters, not a plain word), so "basic auth failed" reads as it was written.
-  @scheme_token ~r/\b((?i:bearer|basic)\s+)(?![A-Za-z][a-z]*\b)[A-Za-z0-9._~+\/=-]{8,}/
+  # A bearer or basic credential outside a header: eight or more token characters that
+  # are not, as a whole, one plain word ("auth", "Authentication", "AUTH"), so
+  # "basic auth failed" reads as written while `sk-proj-…` and dotted tokens are caught.
+  @scheme_token ~r/\b((?i:bearer|basic)\s+)(?!(?:[A-Z]?[a-z]+|[A-Z]+)(?![A-Za-z0-9._~+\/=-]))[A-Za-z0-9._~+\/=-]{8,}/
 
   # `name=value` or `"name": "value"` for a secret-looking name, also under a prefix
   # (`OPENAI_API_KEY`, `x-auth`).

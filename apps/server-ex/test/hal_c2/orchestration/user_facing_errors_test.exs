@@ -31,6 +31,12 @@ defmodule HalC2.Orchestration.UserFacingErrorsTest do
   test "a bearer or basic credential outside a header is redacted when token-shaped" do
     assert sanitize_failure("sent Basic dXNlcjpwYXNz and bearer abc123def") ==
              "sent Basic [REDACTED] and bearer [REDACTED]"
+
+    assert sanitize_failure("invalid bearer sk-proj-AbC123xyz789qwerty") ==
+             "invalid bearer [REDACTED]"
+
+    assert sanitize_failure("Bearer sk-ant-api03-abcdefgh, Bearer abc.def.ghi123") ==
+             "Bearer [REDACTED], Bearer [REDACTED]"
   end
 
   test "prose that says basic or bearer reads as written" do
