@@ -387,8 +387,12 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+    # The MC ending Muse on the way down leaves the run for the next boot's recovery
+    # (`HalC2.Orchestration.Recovery.stopping?/0`).
     state =
-      if state.turn, do: end_turn(state, "failed", "Muse Code exited unexpectedly"), else: state
+      if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
+        do: end_turn(state, "failed", "Muse Code exited unexpectedly"),
+        else: state
 
     # The session and model were the dead host's; the next host resumes the session.
     {:noreply, %{state | conn: nil, host: nil, session: nil, model: nil}}

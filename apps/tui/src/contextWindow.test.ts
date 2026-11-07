@@ -54,6 +54,8 @@ describe("formatting", () => {
   it("formats token counts compactly", () => {
     expect(formatTokens(940)).toBe("940");
     expect(formatTokens(8_500)).toBe("8.5k");
+    expect(formatTokens(999_499)).toBe("999k");
+    expect(formatTokens(999_500)).toBe("1m");
     expect(formatTokens(144_000)).toBe("144k");
     expect(formatTokens(1_200_000)).toBe("1.2m");
   });

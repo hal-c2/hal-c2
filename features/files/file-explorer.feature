@@ -152,6 +152,7 @@ Feature: Exploring project files
     When the user expands "src"
     Then "app.ts" and "lib" are shown under "src"
 
+  # Upstream #17378: expanding a folder shows a row spinner instead of a banner
   @backlog @desktop
   Scenario: A folder loading its children for the first time shows it on its own row
     Given listing "src" takes a while
@@ -257,6 +258,7 @@ Feature: Exploring project files
     And the user retries
     Then the top of "shop" is shown
 
+  # Upstream #11500: a timed-out workspace index returns what was found so far
   @backlog @mc @shared @priority-low
   Scenario: A workspace too large to index in time lists what was found so far
     Given the project's folder is too large to scan within the initial scan budget
@@ -265,6 +267,7 @@ Feature: Exploring project files
     And the results are marked as incomplete until the scan finishes
     And the list completes by itself once the scan finishes
 
+  # Upstream #11500: a timed-out workspace index returns what was found so far
   @backlog @mc
   Scenario: Searching file contents has no partial answer when the scan times out
     Given the project's folder is too large to scan within the initial scan budget

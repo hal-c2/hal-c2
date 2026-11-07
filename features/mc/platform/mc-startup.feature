@@ -243,6 +243,7 @@ Feature: Starting the MC
     Then that folder is still searched
     And the folders from the login shell are searched as well
 
+  # Upstream #19340: the login shell's PATH also brings mise's record of what it added, so wrappers no longer loop
   @backlog @mc
   Scenario: Provider commands behind a mise wrapper start as they do in a terminal
     Given the user's "claude" and "codex" are wrappers that run the real tool through mise
@@ -251,6 +252,7 @@ Feature: Starting the MC
     Then it also takes mise's record of the folders mise added
     And Claude and Codex answer their status checks instead of timing out
 
+  # Upstream #19604: CA trust variables come from the login shell
   @backlog @mc
   Scenario Outline: Certificate settings from the login shell reach the commands the MC starts
     Given the MC is started by a desktop launcher without "<variable>"
@@ -352,12 +354,14 @@ Feature: Starting the MC
   # Two MCs on one home share its database and its cluster name: a member's connection
   # flips between them and each undoes the other's work. The desktop app can start its
   # MC at login before the background service's MC has said where it listens.
+  # Upstream #16102: one owner of the state directory, a second server refuses to start
   @mc
   Scenario: A second MC on the same files stops before it opens them
     Given an MC holds its HAL-C2 home
     When another MC starts on that home
     Then it is refused the home
 
+  # Upstream #16102: one owner of the state directory, the service launcher does not restart-loop on refusal
   @mc
   Scenario: The background service waits for the MC that holds its files
     Given an MC holds its HAL-C2 home
@@ -365,6 +369,7 @@ Feature: Starting the MC
     Then the service's MC waits without opening the files
     And it takes the home once the other MC stops
 
+  # Upstream #16102: the ownership lock is released when the process exits, even killed
   @mc
   Scenario: An MC that was killed leaves its home free
     Given an MC held its HAL-C2 home and was killed
@@ -485,11 +490,13 @@ Feature: Starting the MC
     When a user starts the server with a home directory flag
     Then the server uses that home directory
 
+  # Upstream #15795: unknown bare words are rejected instead of starting a server
   @backlog @mc @priority-low
   Scenario: The MC command line rejects an unknown word
     When the MC command is run with a bare word that names no command or existing directory
     Then it fails with help instead of starting a server
 
+  # Upstream #15795: a launch checks the recorded live pid before creating directories or opening state
   @backlog @mc
   Scenario: A launch while a recorded MC is still alive is refused
     Given the home records an MC that is still alive

@@ -10,7 +10,10 @@ defmodule HalC2.OrchestrationPropTest do
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
   promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474);
-  crash a provider runtime mid-turn; release a thread's provider session as
+  crash a provider runtime mid-turn, or end only its provider stream (the app-server
+  exiting), which fails the run, unless the MC is shutting down, when the run is left
+  for the next boot's recovery to settle; stop a run nothing drives any more, which
+  settles it as interrupted with its checkpoint; release a thread's provider session as
   IdleSessions does; stop a thread as the plugin that started it does, after which no
   message queued at the stop ever starts, on it or on a task delegated from it, and the
   thread goes on as any other once the stop has passed it, also while a task below it
@@ -272,6 +275,9 @@ defmodule HalC2.OrchestrationPropTest do
         do: [],
         else: [
           {2, {:call, __MODULE__, :crash, [oneof(running)]}},
+          {4, {:call, __MODULE__, :end_stream, [oneof(running)]}},
+          {4, {:call, __MODULE__, :end_stream_leaving, [oneof(running)]}},
+          {4, {:call, __MODULE__, :stop_undriven, [oneof(running)]}},
           {2, {:call, __MODULE__, :restart, []}},
           {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}},
           {1, {:call, __MODULE__, :restart_capturing, [oneof(running)]}}
@@ -304,6 +310,10 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
     do: threads[tid] != nil and running(threads[tid]) != nil
+
+  def precondition(%{threads: threads}, {:call, _, fun, [tid]})
+      when fun in [:end_stream, :end_stream_leaving, :stop_undriven],
+      do: threads[tid] != nil and running(threads[tid]) != nil
 
   def precondition(%{threads: threads}, {:call, _, :release, [tid]}),
     do: threads[tid] != nil
@@ -439,6 +449,18 @@ defmodule HalC2.OrchestrationPropTest do
 
   def next_state(state, _result, {:call, _, :crash, [tid]}),
     do: update(state, tid, &(&1 |> end_running(:failed) |> start_next()))
+
+  # The provider's stream ending mid-turn fails the run, as its runtime crashing does.
+  def next_state(state, result, {:call, module, :end_stream, [tid]}),
+    do: next_state(state, result, {:call, module, :crash, [tid]})
+
+  # One ending while the MC shuts down leaves the run; the next boot interrupts it.
+  def next_state(state, result, {:call, module, :end_stream_leaving, [_tid]}),
+    do: next_state(state, result, {:call, module, :restart, []})
+
+  # A stop settles a run nothing drives as a stop settles any run.
+  def next_state(state, result, {:call, module, :stop_undriven, [tid]}),
+    do: next_state(state, result, {:call, module, :interrupt, [tid]})
 
   def next_state(state, _result, {:call, _, :restart, []}) do
     threads =
@@ -1458,6 +1480,69 @@ defmodule HalC2.OrchestrationPropTest do
     end
 
     reply({:ok, %{}}, ending)
+  end
+
+  # Only the provider's stream ends (the app-server exits), the runtime living on.
+  def end_stream(tid) do
+    ending = active_runs(tid)
+    kill_stream(tid)
+    reply({:ok, %{}}, ending)
+  end
+
+  # The same while the MC is shutting down: the run is left as it is for the next boot
+  # (checked before the boot), which settles it as interrupted.
+  def end_stream_leaving(tid) do
+    [run_id] = active_runs(tid)
+    HalC2.Orchestration.Recovery.leaving(true)
+    kill_stream(tid)
+    still_active? = run_id in active_runs(tid)
+    result = restart()
+
+    if still_active?,
+      do: result,
+      else: reply({:error, "the run was ended while the MC was stopping"}, [])
+  end
+
+  # A run whose runtime was killed as the MC stopped, which nothing drives any more
+  # (the MC kept running), is stopped by the user: it settles as interrupted and keeps
+  # a checkpoint of what it changed.
+  def stop_undriven(tid) do
+    [run_id] = active_runs(tid)
+    ending = [run_id]
+    HalC2.Orchestration.Recovery.leaving(true)
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, tid)
+    gone = Process.monitor(pid)
+    Process.exit(pid, :kill)
+
+    receive do
+      {:DOWN, ^gone, :process, _, _} -> :ok
+    end
+
+    _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
+    HalC2.Orchestration.Recovery.leaving(false)
+
+    result = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid})
+    {outcome, projection} = reply(result, ending)
+    run = current(tid) |> StreamState.get("run") |> Map.fetch!(run_id)
+    checkpoint = StreamState.get(current(tid), "checkpoint")[run["checkpointId"]]
+
+    if run["status"] == "interrupted" and checkpoint == nil,
+      do: {{:error, "the stopped run kept no checkpoint"}, projection},
+      else: {outcome, projection}
+  end
+
+  defp kill_stream(tid) do
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, tid)
+    conn = :sys.get_state(pid).conn
+    gone = Process.monitor(conn)
+    Process.exit(conn, :kill)
+
+    receive do
+      {:DOWN, ^gone, :process, _, _} -> :ok
+    end
+
+    _ = :sys.get_state(pid)
+    :ok
   end
 
   # The MC stops with turns running and boots again: provider runtimes go without

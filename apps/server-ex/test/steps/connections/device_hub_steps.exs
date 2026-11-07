@@ -126,14 +126,15 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     assert %{"available" => false, "reason" => actual} =
              Enum.find(platforms, &(&1["platform"] == id))
 
-    assert String.starts_with?(actual, reason), "#{platform}: #{actual}"
+    assert actual =~ reason, "#{platform}: #{actual}"
     context
   end
 
   # --- opening and closing ------------------------------------------------------------
 
   step "a client opens it in a thread", context do
-    rpc(context, "device.open", %{"threadId" => "t1", "deviceId" => "SIM-1", "platform" => "ios"})
+    {id, platform} = context[:target] || {"SIM-1", "ios"}
+    rpc(context, "device.open", %{"threadId" => "t1", "deviceId" => id, "platform" => platform})
   end
 
   step "the MC boots the simulator", context do
@@ -375,6 +376,14 @@ defmodule HalC2.Steps.Connections.DeviceHub do
         %{"type" => "launchApp"} ->
           {"adb shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1",
            "adb shell dumpsys window", detail["foregroundApp"] == %{"id" => "com.example.app"}}
+
+        %{"type" => "terminateApp", "deviceId" => "SIM-1"} ->
+          {"xcrun simctl terminate SIM-1 com.example.shop", "xcrun simctl ui SIM-1 appearance",
+           true}
+
+        %{"type" => "terminateApp"} ->
+          {"adb shell am force-stop com.example.shop", "adb shell dumpsys window",
+           detail["foregroundApp"] == %{"id" => "com.android.launcher"}}
       end
 
     ran = Enum.find_index(calls, &(&1 == command))
@@ -830,6 +839,1037 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     context
   end
 
+  # --- the Android SDK and Node.js ---------------------------------------------------------
+
+  step ~r/^an Android SDK with platform tools and the emulator, (?<tools>and no command-line tools|and only the old command-line tools under tools\/bin|and both the old and the latest command-line tools)$/,
+       %{args: [tools]} = context do
+    sdk = context.devices.sdk
+    legacy = Path.join([sdk, "tools", "bin", "avdmanager"])
+
+    if tools != "and both the old and the latest command-line tools",
+      do: File.rm_rf!(Path.join(sdk, "cmdline-tools"))
+
+    if tools != "and no command-line tools", do: script(legacy, "#!/bin/sh\nexit 0\n")
+    context
+  end
+
+  step "Android devices are unavailable because the tools are an older, unsupported version, naming the SDK folder and what to install",
+       context do
+    assert %{"available" => false, "reason" => reason} = android_platform(context)
+    assert reason =~ "appear to be an older, unsupported version"
+    assert reason =~ context.devices.sdk
+    assert reason =~ "Install Android SDK Command-line Tools (latest)"
+    context
+  end
+
+  step "Android devices are available", context do
+    assert %{"available" => true} = android_platform(context)
+    context
+  end
+
+  step "no ANDROID_HOME is set", context do
+    context
+    |> put_env("ANDROID_HOME", nil)
+    |> put_env("ANDROID_SDK_ROOT", nil)
+    |> put_env("HOME", Mc.tmp_dir(context.mc, "home"))
+  end
+
+  step ~r"^the SDK is in the user's home under Library/Android/sdk with every tool installed$",
+       context do
+    sdk = Path.join([System.get_env("HOME"), "Library", "Android", "sdk"])
+    File.mkdir_p!(Path.dirname(sdk))
+    File.rename!(context.devices.sdk, sdk)
+    put_in(context.devices.sdk, sdk)
+  end
+
+  step "the device tools run with the SDK's platform-tools and emulator folders ahead of PATH",
+       context do
+    sdk = context.devices.sdk
+    # The AVDs came from the SDK's own emulator.
+    assert {:ok, %{"devices" => devices}} = context.reply
+    assert Enum.any?(devices, &(&1["id"] == "Pixel_9"))
+
+    # The MC puts the SDK's folders ahead of its own PATH; a Node launcher (vite-plus's
+    # on CI) may put its runtime ahead of both when it starts the hub.
+    {:ok, 200, body} = hub_get("/fake/env")
+    prefix = Path.join(sdk, "platform-tools") <> ":" <> Path.join(sdk, "emulator") <> ":"
+    assert [_, rest] = String.split(JSON.decode!(body)["PATH"], prefix, parts: 2)
+    assert String.starts_with?(rest, System.get_env("PATH"))
+    context
+  end
+
+  step "the MC's machine has no node on its PATH", context do
+    # Only the fakes' folder: npm and xcrun, but no node.
+    context = put_env(context, "PATH", context.devices.bin)
+    assert System.find_executable("node") == nil
+    context
+  end
+
+  step "a client opens a device for the first time", context do
+    refute File.exists?(Path.join(context.mc.home, "tools"))
+
+    rpc(context, "device.open", %{
+      "threadId" => "t1",
+      "deviceId" => "Pixel_9",
+      "platform" => "android"
+    })
+  end
+
+  step "it fails saying device support requires Node.js and to put node on PATH, then retry",
+       context do
+    assert {:error, _, %{"_tag" => "DeviceHostUnavailableError", "reason" => reason}} =
+             context.reply
+
+    assert reason ==
+             "Local device support requires Node.js. Install Node.js and make sure node is on PATH, then retry."
+
+    context
+  end
+
+  step "no tool is installed", context do
+    refute File.exists?(Path.join(context.mc.home, "tools"))
+    assert HalC2.Devices.hub_origin() == nil
+    assert sessions("t1") == []
+    context
+  end
+
+  # --- booting and shutting down -----------------------------------------------------------
+
+  step ~r/^an Android virtual device "(?<name>[^"]+)" that is not running$/,
+       %{args: [name]} = context do
+    script(Path.join([context.devices.sdk, "emulator", "emulator"]), """
+    #!/bin/sh
+    [ "$1" = "-list-avds" ] && echo "#{name}"
+    exit 0
+    """)
+
+    Map.put(context, :avd, name)
+  end
+
+  step "a client has asked the MC to set up device support", context do
+    rpc(context, "device.list", %{})
+  end
+
+  step "the device is listed by its name as not booted", context do
+    assert {:ok, %{"devices" => devices}} = context.reply
+    avd = context.avd
+
+    assert [%{"id" => ^avd, "name" => ^avd, "platform" => "android", "booted" => false}] =
+             devices
+
+    context
+  end
+
+  step ~r/^a client opens "(?<name>[^"]+)" in a thread$/, %{args: [name]} = context do
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, %{"type" => "devices", "mc" => Atom.to_string(node())})
+    {_, client} = Mc.await(client, &(&1["t"] == "devices"))
+
+    context
+    |> World.put_client("watcher", client)
+    |> rpc("device.open", %{"threadId" => "t1", "deviceId" => name, "platform" => "android"})
+  end
+
+  step ~r/^clients see "(?<name>[^"]+)" as booting until the boot finishes$/,
+       %{args: [name]} = context do
+    booting = &Enum.any?(&1["state"]["bootingDevices"], fn device -> device["id"] == name end)
+    watcher = World.client(context, "watcher")
+    {frame, watcher} = Mc.await(watcher, &(&1["t"] == "devices" and booting.(&1)), 5_000)
+    assert [%{"threadId" => "t1", "name" => ^name}] = frame["state"]["bootingDevices"]
+
+    {_, watcher} =
+      Mc.await(watcher, &(&1["t"] == "devices" and &1["state"]["bootingDevices"] == []), 5_000)
+
+    World.put_client(context, "watcher", watcher)
+  end
+
+  step "the thread's session names the emulator's serial", context do
+    assert {:ok, %{"deviceId" => "emulator-5554", "threadId" => "t1"}} = context.reply
+    assert [%{"deviceId" => "emulator-5554"}] = sessions("t1")
+    context
+  end
+
+  step "the device is listed once, under that serial", context do
+    avd = context.avd
+    android = Enum.filter(HalC2.Devices.state()["devices"], &(&1["platform"] == "android"))
+    assert [%{"id" => "emulator-5554", "name" => ^avd, "booted" => true}] = android
+    context
+  end
+
+  step "a thread with an open iOS simulator that is being streamed", context do
+    context =
+      context
+      |> mac([Map.put(@simulator, "booted", false)])
+      |> open("t1", "SIM-1", "ios")
+
+    assert %{"SIM-1" => capture} = hub_json("/fake/captures")
+    stream = stream_open(context, "/vendor/serve-sim/helper/SIM-1/stream.mjpeg")
+    Map.merge(context, %{capture: capture, stream: stream})
+  end
+
+  step "the simulator's stream capture is released", context do
+    assert {:ok, nil} = context.reply
+    # The hub ended the stream; the client sees its end instead of hanging on.
+    assert %{status: 200, closed: false} = stream_finish(context.stream)
+    refute Map.has_key?(hub_json("/fake/captures"), "SIM-1")
+    context
+  end
+
+  step "opening it again starts a new capture", context do
+    context = open(context, "t1", "SIM-1", "ios")
+    assert %{"SIM-1" => capture} = hub_json("/fake/captures")
+    assert capture > context.capture
+
+    response =
+      http(
+        context,
+        "GET",
+        base() <> "/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{HalC2.Web.token()}",
+        until: &(frames(&1) >= 1)
+      )
+
+    assert %{status: 200, closed: true} = response
+    context
+  end
+
+  step "a booted iOS simulator in the MC's device list", context do
+    context = context |> mac([Map.put(@simulator, "booted", true)]) |> rpc("device.list", %{})
+    assert %{"booted" => true} = device("SIM-1")
+    context
+  end
+
+  step "the hub rejects the shutdown request", context do
+    Map.put(context, :reject_shutdown, true)
+  end
+
+  step ~r/^the hub then reports the simulator (?<state>off|booted|missing from a partial list)$/,
+       %{args: [state]} = context do
+    assert context.reject_shutdown
+    reported = %{"off" => "off", "booted" => "booted", "missing from a partial list" => "missing"}
+    hub_post("/fake/config", %{"rejectShutdown" => reported[state]})
+    context
+  end
+
+  step ~r/^the shutdown (?<outcome>succeeds|fails)$/, %{args: [outcome]} = context do
+    case outcome do
+      "succeeds" ->
+        assert {:ok, nil} = context.reply
+
+      "fails" ->
+        assert {:error, _, %{"_tag" => "DeviceOperationError", "reason" => "hub_rejected"}} =
+                 context.reply
+    end
+
+    context
+  end
+
+  step ~r/^the simulator is listed as (?<listed>not booted|booted)$/,
+       %{args: [listed]} = context do
+    assert %{"booted" => booted} = device("SIM-1")
+    assert booted == (listed == "booted")
+    context
+  end
+
+  step "a thread with an open emulator", context do
+    context =
+      rpc(context, "device.open", %{
+        "threadId" => "t1",
+        "deviceId" => "Pixel_9",
+        "platform" => "android"
+      })
+
+    assert {:ok, %{"deviceId" => "emulator-5554"}} = context.reply
+    Map.put(context, :emulator, "emulator-5554")
+  end
+
+  step "the hub cannot list devices once the emulator is off", context do
+    hub_post("/fake/config", %{"listFailsAfterShutdown" => true})
+    context
+  end
+
+  step "a client closes the device and asks to power it off", context do
+    rpc(context, "device.close", %{
+      "threadId" => "t1",
+      "deviceId" => context.emulator,
+      "shutdown" => true
+    })
+  end
+
+  step "the request succeeds", context do
+    assert {:ok, nil} = context.reply
+    # The list really could not be read afterwards.
+    assert {:ok, 500, _} = hub_get("/api/devices")
+    context
+  end
+
+  step "the emulator is listed as not booted", context do
+    assert %{"booted" => false} = device(context.emulator)
+    context
+  end
+
+  # --- accessibility and orientation ------------------------------------------------------
+
+  step ~r/^a client turns (?<toggle>VoiceOver|network access) on for a booted (?<platform>iOS|Android) device$/,
+       %{args: [toggle, platform]} = context do
+    {setting, change} =
+      if toggle == "VoiceOver",
+        do: {"voiceOver", {ax("set voiceover on"), ax("status")}},
+        else: {"networkEnabled", {~r"^adb shell svc data enable$", adb_get("global wifi_on")}}
+
+    context
+    |> Map.put(:change, Tuple.append(change, &(&1["settings"][setting] == true)))
+    |> action(platform, %{"type" => "setToggle", "setting" => setting, "value" => true})
+  end
+
+  step ~r/^a client sets (?<setting>text size|reduce motion|increase contrast|Liquid Glass) on a booted (?<platform>iOS|Android) device to (?<value>.+)$/,
+       %{args: [setting, platform, value]} = context do
+    {input, command, read, fresh} =
+      case {setting, platform, value} do
+        {"text size", "iOS", "extra large"} ->
+          {%{"type" => "setTextSize", "value" => "extra-large"},
+           ~r"^xcrun simctl ui SIM-1 content_size accessibility-large$",
+           ~r"^xcrun simctl ui SIM-1 content_size$", {"textSize", "extra-large"}}
+
+        {"text size", "Android", "1.3"} ->
+          {%{"type" => "setTextSize", "value" => "extra-large"},
+           ~r"^adb shell settings put system font_scale 1.3$", adb_get("system font_scale"),
+           {"textSize", "extra-large"}}
+
+        {"reduce motion", "iOS", "on"} ->
+          {%{"type" => "setToggle", "setting" => "reduceMotion", "value" => true},
+           ax("set reduce-motion on"), ax("status"), {"reduceMotion", true}}
+
+        {"reduce motion", "Android", "on"} ->
+          {%{"type" => "setToggle", "setting" => "reduceMotion", "value" => true},
+           ~r"^adb shell settings put global window_animation_scale 0$",
+           adb_get("global animator_duration_scale"), {"reduceMotion", true}}
+
+        {"increase contrast", "iOS", "on"} ->
+          {%{"type" => "setToggle", "setting" => "increaseContrast", "value" => true},
+           ~r"^xcrun simctl ui SIM-1 increase_contrast enabled$",
+           ~r"^xcrun simctl ui SIM-1 increase_contrast$", {"increaseContrast", true}}
+
+        {"Liquid Glass", "iOS", "tinted"} ->
+          {%{"type" => "setLiquidGlass", "value" => "tinted"}, ax("set liquid-glass tinted"),
+           ax("status"), {"liquidGlass", "tinted"}}
+      end
+
+    {key, expected} = fresh
+
+    context
+    |> Map.put(:change, {command, read, &(&1["settings"][key] == expected)})
+    |> action(platform, input)
+  end
+
+  step ~r/^a client sets the (?<permission>camera|notifications|location) permission to (?<state>granted|revoked) on a booted (?<platform>iOS|Android) device$/,
+       %{args: [permission, state, platform]} = context do
+    decision = if state == "granted", do: "grant", else: "revoke"
+
+    command =
+      case {platform, permission} do
+        {"iOS", _} ->
+          ~r"^xcrun simctl privacy SIM-1 #{decision} #{permission} com.example.shop$"
+
+        {"Android", "notifications"} ->
+          ~r"^adb shell pm #{decision} com.example.shop android.permission.POST_NOTIFICATIONS$"
+
+        {"Android", "location"} ->
+          ~r"^adb shell pm #{decision} com.example.shop android.permission.ACCESS_COARSE_LOCATION$"
+      end
+
+    # A permission is not part of the detail; what counts is that it was read afterwards.
+    read =
+      if platform == "iOS",
+        do: ~r"^xcrun simctl ui SIM-1 appearance$",
+        else: ~r"^adb shell cmd uimode night$"
+
+    context
+    |> Map.put(:change, {command, read, fn _ -> true end})
+    |> action(platform, %{
+      "type" => "setPermission",
+      "appId" => "com.example.shop",
+      "permission" => permission,
+      "decision" => decision
+    })
+  end
+
+  step "the MC answers with the device's detail after the change", context do
+    assert {:ok, %{"deviceId" => id} = detail} = context.reply
+    assert id == context.action["deviceId"]
+    {command, read, fresh} = context.change
+    assert_read_after(context, command, read)
+
+    assert fresh.(detail),
+           "the detail does not reflect #{inspect(context.action)}: #{inspect(detail)}"
+
+    context
+  end
+
+  step ~r/^a client sets the location of a booted (?<platform>iOS|Android) device to "Reykjavik"$/,
+       %{args: [platform]} = context do
+    context =
+      action(context, platform, %{
+        "type" => "setLocation",
+        "latitude" => 64.1466,
+        "longitude" => -21.9426
+      })
+
+    Map.put(context, :replies, [context.reply])
+  end
+
+  step "a client clears the location of that device", context do
+    context =
+      rpc(context, "device.action", %{
+        "deviceId" => context.action["deviceId"],
+        "type" => "clearLocation"
+      })
+
+    Map.update!(context, :replies, &(&1 ++ [context.reply]))
+  end
+
+  step "the MC answers with the device's detail after each change", context do
+    id = context.action["deviceId"]
+    assert [{:ok, %{"deviceId" => ^id}}, {:ok, %{"deviceId" => ^id}}] = context.replies
+
+    case context.platform do
+      "ios" ->
+        read = ~r"^xcrun simctl ui SIM-1 appearance$"
+        assert_read_after(context, ~r"^xcrun simctl location SIM-1 set 64.1466,-21.9426$", read)
+        assert_read_after(context, ~r"^xcrun simctl location SIM-1 clear$", read)
+
+      "android" ->
+        # The emulator cannot clear a fix, so clearing only reads the device again.
+        read = ~r"^adb shell cmd uimode night$"
+        assert_read_after(context, ~r"^adb emu geo fix -21.9426 64.1466$", read)
+        calls = context |> calls() |> String.split("\n", trim: true)
+        assert Enum.count(calls, &(&1 =~ read)) == 2
+    end
+
+    context
+  end
+
+  step ~r/^a client stops "the shop app" on a booted (?<platform>iOS|Android) device$/,
+       %{args: [platform]} = context do
+    context = action(context, platform, %{"type" => "launchApp", "appId" => "com.example.shop"})
+    assert {:ok, _} = context.reply
+    action(context, platform, %{"type" => "terminateApp", "appId" => "com.example.shop"})
+  end
+
+  step ~r/^a client sends the push "Hello" to an app on a booted iOS simulator$/, context do
+    action(context, "iOS", %{
+      "type" => "sendPush",
+      "appId" => "com.example.app",
+      "payload" => "Hello"
+    })
+  end
+
+  step ~r/^the simulator receives a notification whose alert is "Hello"$/, context do
+    assert {:ok, _} = context.reply
+
+    assert_read_after(
+      context,
+      ~r"^xcrun simctl push SIM-1 com.example.app -$",
+      ~r"^xcrun simctl ui SIM-1 appearance$"
+    )
+
+    assert pushed(context) == %{"aps" => %{"alert" => "Hello"}}
+    context
+  end
+
+  step "a client that sends a full payload has that payload delivered as written", context do
+    payload = %{
+      "aps" => %{"alert" => %{"title" => "Sale", "body" => "Today only"}, "badge" => 3},
+      "orderId" => "42"
+    }
+
+    context =
+      rpc(context, "device.action", %{
+        "deviceId" => "SIM-1",
+        "type" => "sendPush",
+        "appId" => "com.example.app",
+        "payload" => payload
+      })
+
+    assert {:ok, _} = context.reply
+    assert pushed(context) == payload
+    context
+  end
+
+  step "a booted iOS device whose appearance command exits with an error and a message",
+       context do
+    context = booted(context, "iOS")
+    File.write!(Path.join(context.devices.bin, "fail-appearance"), "")
+    context
+  end
+
+  step "a client sets its appearance to dark", context do
+    action(context, "iOS", %{"type" => "setAppearance", "value" => "dark"})
+  end
+
+  step "the MC answers that the appearance change failed with the exit code", context do
+    assert {:error, message,
+            %{
+              "_tag" => "DeviceOperationError",
+              "operation" => "appearance",
+              "reason" => "command_failed",
+              "exitCode" => 3
+            }} = context.reply
+
+    assert message == "Device appearance failed: The device command failed (exit code 3)."
+    context
+  end
+
+  step "the answer does not repeat the command's own message", context do
+    {:error, message, _} = context.reply
+    refute message =~ "refused"
+    context
+  end
+
+  step "a booted device whose settings commands all fail", context do
+    context = booted(context, "Android")
+    File.write!(Path.join(context.devices.bin, "adb-fails"), "")
+    context
+  end
+
+  step "a client asks for its detail", context do
+    rpc(context, "device.detail", %{"deviceId" => "emulator-5580"})
+  end
+
+  step "the detail is returned with no settings and no foreground app", context do
+    assert {:ok, %{"deviceId" => "emulator-5580", "settings" => settings} = detail} =
+             context.reply
+
+    assert settings == %{}
+    assert detail["foregroundApp"] == nil
+    # Every read was tried and failed.
+    assert calls(context) =~ "adb shell dumpsys window\n"
+    context
+  end
+
+  step "no command runs on the device when it is unavailable", context do
+    with {:error, _, _} <- context.reply, do: assert(calls(context) == "")
+    context
+  end
+
+  step ~r/^a client sets the orientation of (?<device>an Android emulator|a physical Android phone) to landscape$/,
+       %{args: [device]} = context do
+    serial = if device == "an Android emulator", do: "emulator-5580", else: "R5CT20ABCDE"
+
+    phone = %{
+      "id" => serial,
+      "name" => "Pixel 9",
+      "version" => "Android 15.0",
+      "platform" => "android",
+      "booted" => true,
+      "physical" => serial != "emulator-5580"
+    }
+
+    context
+    |> put_env("FAKE_HUB_EMULATORS", JSON.encode!([phone]))
+    |> rpc("device.action", %{
+      "deviceId" => serial,
+      "type" => "setOrientation",
+      "value" => "landscape_left"
+    })
+  end
+
+  step "the MC tilts the emulator's accelerometer to that side", context do
+    assert {:ok, %{"deviceId" => "emulator-5580"}} = context.reply
+    assert calls(context) =~ "adb emu sensor set acceleration 9.81:0:0\n"
+    refute calls(context) =~ "user-rotation lock"
+    context
+  end
+
+  step "the MC locks the phone's rotation to that side", context do
+    assert {:ok, %{"deviceId" => "R5CT20ABCDE"}} = context.reply
+    assert calls(context) =~ "adb shell cmd window user-rotation lock 1\n"
+    refute calls(context) =~ "emu sensor"
+    context
+  end
+
+  step "the hub install has no accessibility helper", context do
+    put_env(context, "FAKE_NPM_NO_AX_HELPER", "1")
+  end
+
+  step "a client sets a colour filter on a booted iOS device", context do
+    action(context, "iOS", %{"type" => "setColorFilter", "value" => "grayscale"})
+  end
+
+  step "the MC answers that the action requires a helper and to set up device support again",
+       context do
+    assert {:error, message,
+            %{"_tag" => "DeviceActionUnavailableError", "reason" => "helper_missing"}} =
+             context.reply
+
+    assert message =~ "requires a helper missing from this install. Set up device support again."
+    refute calls(context) =~ "spawn"
+    context
+  end
+
+  # --- the proxy, in more detail ----------------------------------------------------------
+
+  step "a session with the read scope and without the operate scope", context do
+    devices()
+    {:ok, _} = HalC2.Devices.list(%{})
+    Map.put(context, :ticket, ticket(["orchestration:read"]))
+  end
+
+  step ~r/^it opens the WebSocket "(?<socket>[^"]+)" through the device proxy$/,
+       %{args: [socket]} = context do
+    ws = ws_open(context, base() <> socket <> "?wsTicket=#{context.ticket}")
+    Map.merge(context, %{response: ws, socket: socket})
+  end
+
+  step "the MC answers by relaying the socket", context do
+    assert %{status: 101, frames: [hello | _]} = context.response
+    assert %{"hello" => context.socket} == hello
+    ws_close(context.response)
+    context
+  end
+
+  step "the MC answers that the operate scope is needed", context do
+    assert %{status: 403, body: body} = context.response
+
+    assert %{"code" => "insufficient_scope", "requiredScope" => "orchestration:operate"} =
+             JSON.decode!(body)
+
+    context
+  end
+
+  step "the hub receives the socket", context do
+    assert Enum.any?(hub_requests(), &(&1["url"] == context.socket))
+    context
+  end
+
+  step "the hub receives no request", context do
+    path = context[:socket] || context.path
+    refute Enum.any?(hub_requests(), &String.starts_with?(&1["url"], path))
+    context
+  end
+
+  step ~r/^it (?<method>reads|posts) "(?<path>[^"]+)" through the device proxy$/,
+       %{args: [method, path]} = context do
+    url = base() <> path <> "?wsTicket=#{context.ticket}"
+
+    response =
+      if method == "reads",
+        do: http(context, "GET", url),
+        else:
+          http(context, "POST", url,
+            body: ~s({"fps":15}),
+            headers: [{"content-type", "application/json"}]
+          )
+
+    Map.merge(context, %{response: response, path: path, method: method})
+  end
+
+  step ~r/^the MC answers with the stream (?<what>mode|settings)$/, %{args: [what]} = context do
+    assert %{status: 200, body: body} = context.response
+
+    case what do
+      "mode" -> assert %{"mode" => "mjpeg"} = JSON.decode!(body)
+      "settings" -> assert %{"fps" => 30} = JSON.decode!(body)
+    end
+
+    context
+  end
+
+  step "a client that authorises with a WebSocket ticket in the query, a cookie and a bearer header",
+       context do
+    devices()
+    {:ok, _} = HalC2.Devices.list(%{})
+    {:ok, ticket, _} = HalC2.Auth.issue_ticket(context.access_token)
+    Map.put(context, :ticket, ticket)
+  end
+
+  step "it requests a device route through the proxy", context do
+    path =
+      base() <> "/api/devices?wsTicket=#{context.ticket}&hostId=local&token=leak&probe=1"
+
+    headers = [
+      {"cookie", "hal_c2_session=secret"},
+      {"authorization", "Bearer #{context.access_token}"}
+    ]
+
+    Map.put(context, :response, http(context, "GET", path, headers: headers))
+  end
+
+  step "the request the hub receives has none of the ticket, the cookie or the bearer header",
+       context do
+    assert %{status: 200} = context.response
+    assert [%{"url" => url, "headers" => headers}] = hub_requests("/api/devices?")
+    refute url =~ "wsTicket"
+    refute url =~ "token"
+    refute Map.has_key?(headers, "cookie")
+    refute Map.has_key?(headers, "authorization")
+    Map.put(context, :hub_url, url)
+  end
+
+  step "it has no host id parameter, which belongs to the MC", context do
+    assert context.hub_url == "/api/devices?probe=1"
+    context
+  end
+
+  step "the Android hub refuses a change whose origin is not its own", context do
+    devices()
+    {:ok, _} = HalC2.Devices.list(%{})
+
+    {:ok, {{_, status, _}, _, _}} =
+      :httpc.request(
+        :post,
+        {String.to_charlist(
+           HalC2.Devices.hub_origin() <> "/vendor/serve-emu/api/stream-settings"
+         ), [{~c"origin", ~c"http://elsewhere.example"}], ~c"application/json", ~s({"fps":15})},
+        [timeout: 5_000],
+        body_format: :binary
+      )
+
+    assert status == 403
+    context
+  end
+
+  step "a client with the operate scope posts a stream setting through the device proxy",
+       context do
+    ticket = ticket(["orchestration:read", "orchestration:operate"])
+
+    response =
+      http(context, "POST", base() <> "/vendor/serve-emu/api/stream-settings?wsTicket=#{ticket}",
+        body: ~s({"fps":15}),
+        headers: [
+          {"content-type", "application/json"},
+          {"origin", "http://127.0.0.1:#{context.mc.port}"}
+        ]
+      )
+
+    Map.put(context, :response, response)
+  end
+
+  step "the hub accepts the change", context do
+    assert %{status: 200} = context.response
+    assert %{"fps" => 15} = hub_json("/vendor/serve-emu/api/stream-settings")
+
+    # The proxied post reached the hub with the hub's own origin, not none: a proxy that
+    # dropped the header would pass the check. (The first post is the refused probe.)
+    origin = HalC2.Devices.hub_origin()
+
+    assert [%{"headers" => %{"origin" => "http://elsewhere.example"}}, proxied] =
+             hub_requests("/vendor/serve-emu/api/stream-settings")
+             |> Enum.filter(&(&1["method"] == "POST"))
+
+    assert proxied["headers"]["origin"] == origin
+    context
+  end
+
+  step "a client has a device socket open through the proxy", context do
+    devices()
+    {:ok, _} = HalC2.Devices.list(%{})
+    ws = ws_open(context, base() <> "/vendor/serve-emu/ws?token=#{HalC2.Web.token()}")
+    assert %{status: 101, frames: [%{"hello" => "/vendor/serve-emu/ws"}]} = ws
+    Map.put(context, :ws, ws)
+  end
+
+  step "the hub closes the socket", context do
+    ws = ws_send(context.ws, {:text, ~s({"fake":"close"})})
+    Map.merge(context, %{ws: ws, ending: :hub})
+  end
+
+  step "the client closes the socket", context do
+    ws = ws_send(context.ws, :close)
+    Map.merge(context, %{ws: ws, ending: :client})
+  end
+
+  # Another client socket, whose relay to the hub never gets its upgrade answered;
+  # the ten seconds are shortened for the test.
+  step "the hub fails to answer the upgrade within ten seconds", context do
+    Application.put_env(:hal_c2, :device_hub_upgrade_timeout, 200)
+    ws_close(context.ws)
+    path = base() <> "/vendor/serve-emu/ws?token=#{HalC2.Web.token()}&fake=hang"
+    ws = ws_open(context, path, greeting: false)
+    assert %{status: 101} = ws
+    Map.merge(context, %{ws: ws, ending: :upgrade})
+  end
+
+  step "the other end of the socket is closed too", context do
+    case context.ending do
+      :client -> assert {:ok, 200, "closed"} = hub_get("/fake/sockets-closed")
+      _ -> assert ws_closed?(context.ws)
+    end
+
+    context
+  end
+
+  step "a client opens a device's MJPEG stream through the proxy", context do
+    devices()
+    {:ok, _} = HalC2.Devices.list(%{})
+    path = base() <> "/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{HalC2.Web.token()}"
+    Map.put(context, :response, http(context, "GET", path, until: &(frames(&1) >= 3)))
+  end
+
+  step "the response says it must not be stored or transformed", context do
+    assert %{status: 200, headers: headers} = context.response
+    assert {"cache-control", "no-store, no-transform"} in headers
+    refute List.keymember?(headers, "content-encoding", 0)
+    context
+  end
+
+  step "frames reach the client as the hub sends them", context do
+    # The stream never ends, so the frames arrived while the hub was still sending,
+    # each one as the hub wrote it.
+    assert %{closed: true, body: body, chunks: chunks} = context.response
+    assert chunks >= 2
+
+    for frame <- body |> String.split("--frame", trim: true) |> Enum.drop(-1),
+        do: assert(frame == "\r\ncontent-type: image/jpeg\r\ncontent-length: 4\r\n\r\njpeg\r\n")
+
+    context
+  end
+
+  # --- agents, in more detail ---------------------------------------------------------------
+
+  step "device support is on and no client has listed devices since the MC started", context do
+    context =
+      context |> write_settings(%{"enableAgentDeviceAccess" => true}) |> booted("Android")
+
+    devices()
+    assert HalC2.Devices.state()["devices"] == []
+    assert HalC2.Devices.hub_origin() == nil
+    context
+  end
+
+  step "a screenshot of a device is asked for by its id", context do
+    agent_call(context, "device_screenshot", %{"deviceId" => "emulator-5580"})
+  end
+
+  step "the MC finds the device itself", context do
+    assert %{"structuredContent" => %{"device" => %{"id" => "emulator-5580"}}} =
+             context.agent_result
+
+    assert %{"booted" => true} = device("emulator-5580")
+    context
+  end
+
+  step "answers with its screen image", context do
+    assert %{"content" => [_text, %{"type" => "image", "data" => data}]} = context.agent_result
+    assert <<0x89, "PNG", _::binary>> = Base.decode64!(data)
+    context
+  end
+
+  step "an agent has not opened a device in its thread", context do
+    # Another thread's agent opened one, so the device command is installed.
+    context = write_settings(context, %{"enableAgentDeviceAccess" => true})
+    {result, context} = tool(context, "device_open", %{"deviceId" => "Pixel_9"}, "other-thread")
+    assert %{"structuredContent" => %{"agentDevice" => %{"command" => command}}} = result
+    assert sessions(@agent_thread) == []
+    Map.put(context, :command, command)
+  end
+
+  step "the agent runs a device command without the device's config and session", context do
+    {output, code} = System.cmd(context.command, ["snapshot", "-i"], stderr_to_stdout: true)
+    Map.put(context, :command_result, {code, output})
+  end
+
+  step "the command fails telling the agent to open a device first", context do
+    assert {1, output} = context.command_result
+    assert output =~ "Call device_open first and include its --config and --session flags."
+    context
+  end
+
+  # --- boots that fail -----------------------------------------------------------------
+
+  step ~r/^a shut-down (?<platform>iOS|Android) device and (?<situation>the disk is full|the boot takes longer than three minutes|its stream takes longer than three minutes to start|the simulator fails to launch)$/,
+       %{args: [platform, situation]} = context do
+    # The MC's three minutes are shortened; the hub never answers the boot.
+    if situation =~ "three minutes",
+      do: Application.put_env(:hal_c2, :device_boot_timeout, 200)
+
+    case platform do
+      "iOS" ->
+        failure =
+          case situation do
+            "the disk is full" ->
+              %{"bootError" => "Unable to boot device: Not enough disk space available"}
+
+            "the boot takes longer than three minutes" ->
+              %{"bootError" => "hang"}
+
+            # The boot answers; serve-sim's stream helper never does.
+            "its stream takes longer than three minutes to start" ->
+              %{"startError" => "hang"}
+
+            "the simulator fails to launch" ->
+              %{"bootError" => "Unable to boot device: launchd failed to respond"}
+          end
+
+        context
+        |> mac([Map.merge(@simulator, Map.put(failure, "booted", false))])
+        |> Map.put(:target, {"SIM-1", "ios"})
+
+      "Android" ->
+        avd = if situation == "the disk is full", do: "Broken", else: "Hang"
+        avds(context, [avd])
+        Map.put(context, :target, {avd, "android"})
+    end
+  end
+
+  step "the device does not open in the thread", context do
+    {id, _} = context.target
+    assert {:error, _, %{"_tag" => "DeviceBootError", "deviceId" => ^id}} = context.reply
+    assert sessions("t1") == []
+    assert HalC2.Devices.state()["bootingDevices"] == []
+    context
+  end
+
+  step ~r/^the user is told (?<reason>the device ran out of disk space|the boot timed out|the device failed to launch)$/,
+       %{args: [told]} = context do
+    {reason, says} =
+      case told do
+        "the device ran out of disk space" -> {"disk_space", "not enough free disk space"}
+        "the boot timed out" -> {"timeout", "did not become ready in time"}
+        "the device failed to launch" -> {"launch_failed", "could not start"}
+      end
+
+    {id, _} = context.target
+    assert {:error, message, %{"reason" => ^reason}} = context.reply
+    assert message =~ "Device #{id} failed to boot: "
+    assert message =~ says
+    context
+  end
+
+  step "a device is booting for a thread", context do
+    avds(context, ["Hang"])
+    devices()
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, %{"type" => "devices", "mc" => Atom.to_string(node())})
+    {_, client} = Mc.await(client, &(&1["t"] == "devices"))
+    id = System.unique_integer([:positive])
+    input = %{"threadId" => "t1", "deviceId" => "Hang", "platform" => "android"}
+
+    paired =
+      Mc.rpc(World.client(context, "paired"), context.mc.environment, id, "device.open", input)
+
+    booting = &Enum.any?(&1["state"]["bootingDevices"], fn device -> device["id"] == "Hang" end)
+    {_, client} = Mc.await(client, &(&1["t"] == "devices" and booting.(&1)), 10_000)
+
+    context
+    |> World.put_client("watcher", client)
+    |> World.put_client("paired", paired)
+    |> Map.put(:open_id, id)
+  end
+
+  step "the user turns device support off", context do
+    write_settings(context, %{"enableDeviceSupport" => false})
+  end
+
+  step "the open fails saying device support was turned off while the device was opening",
+       context do
+    {frame, _} = Mc.await(World.client(context, "paired"), Mc.reply?(context.open_id), 15_000)
+
+    assert %{
+             "t" => "rpc.error",
+             "detail" => %{
+               "_tag" => "DeviceHostUnavailableError",
+               "reason" => "Device support was turned off while the device was opening."
+             }
+           } = frame
+
+    assert sessions("t1") == []
+    context
+  end
+
+  # --- hub restarts -------------------------------------------------------------------------
+
+  step "the device hub is running", context do
+    context = rpc(context, "device.list", %{})
+    assert {:ok, %{"hostStatus" => "ready"}} = context.reply
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, %{"type" => "devices", "mc" => Atom.to_string(node())})
+    {_, client} = Mc.await(client, &(&1["t"] == "devices"))
+    World.put_client(context, "watcher", client)
+  end
+
+  step "the hub exits", context do
+    Map.put(context, :exit, hub_exit())
+  end
+
+  step "the MC restarts it after one second", context do
+    assert_restart(context, context.exit, 1_000, "1 second")
+  end
+
+  step "each further exit within a minute of starting doubles the wait, up to 30 seconds",
+       context do
+    context = assert_restart(context, hub_exit(), 2_000, "2 seconds")
+
+    # The rest of the waits, on a clock that never lets the hub run for a minute.
+    delays =
+      Enum.map_reduce(1..7, HalC2.Devices.HubRestarts.new(), fn n, restarts ->
+        HalC2.Devices.HubRestarts.exited(
+          HalC2.Devices.HubRestarts.started(restarts, n),
+          n + 59_999
+        )
+      end)
+      |> elem(0)
+
+    assert delays == [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]
+    context
+  end
+
+  step "a hub that ran for a minute restarts after the short wait again", context do
+    restarts = HalC2.Devices.HubRestarts.new()
+    {_, restarts} = HalC2.Devices.HubRestarts.exited(restarts, 0)
+
+    {_, restarts} =
+      HalC2.Devices.HubRestarts.exited(HalC2.Devices.HubRestarts.started(restarts, 0), 10)
+
+    restarts = HalC2.Devices.HubRestarts.started(restarts, 1_000)
+    assert {1_000, _} = HalC2.Devices.HubRestarts.exited(restarts, 61_000)
+    context
+  end
+
+  # --- the runtime directory ---------------------------------------------------------------
+
+  step "an MC on Linux started without XDG_RUNTIME_DIR", context do
+    Application.put_env(:hal_c2, :os_type, {:unix, :linux})
+    root = Mc.tmp_dir(context.mc, "run-user")
+    Application.put_env(:hal_c2, :runtime_dir_root, root)
+
+    context
+    |> put_env("XDG_RUNTIME_DIR", nil)
+    |> Map.put(:runtime_root, root)
+  end
+
+  step ~r{^"/run/user/<uid>" exists and is owned by that user$}, context do
+    {uid, 0} = System.cmd("id", ["-u"])
+    dir = Path.join(context.runtime_root, String.trim(uid))
+    File.mkdir_p!(dir)
+    Map.put(context, :runtime_dir, dir)
+  end
+
+  step "the hub looks for the emulator's token", context do
+    rpc(context, "device.list", %{})
+  end
+
+  step "it uses that directory", context do
+    assert {:ok, %{"hostStatus" => "ready"}} = context.reply
+    assert hub_json("/fake/env")["XDG_RUNTIME_DIR"] == context.runtime_dir
+    context
+  end
+
+  step "an explicit value is kept", context do
+    explicit = Mc.tmp_dir(context.mc, "runtime")
+
+    # A hub started again, now with the variable set.
+    context =
+      context
+      |> put_env("XDG_RUNTIME_DIR", explicit)
+      |> write_settings(%{"enableDeviceSupport" => false})
+      |> write_settings(%{"enableDeviceSupport" => true})
+      |> rpc("device.list", %{})
+
+    assert {:ok, %{"hostStatus" => "ready"}} = context.reply
+    assert hub_json("/fake/env")["XDG_RUNTIME_DIR"] == explicit
+    context
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   # Fake npm and the fake Android SDK; every variable is restored after the scenario.
@@ -855,19 +1895,38 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     esac
     mkdir -p "$(dirname "$prefix/node_modules/$entry")"
     cp "#{@support}/$fake" "$prefix/node_modules/$entry"
+    # The accessibility helper serve-sim bundles, unless the scenario's install lacks it.
+    if [ "$fake" = fake_device_hub.mjs ] && [ -z "$FAKE_NPM_NO_AX_HELPER" ]; then
+      ax="$prefix/node_modules/expo-device-hub/vendor/serve-sim/dist/simax"
+      mkdir -p "$ax" && touch "$ax/serve-sim-ax-settings"
+    fi
     """)
 
     script(Path.join([sdk, "platform-tools", "adb"]), """
     #!/bin/sh
-    # adb -s SERIAL ...: light mode at font scale 1.15; remembers the launched app.
+    # adb -s SERIAL ...: light mode at font scale 1.15 with wifi on; keeps the
+    # settings put since and the launched app. A file `adb-fails` fails every command.
     shift 2
     echo "adb $*" >> "#{log}"
+    [ -f "#{bin}/adb-fails" ] && { echo "error: device offline" >&2; exit 1; }
     case "$*" in
       "shell cmd uimode night") echo "Night mode: no" ;;
-      "shell settings get system font_scale") echo "1.15" ;;
-      "shell settings get global animator_duration_scale") echo "1.0" ;;
-      "shell settings get global wifi_on") echo "1" ;;
+      "shell settings put "*) echo "$6" > "#{bin}/adb-$4-$5" ;;
+      "shell settings get "*)
+        if [ -f "#{bin}/adb-$4-$5" ]; then cat "#{bin}/adb-$4-$5"
+        else
+          case "$5" in
+            font_scale) echo 1.15 ;;
+            animator_duration_scale) echo 1.0 ;;
+            wifi_on) echo 1 ;;
+            *) echo null ;;
+          esac
+        fi ;;
+      "shell svc wifi enable") echo 1 > "#{bin}/adb-global-wifi_on" ;;
+      "shell svc wifi disable") echo 0 > "#{bin}/adb-global-wifi_on" ;;
       "shell monkey -p "*) echo "$4" > "#{bin}/foreground" ;;
+      "shell am force-stop "*)
+        [ "$(cat "#{bin}/foreground" 2>/dev/null)" = "$4" ] && rm "#{bin}/foreground" ;;
       "shell dumpsys window")
         app=$(cat "#{bin}/foreground" 2>/dev/null || echo com.android.launcher)
         echo "  mCurrentFocus=Window{1a2b u0 $app/.MainActivity}" ;;
@@ -892,6 +1951,9 @@ defmodule HalC2.Steps.Connections.DeviceHub do
       ExUnit.Callbacks.on_exit(fn ->
         Application.delete_env(:hal_c2, :os_type)
         Application.delete_env(:hal_c2, :device_hub_answer_timeout)
+        Application.delete_env(:hal_c2, :device_hub_upgrade_timeout)
+        Application.delete_env(:hal_c2, :device_boot_timeout)
+        Application.delete_env(:hal_c2, :runtime_dir_root)
       end)
     end)
   end
@@ -905,6 +1967,11 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     #!/bin/sh
     echo "xcrun $*" >> "#{log}"
     [ "$1" = simctl ] || exit 0
+    # A file `fail-appearance` makes setting the appearance fail, saying why.
+    if [ "$2 $4" = "ui appearance" ] && [ -n "$5" ] && [ -f "#{bin}/fail-appearance" ]; then
+      echo "simctl: the simulator refused the appearance change" >&2
+      exit 3
+    fi
     case "$2" in
       ui)
         file="#{bin}/$3-$4"
@@ -918,6 +1985,20 @@ defmodule HalC2.Steps.Connections.DeviceHub do
           esac
         fi ;;
       push) cat > "#{bin}/push.json" ;;
+      # spawn UDID HELPER set KEY VALUE | status: the accessibility helper's settings.
+      spawn)
+        case "$5" in
+          set) echo "$7" > "#{bin}/$3-ax-$6" ;;
+          status)
+            sep=
+            printf '{'
+            for file in "#{bin}/$3-ax-"*; do
+              [ -f "$file" ] || continue
+              printf '%s"%s":"%s"' "$sep" "${file##*-ax-}" "$(cat "$file")"
+              sep=,
+            done
+            printf '}\n' ;;
+        esac ;;
     esac
     exit 0
     """)
@@ -1050,7 +2131,8 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   defp http(context, method, path, opts \\ []) do
     {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.mc.port, mode: :passive)
     {:ok, conn, ref} = Mint.HTTP.request(conn, method, path, opts[:headers] || [], opts[:body])
-    read(conn, ref, %{status: nil, headers: [], body: "", closed: false}, opts[:until])
+    response = %{status: nil, headers: [], body: "", chunks: 0, closed: false}
+    read(conn, ref, response, opts[:until])
   end
 
   defp read(conn, ref, response, until) do
@@ -1060,7 +2142,7 @@ defmodule HalC2.Steps.Connections.DeviceHub do
       Enum.reduce(parts, {response, false}, fn
         {:status, ^ref, status}, {r, d} -> {%{r | status: status}, d}
         {:headers, ^ref, headers}, {r, d} -> {%{r | headers: headers}, d}
-        {:data, ^ref, data}, {r, d} -> {%{r | body: r.body <> data}, d}
+        {:data, ^ref, data}, {r, d} -> {%{r | body: r.body <> data, chunks: r.chunks + 1}, d}
         {:done, ^ref}, {r, _} -> {r, true}
         _, acc -> acc
       end)
@@ -1108,5 +2190,234 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     assert %{"isError" => true, "content" => [%{"text" => text}]} = context.agent_result
     %{"message" => message} = JSON.decode!(text)
     message
+  end
+
+  # The Android SDK's emulator lists `names` as its AVDs.
+  defp avds(context, names) do
+    script(Path.join([context.devices.sdk, "emulator", "emulator"]), """
+    #!/bin/sh
+    [ "$1" = "-list-avds" ] && printf '%s\\n' #{Enum.join(names, " ")}
+    exit 0
+    """)
+  end
+
+  defp android_platform(context) do
+    assert {:ok, %{"hosts" => hosts}} = context.reply
+    %{"platforms" => platforms} = Enum.find(hosts, &(&1["id"] == "local"))
+    Enum.find(platforms, &(&1["platform"] == "android"))
+  end
+
+  # A device.action on a booted device of `platform`.
+  defp action(context, platform, input) do
+    context = booted(context, platform)
+    id = if platform == "iOS", do: "SIM-1", else: "emulator-5580"
+    input = Map.put(input, "deviceId", id)
+
+    context
+    |> Map.merge(%{action: input, platform: String.downcase(platform)})
+    |> rpc("device.action", input)
+  end
+
+  # The accessibility helper serve-sim bundles, run on SIM-1.
+  defp ax(args), do: ~r"^xcrun simctl spawn SIM-1 \S+/serve-sim-ax-settings #{args}$"
+
+  defp adb_get(key), do: ~r"^adb shell settings get #{key}$"
+
+  # `command` ran, then a read of the device after it.
+  defp assert_read_after(context, command, read) do
+    calls = context |> calls() |> String.split("\n", trim: true)
+    ran = Enum.find_index(calls, &(&1 =~ command))
+    assert ran, "#{inspect(command)} never ran: #{inspect(calls)}"
+
+    assert Enum.any?(Enum.drop(calls, ran + 1), &(&1 =~ read)),
+           "no read after #{inspect(command)}"
+  end
+
+  defp pushed(context),
+    do: context.devices.bin |> Path.join("push.json") |> File.read!() |> JSON.decode!()
+
+  defp hub_json(path) do
+    {:ok, 200, body} = hub_get(path)
+    JSON.decode!(body)
+  end
+
+  # Makes the running hub exit; answers when it went and the origin it had.
+  defp hub_exit do
+    origin = HalC2.Devices.hub_origin()
+
+    {:ok, {{_, 200, _}, _, _}} =
+      :httpc.request(
+        :post,
+        {String.to_charlist(origin <> "/fake/exit"), [], ~c"text/plain", ""},
+        [timeout: 5_000],
+        []
+      )
+
+    {System.monotonic_time(:millisecond), origin}
+  end
+
+  # Clients see the hub stopped, saying when it restarts, and then a new hub ready no sooner.
+  defp assert_restart(context, {exited, origin}, wait, says) do
+    stopped = "The device hub stopped. Restarting it in #{says}."
+    watcher = World.client(context, "watcher")
+
+    {_, watcher} =
+      Mc.await(watcher, &(&1["t"] == "devices" and &1["state"]["hostStatusDetail"] == stopped))
+
+    {_, watcher} =
+      Mc.await(
+        watcher,
+        &(&1["t"] == "devices" and &1["state"]["hostStatus"] == "ready"),
+        wait + 15_000
+      )
+
+    assert System.monotonic_time(:millisecond) - exited >= wait
+    assert HalC2.Devices.hub_origin() not in [nil, origin]
+    World.put_client(context, "watcher", watcher)
+  end
+
+  defp hub_post(path, value) do
+    request =
+      {String.to_charlist(HalC2.Devices.hub_origin() <> path), [], ~c"application/json",
+       JSON.encode!(value)}
+
+    {:ok, {{_, 200, _}, _, _}} =
+      :httpc.request(:post, request, [timeout: 5_000], body_format: :binary)
+  end
+
+  # What reached the hub, optionally only the requests whose URL starts with `prefix`.
+  defp hub_requests(prefix \\ "") do
+    "/fake/requests" |> hub_json() |> Enum.filter(&String.starts_with?(&1["url"], prefix))
+  end
+
+  # A stream through the MC that stays open: read until the first frame, then hand
+  # back the connection so a later step can read it to its end.
+  defp stream_open(context, path) do
+    url = base() <> path <> "?token=#{HalC2.Web.token()}"
+    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.mc.port, mode: :passive)
+    {:ok, conn, ref} = Mint.HTTP.request(conn, "GET", url, [], nil)
+    stream_read(%{conn: conn, ref: ref, status: nil, body: "", done: false}, &(frames(&1) >= 1))
+  end
+
+  defp stream_finish(stream) do
+    stream = stream_read(stream, fn _ -> false end)
+    Mint.HTTP.close(stream.conn)
+    %{status: stream.status, closed: not stream.done}
+  end
+
+  defp stream_read(%{done: true} = stream, _), do: stream
+
+  defp stream_read(stream, until) do
+    if stream.status == 200 and until.(stream) do
+      stream
+    else
+      {:ok, conn, parts} = Mint.HTTP.recv(stream.conn, 0, 10_000)
+      ref = stream.ref
+
+      stream =
+        Enum.reduce(parts, %{stream | conn: conn}, fn
+          {:status, ^ref, status}, s -> %{s | status: status}
+          {:data, ^ref, data}, s -> %{s | body: s.body <> data}
+          {:done, ^ref}, s -> %{s | done: true}
+          _, s -> s
+        end)
+
+      stream_read(stream, until)
+    end
+  end
+
+  # A WebSocket through the MC: its status, and the body of a refusal or the hub's
+  # greeting. `greeting: false` returns as soon as the MC upgrades, for a socket the
+  # hub never answers.
+  defp ws_open(context, path, opts \\ []) do
+    {:ok, conn} = Mint.HTTP.connect(:http, "127.0.0.1", context.mc.port, mode: :passive)
+    {:ok, conn, ref} = Mint.WebSocket.upgrade(:ws, conn, path, [])
+    ws = %{conn: conn, ref: ref, status: nil, headers: [], body: "", frames: [], closed: false}
+    ws = ws_upgrade(ws)
+
+    if ws.status == 101 and Keyword.get(opts, :greeting, true),
+      do: ws_greeting(ws),
+      else: ws
+  end
+
+  defp ws_upgrade(ws) do
+    {:ok, conn, parts} = Mint.HTTP.recv(ws.conn, 0, 10_000)
+    ref = ws.ref
+
+    {ws, done} =
+      Enum.reduce(parts, {%{ws | conn: conn}, false}, fn
+        {:status, ^ref, status}, {w, d} -> {%{w | status: status}, d}
+        {:headers, ^ref, headers}, {w, d} -> {%{w | headers: headers}, d}
+        {:data, ^ref, data}, {w, d} -> {%{w | body: w.body <> data}, d}
+        {:done, ^ref}, {w, _} -> {w, true}
+        _, acc -> acc
+      end)
+
+    cond do
+      not done and not (ws.status == 101 and ws.headers != []) -> ws_upgrade(ws)
+      ws.status != 101 -> ws
+      true -> ws_new(ws)
+    end
+  end
+
+  # The hub's first frame can arrive in the same packet as the upgrade response.
+  defp ws_new(ws) do
+    {:ok, conn, websocket} = Mint.WebSocket.new(ws.conn, ws.ref, ws.status, ws.headers)
+    {:ok, websocket, frames} = Mint.WebSocket.decode(websocket, ws.body)
+    %{ws | conn: conn, body: ""} |> Map.put(:websocket, websocket) |> ws_frames(frames)
+  end
+
+  defp ws_greeting(%{frames: [_ | _]} = ws), do: ws
+
+  defp ws_greeting(ws) do
+    {:frames, _, ws} = ws_recv(ws, 10_000)
+    ws_greeting(ws)
+  end
+
+  defp ws_frames(ws, frames) do
+    closed = Enum.any?(frames, &match?({:close, _, _}, &1))
+    texts = for {:text, text} <- frames, do: JSON.decode!(text)
+    %{ws | frames: ws.frames ++ texts, closed: ws.closed or closed}
+  end
+
+  defp ws_recv(ws, timeout) do
+    case Mint.WebSocket.recv(ws.conn, 0, timeout) do
+      {:ok, conn, parts} ->
+        {websocket, frames} =
+          Enum.reduce(parts, {ws.websocket, []}, fn
+            {:data, _, data}, {websocket, acc} ->
+              {:ok, websocket, frames} = Mint.WebSocket.decode(websocket, data)
+              {websocket, acc ++ frames}
+
+            _, acc ->
+              acc
+          end)
+
+        {:frames, frames, ws_frames(%{ws | conn: conn, websocket: websocket}, frames)}
+
+      {:error, conn, %Mint.TransportError{reason: :timeout}, _} ->
+        {:timeout, %{ws | conn: conn}}
+
+      {:error, conn, _, _} ->
+        {:frames, [], %{ws | conn: conn, closed: true}}
+    end
+  end
+
+  defp ws_send(ws, frame) do
+    {:ok, websocket, data} = Mint.WebSocket.encode(ws.websocket, frame)
+    {:ok, conn} = Mint.WebSocket.stream_request_body(ws.conn, ws.ref, data)
+    %{ws | conn: conn, websocket: websocket}
+  end
+
+  defp ws_close(ws), do: Mint.HTTP.close(ws.conn)
+
+  # Whether the MC ended the socket: a close frame, or the connection gone.
+  defp ws_closed?(%{closed: true}), do: true
+
+  defp ws_closed?(ws) do
+    case ws_recv(ws, 5_000) do
+      {:timeout, _} -> false
+      {:frames, _, ws} -> ws_closed?(ws)
+    end
   end
 end

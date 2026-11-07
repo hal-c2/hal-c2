@@ -60,6 +60,7 @@ Feature: Permission modes
       | auto              | on-request | workspaceWrite   |
       | full access       | never      | dangerFullAccess |
 
+  # Upstream #2829: Grok permission mode
   Scenario Outline: Each mode reaches Grok as a launch flag
     Given a Grok thread in <mode>
     When the user sends a message
@@ -144,6 +145,7 @@ Feature: Permission modes
     Then the plan is shown to the user
     And Claude stops to wait for the user's feedback
 
+  # Upstream #2829: Codex interaction mode after resume
   Scenario: Codex always receives the thread's interaction mode explicitly
     Given a resumed Codex thread that last ran in plan mode
     When the user sends a message in default mode
@@ -164,6 +166,7 @@ Feature: Permission modes
     When the agent delegates a task without naming modes
     Then the child thread runs in auto-accept edits and plan mode
 
+  # Upstream #19712: Cursor threads in Auto use Cursor's Auto-review
   Scenario Outline: Auto uses the provider's automatic review where it has one
     Given a <provider> thread in auto
     When the agent runs a routine action
@@ -193,6 +196,7 @@ Feature: Permission modes
     When a thread in another project asks Grok to run the same command
     Then the user is asked to approve it
 
+  # Upstream #19635: "Always allow this session" stops Codex asking for every command
   @backlog @plugin-codex @priority-high
   Scenario: Codex stops asking for a kind of request the user always allowed this session
     Given a supervised Codex thread
@@ -200,6 +204,7 @@ Feature: Permission modes
     Then later commands in that Codex session run without asking
     But a file change still asks until the user always allows file changes too
 
+  # Upstream #19635: "Always allow this session" stops Codex asking for every command
   @backlog @plugin-codex @priority-high
   Scenario: A Codex session allowance ends with the mode it was given in
     Given the user always allowed commands in a supervised Codex thread
