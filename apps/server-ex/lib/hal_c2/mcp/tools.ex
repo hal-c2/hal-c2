@@ -995,12 +995,18 @@ defmodule HalC2.Mcp.Tools do
 
         with {:ok, _} <-
                orchestration(
-                 Orchestration.dispatch_once(%{
-                   "type" => "run.interrupt",
-                   "commandId" => command_id,
-                   "threadId" => id,
-                   "runId" => run
-                 })
+                 Orchestration.dispatch_once(
+                   Map.merge(
+                     %{
+                       "type" => "run.interrupt",
+                       "commandId" => command_id,
+                       "threadId" => id,
+                       "runId" => run
+                     },
+                     # An agent's Stop holds the queue as the user's does, unless it asks not to.
+                     Map.take(args, ["holdQueue"])
+                   )
+                 )
                ) do
           answer = %{
             "threadId" => id,

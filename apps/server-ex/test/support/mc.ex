@@ -2616,6 +2616,9 @@ defmodule HalC2.Test.Mc.World do
       ignore =
         "FAKE_CODEX_IGNORE_INTERRUPT_FILE=" <> Path.join(context.mc.home, "ignore-interrupt")
 
+      # Turns stay running while this file exists.
+      held = "FAKE_CODEX_HOLD_TURN_FILE=" <> Path.join(context.mc.home, "hold-turn")
+
       Application.put_env(:hal_c2, :codex_command, [
         "env",
         log,
@@ -2624,6 +2627,7 @@ defmodule HalC2.Test.Mc.World do
         full,
         hold,
         ignore,
+        held,
         "python3",
         "-u",
         @fake_codex
@@ -3417,6 +3421,18 @@ defmodule HalC2.Test.Mc.World do
     {pid, state} = codex_runtime(context, title)
     send(pid, {:json_rpc, state.conn, {:notification, method, params}})
     context
+  end
+
+  @doc """
+  Ends the thread's running Codex turn as completed, as the (fake) app-server does
+  when the agent finishes on its own; returns the context. A Stop would hold the queue.
+  """
+  def complete_codex_turn(context, title) do
+    {_pid, runtime} = codex_runtime(context, title)
+
+    codex_notify(context, title, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
   end
 
   @doc """

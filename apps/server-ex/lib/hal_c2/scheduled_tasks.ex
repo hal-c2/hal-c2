@@ -506,7 +506,8 @@ defmodule HalC2.ScheduledTasks do
           Orchestration.dispatch(%{
             "type" => "run.interrupt",
             "threadId" => thread_id,
-            "runId" => run_id
+            "runId" => run_id,
+            "holdQueue" => false
           })
 
         # A run still only starting (or preparing) after that, with nothing
