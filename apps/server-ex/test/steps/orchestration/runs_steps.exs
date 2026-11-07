@@ -1022,6 +1022,45 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- a stream that ends without ending its turn --------------------------------------
+
+  step "the provider's event stream ends without saying the turn ended", context do
+    kill_app_server(context)
+  end
+
+  step "the run and its subagents are failed", context do
+    state = await_status(context, context.running, "failed")
+
+    assert Enum.all?(
+             HalC2.StreamState.list(state, "run"),
+             &(&1["status"] != "running" or &1["id"] != context.running)
+           )
+
+    context
+  end
+
+  # The same end, with the MC itself going down: the runtime sees its connection end
+  # (traced, so the scenario knows it did) and leaves the run as it was.
+  step "a stream the MC ends because it is shutting down leaves the run for recovery",
+       context do
+    context = World.running_turn(context, context.thread)
+    {runtime, state} = World.codex_runtime(context, context.thread)
+
+    HalC2.Orchestration.Recovery.leaving(true)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Orchestration.Recovery.leaving(false) end)
+    :erlang.trace(runtime, true, [:receive])
+    kill_app_server(context)
+    conn = state.conn
+    assert_receive {:trace, ^runtime, :receive, {:EXIT, ^conn, _}}, 5_000
+    :erlang.trace(runtime, false, [:receive])
+    :ok = GenServer.call(runtime, :settle)
+
+    assert %{"status" => "running"} =
+             World.state(context, context.thread).entities["run"][context.running]
+
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   defp run(context), do: World.state(context, context.thread).entities["run"][context.run]
@@ -1093,6 +1132,13 @@ defmodule HalC2.Steps.Orchestration.Runs do
       end
 
     Map.put(context, :reply, reply)
+  end
+
+  defp kill_app_server(context) do
+    {_, runtime} = World.codex_runtime(context, context.thread)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    context
   end
 
   defp turn_starts(context), do: World.codex_requests(context, "turn/start")

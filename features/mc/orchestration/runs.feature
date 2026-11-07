@@ -227,7 +227,7 @@ Feature: Runs and turns
     Then the run is failed
     And "t1" can take its next message
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A provider stream that ends without ending its turn fails the run
     Given "t1" has a running turn
     When the provider's event stream ends without saying the turn ended

@@ -715,9 +715,20 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state = %{state | conn: nil}
-    state = if state.turn, do: end_turn(state, "failed", "Codex exited unexpectedly"), else: state
-    # Its terminals went with it.
-    state = end_background(state, "failed")
+
+    # A stream the MC itself ends while shutting down is not the provider failing the
+    # turn: the run stays as it is for the next boot's recovery to settle.
+    state =
+      if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
+        do: end_turn(state, "failed", "Codex exited unexpectedly"),
+        else: state
+
+    # Its terminals went with it (and, when stopping, are left marked for the next boot).
+    state =
+      if HalC2.Orchestration.Recovery.stopping?(),
+        do: state,
+        else: end_background(state, "failed")
+
     # The native thread was loaded in that app-server; the next one resumes it.
     {:noreply, %{state | conn: nil, native_thread_id: nil}}
   end
