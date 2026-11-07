@@ -13,8 +13,9 @@ on:
       - "apps/desktop-ljos/**"
       # What the shell loads or embeds at build and test time: the bricks, the
       # sounds and themes (src/native), the MC's version, the plugins' files,
-      # and the two files the features runner reads to learn desktop-qt's
-      # scenario list (tst_Features.cpp, tst_Scenarios.qml).
+      # the code colouring crate (native/syntax), and the two files the
+      # features runner reads to learn desktop-qt's scenario list
+      # (tst_Features.cpp, tst_Scenarios.qml).
       - "apps/desktop-qt/qml/**"
       - "apps/desktop-qt/src/native/**"
       - "apps/desktop-qt/tests/native/tst_Features.cpp"
@@ -22,6 +23,7 @@ on:
       - "apps/server-ex/VERSION"
       - "features/**"
       - "plugins/**"
+      - "native/syntax/**"
       - ".github/workflows/desktop-ljos.yml"
   pull_request:
     paths: *paths
