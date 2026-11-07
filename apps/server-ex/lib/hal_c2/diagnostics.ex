@@ -22,6 +22,10 @@ defmodule HalC2.Diagnostics do
   @idle_every 15_000
   @watched_every 2_000
   @keep :timer.hours(1)
+  @min_window 1_000
+  # A counter that moved over a longer gap than this is not attributed to the gap: the process
+  # was probably not watched for part of it.
+  @max_delta_gap 60_000
   @providers ~w(codex claude opencode grok cursor-agent pi-acp node devin gemini muse)
   @shells ~w(zsh bash fish sh nu)
 
@@ -147,6 +151,25 @@ defmodule HalC2.Diagnostics do
   def retry(_input \\ %{}),
     do: {:ok, %{"accepted" => true, "snapshot" => GenServer.call(__MODULE__, :sample_now)}}
 
+  @doc """
+  A history request held to what the MC keeps: a window of one second to an hour, in buckets
+  of one second up to the window.
+  """
+  def history_bounds(window, bucket) do
+    window = window |> max(@min_window) |> min(@keep)
+    {window, bucket |> max(1_000) |> min(window)}
+  end
+
+  @doc """
+  What a cumulative counter adds between two readings `gap_ms` apart: the difference, or nothing
+  when it went backwards or the readings are too far apart to attribute.
+  """
+  def counter_delta(earlier, later, gap_ms)
+      when later >= earlier and gap_ms >= 0 and gap_ms <= @max_delta_gap,
+      do: later - earlier
+
+  def counter_delta(_earlier, _later, _gap_ms), do: 0
+
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
   def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
@@ -172,9 +195,10 @@ defmodule HalC2.Diagnostics do
   end
 
   def handle_call({:history, kind, window, bucket}, _from, state) do
+    {window, bucket} = history_bounds(window, bucket)
     at = System.system_time(:millisecond)
     samples = state.samples |> Enum.filter(fn {t, _} -> at - t <= window end) |> Enum.reverse()
-    {:reply, history(kind, samples, window, max(bucket, interval(state)), state), state}
+    {:reply, history(kind, samples, window, bucket, state), state}
   end
 
   @impl true
@@ -349,11 +373,15 @@ defmodule HalC2.Diagnostics do
   # --- history -----------------------------------------------------------------
 
   defp history(kind, samples, window, bucket, state) do
+    io_added = io_added(samples, bucket)
+
     buckets =
       samples
       |> Enum.group_by(fn {t, _} -> div(t, bucket) end)
       |> Enum.sort()
-      |> Enum.map(fn {index, in_bucket} -> bucket(kind, index, bucket, in_bucket) end)
+      |> Enum.map(fn {index, in_bucket} ->
+        bucket(kind, index, bucket, in_bucket, Map.get(io_added, index, {0, 0}))
+      end)
 
     root = os_pid()
 
@@ -402,7 +430,7 @@ defmodule HalC2.Diagnostics do
     end
   end
 
-  defp bucket(kind, index, size, samples) do
+  defp bucket(kind, index, size, samples, {io_read, io_write}) do
     cpu = for {_, rows} <- samples, do: rows |> Enum.map(& &1.cpu) |> Enum.sum()
 
     %{
@@ -418,10 +446,32 @@ defmodule HalC2.Diagnostics do
     }
     |> then(
       &if(kind == :telemetry,
-        do: Map.merge(&1, %{"ioReadBytes" => 0, "ioWriteBytes" => 0}),
+        do: Map.merge(&1, %{"ioReadBytes" => io_read, "ioWriteBytes" => io_write}),
         else: &1
       )
     )
+  end
+
+  # Storage bytes each bucket adds: per process, what its counters moved between one sample and
+  # the next, attributed to the later sample's bucket. A process is the same only by pid and
+  # start time, so a reused id starts from nothing.
+  defp io_added(samples, bucket) do
+    samples
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.reduce(%{}, fn [{before, earlier}, {at, later}], added ->
+      earlier = Map.new(earlier, &{key(&1), &1})
+
+      {read, write} =
+        for %{io: {read, write}} = row <- later,
+            %{io: {read0, write0}} <- [earlier[key(row)]],
+            reduce: {0, 0} do
+          {sum_read, sum_write} ->
+            {sum_read + counter_delta(read0, read, at - before),
+             sum_write + counter_delta(write0, write, at - before)}
+        end
+
+      Map.update(added, div(at, bucket), {read, write}, fn {r, w} -> {r + read, w + write} end)
+    end)
   end
 
   defp summary(:telemetry, _key, row, stats, {first, last, peak}, _root) do
@@ -489,7 +539,7 @@ defmodule HalC2.Diagnostics do
   defp io_rates(row, at, {before, rows}) when at > before do
     with {read, write} <- Map.get(row, :io),
          %{io: {read_before, write_before}} <- rows[key(row)] do
-      per_second = &max(round((&1 - &2) * 1000 / (at - before)), 0)
+      per_second = &round(counter_delta(&2, &1, at - before) * 1000 / (at - before))
       {per_second.(read, read_before), per_second.(write, write_before)}
     else
       _ -> {0, 0}
@@ -649,18 +699,30 @@ defmodule HalC2.Diagnostics do
     end
   end
 
-  # Busy share of all CPUs (0..1) between two readings of /proc/stat; nil where there is none.
+  # Busy share of all CPUs (0..1) between two readings of /proc/stat; nil where there is none,
+  # where the counters did not advance, or where the core count changed between readings.
+  # `:cpu_counters` (a zero-arity function) replaces the /proc/stat read in tests.
   defp cpu_utilization do
-    with {:ok, {idle1, total1}} <- cpu_times(),
+    reader = Application.get_env(:hal_c2, :cpu_counters, &cpu_times/0)
+
+    with {:ok, first} <- reader.(),
          :ok <- Process.sleep(200),
-         {:ok, {idle2, total2}} <- cpu_times(),
-         total when total > 0 <- total2 - total1,
-         idle when idle >= 0 <- idle2 - idle1 do
-      min(1.0, max(0.0, 1 - idle / total))
+         {:ok, second} <- reader.() do
+      cpu_share(first, second)
     else
       _ -> nil
     end
   end
+
+  @doc false
+  def cpu_share({idle1, total1, cores}, {idle2, total2, cores}) do
+    total = total2 - total1
+    idle = idle2 - idle1
+
+    if total > 0 and idle >= 0, do: min(1.0, max(0.0, 1 - idle / total)), else: nil
+  end
+
+  def cpu_share(_, _), do: nil
 
   defp cpu_times do
     with {:ok, stat} <- File.read("/proc/stat"),
@@ -668,7 +730,11 @@ defmodule HalC2.Diagnostics do
       [user, nice, system, idle, iowait, irq, softirq, steal | _] =
         fields |> Enum.map(&String.to_integer/1) |> Kernel.++(List.duplicate(0, 8))
 
-      {:ok, {idle + iowait, user + nice + system + idle + iowait + irq + softirq + steal}}
+      cores = for "cpu" <> n <- String.split(stat, ~r/\s/), n != "", do: n
+
+      {:ok,
+       {idle + iowait, user + nice + system + idle + iowait + irq + softirq + steal,
+        length(cores)}}
     else
       _ -> :error
     end
