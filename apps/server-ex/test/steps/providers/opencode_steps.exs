@@ -1245,6 +1245,39 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- subagents ---
+
+  step "an OpenCode session is started", context do
+    context =
+      context
+      |> FakeAcp.install("opencode", %{}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("hello")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "its task permission is denied, through the config OpenCode is started with", context do
+    assert [%{"permission" => %{"task" => "deny"}}] = started_configs(context)
+    context
+  end
+
+  step "OpenCode is started with its own config", context do
+    assert started_configs(context) == [nil]
+    context
+  end
+
+  # The `OPENCODE_CONFIG_CONTENT` each OpenCode ACP process was started with.
+  defp started_configs(context) do
+    for(
+      %{"start" => %{"env" => env, "argv" => argv}} <- FakeAcp.log(context),
+      "acp" in argv,
+      do: env["OPENCODE_CONFIG_CONTENT"] && JSON.decode!(env["OPENCODE_CONFIG_CONTENT"])
+    )
+    |> Enum.uniq()
+  end
+
   # --- to-do list ---
 
   defp todos(entries) do

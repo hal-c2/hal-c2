@@ -1059,12 +1059,8 @@ defmodule HalC2.Acp.ThreadRuntime do
          # The way back to HAL-C2's tools from the agent's terminal
          # (`HalC2.Mcp.AcpServers`): the MCP address, its credential and the
          # command to run one call with.
-         env =
-           env ++
-             HalC2.Mcp.AcpServers.build(
-               %{},
-               HalC2.Mcp.for_agent(state.thread_id, instance)
-             ).env,
+         mcp = HalC2.Mcp.for_agent(state.thread_id, instance),
+         env = env ++ HalC2.Mcp.AcpServers.build(%{}, mcp).env ++ subagents_off(instance, mcp),
          {command, env, server} = serve_opencode(instance, command, env),
          env = HalC2.ProjectEnvironment.for_turn(context, env, command),
          {:ok, conn} <-
@@ -1114,6 +1110,29 @@ defmodule HalC2.Acp.ThreadRuntime do
        }}
     else
       {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  # OpenCode's own subagents (its task tool) are denied while agents use HAL-C2's
+  # workers (`HalC2.Mcp.workers_only?/1`), in the config OpenCode starts with, so the
+  # choice holds for the session. The user's own `OPENCODE_CONFIG_CONTENT` is kept.
+  defp subagents_off(instance, mcp) do
+    if HalC2.Acp.driver(instance) == "opencode" and HalC2.Mcp.workers_only?(mcp) do
+      config =
+        case JSON.decode(System.get_env("OPENCODE_CONFIG_CONTENT") || "") do
+          {:ok, %{} = config} -> config
+          _ -> %{}
+        end
+
+      permission =
+        case config["permission"] do
+          %{} = permission -> Map.put(permission, "task", "deny")
+          _ -> %{"task" => "deny"}
+        end
+
+      [{"OPENCODE_CONFIG_CONTENT", JSON.encode!(Map.put(config, "permission", permission))}]
+    else
+      []
     end
   end
 

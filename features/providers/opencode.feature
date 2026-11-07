@@ -1201,12 +1201,19 @@ Feature: OpenCode
     Then no OpenCode status check is run and no OpenCode server is started for one
     But OpenCode's status is checked when the user refreshes provider status
 
-  # features/settings/subagents.feature: the setting is not wired for OpenCode yet.
-  @backlog @mc
+  @mc
   Scenario: OpenCode's own subagent tool is turned off when agents use HAL-C2 workers
-    Given the subagents setting is HAL-C2 workers
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
     When an OpenCode session is started
     Then its task permission is denied, through the config OpenCode is started with
+
+  @mc
+  Scenario: OpenCode keeps its own subagent tool when it has no HAL-C2 tools to delegate with
+    Given the project turns the HAL-C2 tools off
+    And the subagents setting is HAL-C2 workers
+    When an OpenCode session is started
+    Then OpenCode is started with its own config
 
   # HalC2.Plugins.Kinds: another instance runs with its own settings, home and account,
   # so its turn needs its own agent rather than the first instance's.
