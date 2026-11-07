@@ -105,7 +105,7 @@ export const EMPTY_TIMELINE_VIEW: TimelineView = {
 export interface TimelineError {
   readonly message: string;
   readonly usageLimit: { readonly resetAt: string | null } | null;
-  /** The user dismissed this very error; a different one shows again. */
+  /** The user dismissed this failure (its run and message); another one shows again. */
   readonly dismissed: boolean;
 }
 

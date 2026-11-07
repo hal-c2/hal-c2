@@ -199,6 +199,25 @@ step("a different error on the same thread is still shown", async (ctx: ThreadWo
   expect(await snapshot(ctx)).toContain("Connection lost");
 });
 
+step("a later run of the thread fails with {string}", async (ctx: ThreadWorld, error: string) => {
+  await showError(ctx, error, {
+    latestTurn: {
+      turnId: "run-2",
+      state: "error",
+      requestedAt: "2026-07-13T00:00:00.000Z",
+      startedAt: "2026-07-13T00:00:00.000Z",
+      completedAt: "2026-07-13T00:00:05.000Z",
+      assistantMessageId: null,
+    },
+  });
+});
+
+step("the thread shows {string} as its error", async (ctx: ThreadWorld, error: string) => {
+  const screen = await snapshot(ctx);
+  expect(screen).toContain(error);
+  expect(screen).not.toContain("error hidden");
+});
+
 // --- A usage limit -------------------------------------------------------------------
 
 step(

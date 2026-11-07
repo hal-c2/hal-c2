@@ -269,6 +269,13 @@ Feature: Runs, interruptions and the queue
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A later run that fails the same way shows its error again
+    Given the thread shows the error "Rate limited"
+    And the user dismisses the error
+    When a later run of the thread fails with "Rate limited"
+    Then the thread shows "Rate limited" as its error
+
   @shared @backlog-mobile @priority-high
   Scenario: A usage limit is one warning line naming when to retry
     Given the provider stopped the turn at its usage limit, resetting at the top of an hour

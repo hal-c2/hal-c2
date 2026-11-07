@@ -215,7 +215,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   const muted = new Set(mutedStore.load());
   /** Turns the user stopped in this session: their work stays open once they settle. */
   const interruptedTurns = new Set<string>();
-  /** The error the user dismissed on each thread; a different one shows again. */
+  /**
+   * The failure the user dismissed on each thread, as its run and message: another
+   * error, or the same one from a later run, shows again.
+   */
   const dismissedErrors = new Map<string, string>();
   /** The error the timeline last drew, to redraw when the shell row says another. */
   let shownError = "null";
@@ -265,11 +268,13 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     const row = detail ? shellThread(detail.id) : null;
     const message = row?.session?.lastError;
     if (!detail || !row || !message) return null;
+    const key = `${row.latestTurn?.turnId ?? ""}\u0000${message}`;
     return {
       message,
+      key,
       usageLimit:
         row.lastErrorClass === "usage_limit" ? { resetAt: row.usageLimitResetAt ?? null } : null,
-      dismissed: dismissedErrors.get(detail.id) === message,
+      dismissed: dismissedErrors.get(detail.id) === key,
     };
   };
 
@@ -1104,7 +1109,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.error.show": {
         const error = threadError();
         if (!detail || !error) return true;
-        if (action === "timeline.error.dismiss") dismissedErrors.set(detail.id, error.message);
+        if (action === "timeline.error.dismiss") dismissedErrors.set(detail.id, error.key);
         else dismissedErrors.delete(detail.id);
         publishTimeline();
         return true;
