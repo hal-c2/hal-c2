@@ -19,6 +19,7 @@
 #include <QTimeZone>
 
 #include <cmath>
+#include <utility>
 
 #include "FakeThreads.h"
 #include "Harness.h"
@@ -475,6 +476,112 @@ const Steps steps([] {
   step(S("the earlier turns are loaded without the user scrolling"), [](World& world, const Captures&, const Table&) {
     expectEveryTurn(world);
     expect(!sentSince(world, S("more")).isEmpty(), S("the MC was not asked for earlier turns"));
+  });
+
+  // A thread still loading, and switching to one.
+  step(S("the user opens a thread whose agent is still working"), [](World& world, const Captures&, const Table&) {
+    // The long thread's agent is still writing (its running turn), and its
+    // messages are held back: the MC is slow to answer its stream.
+    world.back();
+    world.item(S("homeScreen"));
+    forgetThread(world);
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    fake.slow = true;
+    openThread(world, kTitle);
+    expect(store(world)->activeTimeline() && timeline(world).status() != QLatin1String("live"),
+           S("the thread's messages arrived at once; %1").arg(describe(timeline(world))));
+  });
+  step(S("the thread's messages arrive"), [](World& world, const Captures&, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    fake.slow = false;
+    const QList<std::function<void()>> waiting = std::exchange(fake.waiting, {});
+    for (const std::function<void()>& answer : waiting) answer();
+    waitLive(world);
+  });
+  step(S("the view shows the latest output at the end, not the start of the thread"), [](World& world, const Captures&, const Table&) {
+    waitAtEnd(world);
+    world.waitFor([&] { return world.shows(S("The cart"), false); },
+                  [&] { return S("the latest output on screen; the screen says: %1").arg(world.texts().join(S(" | "))); });
+  });
+  step(S("the user is reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = haveThread(world, c[0]);
+    seedLong(world, id);
+    // Its own last words, so another thread showing them would show.
+    setEntity(world.mc, id, S("turn-item"), S("reply"), {{S("text"), S("Tax totals are done")}});
+    world.back();
+    world.item(S("homeScreen"));
+    world.thread = id;
+    openThread(world, c[0]);
+    waitLive(world);
+    world.waitFor([&] { return world.shows(S("Tax totals are done"), false); },
+                  [&] { return S("the thread's own reply on screen; the screen says: %1").arg(world.texts().join(S(" | "))); });
+  });
+  step(S("the user switches to %1 while its messages are still loading").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = haveThread(world, c[0]);
+    seedLong(world, id);
+    world.thread = id;
+    forgetThread(world);
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    fake.slow = true;
+    world.item(S("homeScreen"));
+    openThread(world, c[0]);
+    expect(store(world)->activeTimeline() && timeline(world).status() != QLatin1String("live"),
+           S("the thread's messages arrived at once; %1").arg(describe(timeline(world))));
+  });
+  step(S("no message of %1 is shown under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(shownThread(world) == c[1], S("the screen shows %1").arg(shownThread(world)));
+    expect(!world.shows(S("Tax totals are done"), false),
+           S("a message of %1 is shown under %2; the screen says: %3").arg(c[0], c[1], world.texts().join(S(" | "))));
+    TimelineModel& model = timeline(world);
+    bool foreign = false;
+    for (int row = 0; row < model.rowCount(); ++row) foreign = foreign || role(model, row, TimelineModel::TextRole).toString().contains(S("Tax totals"));
+    expect(!foreign, S("the open thread holds %1's messages; %2").arg(c[0], describe(model)));
+    // The held messages arrive for the next scenario's clean state.
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    fake.slow = false;
+    const QList<std::function<void()>> waiting = std::exchange(fake.waiting, {});
+    for (const std::function<void()>& answer : waiting) answer();
+    waitLive(world);
+  });
+
+  // A tall reply that arrived while the user was elsewhere (upstream #24622):
+  // taller than the view, with a table in it, as tst_Timeline.qml makes one.
+  step(S("%1 got a long reply while the user was in another thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = haveThread(world, c[0]);
+    seedLong(world, id);
+    const QString words = S("words that run on long enough to wrap the column they are in onto a second line");
+    QString text = S("A paragraph before the table, %1.\n\nAnother one, %1.\n\n").arg(words);
+    text += S("| Item | Finding | Now |\n|---|---|---|\n");
+    for (int i = 0; i < 16; ++i) text += S("| #%1 | `code` and %2 | a worker fixing it, with %2 |\n").arg(400 + i).arg(words);
+    text += S("\nThese are still going:\n");
+    for (int i = 0; i < 3; ++i) text += S("- **#%1:** %2.\n").arg(470 + i).arg(words);
+    text += S("\nA paragraph after the list, %1.").arg(words);
+    setEntity(world.mc, id, S("turn-item"), S("reply"), {{S("text"), text}});
+    watch(world).reading = id;
+  });
+  // A thread's name, not a terminal's (term-1 is TerminalSteps' step).
+  step(S("the user switches to \"(?!term-)([^\"]*)\""), [](World& world, const Captures& c, const Table&) {
+    world.thread = haveThread(world, c[0]);
+    world.back();
+    world.item(S("homeScreen"));
+    openThread(world, c[0]);
+    waitLive(world);
+  });
+  step(S("the user presses %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(c[0] == S("Scroll to end"), S("no such control as %1").arg(c[0]));
+    world.thread = haveThread(world, c[1]);
+    world.back();
+    world.item(S("homeScreen"));
+    openThread(world, c[1]);
+    waitLive(world);
+    scrollAway(world);
+    world.tap(S("jumpToLatest"));
+  });
+  step(S("the end of the reply is in view, with no %1 left to press").arg(q), [](World& world, const Captures&, const Table&) {
+    waitAtEnd(world);
+    world.waitFor([&] { return world.shows(S("A paragraph after the list"), false); },
+                  [&] { return S("the end of the reply on screen; %1").arg(describeList(rows(world))); });
+    expect(world.find(S("jumpToLatest")) == nullptr, S("\"Scroll to end\" is still offered at the end"));
   });
 
   // Nothing left to load.

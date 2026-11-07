@@ -130,7 +130,7 @@ Feature: Moving through a thread and following links
 
   # Upstream #24622: a tall reply that arrived while the user was away left the switched thread,
   # and "Scroll to end", hundreds of pixels short of the end.
-  @shared @backlog @priority-high
+  @shared @backlog-desktop @backlog-tui @priority-high
   Scenario Outline: <action> lands on the real end of a thread with a tall new reply
     Given "Fix checkout" got a long reply while the user was in another thread
     When <action>
@@ -142,14 +142,14 @@ Feature: Moving through a thread and following links
       | the user presses "Scroll to end" in "Fix checkout"   |
 
   # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-desktop @priority-high
   Scenario: A running thread opens at its latest output while its messages are still loading
     Given the user opens a thread whose agent is still working
     When the thread's messages arrive
     Then the view shows the latest output at the end, not the start of the thread
 
   # Upstream #21560: switching threads never shows the previous thread's messages.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-desktop @priority-high
   Scenario: Switching threads shows only the chosen thread's messages
     Given the user is reading "Tax fix"
     When the user switches to "Docs" while its messages are still loading
