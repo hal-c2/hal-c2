@@ -2062,7 +2062,8 @@ defmodule HalC2.Test.Mc.World do
   Wakes on the stream's own commits, never on a timer. `timeout` ms with no commit
   fails it, unless the MC still has effects waiting or running (a checkpoint's git
   fsyncs on a busy disk take seconds): those are waited out on the effect worker's
-  drain, and each effect is waited out once.
+  drain (each effect once, for at most six times `timeout`, 30s at most), and a
+  stalled one fails it, named.
   """
   def await_thread(context, title, fun, timeout \\ 5_000) do
     id = thread_id(context, title)
@@ -2079,12 +2080,23 @@ defmodule HalC2.Test.Mc.World do
       timeout ->
         case Enum.reject(effects_in_flight(), &MapSet.member?(drained, &1["id"])) do
           [] ->
-            runs = last |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"])
-            flunk("#{id} never reached the expected state (runs: #{inspect(runs)})")
+            flunk("#{id} never reached the expected state (runs: #{run_statuses(last)})")
 
           effects ->
+            # Bounded well under ExUnit's 60s, so a stuck effect is named, not killed.
+            bound = min(6 * timeout, 30_000)
+
             for thread <- Enum.uniq(Enum.map(effects, & &1["threadId"])),
-                do: :ok = HalC2.Orchestration.Effects.drain(thread, :infinity)
+                HalC2.Orchestration.Effects.drain(thread, bound) != :ok do
+              stalled =
+                for effect <- effects_in_flight(),
+                    do: Map.take(effect, ~w(type threadId status))
+
+              flunk(
+                "#{id} never reached the expected state (runs: #{run_statuses(last)}): " <>
+                  "effects of #{thread} still in flight after #{bound}ms: #{inspect(stalled)}"
+              )
+            end
 
             state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
             drained = MapSet.union(drained, MapSet.new(effects, & &1["id"]))
@@ -2095,6 +2107,9 @@ defmodule HalC2.Test.Mc.World do
         end
     end
   end
+
+  defp run_statuses(state),
+    do: state |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"]) |> inspect()
 
   # The effects this MC's worker has recorded and not finished.
   defp effects_in_flight do
