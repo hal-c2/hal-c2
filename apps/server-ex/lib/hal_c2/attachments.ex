@@ -129,16 +129,38 @@ defmodule HalC2.Attachments do
     Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
       case claim_one(thread_id, attachment) do
         {:ok, claimed} -> {:cont, {:ok, [claimed | acc]}}
-        {:error, _} = error -> {:halt, error}
+        {:error, _} = error -> {:halt, {error, acc}}
       end
     end)
     |> case do
-      {:ok, claimed} -> {:ok, Enum.reverse(claimed)}
-      error -> error
+      {:ok, claimed} ->
+        {:ok, Enum.reverse(claimed)}
+
+      # One that cannot be claimed leaves none of the message's uploads claimed.
+      {error, claimed} ->
+        release(attachments, Enum.reverse(claimed))
+        error
     end
   end
 
   def claim(_thread_id, _attachments), do: {:ok, []}
+
+  @doc """
+  Gives back what `claim/2` returned for `attachments` when the MC then refuses the
+  message: the thread's copies go, and the pending uploads they were copied from stay,
+  so the client can send them again. Attachments the thread already had are not touched.
+  """
+  def release(attachments, claimed) when is_list(attachments) and is_list(claimed) do
+    for {%{"id" => from}, %{"id" => id}} <- Enum.zip(attachments, claimed),
+        from != id,
+        safe_id?(id),
+        file <- Path.wildcard(Path.join(dir(), id <> ".*")),
+        do: File.rm(file)
+
+    :ok
+  end
+
+  def release(_attachments, _claimed), do: :ok
 
   defp claim_one(thread_id, %{"id" => "pending-" <> rest = id} = attachment) do
     with true <- safe_id?(id) || {:error, "Attachment '#{attachment["name"]}' has a bad id."},
@@ -149,7 +171,7 @@ defmodule HalC2.Attachments do
              {:error, "Attachment '#{attachment["name"]}' does not match its upload."} do
       claimed_id = "#{thread_segment(thread_id)}-#{rest}"
       File.cp!(source, Path.join(dir(), claimed_id <> Path.extname(source)))
-      {:ok, Map.put(attachment, "id", claimed_id)}
+      {:ok, attachment |> Map.put("id", claimed_id)}
     else
       [] -> {:error, "Attachment '#{attachment["name"]}' was not uploaded."}
       {:error, message} when is_binary(message) -> {:error, message}
@@ -161,47 +183,65 @@ defmodule HalC2.Attachments do
 
   @doc """
   `assets.persistChatAttachments`: images a client sends inline (pasted), stored
-  straight into the thread as its attachments.
+  straight into the thread as its attachments. Every image is checked before any is
+  written, so one that is not what it claims to be stores none of the message's images.
   """
   def persist(%{"threadId" => thread_id, "attachments" => attachments}) do
-    Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
-      with "data:" <> rest <- attachment["dataUrl"] || "",
-           [header, data] <- String.split(rest, ",", parts: 2),
-           true <- String.ends_with?(header, ";base64"),
-           {:ok, bytes} <- Base.decode64(data, ignore: :whitespace),
-           true <- byte_size(bytes) <= @max_image_bytes do
-        mime = attachment["mimeType"] || String.replace_suffix(header, ";base64", "")
-        id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
-        File.mkdir_p!(dir())
-        File.write!(Path.join(dir(), id <> extension("image", mime, attachment["name"])), bytes)
-
-        stored =
-          %{
-            "type" => "image",
-            "id" => id,
-            "name" => attachment["name"],
-            "mimeType" => mime,
-            "sizeBytes" => byte_size(bytes)
-          }
-          |> then(
-            &if(attachment["source"], do: Map.put(&1, "source", attachment["source"]), else: &1)
-          )
-
-        {:cont, {:ok, [stored | acc]}}
-      else
-        _ ->
-          {:halt,
-           {:error,
-            %{
-              "_tag" => "PersistChatAttachmentsError",
-              "message" => "Image '#{attachment["name"]}' could not be saved."
-            }}}
+    attachments
+    |> Enum.reduce_while({:ok, []}, fn attachment, {:ok, acc} ->
+      case pasted_image(attachment) do
+        {:ok, decoded} -> {:cont, {:ok, [{attachment, decoded} | acc]}}
+        :error -> {:halt, {:error, persist_error(attachment)}}
       end
     end)
     |> case do
-      {:ok, stored} -> {:ok, %{"attachments" => Enum.reverse(stored)}}
-      error -> error
+      {:ok, decoded} ->
+        {:ok,
+         %{"attachments" => decoded |> Enum.reverse() |> Enum.map(&store_pasted(thread_id, &1))}}
+
+      error ->
+        error
     end
+  end
+
+  defp persist_error(attachment) do
+    %{
+      "_tag" => "PersistChatAttachmentsError",
+      "message" => "Image '#{attachment["name"]}' could not be saved."
+    }
+  end
+
+  # The data URL must be a base64 image of the type and size the client declared.
+  defp pasted_image(attachment) do
+    with "data:" <> rest <- attachment["dataUrl"] || "",
+         [header, data] <- String.split(rest, ",", parts: 2),
+         [type, "base64"] <- header |> String.split(";") |> Enum.map(&String.trim/1),
+         "image/" <> _ <- String.downcase(type),
+         declared = attachment["mimeType"] || type,
+         true <- String.downcase(declared) == String.downcase(type),
+         {:ok, bytes} <- Base.decode64(data, ignore: :whitespace),
+         true <- bytes != "" and byte_size(bytes) <= @max_image_bytes,
+         true <-
+           is_nil(attachment["sizeBytes"]) or attachment["sizeBytes"] == byte_size(bytes) do
+      {:ok, {declared, bytes}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp store_pasted(thread_id, {attachment, {mime, bytes}}) do
+    id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+    File.mkdir_p!(dir())
+    File.write!(Path.join(dir(), id <> extension("image", mime, attachment["name"])), bytes)
+
+    %{
+      "type" => "image",
+      "id" => id,
+      "name" => attachment["name"],
+      "mimeType" => mime,
+      "sizeBytes" => byte_size(bytes)
+    }
+    |> then(&if(attachment["source"], do: Map.put(&1, "source", attachment["source"]), else: &1))
   end
 
   @doc "The file of an attachment on this MC, or `nil`."

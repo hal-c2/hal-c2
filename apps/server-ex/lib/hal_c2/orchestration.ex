@@ -208,9 +208,18 @@ defmodule HalC2.Orchestration do
     # Uploads join the thread before the message names them.
     case HalC2.Attachments.claim(thread_id, command["attachments"] || []) do
       {:ok, attachments} ->
-        with {:ok, _} = sent <- dispatch_message(thread_id, claimed(command, attachments)) do
-          implemented_plan(thread_id, command["sourcePlanRef"])
-          sent
+        case dispatch_message(thread_id, claimed(command, attachments)) do
+          {:ok, _} = sent ->
+            implemented_plan(thread_id, command["sourcePlanRef"])
+            sent
+
+          # A message the MC refuses gives its uploads back.
+          {:error, _} = refused ->
+            HalC2.Attachments.release(command["attachments"] || [], attachments)
+            refused
+
+          other ->
+            other
         end
 
       {:error, _} = error ->
