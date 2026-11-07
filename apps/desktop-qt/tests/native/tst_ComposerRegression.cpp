@@ -829,19 +829,48 @@ private slots:
     QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 1);
     QVERIFY(shell.composerState().value(QStringLiteral("text")).toString().contains(
         QStringLiteral("[@Other thread](hal-c2-context://v1/thread/thread_")));
-    const QString id = shell.composerState()
-                           .value(QStringLiteral("threadContexts"))
-                           .toList()
-                           .constFirst()
-                           .toMap()
-                           .value(QStringLiteral("id"))
-                           .toString();
+    const auto chipId = [&shell] {
+      return shell.composerState()
+          .value(QStringLiteral("threadContexts"))
+          .toList()
+          .constFirst()
+          .toMap()
+          .value(QStringLiteral("id"))
+          .toString();
+    };
+    const auto place = [&shell](const QString& text, int cursor) {
+      shell.bridge->dispatch(QStringLiteral("composer.text.set"), QVariantMap{{QStringLiteral("target"), shell.key},
+                                                                               {QStringLiteral("edit"), shell.edit()},
+                                                                               {QStringLiteral("text"), text},
+                                                                               {QStringLiteral("cursor"), cursor}});
+    };
+    // More words after the link, the caret among them: stripping the link
+    // before the caret shifts it back by the link's length, not forward
+    // into the words after it.
+    const QString linked = shell.composerState().value(QStringLiteral("text")).toString();
+    place(linked + QStringLiteral("please and more"), int(linked.size()) + 6);
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("cursor")).toInt(), int(linked.size()) + 6);
 
     // What the chip's click sends (Composer.qml).
-    shell.bridge->dispatch(QStringLiteral("composer.terminalContext.remove"), QVariantMap{{QStringLiteral("id"), id}});
+    shell.bridge->dispatch(QStringLiteral("composer.terminalContext.remove"), QVariantMap{{QStringLiteral("id"), chipId()}});
     QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 0);
-    QTRY_VERIFY(!shell.composerState().value(QStringLiteral("text")).toString().contains(QStringLiteral("hal-c2-context")));
-    QCOMPARE(shell.composerState().value(QStringLiteral("text")).toString().trimmed(), QStringLiteral("look"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("look please and more"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("cursor")).toInt(), int(QStringLiteral("look please").size()));
+
+    // Again, with the caret inside the link: it lands where the link started.
+    place(QStringLiteral("look please @ and more"), 13);
+    QTRY_VERIFY(std::any_of(shell.composerState().value(QStringLiteral("suggestions")).toList().cbegin(),
+                            shell.composerState().value(QStringLiteral("suggestions")).toList().cend(), [](const QVariant& entry) {
+                              return entry.toMap().value(QStringLiteral("id")).toString() == QLatin1String("thread:env-a:t2");
+                            }));
+    shell.bridge->dispatch(QStringLiteral("composer.suggest.select"),
+                           QVariantMap{{QStringLiteral("id"), QStringLiteral("thread:env-a:t2")}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("threadContexts")).toList().size(), 1);
+    const QString relinked = shell.composerState().value(QStringLiteral("text")).toString();
+    place(relinked, int(relinked.indexOf(QStringLiteral("[@"))) + 3);
+    shell.bridge->dispatch(QStringLiteral("composer.terminalContext.remove"), QVariantMap{{QStringLiteral("id"), chipId()}});
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("text")).toString(), QStringLiteral("look please and more"));
+    QCOMPARE(shell.composerState().value(QStringLiteral("cursor")).toInt(), int(QStringLiteral("look please").size()));
   }
 
   // On an environment without file attachments, the refusal also caught a

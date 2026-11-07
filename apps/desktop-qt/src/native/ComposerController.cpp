@@ -396,11 +396,32 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
       bool published = false;
       if (threadLink) {
         const QString text = draft(target);
-        const QString stripped =
-            QString(text).remove(QRegularExpression(QStringLiteral(" ?\\[@[^\\]]*\\]\\(hal-c2-context://v1/thread/thread_%1\\)")
-                                                        .arg(QRegularExpression::escape(id))));
+        const QRegularExpression link(QStringLiteral(" ?\\[@[^\\]]*\\]\\(hal-c2-context://v1/thread/thread_%1\\)")
+                                          .arg(QRegularExpression::escape(id)));
+        // The caret keeps its place among the words that stay: a link
+        // stripped before it moves it back by the link's length, and one
+        // stripped around it leaves it where the link started.
+        const int cursor = std::clamp(kept.cursor, 0, int(text.size()));
+        QString stripped;
+        stripped.reserve(text.size());
+        qsizetype at = 0;
+        qsizetype removed = 0;
+        std::optional<int> spanned;
+        for (auto matches = link.globalMatch(text); matches.hasNext();) {
+          const QRegularExpressionMatch match = matches.next();
+          stripped += text.sliced(at, match.capturedStart() - at);
+          if (!spanned) {
+            if (match.capturedEnd() <= cursor) {
+              removed += match.capturedLength();
+            } else if (match.capturedStart() < cursor) {
+              spanned = int(match.capturedStart() - removed);
+            }
+          }
+          at = match.capturedEnd();
+        }
+        stripped += text.sliced(at);
         if (stripped != text) {
-          setText(target, stripped, std::min(kept.cursor, int(stripped.size())));
+          setText(target, stripped, spanned.value_or(int(cursor - removed)));
           published = true;
         }
       }
