@@ -135,6 +135,7 @@ Feature: When source control goes wrong
       | prints more than the limit     | produced too much output |
       | cannot be started              | could not be started |
 
+  # Upstream #14140: Bitbucket API requests are bounded by a 30s timeout
   @backlog @mc @priority-low
   Scenario Outline: A Bitbucket request that stalls gives up after 30 seconds
     Given Bitbucket <stalls>
@@ -243,6 +244,7 @@ Feature: When source control goes wrong
       | "acme/shop" typed with a line break and a tab inside     | "acme/shop" with each one shown as a space      |
       | a name of 1,000 characters                               | its first 256 characters                        |
 
+  # Upstream #8645: a failed git command names its cause
   @backlog @mc
   Scenario: A failed git command names its cause
     Given a git command fails with a well-known error

@@ -118,6 +118,7 @@ Feature: Projects settings panel
     When the user manages "shop" in settings
     Then the user is told to keep the project picked while browsing other pages to find more of its settings
 
+  # Upstream #14490: Add project hides disconnected environments
   @backlog @shared
   Scenario: Add project offers only connected environments
     Given one environment is connected and another is switched off in Connections
@@ -125,12 +126,14 @@ Feature: Projects settings panel
     Then the switched-off environment is not offered
     And with a single connected environment the chooser is skipped
 
+  # Upstream #14490: Add project with no connected environment points at Connections
   @backlog @shared
   Scenario: Add project with no connected environment points at Connections
     Given every environment is switched off
     When the user starts Add project
     Then the user is directed to Connections
 
+  # Upstream #14527: start a new project from just a name
   @backlog @shared @mc
   Scenario: A new project is started from just a name
     Given a connected environment
@@ -139,12 +142,14 @@ Feature: Projects settings panel
     And the project is titled "Pinball Stats"
     And a new thread opens in it
 
+  # Upstream #14527: start a new project from just a name
   @backlog @mc
   Scenario: A taken project folder gets a numeric suffix
     Given a new project "Pinball Stats" already exists
     When the user creates another new project named "Pinball Stats"
     Then its folder is "pinball-stats-2"
 
+  # Upstream #14527: start a new project from just a name
   @backlog @mc
   Scenario: A new project survives a failed first commit
     Given Git has no user name or email
@@ -152,6 +157,7 @@ Feature: Projects settings panel
     Then the project is still created
     And a warning says why the first commit failed
 
+  # Upstream #14527: start a new project from just a name
   @backlog @shared @priority-low
   Scenario: The new project name step names the machine
     Given more than one environment is connected
@@ -159,12 +165,14 @@ Feature: Projects settings panel
     Then it lists the machines and the path line names the one chosen
     And switching machine keeps the typed name
 
+  # Upstream #14527: start a new project from just a name
   @backlog @shared
   Scenario: A new project can also be published as a private repository
     Given GitHub is signed in
     When the user creates a new project with "Create private repository on GitHub" on
     Then the repository is published after the project is created
 
+  # Upstream #18901: Cmd+Enter creates the project while an option is highlighted
   @backlog @shared @priority-low
   Scenario: mod+Enter creates the new project while an option is highlighted
     Given the user typed a name in the New project step
@@ -174,6 +182,7 @@ Feature: Projects settings panel
     Then the project is created and the option is left as it was
     But pressing Enter alone toggles the highlighted option
 
+  # Upstream #17860: a new project can be published to any ready host
   @backlog @shared @mobile
   Scenario: A new project can be published to any ready host
     Given GitHub and GitLab are both signed in
@@ -181,6 +190,7 @@ Feature: Projects settings panel
     Then the user can pick GitHub or GitLab, with GitHub first
     And the repository is published to the chosen host, and the messages name it
 
+  # Upstream #17860: only hosts that can say where the repository goes are offered
   @backlog @shared @mobile @priority-low
   Scenario Outline: A host is offered for a new project only when it can say where the repository goes
     Given <host> is signed in <how>
@@ -193,6 +203,7 @@ Feature: Projects settings panel
       | Bitbucket    | with an API token that names no username | not offered |
       | Azure DevOps | with an account                         | not offered |
 
+  # Upstream #14635: cloned projects show their favicon instead of a monogram
   @backlog @mc @priority-low
   Scenario: A cloned project shows its favicon at once
     Given a repository with a favicon is being cloned as a project

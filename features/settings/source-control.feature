@@ -174,6 +174,7 @@ Feature: Source Control settings
 
   # Bitbucket credentials entered in Settings instead of the server's environment variables.
   # The tokens live in the environment's secret store and never reach a client.
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
   @backlog @desktop @mobile
   Scenario: A Bitbucket access token is saved from Source Control settings
     Given Bitbucket is not configured on the environment
@@ -181,18 +182,21 @@ Feature: Source Control settings
     Then Bitbucket is configured on the environment without a restart
     And the token is shown as a saved, masked value
 
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
   @backlog @desktop @mobile
   Scenario: Saving a Bitbucket sign-in method clears the other one
     Given Bitbucket has a saved API token and an Atlassian account email
     When the user saves an access token
     Then the API token and the email are cleared
 
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
   @backlog @desktop @mobile
   Scenario: Removing Bitbucket credentials leaves Bitbucket unconfigured
     Given Bitbucket has a saved access token
     When the user removes the Bitbucket credentials
     Then Bitbucket is not configured on the environment
 
+  # Upstream #14103: Bitbucket credentials are saved from Source Control settings
   @backlog @mc @priority-high
   Scenario: A saved Bitbucket token stays out of the settings file and every client payload
     Given the user saved a Bitbucket API token on the environment
@@ -200,6 +204,7 @@ Feature: Source Control settings
     Then the client learns only that a token is set
     And the token is not written to the settings file
 
+  # Upstream #16322: choose the GitHub account per host
   @backlog @shared
   Scenario: The user chooses which GitHub account an MC uses for each host
     Given the user is signed in to GitHub as "work" and "personal" on one host
@@ -207,12 +212,14 @@ Feature: Source Control settings
     Then the MC uses "work" for that host's requests from then on
     And a host turned off in settings refuses its requests and says where to turn it on
 
+  # Upstream #16322: a GitHub token is saved in Settings
   @backlog @mc
   Scenario: GitHub works from a saved token without the GitHub CLI
     Given the user saved a GitHub token
     When the MC talks to GitHub
     Then it uses the token and does not need the GitHub CLI
 
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @shared
   Scenario: A GitCafe token is saved from Source Control settings
     Given GitCafe is not signed in through its CLI or environment
@@ -220,18 +227,21 @@ Feature: Source Control settings
     Then GitCafe works at once, using the saved token before any from the environment or the CLI
     And the token is only sent to git.cafe, never to its staging host
 
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @shared
   Scenario: A host's saved secret is never shown back
     Given the user saved a secret for a source control host
     When the user opens that host's settings on any client
     Then the field says a secret is saved without showing it
 
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @shared @priority-low
   Scenario: Removing a host's settings clears them
     Given a source control host has saved settings and a token
     When the user removes that host's settings
     Then the host's settings and token are gone and the host falls back to its environment or CLI sign-in
 
+  # Upstream #17901: host settings live on each host definition, with a GitCafe token
   @backlog @mc @priority-low
   Scenario: Settings of a host this MC does not know are kept
     Given the settings file holds settings for a source control host this MC does not ship

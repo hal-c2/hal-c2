@@ -135,6 +135,7 @@ Feature: Snoozing threads
     Then "Refactor cart" is snoozed
 
   # A queued message the user wrote still blocks the snooze (above); automatic wakes do not.
+  # Upstream #19099: snoozed threads allow queued automatic wakes
   @mc @backlog
   Scenario Outline: A thread with an automatic wake queued can be snoozed
     Given "Refactor cart" has <wake> queued
@@ -147,6 +148,7 @@ Feature: Snoozing threads
       | a notification wake                      |
       | the completion of a task it delegated    |
 
+  # Upstream #19099: snoozed threads allow queued automatic wakes
   @mc @backlog @priority-low
   Scenario Outline: Wakes held for output that was thrown away are cancelled
     Given "Refactor cart" has a wake queued for a provider notification
@@ -160,6 +162,7 @@ Feature: Snoozing threads
       | the MC recovers "Refactor cart" at startup |
       | the MC shuts down                          |
 
+  # Upstream #2829: the new orchestrator
   @mc @desktop @mobile @backlog @priority-high
   Scenario: A late failure from an earlier run does not wake a snoozed thread
     Given "Refactor cart" is snoozed until tomorrow
