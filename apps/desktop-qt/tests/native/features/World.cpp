@@ -1,6 +1,7 @@
 #include "MacPlatform.h"
 #include "World.h"
 
+#include <QElapsedTimer>
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QDir>
@@ -223,16 +224,24 @@ void World::sync() {
   bool done = false;
   const qsizetype callsBefore = mc.calls.size();
   const qsizetype connectionsBefore = mc.connections.size();
+  QElapsedTimer clock;
+  clock.start();
+  qint64 reachedAt = -1;
+  const auto reached = [&] {
+    for (qsizetype i = callsBefore; reachedAt < 0 && i < mc.calls.size(); ++i) {
+      if (mc.calls.at(i).method == QLatin1String("test.barrier")) reachedAt = clock.elapsed();
+    }
+  };
   m_native->client()->call(m_native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
   // Says where a lost barrier stopped: before the fake, on a dropped
-  // connection, or after its answer.
-  waitFor([&done] { return done; }, [&] {
-    bool seen = false;
-    for (qsizetype i = callsBefore; i < mc.calls.size(); ++i) seen = seen || mc.calls.at(i).method == QLatin1String("test.barrier");
-    return QStringLiteral("a round trip through the MC (client ready %1, barrier %2 the fake, connections %3 -> %4)")
+  // connection, or after its answer, and when.
+  waitFor([&] { reached(); return done; }, [&] {
+    reached();
+    return QStringLiteral("a round trip through the MC (client ready %1, barrier reached the fake at %2 ms of %3, connections %4 -> %5)")
         .arg(m_native->client()->isReady())
-        .arg(seen ? QStringLiteral("reached") : QStringLiteral("never reached"))
+        .arg(reachedAt)
+        .arg(clock.elapsed())
         .arg(connectionsBefore)
         .arg(mc.connections.size());
   });
