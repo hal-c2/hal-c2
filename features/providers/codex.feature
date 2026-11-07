@@ -1,4 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24600
+#   https://github.com/pingdotgg/t3code/pull/21787
+#   https://github.com/pingdotgg/t3code/pull/23840
+#   https://github.com/pingdotgg/t3code/pull/24200
+#   https://github.com/pingdotgg/t3code/pull/23361
+#   https://github.com/pingdotgg/t3code/pull/19936
+#   https://github.com/pingdotgg/t3code/pull/24737
+#   https://github.com/pingdotgg/t3code/pull/19154
+#   https://github.com/pingdotgg/t3code/pull/20537
+#   https://github.com/pingdotgg/t3code/pull/15623
 #   https://github.com/pingdotgg/t3code/pull/18991
 #   https://github.com/pingdotgg/t3code/pull/18415
 #   https://github.com/pingdotgg/t3code/pull/21366
@@ -43,6 +53,9 @@
 #   apps/server/src/provider/CodexToolPresentation.ts, apps/server/src/provider/Layers/codexLaunchArgs.ts
 #   packages/contracts/src/rpc.ts (provider.uploadFeedback, provider.consumeResetCredit)
 #   https://github.com/pingdotgg/t3code/pull/15389
+#   https://github.com/pingdotgg/t3code/pull/25426
+#   https://github.com/pingdotgg/t3code/pull/22541
+#   https://github.com/pingdotgg/t3code/pull/21750
 
 @plugin-codex @mc
 Feature: Codex
@@ -405,11 +418,46 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows the account's email and its ChatGPT Pro plan
 
+  # Upstream #23361: a turn stopped by a ChatGPT sharing limit showed Codex's raw error. OpenAI's
+  # partner guidelines give each limit its own recovery.
+  @backlog @shared
+  Scenario Outline: A turn stopped by a ChatGPT plan limit says how to recover
+    Given Codex is signed in with <plan>
+    When a turn stops because the plan's limit for other apps is reached
+    Then the thread shows the ChatGPT limit with "<action>"
+
+    Examples:
+      | plan                               | action                  |
+      | a personal ChatGPT plan            | Manage usage            |
+      | a ChatGPT Business workspace       | Copy request for admin  |
+
+  @backlog @shared
+  Scenario: Copying the request for a workspace admin confirms it
+    Given a turn stopped at a ChatGPT Business workspace limit
+    When the user chooses "Copy request for admin"
+    Then the request for the admin is copied
+    And the user is told "Request copied · Send it to your workspace admin."
+
+  # Upstream #24200: the top Pro plan is now called Pro 500.
   @backlog @priority-low
-  Scenario: A ChatGPT Pro Max plan is shown by name
-    Given Codex is signed in with a ChatGPT Pro Max subscription
+  Scenario: A ChatGPT Pro 500 plan is shown by name
+    Given Codex is signed in with the ChatGPT plan Codex reports as "promax"
     When Codex's usage has been checked
-    Then Codex shows the account's email and its "ChatGPT Pro Max Subscription" plan
+    Then Codex shows the account's email and its "ChatGPT Pro 500 Subscription" plan
+
+  # Upstream #24200: OpenAI renamed its plans; Codex accounts showed the old names.
+  @backlog @priority-low
+  Scenario Outline: Codex shows the ChatGPT plan by its current name
+    Given Codex is signed in with the ChatGPT plan Codex reports as "<plan>"
+    When Codex's account is read
+    Then Codex shows the plan as "<name>"
+
+    Examples:
+      | plan                        | name                                 |
+      | prolite                     | ChatGPT Pro 100 Subscription         |
+      | pro                         | ChatGPT Pro 200 Subscription         |
+      | team                        | ChatGPT Business Subscription        |
+      | self_serve_business_prolite | ChatGPT Business Premium Subscription |
 
   @backlog @priority-low
   Scenario: A ChatGPT plan HAL-C2 does not know still signs the account in
@@ -439,6 +487,30 @@ Feature: Codex
     Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
     When the MC checks Codex's models
     Then the models no longer list the Ultrafast tier
+
+  # Upstream #15623: Codex inheriting Fast from its global config showed the catalog's Standard default.
+  @backlog @shared @priority-low
+  Scenario: A Fast tier set in Codex's own config shows as selected
+    Given Codex's global config sets the service tier to fast
+    When the user opens the service tier choices for a model that offers Fast
+    Then Fast is shown as selected
+    And a model that does not offer Fast keeps its own default
+
+  # Upstream #20537: slow model discovery threw away a successful account check.
+  @backlog @priority-high
+  Scenario: A signed-in Codex stays signed in when its model list is slow to arrive
+    Given Codex's account check succeeds
+    And Codex's model list does not arrive before the check's deadline
+    When the user opens the provider list
+    Then Codex is shown as signed in with a warning
+    And the last model list Codex gave is still offered
+
+  # Upstream #19154: a bare Codex binary passed its probes while every Code Mode call failed.
+  @backlog @priority-low
+  Scenario: A Codex on the path without its Code Mode host is passed over for the managed install
+    Given the codex command on the MC's path has no "codex-code-mode-host" beside it
+    When the MC picks the Codex to run
+    Then it runs the managed Codex installation instead
 
   Scenario: Codex signed in with an API key says so
     Given Codex is signed in with an OpenAI API key
@@ -481,6 +553,28 @@ Feature: Codex
     Given the user has never connected a ChatGPT account
     When the user connects one
     Then HAL-C2 explains that using Codex counts against the ChatGPT plan's usage
+
+  # Upstream #21750: a callback address pasted without its scheme still finishes the sign-in.
+  @backlog @mc
+  Scenario Outline: A pasted ChatGPT sign-in callback address is checked by where it points
+    Given the user is connecting ChatGPT to Codex and the browser could not reach the sign-in callback
+    When the user pastes the callback address <pasted>
+    Then <outcome>
+
+    Examples:
+      | pasted                                                 | outcome                                 |
+      | "http://localhost:1455/auth/callback?code=abc"         | the sign-in finishes                    |
+      | "localhost:1455/auth/callback?code=abc"                | the sign-in finishes                    |
+      | "  localhost:1455/auth/callback?code=abc" with spaces  | the sign-in finishes                    |
+      | "localhost:9999/auth/callback?code=abc"                | the address is refused as not the callback |
+      | "example.com:1455/auth/callback?code=abc"              | the address is refused as not the callback |
+
+  # Upstream #22541: a patch touching several files listed only the first.
+  @backlog @mc @shared
+  Scenario: A Codex change to several files lists every file
+    When Codex applies one patch that edits "a.ts", adds "b.ts" and renames "c.ts" to "d.ts"
+    Then the change in the timeline lists "a.ts", "b.ts" and "d.ts"
+    And the rename shows it came from "c.ts"
 
   Scenario: Codex offers its compact and feedback commands in the composer
     When the user types a slash in a Codex thread
@@ -535,6 +629,21 @@ Feature: Codex
     Given the "hal-c2" server is attached to a Codex thread on a model whose catalog replaces default mode
     When the user sends a message in default mode
     Then Codex is told the runtime, the model's name and slug, and the PR linking rules
+
+  # Upstream #24737: copies of Codex's own Plan and Default prompts drifted from the installed
+  # Codex, and a Default turn without the HAL-C2 server never left an earlier Plan mode.
+  @mc @plugin-codex @backlog
+  Scenario: Codex brings its own plan and default mode instructions
+    When the user sends a message in plan mode on a Codex thread
+    Then the turn names Codex's plan collaboration mode
+    And HAL-C2 sends no copy of Codex's mode instructions of its own
+
+  @mc @plugin-codex @backlog @priority-high
+  Scenario: A default-mode turn leaves plan mode even without the HAL-C2 server
+    Given a Codex thread without the "hal-c2" server whose last turn was in plan mode
+    When the user sends a message in default mode
+    Then the turn names Codex's default collaboration mode
+    And Codex may edit files again
 
   @mc @plugin-codex @backlog @priority-high
   Scenario: Codex gets HAL-C2's runtime and tool instructions again after compacting the thread
@@ -889,6 +998,36 @@ Feature: Codex
     When Codex reports an older state for that subagent
     Then the subagent stays completed
 
+  # Upstream #23840: a parent that ended its turn stayed idle when its native subagent finished
+  # later, until the user sent a message.
+  @backlog
+  Scenario: A Codex subagent that finishes after its parent's turn wakes the parent
+    Given a Codex turn started a subagent and then finished
+    When the subagent finishes
+    Then the parent thread starts a turn with the subagent's result
+    And the result is kept in the parent's history
+
+  @backlog
+  Scenario Outline: A finished Codex subagent does not wake a parent that <case>
+    Given a Codex subagent whose parent <case>
+    When the subagent finishes
+    Then the parent does not start another turn for it
+
+    Examples:
+      | case                         |
+      | was interrupted by the user  |
+      | is still running a turn      |
+      | is itself a Codex subagent   |
+
+  # Upstream #21787: a running Codex kept its launch-time sign-in and failed with expired tokens
+  # once the saved sign-in was renewed.
+  @backlog @priority-low
+  Scenario: A Codex turn keeps working after its ChatGPT sign-in is renewed
+    Given a Codex turn is running on a ChatGPT sign-in
+    When the sign-in's token expires and is renewed
+    Then the same turn carries on with the renewed sign-in
+    And a sign-in to another account is not used by that Codex
+
   @mc
   Scenario: Stopping a Codex turn stops its subagents
     Given a Codex turn with two subagents at work
@@ -956,6 +1095,14 @@ Feature: Codex
     Given the MC is waiting on Codex for an answer
     When Codex exits with code 1
     Then the request fails with "Codex App Server process exited with code 1"
+
+  # Upstream #24600: requests hung when Codex closed its output but kept running.
+  @backlog @priority-high
+  Scenario: A request to Codex fails soon after Codex closes its output while still running
+    Given the MC is waiting on Codex for an answer
+    When Codex closes its output and keeps running
+    Then within a quarter of a second the request fails saying Codex's input ended
+    And an exit Codex reports within that time keeps its code
 
   @mc
   Scenario: Output from Codex that is not a protocol message ends the session
@@ -1065,6 +1212,15 @@ Feature: Codex
     Then the command counts as already stopped
     And the running banner clears
 
+  # Upstream #19936: a dead command stayed running after Codex closed its native thread.
+  @backlog @priority-high
+  Scenario: A Codex command left running is interrupted when Codex closes the thread
+    Given Codex left a command running in a finished turn
+    When Codex closes its native thread
+    Then the command is shown as interrupted
+    And the turn stays completed
+    And a late completion for that command does not bring it back
+
   @backlog @mc @shared @plugin-codex
   Scenario Outline: /goal drives Codex's own goal
     When the user sends "<input>" in a Codex thread
@@ -1078,6 +1234,21 @@ Feature: Codex
       | /goal resume         |
       | /goal clear          |
       | /goal                |
+
+  # Upstream #25426: a Codex goal that Codex does not continue within its window is paused as the run ends.
+  @backlog @shared
+  Scenario: A Codex goal Codex does not continue is paused when the run ends
+    Given a Codex thread is working toward a goal
+    When the run ends and Codex does not continue the goal within five seconds
+    Then the goal shows as paused
+    And a turn Codex starts for it later is stopped
+
+  # Upstream #25426: setting a Codex goal flashed "Goal paused", and its first turn got the bare objective.
+  @backlog @priority-low
+  Scenario: Setting a Codex goal starts work on it without a paused flash
+    When the user sends "/goal ship the fix" in a Codex thread
+    Then the goal never shows as paused while it starts
+    And Codex is asked to start working toward "ship the fix"
 
   Rule: An MCP app a Codex tool returns runs inside the thread
 

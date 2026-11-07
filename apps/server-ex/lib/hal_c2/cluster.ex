@@ -166,6 +166,15 @@ defmodule HalC2.Cluster do
   def remove(id), do: GenServer.call(__MODULE__, {:remove, id})
 
   @doc """
+  Whether `id` was a member and was removed (`remove/1`), as this MC's member table has
+  it: not one that is only switched off, which can come back. False while this MC's
+  cluster is off, which knows no member.
+  """
+  def removed?(id) when is_binary(id) do
+    Process.whereis(__MODULE__) != nil and GenServer.call(__MODULE__, {:removed?, id}) == true
+  end
+
+  @doc """
   Switches the member `id` off (`on` false) or back on. Off, it is kept in the table
   and listed in `status/0` but treated as removed everywhere: unpinned, disconnected,
   its threads gone from the sidebar. Every member applies it, as with `remove/1`:
@@ -562,6 +571,9 @@ defmodule HalC2.Cluster do
     {:reply, :ok, merge_in(state, members)}
   end
 
+  def handle_call({:removed?, id}, _from, state),
+    do: {:reply, gone?(state.members[id]), state}
+
   def handle_call({:remove, id}, _from, state) do
     entry = state.members[id]
 
@@ -732,11 +744,21 @@ defmodule HalC2.Cluster do
     if merged == state.members do
       state
     else
+      before = state.members
       state = commit(%{state | members: merged})
       for mc <- state.transport.connected(), do: state.transport.send(mc, {:merge, merged})
+
+      # A member removed for good does not come back to finish a move to it.
+      for {id, entry} <- merged,
+          gone?(entry),
+          not gone?(before[id]),
+          do: HalC2.ThreadMove.removed(id)
+
       state
     end
   end
+
+  defp gone?(entry), do: entry != nil and not member?(entry) and not off?(entry)
 
   # Saves the table, pins its members and cuts off anyone no longer one.
   defp commit(state) do
