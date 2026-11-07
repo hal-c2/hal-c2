@@ -114,11 +114,13 @@ Feature: Answering the agent's questions from the composer
 
   @mobile
   Scenario: The question panel can be folded away to read the conversation
-    Given the agent is waiting for the user's answer
+    Given the agent asked "Which database?" and "Which cache?" in one request
+    And the user answered only "Which database?"
+    And the user typed "Valkey" as the answer to "Which cache?"
     When the user folds the question panel away
     Then the conversation can be read and the question stays pending
     When the user opens the question panel again
-    Then the question and what the user already answered are shown
+    Then "Which cache?" still reads "Valkey" and "Which database?" still has "Postgres" picked
 
   # Upstream #20391: pending questions no longer squash the composer on narrow windows
   @backlog @desktop @mobile

@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QQuickItem>
 
+#include <algorithm>
 #include <functional>
 
 #include "FakeThreads.h"
@@ -95,8 +96,8 @@ QList<QJsonObject> answersSent(World& world) {
   return sent;
 }
 
-void typeAnswer(World& world, const QString& text) {
-  world.tap(part(world, S("questionAnswer-database")));
+void typeAnswer(World& world, const QString& text, const QString& id = S("database")) {
+  world.tap(part(world, S("questionAnswer-") + id));
   world.type(text);
   world.sync();
 }
@@ -130,10 +131,6 @@ const Steps steps([] {
     reask(world, [](QJsonObject& question) { question.insert(S("allowCustomAnswer"), false); });
   });
 
-  step(S("the agent is waiting for the user's answer"), [](World& world, const Captures&, const Table&) {
-    world.item(S("questionOption-Postgres"));
-  });
-
   step(S("the user dismisses the question without answering"), [](World& world, const Captures&, const Table&) {
     world.tap(part(world, S("questionDismiss")));
     world.sync();
@@ -153,6 +150,10 @@ const Steps steps([] {
   });
 
   step(S("the user typed %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) { typeAnswer(world, c[0]); });
+
+  step(S("the user typed %1 as the answer to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    typeAnswer(world, c[0], kAsked.value(c[1]).first);
+  });
 
   step(S("submitting the answer fails"), [](World& world, const Captures&, const Table&) {
     world.mc.refusals.insert(S("runtime-request.respond"), S("The provider went away"));
@@ -174,10 +175,11 @@ const Steps steps([] {
   });
 
   step(S("the conversation can be read and the question stays pending"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.find(S("questionOption-Postgres")) == nullptr && world.find(S("questionAnswer-database")) == nullptr; },
+    const QStringList controls{S("questionOption-Postgres"), S("questionOption-Redis"), S("questionAnswer-database"), S("questionAnswer-cache")};
+    world.waitFor([&] { return std::none_of(controls.begin(), controls.end(), [&](const QString& name) { return world.find(name) != nullptr; }); },
                   [&] { return S("the question's options to fold away; the screen says: %1").arg(screenTexts(world)); });
     expect(world.find(S("questionTitle")) != nullptr, S("the folded question shows no title"));
-    expect(shownQuestion(world).value(S("requestId")) == QLatin1String("request-1"), S("the question is no longer pending"));
+    expect(shownQuestion(world).value(S("requestId")) == S("request-%1").arg(asks), S("the question is no longer pending"));
     expect(answersSent(world).isEmpty(), S("folding the question answered it"));
   });
 
@@ -186,10 +188,14 @@ const Steps steps([] {
     world.sync();
   });
 
-  step(S("the question and what the user already answered are shown"), [](World& world, const Captures&, const Table&) {
-    world.item(S("questionOption-Postgres"));
-    world.item(S("questionOption-SQLite"));
-    expect(world.shows(S("Which database?")), S("the question is not shown; the screen says: %1").arg(screenTexts(world)));
+  step(S("%1 still reads %1 and %1 still has %1 picked").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* field = world.item(S("questionAnswer-") + kAsked.value(c[0]).first);
+    expect(world.shows(c[0]) && field->property("text") == c[1],
+           S("the answer to %1 reads \"%2\"; the screen says: %3").arg(c[0], field->property("text").toString(), screenTexts(world)));
+    world.tap(part(world, S("questionPrevious")));
+    world.sync();
+    world.waitFor([&] { return world.shows(c[2]); }, [&] { return S("%1 again; the screen says: %2").arg(c[2], screenTexts(world)); });
+    expect(picked(world, c[3]), S("%1 is no longer picked").arg(c[3]));
   });
 
   step(S("the user cannot submit an answer to it"), [](World& world, const Captures&, const Table&) {

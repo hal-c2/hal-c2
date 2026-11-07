@@ -207,6 +207,62 @@ Item {
             compare(lastAction().payload.answers[ids[2]], "First 2 (Recommended)");
         }
 
+        // The terminal drawer handles its own keys and has no cursor: its
+        // digits are the shell's.
+        function test_digitsTypedElsewhereAreNotPicks() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            const terminal = createTemporaryQmlObject("import QtQuick; Item { property string got: \"\"; focus: true; Keys.onPressed: event => { got += event.text; event.accepted = true; } }", root);
+            Shell.publishTurn({ questions: [question(false)] });
+            waitForRendering(root);
+            terminal.forceActiveFocus();
+            keyClick(Qt.Key_2);
+            verify(!findChild(requests, "questionOption-SQLite").checked, "the terminal's 2 picked an option");
+            verify(!requests.advancing, "the terminal's 2 is about to send an answer");
+            compare(terminal.got, "2");
+        }
+
+        // A pick on the last question goes back to one skipped, not nowhere.
+        function test_lastPickGoesBackToASkippedQuestion() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            waitForRendering(root);
+            const title = findChild(requests, "questionTitle");
+            mouseClick(findChild(requests, "questionNext"));
+            compare(title.text, "Which cache?");
+            mouseClick(findChild(requests, "questionOption-Redis"));
+            tryVerify(() => !requests.advancing);
+            compare(title.text, "Which database?");
+            verify(lastAction()?.action !== "composer.question.answer", "half the answers were sent");
+        }
+
+        // Answers are kept while their request may still be pending, and no longer.
+        function test_keptAnswersGoOnceTheirRequestIsAnswered() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [question(false)] });
+            waitForRendering(root);
+            requests.type(requests.current, "DuckDB");
+            // Off to another thread and back: kept, then restored.
+            Shell.publishComposerTarget("thread-b", "", 0);
+            Shell.publishTurn({});
+            verify(requests.kept["request-q"] !== undefined, "the answer left behind is not kept");
+            Shell.publishComposerTarget("thread-a", "", 0);
+            Shell.publishTurn({ questions: [question(false)] });
+            compare(findChild(requests, "questionAnswer-database").text, "DuckDB");
+            compare(Object.keys(requests.kept).length, 0);
+            // Left again, and answered elsewhere meanwhile: the next request on
+            // its thread drops it.
+            Shell.publishComposerTarget("thread-b", "", 0);
+            Shell.publishTurn({});
+            Shell.publishComposerTarget("thread-a", "", 0);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            compare(Object.keys(requests.kept).length, 0, "an answered request is still kept");
+            // Replaced on the thread shown: the one answered is not kept.
+            requests.type(requests.current, "Postgres");
+            Shell.publishTurn({ questions: [question(false)] });
+            compare(Object.keys(requests.kept).length, 0, "the request replaced is kept");
+            compare(findChild(requests, "questionAnswer-database").text, "");
+        }
+
         function twoQuestions() {
             const asked = (id, text, labels) => ({
                     id: id,
@@ -259,7 +315,8 @@ Item {
             const requests = createTemporaryObject(requestsComponent, root);
             Shell.publishTurn({ questions: [question(true)] });
             waitForRendering(root);
-            root.forceActiveFocus();
+            // A click on the card takes the keyboard to it.
+            mouseClick(findChild(requests, "questionTitle"));
             keyClick(Qt.Key_2);
             verify(findChild(requests, "questionOption-SQLite").checked, "2 picks the second option");
             const field = findChild(requests, "questionAnswer-database");

@@ -331,14 +331,15 @@ bool optionPicked(World& world, const QString& label) {
 
 // Takes the keyboard out of the composer's editor (and any field), as a click
 // on the conversation does.
-void letGoOfKeyboard(World& world) {
-  QQuickWindow& window = composerBrick(world).window();
-  if (QQuickItem* focused = window.activeFocusItem(); focused && focused != window.contentItem()) focused->setFocus(false);
+// Takes the keyboard off the composer to the question card, as a click on
+// the card does: number keys pick only there.
+void keyboardToCard(World& world) {
   composerEditor(world)->setFocus(false);
+  QQuickItem* card = composerPart(world, QStringLiteral("questionCard"));
+  expect(card && card->isVisible(), QStringLiteral("no question card is shown"));
+  card->forceActiveFocus(Qt::MouseFocusReason);
   world.sync();
-  QQuickItem* focused = window.activeFocusItem();
-  expect(!focused || !focused->property("cursorPosition").isValid(),
-         QStringLiteral("%1 keeps the keyboard").arg(focused ? focused->objectName() : QString()));
+  expect(card->hasActiveFocus(), QStringLiteral("the question card did not take the keyboard"));
 }
 
 // Clicks the question card's `name` as the user does.
@@ -694,7 +695,7 @@ const Steps steps([] {
   step(QStringLiteral("the user is not typing in the composer"), [](World& world, const Captures&, const Table&) {
     composerBrick(world);
     settleQuestion(world);
-    letGoOfKeyboard(world);
+    keyboardToCard(world);
   });
   step(QStringLiteral("%1 is picked").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(optionPicked(world, c[0]), QStringLiteral("\"%1\" is not picked").arg(c[0]));
@@ -727,7 +728,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("number keys pick nothing while it is hidden"), [](World& world, const Captures&, const Table&) {
     Brick& brick = composerBrick(world);
-    letGoOfKeyboard(world);
+    keyboardToCard(world);
     QTest::keyClick(&brick.window(), '1');
     world.sync();
     expect(!optionPicked(world, QStringLiteral("Postgres")), QStringLiteral("1 picked \"Postgres\""));

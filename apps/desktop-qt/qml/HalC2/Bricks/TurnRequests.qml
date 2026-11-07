@@ -50,9 +50,13 @@ Item {
     property var picks: ({})
     property var typed: ({})
     property string answering: ""
-    // What the user answered to requests on other threads, by request id,
-    // restored when one of them is shown again.
+    property string answeringThread: ""
+    // What the user answered to requests still pending on other threads, by
+    // request id ({thread, picks, typed}), restored when one is shown again.
     property var kept: ({})
+    // Threads the card does not show cannot be checked, so the oldest kept
+    // answers go past this many.
+    readonly property int keptMost: 50
     readonly property bool answerable: question !== null && question.canRespond && !question.responding
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -73,12 +77,25 @@ Item {
         const id = question?.requestId ?? "";
         if (id === answering) return;
         advance.stop();
-        const next = Object.assign({}, kept);
-        if (answering.length > 0) next[answering] = { picks: picks, typed: typed };
+        const thread = shown ? turn.threadKey : "";
+        const pendingHere = questions.map(item => item.requestId);
+        const next = {};
+        for (const key of Object.keys(kept)) {
+            // A request the shown thread no longer waits on was answered or withdrawn.
+            if (kept[key].thread === thread && pendingHere.length > 0 && !pendingHere.includes(key)) continue;
+            next[key] = kept[key];
+        }
+        // The request left behind is kept while it may still wait: on a
+        // thread no longer shown, or still pending on this one.
+        if (answering.length > 0 && (answeringThread !== thread || pendingHere.includes(answering)))
+            next[answering] = { thread: answeringThread, picks: picks, typed: typed };
         const restored = next[id] ?? null;
         delete next[id];
+        const keys = Object.keys(next);
+        for (let index = 0; index < keys.length - keptMost; ++index) delete next[keys[index]];
         kept = next;
         answering = id;
+        answeringThread = id.length > 0 ? thread : "";
         picks = restored?.picks ?? {};
         typed = restored?.typed ?? {};
         folded = false;
@@ -87,7 +104,8 @@ Item {
 
     // Moving on after the user picks the one answer a question takes waits a
     // moment, so the pick is seen; moving by hand in that moment cancels it.
-    // Past the last question, moving on sends the answers.
+    // Past the last question, moving on sends the answers, or goes back to
+    // one still unanswered.
     Timer {
         id: advance
 
@@ -95,6 +113,8 @@ Item {
         onTriggered: {
             if (requests.questionIndex < requests.asked.length - 1)
                 requests.questionIndex += 1;
+            else if (requests.answers() === null)
+                requests.questionIndex = requests.firstUnanswered();  // one was skipped
             else
                 requests.submit();
         }
@@ -184,10 +204,19 @@ Item {
         return result;
     }
 
-    // A number key picks the option in that place, unless the user is typing
-    // in a field or the question is folded away.
+    // A number key picks the option in that place while the keyboard is on
+    // the card (a click on it puts it there) or on nothing, so the editor, a
+    // field or the terminal drawer keeps its digits. Not while folded away.
     readonly property var focused: Window.activeFocusItem
-    readonly property bool digitsPick: shown && current !== null && !folded && answerable && (focused === null || focused.cursorPosition === undefined)
+    readonly property bool digitsPick: shown && current !== null && !folded && answerable
+                                       && (focused === null || focused === Window.contentItem || isInside(focused, questionCard) && focused.cursorPosition === undefined)
+
+    function isInside(item, ancestor) {
+        for (let at = item; at !== null; at = at.parent) {
+            if (at === ancestor) return true;
+        }
+        return false;
+    }
 
     // Each Shortcut sits in an Item so it finds the window it listens to.
     Repeater {
@@ -451,9 +480,19 @@ Item {
 
         // The agent's question, one of its questions at a time.
         ShellCard {
+            id: questionCard
+
+            objectName: "questionCard"
             Layout.fillWidth: true
             visible: requests.question !== null
             implicitHeight: questionColumn.implicitHeight + 24
+
+            // A click on the card, off its controls, takes the keyboard to it.
+            // Beneath them, so a button or field keeps its own clicks.
+            MouseArea {
+                anchors.fill: parent
+                onPressed: questionCard.forceActiveFocus(Qt.MouseFocusReason)
+            }
 
             ColumnLayout {
                 id: questionColumn
