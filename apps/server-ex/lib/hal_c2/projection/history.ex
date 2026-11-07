@@ -10,21 +10,33 @@ defmodule HalC2.Projection.History do
   of `#{150}` runs. A page ends at a run boundary, so what a thread gains later never
   moves it.
 
+  One exception: a run holding more than `#{500}` windowed rows is paged within
+  itself, newest rows first in slices of at most `#{75}` rows within the size
+  budget, so opening a thread whose latest turn ran thousands of tool calls starts
+  at that turn's newest rows instead of loading it whole. Its cursor names the run
+  and how many of its rows lie before the slice, so rows the run gains later (which
+  land after the slice) never move it.
+
   The snapshot is the newest `#{10}` user turns, and a page the `#{20}` before a
-  cursor. The cursor names the oldest run a page holds (its ordinal and id), so it
-  stays valid while the thread grows and when that run later leaves the timeline:
+  cursor. The run cursor names the oldest run a page holds (its ordinal and id), so
+  it stays valid while the thread grows and when that run later leaves the timeline:
   the next page is the runs with a lower ordinal. A cursor that does not decode to
-  that is refused.
+  one of these is refused.
 
   The snapshot also carries everything the thread keeps small (the thread, runs,
   requests, plans, handoffs, checkpoints), so what the user can still act on is held
-  whatever its age, plus the messages of queued runs. A plan or handoff that is no
+  whatever its age, plus the messages of queued runs. A pending runtime request —
+  an approval, a question the agent asked — also pulls in the turn item and node
+  that carry it, however old or large, so its answer panel can open; once it is
+  resolved only the newest turns carry it. A plan or handoff that is no
   longer actionable keeps its shape but blanks its bulky text and sets
   `detailInTurnItem`: the text is in its turn item. A pending or ready handoff and a
   pending transfer count as actionable.
 
-  Imported threads can hold rows with no run. They cannot be paged by run, so the
-  result says `runlessHistory` instead of letting a nil cursor read as "complete".
+  Imported threads can hold rows with no run. They cannot be paged by run, so they
+  are paged by rows and size instead (at most `#{75}` rows within the budget, and
+  always at least one row however large), after every run page; the result says
+  `runlessHistory` while a thread holds such rows.
   """
 
   alias HalC2.StreamState
@@ -35,13 +47,15 @@ defmodule HalC2.Projection.History do
   @max_runs 150
   @max_cursor 4_096
   @budget 1_000_000
+  @split_rows 500
+  @slice_rows 75
   @windowed ~w(turn-item message node)
   @waiting ~w(pending ready)
 
   @doc "The newest user turns of a thread, with what the user can act on."
   @spec snapshot(StreamState.t()) :: map
   def snapshot(state) do
-    {runs, cursor} = take(state, nil, @snapshot_turns)
+    {windowed, cursor} = take(state, nil, @snapshot_turns)
     queued = for run <- StreamState.list(state, "run"), run["status"] == "queued", do: run["id"]
 
     small =
@@ -50,11 +64,13 @@ defmodule HalC2.Projection.History do
           {_kind, id, entity} <- Enum.to_list(StreamState.rows(state, kinds: [kind])),
           do: {kind, id, compact(kind, entity)}
 
-    windowed = windowed_rows(state, runs ++ queued)
+    windowed = windowed ++ queued_rows(state, queued, windowed)
+    pending = pending_rows(state, windowed)
 
     held =
       Enum.map(small, &{actionable?(&1), &1}) ++
-        Enum.map(windowed, &{queued_message?(&1, queued), &1})
+        Enum.map(windowed, &{queued_message?(&1, queued), &1}) ++
+        Enum.map(pending, &{true, &1})
 
     # Encoded once: the rows sent, and the size of what the user can act on as sent, so
     # what the wire leaves out (a handoff's history) does not count.
@@ -76,11 +92,16 @@ defmodule HalC2.Projection.History do
   @spec page(StreamState.t(), term) :: {:ok, map} | {:error, map}
   def page(state, cursor) do
     with {:ok, before} <- decode(cursor) do
-      {runs, next} = take(state, before, @page_turns)
+      {rows, next} =
+        case before do
+          {:run, ordinal} -> take(state, ordinal, @page_turns)
+          {:intra, ordinal, run_id, index} -> intra(state, ordinal, run_id, index)
+          {:runless, index} -> runless_page(state, index)
+        end
 
       {:ok,
        %{
-         "rows" => encode(windowed_rows(state, runs)),
+         "rows" => encode(rows),
          "cursor" => next,
          "offset" => state.seq,
          "overBudget" => false,
@@ -89,33 +110,161 @@ defmodule HalC2.Projection.History do
     end
   end
 
-  # Run ids newest first up to `turns` user turns or the cap, and the cursor of what
-  # lies before them (nil at the start of the history).
+  # Windowed rows newest-run first up to `turns` user turns or the cap, in creation
+  # order, and the cursor of what lies before them (nil at the start of the history).
+  # A run over the split limit contributes only its newest slice and ends the page.
   defp take(state, before, turns) do
-    shown =
+    shown = shown_runs(state, before)
+    candidates = candidate_runs(shown, turns)
+
+    # One read for every candidate, grouped back by run: a read per run rescans
+    # the thread's hot rows and rereads its cold pages each time.
+    by_run =
+      if candidates == [] do
+        %{}
+      else
+        state
+        |> StreamState.run_rows(Enum.map(candidates, & &1["id"]))
+        |> Enum.group_by(fn {_kind, _id, entity} -> entity["runId"] end)
+      end
+
+    {taken, _count, intra} =
+      Enum.reduce_while(candidates, {[], 0, nil}, fn run, {taken, count, _} ->
+        rows = Map.get(by_run, run["id"], [])
+
+        if length(rows) > @split_rows do
+          slice = newest_slice(rows)
+          {:halt, {[{run, slice} | taken], count, length(rows) - length(slice)}}
+        else
+          count = if user_turn?(run), do: count + 1, else: count
+          acc = {[{run, rows} | taken], count, nil}
+
+          if count >= turns or length(taken) + 1 >= @max_runs,
+            do: {:halt, acc},
+            else: {:cont, acc}
+        end
+      end)
+
+    case taken do
+      [] ->
+        # No run page here: what remains, if anything, is history with no runs.
+        case runless_rows(state) do
+          [] -> {[], nil}
+          rows -> runless_slice(rows, length(rows))
+        end
+
+      [{oldest, _} | _] ->
+        rows = taken |> Enum.reverse() |> Enum.flat_map(&elem(&1, 1))
+
+        cursor =
+          cond do
+            intra != nil -> encode_intra(oldest, intra)
+            # Runless rows follow the last run page, reached with this same cursor.
+            older?(state, oldest) -> encode_cursor(oldest)
+            true -> nil
+          end
+
+        {rows, cursor}
+    end
+  end
+
+  # The newest runs a page could take, by user turns and the run cap alone. A
+  # split run ends a page earlier than this, never later, so the runs taken
+  # over grouped rows are a prefix of these.
+  defp candidate_runs(shown, turns) do
+    {candidates, _count} =
+      Enum.reduce_while(shown, {[], 0}, fn run, {taken, count} ->
+        count = if user_turn?(run), do: count + 1, else: count
+        acc = {[run | taken], count}
+
+        if count >= turns or length(taken) + 1 >= @max_runs,
+          do: {:halt, acc},
+          else: {:cont, acc}
+      end)
+
+    Enum.reverse(candidates)
+  end
+
+  # Whether any history lies before `run`: an older shown run, or runless rows.
+  defp older?(state, run) do
+    shown_runs(state, run["ordinal"] || 0) != [] or runless?(state)
+  end
+
+  defp shown_runs(state, before) do
+    runs =
       for run <- StreamState.list(state, "run"),
           shown?(run),
           before == nil or (run["ordinal"] || 0) < before,
           do: run
 
-    shown = Enum.sort_by(shown, &(&1["ordinal"] || 0), :desc)
-    {taken, rest, _} = Enum.reduce_while(shown, {[], shown, 0}, &step(&1, &2, turns))
-
-    cursor =
-      case {taken, rest} do
-        {[], _} -> nil
-        {_, []} -> nil
-        {[oldest | _], _} -> encode_cursor(oldest)
-      end
-
-    {Enum.reverse(Enum.map(taken, & &1["id"])), cursor}
+    Enum.sort_by(runs, &(&1["ordinal"] || 0), :desc)
   end
 
-  defp step(run, {taken, [_ | rest], count}, turns) do
-    count = if user_turn?(run), do: count + 1, else: count
-    acc = {[run | taken], rest, count}
-    if count >= turns or length(taken) + 1 >= @max_runs, do: {:halt, acc}, else: {:cont, acc}
+  # The slice of a split run before `index` of its rows. A run that has since left
+  # the timeline resumes from where it was: the runs older than it.
+  defp intra(state, ordinal, run_id, index) do
+    case StreamState.get(state, "run")[run_id] do
+      %{} = run ->
+        if shown?(run) do
+          rows = Enum.to_list(StreamState.run_rows(state, [run_id]))
+          {slice, start} = slice_before(rows, index)
+
+          next =
+            cond do
+              start > 0 -> encode_intra(run, start)
+              older?(state, run) -> encode_cursor(run)
+              true -> nil
+            end
+
+          {slice, next}
+        else
+          take(state, ordinal, @page_turns)
+        end
+
+      _ ->
+        take(state, ordinal, @page_turns)
+    end
   end
+
+  defp runless_page(state, index), do: runless_slice(runless_rows(state), index)
+
+  defp runless_slice(rows, index) do
+    {slice, start} = slice_before(rows, index)
+    {slice, if(start > 0, do: encode_runless(start))}
+  end
+
+  # The rows of no run, in creation order.
+  defp runless_rows(state) do
+    for {kind, id, entity} <- StreamState.rows(state, kinds: @windowed),
+        entity["runId"] == nil,
+        do: {kind, id, entity}
+  end
+
+  # The newest rows of `rows`: at most @slice_rows and within the budget as sent,
+  # but always the newest one, however large it is alone.
+  defp newest_slice(rows), do: elem(slice_before(rows, length(rows)), 0)
+
+  defp slice_before(rows, index) do
+    index = rows |> length() |> min(max(index, 0))
+
+    {kept, _size} =
+      rows
+      |> Enum.slice(0, index)
+      |> Enum.take(-@slice_rows)
+      |> Enum.reverse()
+      |> Enum.reduce_while({[], 0}, fn row, {kept, size} ->
+        size = size + row_size(row)
+
+        if kept == [] or size <= @budget,
+          do: {:cont, {[row | kept], size}},
+          else: {:halt, {kept, size}}
+      end)
+
+    {kept, index - length(kept)}
+  end
+
+  defp row_size({kind, _id, entity}),
+    do: entity |> then(&Wire.entity(kind, &1)) |> JSON.encode!() |> byte_size()
 
   # A rolled-back run no timeline shows, and a run cancelled before it started never was.
   defp shown?(%{"status" => status}) when status in ~w(rolled_back queued), do: false
@@ -124,12 +273,67 @@ defmodule HalC2.Projection.History do
 
   defp user_turn?(run), do: is_binary(run["userMessageId"])
 
-  defp windowed_rows(state, runs) do
-    for {kind, id, entity} <- StreamState.run_rows(state, runs), do: {kind, id, entity}
+  # The queued runs' windowed rows the taken runs do not already hold.
+  defp queued_rows(state, queued, held) do
+    have = MapSet.new(held, fn {kind, id, _} -> {kind, id} end)
+
+    for row <- StreamState.run_rows(state, queued),
+        not MapSet.member?(have, {elem(row, 0), elem(row, 1)}),
+        do: row
   end
 
   defp queued_message?({"message", _, %{"runId" => run}}, queued), do: run in queued
   defp queued_message?(_row, _queued), do: false
+
+  # The turn items and nodes carrying a pending runtime request (its questions, its
+  # prompt), which the request row alone does not hold: found through the request's
+  # node and that node's run, so a long thread is not scanned whole. Every request
+  # is also looked up directly — its node, and the item named after its node as
+  # `Orchestration.question_item/1` names it — so a request whose node is gone or
+  # runless is found however the other requests resolve.
+  defp pending_rows(state, held) do
+    pending =
+      for request <- StreamState.list(state, "runtime-request"),
+          request["status"] == "pending",
+          do: request
+
+    ids = MapSet.new(pending, & &1["id"])
+    node_ids = MapSet.new(for r <- pending, is_binary(r["nodeId"]), do: r["nodeId"])
+    nodes = StreamState.lookup(state, for(id <- node_ids, do: {"node", id}))
+    runs = for {_, node} <- nodes, is_binary(node["runId"]), do: node["runId"]
+
+    from_runs =
+      if runs == [] do
+        []
+      else
+        for {kind, id, entity} = row <- StreamState.run_rows(state, runs),
+            MapSet.member?(ids, entity["requestId"]) or
+              MapSet.member?(ids, entity["runtimeRequestId"]) or
+              (kind == "node" and MapSet.member?(node_ids, id)),
+            do: row
+      end
+
+    # The nodes were read above; only the items named after them need a read.
+    direct =
+      for({{kind, id}, entity} <- nodes, do: {kind, id, entity}) ++
+        for {{kind, id}, entity} <- StreamState.lookup(state, item_keys(pending)),
+            do: {kind, id, entity}
+
+    have = MapSet.new(held, fn {kind, id, _} -> {kind, id} end)
+
+    (from_runs ++ direct)
+    |> Enum.uniq_by(fn {kind, id, _} -> {kind, id} end)
+    |> Enum.reject(fn {kind, id, _} -> MapSet.member?(have, {kind, id}) end)
+  end
+
+  # Each pending request's item, named after its node
+  # (`node:approval:x` -> `turn-item:approval:x`).
+  defp item_keys(pending) do
+    for request <- pending,
+        node_id = request["nodeId"],
+        is_binary(node_id) and String.starts_with?(node_id, "node:"),
+        do: {"turn-item", String.replace_prefix(node_id, "node:", "turn-item:")}
+  end
 
   # A handoff waits to be delivered while `pending` or `ready` (the MC writes `ready`,
   # then `consumed` or `failed`); a context transfer waits while `pending`.
@@ -153,8 +357,8 @@ defmodule HalC2.Projection.History do
 
   defp compact(_kind, entity), do: entity
 
-  # Imported history keeps its messages and items outside any run, which these pages
-  # do not reach yet: a client is told, so a missing cursor is not read as the start.
+  # Imported history keeps its messages and items outside any run; those rows are
+  # paged by rows and size after the run pages, never silently complete.
   defp runless?(state) do
     Enum.any?(@windowed, fn kind ->
       state |> StreamState.get(kind) |> Enum.any?(fn {_id, entity} -> entity["runId"] == nil end)
@@ -167,18 +371,46 @@ defmodule HalC2.Projection.History do
   defp encode_cursor(run),
     do: Base.url_encode64("h1:#{run["ordinal"] || 0}:#{run["id"]}", padding: false)
 
+  defp encode_intra(run, index),
+    do: Base.url_encode64("h2:#{run["ordinal"] || 0}:#{index}:#{run["id"]}", padding: false)
+
+  defp encode_runless(index), do: Base.url_encode64("h3:#{index}", padding: false)
+
   defp decode(cursor)
        when is_binary(cursor) and cursor != "" and byte_size(cursor) <= @max_cursor do
     with {:ok, text} <- Base.url_decode64(cursor, padding: false),
-         ["h1", ordinal, _id] <- String.split(text, ":", parts: 3),
-         {ordinal, ""} <- Integer.parse(ordinal) do
-      {:ok, ordinal}
+         {:ok, before} <- parse(text) do
+      {:ok, before}
     else
       _ -> invalid()
     end
   end
 
   defp decode(_cursor), do: invalid()
+
+  # Run ids hold a colon of their own (`run:<uuid>`), so the tag is split off
+  # first and the id is always the last, unsplit part.
+  defp parse(text) do
+    case String.split(text, ":", parts: 2) do
+      ["h1", rest] ->
+        with [ordinal, id] when id != "" <- String.split(rest, ":", parts: 2),
+             {ordinal, ""} <- Integer.parse(ordinal),
+             do: {:ok, {:run, ordinal}}
+
+      ["h2", rest] ->
+        with [ordinal, index, id] when id != "" <- String.split(rest, ":", parts: 3),
+             {ordinal, ""} <- Integer.parse(ordinal),
+             {index, ""} <- Integer.parse(index),
+             true <- index >= 0,
+             do: {:ok, {:intra, ordinal, id, index}}
+
+      ["h3", index] ->
+        with {index, ""} <- Integer.parse(index), true <- index >= 0, do: {:ok, {:runless, index}}
+
+      _ ->
+        :error
+    end
+  end
 
   defp invalid,
     do: {:error, %{"_tag" => "InvalidHistoryCursor", "message" => "invalid history cursor"}}
