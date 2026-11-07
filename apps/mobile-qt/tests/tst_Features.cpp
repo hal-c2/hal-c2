@@ -121,8 +121,13 @@ class tst_Features : public QObject {
 private slots:
   void initTestCase() {
     runner::defineSteps();
-    m_scenarios = runner::collectScenarios(kFeaturesDir, kDefaultGlobs, QStringLiteral("mobile"));
-    QVERIFY2(!m_scenarios.isEmpty(), "no scenarios matched");
+    runner::Coverage coverage;
+    m_scenarios = runner::collectScenarios(kFeaturesDir, kDefaultGlobs, QStringLiteral("mobile"), &coverage);
+    // A mistyped glob or scenario name, a renamed file or a wrong features dir
+    // names nothing: that fails, even beside globs that matched.
+    QVERIFY2(coverage.unmatchedGlobs.isEmpty(), qPrintable(QStringLiteral("globs naming no scenario: ") + coverage.unmatchedGlobs.join(QLatin1Char(' '))));
+    // Scenarios that all wait on the backlog or are on other surfaces have nothing to run yet.
+    if (m_scenarios.isEmpty()) QSKIP("no runnable scenarios matched");
   }
 
   void scenarios_data() { runner::addRows(m_scenarios, kFeaturesDir); }
