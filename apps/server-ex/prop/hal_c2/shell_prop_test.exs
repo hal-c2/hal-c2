@@ -348,12 +348,14 @@ defmodule HalC2.ShellPropTest do
 
   # The settled threads past `@limit` in each project, newest first by when they
   # settled then by id, that are neither pinned nor snoozed: their ids, and how many
-  # of each project.
+  # of each project. Subagents (`s3`/`r3`) are never on the shelf.
   defp model_trim(rows) do
     out =
       rows
       |> Enum.flat_map(fn {id, {{_kind, row}, _rev}} ->
-        if Map.has_key?(@settled, row["title"]), do: [{id, row["title"]}], else: []
+        if Map.has_key?(@settled, row["title"]) and id not in ["s3", "r3"],
+          do: [{id, row["title"]}],
+          else: []
       end)
       |> Enum.group_by(fn {id, _title} -> project(id) end)
       |> Enum.flat_map(fn {_project, shelf} ->
