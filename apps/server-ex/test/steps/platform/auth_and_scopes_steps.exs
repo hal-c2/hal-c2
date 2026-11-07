@@ -2208,4 +2208,104 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     assert media_opens?(context, media)
     context
   end
+
+  # --- schemes and locales (upstream #23782, #19616) ----------------------------------
+
+  step ~r/^a local tool sends the MC's access token with the scheme "(?<scheme>[^"]+)"$/,
+       %{args: [scheme]} = context do
+    # A paired client's token is read the same way as the MC's own.
+    responses =
+      for token <- [HalC2.Web.token(), standard!(context)] do
+        Mc.request(context.mc, :get, "/api/auth/session",
+          headers: [{"authorization", "#{scheme} #{token}"}]
+        )
+      end
+
+    Map.put(context, :responses, responses)
+  end
+
+  step "the MC says it is authenticated", context do
+    for response <- context.responses,
+        do: assert({200, _, %{"authenticated" => true}} = response)
+
+    context
+  end
+
+  step ~r/^an agent calls the MCP server with (?<authorization>no Authorization header|a Basic credential|the scheme "Bearer", no token|an expired token)$/,
+       %{args: [authorization]} = context do
+    Mc.ensure(HalC2.Mcp)
+    context = context |> World.create_project("Work") |> World.create_thread("Agent work")
+
+    %{authorization: "Bearer " <> token} =
+      HalC2.Mcp.server(World.thread_id(context, "Agent work"), "codex")
+
+    headers =
+      case authorization do
+        "no Authorization header" ->
+          []
+
+        "a Basic credential" ->
+          [{"authorization", "Basic #{token}"}]
+
+        "the scheme \"Bearer\", no token" ->
+          [{"authorization", "Bearer"}]
+
+        "an expired token" ->
+          # An idle agent's credential lapses after a day (`HalC2.Mcp`'s liveness window).
+          a_day_ago = System.monotonic_time(:millisecond) - :timer.hours(25)
+          :ets.update_element(HalC2.Mcp.Credentials, token, {3, a_day_ago})
+          [{"authorization", "bEaReR #{token}"}]
+      end
+
+    request = %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}
+    response = Mc.request(context.mc, :post, "/mcp", headers: headers, json: request)
+    Map.merge(context, %{response: response, mcp_token: token})
+  end
+
+  step ~r/^it is refused as (?<reason>a missing credential|an unsupported scheme|an empty credential|an unknown or expired token)$/,
+       %{args: [reason]} = context do
+    code =
+      %{
+        "a missing credential" => "missing_authorization_header",
+        "an unsupported scheme" => "unsupported_scheme",
+        "an empty credential" => "missing_bearer_token",
+        "an unknown or expired token" => "unknown_or_expired_token"
+      }[reason]
+
+    assert {401, _, %{"error" => "invalid_mcp_credential", "reason" => ^code}} = context.response
+    context
+  end
+
+  step "the refusal does not contain the credential", context do
+    {_, headers, body} = context.response
+    refute inspect({headers, body}) =~ context.mcp_token
+    context
+  end
+
+  @locales ~w(lv_LV.UTF-8 lt_LT.UTF-8 eu_ES.UTF-8 az_AZ.UTF-8)
+
+  step "the MC runs under a Latvian, Lithuanian, Basque or Azerbaijani locale", context do
+    saved = Map.new(~w(LC_ALL LC_COLLATE LANG), &{&1, System.get_env(&1)})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {name, value} <- saved,
+          do: if(value, do: System.put_env(name, value), else: System.delete_env(name))
+    end)
+
+    # The thumbprint is RFC 7638's: the required members in lexicographic order, which
+    # no collation may reorder.
+    {jwk, _} = dpop_key()
+
+    canonical =
+      ~s({"crv":"#{jwk["crv"]}","kty":"#{jwk["kty"]}","x":"#{jwk["x"]}","y":"#{jwk["y"]}"})
+
+    expected = Base.url_encode64(:crypto.hash(:sha256, canonical), padding: false)
+
+    for locale <- @locales do
+      System.put_env(%{"LC_ALL" => locale, "LC_COLLATE" => locale, "LANG" => locale})
+      assert HalC2.Auth.Dpop.thumbprint(jwk) == expected
+    end
+
+    context
+  end
 end

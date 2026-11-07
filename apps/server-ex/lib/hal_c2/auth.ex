@@ -232,11 +232,11 @@ defmodule HalC2.Auth do
   """
   @spec authenticate(Plug.Conn.t()) :: {:ok, map} | {:error, String.t(), atom | nil}
   def authenticate(%Plug.Conn{} = conn) do
-    case Plug.Conn.get_req_header(conn, "authorization") do
-      [] ->
+    case conn |> Plug.Conn.get_req_header("authorization") |> List.first() |> credential() do
+      :missing ->
         {:error, "missing_credential", nil}
 
-      ["Bearer " <> token] ->
+      {"bearer", token} when token != "" ->
         if HalC2.Web.access_token?(token) do
           {:ok, local_session()}
         else
@@ -246,7 +246,7 @@ defmodule HalC2.Auth do
           end
         end
 
-      ["DPoP " <> token] ->
+      {"dpop", token} when token != "" ->
         with {:ok, %{proof_jkt: jkt} = session} when is_binary(jkt) <- session(token),
              proof = conn |> Plug.Conn.get_req_header("dpop") |> List.first(),
              {:ok, _} <-
@@ -262,6 +262,20 @@ defmodule HalC2.Auth do
 
       _ ->
         {:error, "invalid_credential", nil}
+    end
+  end
+
+  @doc """
+  An Authorization header as `{scheme, credential}`, the scheme lowercased since schemes
+  are case-insensitive (RFC 9110 section 11.1), or `:missing` for no header.
+  """
+  @spec credential(String.t() | nil) :: :missing | {String.t(), String.t()}
+  def credential(nil), do: :missing
+
+  def credential(header) do
+    case String.split(String.trim(header), " ", parts: 2) do
+      [scheme, credential] -> {String.downcase(scheme), String.trim(credential)}
+      [scheme] -> {String.downcase(scheme), ""}
     end
   end
 

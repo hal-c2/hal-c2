@@ -288,7 +288,7 @@ Feature: MC authentication and scopes
       | hal-c2.revokeOtherClients |
 
   # Upstream #23782: a token sent as "bearer" or "bEaReR" was refused before it was checked.
-  @backlog @mc
+  @mc
   Scenario Outline: The bearer scheme is read in any letter case
     When a local tool sends the MC's access token with the scheme "<scheme>"
     Then the MC says it is authenticated
@@ -300,7 +300,7 @@ Feature: MC authentication and scopes
       | bEaReR |
 
   # Upstream #23782: refusals say which part was wrong, without repeating the credential.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A refused MCP request says what was wrong with its credential
     When an agent calls the MCP server with <authorization>
     Then it is refused as <reason>
@@ -553,8 +553,7 @@ Feature: MC authentication and scopes
 
   # Upstream #19616: the host computed DPoP key thumbprints with its locale's sort order, so hosts
   # in a Latvian, Lithuanian, Basque or Azerbaijani locale refused valid clients.
-  # Likely already implemented: apps/server-ex/lib/hal_c2/auth/dpop.ex (thumbprint/1 writes the members in a fixed order)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A client's key is recognised whatever the host's locale
     Given the MC runs under a Latvian, Lithuanian, Basque or Azerbaijani locale
     And a client that paired with a DPoP key
