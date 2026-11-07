@@ -67,6 +67,39 @@ defmodule HalC2.Steps.Composer.ModelAndMode do
     context
   end
 
+  step "the thread runs on Claude with Ultrathink turned on", context do
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => "claude-sonnet-4-6",
+      "options" => [%{"id" => "effort", "value" => "ultrathink"}]
+    }
+
+    title = "Ultrathink thread"
+
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(title, "claudeAgent", "hello", %{"modelSelection" => selection})
+
+    World.await_runs(context, title, ["completed"])
+    Map.put(context, :current, title)
+  end
+
+  # Claude gets the prefix and the message on separate lines; the scenario writes them
+  # on one, so whitespace is compared as a single space.
+  step "the agent receives {string}", %{args: [received]} = context do
+    World.await_runs(context, context.current, ["completed", "completed"])
+
+    texts =
+      for %{"in" => %{"type" => "user", "message" => %{"content" => text}}} <-
+            World.provider_log(context, "claude"),
+          do: text
+
+    text = List.last(texts)
+    assert String.replace(text, ~r/\s+/, " ") == received
+    context
+  end
+
   defp interaction(context, mode) do
     {{:ok, _}, context} =
       World.dispatch(context, %{
