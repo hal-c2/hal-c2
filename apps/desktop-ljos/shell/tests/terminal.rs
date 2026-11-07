@@ -371,8 +371,13 @@ fn history_scrolls_and_typing_returns_to_the_prompt() {
     let rows = rig.num("rows");
     let lines: String = (0..100).map(|i| format!("line {i}\r\n")).collect();
     rig.write(&lines);
-    // scrollbackLimit is 50.
-    assert_eq!(rig.num("scrollTotal"), 50.0 + rows);
+    // scrollbackLimit is 50; Ghostty prunes whole pages, so it may keep
+    // more, never less.
+    let total = rig.num("scrollTotal");
+    assert!(
+        (50.0 + rows..=100.0 + rows).contains(&total),
+        "{total} rows"
+    );
     assert!(rig.flag("atBottom"));
     let bottom = rig.num("scrollOffset");
 
@@ -393,12 +398,13 @@ fn history_scrolls_and_typing_returns_to_the_prompt() {
     assert!(rig.flag("atBottom"));
     assert_eq!(rig.num("scrollOffset"), bottom);
 
-    // Output while scrolled up leaves the view on the same lines. The
-    // history is full, so the oldest line goes and every offset drops by one.
+    // Output while scrolled up leaves the view where it was.
     call(&rig.engine, rig.term, "scrollLines", &[Value::Int(-10)]);
+    assert!(!rig.flag("atBottom"));
     let seen = rig.num("scrollOffset");
     rig.write("more\r\n");
-    assert_eq!(rig.num("scrollOffset"), seen - 1.0);
+    assert!(!rig.flag("atBottom"));
+    assert!(rig.num("scrollOffset") <= seen);
     call(&rig.engine, rig.term, "scrollToBottom", &[]);
     assert!(rig.flag("atBottom"));
 }
@@ -411,12 +417,15 @@ fn dragging_selects_and_copy_puts_it_on_the_clipboard() {
     rig.drag((0, 0), (0, 4));
     assert!(rig.flag("hasSelection"));
     assert_eq!(rig.method("selectedText"), "hello");
-    // The selected cells are filled with selectionColor.
-    let chosen = rects(&rig.ops())
+    // The selected cells are filled with selectionColor, in one rectangle.
+    let chosen: Vec<_> = rects(&rig.ops())
         .into_iter()
         .filter(|(_, c)| near(*c, rgb(0x336699)))
-        .count();
-    assert_eq!(chosen, 5);
+        .map(|(r, _)| r)
+        .collect();
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[0].x0, PAD);
+    assert!((chosen[0].width() - 5.0 * rig.cw).abs() < 1e-6);
 
     call(&rig.engine, rig.term, "copy", &[]);
     assert_eq!(
@@ -503,4 +512,46 @@ fn reset_is_a_blank_screen_with_no_history() {
     assert_eq!(rig.string("title"), "");
     assert_eq!(rig.num("scrollTotal"), rig.num("rows"));
     assert!(glyphs(&rig.ops()).is_empty());
+}
+
+/// TerminalSplits' cells: a Loader that a `Binding on width` sizes.
+const IN_A_CELL: &str = r##"
+import QtQuick
+import Ghostty
+
+Item {
+    id: root
+    width: 400
+    height: 200
+    property real cellWidth: width
+    Loader {
+        id: cell
+        Binding on width {
+            when: root.width > 0 && root.height > 0
+            value: root.cellWidth
+            restoreMode: Binding.RestoreNone
+        }
+        Binding on height {
+            when: root.width > 0 && root.height > 0
+            value: root.height
+            restoreMode: Binding.RestoreNone
+        }
+        sourceComponent: Terminal { font.pixelSize: 16 }
+    }
+    function size() { return cell.item.width + "x" + cell.item.height }
+}
+"##;
+
+#[test]
+fn a_terminal_takes_the_size_of_the_cell_that_loads_it() {
+    let (engine, root) = shell(IN_A_CELL, Rc::new(Disconnected::default()));
+    let mut scene = Scene::new(&engine, root, (400.0, 200.0));
+    scene.settle();
+    let size = |engine: &Engine| engine.to_js_string(&call(engine, root, "size", &[]));
+    assert_eq!(size(&engine), "400x200");
+    engine
+        .write_by_name(root, "cellWidth", Value::Real(250.0))
+        .unwrap();
+    scene.settle();
+    assert_eq!(size(&engine), "250x200");
 }

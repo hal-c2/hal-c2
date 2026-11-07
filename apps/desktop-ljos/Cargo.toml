@@ -24,6 +24,14 @@ codegen-units = 1
 lto = "thin"
 strip = true
 
+# The Terminal's VT parser (hof_vt's libghostty-vt) is the hot path even in
+# a debug build. Its build script builds Ghostty's Zig in Debug mode whenever
+# cargo says DEBUG, which any debug info does (line tables too): several
+# times slower, so none here. As Ljós Hof's own Cargo.toml.
+[profile.dev.package.libghostty-vt-sys]
+opt-level = 3
+debug = false
+
 # desktop-ljos:inspect's build: release code with its symbols and line tables
 # kept, so a stack sampled from a stuck UI thread names its functions. Its own
 # profile, so switching between it and a plain run does not rebuild either.
@@ -31,3 +39,6 @@ strip = true
 inherits = "release"
 strip = false
 debug = "line-tables-only"
+# Its line tables would build Ghostty's Zig in Debug mode (see above).
+[profile.inspect.package.libghostty-vt-sys]
+debug = false

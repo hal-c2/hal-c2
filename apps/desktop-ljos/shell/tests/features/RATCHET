@@ -1803,16 +1803,81 @@ terminal/drawer.feature: Output reaches the terminal
 terminal/drawer.feature: The drawer follows the user's own terminal chords
 terminal/drawer.feature: The drawer shows the terminals the thread already has
 terminal/drawer.feature: The drawer's height and open terminals survive a restart
+terminal/errors.feature: A failed terminal action is written into the terminal [clearing from the keyboard, , Failed to clear terminal]
+terminal/errors.feature: A failed terminal action is written into the terminal [copying a link from the terminal's menu, , Unable to copy link]
+terminal/errors.feature: A failed terminal action is written into the terminal [copying the selection, , Unable to copy terminal selection]
+terminal/errors.feature: A failed terminal action is written into the terminal [deleting to the start of the line, , Failed to delete terminal input]
+terminal/errors.feature: A failed terminal action is written into the terminal [moving the cursor by word or line, , Failed to move cursor]
+terminal/errors.feature: A failed terminal action is written into the terminal [opening a file path from the output, , Unable to open path]
+terminal/errors.feature: A failed terminal action is written into the terminal [sending what the user typed, , Terminal write failed]
+terminal/errors.feature: A failed terminal action is written into the terminal [sending what the user typed, MC is unreachable, MC is unreachable]
+terminal/errors.feature: A script that cannot reopen its terminal does not close it
 terminal/errors.feature: A terminal that fails to open tells the user why
+terminal/errors.feature: A terminal that fails to start leaves the existing terminal as it was [opens a new terminal]
+terminal/errors.feature: A terminal that fails to start leaves the existing terminal as it was [runs a project script that wants a new terminal]
+terminal/errors.feature: A terminal that fails to start leaves the existing terminal as it was [splits the terminal side by side]
+terminal/errors.feature: A terminal that fails to start leaves the existing terminal as it was [splits the terminal stacked]
+terminal/errors.feature: Each time the MC is unreachable is said
+terminal/errors.feature: Typing while the MC is unreachable says so once
+terminal/io.feature: A character typed with AltGr is typed as text
+terminal/io.feature: A program that asks for the mouse receives the user's clicks
 terminal/io.feature: A terminal that exits on its own closes without asking
+terminal/io.feature: Arrow keys with a modifier move by word or line [Linux, Alt+Right, one word right]
+terminal/io.feature: Arrow keys with a modifier move by word or line [Linux, Ctrl+Left, one word left]
+terminal/io.feature: Arrow keys with a modifier move by word or line [Windows, Ctrl+Right, one word right]
+terminal/io.feature: Arrow keys with a modifier move by word or line [macOS, Cmd+Left, to the start of the line]
+terminal/io.feature: Arrow keys with a modifier move by word or line [macOS, Cmd+Right, to the end of the line]
+terminal/io.feature: Arrow keys with a modifier move by word or line [macOS, Option+Left, one word left]
+terminal/io.feature: Arrow keys with a modifier move by word or line [macOS, Option+Right, one word right]
+terminal/io.feature: Characters composed with an input method reach the shell once
 terminal/io.feature: Clearing the web terminal asks the shell to redraw
+terminal/io.feature: Clicking again selects a word and then a line [3 times, "git commit -m fix"]
+terminal/io.feature: Clicking again selects a word and then a line [twice, "commit"]
 terminal/io.feature: Closing a terminal whose server session is gone still ends the shell
+terminal/io.feature: Cmd+Backspace deletes to the start of the line on macOS
+terminal/io.feature: Cmd+K clears the terminal on macOS
+terminal/io.feature: Ctrl+C copies once on Linux and Windows and then interrupts [Linux]
+terminal/io.feature: Ctrl+C copies once on Linux and Windows and then interrupts [Windows]
 terminal/io.feature: Ctrl+C with nothing selected still interrupts the program
+terminal/io.feature: Holding a modifier selects text even while a program has the mouse [Cmd]
+terminal/io.feature: Holding a modifier selects text even while a program has the mouse [Ctrl]
+terminal/io.feature: Holding a modifier selects text even while a program has the mouse [Shift]
+terminal/io.feature: Middle-clicking where the button means something else does not paste [Windows]
+terminal/io.feature: Middle-clicking where the button means something else does not paste [macOS]
+terminal/io.feature: On macOS Cmd+C copies and Ctrl+C always interrupts
+terminal/io.feature: Scrolling the wheel in a full-screen program moves it with arrow keys
+terminal/io.feature: Scrolling the wheel reaches a program that asked for the mouse
+terminal/io.feature: Selecting with Shift and an arrow is left to the terminal
+terminal/io.feature: Small wheel movements add up to whole rows
+terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Linux, Ctrl+Insert, the selected text is on the clipboard]
+terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Linux, Ctrl+Shift+C, the selected text is on the clipboard]
+terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Linux, Ctrl+Shift+V, the clipboard text is sent to the shell]
+terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Linux, Shift+Insert, the clipboard text is sent to the shell]
+terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Windows, Ctrl+Insert, the selected text is on the clipboard]
+terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Windows, Shift+Insert, the clipboard text is sent to the shell]
+terminal/io.feature: The scrollbar's thumb stays large enough to grab
+terminal/io.feature: The terminal shows a scrollbar for its history
 terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Copy, the selected text is on the clipboard]
 terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Paste, the clipboard text is sent to the shell]
+terminal/io.feature: The user moves through the history with the scrollbar [clicks the scrollbar's track, jumps to that place in the history]
+terminal/io.feature: The user moves through the history with the scrollbar [drags the scrollbar's thumb, follows the thumb row for row]
+terminal/io.feature: The user moves through the history with the scrollbar [presses End on the scrollbar, moves to the newest output]
+terminal/io.feature: The user moves through the history with the scrollbar [presses Home on the scrollbar, moves to the oldest output]
+terminal/io.feature: The user moves through the history with the scrollbar [presses Page Down on the scrollbar, moves down a screenful]
+terminal/io.feature: The user moves through the history with the scrollbar [presses Page Up on the scrollbar, moves up a screenful]
+terminal/io.feature: The user moves through the history with the scrollbar [presses an arrow key on the scrollbar, moves one row]
 terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+C, the selected text is on the clipboard]
 terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+V, the clipboard text is sent to the shell]
+terminal/io.feature: The wheel scrolls by the unit the device reports [pixels, by that many pixels, rounded down to rows]
+terminal/io.feature: The wheel scrolls by the unit the device reports [three lines, three rows]
+terminal/io.feature: What an input method is composing shows at the cursor
+terminal/links-and-graphics.feature: A branch range in git's output is not a file path
+terminal/links-and-graphics.feature: A file path in the output opens in the editor
+terminal/links-and-graphics.feature: A plain click on a file path does not open it
 terminal/links-and-graphics.feature: A plain click on a link does not follow it
+terminal/links-and-graphics.feature: A tap on a link on a touch screen follows it
+terminal/links-and-graphics.feature: Following a link opens the system browser when that is the chosen target
+terminal/links-and-graphics.feature: On macOS a program that asks for enhanced reporting gets Ctrl as Ctrl
 terminal/links-and-graphics.feature: Programs that ask for enhanced keyboard reporting receive it
 terminal/links-and-graphics.feature: The terminal's menu opens or copies the link under the pointer [http://localhost:5173, Open link, Copy link, the address opens in the system browser]
 terminal/links-and-graphics.feature: The terminal's menu opens or copies the link under the pointer [src/app.ts:12:4, Open file, Copy path, "src/app.ts" opens in the user's editor at line 12, column 4]
@@ -1830,7 +1895,9 @@ terminal/tabs.feature: A split group holds at most four terminals
 terminal/tabs.feature: A terminal tab runs its own terminal beside the drawer's
 terminal/tabs.feature: Closing a terminal asks before stopping its process
 terminal/tabs.feature: Closing a terminal tab stops its terminals
+terminal/tabs.feature: Closing a terminal that is not active keeps the active one
 terminal/tabs.feature: Closing several terminals asks once for all of them
+terminal/tabs.feature: Closing the right-most active terminal activates the one before it
 terminal/tabs.feature: Declining the close confirmation keeps the terminal
 terminal/tabs.feature: Recently visited threads keep their terminals ready
 terminal/tabs.feature: The user splits a terminal tab [horizontally, side by side]

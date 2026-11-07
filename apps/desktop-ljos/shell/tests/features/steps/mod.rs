@@ -104,6 +104,8 @@ pub mod subagent;
 pub mod terminal;
 pub mod terminal_close;
 pub mod terminal_context;
+pub mod terminal_errors;
+pub mod terminal_input;
 pub mod terminal_menu;
 pub mod terminal_session;
 pub mod theme;
@@ -233,6 +235,8 @@ pub fn register(steps: &mut Steps) {
     terminal_close::register(steps);
     terminal_context::register(steps);
     terminal_menu::register(steps);
+    terminal_input::register(steps);
+    terminal_errors::register(steps);
     terminal_session::register(steps);
     theme::register(steps);
     theme_library::register(steps);

@@ -62,8 +62,9 @@ fancy-regex = "0.19"
 # Code coloured by its language (src/code_highlighter.rs): the crate
 # desktop-qt links.
 hal-c2-syntax = { path = "../../../native/syntax" }
-# The Terminal item's escape-sequence parser and screen (see terminal/mod.rs).
-vt100 = "0.16"
+# The Terminal item's screen (see terminal/mod.rs): libghostty-vt, through
+# Ljós Hof's session. Pinned to a commit of hal-c2/ljos-hof main.
+hof_vt = { git = "https://github.com/hal-c2/ljos-hof", rev = "b9e94eab2402cad81747eac1e1c8d5585ec072e7" }
 # The thread view (thread_view/): desktop-qt's QRegularExpression patterns
 # and QTextDocument's markdown as text.
 regex = "1"

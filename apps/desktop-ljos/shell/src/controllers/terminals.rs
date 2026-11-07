@@ -313,6 +313,9 @@ struct SessionState {
     transcript_size: usize,
     pending_write: String,
     writing: bool,
+    /// The last write failure the terminal was told of, so a run of them
+    /// says it once.
+    write_failure: String,
     wanted: Option<(i32, i32)>,
     sent: Option<(i32, i32)>,
     resizing: bool,
@@ -509,7 +512,12 @@ impl Session {
                 // Every (re)subscription starts with a snapshot: the screen
                 // starts over.
                 self.replace(engine, &text(event["snapshot"].get("history")));
-                let first = !std::mem::replace(&mut self.0.state.borrow_mut().attached, true);
+                let first = {
+                    let mut state = self.0.state.borrow_mut();
+                    // Attached again: the next outage is a new one, and is said.
+                    state.write_failure.clear();
+                    !std::mem::replace(&mut state.attached, true)
+                };
                 if first {
                     self.flush_writes(engine);
                     (self.0.on_event)(engine, &SessionEvent::Attached);
@@ -584,6 +592,12 @@ impl Session {
         self.append(engine, &format!("\r\n[{text}]\r\n"));
     }
 
+    /// Something the terminal was asked to do failed: said in it, as
+    /// desktop-qt's session says it.
+    pub fn report(&self, engine: &Engine, message: &str) {
+        self.append(engine, &format!("\r\n[terminal] {message}\r\n"));
+    }
+
     fn flush_writes(&self, _engine: &Engine) {
         let chunk = {
             let mut state = self.0.state.borrow_mut();
@@ -606,15 +620,33 @@ impl Session {
             }),
             Box::new(move |engine, result| {
                 let Some(inner) = weak.upgrade() else { return };
-                {
+                let failure = {
                     let mut state = inner.state.borrow_mut();
                     state.writing = false;
-                    if result.is_err() {
-                        // Typing into an ended shell, or no MC: what was
-                        // typed is gone.
-                        state.pending_write.clear();
-                        return;
+                    match result {
+                        Err(error) => {
+                            // Typing into an ended shell, or no MC: what was
+                            // typed is gone.
+                            state.pending_write.clear();
+                            let failure = if error.message.is_empty() {
+                                write_failure(&chunk).to_owned()
+                            } else {
+                                error.message
+                            };
+                            let old = std::mem::replace(&mut state.write_failure, failure.clone());
+                            Some((old != failure).then_some(failure))
+                        }
+                        Ok(_) => {
+                            state.write_failure.clear();
+                            None
+                        }
                     }
+                };
+                if let Some(failure) = failure {
+                    if let Some(failure) = failure {
+                        Session(inner).report(engine, &failure);
+                    }
+                    return;
                 }
                 if !inner.ended.get() {
                     Session(inner).flush_writes(engine);
@@ -703,6 +735,15 @@ impl TerminalSessionObject {
     fn resize(cx: &Cx, columns: i32, rows: i32) {
         if let Some(session) = session_of(cx) {
             session.resize(cx.engine, columns, rows);
+        }
+    }
+
+    /// Says in the terminal that something it was asked to do failed.
+    #[qml(invokable)]
+    fn report(cx: &Cx, message: Value) {
+        let message = cx.engine.to_js_string(&message);
+        if let Some(session) = session_of(cx) {
+            session.report(cx.engine, &message);
         }
     }
 
@@ -1305,7 +1346,13 @@ impl Controller for Terminals {
                 }
             }
             "terminal.followLink" => {
-                self.follow_link(engine, &arg("kind"), &arg("text"), &arg("cwd"));
+                self.follow_link(
+                    engine,
+                    &arg("terminalId"),
+                    &arg("kind"),
+                    &arg("text"),
+                    &arg("cwd"),
+                );
             }
             "terminal.close" => {
                 if self.place.is_none() {
@@ -2066,7 +2113,46 @@ impl Terminals {
                     self.close_terminal(engine, id);
                 }
             }
-            SessionEvent::Attached | SessionEvent::Failed(_) => {}
+            // A terminal started here that the MC refused goes again, and
+            // the user is told why (desktop-qt's abandonStart).
+            SessionEvent::Failed(reason) => {
+                let ui = self.ui.entry(thread_key.to_owned()).or_default();
+                if !ui.local.remove(id) {
+                    return;
+                }
+                if let Some(group) = group_of_mut(ui, id) {
+                    group.terminals.retain(|t| t != id);
+                    if group.active == id {
+                        group.active = group.terminals.last().cloned().unwrap_or_default();
+                    }
+                }
+                if ui.active == id {
+                    ui.active.clear();
+                }
+                let mut emptied = false;
+                if let Some(parked) = self.parked.get_mut(thread_key) {
+                    if let Some(gone) = parked.sessions.remove(id) {
+                        gone.end(engine);
+                    }
+                    emptied = parked.sessions.is_empty();
+                }
+                if emptied {
+                    self.drop_parked(engine, thread_key);
+                }
+                if thread_key == self.thread_key {
+                    let ids = self.terminal_ids();
+                    let ui = self.ui_mut();
+                    match drawer_ids(ui, &ids).last() {
+                        Some(last) if ui.active.is_empty() => ui.active = last.clone(),
+                        Some(_) => {}
+                        None => ui.open = false,
+                    }
+                    self.sync_tabs(engine);
+                    self.notify(engine);
+                }
+                toast(engine, "Unable to open terminal", &reason);
+            }
+            SessionEvent::Attached => {}
         }
     }
 
@@ -2383,8 +2469,16 @@ impl Terminals {
     /// A link the user followed in a terminal: a web address goes to the
     /// browser (the desktop draws no pages itself), a file path to the
     /// editor, resolved against the folder the shell reported (OSC 7) or the
-    /// one the terminal started in.
-    fn follow_link(&mut self, engine: &Engine, kind: &str, text: &str, reported_cwd: &str) {
+    /// one the terminal started in. What cannot open is said without
+    /// touching the terminal's shell: a path in the terminal it was printed in.
+    fn follow_link(
+        &mut self,
+        engine: &Engine,
+        terminal_id: &str,
+        kind: &str,
+        text: &str,
+        reported_cwd: &str,
+    ) {
         let Some(place) = &self.place else {
             return;
         };
@@ -2419,11 +2513,14 @@ impl Terminals {
             path = clean_path(&format!("{cwd}/{path}"));
         }
         if !workspace::open_in_editor(engine, "", &format!("{path}{position}"), false) {
-            toast(
-                engine,
-                "Unable to open path",
-                &format!("This environment has no editor to open {path} in."),
-            );
+            match self.session(terminal_id) {
+                Some(session) => session.report(engine, "Unable to open path"),
+                None => toast(
+                    engine,
+                    "Unable to open path",
+                    &format!("This environment has no editor to open {path} in."),
+                ),
+            }
         }
     }
 
@@ -2471,6 +2568,22 @@ fn percent_decoded(path: &str) -> String {
 }
 
 /// Writes `bytes` to `path` whole or not at all, as QSaveFile does.
+/// What the user was doing when a write came back with no reason, from
+/// the keys it carried (desktop-qt's `writeFailure`).
+fn write_failure(data: &str) -> &'static str {
+    let moves = matches!(data, "\x1bb" | "\x1bf" | "\x01" | "\x05")
+        || data
+            .strip_prefix("\x1b[1;")
+            .and_then(|rest| rest.strip_suffix(['C', 'D', 'H', 'F']))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    match data {
+        "\x0c" => "Failed to clear terminal",
+        "\x15" => "Failed to delete terminal input",
+        _ if moves => "Failed to move cursor",
+        _ => "Terminal write failed",
+    }
+}
+
 fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;

@@ -8,30 +8,37 @@
 //! out of the `input` signal; the grid follows the item's size, `resized`
 //! says to what.
 //!
-//! The terminal emulation is the `vt100` crate, not libghostty-vt. libghostty
-//! is a C library (`native/libghostty-vt` here builds it with Zig), which
-//! Cargo would have to build and link, and its grid is read through an FFI
-//! that hands out pointers; `vt100` is plain Rust with the grid, scrollback,
-//! alternate screen, mouse and bracketed-paste modes the item needs, and
-//! it builds with the rest. What it lacks that Ghostty has: kitty graphics,
-//! most of the kitty keyboard protocol ([`keys`] says what it speaks),
-//! reflow of wrapped lines on resize, a mode report for DECRQM, and
-//! grapheme-accurate widths for every emoji.
+//! The terminal is libghostty-vt, through Ljós Hof's `hof_vt`: a
+//! [`Session::remote`] whose program is wherever the MC runs it, its output
+//! fed in and its input collected by an [`Outlet`] for the signal. Ghostty
+//! encodes keys (the whole kitty keyboard protocol), mouse reports and
+//! pastes, answers queries (DECRQM among them), reflows wrapped lines on
+//! resize, and finds links and words for the selection.
 //!
-//! The item draws its cells as filled rectangles and glyph runs in its own
-//! display list ([`paint`]), with no animation: the cursor does not blink.
+//! The item draws hof_vt's [`Grid`] as filled rectangles and glyph runs in
+//! its own display list ([`paint`]), with no animation: the cursor is drawn
+//! steady (hal-c2/hal-c2#1193). Keys and the pointer follow Ljós Hof's
+//! `hof_qml` terminal (`keys.rs`, `pointer.rs`, MIT), which [`keys`] copies
+//! and the pointer handlers here adapt; links are opened by the bricks, so a
+//! Control+click is left to them.
 //!
-//! Not done: double and triple click selection, scrolling while a drag
-//! passes the item's edge, hyperlinks, and the selection following its text
-//! once history is full and its oldest lines are dropped.
+//! Not done: scrolling while a drag passes the item's edge, and images
+//! (kitty graphics, sixel).
 
 mod keys;
 mod paint;
-mod vt;
 
 use std::fmt;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use hof_vt::libghostty_vt::screen::Screen as Active;
+use hof_vt::libghostty_vt::terminal::Mode;
+use hof_vt::{
+    CursorShape, Grid, MouseAction, MouseButton, MouseInput, Options, Outlet, Rgb, Scroll,
+    Selecting, Session, Size, Theme,
+};
 use ljos::item::{
     self, DisplayListBuilder, FocusReason, Font, Item, ItemPaint, KeyEvent, KeyItem, Modifiers,
     MouseButtons, PointerEvent, PointerItem, Surrounding, TextEngine, TextInputClient, TextStyle,
@@ -39,12 +46,10 @@ use ljos::item::{
 };
 use ljos::prelude::{
     Atom, ClipboardMode, Color, Cx, Engine, EngineError, ObjectId, Platform, Prop, QmlObject,
-    QmlValue, Value, qml_impl,
+    QmlValue, Time, Value, qml_impl,
 };
 
-use keys::{MouseAction, encode_key, encode_mouse};
 use paint::{Look, Painted};
-use vt::{Pos, Vt};
 
 /// Adds `Terminal` to module `Ghostty`.
 pub fn register(engine: &Engine) {
@@ -75,22 +80,96 @@ pub fn register(engine: &Engine) {
     item::register_text_input_client::<Terminal>(engine, Rc::new(Ime));
 }
 
+/// Clicks this close together, on the same cell, count as one more.
+const MULTI_CLICK: Duration = Duration::from_millis(400);
+
+/// Where the session's input goes: kept until the item emits it.
+#[derive(Default)]
+struct Pending(Mutex<Vec<u8>>);
+
+impl Pending {
+    fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl Outlet for Pending {
+    fn input(&self, bytes: &[u8]) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend_from_slice(bytes);
+    }
+
+    // The item says its size with `resized`, and the bricks pass it on.
+    fn resize(&self, _: Size) {}
+
+    fn closed(&self) {}
+}
+
+/// The terminal and what it last drew.
+struct Vt {
+    session: Session,
+    grid: Grid,
+    pending: Arc<Pending>,
+}
+
+impl Vt {
+    fn new(size: Size, scrollback: usize, theme: Theme) -> Option<Vt> {
+        let pending = Arc::new(Pending::default());
+        let outlet = Arc::clone(&pending);
+        let options = Options {
+            size,
+            scrollback,
+            theme: Some(theme),
+            cursor: CursorShape::Block,
+            cursor_blink: false,
+            ..Options::default()
+        };
+        let session = Session::remote(options, || {}, move |_| outlet as Arc<dyn Outlet>).ok()?;
+        Some(Vt {
+            session,
+            grid: Grid::new().ok()?,
+            pending,
+        })
+    }
+
+    fn alternate(&self) -> bool {
+        self.session
+            .with_terminal(|t| t.active_screen().ok() == Some(Active::Alternate))
+    }
+
+    fn application_cursor(&self) -> bool {
+        self.session
+            .with_terminal(|t| t.mode(Mode::DECCKM).unwrap_or(false))
+    }
+}
+
 /// What the item keeps besides its properties.
 #[derive(Default)]
 struct State {
     /// Made when first needed, so `scrollbackLimit` is read after the QML
     /// has set it.
     vt: Option<Vt>,
+    /// The colours last given to the terminal.
+    theme: Theme,
+    /// A cell in device pixels, as mouse reports count them.
+    cell_px: (u32, u32),
     /// The grid has been sized to the item at least once.
     sized: bool,
-    /// A selection is being dragged from this cell.
-    drag: Option<Pos>,
+    /// A left press is selecting, from this cell.
+    selecting: Option<(u16, u16)>,
     /// The button whose press was sent to the program as a mouse report.
-    reported: Option<u8>,
+    reported: Option<MouseButton>,
     /// The cell last reported to a program that asked for any motion.
     hovered: Option<(u16, u16)>,
     /// A fraction of a wheel step, kept for the next event.
     wheel_remainder: f64,
+    /// What an input method is composing, drawn at the cursor until it
+    /// commits or cancels.
+    preedit: String,
+    last_click: Option<(Time, (u16, u16))>,
+    clicks: u8,
 }
 
 #[derive(QmlObject)]
@@ -118,7 +197,7 @@ pub struct Terminal {
     /// Space between the item's edge and the cells, in pixels.
     #[qml(notify)]
     pub padding: f64,
-    /// Lines of history kept; read once, before the first output.
+    /// Lines of history kept.
     #[qml(notify)]
     pub scrollback_limit: i32,
     #[qml(notify, readonly)]
@@ -144,6 +223,10 @@ pub struct Terminal {
     pub scroll_offset: f64,
     #[qml(notify, readonly)]
     pub at_bottom: bool,
+    /// A program in the terminal asked for mouse reports, so presses go
+    /// to it rather than selecting (qml-ghostty's).
+    #[qml(notify, readonly)]
+    pub mouse_tracking: bool,
     /// Whether the cursor may blink (qml-ghostty's). The cursor is drawn
     /// steady for now (hal-c2/hal-c2#1193), so this is kept and read back.
     #[qml(notify)]
@@ -188,6 +271,7 @@ impl Default for Terminal {
             scroll_total: 24.0,
             scroll_offset: 0.0,
             at_bottom: true,
+            mouse_tracking: false,
             cursor_blink: true,
             mac_modifiers: cfg!(target_os = "macos"),
             state: State::default(),
@@ -221,6 +305,22 @@ impl Terminal {
             let padding = e.read(me, Self::PADDING.index).to_number();
             e.untrack(|| relayout(e, me, (w, h), &style, padding));
         })?;
+        e.effect_in(me, move |e| follow_loader(e, me))?;
+        // The colours and the history follow their properties.
+        e.effect_in(me, move |e| {
+            let theme = theme(e, me);
+            let limit = item::prop(e, me, Self::SCROLLBACK_LIMIT).max(0) as usize;
+            e.untrack(|| {
+                vt_mut(e, me, |vt, state| {
+                    if state.theme != theme {
+                        let _ = vt.session.set_theme(&theme);
+                        state.theme = theme;
+                    }
+                    let _ = vt.session.set_scrollback(limit);
+                });
+                flush(e, me);
+            });
+        })?;
         Ok(())
     }
 
@@ -242,65 +342,56 @@ impl Terminal {
     #[qml(invokable)]
     fn reset(cx: &Cx) {
         let (e, me) = (cx.engine, cx.this);
-        if vt_mut(e, me, Vt::reset).is_some() {
-            put(e, me, Self::TITLE, Atom::from(""));
+        if vt_mut(e, me, |vt, _| vt.session.reset()).is_some() {
             put(e, me, Self::WORKING_DIRECTORY, Atom::from(""));
-            sync(e, me);
+            flush(e, me);
         }
     }
 
-    /// Sends text as a paste: bracketed when the program asked for it, with
-    /// control bytes that could end the paste early defused.
+    /// Sends text as a paste, as the program asked for pastes: bracketed
+    /// when it did, with control bytes that could end the paste early or
+    /// run as a command defused.
     #[qml(invokable)]
     fn paste(cx: &Cx, text: Atom) {
-        let (e, me) = (cx.engine, cx.this);
-        let Some(bracketed) = vt_mut(e, me, |vt| vt.bracketed_paste()) else {
-            return;
-        };
-        if let Some(bytes) = paste_bytes(text.as_str(), bracketed) {
-            send(e, me, &bytes, true);
-        }
+        paste_text(cx.engine, cx.this, text.as_str());
     }
 
-    /// Puts the selected text on the clipboard.
+    /// Puts the selected text on the clipboard; false when nothing is
+    /// selected or the clipboard refused it.
     #[qml(invokable)]
-    fn copy(cx: &Cx) {
-        let text = Self::selected_text(cx);
-        if !text.is_empty() {
-            // qml-ghostty's copy() says nothing of a failure either.
-            let _ = Platform::of(cx.engine)
-                .clipboard()
-                .set_text(ClipboardMode::Clipboard, &text);
-        }
+    fn copy(cx: &Cx) -> bool {
+        copy_to(cx.engine, cx.this, ClipboardMode::Clipboard)
     }
 
     #[qml(invokable)]
     fn select_all(cx: &Cx) {
-        vt_mut(cx.engine, cx.this, Vt::select_all);
-        sync(cx.engine, cx.this);
+        vt_mut(cx.engine, cx.this, |vt, _| vt.session.select_all());
+        flush(cx.engine, cx.this);
     }
 
     #[qml(invokable)]
     fn clear_selection(cx: &Cx) {
-        vt_mut(cx.engine, cx.this, Vt::clear_selection);
-        sync(cx.engine, cx.this);
+        vt_mut(cx.engine, cx.this, |vt, _| vt.session.clear_selection());
+        flush(cx.engine, cx.this);
     }
 
     #[qml(invokable)]
     fn selected_text(cx: &Cx) -> String {
-        vt_mut(cx.engine, cx.this, Vt::selected_text).unwrap_or_default()
+        vt_mut(cx.engine, cx.this, |vt, _| vt.session.selected_text())
+            .flatten()
+            .unwrap_or_default()
     }
 
     /// Scrollback and screen as plain text, soft wraps joined.
     #[qml(invokable)]
     fn text(cx: &Cx) -> String {
-        vt_mut(cx.engine, cx.this, Vt::text).unwrap_or_default()
+        vt_mut(cx.engine, cx.this, |vt, _| vt.session.text()).unwrap_or_default()
     }
 
     /// Scrolls the view by `delta` rows; negative goes back into history.
     #[qml(invokable)]
     fn scroll_lines(cx: &Cx, delta: i32) {
-        scroll(cx.engine, cx.this, i64::from(delta));
+        scroll(cx.engine, cx.this, Scroll::Lines(delta as isize));
     }
 
     /// Puts row `offset` (of `scrollTotal`) at the top of the view.
@@ -311,31 +402,39 @@ impl Terminal {
         } else {
             0
         };
-        vt_mut(cx.engine, cx.this, |vt| vt.scroll_to(top));
-        sync(cx.engine, cx.this);
+        scroll(cx.engine, cx.this, Scroll::Row(top));
     }
 
     #[qml(invokable)]
     fn scroll_to_bottom(cx: &Cx) {
-        vt_mut(cx.engine, cx.this, Vt::scroll_to_bottom);
-        sync(cx.engine, cx.this);
+        scroll(cx.engine, cx.this, Scroll::Bottom);
     }
 }
 
-// The vt and the properties that mirror it.
+// The session and the properties that mirror it.
 
-/// Runs `f` on the terminal's state, making it first if need be. None when
-/// `me` is not a terminal. `f` must not call back into the engine.
-fn vt_mut<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Vt) -> R) -> Option<R> {
+/// Runs `f` on the terminal, making it first if need be. None when `me` is
+/// not a terminal or the terminal could not be made. `f` must not call back
+/// into the engine.
+fn vt_mut<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&Vt, &mut State) -> R) -> Option<R> {
     e.with_mut::<Terminal, _>(me, |t| {
-        let (rows, cols) = (
-            t.rows.clamp(1, 1000) as u16,
-            t.columns.clamp(1, 1000) as u16,
-        );
-        let limit = t.scrollback_limit.max(0) as usize;
-        f(t.state.vt.get_or_insert_with(|| Vt::new(rows, cols, limit)))
+        if t.state.vt.is_none() {
+            let (w, h) = t.state.cell_px;
+            let size = Size::new(
+                t.columns.clamp(1, 1000) as u16,
+                t.rows.clamp(1, 1000) as u16,
+            )
+            .with_cell(w.max(1), h.max(1));
+            let limit = t.scrollback_limit.max(0) as usize;
+            t.state.vt = Vt::new(size, limit, t.state.theme.clone());
+        }
+        let vt = t.state.vt.take()?;
+        let out = f(&vt, &mut t.state);
+        t.state.vt = Some(vt);
+        Some(out)
     })
     .ok()
+    .flatten()
 }
 
 /// Sets a readonly property, notifying only when it changes.
@@ -345,29 +444,51 @@ fn put<T: PartialEq + QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T) {
     }
 }
 
-/// Brings the scroll, selection and size properties in line with the vt and
-/// paints the cells again.
-fn sync(e: &Engine, me: ObjectId) {
-    let Some((total, top, at_bottom, selected, (rows, cols))) = vt_mut(e, me, |vt| {
+/// Carries out what the terminal did since the last time: sends what it
+/// has for the program, brings the title, the scroll and the selection's
+/// properties in line, rings the bell, and paints the cells again.
+fn flush(e: &Engine, me: ObjectId) {
+    let Some((input, changes, title, pwd, bar, selected, tracking)) = vt_mut(e, me, |vt, _| {
+        let changes = vt.session.take_changes();
         (
-            vt.total(),
-            vt.top(),
-            vt.at_bottom(),
-            vt.has_selection(),
-            vt.size(),
+            vt.pending.take(),
+            changes,
+            changes
+                .contains(hof_vt::Changes::TITLE)
+                .then(|| vt.session.title()),
+            changes
+                .contains(hof_vt::Changes::PWD)
+                .then(|| vt.session.pwd()),
+            vt.session.scrollbar(),
+            vt.session.has_selection(),
+            vt.session.mouse_tracking(),
         )
     }) else {
         return;
     };
     e.batch(|| {
-        put(e, me, Terminal::SCROLL_TOTAL, total as f64);
-        put(e, me, Terminal::SCROLL_OFFSET, top as f64);
-        put(e, me, Terminal::AT_BOTTOM, at_bottom);
+        if let Some(title) = title {
+            put(e, me, Terminal::TITLE, Atom::from(title.as_str()));
+        }
+        if let Some(pwd) = pwd {
+            put(e, me, Terminal::WORKING_DIRECTORY, Atom::from(pwd.as_str()));
+        }
+        if bar.total > 0 {
+            put(e, me, Terminal::SCROLL_TOTAL, bar.total as f64);
+            put(e, me, Terminal::SCROLL_OFFSET, bar.offset as f64);
+            put(e, me, Terminal::AT_BOTTOM, bar.at_bottom());
+        }
         put(e, me, Terminal::HAS_SELECTION, selected);
-        put(e, me, Terminal::ROWS, i32::from(rows));
-        put(e, me, Terminal::COLUMNS, i32::from(cols));
+        put(e, me, Terminal::MOUSE_TRACKING, tracking);
     });
     item::repaint(e, me);
+    if !input.is_empty() {
+        let text = String::from_utf8_lossy(&input);
+        let _ = e.emit_by_name(me, "input", &[Value::String(Atom::from(&*text))]);
+    }
+    if changes.contains(hof_vt::Changes::BELL) {
+        let _ = e.emit_by_name(me, "bell", &[]);
+    }
 }
 
 fn bytes_of(data: &Value) -> Vec<u8> {
@@ -378,72 +499,90 @@ fn bytes_of(data: &Value) -> Vec<u8> {
     }
 }
 
-/// Gives the vt program output and carries out what came of it.
+/// Gives the terminal program output; its answers go to the program only
+/// when `answer`.
 fn feed(e: &Engine, me: ObjectId, bytes: &[u8], answer: bool) {
     if bytes.is_empty() {
         return;
     }
-    let Some(fed) = vt_mut(e, me, |vt| vt.feed(bytes, answer)) else {
-        return;
+    vt_mut(e, me, |vt, _| {
+        vt.session.feed(bytes);
+        if !answer {
+            vt.pending.take();
+        }
+    });
+    flush(e, me);
+}
+
+/// Has the terminal take something the user did, `f`, and brings the view
+/// back to the prompt if it sent the program anything.
+fn user<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&Vt) -> R) -> Option<R> {
+    let out = vt_mut(e, me, |vt, _| {
+        let out = f(vt);
+        if !vt
+            .pending
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+            && !vt.session.scrollbar().at_bottom()
+        {
+            vt.session.scroll(Scroll::Bottom);
+        }
+        out
+    });
+    flush(e, me);
+    out
+}
+
+fn paste_text(e: &Engine, me: ObjectId, text: &str) {
+    if !text.is_empty() {
+        // Pasting is asked for (a menu, a key), so a newline is meant.
+        user(e, me, |vt| vt.session.paste(text, true));
+    }
+}
+
+/// Puts the selected text on the clipboard `mode`.
+fn copy_to(e: &Engine, me: ObjectId, mode: ClipboardMode) -> bool {
+    let text = vt_mut(e, me, |vt, _| vt.session.selected_text())
+        .flatten()
+        .unwrap_or_default();
+    !text.is_empty() && Platform::of(e).clipboard().set_text(mode, &text).is_ok()
+}
+
+fn scroll(e: &Engine, me: ObjectId, to: Scroll) {
+    if to != Scroll::Lines(0) {
+        vt_mut(e, me, |vt, _| vt.session.scroll(to));
+        flush(e, me);
+    }
+}
+
+/// The colours the properties give the terminal: the sixteen of
+/// [`paint::ANSI`] and on with `ansiColors`. Tracked.
+fn theme(e: &Engine, me: ObjectId) -> Theme {
+    let rgb = |c: Color| {
+        let [r, g, b, _] = c.to_rgba_f();
+        let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        Rgb::new(byte(r), byte(g), byte(b))
     };
-    if let Some(title) = fed.title {
-        put(e, me, Terminal::TITLE, Atom::from(title.as_str()));
-    }
-    if let Some(cwd) = fed.cwd {
-        put(e, me, Terminal::WORKING_DIRECTORY, Atom::from(cwd.as_str()));
-    }
-    sync(e, me);
-    if !fed.replies.is_empty() {
-        send(e, me, &fed.replies, false);
-    }
-    if fed.bells > 0 {
-        let _ = e.emit_by_name(me, "bell", &[]);
-    }
-}
-
-/// Emits `input`. What the user typed brings the view back to the prompt.
-fn send(e: &Engine, me: ObjectId, bytes: &[u8], user: bool) {
-    if bytes.is_empty() {
-        return;
-    }
-    if user && vt_mut(e, me, |vt| !vt.at_bottom()) == Some(true) {
-        vt_mut(e, me, Vt::scroll_to_bottom);
-        sync(e, me);
-    }
-    let text = String::from_utf8_lossy(bytes);
-    let _ = e.emit_by_name(me, "input", &[Value::String(Atom::from(&*text))]);
-}
-
-fn scroll(e: &Engine, me: ObjectId, delta: i64) {
-    if delta != 0 {
-        vt_mut(e, me, |vt| vt.scroll_by(delta));
-        sync(e, me);
-    }
-}
-
-/// The bytes of a paste, or none for nothing to paste. Control bytes other
-/// than tab and line breaks become spaces, so that a pasted escape cannot
-/// end a bracketed paste or run as a command.
-fn paste_bytes(text: &str, bracketed: bool) -> Option<Vec<u8>> {
-    if text.is_empty() {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len() + 12);
-    if bracketed {
-        out.push_str("\x1b[200~");
-    }
-    for c in text.chars() {
-        match c {
-            '\n' if !bracketed => out.push('\r'),
-            '\n' | '\r' | '\t' => out.push(c),
-            c if c.is_control() => out.push(' '),
-            c => out.push(c),
+    let mut palette: Vec<(u8, Rgb)> = (0u8..).zip(paint::ANSI).collect();
+    if let Value::List(items) = e.read(me, Terminal::ANSI_COLORS.index) {
+        for (slot, v) in (0u8..=255).zip(items.iter()) {
+            if let Value::Color(c) = v {
+                match palette.get_mut(usize::from(slot)) {
+                    Some(entry) => entry.1 = rgb(*c),
+                    None => palette.push((slot, rgb(*c))),
+                }
+            }
         }
     }
-    if bracketed {
-        out.push_str("\x1b[201~");
+    let cursor = item::prop(e, me, Terminal::CURSOR_COLOR);
+    Theme {
+        foreground: Some(rgb(item::prop(e, me, Terminal::FOREGROUND_COLOR))),
+        background: Some(rgb(item::prop(e, me, Terminal::BACKGROUND_COLOR))),
+        cursor: cursor.is_valid().then(|| rgb(cursor)),
+        palette,
     }
-    Some(out.into_bytes())
 }
 
 // The grid follows the item.
@@ -463,6 +602,10 @@ fn relayout(e: &Engine, me: ObjectId, (w, h): (f64, f64), style: &TextStyle, pad
     };
     put(e, me, Terminal::CELL_WIDTH, cw);
     put(e, me, Terminal::CELL_HEIGHT, ch);
+    let dpr = item::device_pixel_ratio(e, me).max(0.1);
+    let px = |v: f64| ((v * dpr).round() as u32).max(1);
+    let cell_px = (px(cw), px(ch));
+    let _ = e.with_mut::<Terminal, _>(me, |t| t.state.cell_px = cell_px);
     if w <= 0.0 || h <= 0.0 {
         return;
     }
@@ -481,8 +624,16 @@ fn relayout(e: &Engine, me: ObjectId, (w, h): (f64, f64), style: &TextStyle, pad
     else {
         return;
     };
-    vt_mut(e, me, |vt| vt.resize(rows, cols));
-    sync(e, me);
+    e.batch(|| {
+        put(e, me, Terminal::ROWS, i32::from(rows));
+        put(e, me, Terminal::COLUMNS, i32::from(cols));
+    });
+    vt_mut(e, me, |vt, _| {
+        let _ = vt
+            .session
+            .resize(Size::new(cols, rows).with_cell(cell_px.0, cell_px.1));
+    });
+    flush(e, me);
     if was || first {
         let _ = e.emit_by_name(
             me,
@@ -494,28 +645,18 @@ fn relayout(e: &Engine, me: ObjectId, (w, h): (f64, f64), style: &TextStyle, pad
 
 // Painting.
 
-/// The palette and colours the properties say.
+/// The colours the properties say.
 fn look(e: &Engine, me: ObjectId, style: TextStyle, cell: (f64, f64)) -> Look {
     let color = |p: Prop<Color>| -> paint::Color {
         let [r, g, b, a] = item::prop(e, me, p).to_rgba_f();
         [r as f32, g as f32, b as f32, a as f32]
     };
     let optional = |p: Prop<Color>| item::prop(e, me, p).is_valid().then(|| color(p));
-    let mut palette = paint::default_palette();
-    if let Value::List(items) = e.read(me, Terminal::ANSI_COLORS.index) {
-        for (slot, v) in palette.iter_mut().zip(items.iter()) {
-            if let Value::Color(c) = v {
-                let [r, g, b, a] = c.to_rgba_f();
-                *slot = [r as f32, g as f32, b as f32, a as f32];
-            }
-        }
-    }
     Look {
         foreground: color(Terminal::FOREGROUND_COLOR),
         background: color(Terminal::BACKGROUND_COLOR),
         cursor: optional(Terminal::CURSOR_COLOR),
         selection: optional(Terminal::SELECTION_COLOR),
-        palette,
         padding: item::prop(e, me, Terminal::PADDING),
         style,
         cell,
@@ -533,7 +674,7 @@ impl ItemPaint for Screen {
 }
 
 /// Read tracked: the colours, the font, the system's text size and the
-/// focus repaint the item; [`sync`] repaints it when the cells change.
+/// focus repaint the item; [`flush`] repaints it when the cells change.
 fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
     let style = font_style(e, me);
     let cell = item::with_text_engine(|te| paint::cell_size(te, &style)).unwrap_or((0.0, 0.0));
@@ -541,10 +682,19 @@ fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
     let background = look.background;
     // The engine's store is borrowed in `vt_mut`, and the text engine must
     // be free for anything that reads properties: lay out last.
-    let painted = vt_mut(e, me, |vt| {
-        item::with_text_engine(|te| paint::build(vt, &look, te))
-    })
-    .flatten();
+    let painted = e
+        .with_mut::<Terminal, _>(me, |t| {
+            let vt = t.state.vt.as_mut()?;
+            vt.grid.update(&vt.session).ok()?;
+            let preedit = &t.state.preedit;
+            item::with_text_engine(|te| {
+                let mut painted = paint::build(&vt.grid, &look, te);
+                paint::compose(&mut painted, &vt.grid, &look, te, preedit);
+                painted
+            })
+        })
+        .ok()
+        .flatten();
     Rc::new(Screen(painted.unwrap_or_else(|| Painted {
         background,
         ..Default::default()
@@ -556,20 +706,43 @@ fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
 fn key_press(e: &Engine, me: ObjectId, ev: &KeyEvent) -> bool {
     // Shift+PageUp and Shift+PageDown page through history, as in xterm.
     if ev.modifiers == Modifiers::SHIFT && (ev.key == key::PAGE_UP || ev.key == key::PAGE_DOWN) {
-        let page = vt_mut(e, me, |vt| i64::from(vt.size().0).saturating_sub(1).max(1)).unwrap_or(1);
-        scroll(e, me, if ev.key == key::PAGE_UP { -page } else { page });
+        let page = (item::prop(e, me, Terminal::ROWS) as isize - 1).max(1);
+        scroll(
+            e,
+            me,
+            Scroll::Lines(if ev.key == key::PAGE_UP { -page } else { page }),
+        );
         return true;
     }
-    let (app, kitty) =
-        vt_mut(e, me, |vt| (vt.application_cursor(), vt.kitty_keyboard())).unwrap_or((false, 0));
-    let mods = program_mods(e, me, ev.modifiers);
-    match encode_key(ev.key, mods, &ev.text, app, kitty) {
-        Some(bytes) => {
-            send(e, me, &bytes, true);
-            true
-        }
-        None => false,
+    // The usual terminal chords, as qml-ghostty's item has them:
+    // Ctrl+Shift+C copies, Ctrl+Shift+V and Shift+Insert paste.
+    const C: i32 = key::A + 2;
+    const V: i32 = key::A + 21;
+    let ctrl_shift = Modifiers::CONTROL | Modifiers::SHIFT;
+    if ev.modifiers == ctrl_shift && ev.key == C {
+        copy_to(e, me, ClipboardMode::Clipboard);
+        return true;
     }
+    if (ev.modifiers == ctrl_shift && ev.key == V)
+        || (ev.modifiers == Modifiers::SHIFT && ev.key == key::INSERT)
+    {
+        if let Some(text) = Platform::of(e).clipboard().text(ClipboardMode::Clipboard) {
+            paste_text(e, me, &text);
+        }
+        return true;
+    }
+    let mac = item::prop(e, me, Terminal::MAC_MODIFIERS);
+    let Some(input) = keys::translate(ev, mac) else {
+        return false;
+    };
+    user(e, me, |vt| {
+        let taken = vt.session.key(&input).unwrap_or(false);
+        if taken {
+            vt.session.clear_selection();
+        }
+        taken
+    })
+    .unwrap_or(false)
 }
 
 // The input method: committed text is typed.
@@ -582,22 +755,87 @@ impl TextInputClient for Ime {
     }
 
     fn replace(&self, e: &Engine, item: ObjectId, _: std::ops::Range<usize>, text: &str) {
-        send(e, item, text.as_bytes(), true);
+        user(e, item, |vt| vt.session.write(text.as_bytes()));
+    }
+
+    /// Kept to be drawn at the cursor; none of it reaches the program until
+    /// it is committed.
+    fn set_preedit(&self, e: &Engine, item: ObjectId, text: &str, _: Option<usize>) -> bool {
+        let changed = e
+            .with_mut::<Terminal, _>(item, |t| {
+                let changed = t.state.preedit != text;
+                text.clone_into(&mut t.state.preedit);
+                changed
+            })
+            .unwrap_or(false);
+        if changed {
+            item::repaint(e, item);
+        }
+        true
+    }
+
+    /// Ends what was being composed and types `text`.
+    fn commit(&self, e: &Engine, item: ObjectId, text: &str) -> bool {
+        self.set_preedit(e, item, "", None);
+        if !text.is_empty() {
+            user(e, item, |vt| vt.session.write(text.as_bytes()));
+        }
+        true
+    }
+
+    fn preedit(&self, e: &Engine, item: ObjectId) -> String {
+        e.with::<Terminal, _>(item, |t| t.state.preedit.clone())
+            .unwrap_or_default()
     }
 
     fn set_selection(&self, _: &Engine, _: ObjectId, _: usize, _: usize) {}
 
     fn cursor_rect(&self, e: &Engine, item: ObjectId) -> kurbo::Rect {
         let (cw, ch, pad) = metrics(e, item);
-        let (row, col) = vt_mut(e, item, |vt| vt.cursor())
+        let (col, row) = e
+            .with::<Terminal, _>(item, |t| {
+                t.state.vt.as_ref().and_then(|vt| vt.grid.cursor.at)
+            })
+            .ok()
             .flatten()
             .unwrap_or((0, 0));
         let (x, y) = (pad + f64::from(col) * cw, pad + f64::from(row) * ch);
         kurbo::Rect::new(x, y, x + cw, y + ch)
     }
 
+    /// No prediction, no autocorrection, no capitals: a terminal wants the
+    /// keys as they were typed.
     fn hints(&self, _: &Engine, _: ObjectId) -> i32 {
-        0
+        0x2 | 0x40 | 0x200
+    }
+}
+
+/// Takes the size of the Loader that loaded the terminal when the Loader
+/// has a size of its own, as Qt's Loader gives it. Ljós's Loader does not
+/// when that size comes from a `Binding on width` (TerminalSplits' cells),
+/// and the terminal stayed 0x0 (hal-c2/ljos-ui#236). A Loader that follows
+/// its item has the item's size as its implicit size, so nothing is
+/// written then.
+fn follow_loader(e: &Engine, me: ObjectId) {
+    let Some(parent) = e.read(me, Item::PARENT.index).as_object() else {
+        return;
+    };
+    let is_loader = e
+        .lookup_type("QtQuick", "Loader")
+        .is_some_and(|loader| e.inherits(parent, &loader));
+    if !is_loader || e.read_by_name(parent, "item").as_object() != Some(me) {
+        return;
+    }
+    let axes = [
+        (Item::WIDTH.index, Item::IMPLICIT_WIDTH.index),
+        (Item::HEIGHT.index, Item::IMPLICIT_HEIGHT.index),
+    ];
+    for (size, implicit) in axes {
+        let own = e.read(parent, size).to_number();
+        let follows = own == e.read(parent, implicit).to_number();
+        if !follows && e.untrack(|| e.read(me, size).to_number()) != own {
+            let _ = e.write_internal(me, size, own.into(), item::WriteKind::Imperative);
+        }
     }
 }
 
@@ -612,157 +850,175 @@ fn metrics(e: &Engine, me: ObjectId) -> (f64, f64, f64) {
 }
 
 /// The cell under `at` (in the item), the nearest one for a point outside
-/// the grid, as `(row, column)` of the view.
+/// the grid, as `(column, row)` of the view.
 fn cell_at(e: &Engine, me: ObjectId, at: kurbo::Point) -> (u16, u16) {
     let (cw, ch, pad) = metrics(e, me);
-    let (rows, cols) = vt_mut(e, me, |vt| vt.size()).unwrap_or((1, 1));
+    let (cols, rows) = e
+        .with::<Terminal, _>(me, |t| (t.columns.max(1), t.rows.max(1)))
+        .unwrap_or((1, 1));
     let col = ((at.x - pad) / cw).floor().clamp(0.0, f64::from(cols - 1)) as u16;
     let row = ((at.y - pad) / ch).floor().clamp(0.0, f64::from(rows - 1)) as u16;
-    (row, col)
+    (col, row)
 }
 
+/// Reports the pointer at `cell` to a program that tracks it. The encoder
+/// counts cells in the session's device pixels: a report names the middle
+/// of the cell the item found, so the two agree.
 fn report(
     e: &Engine,
     me: ObjectId,
     action: MouseAction,
-    button: u8,
+    button: Option<MouseButton>,
     mods: Modifiers,
-    at: (u16, u16),
-) {
-    let Some(encoding) = vt_mut(e, me, |vt| vt.mouse_encoding()) else {
-        return;
-    };
-    let mods = program_mods(e, me, mods);
-    let bytes = encode_mouse(encoding, action, button, mods, at.1, at.0);
-    send(e, me, &bytes, false);
+    (col, row): (u16, u16),
+) -> bool {
+    let mods = keys::mods(mods, item::prop(e, me, Terminal::MAC_MODIFIERS));
+    let sent = vt_mut(e, me, |vt, state| {
+        let (w, h) = state.cell_px;
+        let input = MouseInput {
+            action,
+            button,
+            mods,
+            x: ((f64::from(col) + 0.5) * f64::from(w.max(1))) as f32,
+            y: ((f64::from(row) + 0.5) * f64::from(h.max(1))) as f32,
+        };
+        vt.session.mouse(&input).unwrap_or(false)
+    })
+    .unwrap_or(false);
+    flush(e, me);
+    sent
 }
 
-/// The modifiers as the program should get them: with `macModifiers`,
-/// Control and Meta traded back (`mac_keys`).
-fn program_mods(e: &Engine, me: ObjectId, mods: Modifiers) -> Modifiers {
-    if item::prop(e, me, Terminal::MAC_MODIFIERS) {
-        mac_keys(mods)
-    } else {
-        mods
-    }
+/// Whether the program gets the pointer rather than the selection: Shift,
+/// Ctrl or Cmd held always selects, so text can be copied from a program
+/// that tracks (desktop-qt's).
+fn reports(e: &Engine, me: ObjectId, mods: Modifiers) -> bool {
+    !mods.intersects(Modifiers::SHIFT | Modifiers::CONTROL | Modifiers::META)
+        && vt_mut(e, me, |vt, _| vt.session.mouse_tracking()).unwrap_or(false)
 }
 
-/// Control and Meta swapped: what macOS's Cmd and Control are once the
-/// toolkit has reported Cmd as Control.
-fn mac_keys(mods: Modifiers) -> Modifiers {
-    let mut out = mods - (Modifiers::CONTROL | Modifiers::META);
-    if mods.contains(Modifiers::CONTROL) {
-        out |= Modifiers::META;
-    }
-    if mods.contains(Modifiers::META) {
-        out |= Modifiers::CONTROL;
-    }
-    out
-}
-
-fn button_number(b: Option<MouseButtons>) -> Option<u8> {
-    match b? {
-        MouseButtons::LEFT => Some(0),
-        MouseButtons::MIDDLE => Some(1),
-        MouseButtons::RIGHT => Some(2),
-        _ => None,
-    }
+fn button_of(b: MouseButtons) -> Option<MouseButton> {
+    Some(match b {
+        MouseButtons::LEFT => MouseButton::Left,
+        MouseButtons::MIDDLE => MouseButton::Middle,
+        MouseButtons::RIGHT => MouseButton::Right,
+        MouseButtons::BACK => MouseButton::Back,
+        MouseButtons::FORWARD => MouseButton::Forward,
+        _ => return None,
+    })
 }
 
 fn pointer_press(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) -> bool {
     force_active_focus(e, me, FocusReason::Mouse);
-    let tracking = vt_mut(e, me, |vt| vt.mouse_tracking()).unwrap_or(false);
+    let Some(b) = ev.button.and_then(button_of) else {
+        return false;
+    };
     let cell = cell_at(e, me, at);
-    if tracking && !ev.modifiers.contains(Modifiers::SHIFT) {
-        let Some(button) = button_number(ev.button) else {
-            return false;
-        };
-        let _ = e.with_mut::<Terminal, _>(me, |t| t.state.reported = Some(button));
-        report(e, me, MouseAction::Press, button, ev.modifiers, cell);
+    if reports(e, me, ev.modifiers)
+        && report(e, me, MouseAction::Press, Some(b), ev.modifiers, cell)
+    {
+        let _ = e.with_mut::<Terminal, _>(me, |t| t.state.reported = Some(b));
         return true;
     }
-    if ev.button != Some(MouseButtons::LEFT) {
-        return false;
+    match b {
+        MouseButton::Left => {
+            let shift = ev.modifiers.contains(Modifiers::SHIFT);
+            let alt = ev.modifiers.contains(Modifiers::ALT);
+            vt_mut(e, me, |vt, state| {
+                let again = state.last_click.is_some_and(|(t, was)| {
+                    was == cell && ev.time.saturating_since(t) <= MULTI_CLICK
+                });
+                state.clicks = if again { state.clicks % 3 + 1 } else { 1 };
+                state.last_click = Some((ev.time, cell));
+                state.selecting = Some(cell);
+                let unit = match state.clicks {
+                    2 => Selecting::Words,
+                    3 => Selecting::Lines,
+                    _ if alt => Selecting::Block,
+                    _ => Selecting::Cells,
+                };
+                if shift && unit == Selecting::Cells && vt.session.has_selection() {
+                    let _ = vt.session.select_extend(cell.0, cell.1);
+                } else {
+                    vt.session.clear_selection();
+                    let _ = vt.session.select_start(cell.0, cell.1, unit);
+                }
+            });
+            flush(e, me);
+            true
+        }
+        // Middle-click pastes the primary selection, as X11 does.
+        MouseButton::Middle => {
+            if let Some(text) = Platform::of(e).clipboard().text(ClipboardMode::Selection) {
+                paste_text(e, me, &text);
+            }
+            true
+        }
+        // Right-click is for the bricks' menu.
+        _ => false,
     }
-    let top = vt_mut(e, me, |vt| {
-        vt.clear_selection();
-        vt.top()
-    })
-    .unwrap_or(0);
-    let from = Pos {
-        row: top + usize::from(cell.0),
-        col: cell.1,
-    };
-    let _ = e.with_mut::<Terminal, _>(me, |t| t.state.drag = Some(from));
-    sync(e, me);
-    true
 }
 
 fn pointer_moved(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     let cell = cell_at(e, me, at);
-    let Ok((drag, reported)) = e.with::<Terminal, _>(me, |t| (t.state.drag, t.state.reported))
+    let Ok((selecting, reported)) =
+        e.with::<Terminal, _>(me, |t| (t.state.selecting, t.state.reported))
     else {
         return;
     };
-    if let Some(button) = reported {
-        if vt_mut(e, me, |vt| vt.mouse_drag()).unwrap_or(false) {
-            report(e, me, MouseAction::Motion, button, ev.modifiers, cell);
-        }
-    } else if let Some(from) = drag {
-        let moved = vt_mut(e, me, |vt| {
-            let to = Pos {
-                row: vt.top() + usize::from(cell.0),
-                col: cell.1,
-            };
+    if let Some(b) = reported {
+        report(e, me, MouseAction::Motion, Some(b), ev.modifiers, cell);
+    } else if let Some(from) = selecting {
+        vt_mut(e, me, |vt, _| {
             // A press that has not left its cell selects nothing.
-            if to != from || vt.has_selection() {
-                vt.select(from, to);
+            if cell != from || vt.session.has_selection() {
+                let _ = vt.session.select_extend(cell.0, cell.1);
             }
         });
-        if moved.is_some() {
-            sync(e, me);
-        }
+        flush(e, me);
     }
 }
 
 /// The pointer moved over the item with no button down: a program that asked
-/// for any motion hears of each new cell (button 3 is "none").
+/// for any motion hears of each new cell; the encoder drops it for one that
+/// didn't.
 fn hover_moved(e: &Engine, me: ObjectId, at: kurbo::Point) {
     let cell = cell_at(e, me, at);
     let Ok(idle) = e.with_mut::<Terminal, _>(me, |t| {
-        let idle = t.state.drag.is_none() && t.state.reported.is_none();
+        let idle = t.state.selecting.is_none() && t.state.reported.is_none();
         idle && t.state.hovered.replace(cell) != Some(cell)
     }) else {
         return;
     };
-    if idle && vt_mut(e, me, |vt| vt.mouse_any_motion()).unwrap_or(false) {
-        report(e, me, MouseAction::Motion, 3, Modifiers::empty(), cell);
+    if idle && reports(e, me, Modifiers::empty()) {
+        report(e, me, MouseAction::Motion, None, Modifiers::empty(), cell);
     }
 }
 
 fn pointer_release(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
-    let reported = e
-        .with_mut::<Terminal, _>(me, |t| {
-            t.state.drag = None;
-            t.state.reported.take()
-        })
-        .ok()
-        .flatten();
-    if let Some(button) = reported {
+    let Ok((reported, selecting)) =
+        e.with_mut::<Terminal, _>(me, |t| (t.state.reported.take(), t.state.selecting.take()))
+    else {
+        return;
+    };
+    if let Some(b) = reported {
         report(
             e,
             me,
             MouseAction::Release,
-            button,
+            Some(b),
             ev.modifiers,
             cell_at(e, me, at),
         );
+    } else if selecting.is_some() {
+        // What is selected is the primary selection, as on X11.
+        copy_to(e, me, ClipboardMode::Selection);
     }
 }
 
 fn pointer_cancel(e: &Engine, me: ObjectId) {
     let _ = e.with_mut::<Terminal, _>(me, |t| {
-        t.state.drag = None;
+        t.state.selecting = None;
         t.state.reported = None;
     });
 }
@@ -783,30 +1039,31 @@ fn wheel(e: &Engine, me: ObjectId, ev: &WheelEvent, at: kurbo::Point) -> bool {
         t.state.wheel_remainder += wheel_rows(ev, ch);
         let steps = t.state.wheel_remainder.trunc();
         t.state.wheel_remainder -= steps;
-        steps as i64
+        steps as isize
     }) else {
         return false;
     };
     if steps == 0 {
         return true;
     }
-    let Some((tracking, alternate, app)) = vt_mut(e, me, |vt| {
-        (
-            vt.mouse_tracking(),
-            vt.alternate_screen(),
-            vt.application_cursor(),
-        )
-    }) else {
-        return false;
-    };
-    if tracking && !ev.modifiers.contains(Modifiers::SHIFT) {
-        // Steps are presses of buttons four (up) and five (down).
-        let button = if steps < 0 { 4 } else { 5 };
+    if reports(e, me, ev.modifiers) {
+        // Steps are presses of the wheel's buttons.
+        let b = if steps < 0 {
+            MouseButton::WheelUp
+        } else {
+            MouseButton::WheelDown
+        };
         let cell = cell_at(e, me, at);
         for _ in 0..steps.unsigned_abs().min(10) {
-            report(e, me, MouseAction::Press, button, ev.modifiers, cell);
+            report(e, me, MouseAction::Press, Some(b), ev.modifiers, cell);
         }
-    } else if alternate {
+        return true;
+    }
+    let Some((alternate, app)) = vt_mut(e, me, |vt, _| (vt.alternate(), vt.application_cursor()))
+    else {
+        return false;
+    };
+    if alternate {
         // Full-screen programs without mouse support (less, man) see arrows.
         let arrow: &[u8] = match (steps < 0, app) {
             (true, true) => b"\x1bOA",
@@ -814,40 +1071,11 @@ fn wheel(e: &Engine, me: ObjectId, ev: &WheelEvent, at: kurbo::Point) -> bool {
             (true, false) => b"\x1b[A",
             (false, false) => b"\x1b[B",
         };
-        let n = steps.unsigned_abs().min(100) as usize;
-        send(e, me, &arrow.repeat(n), false);
+        let n = steps.unsigned_abs().min(100);
+        vt_mut(e, me, |vt, _| vt.session.write(&arrow.repeat(n)));
+        flush(e, me);
     } else {
-        scroll(e, me, steps);
+        scroll(e, me, Scroll::Lines(steps));
     }
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Modifiers, mac_keys, paste_bytes};
-
-    #[test]
-    fn mac_keys_trade_control_and_meta_back() {
-        let shift = Modifiers::SHIFT;
-        assert_eq!(
-            mac_keys(Modifiers::CONTROL | shift),
-            Modifiers::META | shift
-        );
-        assert_eq!(mac_keys(Modifiers::META), Modifiers::CONTROL);
-        let both = Modifiers::CONTROL | Modifiers::META;
-        assert_eq!(mac_keys(both), both);
-        assert_eq!(mac_keys(Modifiers::ALT), Modifiers::ALT);
-    }
-
-    #[test]
-    fn a_paste_is_bracketed_when_asked_and_defused() {
-        assert_eq!(paste_bytes("", true), None);
-        assert_eq!(paste_bytes("a\nb", false).unwrap(), b"a\rb");
-        assert_eq!(
-            paste_bytes("a\nb", true).unwrap(),
-            b"\x1b[200~a\nb\x1b[201~"
-        );
-        let defused = paste_bytes("x\x1b[201~y", true).unwrap();
-        assert_eq!(defused, b"\x1b[200~x [201~y\x1b[201~");
-    }
 }

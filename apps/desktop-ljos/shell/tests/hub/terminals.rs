@@ -192,14 +192,15 @@ fn keystrokes_wait_for_the_attach_and_go_one_request_at_a_time() {
         .answer(&hub.engine, "terminal.write", Ok(json!(null)));
     assert_eq!(writes(&hub), ["ls", "\rpwd\r"]);
 
-    // A refused write loses what was typed after it too.
+    // A refused write loses what was typed after it too, and says why.
     term.write(&hub.engine, "lost");
     hub.mc
         .answer(&hub.engine, "terminal.write", Err(failure("ended")));
     assert_eq!(writes(&hub).len(), 2);
+    assert_eq!(term.transcript(), "$ \r\n[terminal] ended\r\n");
 
     on_terminal(&hub, "term-1", json!({"type": "output", "data": "out"}));
-    assert_eq!(term.transcript(), "$ out");
+    assert_eq!(term.transcript(), "$ \r\n[terminal] ended\r\nout");
     on_terminal(&hub, "term-1", json!({"type": "cleared"}));
     assert_eq!(term.transcript(), "");
 }
@@ -639,6 +640,8 @@ mod session_model {
         /// Typed but not sent.
         pending: String,
         writing: bool,
+        /// Why the last write failed, said once until a write goes through.
+        write_failure: String,
         resizing: bool,
         wanted: Option<(i32, i32)>,
         sent: Option<(i32, i32)>,
@@ -799,6 +802,7 @@ mod session_model {
                     let m = &mut self.model;
                     if hears {
                         m.replace(&history);
+                        m.write_failure.clear();
                         if !std::mem::replace(&mut m.attached, true) {
                             m.flush_writes();
                             m.events.push(SessionEvent::Attached);
@@ -862,8 +866,15 @@ mod session_model {
                         m.writing = false;
                         if !ok {
                             m.pending.clear();
-                        } else if !m.ended {
-                            m.flush_writes();
+                            // `answer`'s refusal says why.
+                            if std::mem::replace(&mut m.write_failure, "gone".into()) != "gone" {
+                                m.append("\r\n[terminal] gone\r\n");
+                            }
+                        } else {
+                            m.write_failure.clear();
+                            if !m.ended {
+                                m.flush_writes();
+                            }
                         }
                     }
                 }

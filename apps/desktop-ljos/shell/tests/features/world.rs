@@ -818,6 +818,17 @@ impl World {
         self.pump()
     }
 
+    /// An input method shows `text` as what the user is composing, in
+    /// whatever has the keyboard focus; an empty `text` cancels it.
+    pub fn preedit(&mut self, text: &str) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let taken = shell.window.preedit(text, None);
+        self.pump()?;
+        Ok(taken)
+    }
+
     /// The user presses a key in the window. Whether an item took it.
     pub fn key(&mut self, event: &ljos::item::KeyEvent) -> Outcome<bool> {
         let Some(shell) = &mut self.shell else {
@@ -934,6 +945,21 @@ impl World {
             return Err(Failure("the app is not running".into()));
         };
         let event = ljos::item::WheelEvent::notches(x, y, 0.0, notches, shell.window.now());
+        let taken = shell.window.wheel(&event);
+        self.pump()?;
+        Ok(taken)
+    }
+}
+
+impl World {
+    /// A trackpad scrolls `dy` pixels over (x, y) of the window (positive:
+    /// the content follows the fingers down, showing what is further up).
+    /// Whether an item used it.
+    pub fn wheel_pixels(&mut self, x: f64, y: f64, dy: f64) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let event = ljos::item::WheelEvent::pixels(x, y, 0.0, dy, shell.window.now());
         let taken = shell.window.wheel(&event);
         self.pump()?;
         Ok(taken)

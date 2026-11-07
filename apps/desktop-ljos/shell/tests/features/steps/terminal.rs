@@ -37,6 +37,8 @@ pub struct FakeTerminals {
     pub refuse_open: String,
     /// Why terminal.close fails, when it does.
     pub refuse_close: String,
+    /// Why terminal.write fails ("" for no reason given), when it does.
+    pub refuse_write: Option<String>,
     /// What the shell prints back when it is written exactly this.
     pub replies: HashMap<String, String>,
     /// The terminal the steps' right panel tab runs.
@@ -223,6 +225,11 @@ fn extension(mc: &mut FakeMc) {
             }
             let refusal = mc.part::<FakeTerminals>().refuse_close.clone();
             if rpc.method == "terminal.close" && !refusal.is_empty() {
+                mc.refuse(&rpc, &refusal);
+                return;
+            }
+            let refusal = mc.part::<FakeTerminals>().refuse_write.clone();
+            if let Some(refusal) = refusal.filter(|_| rpc.method == "terminal.write") {
                 mc.refuse(&rpc, &refusal);
                 return;
             }
@@ -542,7 +549,10 @@ fn project_row(id: &str) -> Value {
 /// up.
 pub fn ensure_project(world: &mut World) -> Outcome {
     if world.mc.projects.is_empty() {
-        world.mc.projects.insert("p1".into(), project_row("p1"));
+        let row = project_row("p1");
+        world.mc.projects.insert("p1".into(), row.clone());
+        // A shell already connected ("the user is on macOS") hears of it.
+        world.mc.send_row_of("p1", &row, "project");
     }
     if world.shell_subscriptions() == 0 {
         world.connect()?;

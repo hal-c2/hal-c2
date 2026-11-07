@@ -15,11 +15,12 @@ use serde_json::{Value, json};
 
 use crate::brick::Brick;
 use crate::expect;
-use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
+use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::steps::terminal::{
-    FakeTerminals, attached, describe_rows, describe_terminal_calls, drawer_available, drawer_open,
-    ensure_project, ensure_thread, print, rows_in, send_terminal, shown_thread, tab_labels,
-    terminal_attach, terminal_call, terminal_session, terminal_writes,
+    FakeTerminals, active_terminal, add_action, add_terminal, attached, confirm_terminal_close,
+    describe_rows, describe_terminal_calls, drawer_available, drawer_open, ensure_project,
+    ensure_thread, print, rows_in, send_terminal, shown_thread, tab_labels, terminal_attach,
+    terminal_call, terminal_session, terminal_writes, toast_shown,
 };
 use crate::world::World;
 
@@ -33,6 +34,8 @@ struct CloseWorld {
     printed: usize,
     first_chunk: String,
     last_chunk: String,
+    /// The active group before the user closed a terminal.
+    group_before: String,
 }
 
 fn has_tab(world: &World, terminal_id: &str) -> bool {
@@ -112,7 +115,167 @@ fn drawer(world: &mut World) -> Outcome<Brick> {
     )
 }
 
+fn active_group(world: &World) -> String {
+    controller::with::<Terminals, _>(world.engine(), |t, _| t.active_group()).unwrap_or_default()
+}
+
+/// Waits for `term-<number>` to be the active terminal.
+fn expect_active(world: &mut World, number: &str) -> Outcome {
+    world.sync()?;
+    let id = format!("term-{number}");
+    let wanted = id.clone();
+    world.wait_for_with(
+        move |w| active_terminal(w) == wanted,
+        move |w| {
+            format!(
+                "{id} active; {} is. {}",
+                active_terminal(w),
+                describe_rows(w)
+            )
+        },
+    )
+}
+
+fn refuse_open(world: &mut World) -> Outcome {
+    world.mc.part::<FakeTerminals>().refuse_open =
+        "Terminal limit reached on this machine".to_owned();
+    Ok(())
+}
+
+/// The project's "Dev" script, run from the header.
+fn run_script(world: &mut World) -> Outcome {
+    add_action(world, "p1", "Dev", "bun dev")?;
+    world.dispatch("workspace.runScript", json!({"scriptId": "dev"}))?;
+    world.sync()
+}
+
+/// Whether the shell said the terminal or the script could not open.
+fn told_it_failed(world: &World) -> bool {
+    toast_shown(world, "Unable to open terminal")
+        || toast_shown(world, "Failed to run script \"Dev\".")
+}
+
+fn describe_failure(world: &World) -> String {
+    format!(
+        "{}; the shell shows {}",
+        describe_rows(world),
+        show(&world.state("toasts"))
+    )
+}
+
+/// Which terminal is active as terminals close, and what a terminal that
+/// does not open leaves (terminal/tabs.feature, errors.feature).
+fn register_tabs(steps: &mut Steps) {
+    steps.step(
+        "the thread has terminals 1, 2 and 3 with terminal 3 active",
+        |world, _, _| open_terminals(world, 3),
+    );
+    steps.step("terminal (\\d) is (?:still )?active", |world, c, _| {
+        expect_active(world, &c[0])
+    });
+    steps.step("the user closes terminal (\\d)", |world, c, _| {
+        world.mc.part::<CloseWorld>().group_before = active_group(world);
+        world.dispatch(
+            "terminal.close",
+            json!({"terminalId": format!("term-{}", c[0])}),
+        )?;
+        confirm_terminal_close(world)?;
+        world.sync()
+    });
+    steps.step(
+        "its group and place in the row are unchanged",
+        |world, _, _| {
+            let before = world.mc.part::<CloseWorld>().group_before.clone();
+            let rows = rows_in(world, false);
+            expect!(
+                rows.len() == 2
+                    && rows[1].terminal_id == "term-3"
+                    && rows[1].group == before
+                    && active_group(world) == before,
+                "{}",
+                describe_rows(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the thread has one running terminal that is active",
+        |world, _, _| {
+            open_terminals(world, 1)?;
+            // A script would rather not type into a busy one.
+            let thread_id = shown_thread(world);
+            add_terminal(&mut world.mc, &thread_id, "term-1", "", true);
+            world.sync()
+        },
+    );
+    steps.step(
+        "a project script's terminal is already known to the thread",
+        |world, _, _| open_terminals(world, 1),
+    );
+    steps.step(
+        "the MC refuses to open (?:another terminal|it again)",
+        |world, _, _| refuse_open(world),
+    );
+    steps.step(
+        "the user splits the terminal (side by side|stacked)",
+        |world, c, _| {
+            let action = if c[0] == "stacked" {
+                "terminal.splitVertical"
+            } else {
+                "terminal.split"
+            };
+            world.dispatch(action, json!({"terminalId": "term-1"}))?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the user runs (?:a project script that wants a new terminal|the script)",
+        |world, _, _| run_script(world),
+    );
+    steps.step(
+        "the thread still has only its first terminal and it is still active",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let rows = rows_in(w, false);
+                    told_it_failed(w)
+                        && rows.len() == 1
+                        && rows[0].terminal_id == "term-1"
+                        && rows[0].span == 1
+                        && active_terminal(w) == "term-1"
+                },
+                describe_failure,
+            )
+        },
+    );
+    steps.step("nothing is typed into any terminal", |world, _, _| {
+        let typed = world.mc.peek::<FakeTerminals>().is_some_and(|f| {
+            f.calls
+                .iter()
+                .any(|call| call["method"] == "terminal.write")
+        });
+        expect!(!typed, "{}", describe_terminal_calls(world));
+        Ok(())
+    });
+    steps.step("the terminal stays in the thread", |world, _, _| {
+        world.wait_for_with(
+            |w| told_it_failed(w) && rows_in(w, false).len() == 1 && has_tab(w, "term-1"),
+            describe_failure,
+        )
+    });
+    steps.step("the script's command is not typed", |world, _, _| {
+        let typed = terminal_writes(world, "term-1").concat();
+        expect!(
+            !typed.contains("bun dev"),
+            "{}",
+            describe_terminal_calls(world)
+        );
+        Ok(())
+    });
+}
+
 pub fn register(steps: &mut Steps) {
+    register_tabs(steps);
     steps.step(
         "the terminal \"Terminal (\\d+)\" is running",
         |world, c, _| {
@@ -398,34 +561,27 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
-        "the terminal says the folder does not exist",
+        "the user is told the folder does not exist",
         |world, _, _| {
-            let session = terminal_session(world, "term-1")?;
-            let watched = session.clone();
+            let told = |w: &World| {
+                let toasts = w.state("toasts");
+                toasts["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|item| text(at(item, "title")) == "Unable to open terminal")
+                    .map(|item| text(at(item, "description")))
+                    .unwrap_or_default()
+            };
             world.wait_for_with(
-                move |_| {
-                    watched
-                        .transcript()
-                        .contains("[Terminal cwd does not exist: /work/p1]")
-                },
-                |_| {
-                    format!(
-                        "the terminal to say why; it shows \"{}\"",
-                        session.transcript()
-                    )
-                },
+                move |w| told(w) == "Terminal cwd does not exist: /work/p1",
+                |w| format!("the reason; the shell shows {}", show(&w.state("toasts"))),
             )?;
-            // The drawer draws it where the shell would have been.
-            let drawer = drawer(world)?;
-            let terminal = drawer.item(world, "HalC2Terminal")?;
-            let drawn = world
-                .engine()
-                .invoke_by_name(terminal, "text", &[])
-                .map(|v| world.engine().to_js_string(&v).to_string())
-                .map_err(|e| Failure(format!("the drawer's terminal has no text: {e:?}")))?;
+            // The refused terminal goes again, and the drawer with it.
             expect!(
-                drawn.contains("Terminal cwd does not exist: /work/p1"),
-                "the drawer draws \"{drawn}\""
+                rows_in(world, false).is_empty() && !drawer_open(world),
+                "{}",
+                describe_rows(world)
             );
             Ok(())
         },
@@ -438,8 +594,7 @@ pub fn register(steps: &mut Steps) {
             "the window shows {}",
             show(&route)
         );
-        // The composer still takes the user's words, and the drawer still
-        // hides.
+        // The composer still takes the user's words.
         world.dispatch(
             "composer.text.set",
             json!({"target": key, "text": "try again", "cursor": 9}),
@@ -447,9 +602,7 @@ pub fn register(steps: &mut Steps) {
         world.wait_for_with(
             |w| at(&w.state("composer"), "text") == "try again",
             |w| format!("the composer shows {}", show(&w.state("composer"))),
-        )?;
-        world.dispatch("terminal.toggle", json!({}))?;
-        world.wait_for("the terminal drawer to hide", |w| !drawer_open(w))
+        )
     });
 
     steps.step(

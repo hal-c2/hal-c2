@@ -6,10 +6,11 @@
 //! and keys the user has.
 
 use hal_c2_shell::controller;
+use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::theme::Themes;
 use ljos::ObjectId;
-use ljos::item::{Modifiers, MouseButtons, PointerEvent};
+use ljos::item::{KeyEvent, Modifiers, MouseButtons, PointerEvent, key};
 use serde_json::{Value, json};
 
 use crate::brick::{self, Brick, Shown, key_event};
@@ -21,6 +22,7 @@ use crate::steps::terminal::{
 };
 use crate::world::World;
 use crate::{expect, fail};
+use ljos::prelude::Atom;
 
 const OUTPUT: &str = "FAIL cart.test.ts\r\n  expected 3, got 2\r\n";
 const CLIPBOARD: &str = "bun test cart";
@@ -35,19 +37,27 @@ fn current(world: &mut World) -> Option<Brick> {
     world.peek_part::<Shown>().and_then(|shown| shown.0)
 }
 
-fn call(world: &World, terminal: ObjectId, method: &str) -> String {
+pub(crate) fn call(world: &World, terminal: ObjectId, method: &str) -> String {
     match world.engine().invoke_by_name(terminal, method, &[]) {
         Ok(value) => world.engine().to_js_string(&value).to_string(),
         Err(_) => String::new(),
     }
 }
 
-fn number(brick: &Brick, world: &World, item: ObjectId, name: &str) -> f64 {
+pub(crate) fn number(brick: &Brick, world: &World, item: ObjectId, name: &str) -> f64 {
     brick.text_of(world, item, name).parse().unwrap_or_default()
 }
 
 /// The thread's drawer, open on a terminal that printed [`OUTPUT`], drawn.
-fn drawn_terminal(world: &mut World) -> Outcome<(Brick, ObjectId)> {
+pub(crate) fn drawn_terminal(world: &mut World) -> Outcome<(Brick, ObjectId)> {
+    // A shell answers Ctrl-L (or Cmd+K on macOS) by clearing the screen and
+    // drawing its prompt.
+    world
+        .mc
+        .part::<FakeTerminals>()
+        .replies
+        .entry("\x0c".into())
+        .or_insert_with(|| "\x1b[H\x1b[2J$ ".into());
     let brick = match current(world) {
         Some(brick) => brick,
         None => {
@@ -82,11 +92,33 @@ fn drawn_terminal(world: &mut World) -> Outcome<(Brick, ObjectId)> {
         }
     };
     let terminal = brick.item(world, "HalC2Terminal")?;
+    // The platform whose keys apply, as "the user is on" set it.
+    let platform = if Keymap::of(world.engine()).mac() {
+        "osx"
+    } else {
+        "linux"
+    };
+    if brick.text_of(world, terminal, "platform") != platform {
+        brick.write(
+            world,
+            terminal,
+            "platform",
+            ljos::prelude::Value::String(Atom::from(platform)),
+        )?;
+    }
+    // The cell sizes its terminal once the drawer has its size: a point
+    // read before then is outside it.
     world.wait_for_with(
-        move |w| call(w, terminal, "text").contains("expected 3, got 2"),
+        move |w| {
+            number(&brick, w, terminal, "width") > 0.0
+                && number(&brick, w, terminal, "height") > 0.0
+                && call(w, terminal, "text").contains("expected 3, got 2")
+        },
         move |w| {
             format!(
-                "the terminal to draw its output; it draws \"{}\"",
+                "the terminal to draw its output; it is {}x{} and draws \"{}\"",
+                number(&brick, w, terminal, "width"),
+                number(&brick, w, terminal, "height"),
                 call(w, terminal, "text")
             )
         },
@@ -95,7 +127,7 @@ fn drawn_terminal(world: &mut World) -> Outcome<(Brick, ObjectId)> {
 }
 
 /// Drags the mouse over the terminal's first line, as the user selects it.
-fn select_first_line(world: &mut World, brick: Brick, terminal: ObjectId) -> Outcome {
+pub(crate) fn select_first_line(world: &mut World, brick: Brick, terminal: ObjectId) -> Outcome {
     let cell = number(&brick, world, terminal, "cellWidth");
     let row = number(&brick, world, terminal, "cellHeight");
     let padding = number(&brick, world, terminal, "padding");
@@ -125,7 +157,7 @@ fn select_first_line(world: &mut World, brick: Brick, terminal: ObjectId) -> Out
 
 /// Right-clicks at (x, y); the terminal's menu's items then take clicks,
 /// as they do once the menu has finished opening.
-fn open_menu_at(world: &mut World, brick: Brick, x: f64, y: f64) -> Outcome {
+pub(crate) fn open_menu_at(world: &mut World, brick: Brick, x: f64, y: f64) -> Outcome {
     world.click_at_with(x, y, MouseButtons::RIGHT, Modifiers::empty())?;
     let ljos::prelude::Value::Object(menu) =
         brick.read(world, brick.item(world, "terminalPaste")?, "menu")
@@ -163,7 +195,36 @@ fn press_in_terminal(world: &mut World, brick: Brick, terminal: ObjectId, spelt:
     world.sync()
 }
 
-fn take_keyboard(world: &mut World, brick: Brick, terminal: ObjectId) -> Outcome {
+/// A chord as "the user presses" spells it ("Shift+Option+Left"), with the
+/// modifiers the toolkit reports on the platform: on macOS it calls Cmd
+/// Control, and Ctrl Meta (desktop-qt's pressChord).
+pub(crate) fn chord(world: &World, spelt: &str) -> Outcome<KeyEvent> {
+    let mac = Keymap::of(world.engine()).mac();
+    let mut parts: Vec<&str> = spelt.split('+').collect();
+    let name = parts.pop().unwrap_or_default();
+    let code = match name {
+        "Left" => key::LEFT,
+        "Right" => key::RIGHT,
+        "Insert" => key::INSERT,
+        "Backspace" => key::BACKSPACE,
+        letter if letter.len() == 1 => i32::from(letter.as_bytes()[0].to_ascii_uppercase()),
+        _ => fail!("no such key: {name}"),
+    };
+    let mut modifiers = Modifiers::empty();
+    for part in parts {
+        modifiers |= match part {
+            "Shift" => Modifiers::SHIFT,
+            "Cmd" => Modifiers::CONTROL,
+            "Ctrl" if mac => Modifiers::META,
+            "Ctrl" => Modifiers::CONTROL,
+            "Alt" | "Option" => Modifiers::ALT,
+            _ => fail!("no such modifier: {part}"),
+        };
+    }
+    Ok(KeyEvent::press(code).with_modifiers(modifiers))
+}
+
+pub(crate) fn take_keyboard(world: &mut World, brick: Brick, terminal: ObjectId) -> Outcome {
     let _ = world
         .engine()
         .invoke_by_name(terminal, "forceActiveFocus", &[]);
@@ -174,7 +235,12 @@ fn take_keyboard(world: &mut World, brick: Brick, terminal: ObjectId) -> Outcome
 }
 
 /// Where `link` is drawn, on the last line that shows it.
-fn point_on(world: &World, brick: &Brick, terminal: ObjectId, link: &str) -> Outcome<(f64, f64)> {
+pub(crate) fn point_on(
+    world: &World,
+    brick: &Brick,
+    terminal: ObjectId,
+    link: &str,
+) -> Outcome<(f64, f64)> {
     let shown = call(world, terminal, "text");
     let lines: Vec<&str> = shown.split('\n').collect();
     let Some(row) = lines.iter().rposition(|line| line.contains(link)) else {
@@ -212,7 +278,12 @@ fn show_link(world: &mut World, printed: &str, link: &str) -> Outcome<(f64, f64)
 }
 
 /// The shell prints a line with `link` in it and the user clicks the link.
-fn follow(world: &mut World, printed: &str, link: &str, modifiers: Modifiers) -> Outcome {
+pub(crate) fn follow(
+    world: &mut World,
+    printed: &str,
+    link: &str,
+    modifiers: Modifiers,
+) -> Outcome {
     let (x, y) = show_link(world, printed, link)?;
     world.click_at_with(x, y, MouseButtons::LEFT, modifiers)?;
     world.sync()
@@ -412,8 +483,10 @@ pub fn register(steps: &mut Steps) {
         &format!("the user presses {Q} in the terminal"),
         |world, c, _| {
             let (brick, terminal) = drawn_terminal(world)?;
-            let spelt = if c[0] == "Ctrl+C" { "ctrl+c" } else { "ctrl+v" };
-            press_in_terminal(world, brick, terminal, spelt)
+            take_keyboard(world, brick, terminal)?;
+            let event = chord(world, &c[0])?;
+            world.key(&event)?;
+            world.sync()
         },
     );
     steps.step("the shell receives Ctrl-C", |world, _, _| {
@@ -431,13 +504,6 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user clears the terminal from the keyboard",
         |world, _, _| {
-            // A shell answers Ctrl-L by clearing the screen and drawing its
-            // prompt.
-            world
-                .mc
-                .part::<FakeTerminals>()
-                .replies
-                .insert("\x0c".into(), "\x1b[H\x1b[2J$ ".into());
             let (brick, terminal) = drawn_terminal(world)?;
             // The terminal item encodes Control as Ctrl on every platform.
             press_in_terminal(world, brick, terminal, "ctrl+l")
@@ -724,6 +790,20 @@ pub fn register(steps: &mut Steps) {
                 |w| {
                     format!(
                         "CSI 13;2u to be written; the MC got {}",
+                        describe_terminal_calls(w)
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the program receives Ctrl\\+A in the enhanced report",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| terminal_writes(w, "term-1").contains(&"\x1b[97;5u".to_owned()),
+                |w| {
+                    format!(
+                        "CSI 97;5u to be written; the MC got {}",
                         describe_terminal_calls(w)
                     )
                 },
