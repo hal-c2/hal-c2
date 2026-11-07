@@ -23,7 +23,7 @@ defmodule HalC2.Orchestration.CommandTail do
   def kept, do: @kept
 
   @doc """
-  Adds `text` to a command's output. Returns how much it has printed in all, which is
+  Adds `text` to a command's output. Returns how many bytes it has printed in all, which is
   what a client watches.
   """
   def append(thread_id, item_id, text) do
@@ -35,7 +35,7 @@ defmodule HalC2.Orchestration.CommandTail do
         [] -> {"", 0}
       end
 
-    total = total + String.length(text)
+    total = total + byte_size(text)
     tail = cut(tail <> text, @limit)
     :ets.insert(@table, {key, tail, total})
     total

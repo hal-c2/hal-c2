@@ -590,7 +590,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     print_output(context, 17 * 1024 * 1024)
   end
 
-  step "the agent's command has printed more than 64K characters", context do
+  step "the agent's command has printed more than 64K bytes", context do
     print_output(context, 100_000)
   end
 
@@ -607,7 +607,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
 
   step "the output printed so far is shown", context do
     assert %{"running" => true, "output" => output} = context.shown
-    # It printed 100,000 characters; the MC keeps the last 64K.
+    # It printed 100,000 bytes; the MC keeps the last 64K.
     assert output == String.slice(printed(100_000), -65_536, 65_536)
     context
   end
@@ -665,7 +665,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     context
   end
 
-  step "the last 64K characters are shown", context do
+  step "the last 64K bytes are shown", context do
     assert %{"running" => true, "output" => output} = context.shown
     assert byte_size(output) == 65_536
     assert output == String.slice(printed(100_000), -65_536, 65_536)

@@ -1176,7 +1176,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
-    /** Characters printed so far; set while the output is held off the thread. */
+    /** Bytes printed so far; set while the output is held off the thread. */
     outputSize: Schema.optional(Schema.Int),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
@@ -1912,7 +1912,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
-    /** Characters printed so far; set while the output is held off the thread. */
+    /** Bytes printed so far; set while the output is held off the thread. */
     outputSize: Schema.optional(Schema.Int),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
@@ -2963,7 +2963,7 @@ export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 /**
  * A command's output is not part of the thread a client holds: the item says how much
  * it has printed (`outputSize`) and a client that shows the output asks for it. While
- * the command runs that is its last 64K characters; once it ends, what the thread kept,
+ * the command runs that is its last 64K bytes; once it ends, what the thread kept,
  * at most the last 256 KiB.
  */
 export const OrchestrationV2GetCommandOutputInput = Schema.Struct({

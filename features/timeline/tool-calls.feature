@@ -97,6 +97,27 @@ Feature: Tool calls and file changes
     When the user opens the row
     Then all six tool calls are shown
 
+  # TUI: a subagent's row is never folded away (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: A subagent's row stays beside the live row
+    Given the agent delegated a task and then ran three tool calls in the running turn
+    Then the subagent's row is shown
+    And the latest tool call is shown with "+2 previous tool calls" beside it
+
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: A command whose output cannot be fetched says so
+    Given the agent ran a command that finished
+    And the MC cannot supply its output
+    When the user opens the command's details
+    Then the details read "Output unavailable" rather than loading
+
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: An older reply never replaces a newer one
+    Given the agent's command is still running and printing
+    And the user has opened the command's details
+    When the output is fetched again and the second reply arrives before the first
+    Then the details show the second reply's output
+
   # Upstream #16284: the live row also says what the agent is thinking about.
   @backlog @shared
   Scenario: The live row shows the first sentence of the agent's latest thought
@@ -408,10 +429,10 @@ Feature: Tool calls and file changes
     And the thread's history and stream do not grow by it
 
   @mc
-  Scenario: A running command keeps only the last 64K characters of output
-    Given the agent's command has printed more than 64K characters
+  Scenario: A running command keeps only the last 64K bytes of output
+    Given the agent's command has printed more than 64K bytes
     When the user opens the command's details
-    Then the last 64K characters are shown
+    Then the last 64K bytes are shown
 
   @mc
   Scenario: A client that falls behind is sent the whole tail again

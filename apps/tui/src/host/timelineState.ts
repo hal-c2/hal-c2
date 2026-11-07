@@ -225,7 +225,7 @@ export interface TimelineInput {
   /** Colours a reply's code by its language (`codeColours.ts`); without it code is one colour. */
   readonly codeColours?: CodeColouring;
   /** A command's output as fetched (`orchestration.getCommandOutput`); null until it arrives. */
-  readonly commandOutput?: (itemId: string) => string | null;
+  readonly commandOutput?: (itemId: string) => string | { readonly failed: true } | null;
   /** Where the thread works; a file change in it is named relative to it. */
   readonly workspaceRoot?: string | null;
   /** How this device writes times (default: the locale's). */
@@ -516,7 +516,7 @@ interface RowContext {
   readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
   readonly codeColours: CodeColouring | undefined;
   readonly workspaceRoot: string | null;
-  readonly commandOutput: (itemId: string) => string | null;
+  readonly commandOutput: (itemId: string) => string | { readonly failed: true } | null;
   readonly nowMs: number;
   readonly timestampFormat: TimestampFormat;
   /** The replies that end a settled turn, which carry its time and actions. */
@@ -1043,7 +1043,13 @@ function callLines(entry: WorkLogEntry, text: StyledText, ctx: RowContext): Time
   if (!open) return [head];
   const output = ctx.commandOutput(id);
   const body =
-    output === null ? ["Loading output…"] : output === "" ? ["No output"] : tailLines(output);
+    output === null
+      ? ["Loading output…"]
+      : typeof output === "object"
+        ? ["Output unavailable"]
+        : output === ""
+          ? ["No output"]
+          : tailLines(output);
   return [
     head,
     ...body.map((row) =>

@@ -148,24 +148,24 @@ defmodule HalC2.Orchestration do
   # A command's output, which the thread's clients do not hold: what it has printed so
   # far while it runs, what the thread kept once it ended (`CommandTail`).
   def handle("orchestration.getCommandOutput", %{"threadId" => thread_id, "itemId" => item_id}) do
-    tail = HalC2.Orchestration.CommandTail.get(thread_id, item_id)
+    # Fetched, not read from memory: the command may belong to a run gone cold.
+    case StreamState.fetch(HalC2.Streams.state(thread_id), "turn-item", item_id) do
+      %{"type" => "command_execution"} = item ->
+        running = item["status"] == "running"
 
-    kept =
-      case StreamState.get(HalC2.Streams.state(thread_id), "turn-item")[item_id] do
-        %{"type" => "command_execution", "output" => output} when is_binary(output) -> output
-        _ -> nil
-      end
+        output =
+          if running,
+            do: HalC2.Orchestration.CommandTail.get(thread_id, item_id) || "",
+            else: item["output"] || ""
 
-    case tail || kept do
-      nil ->
+        {:ok, %{"output" => output, "running" => running}}
+
+      _ ->
         {:error,
          %{
            "_tag" => "OrchestrationGetTurnDiffError",
            "message" => "That command is not in this thread."
          }}
-
-      output ->
-        {:ok, %{"output" => output, "running" => tail != nil}}
     end
   end
 

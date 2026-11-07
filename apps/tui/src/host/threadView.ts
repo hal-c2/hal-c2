@@ -278,7 +278,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       cellPixels: cellPixels(),
       diagrams: diagrams.get,
       codeColours: codeColours.lines,
-      commandOutput: (id) => commandOutputs.get(id)?.text ?? null,
+      commandOutput: (id) => {
+        const held = commandOutputs.get(id);
+        return held?.failed ? { failed: true } : (held?.text ?? null);
+      },
       workspaceRoot:
         detail?.worktreePath ??
         store.getState().shell?.projects.find((project) => project.id === detail?.projectId)
@@ -396,10 +399,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   /** What an opened command showed last, and which version of the item that was. */
   const commandOutputs = new Map<
     string,
-    { text: string | null; key: string; at: number; timer: ReturnType<typeof setTimeout> | null }
+    {
+      text: string | null;
+      failed: boolean;
+      seq: number;
+      key: string;
+      at: number;
+      timer: ReturnType<typeof setTimeout> | null;
+    }
   >();
   /** Fewest ms between two fetches of one command's output while it prints. */
   const COMMAND_OUTPUT_MS = 100;
+  /** Numbers the fetches, so a reply that is not for the newest one is dropped. */
+  let commandSeq = 0;
 
   /** The command's turn item as the thread holds it now. */
   const commandItem = (id: string): Record<string, unknown> | null => {
@@ -429,8 +441,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       const latest = commandItem(id);
       const latestKey = `${String(latest?.status)}:${String(latest?.outputSize ?? "")}`;
       const threadId = detail.id;
+      const seq = ++commandSeq;
       commandOutputs.set(id, {
         text: current?.text ?? null,
+        failed: false,
+        seq,
         key: latestKey,
         at: Date.now(),
         timer: null,
@@ -438,14 +453,19 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       client.getCommandOutput(threadId as never, id).then(
         ({ output }) => {
           const now = commandOutputs.get(id);
-          if (!now || detail?.id !== threadId) return;
+          if (!now || now.seq !== seq || detail?.id !== threadId) return;
           now.text = output;
           publishTimeline();
           syncCommand(id);
         },
         () => {
           const now = commandOutputs.get(id);
-          if (now) now.key = "";
+          if (!now || now.seq !== seq) return;
+          // Kept as the answer, so the row says so rather than loading for good; the
+          // next change to the command asks again.
+          now.failed = true;
+          now.key = "";
+          publishTimeline();
         },
       );
     };

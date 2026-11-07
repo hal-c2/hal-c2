@@ -811,6 +811,52 @@ step("the user opens the command's details", async (ctx: CommandWorld) => {
   await clickText(ctx, "bun test cart-1");
 });
 
+step("the MC cannot supply its output", async (ctx: CommandWorld) => {
+  ctx.fake!.override("getCommandOutput", async () => {
+    throw new Error("the MC is unreachable");
+  });
+});
+
+step("the details read {string} rather than loading", async (ctx: CommandWorld, text: string) => {
+  await settle();
+  const screen = await snapshot(ctx);
+  expect(screen).toContain(text);
+  expect(screen).not.toContain("Loading output");
+});
+
+step("the user has opened the command's details", async (ctx: CommandWorld) => {
+  await clickText(ctx, "bun test cart-1");
+});
+
+step(
+  "the output is fetched again and the second reply arrives before the first",
+  async (ctx: CommandWorld) => {
+    let answerFirst!: (reply: { output: string; running: boolean }) => void;
+    let calls = 0;
+    ctx.fake!.override("getCommandOutput", () => {
+      calls += 1;
+      if (calls > 1) return Promise.resolve({ output: "newer\n", running: true });
+      return new Promise((resolve) => {
+        answerFirst = resolve;
+      });
+    });
+    // Two fetches, a throttle window apart: the first is held back, the second answers at once.
+    await Bun.sleep(150);
+    await setItem(ctx, "call-1", { outputSize: 100 });
+    await Bun.sleep(150);
+    await setItem(ctx, "call-1", { outputSize: 200 });
+    await settle();
+    answerFirst({ output: "stale\n", running: true });
+    await settle();
+  },
+);
+
+step("the details show the second reply's output", async (ctx: CommandWorld) => {
+  const screen = await snapshot(ctx);
+  expect(screen).toContain("newer");
+  expect(screen).not.toContain("stale");
+});
+
 step("the output printed so far is shown", async (ctx: CommandWorld) => {
   const screen = await snapshot(ctx);
   expect(screen).toContain("compiling");

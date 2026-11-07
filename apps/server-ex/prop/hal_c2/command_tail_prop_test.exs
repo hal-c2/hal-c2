@@ -3,7 +3,7 @@ defmodule HalC2.CommandTailPropTest do
   A thread's running commands (`HalC2.Orchestration.CommandTail` and the output path of
   `HalC2.Orchestration.TurnWriter`) against a model of what each promises: a running
   command's output is printed into the tail, which keeps the last 64 KiB and the
-  count of characters printed, never reaching the thread but for `outputSize`; a
+  count of bytes printed, never reaching the thread but for `outputSize`; a
   refetch returns the whole tail. A command that ends keeps the provider's output cut
   to the last 256 KiB (or, when it gave none, what was printed, cut to the tail); one
   the turn stopped keeps what it printed. Every ended command, and every command of a
@@ -133,7 +133,7 @@ defmodule HalC2.CommandTailPropTest do
           shown = thread_item(id)
 
           tail == if(item.printed == "", do: nil, else: held) and shown["output"] == "" and
-            (item.printed == "" or shown["outputSize"] == String.length(item.printed))
+            (item.printed == "" or shown["outputSize"] == byte_size(item.printed))
 
         :ended ->
           tail == nil and thread_item(id)["output"] == item.kept
