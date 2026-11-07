@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20223
+#   https://github.com/pingdotgg/t3code/pull/20394
+#   https://github.com/pingdotgg/t3code/pull/17365
+#   https://github.com/pingdotgg/t3code/pull/18941
 #   docs/user/thread-sidebar.md (Link a pull request, agent-managed metadata)
 #   apps/web/src/hooks/usePullRequestLinking.ts
 #   apps/web/src/hooks/useSupportsMultiplePullRequests.ts
@@ -77,11 +81,63 @@ Feature: Linking pull requests to threads
     When the user unlinks pull request 41 from the thread
     Then "Cart totals" shows the pull request for "feature/cart" again
 
+  # Upstream #20394: a pull request is linked to a thread by its address, or by its number in
+  # the thread's repository.
+  @backlog @desktop @mobile
+  Scenario Outline: Linking a pull request to the thread by its address or number
+    When the user links "<given>" to "Cart totals"
+    Then "Cart totals" is linked to pull request 42 of the thread's repository
+
+    Examples:
+      | given                                |
+      | https://github.com/acme/shop/pull/42 |
+      | 42                                   |
+      | #42                                  |
+
+  # Upstream #20394: each linked pull request offers the desktop row menu's actions on the phone too.
+  @backlog @desktop @mobile
+  Scenario Outline: A linked pull request offers its actions
+    Given "Cart totals" is linked to the open pull request 42
+    When the user chooses "<action>" for pull request 42 of "Cart totals"
+    Then <outcome>
+
+    Examples:
+      | action             | outcome                                              |
+      | Copy link          | the clipboard holds the address of pull request 42   |
+      | Open in browser    | pull request 42 opens in the browser                 |
+      | Watch for changes  | pull request 42 is watched for changes               |
+      | Unlink from thread | "Cart totals" is no longer linked to pull request 42 |
+
+  # Upstream #20394: the MC refuses a watch on these threads, so it is not offered there.
+  @backlog @desktop @mobile
+  Scenario Outline: Watching is not offered on a thread that cannot be woken
+    Given "Cart totals" is <state> and linked to the open pull request 42
+    Then watching pull request 42 for changes is not offered
+
+    Examples:
+      | state             |
+      | archived          |
+      | settled           |
+      | a subagent thread |
+
+  # Upstream #20394: the link, unlink and watch actions need the orchestration-operate scope.
+  @backlog @desktop @mobile
+  Scenario: A session that may not operate the thread cannot change its pull requests
+    Given the user's session may read "Cart totals" but not operate it
+    Then linking, unlinking and watching pull requests is not offered for "Cart totals"
+
   @mc
   Scenario: Settled threads keep their links
     Given "Cart totals" is settled and linked to pull request 42
     When a new pull request is opened for "feature/cart"
     Then "Cart totals" stays linked to pull request 42
+
+  # Upstream #17365: pull request links stay while a reconnect changes the thread's details
+  @backlog @shared
+  Scenario: A linked pull request stays shown through a reconnect
+    Given "Cart totals" is linked to pull request 42
+    When the client reconnects and the thread's title or status has changed meanwhile
+    Then "Cart totals" still shows pull request 42
 
   @desktop @mobile @backlog-mobile
   Scenario: An environment that cannot find pull requests says it needs an update
@@ -101,9 +157,12 @@ Feature: Linking pull requests to threads
       | merged |
       | closed |
 
+  # Upstream #20223: only a finished pull request the environment found by itself is cleared
+  # once the folder is on another branch (mc/orchestration/pull-request-links.feature); one the
+  # user linked stays.
   @backlog @desktop @priority-low
-  Scenario: A finished pull request is kept while the folder is on another branch
-    Given "Cart totals" is linked to pull request 42, which was merged
+  Scenario: A finished pull request the user linked is kept while the folder is on another branch
+    Given "Cart totals" was linked by hand to pull request 42, which was merged
     And the folder is on "main", which has an open pull request of its own
     When the user opens "Cart totals"
     Then "Cart totals" stays linked to pull request 42
@@ -166,3 +225,11 @@ Feature: Linking pull requests to threads
     Given "Cart totals" is linked to the open pull request 42 "Fix cart totals" from "feature/cart" into "main"
     When the user rests the pointer on it in the thread's details
     Then the summary names its title, number, state, both branches, its checks and how many files and lines it changes
+
+  # Upstream #18941: long badge lists ran below the window.
+  @backlog @desktop @priority-low
+  Scenario: A long list of linked pull requests scrolls within the window
+    Given a thread is linked to 40 pull requests
+    When the user opens the list of its pull requests
+    Then the list fits in the window and scrolls
+    And the user can open the 40th pull request

@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18498
+#   https://github.com/pingdotgg/t3code/pull/21762
+#   https://github.com/pingdotgg/t3code/pull/18933
+#   https://github.com/pingdotgg/t3code/pull/15529
+#   https://github.com/pingdotgg/t3code/pull/15368
+#   https://github.com/pingdotgg/t3code/pull/15791
+#   https://github.com/pingdotgg/t3code/pull/19070
 #   https://github.com/pingdotgg/t3code/pull/18639
 #   https://github.com/pingdotgg/t3code/pull/18643
 #   https://github.com/pingdotgg/t3code/pull/17851
@@ -93,11 +100,27 @@ Feature: Pi
     Then Pi stays available with the "Pi default" model
     And Pi is shown with a message that the live session will retry startup
 
+  # Upstream #18498: models Pi no longer lists are not restored
+  @backlog
+  Scenario: A model Pi no longer offers is removed
+    Given Pi listed the models "alpha" and "beta"
+    When Pi's models are discovered again and only "alpha" is listed
+    Then only "alpha" is offered
+    And a discovery that fails or does not finish keeps both
+
   Scenario: Pi stays usable when discovery cannot finish
     Given Pi discovery needs interactive input
     When the user refreshes provider status
     Then Pi stays available with the "Pi default" model
     And the first thread lets Pi handle its startup prompt
+
+  # Upstream #15529: Pi model discovery waits up to 30 seconds for slow extensions
+  @backlog
+  Scenario: Pi's extension models are found when its extensions load slowly
+    Given Pi takes 20 seconds to load its extensions
+    When the user refreshes provider status
+    Then the models Pi's extensions add are offered
+    And discovery that takes longer than 30 seconds falls back to "Pi default"
 
   Scenario: Pi thinking levels follow the model
     Given the Pi model supports thinking levels up to extra high
@@ -280,6 +303,14 @@ Feature: Pi
     Then Pi runs with every tool and extension turned off
     And no Pi session file is left behind
 
+  # Upstream #19070: Pi text generation names the model it could not load and that extensions are off for it.
+  @backlog
+  Scenario: Pi failing to write a title says which model it could not load
+    Given the text-generation model is one only a Pi extension provides
+    When Pi is asked for a thread title
+    Then the failure names that model
+    And says extensions are not loaded when Pi writes titles and commit messages
+
   @backlog @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
     Given the MC itself was started by an agent that holds a HAL-C2 tools credential
@@ -419,6 +450,13 @@ Feature: Pi
     Then Pi receives the message unchanged and expands "/review"
     And HAL-C2's own instructions reach Pi as part of its system prompt
 
+  # Upstream #18933: HAL-C2's guidance no longer overrides other Pi extensions' prompt changes
+  @backlog
+  Scenario: HAL-C2's instructions leave other Pi extensions' prompt changes in place
+    Given a Pi extension adds its own context files and skills to the system prompt
+    When a Pi thread starts a turn
+    Then Pi's system prompt holds both that extension's additions and HAL-C2's instructions
+
   # Works around Pi asking OpenRouter for more output than the context can hold.
   @backlog
   Scenario Outline: Pi's output budget on OpenRouter is capped at 32,768 tokens
@@ -476,6 +514,7 @@ Feature: Pi
     Then the whole text fills the answer composer, ready to edit
     And the answer goes back to the extension with its spaces and line breaks as typed
 
+  # Upstream #21762: an empty Pi select value no longer fails the question
   @backlog
   Scenario: An empty choice from a Pi extension can still be picked
     When a Pi extension offers a list whose choices include an empty one
@@ -926,3 +965,18 @@ Feature: Pi
       | a HAL-C2 tool marked read-only                   | allowed without asking |
       | a HAL-C2 tool that changes something             | asked for approval     |
       | a read-only tool from another MCP server         | asked for approval     |
+
+  # Upstream #15368: extension notifications were a "notify" tool call folded into the work log.
+  @backlog @shared
+  Scenario: A Pi extension notification shows as a notice in the thread
+    When a Pi extension sends the notification "Lint finished\n3 warnings"
+    Then the thread shows a notice with both lines
+    And it is not folded into the tool calls
+
+  # Upstream #15791: ids built from the per-turn ordinal let one thread's notice replace another's.
+  @backlog
+  Scenario: Pi notices in two threads stay apart
+    Given Pi threads "t1" and "t2" each send a notification as the first item of a turn
+    When the user opens each thread
+    Then "t1" shows its own notice
+    And "t2" shows its own notice

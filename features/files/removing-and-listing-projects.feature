@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19686
 #   https://github.com/pingdotgg/t3code/pull/15864
 #   https://github.com/pingdotgg/t3code/pull/14912 (automatic pull no longer holds readiness)
 #   docs/user/project-settings.md (Project category, removal)
@@ -133,6 +134,13 @@ Feature: Removing and updating projects
       Then clients are served as soon as the MC is ready
       And "api" is still pulled once in the background
       And the failure to pull "shop" is logged
+
+    # Upstream #19686: an automatic pull that fails reads the project's status again.
+    @backlog @mc @priority-low
+    Scenario: A failed automatic pull leaves the changes up to date
+      Given a project that pulls automatically
+      When an automatic pull fails part-way
+      Then the project's changes are read again and show what is on disk
 
   Rule: Managing projects from the command line
 

@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19465
+#   https://github.com/pingdotgg/t3code/pull/14834
+#   https://github.com/pingdotgg/t3code/pull/18310
+#   https://github.com/pingdotgg/t3code/pull/18845
+#   https://github.com/pingdotgg/t3code/pull/17821
+#   https://github.com/pingdotgg/t3code/pull/8415
+#   https://github.com/pingdotgg/t3code/pull/20024
+#   https://github.com/pingdotgg/t3code/pull/19671
+#   https://github.com/pingdotgg/t3code/pull/14360
 #   https://github.com/pingdotgg/t3code/pull/16619
 #   https://github.com/pingdotgg/t3code/pull/19107
 #   https://github.com/pingdotgg/t3code/pull/16828
@@ -96,6 +105,12 @@ Feature: Referencing files, skills, commands and context
     When the user chooses it
     Then the draft reads "Please use " followed by the skill "review"
 
+  # Upstream #19671: a path typed in the composer offers no slash suggestions.
+  @backlog @shared
+  Scenario: A path typed in the composer does not open the slash menu
+    When the user types "run /tmp/build.sh"
+    Then no slash command or skill suggestions are offered
+
   @backlog @desktop @priority-high
   Scenario Outline: Choosing a built-in command acts at once and leaves no text behind
     Given the Build and Plan toggle setting is on
@@ -156,6 +171,18 @@ Feature: Referencing files, skills, commands and context
     Then the draft sends "@src/__test__.tsx" unchanged
     And "this" is still bold
 
+  # Upstream #8415: a pasted "@foo(bar)" became a file reference.
+  @backlog @desktop @mobile @priority-low
+  Scenario Outline: A pasted decorator call stays as text
+    When the user pastes "<text>" into the draft
+    Then the draft holds "<text>" as typed, with no file reference
+
+    Examples:
+      | text                   |
+      | @foo(bar)              |
+      | @app.route("/users")   |
+      | @écrire(option)        |
+
   @backlog @desktop @priority-high
   Scenario: Another thread on the same MC can be referenced
     Given the environment has a thread "Auth refactor"
@@ -170,6 +197,18 @@ Feature: Referencing files, skills, commands and context
     Then the user is told the agent can only read threads on its own server
     And the draft is unchanged
 
+  # Upstream #18310: moving a draft to another environment kept references the agent there cannot
+  # read; they are marked and the message waits until they are removed or the draft moves back.
+  @backlog @desktop
+  Scenario: A draft moved to another environment cannot send the threads it references
+    Given the draft references "Auth refactor" on "laptop"
+    When the user moves the draft to run on "desktop"
+    Then the reference to "Auth refactor" is marked as unreadable on "desktop"
+    And the message cannot be sent, and the draft is kept
+    When the user moves the draft back to "laptop"
+    Then the message can be sent
+    And Auto balance only picks a machine that holds every referenced thread
+
   @backlog @desktop
   Scenario: A thread dropped from another environment is attached as its transcript
     Given a thread "Remote work" lives in a different environment
@@ -178,6 +217,15 @@ Feature: Referencing files, skills, commands and context
     And the message cannot be sent until the transcript has loaded
     And a transcript over the file limit is refused saying it is too large
     But a thread dropped from the same environment is referenced live
+
+  # Upstream #20024: a thread dropped on the composer lands in the draft of the thread on
+  # screen, not the one the composer first opened for.
+  @backlog @desktop
+  Scenario: A thread dropped after switching threads lands in the visible draft
+    Given the user opened thread "Alpha" and then switched to thread "Beta"
+    When the user drops the thread "Auth refactor" onto the composer
+    Then the draft of "Beta" references "Auth refactor"
+    And the draft of "Alpha" is unchanged
 
   @desktop
   Scenario: Part of an assistant response can be quoted with a comment
@@ -363,6 +411,13 @@ Feature: Referencing files, skills, commands and context
     Then the draft carries the annotation without a screenshot
     And the user is told the element could not be captured
 
+  # Upstream #14360: annotations made after a preview reload no longer replace earlier ones
+  @backlog @desktop
+  Scenario: Annotations made after the preview reloads are added beside the earlier ones
+    Given the draft holds an annotation of the preview
+    When the preview reloads and the user annotates it again
+    Then the draft holds both annotations
+
   @backlog @desktop
   Scenario: The user opens an annotation from the draft to read it in full
     Given the draft carries an annotation of the page "Checkout"
@@ -494,6 +549,22 @@ Feature: Referencing files, skills, commands and context
     When the user types one more letter
     Then the first suggestion is highlighted
 
+  # Upstream #18845: a suggestion from an older search replaced the newer text; it is now refused
+  # until results for the current text arrive.
+  @backlog @shared
+  Scenario Outline: A suggestion left from an earlier search does not replace what the user typed since
+    Given the user typed "@bin" and "bin.ts" is suggested
+    And the user typed on to "@Migrations" before new results arrived
+    When the user takes "bin.ts" with <input>
+    Then the draft still reads "@Migrations"
+    And the suggestions for "@Migrations" can be taken once they arrive
+
+    Examples:
+      | input |
+      | Click |
+      | Enter |
+      | Tab   |
+
   @backlog @desktop
   Scenario: Suggestions are ordered by how closely their name matches
     Given the provider offers the commands "review", "review-pr" and "code-review" and the skill "pre-review"
@@ -536,6 +607,14 @@ Feature: Referencing files, skills, commands and context
     Given the provider reports different skills for "/work/shop" and for "/work/blog"
     When the user types "$" in a thread working in "/work/blog"
     Then only the skills reported for "/work/blog" are offered
+
+  # Upstream #19465: an older scan could publish over a newer forced scan.
+  @backlog @mc @priority-low
+  Scenario: A rescan of skills is not undone by an older scan finishing late
+    Given a scan of the folder's skills is still running
+    And the user adds the skill "deploy" and asks for a rescan
+    When the older scan finishes after the rescan
+    Then the skill "deploy" is still offered
 
   # Legacy: packages/client-runtime/src/providerSkills.ts (formatProviderSkillDisplayName)
   @backlog @desktop
@@ -582,6 +661,14 @@ Feature: Referencing files, skills, commands and context
       | $rev  |
       | €rev  |
       | £rev  |
+
+  # Upstream #14834: $HOME and $PATH were drawn as skill chips.
+  @backlog @desktop
+  Scenario: A dollar word that is not an offered skill stays plain text
+    Given the provider offers the skill "review" and no skill "HOME"
+    When the user writes "echo $HOME and $review"
+    Then "$review" becomes a skill reference
+    And "$HOME" stays plain text the user can edit
 
   @backlog @desktop
   Scenario: Threads on this environment are offered ahead of files
@@ -669,6 +756,27 @@ Feature: Referencing files, skills, commands and context
     Given the draft carries a preview annotation with a screenshot
     When the user copies the annotation and pastes it into another thread's draft
     Then that draft carries the annotation with its screenshot
+
+  # Upstream #17821: an image copied from an unsent draft pasted as nothing once the source
+  # changed; the copy now keeps the image itself.
+  @backlog @desktop
+  Scenario Outline: An image copied from an unsent draft still pastes after its source changes
+    Given the user copied a draft that holds an image
+    And <change>
+    When the user pastes into another thread's composer
+    Then the image is attached there
+
+    Examples:
+      | change                                      |
+      | the image was still uploading when copied   |
+      | the image was removed from the source draft |
+
+  # Upstream #17821: pasting the copy back into the draft it came from does not duplicate it.
+  @backlog @desktop @priority-low
+  Scenario: Pasting a copied image back into its own draft does not add it twice
+    Given the user copied a draft that holds an image
+    When the user pastes into the same draft
+    Then the draft holds the image once
 
   @backlog @desktop
   Scenario: A thread reference pasted from another environment is left out

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18152
 #   https://github.com/pingdotgg/t3code/pull/17161
 #   packages/contracts/src/checkpointDiff.ts (TurnCountRange, getTurnDiff, getFullThreadDiff)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
@@ -155,3 +156,12 @@ Feature: What each turn changed
     Then the removed and added line of "src/cart.ts" are shown side by side
     When the user shows the diff as one column
     Then the removed and added line of "src/cart.ts" are shown one above the other
+
+  # Upstream #18152: projects opened through a symlink into a repository's subfolder resolve the right repository.
+  @backlog @mc
+  Scenario: A project opened through a symlink uses the repository it points into
+    Given the project folder is a symlink into the "web" folder of the repository "shop"
+    And another repository sits next to the symlink
+    When a turn finishes
+    Then its checkpoint is taken in "shop"
+    And the branch list shows the branches of "shop"

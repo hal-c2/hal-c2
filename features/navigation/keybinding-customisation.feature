@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15825
+#   https://github.com/pingdotgg/t3code/pull/21062
 #   docs/user/keybindings.md (keybindings.json, rule shape, when keys, precedence)
 #   packages/contracts/src/keybindings.ts (limits, forward-compatible decoding, KeybindingsConfigParseError)
 #   packages/shared/src/keybindings.ts (when-expression evaluation)
@@ -58,6 +60,16 @@ Feature: Customising keybindings
     Scenario: A write never leaves a half-written file
       When a client adds a keybinding rule
       Then keybindings.json is replaced in one step
+
+    # Upstream #21062: on Windows a save retries for about two seconds while another program
+    # holds the file, and gives up if someone else saved the file in the meantime.
+    @backlog @mc @priority-low
+    Scenario: On Windows a save waits out a program holding the file
+      Given the MC runs on Windows
+      And a virus scanner holds keybindings.json open for half a second
+      When a client adds a keybinding rule
+      Then the rule is saved once the scanner lets go
+      But a save that finds keybindings.json changed by someone else meanwhile fails and keeps their change
 
     @mc
     Scenario: Entries that are not rules are skipped
@@ -144,6 +156,14 @@ Feature: Customising keybindings
       When the MC adds the rule mod+alt+g for "diff.toggle"
       And the user presses mod+alt+g
       Then "diff.toggle" runs
+
+    # Upstream #15825: with Local environment off, custom shortcuts were ignored.
+    @backlog @desktop @priority-low
+    Scenario: Custom shortcuts apply with the local environment off
+      Given the local environment is off and "Build box" is connected with a custom rule
+      When the user presses the rule's shortcut
+      Then the rule's command runs
+      And the shortcuts follow the environment the keybindings settings edit
 
     @desktop
     Scenario: A reload of the keybindings is confirmed

@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19640 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19271 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/22108 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/18885 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/11013 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/19444 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/17743 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/18838 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/18621 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/16554 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/19321 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/19329 (dropped)
@@ -993,3 +1002,28 @@ Feature: HAL-C2 Connect
     When the user sees the link error
     Then it says the relay timed out and to try again in a few minutes
     And it offers the relay's trace id to copy
+
+  # Upstream #17743: unlinking warns when the relay still holds the environment's record.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: Unlinking warns when the relay keeps the environment's record
+    Given an environment linked to the relay
+    When the user unlinks it and the relay does not remove its record
+    Then the user is warned that the relay still lists the environment
+
+  # Upstream #19444: the relay finds cloudflared on the user's full PATH.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: The relay finds cloudflared installed outside the system path
+    Given cloudflared is installed only in a folder the user's shell adds to the path
+    When the MC opens its relay tunnel
+    Then cloudflared is found and the tunnel opens
+
+  # Upstream #11013: a device still loading its Connect sign-in reported "Your cloud sign-in
+  # changed" and stopped retrying. Dropped with HAL-C2 Connect.
+  @dropped @shared
+  Scenario: A device still loading its Connect sign-in retries instead of asking to sign in again
+    Given the user's device is still loading its HAL-C2 Connect sign-in
+    When it tries to reach an environment through the relay
+    Then it says it is waiting for the sign-in to load
+    And it connects on its own once the sign-in has loaded

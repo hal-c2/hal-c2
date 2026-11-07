@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21071
+#   https://github.com/pingdotgg/t3code/pull/18574
+#   https://github.com/pingdotgg/t3code/pull/15083
 #   https://github.com/pingdotgg/t3code/pull/12648 (folded phone and unfolded split; Android foldables here)
 #   https://github.com/pingdotgg/t3code/pull/19988
 #   https://github.com/pingdotgg/t3code/pull/20403
@@ -90,6 +93,14 @@ Feature: Tablet layout and hardware keyboards
     When the hinge changes again before it gets there
     Then the edge moves on from where it is without jumping
 
+  # Upstream #18574: folding the phone keeps the composer on the folded screen.
+  @backlog @mobile
+  Scenario: Folding the phone with a thread open keeps the composer on screen
+    Given a thread is open on an unfolded phone
+    When the user folds the phone
+    Then the thread stays open
+    And the whole composer, including Send, is on the folded screen
+
   # The desktop's layout has no empty detail pane: with no thread it lands on a new thread's draft.
   @backlog @mobile
   Scenario: An empty detail pane tells the user what to do
@@ -104,6 +115,36 @@ Feature: Tablet layout and hardware keyboards
     Then the thread sidebar is hidden
     When the user shows the thread sidebar
     Then the thread sidebar is shown
+
+  # Upstream #21071: one control switches the split sidebar between threads and pull
+  # requests, in place of the rail.
+  @backlog @mobile
+  Scenario: The split sidebar switches between threads and pull requests
+    Given the layout is split
+    When the user switches the sidebar to pull requests
+    Then the sidebar lists pull requests
+    When the user switches the sidebar back
+    Then the sidebar lists threads
+
+  # Upstream #21071: sidebar threads open while Settings or New task is open.
+  @backlog @mobile
+  Scenario Outline: A thread chosen in the split sidebar opens over another screen
+    Given the layout is split
+    And <screen> is open
+    When the user chooses "Add search" in the thread list
+    Then "Add search" is shown
+
+    Examples:
+      | screen     |
+      | Settings   |
+      | a new task |
+
+  # Upstream #21071: sidebar taps did nothing until the app had navigated once.
+  @backlog @mobile
+  Scenario: The split sidebar opens threads straight after launch
+    Given the app has just started with the layout split
+    When the user chooses "Add search" in the thread list before going anywhere else
+    Then "Add search" is shown
 
   @backlog @mobile
   Scenario: The thread's header starts a new task beside the thread
@@ -514,12 +555,13 @@ Feature: Tablet layout and hardware keyboards
     Then the screen opened last handles it
     And the thread screen does not
 
+  # Upstream #21071: in split view a thread or pull request replaces the detail pane with no slide-in.
   @backlog @mobile
   Scenario: Choosing another thread beside the list swaps the thread without stacking screens
     Given the layout is split
     And the user is reading "Fix checkout"
     When the user chooses "Add search" in the thread list
-    Then "Add search" is shown beside the list
+    Then "Add search" takes the place of "Fix checkout" beside the list without sliding in
     When the user goes back
     Then the user does not return to "Fix checkout"
 
@@ -556,6 +598,7 @@ Feature: Tablet layout and hardware keyboards
     When the user hides the inspector
     Then the thread list is shown again
 
+  # Upstream #21071: on Android the thread, the composer and the full-width thread list stop at 640dp and stay centred.
   @backlog @mobile
   Scenario: Reading text in a thread stays a comfortable width on a wide window
     Given the app window is wider than the thread's reading width
@@ -589,3 +632,11 @@ Feature: Tablet layout and hardware keyboards
     When the app goes to the background, the phone folds, and the app returns on the cover screen
     Then the composer fits the cover screen and Send is visible
     And the draft text is still there
+
+  # Upstream #15083: on iPadOS 18 a pending task tapped in the split sidebar never opened.
+  @backlog @mobile
+  Scenario: A pending task chosen in the split thread list opens beside it
+    Given the layout is split
+    And a pending task is waiting in "shop"
+    When the user chooses the pending task in the thread list
+    Then the pending task opens for editing beside the list

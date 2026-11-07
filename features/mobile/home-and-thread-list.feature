@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19818
 #   https://github.com/pingdotgg/t3code/pull/16693
 #   https://github.com/pingdotgg/t3code/pull/17368
 #   apps/mobile/src/features/home/ (thread list options, empty states, search, connection status)
@@ -292,6 +293,13 @@ Feature: Home screen and thread list on a phone
         | task                                                   | label             |
         | a task written offline that is waiting to be sent      | Sends on reconnect |
         | a task that was written but not started                | Draft             |
+
+    # Upstream #19818: the Unsent group sat below the active threads; it leads the list on the phone
+    # and in the tablet sidebar.
+    @backlog @mobile
+    Scenario: Unsent tasks lead the thread list
+      Given the list holds a draft that was never started and threads that are working
+      Then the "Unsent" group comes before every other group
 
     @backlog @mobile @priority-low
     Scenario: A subagent's own thread is not listed but a fork of the thread is

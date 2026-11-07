@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22128
 #   https://github.com/pingdotgg/t3code/pull/15870
 #   https://github.com/pingdotgg/t3code/pull/16329
 #   https://github.com/pingdotgg/t3code/pull/16330
@@ -666,3 +667,10 @@ Feature: Staying useful through backgrounding and bad connections
       | pane      | title                              |
       | sidebar   | The sidebar couldn't be displayed  |
       | inspector | The inspector couldn't be displayed |
+
+  # Upstream #22128: Android dialogs keep working after the activity is replaced.
+  @backlog @mobile
+  Scenario: Confirmations still appear after Android reopens the app's window
+    Given Android replaced the app's window while the app was running
+    When the user does something that asks for confirmation
+    Then the confirmation appears and can be answered

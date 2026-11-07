@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14626
+#   https://github.com/pingdotgg/t3code/pull/18854
+#   https://github.com/pingdotgg/t3code/pull/20223
 #   https://github.com/pingdotgg/t3code/pull/16762
 #   https://github.com/pingdotgg/t3code/pull/16761
 #   https://github.com/pingdotgg/t3code/pull/17148
@@ -222,6 +225,16 @@ Feature: Pull requests linked to a thread
       | closed | still records "acme/app#7" as its branch pull request |
       | open   | records no branch pull request                       |
 
+  # Upstream #20223: a finished pull request found automatically is kept only while the thread is
+  # on its source branch; links the user made stay.
+  @backlog @mc
+  Scenario: A finished pull request of another branch is dropped when the thread's branch changes
+    Given thread "t1" has no worktree of its own and records the merged "acme/app#7" of "feature/x" as its branch pull request
+    And the user linked "acme/app#9" to "t1"
+    When the folder of "t1" moves to "main" and the MC finds no branch pull request for "main"
+    Then thread "t1" records no branch pull request
+    And "acme/app#9" is still linked to "t1"
+
   @mc
   Scenario: A thread in its own worktree drops the branch pull request once the branch shows none
     Given thread "t1" is in its own worktree and records the merged "acme/app#7" as its branch pull request
@@ -360,6 +373,17 @@ Feature: Pull requests linked to a thread
     And no event is recorded
     And the sweep goes on to the other linked pull requests
 
+  # Upstream #18854: sync read a pull request linked in several projects through the first
+  # project's checkout; reads are now per project and each failed project retries on its own.
+  @backlog @mc
+  Scenario: A pull request linked in two projects is read through each of them
+    Given pull request "acme/app#12" is linked to "t1" in project "app" and to "t2" in project "app-fork"
+    And "acme/app#12" changed state on the host
+    And the host cannot be reached through the checkout of "app"
+    When the sync sweep runs
+    Then thread "t2" shows the new state of "acme/app#12"
+    And "acme/app#12" is read again through "app" on the next sweep
+
   @mc
   Scenario: A stack the host failed to report is asked for again on the next sweep
     Given pull request "acme/app#12" changed state on the host
@@ -459,6 +483,15 @@ Feature: Pull requests linked to a thread
       | git@ssh.dev.azure.com:v3/org/project/web                       |
       | org@vs-ssh.visualstudio.com:v3/org/project/web                 |
       | https://org.visualstudio.com/defaultcollection/project/_git/web |
+
+  # Upstream #14626: Azure DevOps Server pull request links on a self-hosted host were refused; they
+  # are linked by their /_git/<repo>/pullrequest/<n> path, keeping the host's port.
+  @backlog @mc @priority-low
+  Scenario: A pull request on a self-hosted Azure DevOps Server can be linked
+    Given the project's checkout was cloned from "https://devops.acme.test:8443/tfs/acme/shop/_git/web"
+    When a client links "https://devops.acme.test:8443/tfs/acme/shop/_git/web/pullrequest/7"
+    Then pull request 7 of "web" on "devops.acme.test:8443" is linked to the thread
+    And naming pull request 7 of "web" links that same pull request
 
   # Upstream #13689: a turn that adds a remote must not leave its pull request unlinked until a
   # cached repository identity expires.

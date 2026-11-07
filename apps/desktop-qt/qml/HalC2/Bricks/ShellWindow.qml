@@ -205,22 +205,32 @@ Window {
     // while any popup that closes on Escape is open, wherever the keyboard is,
     // and the keys then went into the field under it (a page's `/` menu, the
     // release notes a hover opens).
+    //
+    // Each Shortcut is held by a QtObject. The list changes with the route,
+    // the turn and the focus, and the Instantiator drops its old delegates
+    // with deleteLater, which a Shortcut ignores (Qt 6.12): one that was the
+    // delegate itself never went, and kept its key in the application's
+    // shortcut map. The QtObject goes, and deletes its Shortcut as it does.
     property Instantiator keyShortcuts: Instantiator {
         model: Keybindings.shortcuts
 
-        delegate: Shortcut {
+        delegate: QtObject {
+            id: key
+
             required property var modelData
 
-            sequence: modelData.sequence
-            context: Qt.WindowShortcut
-            autoRepeat: modelData.autoRepeat
-            enabled: !root.popupHoldsKeys && (root.terminalFocused ? modelData.terminal : root.previewFocused ? modelData.preview : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome)
-            onActivated: Keybindings.press(modelData.sequence, {
-                terminal: root.terminalFocused,
-                composer: root.composerFocused,
-                editable: root.editableFocused,
-                preview: root.previewFocused
-            })
+            readonly property Shortcut shortcut: Shortcut {
+                sequence: key.modelData.sequence
+                context: Qt.WindowShortcut
+                autoRepeat: key.modelData.autoRepeat
+                enabled: !root.popupHoldsKeys && (root.terminalFocused ? key.modelData.terminal : root.previewFocused ? key.modelData.preview : root.composerFocused ? key.modelData.composer : root.editableFocused ? key.modelData.editable : key.modelData.chrome)
+                onActivated: Keybindings.press(key.modelData.sequence, {
+                    terminal: root.terminalFocused,
+                    composer: root.composerFocused,
+                    editable: root.editableFocused,
+                    preview: root.previewFocused
+                })
+            }
         }
     }
 

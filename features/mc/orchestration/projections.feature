@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18163
 #   https://github.com/pingdotgg/t3code/pull/19423
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.updated, thread.removed, project.updated,
@@ -100,6 +101,16 @@ Feature: What the engine projects for clients
   Scenario: A rolled-back latest run abandons its background work
     Given the latest run of "t1" was rolled back while a background command ran
     Then the shell row of "t1" lists no background tasks
+
+  # Upstream #18163: a failed later start made the old session's empty list of background work be
+  # ignored, so a command Stop killed was still listed.
+  @mc @backlog
+  Scenario: Stopping a thread clears the background command it ended
+    Given the latest run of "t1" completed while a background command kept running
+    And a later start of the provider for "t1" failed
+    When the user stops "t1"
+    Then the background command ends
+    And the shell row of "t1" lists no background tasks
 
   @mc
   Scenario: The thread error comes from the failed root turn of the latest run

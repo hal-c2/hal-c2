@@ -1,4 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16198
+#   https://github.com/pingdotgg/t3code/pull/14778
+#   https://github.com/pingdotgg/t3code/pull/21069
+#   https://github.com/pingdotgg/t3code/pull/10987
+#   https://github.com/pingdotgg/t3code/pull/14510
+#   https://github.com/pingdotgg/t3code/pull/18308
+#   https://github.com/pingdotgg/t3code/pull/21497
+#   https://github.com/pingdotgg/t3code/pull/18735
+#   https://github.com/pingdotgg/t3code/pull/13859
+#   https://github.com/pingdotgg/t3code/pull/19677
+#   https://github.com/pingdotgg/t3code/pull/16249
+#   https://github.com/pingdotgg/t3code/pull/18389
 #   https://github.com/pingdotgg/t3code/pull/19719
 #   https://github.com/pingdotgg/t3code/pull/19854
 #   https://github.com/pingdotgg/t3code/pull/20080
@@ -237,6 +249,14 @@ Feature: Formatted messages
     And the user is told where the mistake is
     And nothing claims the diagram is still being drawn
 
+  # Upstream #16198: maths in Mermaid labels is drawn.
+  @backlog @desktop @mobile @priority-low
+  Scenario: Maths in a Mermaid diagram's labels is drawn
+    Given the agent replies with a Mermaid diagram whose node label holds "$x^2$"
+    When the reply is shown
+    Then the node's label shows the formula drawn as maths
+
+  # Upstream #18308: completed Mermaid blocks are drawn while the reply still streams.
   # https://github.com/hal-c2/hal-c2/issues/843
   @shared @backlog-mobile
   Scenario: A Mermaid diagram being written is drawn once it is finished
@@ -244,6 +264,29 @@ Feature: Formatted messages
     Then the code written so far is shown as a code block
     When the agent closes the code block
     Then the diagram is drawn
+
+  # Upstream #18735: chat markdown can draw LaTeX formulas, behind a setting that is off by default.
+  @backlog @shared @priority-low
+  Scenario: Formulas in a reply are drawn when math rendering is on
+    Given the user turned on math rendering
+    When the agent replies with an inline formula and a formula on its own lines
+    Then both formulas are drawn as math
+    And with math rendering off they are shown as the agent wrote them
+
+  # Upstream #18735: a selection across a drawn formula copies its TeX, not the drawn symbols.
+  @backlog @shared @priority-low
+  Scenario: Copying a drawn formula gives its TeX
+    Given math rendering is on and a reply holds a drawn formula
+    When the user selects the formula and copies it
+    Then the clipboard holds the formula's TeX source
+
+  # Upstream #18735: dollar amounts and unfinished formulas stay as text.
+  @backlog @shared @priority-low
+  Scenario: A price is not mistaken for a formula
+    Given math rendering is on
+    When the agent writes "it costs $5 and $10"
+    Then the text is shown as written, not as math
+    And a formula the agent is still writing is shown as text until it is finished
 
   @shared @backlog-mobile @priority-high
   Scenario: A user message keeps its line breaks
@@ -356,6 +399,21 @@ Feature: Formatted messages
     When the user copies the reply
     Then the clipboard holds a link named "report.xlsx" to "outputs/report.xlsx"
     And the clipboard holds "Hello World (Document template)"
+
+  # Upstream #14778: a copied task list keeps its nested items and code blocks where they were.
+  @backlog @shared @priority-low
+  Scenario: A selected task list is copied with its nesting intact
+    Given a reply holds a task list with nested items and a code block under one item
+    When the user selects the list and copies it
+    Then the copied Markdown nests each item under its parent
+    And the code block stays under its item
+
+  # Upstream #16249: selected text that spans a Mermaid diagram copies the diagram's source.
+  @backlog @desktop
+  Scenario: Copying a selection across a Mermaid diagram copies its source
+    Given a reply with a sentence, a Mermaid diagram and another sentence
+    When the user selects from the first sentence to the last and copies
+    Then the clipboard holds both sentences with the diagram's fenced Mermaid source between them
 
   @backlog @desktop @mobile @plugin-codex @priority-low
   Scenario: A follow-up suggestion from Codex shows its label, not its markup
@@ -511,6 +569,21 @@ Feature: Formatted messages
     When the user follows the link
     Then "src/lib/cart-total.ts" opens beside the conversation
 
+  # Upstream #14510: a repository-relative path in a subfolder project repeated the project's
+  # folder; when that path is missing the project's own file opens, and a real file still wins.
+  @desktop @backlog
+  Scenario Outline: A file named from the repository root opens in a project that is a subfolder
+    Given the project "shop" is the folder "apps/shop" of its repository and holds "src/cart.ts"
+    And <nested>
+    And the agent's reply links to "apps/shop/src/cart.ts"
+    When the user follows the link
+    Then <opened> opens beside the conversation
+
+    Examples:
+      | nested                                    | opened                            |
+      | "shop" holds no "apps/shop/src/cart.ts"   | "src/cart.ts"                     |
+      | "shop" also holds "apps/shop/src/cart.ts" | "apps/shop/src/cart.ts" in "shop" |
+
   @desktop @backlog
   Scenario: A link whose bare name fits two files by case alone opens neither
     Given "shop" holds "src/Cart.ts" and "src/cart.ts"
@@ -533,6 +606,13 @@ Feature: Formatted messages
     When the user opens the menu on the link
     And the user chooses "Open file" from the link's menu
     Then "assets/logo.png" opens as a large preview
+
+  # Upstream #13859: Android image previews kept the window size from when they opened.
+  @backlog @mobile @priority-low
+  Scenario: An open image preview follows the window when it changes size
+    Given the user has opened an image preview on an Android phone
+    When the user unfolds the phone or puts the app in split screen
+    Then the image and its pan limits fit the new window size
 
   # The desktop links no video player (Qt Multimedia): it offers the video to
   # open in the browser.
@@ -642,6 +722,14 @@ Feature: Formatted messages
       | the page "public/index.html" with a browser    | opening in the editor, in the in-app browser and revealing  |
       | the file "src/cart.ts"                         | opening in the editor and revealing it                      |
 
+  # Upstream #18389: Open in editor and copy on a basename file chip use the file the chip resolves to.
+  @backlog @desktop
+  Scenario: A file chip named by its basename opens that file in the editor
+    Given a reply cites "cart.ts:12" and the only such file is "src/lib/cart.ts"
+    When the user opens the chip in the editor
+    Then "src/lib/cart.ts" opens at line 12
+    And copying the chip's path copies "src/lib/cart.ts"
+
   @backlog @mc @shared @priority-low
   Scenario Outline: A file chip shows what the path really is
     Given the agent's reply names <path>, which is <what>
@@ -673,6 +761,14 @@ Feature: Formatted messages
     Given the agent's reply links to the file "src/cart.ts"
     When the user copies its relative path from the file chip's menu
     Then the user is told "Relative path copied" with "src/cart.ts"
+
+  # Upstream #21497: relative paths are copied relative to the thread's workspace.
+  @desktop @backlog
+  Scenario: A relative path is copied from the thread's own workspace
+    Given the thread works in a worktree of "shop"
+    And the agent's reply links to "src/cart.ts" in that worktree
+    When the user copies its relative path from the file chip's menu
+    Then "src/cart.ts" is copied, not a path from the project's folder
 
   @desktop @backlog
   Scenario: A copied path that cannot reach the clipboard says so
@@ -733,6 +829,27 @@ Feature: Formatted messages
     When the user follows a link to pull request 42 in the agent's reply
     Then pull request 42 opens beside the conversation
     And the page can still be opened in a browser from there
+
+  # Upstream #10987: Azure DevOps and nested GitLab pull request links opened in the browser; they
+  # now open in the panel.
+  @desktop @backlog
+  Scenario Outline: A pull request link on any host opens beside the conversation
+    Given a message links "<url>"
+    When the user follows the link
+    Then the pull request opens beside the conversation
+
+    Examples:
+      | url                                                      |
+      | https://dev.azure.com/acme/shop/_git/api/pullrequest/42  |
+      | https://gitlab.com/acme/platform/web/-/merge_requests/42 |
+
+  # Upstream #10987: an Azure DevOps link resolves to the project whose Azure project matches,
+  # not the first repository with that name.
+  @desktop @backlog @priority-low
+  Scenario: An Azure DevOps link opens in the project whose Azure project matches
+    Given projects "Payments" and "Billing" both have an Azure DevOps repository "api"
+    When the user follows a link to a pull request in the "Billing" Azure project's "api"
+    Then the pull request opens for the "Billing" project
 
   @desktop @backlog @priority-low
   Scenario Outline: A pull request link opened with a modifier goes to the browser
@@ -1081,6 +1198,19 @@ Feature: Formatted messages
     When it is shown
     Then the path is used as written, not read as escapes
 
+  # Upstream #21069: a backslash inside a drive path is kept even before punctuation; escapes
+  # outside paths still work, and collapsed thinking previews follow the same rule.
+  @backlog @shared
+  Scenario Outline: Windows paths in a message's text keep their backslashes
+    When the agent's reply reads "<text>"
+    Then the reply shows "<shown>"
+
+    Examples:
+      | text                         | shown                        |
+      | Look in C:\Users\me\.t3\data | Look in C:\Users\me\.t3\data |
+      | Open C:\a\_b                 | Open C:\a\_b                 |
+      | A \*literal\* star           | A *literal* star             |
+
   @backlog @shared @priority-low
   Scenario: A descriptive file link keeps its words
     Given a reply says "This function [validates the input](/repo/src/example.ts:12)."
@@ -1102,3 +1232,10 @@ Feature: Formatted messages
     Given a reply links media as "~/Downloads/repro.mp4"
     When the media is requested
     Then the path expands to the environment's home before project-relative resolution
+
+  # Upstream #19677: missing media names the remote host and the absolute path that was checked.
+  @backlog @shared
+  Scenario: A media link that is not found says where it was looked for
+    Given a reply links "shots/after.png" on the environment "server"
+    And the file is not there
+    Then the media says it was not found on "server" at its full path
