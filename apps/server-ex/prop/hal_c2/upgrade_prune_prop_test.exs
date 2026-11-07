@@ -10,13 +10,16 @@ defmodule HalC2.UpgradePrunePropTest do
   and with them every application, runtime and cached bundle that no version left uses
   and that is older than an hour. What a removal cut off left is cleared, and is never
   taken for an installed version. When the MC cannot tell which version starts next,
-  it removes nothing.
+  it removes nothing. An update asked for while a prune runs waits for it
+  (`update_during_prune`), so what it then sees on disk is the prune's finished
+  work, and the prune's outcome is the one it would have had alone.
   """
 
   use ExUnit.Case, async: false
   use PropCheck
   use PropCheck.StateM
 
+  alias HalC2.Upgrade
   alias HalC2.Upgrade.Appup
   alias HalC2.Upgrade.Prune
   alias HalC2.Upgrade.Source
@@ -74,7 +77,8 @@ defmodule HalC2.UpgradePrunePropTest do
         {1, {:call, __MODULE__, :previous, [oneof([nil | @versions])]}},
         {1, {:call, __MODULE__, :hold, [oneof(@versions)]}},
         {1, {:call, __MODULE__, :let_go, [oneof(@versions)]}},
-        {3, {:call, __MODULE__, :prune, [oneof(@versions)]}}
+        {3, {:call, __MODULE__, :prune, [oneof(@versions)]}},
+        {2, {:call, __MODULE__, :update_during_prune, [oneof(@versions)]}}
       ] ++
         if(installed == [],
           do: [],
@@ -120,9 +124,12 @@ defmodule HalC2.UpgradePrunePropTest do
   def next_state(state, _result, {:call, _, :interrupt, [version]}),
     do: %{state | installed: Map.delete(state.installed, version)}
 
-  def next_state(%{start: nil} = state, _result, {:call, _, :prune, _}), do: state
+  def next_state(%{start: nil} = state, _result, {:call, _, cmd, _})
+      when cmd in [:prune, :update_during_prune],
+      do: state
 
-  def next_state(state, _result, {:call, _, :prune, [running]}) do
+  def next_state(state, _result, {:call, _, cmd, [running]})
+      when cmd in [:prune, :update_during_prune] do
     keep = keep(state, running)
     installed = Map.filter(state.installed, fn {v, _} -> v in keep end)
     used_libs = for {_, %{libs: libs}} <- installed, lib <- libs, into: MapSet.new(), do: lib
@@ -145,6 +152,23 @@ defmodule HalC2.UpgradePrunePropTest do
     after_prune = next_state(state, nil, call)
     gone = Map.keys(state.installed) -- Map.keys(after_prune.installed)
     result == {:ok, Enum.sort(gone)} and disk == expected_disk(after_prune)
+  end
+
+  def postcondition(%{start: nil}, {:call, _, :update_during_prune, _}, {result, _, _, _}),
+    do: match?({:error, _}, result)
+
+  # The update waited, so it saw exactly the disk the finished prune left, and
+  # the prune removed what it would have removed alone.
+  def postcondition(
+        state,
+        {:call, _, :update_during_prune, _} = call,
+        {result, disk, saw, waited}
+      ) do
+    after_prune = next_state(state, nil, call)
+    gone = Map.keys(state.installed) -- Map.keys(after_prune.installed)
+
+    waited and result == {:ok, Enum.sort(gone)} and disk == expected_disk(after_prune) and
+      saw == expected_disk(after_prune)
   end
 
   def postcondition(_state, _call, _result), do: true
@@ -237,6 +261,68 @@ defmodule HalC2.UpgradePrunePropTest do
     args = for v <- held(), do: "beam.smp -- -boot #{root}/releases/#{v}/start"
     Application.put_env(:hal_c2, :upgrade_processes, fn -> {:ok, args} end)
     {Prune.run(root, running), disk()}
+  end
+
+  # A prune running off the updater (registered as it is at boot), stopped where
+  # it asks which processes run, and an update that waits on it as
+  # `HalC2.Upgrade.run/2` does before fetching. Answers the prune's result, the
+  # disk, the disk the update saw once it stopped waiting, and whether it did
+  # wait (nothing seen before this command let the prune go).
+  def update_during_prune(running) do
+    root = root()
+    runner = self()
+    args = for v <- held(), do: "beam.smp -- -boot #{root}/releases/#{v}/start"
+
+    Application.put_env(:hal_c2, :upgrade_processes, fn ->
+      send(runner, {:prune_blocked, self()})
+      receive(do: (:release_prune -> {:ok, args}))
+    end)
+
+    :ok = Upgrade.await_pruned()
+
+    {prune_pid, prune_ref} =
+      spawn_monitor(fn -> send(runner, {:prune_result, Prune.run(root, running)}) end)
+
+    try do
+      Process.register(prune_pid, HalC2.Upgrade.Prune)
+    rescue
+      # It finished before it could be named (it never reached the gate).
+      ArgumentError -> :ok
+    end
+
+    receive do
+      {:prune_blocked, ^prune_pid} ->
+        home = Process.get(:home)
+
+        {_update_pid, update_ref} =
+          spawn_monitor(fn ->
+            Process.put(:home, home)
+            send(runner, :update_waiting)
+            :ok = Upgrade.await_pruned()
+            send(runner, {:update_saw, disk()})
+          end)
+
+        receive(do: (:update_waiting -> :ok))
+
+        early =
+          receive do
+            {:update_saw, saw} -> saw
+          after
+            0 -> nil
+          end
+
+        send(prune_pid, :release_prune)
+        result = receive(do: ({:prune_result, result} -> result))
+        receive(do: ({:DOWN, ^prune_ref, _, _, _} -> :ok))
+        saw = early || receive(do: ({:update_saw, saw} -> saw))
+        receive(do: ({:DOWN, ^update_ref, _, _, _} -> :ok))
+        {result, disk(), saw, early == nil}
+
+      {:prune_result, result} ->
+        receive(do: ({:DOWN, ^prune_ref, _, _, _} -> :ok))
+        :ok = Upgrade.await_pruned()
+        {result, disk(), disk(), true}
+    end
   end
 
   # What is on disk, `.removing` leftovers included under the name they would have.

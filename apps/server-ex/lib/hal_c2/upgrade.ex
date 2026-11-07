@@ -371,6 +371,8 @@ defmodule HalC2.Upgrade do
   # running the installed version directly, by hand), removes what no version uses.
   # Off this server, so removing gigabytes of old versions holds up no update request;
   # one at a time, under `HalC2.Upgrade.Prune`'s name, which `await_pruned/0` waits on.
+  # An update itself waits for it before it fetches (`run/2`): the prune's keep set
+  # knows nothing of the version an update is installing, so the two never overlap.
   defp start_prune(root) do
     {:ok, pid} = Task.start(fn -> receive(do: (:go -> prune(root))) end)
 
@@ -384,7 +386,7 @@ defmodule HalC2.Upgrade do
 
   @doc "Returns once this boot has read its outcome and removed the versions nothing uses."
   def await_pruned do
-    _ = :sys.get_state(__MODULE__)
+    if Process.whereis(__MODULE__), do: :sys.get_state(__MODULE__)
 
     with pid when is_pid(pid) <- Process.whereis(HalC2.Upgrade.Prune) do
       ref = Process.monitor(pid)
@@ -451,6 +453,10 @@ defmodule HalC2.Upgrade do
         failure("This MC already runs #{target}.")
 
       true ->
+        # Before the fetch reads the target's cached bundle or installed release:
+        # the boot prune, still removing old versions off this server, may be
+        # about to take exactly those. It is bounded by its own removals.
+        :ok = await_pruned()
         notify(progress, "downloading")
 
         with {:ok, bundle} <- HalC2.Upgrade.Source.fetch(target, platform()) do
