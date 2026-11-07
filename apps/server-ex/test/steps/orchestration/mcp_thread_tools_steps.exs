@@ -776,6 +776,57 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
+  step "the agent of {string} launched a thread in {string} with request key {string} and message {string}",
+       %{args: [caller, project, key, text]} = context do
+    args = %{
+      "projectId" => World.project(context, project).id,
+      "title" => "Release notes",
+      "message" => text,
+      "clientRequestId" => key
+    }
+
+    result = World.mcp_tool(context, caller, "hal_c2_thread_launch", args)
+    assert {:ok, %{"threadId" => id}} = result
+    World.await_row(id, & &1)
+
+    context
+    |> Map.merge(%{launch_args: args, launch_caller: caller, first_launch: result})
+    |> put_in([:threads, "launched"], id)
+  end
+
+  step "it repeats the launch with request key {string}", %{args: [key]} = context do
+    args = Map.put(context.launch_args, "clientRequestId", key)
+    result = World.mcp_tool(context, context.launch_caller, "hal_c2_thread_launch", args)
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "it is answered with the thread the first launch created", context do
+    assert {:ok, %{"threadId" => id}} = context.mcp_result
+    assert {:ok, %{"threadId" => ^id}} = context.first_launch
+    context
+  end
+
+  step "that thread has one user message", context do
+    state = World.state(context, "launched")
+
+    assert [%{"text" => "Hello"}] =
+             Enum.filter(StreamState.list(state, "message"), &(&1["role"] == "user"))
+
+    context
+  end
+
+  step "no extra thread is created", context do
+    caller = World.thread_id(context, "caller")
+
+    launched =
+      for {{_mc, id}, {"thread", _row}} <- HalC2.Shell.rows(),
+          String.starts_with?(id, "thread:mcp:#{caller}:launch:"),
+          do: id
+
+    assert length(launched) == 1
+    context
+  end
+
   step "their ids are derived from the caller, the request key and their position", context do
     assert {:ok, %{"threads" => threads}} = context.mcp_result
     caller = World.thread_id(context, "caller")

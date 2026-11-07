@@ -347,7 +347,7 @@ Feature: Agents working with threads through MCP tools
 
   # Upstream #16654: an agent whose launch reply was lost could only launch again and make a
   # second thread; the launch tool takes a request key, and a retry returns the same thread.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Repeating a thread launch with the same request key returns the same thread
     Given the agent of "caller" launched a thread in "demo" with request key "k1" and message "Hello"
     When it repeats the launch with request key "k1"

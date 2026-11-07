@@ -2822,10 +2822,13 @@
   },
   {
     "name": "hal_c2_thread_launch",
-    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. There is no retry key and the result is not delivered back: retain threadId, follow it with hal_c2_thread_read or hal_c2_thread_wait, and after an error or lost response check hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.",
+    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. The result is not delivered back: retain threadId and follow it with hal_c2_thread_read or hal_c2_thread_wait. Pass clientRequestId so a retry after a lost response returns the same thread instead of launching a second one. Attachments must be pending uploads. Requires a full-access/default caller.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "clientRequestId": {
+          "type": "string"
+        },
         "projectId": {
           "anyOf": [
             {
