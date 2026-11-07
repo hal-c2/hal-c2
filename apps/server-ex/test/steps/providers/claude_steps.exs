@@ -2366,6 +2366,120 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a gateway's 503 --------------------------------------------------------------------
+
+  # Claude reports a gateway's failure as an API error result; `body` is what the gateway said.
+  defp gateway_503(context, body) do
+    context = running_turn(context)
+    text = "API Error: 503 " <> Jason.encode!(body)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{"id" => "m-503", "content" => [%{"type" => "text", "text" => text}]}
+    })
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "api_error_status" => 503,
+      "terminal_reason" => "completed",
+      "result" => text
+    })
+
+    context
+  end
+
+  defp rate_limit_body(message),
+    do: %{"type" => "error", "error" => %{"type" => "rate_limit_error", "message" => message}}
+
+  # The clock the MC reads for a cooldown, fixed to 13:00 on the day the other scenarios use.
+  defp at_13_00(context) do
+    World.put_app_env(:claude_now_s, at_o_clock(13))
+    context
+  end
+
+  step ~r/^a Claude turn ends at 13:00 with a 503 rate_limit_error saying "\(reset after (?<cooldown>[^"]+)\)"$/,
+       %{args: [cooldown]} = context do
+    context
+    |> at_13_00()
+    |> gateway_503(rate_limit_body("All accounts rate limited (reset after #{cooldown})"))
+    |> Map.put(:gateway_cooldown, cooldown)
+  end
+
+  step ~r/^the thread is marked as limited with a reset time of (?<reset>[\d:]+)$/,
+       %{args: [reset]} = context do
+    [hour, minute, second] = reset |> String.split(":") |> Enum.map(&String.to_integer/1)
+    expected = at_o_clock(hour) + minute * 60 + second
+    World.await_runs(context, @thread, ["failed"])
+
+    row =
+      World.await_row(
+        World.thread_id(context, @thread),
+        &(&1["lastErrorClass"] == "usage_limit" and
+            &1["usageLimitResetAt"] ==
+              DateTime.to_iso8601(DateTime.from_unix!(expected * 1000, :millisecond)))
+      )
+
+    context |> Map.put(:limit_reset_s, expected) |> Map.put(:limited_row, row)
+  end
+
+  step "it resumes on its own then if resuming after usage limits is on", context do
+    # The recovery reads the thread's row; the fixed clock is in the past, so the stop is
+    # dated to the same fixed moment.
+    row = context.limited_row
+    stopped = DateTime.to_iso8601(DateTime.from_unix!(at_o_clock(13)), :extended)
+    thread = Map.put(row, "latestRunCompletedAt", stopped)
+
+    assert %{"type" => "message.dispatch"} =
+             HalC2.Orchestration.LimitRecovery.command(
+               Map.put(thread, "limitRecovery", %{
+                 "runId" => row["latestRunId"],
+                 "resetAt" => row["usageLimitResetAt"],
+                 "autoResume" => true
+               }),
+               true,
+               (context.limit_reset_s + 1) * 1000
+             )
+
+    context
+  end
+
+  step ~r/^a Claude turn ends with a 503 (?<error>that is not a rate_limit_error|rate_limit_error saying "\(reset after 0s\)"|rate_limit_error with a cooldown it cannot read)$/,
+       %{args: [error]} = context do
+    body =
+      case error do
+        "that is not a rate_limit_error" ->
+          %{
+            "type" => "error",
+            "error" => %{"type" => "overloaded_error", "message" => "(reset after 5m)"}
+          }
+
+        ~s|rate_limit_error saying "(reset after 0s)"| ->
+          rate_limit_body("All accounts rate limited (reset after 0s)")
+
+        _ ->
+          rate_limit_body("All accounts rate limited (reset after a while)")
+      end
+
+    context |> at_13_00() |> gateway_503(body)
+  end
+
+  step "the run fails with a provider error and the thread is not marked as limited", context do
+    World.await_runs(context, @thread, ["failed"])
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert %{"failure" => %{"class" => "provider_error", "code" => "api_error_503"}} =
+             Enum.find(items, &(&1["type"] == "error"))
+
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["lastErrorClass"] != "usage_limit" and &1["usageLimitResetAt"] == nil)
+    )
+
+    context
+  end
+
   # --- stopping a turn -----------------------------------------------------------------------
 
   defp stop_turn(context) do

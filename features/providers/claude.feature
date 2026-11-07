@@ -709,7 +709,7 @@ Feature: Claude
 
   # Upstream #17778: a gateway such as 9router wraps Claude's 429 as a 503 that names its
   # cooldown, and Claude reports it as an API error with no reset time.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A gateway's wrapped rate limit is a usage limit that resets when it says
     When a Claude turn ends at 13:00 with a 503 rate_limit_error saying "(reset after <cooldown>)"
     Then the thread is marked as limited with a reset time of <reset>
@@ -721,7 +721,7 @@ Feature: Claude
       | 1h 2m 3s  | 14:02:03 |
       | 7s        | 13:00:07 |
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A 503 that is not a wrapped rate limit stays a provider error
     When a Claude turn ends with a 503 <error>
     Then the run fails with a provider error and the thread is not marked as limited

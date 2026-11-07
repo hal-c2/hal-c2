@@ -1987,8 +1987,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     shown = user_facing_error(result)
     structured = @terminal_errors[reason]
 
+    gateway_reset = gateway_reset(result, api_status)
+    limits = if gateway_reset, do: %{gateway: gateway_reset}, else: limits
+
     limited? =
-      reason == "blocking_limit" or (result["subtype"] == "success" and api_status == 429) or
+      gateway_reset != nil or reason == "blocking_limit" or
+        (result["subtype"] == "success" and api_status == 429) or
         ((limits != %{} or turn[:rate_limited] == true) and
            (result["subtype"] != "success" or api_status in [nil, 429]) and
            reason in [nil, "api_error", "blocking_limit"])
@@ -2021,6 +2025,35 @@ defmodule HalC2.Claude.ThreadRuntime do
         "retryable" => if(api_status in [429, 529], do: true)
       }
     end
+  end
+
+  # A gateway (9router and the like) wraps Claude's 429 as a 503 `rate_limit_error` that
+  # names its cooldown, "(reset after 1h 2m 3s)". The reset is that long from now; a cooldown of zero or one that cannot be
+  # read is no usage limit.
+  defp gateway_reset(result, 503) do
+    text =
+      Enum.join(
+        [result["result"] | List.wrap(result["errors"])] |> Enum.filter(&is_binary/1),
+        " "
+      )
+
+    with true <- text =~ "rate_limit_error",
+         [_, cooldown] <- Regex.run(~r/\(reset after ((?:\d+[hms] ?)+)\)/, text),
+         seconds when seconds > 0 <- cooldown_seconds(cooldown) do
+      reset_at(Application.get_env(:hal_c2, :claude_now_s, System.system_time(:second)) + seconds)
+    else
+      _ -> nil
+    end
+  end
+
+  defp gateway_reset(_result, _status), do: nil
+
+  defp cooldown_seconds(cooldown) do
+    ~r/(\d+)([hms])/
+    |> Regex.scan(cooldown)
+    |> Enum.sum_by(fn [_, n, unit] ->
+      String.to_integer(n) * %{"h" => 3600, "m" => 60, "s" => 1}[unit]
+    end)
   end
 
   defp api_status_message(529), do: "Claude API is overloaded (529). Try again shortly."
