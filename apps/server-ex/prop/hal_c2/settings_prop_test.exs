@@ -202,6 +202,12 @@ defmodule HalC2.SettingsPropTest do
 
   def precondition(_state, _call), do: true
 
+  # A file the user left unreadable is not written over: every save is refused until
+  # they repair it.
+  def next_state(%{file: :garbage} = state, _result, {:call, _, op, _})
+      when op in [:put_retry, :merge, :drop],
+      do: state
+
   def next_state(state, _result, {:call, _, :put_retry, [doc]}), do: accepted(state, doc)
 
   def next_state(state, _result, {:call, _, :merge, [patch]}),
@@ -381,6 +387,10 @@ defmodule HalC2.SettingsPropTest do
   defp order(%{"at" => at} = record) when at >= @future, do: {2, at, record["by"], record}
   defp order(%{"at" => at} = record), do: {0, at, record["by"], record}
 
+  def postcondition(%{file: :garbage}, {:call, _, op, _}, result)
+      when op in [:put_retry, :merge, :drop],
+      do: match?({:error, _}, result)
+
   def postcondition(state, {:call, _, :put_retry, _}, result),
     do: result == {:ok, state.version + 1}
 
@@ -457,6 +467,7 @@ defmodule HalC2.SettingsPropTest do
     case write(doc, version) do
       {:ok, %{"version" => version}} -> {:ok, version}
       {:error, %{"_tag" => "StaleSettings"}} -> put_retry(doc)
+      {:error, %{"_tag" => "ServerSettingsError"}} = refused -> refused
     end
   end
 

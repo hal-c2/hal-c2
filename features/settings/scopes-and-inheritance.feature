@@ -185,20 +185,19 @@ Feature: Settings scopes and inheritance
       But resetting a setting the client knows still removes that override
 
     # Upstream #24472
-    @backlog @mc @priority-high
+    @mc
     Scenario: An MC older than its settings file keeps project overrides it does not know
       Given the settings file holds a project override written by a newer MC
       When an older MC loads it and the user edits that project
       Then the newer override is still in the settings file
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (the file is checked again every couple of seconds)
-    @backlog @mc @priority-high
+    @mc
     Scenario: A settings file edited by hand reaches connected clients
       Given a client is connected to the MC
       When the user changes a setting in settings.json with a text editor
       Then the client receives the changed settings without the MC restarting
 
-    @backlog @mc
+    @mc
     Scenario: A hand edit that is not valid JSON is ignored until it is fixed
       Given the MC is running with its settings
       When the user saves a settings.json that is not valid JSON
@@ -206,21 +205,21 @@ Feature: Settings scopes and inheritance
       And connected clients are not sent broken settings
 
     # Upstream #18582: a client's save no longer reverts a hand edit to settings.json the server had not read yet.
-    @backlog @mc
+    @mc
     Scenario: A client's save keeps a hand edit the MC has not noticed yet
       Given the user edited settings.json by hand a moment ago
       When a client saves a different setting before the MC has read the edit
       Then settings.json holds both the hand edit and the client's change
 
     # Upstream #18582: a save over a settings.json that is not valid JSON is refused.
-    @backlog @mc
+    @mc
     Scenario: A save over a settings file that is not valid JSON is refused and leaves it unchanged
       Given settings.json holds a hand edit that is not valid JSON
       When a client saves a setting
       Then the save is refused
       And settings.json still holds the user's text for them to fix
 
-    @backlog @mc
+    @mc
     Scenario: A settings file that cannot be read at startup is kept for repair
       Given settings.json is not valid JSON
       When the MC starts
@@ -241,8 +240,7 @@ Feature: Settings scopes and inheritance
         | cannot be decoded as settings   | the read fails and the damaged file is left on disk unchanged    |
         | cannot be opened                | the read fails and the user's saved choices are not overwritten  |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (write!: temporary file, owner-only, rename)
-    @backlog @mc @priority-high
+    @mc
     Scenario: The settings file is private to its owner and replaced in one step
       When a client saves a setting
       Then settings.json is readable only by the user the MC runs as
