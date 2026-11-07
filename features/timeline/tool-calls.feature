@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21146
+#   https://github.com/pingdotgg/t3code/pull/19238
+#   https://github.com/pingdotgg/t3code/pull/15674
+#   https://github.com/pingdotgg/t3code/pull/15747
+#   https://github.com/pingdotgg/t3code/pull/18831
+#   https://github.com/pingdotgg/t3code/pull/19810
+#   https://github.com/pingdotgg/t3code/pull/19767
 #   https://github.com/pingdotgg/t3code/pull/17561
 #   https://github.com/pingdotgg/t3code/pull/17211
 #   https://github.com/pingdotgg/t3code/pull/17948
@@ -317,6 +324,14 @@ Feature: Tool calls and file changes
     When the user reads the activity group
     Then the command is shown as succeeded
 
+  # Upstream #21146: reasoning rows are no longer scanned for failure text.
+  @backlog @desktop @mobile @tui
+  Scenario: Reasoning that mentions a failed exit code is not shown as a failed call
+    Given the agent's reasoning says "the last command exited with exit code 1"
+    When the user reads the activity group
+    Then the reasoning is not marked as failed
+    And the group is not marked as having a failure
+
   @shared
   Scenario: A group opens into each call's details
     Given a collapsed group of tool calls
@@ -324,6 +339,25 @@ Feature: Tool calls and file changes
     Then each call shows its command or input, its status and its exit code
     When the user closes the group
     Then the calls collapse back into the summary
+
+  # Upstream #15674: one visible tool call is shown as its own row that opens with one tap;
+  # several calls keep their summary group, and a live row keeps its state when a second arrives.
+  @backlog @mobile
+  Scenario: A lone tool call opens its details with one tap
+    Given the agent made a single tool call between two messages
+    When the user taps the tool call
+    Then its details are shown
+    And no group of one call is shown around it
+    When the agent makes a second call beside it
+    Then the two calls are grouped and the call the user opened stays open
+
+  # Upstream #18831: Enter on a control inside an open tool row collapsed the row instead.
+  @backlog @desktop @priority-low
+  Scenario: A control inside an open tool row works from the keyboard
+    Given the user opened a tool call that offers "Open diff"
+    When the user moves the keyboard focus to "Open diff" and presses Enter
+    Then the diff opens
+    And the tool call stays open
 
   @desktop
   Scenario Outline: A command's details say how it ended
@@ -351,6 +385,14 @@ Feature: Tool calls and file changes
     Then the output printed so far is shown
     And new output is added as it is printed, at most every 100 ms
     And once the command ends the output is replaced by the output the thread kept
+
+  # Upstream #19810: the Running banner offers the full command when its title is clipped.
+  @backlog @shared
+  Scenario: A background command too long for the Running banner can be read in full
+    Given the agent runs a background command too long for the Running banner
+    When the user asks for the command's details from the banner
+    Then the whole command is shown
+    And no details are offered when the command fits
 
   @mc @shared @backlog @priority-high
   Scenario: A finished command's output is fetched when it is opened
@@ -440,6 +482,21 @@ Feature: Tool calls and file changes
     When the user opens the activity group
     Then the command is labelled "git status" and the file change "src/cart.ts"
 
+  # Upstream #19767: unwatch, review guide and task cancel calls read as plain sentences.
+  @backlog @shared @priority-low
+  Scenario Outline: An orchestration call reads as a plain sentence
+    Given the agent's call <did>
+    When the user opens the activity group
+    Then the call reads "<label>"
+
+    Examples:
+      | did                                         | label                                      |
+      | to unwatch a pull request is still running  | Unwatching a pull request                  |
+      | to unwatch a pull request was interrupted   | Stopped unwatching a pull request          |
+      | to write review guides finished             | Started writing review guides              |
+      | to cancel a delegated task is still running | Canceling a delegated task                 |
+      | to cancel a delegated task finished         | Requested cancellation of a delegated task |
+
   # TUI: implemented in apps/tui/src/worklog.ts
   @shared
   Scenario Outline: A tool call shows how it ended
@@ -486,6 +543,14 @@ Feature: Tool calls and file changes
     Then its text is copied and the row says "Copied" for a moment
     When the user long presses the failure
     Then the failure message is copied and the row says "Copied" for a moment
+
+  # Upstream #19238: long commands no longer freeze work-log taps on Android.
+  @backlog @mobile
+  Scenario: A tool call with a very long command stays quick to open
+    Given the agent ran a command thousands of characters long
+    When the user taps its row in the activity log
+    Then the row opens at once
+    And its one-line label shows at most 200 characters while its details show the whole command
 
   @mobile
   Scenario Outline: A turn that failed says why in the activity log
@@ -800,6 +865,13 @@ Feature: Tool calls and file changes
     When the user has scrolled up in the group and the agent adds another call
     Then the group stays where it is
     And a call changing its status or output never moves the group
+
+  # Upstream #15747: an open group of tool calls on the phone stopped following calls the agent added.
+  @backlog @mobile
+  Scenario: An open group on the phone follows new calls while the user is at its end
+    Given the user has a long group of tool calls open on the phone and is looking at its last call
+    When the agent adds another call to the group
+    Then the group scrolls to show the new call
 
   @mobile
   Scenario Outline: Some rows stand alone between groups of tool calls

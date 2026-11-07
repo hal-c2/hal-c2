@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18063
+#   https://github.com/pingdotgg/t3code/pull/20284
+#   https://github.com/pingdotgg/t3code/pull/20051
 #   apps/mobile/src/features/terminal/ (sessions, status, text size, accessory keys, context)
 #   apps/mobile/modules/hal-c2-terminal
 #   apps/mobile/src/features/threads/ThreadGitControls.tsx (terminal menu: scripts, sessions, new terminal)
@@ -155,6 +158,13 @@ Feature: Using a terminal on a phone
     When the user touches the terminal
     Then the keyboard is shown
 
+  # Upstream #20051: focusing the Android terminal offered password managers' logins.
+  @backlog @mobile @priority-low
+  Scenario: Typing in the terminal does not offer saved passwords
+    Given the user is on an Android phone with a password manager
+    When the user touches the terminal to type
+    Then the keyboard opens without offering saved logins to fill
+
   @mobile
   Scenario: Dragging a finger over the terminal scrolls its history
     Given the terminal has more output than fits on screen
@@ -187,6 +197,13 @@ Feature: Using a terminal on a phone
       | Ctrl-Z     | Control-Z                     |
       | Backspace  | the delete key                |
       | Enter      | Return                        |
+
+  # Upstream #18063: Backspace works when Android sends it without a key code.
+  @backlog @mobile @priority-low
+  Scenario: Backspace deletes in the terminal on keyboards that send no key code
+    Given an Android keyboard that sends Backspace without a key code
+    When the user presses Backspace in the terminal
+    Then the character before the cursor is deleted
 
   @mobile
   Scenario: The shell is told the size that fits when the phone changes shape
@@ -442,6 +459,14 @@ Feature: Using a terminal on a phone
     When the user adds the visible lines as context
     And the user attaches the selected output
     Then the draft carries those lines
+
+  # Upstream #20284: the terminal output sheet scrolls to its end and keeps its button on screen.
+  @backlog @mobile
+  Scenario: Long terminal output can be read to its end and attached
+    Given the terminal holds more output than fits on the phone
+    When the user adds the visible lines as context
+    Then the output can be scrolled to its last line
+    And the user can attach the selected output from wherever the output is scrolled
 
   @mobile
   Scenario: Too much terminal context is refused

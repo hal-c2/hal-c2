@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19641
 #   https://github.com/pingdotgg/t3code/pull/17409
 #   https://github.com/pingdotgg/t3code/pull/17611
 #   https://github.com/pingdotgg/t3code/pull/13454 (branch search and remote-only branches)
@@ -236,3 +237,10 @@ Feature: Starting a task from a phone
     Then a single No project row is at the top, above the projects
     And it starts on the selected machine when that machine offers it, otherwise on the first that does
     And scratch projects are never listed as projects
+
+  # Upstream #19641: a draft without a project reads "No project" in the project picker.
+  @backlog @mobile @priority-low
+  Scenario: A draft without a project says No project
+    Given the user is drafting a new task with No project chosen
+    Then the project choice reads "No project"
+    And No project is marked as chosen in the project picker

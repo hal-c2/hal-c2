@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18340
 #   https://github.com/pingdotgg/t3code/pull/17658
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the MC)
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (the route's thread, drafts too, its project
@@ -200,6 +201,14 @@ Feature: The desktop's terminal drawer
         | data       |
         | bun test\r |
       And the terminal drawer shows the tabs "Terminal 1, Terminal 2"
+
+    # Upstream #18340: project actions open their own drawer terminal instead of reusing an idle right-panel terminal.
+    @backlog @desktop
+    Scenario: A script never runs in a terminal outside the drawer
+      Given "t1" has an idle terminal open outside the terminal drawer
+      When the user runs the script "test"
+      Then the script runs in a terminal of the terminal drawer
+      And the other terminal receives no writes
 
   Rule: The drawer keeps the user's chords and its place
 

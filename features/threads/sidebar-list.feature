@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15163
+#   https://github.com/pingdotgg/t3code/pull/20808
 #   https://github.com/pingdotgg/t3code/pull/17022
 #   https://github.com/pingdotgg/t3code/pull/18368
 #   https://github.com/pingdotgg/t3code/pull/17050
@@ -330,6 +332,14 @@ Feature: The thread list
     And the settled section is collapsed
     When the user looks at the thread list
     Then the open thread is still listed under the settled section
+
+  # Upstream #15163: opening a subagent left no thread highlighted in the sidebar.
+  @backlog @desktop @priority-low
+  Scenario: The parent thread stays highlighted while the user views its subagent
+    Given the thread "Fix login" delegated a subagent
+    When the user opens the subagent
+    Then "Fix login" is highlighted in the thread list
+    And moving to the next or previous thread starts from "Fix login"
 
   @backlog @desktop @tui
   Scenario: Settling a thread into a collapsed settled shelf keeps the list working
@@ -830,3 +840,13 @@ Feature: The thread list
     When the user drops a thread among rows that have no order yet
     Then the thread lands where it was dropped
     And rows that cannot store an order are not written
+
+  # Upstream #20808: subagent threads a provider starts itself are not listed in the sidebar,
+  # do not reorder projects and are skipped by the next and previous thread keys.
+  @backlog @shared
+  Scenario: A provider's own subagent threads are not sidebar rows
+    Given thread "Fix cart" in project "shop" has a subagent thread its provider started
+    When the subagent works
+    Then the sidebar lists "Fix cart" but not the subagent thread
+    And "shop" does not move up because of the subagent's activity
+    And moving to the next thread from "Fix cart" skips the subagent thread

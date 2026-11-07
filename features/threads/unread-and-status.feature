@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20996
+#   https://github.com/pingdotgg/t3code/pull/15607
+#   https://github.com/pingdotgg/t3code/pull/15430
 #   https://github.com/pingdotgg/t3code/pull/19630
 #   https://github.com/pingdotgg/t3code/pull/19617
 #   https://github.com/pingdotgg/t3code/pull/19355
@@ -68,11 +71,35 @@ Feature: Unread and status in the thread list
     When the user looks at the thread list
     Then the row for "Build search" reads "Approval"
 
+  # Upstream #15430: a question the agent asked without waiting for the answer showed Input while
+  # it kept working; it shows Input once the run ends, and a secret request still shows Input at once.
+  @backlog @mc @desktop @mobile @tui
+  Scenario: A question the agent does not wait on leaves the thread working
+    Given "Build search" has an agent working that asked a question it does not wait on
+    When the user looks at the thread list
+    Then "Build search" is shown as working
+    When the run ends with the question unanswered
+    Then "Build search" is shown as waiting for an answer
+
   @desktop @mobile @backlog-mobile
   Scenario: A project shows the most urgent state of its threads
     Given one thread in "shop" is working and another is waiting for an approval
     When the user looks at the project "shop"
     Then the project shows that a thread needs an approval
+
+  # Upstream #20996: an unseen failed run reads Failed, not Completed
+  @backlog @desktop @mobile
+  Scenario: A failed run the user has not seen reads Failed
+    Given the last run of "Build search" failed and the user has not seen it
+    When the user looks at the thread list
+    Then the row for "Build search" reads "Failed", not "Done"
+
+  # Upstream #20996: Failed outranks Working when states are rolled up
+  @backlog @desktop @mobile
+  Scenario: A failed thread outranks a working one in its project
+    Given one thread in "shop" is working and another had its last run fail
+    When the user looks at the project "shop"
+    Then the project shows that a thread failed
 
   # A delegated subagent's thread has no row of its own, so what it waits on
   # shows on the nearest thread that does. Provider-native subagents already
@@ -166,6 +193,21 @@ Feature: Unread and status in the thread list
     Given "Build search" was visited at 10:05 on the desktop
     When the phone reports a visit at 10:01
     Then "Build search" stays read as of 10:05
+
+  # Upstream #15607: a thread never opened finished without showing as unread.
+  @backlog @mc @priority-high
+  Scenario: A thread the user never opened is unread when it finishes
+    Given a thread was started in the background and the user has not opened it
+    When its agent finishes
+    Then the thread is unread
+    And opening it marks it read
+
+  # Upstream #15607: imported history and the MC's own maintenance leave a thread's reads unset.
+  @backlog @mc
+  Scenario: A thread imported with its finished history is not unread
+    Given a thread was imported with its finished history and nobody has opened it
+    When a client lists the environment's threads
+    Then the thread is not unread
 
   @mc
   Scenario: Marking a thread unread

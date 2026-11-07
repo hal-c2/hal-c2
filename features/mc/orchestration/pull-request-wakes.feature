@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18835
+#   https://github.com/pingdotgg/t3code/pull/18775
+#   https://github.com/pingdotgg/t3code/pull/18120
+#   https://github.com/pingdotgg/t3code/pull/21155
 #   https://github.com/hal-c2/hal-c2/issues/518
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
@@ -66,6 +70,16 @@ Feature: A thread hears when a pull request it owns needs attention
       | Copilot                               | is woken once about "acme/app#12"  |
       | Codex                                 | is woken once about "acme/app#12"  |
       | a contributor from outside the repository | is not woken                   |
+
+  # Upstream #18120: Forgejo comments keep their edit time, so an edited comment is news
+  # once, the way a new comment is.
+  @mc @backlog
+  Scenario: An edited comment wakes the thread once
+    Given the agent of "t1" was woken for a comment from the owner
+    When the owner edits that comment and the MC reads "acme/app#12" again
+    Then the agent of "t1" is woken once about "acme/app#12"
+    When the MC reads "acme/app#12" again
+    Then the agent of "t1" is not woken again
 
   @mc
   Scenario Outline: Changes that are not worth acting on wake nothing
@@ -179,6 +193,21 @@ Feature: A thread hears when a pull request it owns needs attention
       | settled  | unsettles      |
       | archived | unarchives     |
 
+  # Upstream #21155: a watch that ends keeps the check and conflict state it reported, so
+  # watching the pull request again does not repeat news the thread already got.
+  @mc @backlog
+  Scenario Outline: A thread brought back is not told again what it heard before
+    Given the agent of "t1" was woken because the checks of "acme/app#12" passed
+    And thread "t1" is <put away>
+    When a client <brings it back> "t1"
+    And the MC reads "acme/app#12" again with nothing changed
+    Then the agent of "t1" is not woken
+
+    Examples:
+      | put away | brings it back |
+      | settled  | unsettles      |
+      | archived | unarchives     |
+
   # A delegated task's child stops owning its pull requests when its task ends, so
   # their reviews wake the thread that delegated it, which may have handed the work
   # to a newer task, instead of reviving the old child beside it.
@@ -253,3 +282,17 @@ Feature: A thread hears when a pull request it owns needs attention
     When the MC reads "acme/app#12" again
     Then the agent of "t1" is not woken
     And thread "t1" still shows "acme/app#12" as open
+
+  # Upstream #18775: a failed optional check stopped a Forgejo watch from passing.
+  @backlog @mc @priority-low
+  Scenario: A Forgejo watch passes when the required checks pass
+    Given a thread watches the checks of a Forgejo pull request whose branch requires "ci/test"
+    When "ci/test" passes and an optional "ci/lint" fails
+    Then the thread hears that the required checks passed
+
+  # Upstream #18835: an edit beyond the first page of replies kept the cached reply.
+  @backlog @mc @priority-low
+  Scenario: An edited reply deep in a review thread reaches the watching agent
+    Given a thread watches a review thread with more replies than fit in one page
+    When a reviewer edits a reply on a later page
+    Then the thread reads the edited reply

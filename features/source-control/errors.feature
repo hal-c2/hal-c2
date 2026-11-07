@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17794
 #   https://github.com/pingdotgg/t3code/pull/14140
 #   https://github.com/pingdotgg/t3code/pull/8645
 #   docs/user/source-control.md (Troubleshooting)
@@ -250,3 +251,16 @@ Feature: When source control goes wrong
     Given a git command fails with a well-known error
     When the failure is shown
     Then the message names the cause
+
+  # Upstream #17794: a deleted branch surfaced as a generic git failure; it is named as a missing
+  # ref, without git's output or the ref's name.
+  @backlog @mc
+  Scenario Outline: A branch that no longer exists is named as missing
+    Given the branch "feature/old" was deleted
+    When the user <action> "feature/old"
+    Then the failure says the ref could not be found
+
+    Examples:
+      | action                                 |
+      | starts a thread in a new worktree from |
+      | switches the checkout to               |

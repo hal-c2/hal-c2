@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20073
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
 #   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
 #   apps/web/src/components/Sidebar.logic.ts (getFallbackThreadIdAfterDelete)
@@ -56,6 +57,15 @@ Feature: Archiving and deleting threads
     Given "Old spike" has a queued turn
     When a client archives "Old spike"
     Then the queued turn is cancelled
+
+  # Upstream #20073: archive cancels a run still preparing its workspace together with its
+  # preparation, and reopening the thread does not let that work resume.
+  @backlog @mc
+  Scenario: Archiving cancels a run still preparing its workspace
+    Given "Old spike" has a turn whose worktree is still being prepared
+    When a client archives "Old spike"
+    Then the turn and its preparation are cancelled
+    And unarchiving "Old spike" does not start them again
 
   @mc
   Scenario: Archived threads are listed separately

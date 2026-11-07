@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18443
 #   https://github.com/pingdotgg/t3code/pull/17654
 #   apps/server-ex/lib/hal_c2/worktree_setup.ex
 #   apps/web/src/components/chat/WorktreeSetupCard.tsx
@@ -40,6 +41,15 @@ Feature: Preparing a new thread's worktree
     When the user cancels the setup
     Then the worktree is removed
     And the thread's first run is cancelled
+
+  # Upstream #18443: cancelling the setup stops the background branch rename before the
+  # worktree is removed, so the rename cannot land on a worktree that is gone.
+  @backlog @mc
+  Scenario: Cancelling the setup stops the branch rename first
+    Given the temporary branch is still being renamed from the first message
+    When the user cancels the setup
+    Then the rename is stopped before the worktree is removed
+    And the thread is left with no worktree and no renamed branch
 
   @mc
   Scenario: The setup cannot be cancelled once the agent has started

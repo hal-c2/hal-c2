@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21122
+#   https://github.com/pingdotgg/t3code/pull/20948
 #   https://github.com/pingdotgg/t3code/pull/15937 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/15925 (dropped: the MC runs no numbered migrations)
 #   https://github.com/pingdotgg/t3code/pull/19435
@@ -155,6 +157,16 @@ Feature: The MC's event store and projections
     When the MC starts
     Then it rebuilds their rows without delaying startup
 
+  # Upstream #21122: opening a large database no longer reads every table for planner
+  # statistics; an 11 GB copy opened in 50 to 66 ms instead of 108 s.
+  # Likely already implemented: apps/server-ex/lib/hal_c2/store.ex (opens with no ANALYZE or PRAGMA optimize)
+  @backlog @mc @priority-high
+  Scenario: Opening a large store does not hold up startup
+    Given a store of many gigabytes with no table statistics
+    When the MC starts
+    Then it opens the store without reading through its tables
+    And it accepts clients within a second of opening the store
+
   @mc
   Scenario: Messages written before the search index are indexed once
     Given threads written before the message index existed
@@ -302,6 +314,15 @@ Feature: The MC's event store and projections
     Then the service is stopped for the repair and started again afterwards, even when the repair fails
     And a service that was disabled is not enabled
     And services for other homes are left alone
+
+  # Upstream #20948 lets t3 doctor delete, by opt-in, the database T3 Code kept for rolling
+  # back to before 0.1.0. The MC keeps no second database: what HAL-C2 moved in from lives in
+  # the old home, which HAL-C2 never changes.
+  @dropped @mc
+  Scenario: The doctor command offers to delete the database kept for rolling back
+    Given a store kept beside the current one only for rolling back to an older version
+    When the user runs the MC's doctor command
+    Then it offers to delete that store, unchosen, warning that the older version would start empty
 
   # The TypeScript server's numbered projection migrations. The MC stores entity
   # patches, and its state format migrates snapshots in place instead.

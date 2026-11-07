@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14887
 #   https://github.com/pingdotgg/t3code/pull/17258
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.settled, thread.unsettle,
 #     thread.unsettled, thread.snooze, thread.snoozed, thread.unsnooze, thread.unsnoozed,
@@ -222,11 +223,14 @@ Feature: Organizing threads in the engine
       | a client                 |
       | the MC, automatically    |
 
+  # Upstream #14887: every snooze is stamped afresh, even to the same wake time; only a retried
+  # command is applied once.
   @backlog @mc
-  Scenario: Snoozing to the wake time a thread already has changes nothing
+  Scenario: Snoozing again to the wake time a thread already has stamps the snooze afresh
     Given thread "t1" is snoozed until tomorrow 09:00
     When a client snoozes "t1" until tomorrow 09:00 again
-    Then thread "t1" keeps its original snoozed-at time
+    Then thread "t1" gets a new snoozed-at time
+    And a retry of that same snooze command is applied once
 
   @backlog @mc
   Scenario: Manual settling dismisses a question the provider is not waiting on

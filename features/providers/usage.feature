@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17769
+#   https://github.com/pingdotgg/t3code/pull/21862
+#   https://github.com/pingdotgg/t3code/pull/21863
 #   https://github.com/pingdotgg/t3code/pull/15661
 #   https://github.com/pingdotgg/t3code/pull/17848
 #   https://github.com/pingdotgg/t3code/pull/10409
@@ -64,6 +67,13 @@ Feature: Usage
     Given a Grok session whose last turn never completed
     When the user opens Usage
     Then that turn is missing from the totals
+
+  # Upstream #21863: Codex per-request and cumulative token counters are reconciled in usage totals.
+  @backlog @mc @plugin-codex
+  Scenario: Codex tokens are counted once when it reports both per-request and running totals
+    Given a Codex turn reported 3 requests of 1000 tokens each and a running total of 3000 tokens
+    When the user opens usage
+    Then the turn counts 3000 tokens
 
   @mc
   Scenario: A cost reported by the provider is used as is
@@ -324,6 +334,15 @@ Feature: Usage
     When the user opens Usage
     Then Antigravity's tokens are counted
 
+  # Upstream #17769: usage reads each Antigravity instance's own data directory.
+  @mc @plugin-antigravity @backlog @priority-low
+  Scenario: An Antigravity instance with its own data directory counts toward usage
+    Given an Antigravity instance whose environment sets its own data directory
+    And that directory holds local session history
+    When the user opens Usage
+    Then that instance's tokens are counted
+    And history shared with the default instance is counted once
+
   @mc
   Scenario: A scan that fails is reported
     Given the transcripts cannot be scanned
@@ -338,6 +357,15 @@ Feature: Usage
     Then Claude's usage is marked incomplete, saying how many transcripts could not be read
     And it counts the readable transcripts and the usage saved from the unreadable one
     And a later scan that reads everything is no longer marked incomplete
+
+  # Upstream #21862: records a reader skipped inside a readable transcript went unreported, and
+  # the next incremental scan forgot them.
+  @backlog @mc @priority-low
+  Scenario: Records a scan skipped keep the usage marked incomplete
+    Given a Claude transcript can be read but some of its records could not be understood
+    When the user opens Usage
+    Then Claude's usage is marked incomplete
+    And it stays marked incomplete after a later scan that reads only what was added since
 
   # Clients leave a missing source out of the totals; saved records keep counting.
   @backlog @mc @priority-low

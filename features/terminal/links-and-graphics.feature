@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21199
+#   https://github.com/pingdotgg/t3code/pull/15838
+#   https://github.com/pingdotgg/t3code/pull/9867
+#   https://github.com/pingdotgg/t3code/pull/20264
 #   https://github.com/pingdotgg/t3code/pull/17653
 #   https://github.com/pingdotgg/t3code/pull/17168
 #   https://github.com/pingdotgg/t3code/pull/13408
@@ -138,12 +142,39 @@ Feature: Links and rendering inside terminals
       Then "src/app.ts" opens in the user's editor at line 12, column 4
       And the path is resolved against the terminal's folder
 
+    # Upstream #21199: relative backslash paths and quoted paths with spaces are file links,
+    # keeping a line and column given inside or outside the quotes.
+    @backlog @desktop @priority-low
+    Scenario Outline: Windows paths in the output open in the editor
+      Given the shell prints <output>
+      When the user follows that path
+      Then "<file>" opens in the user's editor at line 12
+
+      Examples:
+        | output                                                         | file                               |
+        | src\index.ts:12                                                | src\index.ts                       |
+        | .\src\index.ts:12                                              | src\index.ts                       |
+        | C:\Users\Jane Doe\project\index.ts:12 wrapped in double quotes | C:\Users\Jane Doe\project\index.ts |
+        | C:\Users\Jane Doe\project\index.ts in double quotes, then :12  | C:\Users\Jane Doe\project\index.ts |
+
     # git status prints a branch and its upstream as "## main...origin/main".
     @desktop
     Scenario: A branch range in git's output is not a file path
       Given the shell prints "## main...origin/main"
       When the user follows "main...origin/main" in the terminal
       Then nothing is opened
+
+    # Upstream #15838: a logged request route with a query was opened in the editor as a file.
+    @backlog @desktop @priority-low
+    Scenario Outline: A request route in a log line is not a file path
+      Given the shell prints "<line>"
+      When the user follows "<route>" in the terminal
+      Then nothing is opened
+
+      Examples:
+        | line                                         | route                               |
+        | GET /api/trpc/post.list,user.me?batch=1 200  | /api/trpc/post.list,user.me?batch=1 |
+        | proxying /api/users?page=2 to localhost:4000 | /api/users?page=2                   |
 
     @desktop
     Scenario Outline: The terminal's menu opens or copies the link under the pointer
@@ -273,6 +304,22 @@ Feature: Links and rendering inside terminals
       When the user presses "Ctrl+A" in the terminal
       Then the program receives Ctrl+A in the enhanced report
 
+    # Upstream #9867: a synchronized update split across output chunks was painted half-done;
+    # the renderer now waits for the end of the update before painting it.
+    @backlog @desktop
+    Scenario: A program's synchronized screen update appears all at once
+      Given a program redraws its screen as one synchronized update
+      And the update reaches the terminal in several pieces
+      Then the terminal shows the old screen until the update is complete
+      And then shows the whole new screen at once
+
+    # Upstream #9867: an update that is never closed is painted after half a second.
+    @backlog @desktop @priority-low
+    Scenario: A synchronized update that never ends is shown after half a second
+      Given a program starts a synchronized update and never ends it
+      When half a second passes
+      Then the terminal shows what the program has drawn so far
+
   Rule: File locations in compiler output are links
 
     # Upstream #13408: the colon that ends a compiler's location is not part of the path.
@@ -286,3 +333,10 @@ Feature: Links and rendering inside terminals
         | output                                | file        | line | column |
         | ./main.go:10:5: undefined: x          | ./main.go   | 10   | 5      |
         | /src/main.c:10:5: error: expected ';' | /src/main.c | 10   | 5      |
+
+    # Upstream #20264: terminal links keep Unicode file paths intact.
+    @backlog @desktop
+    Scenario: A file location with non-ASCII characters opens the whole path
+      Given the shell prints "./src/café/menü.ts:3:1: error"
+      When the user Ctrl-clicks the file location
+      Then "./src/café/menü.ts" opens in the editor at line 3, column 1
