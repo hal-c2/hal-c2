@@ -192,8 +192,7 @@ Feature: MC diagnostics
       | grok-build         | other  |
 
   # Legacy: apps/server/src/resourceTelemetry/HostResources.ts (sample: two readings 200 ms apart)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (host CPU use)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: Host CPU use is measured over a short interval or left blank
     Given the host's CPU counters <state>
     When a client asks for the host's resources
@@ -219,8 +218,7 @@ Feature: MC diagnostics
     Then the host is read once and all three get that reading
 
   # Legacy: apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts (normalizeResourceTelemetryHistoryInput)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (history)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A history request is held to what the MC keeps
     When a client asks for resource history over <window> in buckets of <bucket>
     Then the history covers <window used> in buckets of <bucket used>
@@ -233,8 +231,7 @@ Feature: MC diagnostics
       | 10 minutes | 10 ms      | 10 minutes  | 1 second    |
 
   # Legacy: apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts (observed RSS, "uses observed RSS for the history-window peak")
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (peak)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A process's peak memory in a history window is what was seen in that window
     Given a process whose memory reached 2 GiB an hour ago and has been 300 MiB since
     When a client asks for the last ten minutes of resource history
@@ -255,8 +252,7 @@ Feature: MC diagnostics
       | a process missing from one sample keeps its earlier reading as its baseline for the next     |
 
   # Legacy: apps/server/src/resourceTelemetry/Model.ts (delta, MAX_DELTA_INTERVAL_MS)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (rates)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A process's CPU time and I/O are counted as differences between samples
     Given a process with a reading of <earlier> and then a reading of <later> taken <apart>
     Then the interval adds <added>
@@ -268,8 +264,7 @@ Feature: MC diagnostics
       | 100     | 160   | 90 seconds  | nothing     |
 
   # Legacy: apps/server/src/resourceTelemetry/Model.ts (processIdentityKey: pid and start time)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (identity)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A process that reuses an id is a new process
     Given a process was sampled and then exited
     And a new process took the same id with a different start time
@@ -294,8 +289,7 @@ Feature: MC diagnostics
     And a process's children are ordered by id
     And a process whose parent is not in the list is placed after the trees that are
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (@max_bytes, @max_files)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: The trace file rolls over at 10 MiB and keeps ten older files
     Given tracing is enabled on the MC
     When the trace file reaches 10 MiB
@@ -464,7 +458,7 @@ Feature: MC diagnostics
 
   # CodexAdapterV2.ts redactCodexProtocolValue, ClaudeAdapterV2.ts (query options logged
   # without env, MCP server headers or callbacks).
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: Codex protocol logs never hold credentials
     Given provider event logging is on
     When a Codex protocol message carries <content>
@@ -475,8 +469,10 @@ Feature: MC diagnostics
       | a value that starts with "Bearer "                                          |
       | a field whose name ends in authorization, apikey, token, password or secret |
       | either of those inside JSON carried as text                                 |
+      | a credential field that holds an object rather than text                    |
+      | a bearer token in the middle of a command line or tool output               |
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Claude's logged start-up options leave out its environment and credentials
     Given provider event logging is on
     When a Claude session starts with the "hal-c2" server attached

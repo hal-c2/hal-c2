@@ -3575,7 +3575,7 @@ defmodule HalC2.Steps.Planning.Planner do
 
     File.write!(script, """
     #!/bin/sh
-    if [ "$1 $2" = "remote -v" ] && mkdir '#{dir}/held' 2>/dev/null; then read _ < '#{gate}'; fi
+    case " $* " in *" remote -v "*) mkdir '#{dir}/held' 2>/dev/null && read _ < '#{gate}';; esac
     exec '#{System.find_executable("git")}' "$@"
     """)
 

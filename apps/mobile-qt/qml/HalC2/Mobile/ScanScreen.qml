@@ -22,7 +22,7 @@ Rectangle {
     // The camera is the app's to use and gives a picture, or will.
     readonly property bool looking: access === "granted" && !failed
     readonly property var pairing: Shell.state.pairing ?? null
-    readonly property bool replacing: pairing !== null && pairing.phase === "paired"
+    readonly property bool adding: pairing !== null && pairing.phase === "paired"
     readonly property string environment: pairing !== null && pairing.label ? pairing.label : qsTr("this environment")
 
     objectName: "scanScreen"
@@ -122,7 +122,7 @@ Rectangle {
                 wrapMode: Text.Wrap
                 color: screen.message.length > 0 ? Theme.palette.color("error", "#f87171") : Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
-                text: screen.message.length > 0 ? screen.message : screen.replacing ? qsTr("Point the camera at the QR code under Settings → Connections on the machine that runs HAL-C2. Pairing with it replaces %1.").arg(screen.environment) : qsTr("Point the camera at the QR code under Settings → Connections on the machine that runs HAL-C2.")
+                text: screen.message.length > 0 ? screen.message : screen.adding ? qsTr("Point the camera at the QR code under Settings → Connections on the machine that runs HAL-C2. Pairing with it adds it beside %1.").arg(screen.environment) : qsTr("Point the camera at the QR code under Settings → Connections on the machine that runs HAL-C2.")
             }
         }
     }

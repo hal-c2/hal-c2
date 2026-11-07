@@ -38,7 +38,7 @@ public:
   // the project "shop" and one thread in it.
   PairableMc environment;
   FakeMc& mc;
-  // A second environment, for a device that moves from one to another; made
+  // A second environment, for a device paired with two; made
   // when a step first asks for it.
   PairableMc& another(const QString& label);
   bool hasAnother() const { return m_another != nullptr; }

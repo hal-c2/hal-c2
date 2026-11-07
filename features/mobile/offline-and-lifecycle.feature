@@ -51,11 +51,19 @@ Feature: Staying useful through backgrounding and bad connections
 
   # Upstream #26540: on iOS a trip to the home screen of a second or two suspended the app and cost a
   # reconnect; the app now asks the system for a short grace period so the connection survives.
-  @backlog @mobile
+  @mobile
   Scenario: Returning to the app after a moment checks the connection quickly
     Given the user switched away from the app for 5 seconds
     When the user returns to the app
     Then the phone checks the existing connection instead of reconnecting
+
+  # Passes today; upstream #25824 keeps a connection that still answers, see the backlog scenario below.
+  @mobile @priority-high
+  Scenario: Returning to the app after a longer break reconnects
+    Given the user switched away from the app for a minute
+    When the user returns to the app
+    Then the phone reconnects to "My MacBook"
+    And "Fix checkout" catches up on what happened while the app was away
 
   # Upstream #25824: a return after 10 seconds or more always threw the connection away, so every
   # return showed "Reconnecting" and reloaded the thread list. The phone now checks it first.
@@ -108,7 +116,7 @@ Feature: Staying useful through backgrounding and bad connections
     And the status is asked for once for each place that shows it
 
   # Upstream #25627: the app reopened on "Thread unavailable" before it had read its cache.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Cached threads open without a connection
     Given "My MacBook" is unreachable
     When the user opens "Fix checkout"
@@ -207,7 +215,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then the threads are still filtered to "shop"
     And the pull requests of "My MacBook" are still filtered the same way
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The app keeps retrying on its own
     Given "My MacBook" is unreachable
     Then the user is told the app will keep retrying automatically
@@ -379,7 +387,7 @@ Feature: Staying useful through backgrounding and bad connections
     When "Fix checkout" is deleted on another device
     Then the user is told the thread was deleted or is no longer available
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Messages written offline are sent in order once the connection returns
     Given "My MacBook" is unreachable
     When the user sends "first" and then "second" in "Fix checkout"
@@ -395,7 +403,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then "first" is shown at the bottom of "Fix checkout" as waiting to send
     And "Fix checkout" stays selected in the sidebar
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message the environment rejects after reconnecting is kept for the user
     Given the user sent "first" while offline
     And the environment rejects "first" when the connection returns
@@ -454,14 +462,14 @@ Feature: Staying useful through backgrounding and bad connections
     When the app starts
     Then the first screen the user sees already uses the dark theme
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Drafts are saved before the system suspends the app
     Given the user has typed "add a test" in "Fix checkout"
     When the system suspends and later terminates the app
     And the user opens the app again
     Then the draft in "Fix checkout" still reads "add a test"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Messages waiting to send survive the app being closed
     Given "My MacBook" is unreachable
     And the user sent "add a test" in "Fix checkout"
@@ -471,7 +479,7 @@ Feature: Staying useful through backgrounding and bad connections
     When "My MacBook" becomes reachable
     Then "add a test" is sent
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A dropped connection never discards a message waiting to send
     Given the user sent "add a test" in "Fix checkout"
     And the connection to "My MacBook" drops before it answers
@@ -486,7 +494,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then the task is not created a second time
     And the task is no longer listed as pending
 
-  @backlog @mobile
+  @mobile
   Scenario: A message for a thread that no longer exists is dropped
     Given the user sent "add a test" to "Fix checkout" while offline
     And "Fix checkout" was deleted from another device
@@ -494,13 +502,13 @@ Feature: Staying useful through backgrounding and bad connections
     Then "add a test" is not sent
     And "add a test" is no longer waiting to send
 
-  @backlog @mobile
+  @mobile
   Scenario: A message is not judged missing before the thread list has loaded
     Given the user sent "add a test" to "Fix checkout" while offline
     And "My MacBook" has reconnected but its thread list has not arrived
     Then "add a test" keeps waiting to send
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A refused message joins what the user has typed in the draft since
     Given the user sent "add a test" in "Fix checkout" while offline
     And the user has typed "also check lint" in the draft of "Fix checkout" since
@@ -615,7 +623,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then "add a test" and the photo are back in the draft of "Fix checkout"
     And the user is told the reason the environment gave
 
-  @backlog @mobile
+  @mobile
   Scenario: A thread's stuck message does not hold up another thread
     Given "add a test" in "Fix checkout" cannot be sent yet
     And "update the readme" is waiting in "Docs pass" on the same environment
@@ -660,7 +668,7 @@ Feature: Staying useful through backgrounding and bad connections
     Then "add a test", the photo and the model choice are in the composer of "Fix checkout"
     And "add a test" is no longer waiting to send
 
-  @backlog @mobile
+  @mobile
   Scenario: A message that is being sent cannot be pulled back
     Given the phone is sending "add a test" to "My MacBook"
     When the user tries to edit it
@@ -730,15 +738,14 @@ Feature: Staying useful through backgrounding and bad connections
     And clearing caches is not offered
     And the paired environments and their credentials are untouched
 
-  # Likely already implemented: apps/mobile/src/connection/catalog-store.ts
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Environments saved by an earlier version of the app are still paired after updating
     Given the phone holds environments paired with an earlier version of the app
     When the user opens the updated app
     Then the same environments are paired on the phone
     And they are kept in the phone's current format
 
-  @backlog @mobile
+  @mobile
   Scenario: A damaged record of paired environments is discarded
     Given the phone's record of paired environments is damaged
     When the app starts
