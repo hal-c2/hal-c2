@@ -175,6 +175,8 @@ export interface TimelineState {
   readonly items: ReadonlyArray<TimelineItem>;
   /** The newest row is mounted, so the view sticks to the bottom. */
   readonly showingLatest: boolean;
+  /** Earlier turns wait on the MC and are not being fetched: a short timeline asks for them. */
+  readonly canLoadEarlier: boolean;
   readonly rowCount: number;
   readonly windowStart: number;
   readonly windowEnd: number;
@@ -271,6 +273,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       context: null,
       items: [],
       showingLatest: true,
+      canLoadEarlier: false,
       rowCount: 0,
       windowStart: 0,
       windowEnd: 0,
@@ -430,6 +433,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
       : null,
     items,
     showingLatest,
+    canLoadEarlier: window.start === 0 && input.hasOlderTurns && !input.loadingOlderTurns,
     rowCount: rows.length,
     windowStart: window.start,
     windowEnd: window.end,

@@ -12,9 +12,65 @@ ScrollView {
     readonly property var scrollRequest: Shell.state.timelineScroll ?? null
     readonly property int scrollSeq: scrollRequest ? scrollRequest.seq : 0
     onScrollSeqChanged: {
+        // A jump the host asked for wins over keeping the row being read in place.
+        heightBefore = -1
         if (scrollRequest.to === "top") scroller.scrollToTop()
         else if (scrollRequest.to === "bottom") scroller.scrollToBottom()
         else scroller.scrollBy(scrollRequest.by)
+    }
+
+    // Where the user is, for the "Scroll to end" offer under the timeline.
+    readonly property bool awayFromEnd: timeline.kind === "thread"
+        && (!timeline.showingLatest || contentHeight - layoutHeight - contentY > 1)
+
+    // A thread opened (or another one chosen) shows its newest output once its rows
+    // arrive, however far the last one was scrolled; the page key says which thread.
+    readonly property var pageKey: Shell.state.page.key ?? null
+    property bool opening: true
+    onPageKeyChanged: opening = true
+    onTimelineChanged: if (opening && timeline.items.length > 0) settleOpening()
+
+    // Rows mount over a few frames: keep going to the bottom until they settle.
+    function settleOpening() {
+        heightBefore = -1
+        scrollToBottom()
+        Qt.callLater(function () { scroller.opening = false })
+    }
+
+    // Earlier turns that land above the row being read push it down; the view
+    // follows by the height they added, so that row stays where it was.
+    property string firstKey: ""
+    property real heightBefore: -1
+    readonly property string headKey: {
+        const items = timeline.items
+        for (let i = 0; i < items.length; i++) {
+            if (!items[i].key.startsWith("pager:")) return items[i].key
+        }
+        return ""
+    }
+    onHeadKeyChanged: {
+        const prepended = firstKey !== "" && headKey !== "" && headKey !== firstKey && !opening
+        firstKey = headKey
+        if (prepended && contentHeight - layoutHeight - contentY > 1) heightBefore = contentHeight
+    }
+
+    onContentHeightChanged: {
+        if (opening && timeline.items.length > 0) {
+            settleOpening()
+        } else if (heightBefore >= 0) {
+            const added = contentHeight - heightBefore
+            heightBefore = -1
+            if (added > 0) scrollBy(added)
+        }
+        askForEarlier()
+    }
+    onLayoutHeightChanged: askForEarlier()
+
+    // A timeline that leaves room in the view loads the turns before it by itself.
+    function askForEarlier() {
+        if (timeline.canLoadEarlier && contentHeight <= layoutHeight) {
+            Qt.callLater(Shell.dispatch, "timeline.showOlder")
+        }
     }
 
     stickyScroll: timeline.showingLatest
