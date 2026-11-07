@@ -563,6 +563,12 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
   // Oldest first; a prompt sent twice in a row is one entry, its newest.
   QList<std::pair<QString, QString>> entries;
   for (const QJsonObject& item : itemsOf(m_timeline->entities(QStringLiteral("turn-item")), QStringLiteral("user_message"))) {
+    // Only what the user typed: not a scheduled task's, another agent's or the app's message.
+    const QString by = str(item, QLatin1String("createdBy"));
+    if ((!by.isEmpty() && by != QLatin1String("user")) || TimelineModel::sentByScheduledTask(item) ||
+        !str(item, QLatin1String("senderThreadId")).isEmpty()) {
+      continue;
+    }
     const QString prompt = recallable(str(item, QLatin1String("text")));
     if (prompt.isEmpty()) continue;
     if (!entries.isEmpty() && entries.constLast().second == prompt) entries.removeLast();
@@ -631,8 +637,18 @@ bool ComposerController::stash(const QString& target) {
     return true;
   }
   m_kept.stash.prepend({newId(), m_now(), text, kept.attachments, kept.excerpts});
-  if (m_kept.stash.size() > kMaxStashEntries) {
-    m_kept.stash.removeLast();
+  std::optional<StashEntry> oldest;
+  if (m_kept.stash.size() > kMaxStashEntries) oldest = m_kept.stash.takeLast();
+  // A stash that cannot be written keeps nothing: the prompt stays in the composer.
+  if (!save()) {
+    m_kept.stash.removeFirst();
+    if (oldest) m_kept.stash.append(*oldest);
+    NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("error"), QStringLiteral("Could not stash this prompt"),
+                                                               QStringLiteral("The stash could not be saved on this machine."));
+    publish();
+    return true;
+  }
+  if (oldest) {
     NativeShell::of(this)->controller<ToastController>()->show(
         QStringLiteral("warning"), QStringLiteral("Oldest stashed prompt discarded"),
         QStringLiteral("The stash holds %1 prompts; the oldest was removed to make room.").arg(kMaxStashEntries));
@@ -687,9 +703,11 @@ QVariantMap ComposerController::stashState() const {
     if (snippet.size() > 90) {
       snippet = snippet.left(90) + QStringLiteral("…");
     } else if (snippet.isEmpty()) {
-      const qsizetype images = entry.attachments.size();
-      snippet = images == 0 ? QStringLiteral("(empty)")
-                            : QStringLiteral("(%1 image%2)").arg(images).arg(images == 1 ? "" : "s");
+      // What it holds instead: images, files, or both as attachments.
+      const qsizetype files = std::count_if(entry.attachments.cbegin(), entry.attachments.cend(), [](const Attachment& a) { return a.file; });
+      const qsizetype all = entry.attachments.size();
+      const QString kind = files == 0 ? QStringLiteral("image") : files == all ? QStringLiteral("file") : QStringLiteral("attachment");
+      snippet = all == 0 ? QStringLiteral("(empty)") : QStringLiteral("(%1 %2%3)").arg(all).arg(kind, all == 1 ? QString() : QStringLiteral("s"));
     }
     entries.append(QVariantMap{{QStringLiteral("id"), entry.id},
                                {QStringLiteral("snippet"), snippet},
@@ -4218,9 +4236,9 @@ void ComposerController::spread() const {
   }
 }
 
-void ComposerController::save() const {
+bool ComposerController::save() const {
   spread();
-  if (m_kept.path.isEmpty()) return;
+  if (m_kept.path.isEmpty()) return true;
   QJsonObject targets;
   for (auto it = m_drafts.cbegin(); it != m_drafts.cend(); ++it) {
     const Draft& kept = it.value();
@@ -4271,6 +4289,7 @@ void ComposerController::save() const {
   // Whole or not at all: a write cut short would lose every thread's draft.
   QDir().mkpath(QFileInfo(m_kept.path).absolutePath());
   QSaveFile file(m_kept.path);
+  bool written = false;
   if (file.open(QIODevice::WriteOnly)) {
     QJsonObject stored{{QStringLiteral("targets"), targets}};
     if (!stash.isEmpty()) stored.insert(QStringLiteral("stash"), stash);
@@ -4282,7 +4301,7 @@ void ComposerController::save() const {
       stored.insert(QStringLiteral("lastModels"), lastModels);
     }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
-    file.commit();
+    written = file.commit();
   }
   // The drafts' images, apart: rewritten only when they change.
   QJsonObject images;
@@ -4292,16 +4311,17 @@ void ComposerController::save() const {
     if (!list.isEmpty()) images.insert(it.key(), list);
   }
   const QString joined = imagesSignature(images) + u'\n' + imagesSignature(unsentImages);
-  if (joined == m_kept.images) return;
+  if (joined == m_kept.images) return written;
   if (images.isEmpty() && unsentImages.isEmpty()) {
     if (QFile::remove(imagesPath()) || !QFile::exists(imagesPath())) m_kept.images = joined;
-    return;
+    return written;
   }
   QSaveFile imagesFile(imagesPath());
-  if (!imagesFile.open(QIODevice::WriteOnly)) return;
+  if (!imagesFile.open(QIODevice::WriteOnly)) return written;
   QJsonObject kept{{QStringLiteral("targets"), images}};
   if (!unsentImages.isEmpty()) kept.insert(QStringLiteral("unsent"), unsentImages);
   imagesFile.write(QJsonDocument(kept).toJson(QJsonDocument::Compact));
   // Remembered once written, so a failed write is tried again on the next save.
   if (imagesFile.commit()) m_kept.images = joined;
+  return written;
 }

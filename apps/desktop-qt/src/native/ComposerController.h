@@ -549,7 +549,8 @@ private:
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
-  void save() const;
+  // False when the drafts and stash could not be written.
+  bool save() const;
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
