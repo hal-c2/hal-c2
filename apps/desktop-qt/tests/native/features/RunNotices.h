@@ -10,3 +10,6 @@ class World;
 bool backgroundNoticeSays(World& world, const QString& title);
 // Dismisses the thread's error, when the scenario showed one; false otherwise.
 bool dismissThreadError(World& world);
+// The thread's provider notice, when the scenario showed one; false otherwise.
+bool dismissProviderNotice(World& world);
+bool providerNoticeGone(World& world);

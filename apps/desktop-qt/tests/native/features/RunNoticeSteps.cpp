@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 
 #include "Brick.h"
+#include "FakeConfig.h"
 #include "Harness.h"
 #include "LocalCache.h"
 #include "NativeShell.h"
@@ -132,6 +133,74 @@ void showError(World& world, const QString& message) {
   updateThreadRow(world, kThread, [&](QJsonObject& row) { row.insert(QStringLiteral("lastError"), message); });
   world.mc.part<ThreadErrorShown>().shown = true;
   errorShows(world, message);
+}
+
+// The provider a scenario's thread runs on, as the MC's config lists it.
+struct ProviderShown {
+  bool shown = false;
+  QJsonObject entry;
+};
+
+QVariantMap providerNotice(World& world) {
+  return world.state(QStringLiteral("providerNotice")).toMap();
+}
+
+// The thread runs on `driver` (its row's modelSelection), which the MC lists
+// ready until a step says otherwise.
+void runOn(World& world, const QString& driver, const QString& name, const QString& version = QStringLiteral("0.51.0")) {
+  threadView(world);
+  QJsonObject entry{{QStringLiteral("instanceId"), driver},
+                    {QStringLiteral("driver"), driver},
+                    {QStringLiteral("displayName"), name},
+                    {QStringLiteral("enabled"), true},
+                    {QStringLiteral("installed"), true},
+                    {QStringLiteral("version"), version},
+                    {QStringLiteral("status"), QStringLiteral("ready")},
+                    {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("authenticated")}}},
+                    {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("model-1")}, {QStringLiteral("name"), QStringLiteral("Model 1")}}}}};
+  world.mc.part<ProviderShown>().entry = entry;
+  publishProviders(world.mc, {entry});
+  updateThreadRow(world, kThread, [&](QJsonObject& row) {
+    row.insert(QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), driver}, {QStringLiteral("model"), QStringLiteral("model-1")}});
+  });
+}
+
+// The MC reports the thread's provider changed by `fields`.
+void reportProvider(World& world, const QJsonObject& fields) {
+  QJsonObject& entry = world.mc.part<ProviderShown>().entry;
+  for (auto it = fields.begin(); it != fields.end(); ++it) entry.insert(it.key(), it.value());
+  publishProviders(world.mc, {entry});
+  world.mc.part<ProviderShown>().shown = true;
+}
+
+// The provider's notice over the conversation, drawn, once its title reads
+// `title` and, when given, its message `message`.
+void providerNoticeSays(World& world, const QString& title, const QString& message = {}) {
+  Brick& view = threadView(world);
+  world.waitFor(
+      [&] {
+        QQuickItem* banner = view.find(QStringLiteral("providerNotice"));
+        return banner && banner->isVisible() && text(view.find(QStringLiteral("providerNoticeTitle"))) == title &&
+               (message.isEmpty() || text(view.find(QStringLiteral("providerNoticeMessage"))) == message);
+      },
+      [&] { return QStringLiteral("the thread to show \"%1\" with \"%2\"; providerNotice is %3").arg(title, message, show(world.state(QStringLiteral("providerNotice")))); });
+}
+
+void noProviderNotice(World& world) {
+  Brick& view = threadView(world);
+  world.sync();
+  world.waitFor(
+      [&] {
+        QQuickItem* banner = view.find(QStringLiteral("providerNotice"));
+        return world.state(QStringLiteral("providerNotice")).isNull() && !(banner && banner->isVisible());
+      },
+      [&] { return QStringLiteral("no provider notice; providerNotice is %1").arg(show(world.state(QStringLiteral("providerNotice")))); });
+}
+
+QJsonObject signedOut(bool setup) {
+  return {{QStringLiteral("status"), QStringLiteral("error")},
+          {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("unauthenticated")}}},
+          {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canAuthenticate"), setup}}}};
 }
 
 const Steps steps([] {
@@ -278,6 +347,68 @@ const Steps steps([] {
         },
         [&] { return seen(world); });
   });
+  // What the thread's provider says when it cannot run (ProviderNoticeController).
+  step(QStringLiteral("the thread in %1 runs on (Codex|Antigravity)(?: (\\d[\\d.]*))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    const bool codex = c[1] == QLatin1String("Codex");
+    runOn(world, codex ? QStringLiteral("codex") : QStringLiteral("antigravity"), c[1], c[2].isEmpty() ? QStringLiteral("0.51.0") : c[2]);
+  });
+  step(QStringLiteral("Codex (is not installed and HAL-C2 can install it|is signed out and HAL-C2 can sign it in|is signed out and can only be signed in from "
+                      "its own CLI|is unavailable)"),
+       [](World& world, const Captures& c, const Table&) {
+         if (c[0].startsWith(QLatin1String("is not installed"))) {
+           reportProvider(world, {{QStringLiteral("installed"), false},
+                                  {QStringLiteral("status"), QStringLiteral("error")},
+                                  {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("unknown")}}},
+                                  {QStringLiteral("setup"), QJsonObject{{QStringLiteral("canInstall"), true}}}});
+         } else if (c[0].startsWith(QLatin1String("is signed out"))) {
+           reportProvider(world, signedOut(c[0].contains(QLatin1String("HAL-C2"))));
+         } else {
+           reportProvider(world, {{QStringLiteral("status"), QStringLiteral("error")}});
+         }
+       });
+  step(QStringLiteral("Codex ([\\d.]+) is known to be broken"), [](World& world, const Captures& c, const Table&) {
+    reportProvider(world, {{QStringLiteral("version"), c[0]},
+                           {QStringLiteral("compatibilityAdvisory"),
+                            QJsonObject{{QStringLiteral("status"), QStringLiteral("broken")},
+                                        {QStringLiteral("message"), QStringLiteral("Turns fail mid-run on this version. Use v0.51.0.")}}}});
+  });
+  step(QStringLiteral("Antigravity has not checked its saved sign-in since the environment restarted"), [](World& world, const Captures&, const Table&) {
+    reportProvider(world, {{QStringLiteral("status"), QStringLiteral("warning")},
+                           {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("unknown")}}},
+                           {QStringLiteral("message"), QStringLiteral("Antigravity checks its sign-in when a session starts.")}});
+  });
+  // "the user looks at the thread" is ThreadSnoozeSteps' sync; runOn has opened the thread.
+  step(QStringLiteral("the thread shows %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    providerNoticeSays(world, c[0], c[1]);
+    shoot(world, QStringLiteral("provider-%1").arg(QString(c[1]).left(24).replace(QRegularExpression(QStringLiteral("\\W+")), QStringLiteral("-"))));
+  });
+  step(QStringLiteral("the thread warns %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    providerNoticeSays(world, c[0]);
+    expect(providerNotice(world).value(QStringLiteral("warning")).toBool(), show(providerNotice(world)));
+    shoot(world, QStringLiteral("provider-broken-version"));
+  });
+  step(QStringLiteral("the thread shows that Codex is signed out"), [](World& world, const Captures&, const Table&) {
+    runOn(world, QStringLiteral("codex"), QStringLiteral("Codex"));
+    reportProvider(world, signedOut(true));
+    providerNoticeSays(world, QStringLiteral("Codex is unauthenticated"));
+  });
+  step(QStringLiteral("the user opens provider setup from the thread"), [](World& world, const Captures&, const Table&) {
+    threadView(world).click(QStringLiteral("providerNoticeSetup"));
+  });
+  step(QStringLiteral("the setup for Codex opens"), [](World& world, const Captures&, const Table&) {
+    auto* navigation = world.native().controller<NavigationController>();
+    world.waitFor([&] { return navigation->route() == NavigationController::Route::settings(NavigationController::kProvidersSection); },
+                  QStringLiteral("Settings › Providers to open"));
+  });
+  step(QStringLiteral("Codex later becomes unavailable for another reason"), [](World& world, const Captures&, const Table&) {
+    reportProvider(world, {{QStringLiteral("status"), QStringLiteral("error")},
+                           {QStringLiteral("auth"), QJsonObject{{QStringLiteral("status"), QStringLiteral("authenticated")}}},
+                           {QStringLiteral("message"), QStringLiteral("Codex exited during startup.")}});
+  });
+  step(QStringLiteral("the thread shows the new problem"), [](World& world, const Captures&, const Table&) {
+    providerNoticeSays(world, QStringLiteral("Codex provider status"), QStringLiteral("Codex exited during startup."));
+  });
+  step(QStringLiteral("no provider notice is shown"), [](World& world, const Captures&, const Table&) { noProviderNotice(world); });
 });
 
 }  // namespace
@@ -296,5 +427,19 @@ bool backgroundNoticeSays(World& world, const QString& title) {
 bool dismissThreadError(World& world) {
   if (!world.mc.part<ThreadErrorShown>().shown) return false;
   threadView(world).click(QStringLiteral("threadErrorDismiss"));
+  return true;
+}
+
+// The thread's provider notice: dismissed and gone, when the scenario showed
+// one (ProviderSettingsSteps' are the sidebar's update notice otherwise).
+bool dismissProviderNotice(World& world) {
+  if (!world.mc.part<ProviderShown>().shown) return false;
+  threadView(world).click(QStringLiteral("providerNoticeDismiss"));
+  return true;
+}
+
+bool providerNoticeGone(World& world) {
+  if (!world.mc.part<ProviderShown>().shown) return false;
+  noProviderNotice(world);
   return true;
 }

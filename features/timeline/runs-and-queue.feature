@@ -560,7 +560,7 @@ Feature: Runs, interruptions and the queue
     When the user reloads the thread
     Then the offer to continue with less context counts the tokens of Claude's latest turn, not an older one
 
-  @desktop @backlog @priority-high
+  @desktop @priority-high
   Scenario Outline: The thread says when its provider cannot run
     Given the thread in "shop" runs on Codex
     And Codex <problem>
@@ -574,20 +574,20 @@ Feature: Runs, interruptions and the queue
       | is signed out and can only be signed in from its own CLI | Codex is unauthenticated | Sign in via the CLI to authenticate again.                |
       | is unavailable                                           | Codex provider status    | Codex provider is unavailable.                            |
 
-  @desktop @backlog
+  @desktop
   Scenario: A provider version known to break turns is flagged even when it is ready
     Given the thread in "shop" runs on Codex 0.9.0
     And Codex 0.9.0 is known to be broken
     When the user looks at the thread
     Then the thread warns "Codex 0.9.0 is known to be broken"
 
-  @desktop @backlog
+  @desktop
   Scenario: The user installs or signs in to the provider from the thread
     Given the thread shows that Codex is signed out
     When the user opens provider setup from the thread
     Then the setup for Codex opens
 
-  @desktop @backlog
+  @desktop
   Scenario: A dismissed provider notice stays away until the problem changes
     Given the thread shows that Codex is signed out
     When the user dismisses the notice
@@ -595,7 +595,7 @@ Feature: Runs, interruptions and the queue
     When Codex later becomes unavailable for another reason
     Then the thread shows the new problem
 
-  @desktop @backlog
+  @desktop
   Scenario: Antigravity after a restart is not reported as signed out
     Given the thread in "shop" runs on Antigravity
     And Antigravity has not checked its saved sign-in since the environment restarted

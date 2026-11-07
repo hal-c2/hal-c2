@@ -375,9 +375,20 @@ Item {
         visible: recovery !== null && !view.draft
     }
 
-    // The open thread's error, over the top of its conversation.
+    // The open thread's error, over the top of its conversation, and under
+    // it what its provider says when it cannot run.
     ThreadErrorBanner {
+        id: errorBanner
+
         anchors.top: timeline.top
+        anchors.left: timeline.left
+        anchors.right: timeline.right
+        z: 2
+        height: implicitHeight
+        visible: current !== null && !view.draft
+    }
+    ProviderStatusBanner {
+        anchors.top: errorBanner.visible ? errorBanner.bottom : timeline.top
         anchors.left: timeline.left
         anchors.right: timeline.right
         z: 2

@@ -92,6 +92,7 @@ set(hal_c2_bricks_qml_files
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
     ThreadErrorBanner.qml
+    ProviderStatusBanner.qml
     ThreadNotice.qml
     ProviderUpdateNotice.qml
     ThreadLineage.qml
