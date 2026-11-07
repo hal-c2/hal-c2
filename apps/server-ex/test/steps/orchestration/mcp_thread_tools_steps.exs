@@ -1716,18 +1716,8 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  step "the user attached thread {string} of another project to a message of {string}",
-       %{args: [elsewhere, caller]} = context do
-    context
-    |> attachable_elsewhere(elsewhere)
-    |> attach_as_context(caller, elsewhere, %{})
-  end
-
-  step "a message written by an agent of {string} carries a context record naming thread {string} of another project",
-       %{args: [caller, elsewhere]} = context do
-    context
-    |> attachable_elsewhere(elsewhere)
-    |> attach_as_context(caller, elsewhere, %{"createdBy" => "agent", "creationSource" => "mcp"})
+  step "thread {string} of another project has a message", %{args: [elsewhere]} = context do
+    elsewhere_with_a_message(context, elsewhere)
   end
 
   step "it receives the thread's messages", context do
@@ -1737,7 +1727,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  step "listing, sending to or interrupting {string} is still refused",
+  step "listing its own project, sending to or interrupting {string} is still refused",
        %{args: [elsewhere]} = context do
     id = World.thread_id(context, elsewhere)
 
@@ -1959,8 +1949,8 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  # A thread in another project with a message of its own, named for attachment.
-  defp attachable_elsewhere(context, elsewhere) do
+  # A thread in another project with a message of its own.
+  defp elsewhere_with_a_message(context, elsewhere) do
     context =
       context
       |> World.create_project("another")
@@ -1968,38 +1958,6 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
 
     assert %{"status" => "completed"} =
              World.finish_turn(context, elsewhere, "say from elsewhere")
-
-    context
-  end
-
-  # Sends a message to `caller` carrying a `thread` context record for
-  # `elsewhere`; `fields` says who wrote it (the user by default).
-  defp attach_as_context(context, caller, elsewhere, fields) do
-    record = %{
-      "contextId" => "ctx-elsewhere",
-      "kind" => "thread",
-      "threadId" => World.thread_id(context, elsewhere),
-      "title" => elsewhere
-    }
-
-    fields = Map.put(fields, "context", %{"records" => [record]})
-
-    context =
-      World.send_turn(
-        context,
-        caller,
-        "See [#{elsewhere}](hal-c2-context://v1/thread/ctx-elsewhere)",
-        fields
-      )
-
-    World.await_state(context, caller, fn state ->
-      Enum.any?(StreamState.list(state, "message"), fn message ->
-        Enum.any?(
-          get_in(message, ["context", "records"]) || [],
-          &(&1["threadId"] == record["threadId"])
-        )
-      end)
-    end)
 
     context
   end
@@ -2208,6 +2166,21 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
 
   step "the list names no single project", context do
     assert {:ok, %{"projectId" => nil}} = context.mcp_result
+    context
+  end
+
+  step "the agent of {string} can read and unsnooze each listed thread",
+       %{args: [caller]} = context do
+    assert {:ok, %{"threads" => threads}} = context.mcp_result
+
+    for %{"threadId" => id} = thread <- threads do
+      assert {:ok, %{"thread" => %{"threadId" => ^id}}} =
+               World.mcp_tool(context, caller, "hal_c2_thread_read", %{"threadId" => id})
+
+      assert {:ok, _} = organize(context, caller, thread_title(context, thread), "unsnooze")
+      World.await_row(id, organized("unsnooze"))
+    end
+
     context
   end
 

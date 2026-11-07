@@ -34,8 +34,10 @@
 #     thread.archive, thread.unarchive, thread.mark-unread
 #   apps/server/src/mcp/toolkits/thread, orchestrator, environment, attachment, project
 Feature: Agents working with threads through MCP tools
-  An agent reads, messages, creates and organizes threads of its own project as
-  the thread it runs in. Writes follow the access rules of the MCP server.
+  An agent reads, messages, creates and organizes threads as the thread it runs in.
+  It lists its own project unless it asks for all projects, and can read and
+  organize any thread of the MC; messaging stays inside its project. Writes follow
+  the access rules of the MCP server.
 
   Background:
     Given an MC with a project "demo"
@@ -525,12 +527,14 @@ Feature: Agents working with threads through MCP tools
       | false  | "t3" and not "t2"           |
 
   # Upstream #26442: going through the user's snoozed threads took one call per project.
+  # Upstream reads and organizes any thread of the server, so every listed id can be acted on.
   @mc
   Scenario: An agent lists the threads of every project in one call
     Given thread "t2" in "shop" and thread "t3" in "demo" are snoozed
     When the agent of "caller" lists threads of all projects with snoozed true
     Then the list holds "t2" and "t3", each naming its project
     And the list names no single project
+    And the agent of "caller" can read and unsnooze each listed thread
 
   @backlog @mc
   Scenario: Agents are told how to link to a thread in their answers
@@ -638,14 +642,17 @@ Feature: Agents working with threads through MCP tools
     And each provider instance with its models, options and whether it can run a child task and why not
     And that batches hold at most 20 threads
 
+  # Upstream reads any thread of the server, attached or not (threadAccess.ts readThread).
   @mc
-  Scenario: A thread the user attached as context can be read from another project
-    Given the user attached thread "elsewhere" of another project to a message of "caller"
+  Scenario: A thread of another project can be read but not messaged
+    Given thread "elsewhere" of another project has a message
     When the agent of "caller" reads "elsewhere"
     Then it receives the thread's messages
-    But listing, sending to or interrupting "elsewhere" is still refused
+    But listing its own project, sending to or interrupting "elsewhere" is still refused
 
-  @mc
+  # Dropped: read reaches every thread of the MC (upstream #26442 and threadAccess.ts), so a
+  # context record, whoever wrote it, no longer decides what an agent can read.
+  @dropped @mc
   Scenario: A thread an agent attached does not widen what the agent can read
     Given a message written by an agent of "caller" carries a context record naming thread "elsewhere" of another project
     When the agent of "caller" reads "elsewhere"

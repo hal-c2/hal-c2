@@ -189,7 +189,7 @@ defmodule HalC2.Mcp.Tools do
 
   def run("hal_c2_thread_read", args, %{row: me} = caller) do
     with {:ok, args} <- clamp_read(args),
-         {:ok, row} <- readable_thread(me, args["threadId"]),
+         {:ok, row} <- mc_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
       view = args["view"] || "messages"
       after_position = args["afterPosition"] || -1
@@ -559,44 +559,20 @@ defmodule HalC2.Mcp.Tools do
   defp foreign_credential,
     do: {:error, "capability_denied", "This credential belongs to another environment."}
 
-  # A thread `hal_c2_thread_read` may show the caller: one of its project, or one
-  # the user attached to the caller's conversation as context, of any project.
-  # A deleted one the caller could otherwise read says it is gone, not missing.
-  defp readable_thread(me, nil), do: {:ok, me}
+  @doc """
+  A thread of this MC that is not deleted (the caller itself for nil), of any
+  project, as its sidebar row: what `hal_c2_thread_list` with `allProjects`
+  finds, `hal_c2_thread_read` and `hal_c2_thread_organize` reach. The caller's
+  project is only the default the list starts from, as upstream (#26442).
+  """
+  def mc_thread(me, nil), do: {:ok, me}
 
-  defp readable_thread(%{"projectId" => project} = me, id) do
+  def mc_thread(_me, id) do
     case HalC2.Shell.row(node(), id) do
-      {"thread", row} ->
-        cond do
-          row["projectId"] != project and not user_attached?(me, id) ->
-            {:error, "thread_not_found", "The thread was not found in the calling project."}
-
-          row["deletedAt"] != nil ->
-            {:error, "thread_not_found", "Thread #{id} is no longer available."}
-
-          true ->
-            {:ok, row}
-        end
-
-      _ ->
-        {:error, "thread_not_found", "The thread was not found in the calling project."}
+      {"thread", %{"deletedAt" => nil} = row} -> {:ok, row}
+      {"thread", _} -> {:error, "thread_not_found", "Thread #{id} is no longer available."}
+      _ -> {:error, "thread_not_found", "The thread was not found."}
     end
-  end
-
-  # Only records on messages the user wrote count: an agent cannot widen its own
-  # reach by writing a `thread` context record naming a thread elsewhere.
-  defp user_attached?(me, thread_id) do
-    HalC2.Streams.read(me["id"], fn state ->
-      state
-      |> StreamState.all("message")
-      |> Enum.any?(fn message ->
-        message["role"] == "user" and message["createdBy"] == "user" and
-          Enum.any?(
-            get_in(message, ["context", "records"]) || [],
-            &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
-          )
-      end)
-    end)
   end
 
   @doc """

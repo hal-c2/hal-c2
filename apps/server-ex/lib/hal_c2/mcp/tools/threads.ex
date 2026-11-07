@@ -14,6 +14,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     only: [
       command_id: 0,
       live: 1,
+      mc_thread: 2,
       message_run: 2,
       mode: 3,
       no_escalation: 2,
@@ -235,8 +236,12 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("hal_c2_thread_organize", %{"action" => action} = args, caller) do
-    with {:ok, row} <- writable(caller, args["threadId"]),
+  # Any thread of this MC, like `hal_c2_thread_read`: the snoozed threads
+  # `hal_c2_thread_list` finds with `allProjects` can be woken from one thread.
+  def run("hal_c2_thread_organize", %{"action" => action} = args, %{row: me} = caller) do
+    with {:ok, row} <- mc_thread(me, args["threadId"]),
+         :ok <- live(caller),
+         :ok <- no_escalation(me, row),
          {:ok, command} <- organize_command(action, args),
          {:ok, %{"sequence" => sequence}} <-
            command
