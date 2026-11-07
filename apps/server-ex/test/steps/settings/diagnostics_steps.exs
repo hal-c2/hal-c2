@@ -229,6 +229,34 @@ defmodule HalC2.Steps.Settings.Diagnostics do
     context
   end
 
+  step "the MC recorded a warning with no time inside a span that ended before a later error",
+       context do
+    now = System.system_time(:nanosecond)
+    untimed = %{"name" => "no clock", "attributes" => %{"effect.logLevel" => "Warning"}}
+
+    trace_file([
+      effect_span("git.status", now - 3_000_000_000, 20, events: [untimed]),
+      effect_span("provider.start", now - 2_000_000_000, 30,
+        events: [log("Error", "spawn failed", now - 1_990_000_000)]
+      )
+    ])
+
+    Map.put(context, :untimed_span_end, div(now - 3_000_000_000 + 20_000_000, 1_000_000))
+  end
+
+  step "the warning is listed after the later error, at its span's end", context do
+    assert {:ok, traces} = context.reply
+
+    assert [
+             %{"spanName" => "provider.start", "message" => "spawn failed"},
+             %{"spanName" => "git.status", "message" => "no clock", "seenAt" => seen}
+           ] = traces["latestWarningAndErrorLogs"]
+
+    {:ok, at, 0} = DateTime.from_iso8601(seen)
+    assert DateTime.to_unix(at, :millisecond) == context.untimed_span_end
+    context
+  end
+
   step "the MC recorded spans that took under a second and spans that took a second or more",
        context do
     now = System.system_time(:nanosecond)

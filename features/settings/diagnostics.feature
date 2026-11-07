@@ -94,6 +94,12 @@ Feature: Diagnostics
     Then the latest warnings and errors are listed with the span they happened in
 
   @mc
+  Scenario: A warning with no time of its own is listed at its span's end
+    Given the MC recorded a warning with no time inside a span that ended before a later error
+    When the user asks for trace diagnostics
+    Then the warning is listed after the later error, at its span's end
+
+  @mc
   Scenario: Trace diagnostics count spans that take a second or more
     Given the MC recorded spans that took under a second and spans that took a second or more
     When the user asks for trace diagnostics

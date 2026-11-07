@@ -435,7 +435,7 @@ defmodule HalC2.Traces do
          ended: div(ended, 1_000_000),
          exit: exit,
          cause: cause,
-         logs: logs(record["events"], ended)
+         logs: logs(record["events"], div(ended, 1_000_000))
        }}
     else
       _ -> :error
@@ -448,7 +448,12 @@ defmodule HalC2.Traces do
     for %{"name" => message, "attributes" => %{"effect.logLevel" => level}} = event <- events,
         is_binary(message) and message != "" and is_binary(level) and level != "" do
       time = nanos(event["timeUnixNano"] || event["startTimeUnixNano"])
-      %{level: level, message: message, seen: if(time > 0, do: div(time, 1_000_000), else: span_ended)}
+
+      %{
+        level: level,
+        message: message,
+        seen: if(time > 0, do: div(time, 1_000_000), else: span_ended)
+      }
     end
   end
 
