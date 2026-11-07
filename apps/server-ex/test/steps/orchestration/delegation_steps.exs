@@ -2535,7 +2535,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
         World.send_turn(context, "subagent", "say Done")
 
       "failed" ->
-        World.send_turn(context, "subagent", "fail")
+        {_pid, runtime} = World.codex_runtime(context, "subagent")
+
+        World.codex_notify(context, "subagent", "turn/completed", %{
+          "threadId" => runtime.native_thread_id,
+          "turn" => %{
+            "id" => runtime.turn.native_turn_id,
+            "status" => "failed",
+            "error" => %{"message" => "the turn failed"}
+          }
+        })
     end
 
     await_task(context, &(&1["status"] == ending))
