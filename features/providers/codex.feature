@@ -553,6 +553,7 @@ Feature: Codex
       | a personal ChatGPT plan            | Manage usage            |
       | a ChatGPT Business workspace       | Copy request for admin  |
 
+  # Upstream #23361: ChatGPT Business usage limits offer a copyable admin request.
   @backlog @shared
   Scenario: Copying the request for a workspace admin confirms it
     Given a turn stopped at a ChatGPT Business workspace limit
@@ -782,6 +783,7 @@ Feature: Codex
     Then the turn names Codex's plan collaboration mode
     And HAL-C2 sends no copy of Codex's mode instructions of its own
 
+  # Upstream #24737: a Default turn without the HAL-C2 server never left an earlier Plan mode.
   @mc @plugin-codex @backlog @priority-high
   Scenario: A default-mode turn leaves plan mode even without the HAL-C2 server
     Given a Codex thread without the "hal-c2" server whose last turn was in plan mode
@@ -1227,6 +1229,8 @@ Feature: Codex
     Then the parent thread starts a turn with the subagent's result
     And the result is kept in the parent's history
 
+  # Upstream #23840: a finished native subagent does not wake a parent that was interrupted, is still
+  # running a turn, or is itself a subagent.
   @backlog
   Scenario Outline: A finished Codex subagent does not wake a parent that <case>
     Given a Codex subagent whose parent <case>

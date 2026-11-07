@@ -155,6 +155,7 @@ Feature: The thread list
     Then it is sent the 25 newest settled threads and the pinned and snoozed ones
     And it is told how many settled threads of "shop" were left out
 
+  # Upstream #24723: the settled shelf's label counts the threads a connect left out, and they load a page at a time.
   @backlog @shared
   Scenario: The settled section counts and pages the threads a connect left out
     Given a client was sent 25 of the 900 settled threads of "shop"
@@ -162,12 +163,14 @@ Feature: The thread list
     When the user shows more settled threads
     Then the next 25 older settled threads are read from the MC and listed below the others
 
+  # Upstream #24723: a search that matches an older settled thread brings it in with its family.
   @backlog @shared
   Scenario: Search finds settled threads a connect left out
     Given a client was not sent the older settled thread "Old billing fix"
     When the user searches threads for "billing"
     Then "Old billing fix" is among the results
 
+  # Upstream #24723: opening an old thread (link, notification, search) brings in that thread's family.
   @backlog @shared
   Scenario: A link to a settled thread a connect left out opens it
     Given a client was not sent the older settled thread "Old billing fix"
@@ -995,6 +998,7 @@ Feature: The thread list
       | a background command the agent did not mark  | moves to the inbox            |
       | a monitor the agent did not mark             | moves to the inbox            |
 
+  # Upstream #24610: Claude implements the mark on its background-task roster; other providers return unsupported.
   @backlog @mc @plugin-claude
   Scenario: A Claude agent marks the background work it waits on and can clear the mark
     Given Claude left the background commands "tests" and "dev server" running in "Fix login"
@@ -1004,6 +1008,7 @@ Feature: The thread list
     Then "tests" no longer holds "Fix login"
     And marking a command that is not running reports it as unmatched and changes nothing
 
+  # Upstream #24610: other providers return "unsupported" for the wait mark and keep today's behaviour.
   @backlog @mc
   Scenario: Agents that cannot mark their waits keep holding only for subagents
     Given a Codex thread asks to mark a background command as work it waits on

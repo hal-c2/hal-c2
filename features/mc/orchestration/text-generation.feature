@@ -59,6 +59,7 @@ Feature: Generated titles, branch names and source control text
     Then the title writer is asked to follow "Start with the ticket number"
     And with no instructions set the title request is unchanged
 
+  # Upstream #21882: thread title instructions are set in the text generation settings.
   @backlog @desktop @tui
   Scenario: Thread title instructions are set under text generation
     When the user sets thread title instructions in the text generation settings
@@ -475,6 +476,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given the source's title and its messages up to the fork point, across forks of forks
     And it is asked for the inherited subject together with the fork's new direction
 
+  # Upstream #24857: forked threads get titles from the history they inherit.
   @backlog @mc
   Scenario: A fork whose source is gone is titled from its own messages
     Given a forked thread whose source thread was deleted
@@ -705,6 +707,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given a short account of the thread's visible history with the check and its result
     And turns that were rolled back are left out of it
 
+  # Upstream #18291: generated pull requests include the thread's context, such as the checks it ran.
   @mc @backlog
   Scenario: Pull request text from a thread needs permission to read the thread
     Given a client that may write to source control but may not read threads
