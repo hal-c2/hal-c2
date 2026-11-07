@@ -587,8 +587,10 @@ defmodule HalC2.Web.Socket do
 
   # --- subscriptions -------------------------------------------------------------
 
-  defp subscribe(state, id, :shell, %{have: have}) do
-    %{mcs: mcs, rows: rows} = HalC2.Shell.subscribe(self(), have)
+  defp subscribe(state, id, :shell, %{have: have} = resume) do
+    %{mcs: mcs, rows: rows} =
+      HalC2.Shell.subscribe(self(), have, settled_limit: resume[:settled_limit])
+
     offline = HalC2.Cluster.Discovery.offline()
 
     frame = %{
@@ -605,6 +607,7 @@ defmodule HalC2.Web.Socket do
             "rev" => mc.rev,
             "reset" => mc.reset
           }
+          |> put_left_out(mc[:settled_left_out])
         end,
       "rows" => for({mc, stream, kind, row} <- rows, do: [Atom.to_string(mc), stream, kind, row])
     }
@@ -2240,7 +2243,7 @@ defmodule HalC2.Web.Socket do
   # changes as the messages did, in the order each row last changed (`order`). After
   # a `reset` the MC's earlier rows are gone, buffered or held; rows merged on top of
   # it keep the frame a reset.
-  defp buffer_shell_rows(state, mc, rows, %{epoch: epoch, rev: rev, reset: reset?}) do
+  defp buffer_shell_rows(state, mc, rows, %{epoch: epoch, rev: rev, reset: reset?} = version) do
     buffer = Map.get(state.shell, mc, %{rows: %{}, reset: false})
     {kept, order} = if reset?, do: {%{}, %{}}, else: {buffer.rows, Map.get(buffer, :order, %{})}
     last = Map.get(buffer, :last, 0)
@@ -2255,7 +2258,10 @@ defmodule HalC2.Web.Socket do
       last: last + length(rows),
       epoch: epoch,
       rev: rev,
-      reset: reset? or buffer.reset
+      reset: reset? or buffer.reset,
+      # Told with the rows sent whole, to a client that asked for a settled limit.
+      settled_left_out:
+        if(reset?, do: version[:settled_left_out], else: buffer[:settled_left_out])
     }
 
     put_in(state.shell[mc], buffer)
@@ -2296,15 +2302,17 @@ defmodule HalC2.Web.Socket do
     }
 
   defp shell_message(id, {:rows, mc, rows, version}),
-    do: %{
-      "t" => "shell.rows",
-      "id" => id,
-      "mc" => to_string(mc),
-      "epoch" => version.epoch,
-      "rev" => version.rev,
-      "reset" => version.reset,
-      "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
-    }
+    do:
+      %{
+        "t" => "shell.rows",
+        "id" => id,
+        "mc" => to_string(mc),
+        "epoch" => version.epoch,
+        "rev" => version.rev,
+        "reset" => version.reset,
+        "rows" => for({sid, {kind, row}} <- rows, do: [sid, kind, row])
+      }
+      |> put_left_out(version[:settled_left_out])
 
   defp shell_message(id, {:environment, mc, descriptor}),
     do: %{
@@ -2341,4 +2349,9 @@ defmodule HalC2.Web.Socket do
       "online" => status in [:up, true],
       "trying" => true
     }
+
+  # The settled threads of each project an MC's rows sent whole left out, for a client
+  # that asked for a settled limit.
+  defp put_left_out(frame, nil), do: frame
+  defp put_left_out(frame, left_out), do: Map.put(frame, "settledLeftOut", left_out)
 end

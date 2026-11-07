@@ -57,6 +57,7 @@ ShellToolTip 1.0 ShellToolTip.qml
 ShellEmptyState 1.0 ShellEmptyState.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
+SidebarProjectHeader 1.0 SidebarProjectHeader.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
 StagePill 1.0 StagePill.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
@@ -80,6 +81,7 @@ ThemeImportDialog 1.0 ThemeImportDialog.qml
 ThemeInspector 1.0 ThemeInspector.qml
 TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
+ProjectRenameDialog 1.0 ProjectRenameDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 CustomSnoozeDialog 1.0 CustomSnoozeDialog.qml
 PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml

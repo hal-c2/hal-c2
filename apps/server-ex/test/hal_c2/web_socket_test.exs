@@ -151,6 +151,26 @@ defmodule HalC2.Web.SocketTest do
            ] = frames
   end
 
+  # A client with a settled limit is told, with the rows sent whole, how many it was
+  # not sent; rows merged on top of the reset keep the counts, and other frames have none.
+  test "a reset carries the settled threads left out", %{port: port} do
+    left_out = %{epoch: "e2", rev: 0, reset: true, settled_left_out: %{"shop" => 3}}
+
+    assert [
+             %{"reset" => true, "rev" => 1, "settledLeftOut" => %{"shop" => 3}},
+             %{"rev" => 2} = later
+           ] =
+             shell_frames(port, [
+               {:rows, node(), [row("th-2", "Whole")], left_out},
+               rows(1, [row("th-3", "After")], "e2"),
+               {:environment, node(), %{"environmentId" => "env"}},
+               rows(2, [row("th-3", "Later")], "e2")
+             ])
+             |> Enum.filter(&(&1["t"] == "shell.rows"))
+
+    refute Map.has_key?(later, "settledLeftOut")
+  end
+
   test "a reset with no rows still goes out", %{port: port} do
     assert [%{"t" => "shell.rows", "reset" => true, "rows" => []}] =
              shell_frames(port, [rows(0, [], "e2", true)])

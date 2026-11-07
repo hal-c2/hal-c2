@@ -3648,7 +3648,10 @@ defmodule HalC2.Test.Mc.World do
   def launch_on(context, title, instance, text, fields \\ %{}) do
     id = "th-#{slug(title)}-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(id, self(), nil)
-    project = if context[:projects] not in [nil, %{}], do: project(context).id
+
+    project =
+      fields["projectId"] || if context[:projects] not in [nil, %{}], do: project(context).id
+
     {model, fields} = Map.pop(fields, "model", default_model(instance))
 
     {:ok, _} =

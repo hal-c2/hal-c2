@@ -2822,6 +2822,24 @@
     }
   },
   {
+    "name": "hal_c2_background_wait",
+    "description": "Mark background work you started (a background command or monitor) as something you wait on before you are done, so this thread stays Working until it ends. Unmarked background commands and monitors do not keep the thread Working: mark tests or builds whose result you need, not dev servers or watchers. Pass the background task ids your tools reported; waiting: false clears the mark. Returns which ids matched running background work. Only providers that track their background tasks (Claude) support it; others return invalid_request.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "taskIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "waiting": { "type": "boolean" }
+      },
+      "required": ["taskIds"],
+      "additionalProperties": true
+    }
+  },
+  {
     "name": "hal_c2_thread_launch",
     "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it only when the user asks for a separate/new/top-level thread (for example a PR stack in its own worktree); for workers, including ones that need their own worktree, use delegate_task. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. There is no retry key and the result is not delivered back: retain threadId, follow it with hal_c2_thread_read or hal_c2_thread_wait, and after an error or lost response check hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.",
     "inputSchema": {

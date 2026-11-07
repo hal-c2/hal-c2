@@ -131,7 +131,7 @@ void act(World& world, const QString& action, const QString& title) {
 
 bool inThreadList(World& world, const QString& title) {
   const QVariantMap sidebar = world.state(QStringLiteral("sidebar")).toMap();
-  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("settled"), QStringLiteral("snoozed")}) {
+  for (const QString& section : {QStringLiteral("pinned"), QStringLiteral("active"), QStringLiteral("working"), QStringLiteral("settled"), QStringLiteral("snoozed")}) {
     for (const QVariant& row : sidebar.value(section).toList()) {
       if (row.toMap().value(QStringLiteral("title")) == title) return true;
     }
