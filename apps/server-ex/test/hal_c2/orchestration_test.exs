@@ -650,6 +650,73 @@ defmodule HalC2.OrchestrationTest do
              StreamState.get(state, "message")["m1"]
   end
 
+  test "a message sent again under its id keeps its first copies and leaves no others" do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+
+    upload = fn ->
+      {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+        HalC2.Attachments.create_upload_url(%{
+          "name" => "a.png",
+          "mimeType" => "image/png",
+          "sizeBytes" => byte_size(png)
+        })
+
+      :ok = HalC2.Attachments.store(token, png)
+
+      %{
+        "type" => "image",
+        "id" => id,
+        "name" => "a.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => byte_size(png)
+      }
+    end
+
+    thread_id = "thread-#{System.unique_integer([:positive])}"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.launch_thread(%{
+        "commandId" => "c",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Twice",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"},
+        "initialMessage" => %{
+          "messageId" => "m1",
+          "text" => "first",
+          "attachments" => [upload.()]
+        }
+      })
+
+    state = await_run(thread_id, "completed")
+    %{"attachments" => [%{"id" => first}]} = StreamState.get(state, "message")["m1"]
+    again = upload.()
+    on_disk = fn -> HalC2.Attachments.dir() |> Path.join("*") |> Path.wildcard() end
+    before = length(on_disk.())
+
+    assert {:ok, %{"sequence" => _}} =
+             Orchestration.dispatch(%{
+               "type" => "message.dispatch",
+               "threadId" => thread_id,
+               "messageId" => "m1",
+               "text" => "first",
+               "attachments" => [again]
+             })
+
+    # The resend's copy is gone; the pending upload it came from stays, as does the
+    # message's own copy.
+    assert length(on_disk.()) == before
+    assert HalC2.Attachments.path(%{"id" => first})
+    assert HalC2.Attachments.path(again)
+
+    assert %{"attachments" => [%{"id" => ^first}]} =
+             StreamState.get(current(thread_id), "message")["m1"]
+  end
+
   test "inline context reaches the agent as markers and an envelope, and stays on the message" do
     thread_id = "thread-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)

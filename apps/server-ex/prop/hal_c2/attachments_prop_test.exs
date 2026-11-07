@@ -3,7 +3,9 @@ defmodule HalC2.AttachmentsPropTest do
   A state machine over a thread's attachment claims (`HalC2.Attachments`): clients
   upload and discard files, messages claim the uploads they name into the thread
   (`claim/2`), and the MC then accepts each message or refuses it and gives its uploads
-  back (`release/2`), in any order, with claims of other messages in between.
+  back (`release/2`), in any order, with claims of other messages in between. A client
+  can also resend a message the thread already has (`duplicate/1`): the resend claims
+  again, the MC answers "sent" without recording it, and the resend's copies go.
 
   The promise: a claim takes every upload a message names or none of them; a message
   holds copies of its own, so two messages naming one upload never share a file; a
@@ -60,6 +62,10 @@ defmodule HalC2.AttachmentsPropTest do
         if(undecided == [],
           do: [],
           else: [{5, {:call, __MODULE__, :decide, [oneof(undecided), oneof([:accept, :refuse])]}}]
+        ) ++
+        if(sent == [],
+          do: [],
+          else: [{3, {:call, __MODULE__, :duplicate, [oneof(sent)]}}]
         )
     )
   end
@@ -76,6 +82,9 @@ defmodule HalC2.AttachmentsPropTest do
 
   def precondition(state, {:call, _, :decide, [m, _]}),
     do: match?(%{phase: :claimed}, state.messages[m])
+
+  def precondition(state, {:call, _, :duplicate, [m]}),
+    do: match?(%{phase: :sent}, state.messages[m])
 
   def precondition(_state, _call), do: true
 
@@ -94,6 +103,8 @@ defmodule HalC2.AttachmentsPropTest do
     phase = if outcome == :accept, do: :sent, else: :refused
     %{state | messages: Map.put(state.messages, m, %{phase: phase})}
   end
+
+  def next_state(state, _result, {:call, _, :duplicate, [_m]}), do: state
 
   def postcondition(state, {:call, _, :claim, [_, names]} = call, result) do
     result == if(claimable?(state, names), do: :ok, else: :error) and
@@ -153,6 +164,17 @@ defmodule HalC2.AttachmentsPropTest do
   def decide(m, :refuse) do
     {attachments, claimed} = get({:message, m})
     Attachments.release(attachments, claimed)
+  end
+
+  # The resend claims what the message named, finds the message already recorded and
+  # releases its own copies: the message keeps naming the first ones.
+  def duplicate(m) do
+    {attachments, _claimed} = get({:message, m})
+
+    case Attachments.claim(@thread, attachments) do
+      {:ok, again} -> Attachments.release(attachments, again)
+      {:error, _} -> :ok
+    end
   end
 
   defp attachment({:upload, u}),
