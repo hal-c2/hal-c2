@@ -79,6 +79,12 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
     if (context.newDraft) {
       list.push(
         {
+          id: "project",
+          title: "Change project",
+          keywords: "repository folder",
+          action: "composer.projectPicker.toggle",
+        },
+        {
           id: "workspace",
           title: "Change workspace",
           keywords: "checkout worktree",

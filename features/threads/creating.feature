@@ -506,14 +506,20 @@ Feature: Creating threads
     And the current project is still the default choice
 
   # Upstream #17664: the draft screen's picker searches like the sidebar's project filter.
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: The new thread's project picker ends with Add project
+    Given the user has many projects and is writing a new thread
+    When the user opens the draft's project picker
+    Then every project is listed, with "Add project" last
+
+  @shared @backlog-desktop @backlog-mobile
   Scenario: The new thread's project picker can be searched
     Given the user has many projects and is writing a new thread
     When the user opens the draft's project picker and types part of a project's name
-    Then only matching projects are listed, with "Add project" last
+    Then only matching projects are listed
     And choosing one moves the draft into that project
 
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A project search with no match says so
     Given the user is searching the new thread's project picker
     When nothing matches the search
