@@ -239,6 +239,7 @@ Feature: Keybindings settings
         | saves   | Unable to save keybinding  |
         | removes | Unable to remove keybinding|
 
+    # Upstream #19400: the keybindings page says to connect an environment when none is connected
     @backlog @desktop @priority-low
     Scenario Outline: A locked keybindings page says why it is locked
       Given <state>
@@ -267,6 +268,7 @@ Feature: Keybindings settings
       Then the panel warns that some shortcuts may be claimed by the browser before HAL-C2 sees them
       And suggests the desktop app for better keybinding support
 
+  # Upstream #14548: hotkey settings record plain keys and Tab
   @backlog @shared
   Scenario: The shortcut recorder records plain keys and Tab
     Given a keybinding row is recording
@@ -275,6 +277,7 @@ Feature: Keybindings settings
     And Escape still cancels
     And afterwards Tab moves focus on so Save is reachable
 
+  # Upstream #12822: keybindings settings are grouped by area
   Rule: Keybindings are grouped
 
   @backlog @shared
