@@ -112,8 +112,8 @@ Feature: Tool calls and file changes
   # The running group is one line: what the agent is doing now, with the count of the calls
   # before it at its end. It changes as calls land and never animates.
   # Proved by tst_Timeline.qml (test_runningToolCallsReadAsOneLiveRow), not yet by a step (hal-c2/hal-c2#213).
-  # TUI: the latest call and "+N previous tool calls" are still two lines (apps/tui/src/host/timelineState.ts).
-  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
+  # TUI: one row, the count in its right-hand part (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: A running turn's tool calls read as one live row
     Given the agent has run five tool calls in a row in the running turn
     Then one row shows the latest tool call with "+4 previous tool calls" beside it
@@ -121,6 +121,27 @@ Feature: Tool calls and file changes
     Then the row shows the sixth tool call with "+5 previous tool calls" beside it
     When the user opens the row
     Then all six tool calls are shown
+
+  # TUI: a subagent's row is never folded away (apps/tui/src/host/timelineState.ts).
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: A subagent's row stays beside the live row
+    Given the agent delegated a task and then ran three tool calls in the running turn
+    Then the subagent's row is shown
+    And the latest tool call is shown with "+2 previous tool calls" beside it
+
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: A command whose output cannot be fetched says so
+    Given the agent ran a command that finished
+    And the MC cannot supply its output
+    When the user opens the command's details
+    Then the details read "Output unavailable" rather than loading
+
+  @shared @backlog-desktop @backlog-mobile
+  Scenario: An older reply never replaces a newer one
+    Given the agent's command is still running and printing
+    And the user has opened the command's details
+    When the output is fetched again and the second reply arrives before the first
+    Then the details show the second reply's output
 
   # Upstream #16284: the live row also says what the agent is thinking about.
   @backlog @shared
@@ -417,7 +438,7 @@ Feature: Tool calls and file changes
     Then the details show its input
     And no exit code is shown
 
-  @mc @shared @backlog @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: An opened command shows its output while it runs
     Given the agent's command is still running and printing
     When the user opens the command's details
@@ -433,26 +454,26 @@ Feature: Tool calls and file changes
     Then the whole command is shown
     And no details are offered when the command fits
 
-  @mc @shared @backlog @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A finished command's output is fetched when it is opened
     Given the agent ran a command that finished
     When the user opens the command's details
     Then the command's final output is shown
 
-  @mc @backlog @priority-high
+  @mc
   Scenario: Command output does not ride the thread
     Given the agent's command prints 17 MB of output
     And no client has opened the command's details
     Then no client receives any of that output
     And the thread's history and stream do not grow by it
 
-  @mc @backlog
-  Scenario: A running command keeps only the last 64K characters of output
-    Given the agent's command has printed more than 64K characters
+  @mc
+  Scenario: A running command keeps only the last 64K bytes of output
+    Given the agent's command has printed more than 64K bytes
     When the user opens the command's details
-    Then the last 64K characters are shown
+    Then the last 64K bytes are shown
 
-  @mc @backlog
+  @mc
   Scenario: A client that falls behind is sent the whole tail again
     Given a client watching a running command falls more than 16 KB behind
     Then it is sent the whole kept output instead of the missed parts, at most every 500 ms
@@ -1200,7 +1221,8 @@ Feature: Tool calls and file changes
     Then the MC supplies its stored output, limited to 256 KiB per value
     And a call with nothing more to show does not expand
 
-  @backlog @shared @priority-high
+  # TUI: commands only; other tool calls carry no output the MC can supply.
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call
     Then the full call shows first and its result below it, muted, without cards or labels
