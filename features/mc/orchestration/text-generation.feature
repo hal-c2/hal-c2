@@ -227,9 +227,14 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/textGeneration/AntigravityTextGeneration.ts (default mode, tool and file requests stop the run)
   @mc @plugin-antigravity @priority-high
-  Scenario: Antigravity is stopped when it reaches for a tool or a file
-    When "antigravity" writes a title and asks to run a command or read a file
+  Scenario Outline: Antigravity is stopped when it reaches for a tool or a file
+    When "antigravity" writes a title and asks to <reach>
     Then the run is stopped and text generation fails
+
+    Examples:
+      | reach         |
+      | run a command |
+      | read a file   |
 
   # Legacy: apps/server/src/textGeneration/PiTextGeneration.ts (no tools, no extensions), OpenCodeTextGeneration.ts (provider/model format)
   @mc @priority-high

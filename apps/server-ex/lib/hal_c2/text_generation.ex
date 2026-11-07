@@ -354,12 +354,13 @@ defmodule HalC2.TextGeneration do
         ["--settings", JSON.encode!(settings), "--tools", ""] ++
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
-    # The instance's own config folder, as its sessions get it.
+    # The instance's own env and config folder, as its sessions get them.
     env =
-      case HalC2.Claude.Provider.home_path(selection["instanceId"]) do
-        nil -> []
-        home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
-      end
+      Enum.to_list(HalC2.Settings.instance_env(selection["instanceId"])) ++
+        case HalC2.Claude.Provider.home_path(selection["instanceId"]) do
+          nil -> []
+          home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
+        end
 
     in_dir(if(isolate, do: nil, else: cwd), fn dir ->
       with {:ok, out} <-

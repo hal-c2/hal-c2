@@ -606,7 +606,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
-  step "{string} writes a title and asks to run a command or read a file", context do
+  step "{string} writes a title and asks to run a command", context do
     steps = [
       %{
         "permission" => %{
@@ -620,13 +620,27 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     ]
 
     context
+    |> Map.put(:stopped_because, "requested a tool permission")
     |> antigravity_model(steps)
     |> title("Fix the login redirect loop")
   end
 
+  step "{string} writes a title and asks to read a file", context do
+    steps = [
+      %{"request" => %{"method" => "fs/read_text_file", "params" => %{"path" => "notes.md"}}},
+      answer_step("antigravity")
+    ]
+
+    context
+    |> Map.put(:stopped_because, "requested a tool or user input")
+    |> antigravity_model(steps)
+    |> title("Fix the login redirect loop")
+  end
+
+  # Each way of reaching out is refused with its own reason, and no title comes back.
   step "the run is stopped and text generation fails", context do
     assert {:error, message, _} = context.reply
-    assert message =~ "tool permission"
+    assert message =~ context.stopped_because
     context
   end
 
