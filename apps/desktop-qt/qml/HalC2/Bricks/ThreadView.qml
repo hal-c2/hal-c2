@@ -43,6 +43,16 @@ Item {
     // The composer's message is on its way to the MC.
     readonly property bool sending: Shell.state.composer?.isSendBusy === true
 
+    // An Escape nothing over the conversation wanted folds the expanded
+    // notices above the composer back to the front one, wherever in the
+    // banners or timeline focus is; the composer does the same for its own.
+    Keys.onEscapePressed: event => {
+        if ((Shell.state.noticeStack ?? null)?.expanded === true)
+            Shell.dispatch("noticeStack.collapse", {});
+        else
+            event.accepted = false;
+    }
+
     readonly property color textColor: Theme.palette.color("text", "#e4e4e7")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family

@@ -186,6 +186,17 @@ Rectangle {
 
     onConversationScrolledChanged: scrollCollapsed = conversationScrolled
 
+    // An Escape nothing in the composer wanted (not the suggestions, the
+    // stash or vim keys, which take theirs in the editor first) folds the
+    // expanded notices above it back to the front one; the banners over
+    // the conversation do the same from ThreadView.
+    Keys.onEscapePressed: event => {
+        if ((Shell.state.noticeStack ?? null)?.expanded === true)
+            Shell.dispatch("noticeStack.collapse", {});
+        else
+            event.accepted = false;
+    }
+
     // Opt-in input plugins share the same draft synchronization as typing.
     property alias editor: input
     property alias editorActions: editorActions.data
