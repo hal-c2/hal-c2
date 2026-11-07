@@ -114,7 +114,7 @@ Feature: Referencing files, skills, commands and context
     And a built-in command or skill is offered
 
     Examples:
-      | typed               |
+      | typed                |
       | Please use /         |
       | Please use /mo       |
       | Please use /ski      |
