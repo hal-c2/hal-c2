@@ -84,6 +84,30 @@ defmodule HalC2.OrchestrationProviderSwitchTest do
     assert thread["modelSelection"]["instanceId"] == "codex"
   end
 
+  test "a switch to an instance the MC turned off goes through when the project turns it on",
+       %{thread_id: thread_id} do
+    {:ok, _} =
+      HalC2.Settings.update(fn settings ->
+        settings
+        |> Map.put("providerInstances", %{
+          "codex-work" => %{"driver" => "codex", "enabled" => false}
+        })
+        |> Map.put("projectSettingsOverrides", %{
+          "project-1" => %{"providerInstances" => %{"codex-work" => %{"enabled" => true}}}
+        })
+      end)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{
+               "type" => "provider.switch",
+               "threadId" => thread_id,
+               "modelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-5.4"}
+             })
+
+    thread = StreamState.get(current(thread_id), "thread")[thread_id]
+    assert thread["modelSelection"]["instanceId"] == "codex-work"
+  end
+
   test "an answer by message to a provider the project turned off keeps the question open",
        %{thread_id: thread_id} do
     {:ok, _} = send_message(thread_id, "m1")

@@ -3653,12 +3653,13 @@ defmodule HalC2.Orchestration do
       target == current ->
         model_switch_refusal(state, thread, command, target)
 
-      not HalC2.Settings.instance_enabled?(target, driver_for(target)) ->
-        {:error, "The target provider instance is unavailable."}
-
-      # No turn of the thread's could run on a provider its project turned off.
+      # No turn of the thread's could run on a provider off for its project: the
+      # project's switch wins in either direction, and one the MC turned off that the
+      # project leaves alone is simply unavailable.
       reason = HalC2.Settings.provider_off(thread["projectId"], target) ->
-        {:error, reason}
+        if reason == HalC2.Settings.provider_off(nil, target),
+          do: {:error, "The target provider instance is unavailable."},
+          else: {:error, reason}
 
       conversation? ->
         case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
