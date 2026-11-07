@@ -13,6 +13,7 @@
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/24172
 #   https://github.com/pingdotgg/t3code/pull/26782
+#   https://github.com/pingdotgg/t3code/pull/28520
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, message.updated, run.created,
 #     run.updated, run-attempt.created, run-attempt.updated, node.updated, turn-item.updated,
 #     provider-session.attached, provider-session.updated, provider-session.detach,
@@ -635,6 +636,20 @@ Feature: Runs and turns
     Then the run is settled as stopped with its partial output kept
     And its pending requests are closed and its checkpoint is captured
     And a late result from the provider cannot undo the stop or replace a newer attempt
+
+  # Upstream #28520: a run whose provider turn had already completed stayed running through Stop and
+  # Force stop, and every later message stayed queued until the server restarted.
+  @backlog @mc @shared @priority-high
+  Scenario Outline: Stopping a run whose provider turn already finished ends it
+    Given "t1" has a run still running whose provider turn already completed
+    When the user chooses "<stop>"
+    Then the run ends as interrupted
+    And the next message to "t1" starts a run
+
+    Examples:
+      | stop       |
+      | Stop       |
+      | Force stop |
 
   # Upstream #27252: under kernel memory throttling every provider froze for hours; Stop waited on
   # the provider with no time limit and queued every later action of the thread behind it.

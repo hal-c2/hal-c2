@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29752
 #   https://github.com/pingdotgg/t3code/pull/26901
+#   https://github.com/pingdotgg/t3code/pull/31114
+#   https://github.com/pingdotgg/t3code/pull/31709
 #   docs/orchestration-v2/thread-lineage-and-context-transfer.md (upstream: side chats are hidden forks)
 #   threads/fork-and-lineage.feature (forks and Bring back, which side chats build on)
 
@@ -53,13 +56,43 @@ Feature: Side chats beside a thread
     When the user opens a side chat and asks a question
     Then the side chat's first message carries a digest of that run as its context
 
-  # Upstream #26901
-  @backlog @mc @priority-high
-  Scenario: A side chat's first turn asks before it acts
-    Given "Plan billing" runs in full access
+  # Upstream #31114: side chats forced Supervised at creation, on the first message and at
+  # provider start; they now copy the thread's permission mode (this replaces #26901's rule).
+  @backlog @mc @shared @priority-high
+  Scenario Outline: A side chat starts with its thread's permission mode
+    Given "Plan billing" runs in <mode>
     When the user asks a side chat of it a question
-    Then the side chat's first turn runs supervised
-    And it records no checkpoints of the files it shares with "Plan billing"
+    Then the side chat's first turn runs in <mode>
+    And changing the permission mode of "Plan billing" later leaves the side chat's own
+
+    Examples:
+      | mode              |
+      | full access       |
+      | auto-accept edits |
+      | supervised        |
+
+  # Upstream #31114: the side chat's own permission picker works on its own.
+  @backlog @shared
+  Scenario: A side chat's permission mode can be changed on its own
+    Given a side chat of "Plan billing" runs in full access
+    When the user switches the side chat to supervised
+    Then the side chat's next turn asks before it acts
+    And "Plan billing" stays in full access
+
+  # Upstream #29752: a side chat's first message compared its model with the parent's latest turn,
+  # so it opened with a model change from a run it never showed.
+  @backlog @mc @shared
+  Scenario: A side chat's first message shows no model change from its thread
+    Given the latest turn of "Plan billing" ran on "GPT-5.5"
+    When the user asks a side chat of it a question on "Haiku"
+    Then the side chat's first message shows no change of model
+    But a later side chat message on another model shows the change from the side chat's own turn
+
+  # Upstream #26901
+  @backlog @mc
+  Scenario: A side chat records no checkpoints of the files it shares with its thread
+    When the user asks a side chat of "Plan billing" a question
+    Then the side chat records no checkpoints of the files it shares with "Plan billing"
 
   # Upstream #26901
   @backlog @mc
@@ -106,7 +139,31 @@ Feature: Side chats beside a thread
       | the user deletes it from its header               |
       | "Plan billing" is deleted                         |
 
-  # Upstream #26901: starting one stays on the desktop for now; the phone lists them to answer them.
+  # Upstream #31709: the phone starts side chats with /side and /btw; on a phone the side chat
+  # opens as a page of its own, on a tablet beside the thread.
+  @backlog @mobile
+  Scenario: A side chat started on the phone opens as its own page
+    When the user sends "/side why add clamp next to sum?" in "Plan billing" on the phone
+    Then a side chat of "Plan billing" opens as a page of its own with the question sent
+    And the side chat is listed under the side chats of "Plan billing"
+
+  # Upstream #31709: typed where it is not offered, /side says why it cannot start.
+  @backlog @shared
+  Scenario: A side chat typed where one cannot start says why
+    Given "Plan billing" has no message yet
+    When the user sends "/side why add clamp next to sum?" in "Plan billing"
+    Then the user is told why a side chat cannot start
+    And nothing is sent to "Plan billing"
+
+  # Upstream #31709: as on the desktop, a side chat question is text only.
+  @backlog @shared @priority-low
+  Scenario: A side chat question carries no attachments
+    Given the draft of "Plan billing" holds "/side what is this?" and an image
+    When the user sends it
+    Then the user is told a side chat takes text only
+    And the draft keeps the image
+
+  # Upstream #26901: the phone lists them to answer them.
   @backlog @mobile
   Scenario: The phone lists a thread's side chats so their approvals can be answered
     Given a side chat of "Plan billing" waits for an approval

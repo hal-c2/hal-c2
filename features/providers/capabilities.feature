@@ -15,6 +15,7 @@
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
 #   docs/user/providers-pi.md, docs/user/providers-muse.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
 #   https://github.com/pingdotgg/t3code/pull/14542
+#   https://github.com/pingdotgg/t3code/pull/29605
 
 @mc
 Feature: Provider capabilities
@@ -189,6 +190,15 @@ Feature: Provider capabilities
     When the user looks at the change
     Then the diff shows the replaced lines
     And the diff is not empty just because the agent sent no patch
+
+  # Upstream #29605: the ACP reader threw away text after the last newline when the agent's output
+  # closed, so an answer written without one failed its request with "ACP input stream ended".
+  @backlog @priority-high
+  Scenario: An ACP agent's last message without a trailing newline is still read
+    Given an ACP agent answers a pending request without a trailing newline and then closes its output
+    When the MC reads the agent's output
+    Then the request receives the agent's answer
+    And it does not fail as though the agent's output ended unanswered
 
   @backlog @priority-low
   Scenario: A registry agent declares its capabilities through its plugin

@@ -3,6 +3,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14284
 #   https://github.com/pingdotgg/t3code/pull/25231
 #   https://github.com/pingdotgg/t3code/pull/26061
+#   https://github.com/pingdotgg/t3code/pull/28622
 #   apps/mobile/src/features/usage/UsageRouteScreen.tsx (usage and limits tabs, ranges, filter)
 #   apps/mobile/src/features/usage/UsageLimitsSection.tsx (reset credits)
 #   apps/mobile/src/features/usage/UsageLimitsPooled.tsx (accounts, pace, reveal email)
@@ -295,6 +296,15 @@ Feature: Usage, diagnostics and devices on a phone
     When the user closes the device viewer
     Then streaming stops
     And the simulator stays open for the agent
+
+  # Upstream #28622: the phone forced iOS simulators onto still images, and connecting input hid Close.
+  @backlog @mobile @priority-low
+  Scenario: The device viewer streams video where it can and keeps Close in reach
+    Given an agent in "Fix checkout" has an iOS simulator open
+    When the user opens the device viewer
+    Then the simulator is streamed as H.264 video, or as still images where the phone cannot decode it
+    When the user's touches start reaching the simulator and the controls hide
+    Then the user can still close the viewer and show the controls again
 
   @backlog @mobile @priority-low
   Scenario Outline: The device viewer adapts to an insecure remote connection

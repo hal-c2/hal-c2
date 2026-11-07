@@ -13,12 +13,14 @@ defmodule HalC2.Orchestration.Recovery do
 
   Work a provider left running in the background after its turn (a subagent, a
   background command) died with the process too, and is ended the same way; a thread
-  that had finished its turn is then told which background commands the restart
-  ended (`continue/0`), where its project continues threads after a restart. A
+  that had finished its turn is then told what background work the restart ended
+  (`continue/0`), where its project continues threads after a restart. A
   task the thread delegated runs in its own thread and is left to settle when
   that ends (`Delegation.finished/3`); one whose child had already stopped without
   telling it settles now (`Delegation.reconcile/2`), and one whose child this boot
-  interrupted settles once `continue/0` has seen whether the child goes on.
+  interrupted settles once `continue/0` has seen whether the child goes on. A child
+  that ended its turn to wait on background work the restart ended did not finish
+  its task: one nothing continues reports it interrupted (`cut_off?/1`).
 
   Only threads whose sidebar row shows an active run or background work are opened.
 
@@ -36,6 +38,9 @@ defmodule HalC2.Orchestration.Recovery do
 
   @active_runs ~w(preparing queued starting running waiting)
   @active ~w(pending preparing queued starting running waiting active)
+  # Turn items of work a provider can leave running after its turn (`BackgroundWork`).
+  @background ~w(command_execution dynamic_tool subagent)
+  @cut_off "Cancelled because the server "
   # What a clean stop settled and would continue, for the next boot.
   @shut_down_key "recovery:shutdown"
 
@@ -145,8 +150,9 @@ defmodule HalC2.Orchestration.Recovery do
       :requeued ->
         %{"thread" => thread_id, "requeued" => true}
 
-      {:background, run, commands} ->
-        %{"thread" => thread_id, "background" => run, "commands" => commands}
+      # "commands" for what an MC before monitors and subagents were named wrote too.
+      {:background, run, work} ->
+        %{"thread" => thread_id, "background" => run, "commands" => work}
 
       nil ->
         %{"thread" => thread_id}
@@ -257,46 +263,137 @@ defmodule HalC2.Orchestration.Recovery do
   @doc """
   Settles one thread's interrupted turn: `{entities changed, what}`, where `what` is
   the run that was mid-turn on a provider thread that can resume, `:requeued` for a
-  run that goes back to the queue, `{:background, run, commands}` when the thread's
-  turn had finished and only the commands it left running in the background were
+  run that goes back to the queue (a wake that never started is cancelled instead,
+  and passed over), `{:background, run, work}` when the thread's
+  turn had finished and only the work it left running in the background was
   ended (`run` is that turn's), or nil.
+
+  The own threads of the provider's subagents it ends (`HalC2.Orchestration.NativeSubagent`)
+  are settled with it: they have no run of their own, so no sidebar row shows them
+  active for `run/0` to find.
   """
   def settle(thread_id, trigger \\ :restart) do
     capturing = capturing(thread_id)
 
-    HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = changes(state, Entities.now(), trigger, capturing)
-      requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
+    {count, what, children} =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        changes = changes(state, Entities.now(), trigger, capturing) ++ note(state, thread_id)
 
-      what =
-        cond do
-          requeued? -> :requeued
-          (latest_run(state) || %{})["id"] in capturing -> nil
-          true -> continuable(state) || ended_background(state)
-        end
+        requeued? =
+          Enum.any?(
+            StreamState.list(state, "run"),
+            &(unstarted?(state, &1) and not lost_wake?(state, &1))
+          )
 
-      {changes, {length(changes), what}}
-    end)
+        what =
+          cond do
+            requeued? -> :requeued
+            (latest_run(state) || %{})["id"] in capturing -> nil
+            true -> continuable(state) || ended_background(state)
+          end
+
+        children =
+          for %{"origin" => "provider_native", "childThreadId" => child} = subagent <-
+                StreamState.list(state, "subagent"),
+              subagent["status"] in @active and is_binary(child),
+              do: child
+
+        {changes, {length(changes), what, children}}
+      end)
+
+    settled =
+      for child <- children, {count, _} = settle(child, trigger), count > 0 do
+        HalC2.Streams.flush_shell(child)
+        count
+      end
+
+    {count + Enum.sum(settled), what}
   end
 
-  # The background commands of the thread's finished latest run that are still marked
-  # active: they ran in the provider process, which is gone.
+  # The background work of the thread's finished latest run that is still marked active
+  # (`ended_work/2`): it ran in the provider process, which is gone. A thread whose
+  # sessions were all released before the stop (`Orchestration.release_session/1`) is
+  # not woken for it: that work was gone already, and only its records were left.
   defp ended_background(state) do
     with %{"status" => "completed"} = run <- latest_run(state),
+         false <- released?(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]],
-         [_ | _] = commands <-
-           for(
-             %{"type" => "command_execution", "input" => input} = item <-
-               StreamState.list(state, "turn-item"),
-             item["status"] in @active and item["runId"] == run["id"] and is_binary(input),
-             do: input
-           ) do
-      {:background, run, commands}
+         [_ | _] = work <- ended_work(state, run) do
+      {:background, run, work}
     else
       _ -> nil
     end
   end
+
+  defp released?(state) do
+    sessions = StreamState.list(state, "provider-session")
+    sessions != [] and Enum.all?(sessions, &(&1["status"] == "stopped"))
+  end
+
+  # What the agent hears on its next turn about the background work of its finished
+  # turn that the settle ends (`restartNote`, which `HalC2.Orchestration.Handoff` hands
+  # over once). A continuation about it says so itself, and its run takes the note unsaid.
+  defp note(state, thread_id) do
+    with %{"status" => "completed"} = run <- latest_run(state),
+         [_ | _] = work <- ended_work(state, run),
+         %{} = thread <- StreamState.get(state, "thread")[thread_id],
+         text =
+           "The server stopped after your last turn, which ended the background work " <>
+             "it had left running: " <>
+             Enum.map_join(work, ", ", &named/1) <>
+             ". None of it is running now; start again what you still need.",
+         %{} = patch <- Patch.diff(thread, Map.put(thread, "restartNote", text)) do
+      [{"thread", thread_id, patch}]
+    else
+      _ -> []
+    end
+  end
+
+  # What the run left running in the background, as the continuation names it: a
+  # command by its command line, other work as `%{"kind", "label"}`. Monitors that run
+  # for the life of the session (`persistent`) are not waited on, so not named, and a
+  # task the thread delegated runs on in its own thread.
+  defp ended_work(state, run) do
+    delegated =
+      for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),
+          into: MapSet.new(),
+          do: id
+
+    for %{"type" => type} = item <- StreamState.list(state, "turn-item"),
+        type in @background and item["status"] in @active and item["runId"] == run["id"],
+        item["nodeId"] not in delegated,
+        not match?(%{"persistent" => true}, item["input"]),
+        do: work(item)
+  end
+
+  defp work(%{"type" => "command_execution", "input" => input}) when is_binary(input), do: input
+
+  defp work(item) do
+    kind =
+      case item do
+        %{"type" => "subagent"} -> "subagent"
+        %{"type" => "command_execution"} -> "command"
+        %{"toolName" => "Monitor"} -> "monitor"
+        _ -> "tool"
+      end
+
+    described = if is_map(item["input"]), do: item["input"]["description"]
+
+    label =
+      Enum.find_value([item["title"], described, item["prompt"], item["toolName"]], kind, fn
+        text when is_binary(text) -> if String.trim(text) != "", do: String.trim(text)
+        _ -> nil
+      end)
+
+    %{"kind" => kind, "label" => label}
+  end
+
+  @doc """
+  Whether the restart or shutdown that settled the thread ended `item` (`statusDetail`).
+  A finished run whose background work one ended did not get to finish what it waited on.
+  """
+  def cut_off?(item), do: match?(@cut_off <> _, item["statusDetail"])
 
   @doc """
   Whether the MC itself is stopping. A provider runtime that ends then leaves the
@@ -360,8 +457,8 @@ defmodule HalC2.Orchestration.Recovery do
             thread_id
           end
 
-        # A thread whose turn had finished hears which of its background commands the
-        # restart ended, so its agent can start them again rather than wait on them.
+        # A thread whose turn had finished hears what background work the restart
+        # ended, so its agent can start it again rather than wait on it.
         waiting =
           for {thread_id, run, commands} <- background, continue?(thread_id, run) do
             continuation(thread_id, run, background_text(commands))
@@ -385,15 +482,108 @@ defmodule HalC2.Orchestration.Recovery do
 
   defp continue?(thread_id, run) do
     case HalC2.Shell.row(node(), thread_id) do
-      {"thread", thread} ->
-        thread["archivedAt"] == nil and thread["deletedAt"] == nil and
-          HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-            true and same_provider?(thread, run) and latest?(thread_id, run) and
-          not continued?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
-
-      _ ->
-        false
+      {"thread", thread} -> wanted?(thread, thread_id, run) and not continued?(thread_id, run)
+      _ -> false
     end
+  end
+
+  @doc """
+  Whether the continuation `continue/0` recorded for `thread_id`'s run `run_id` is still
+  wanted when its effect runs, which can be well after: the thread may have been
+  archived, deleted, settled, snoozed, set to another provider, sent something newer, or
+  had its project stop continuing threads since. One whose message is in already (a retry after it was
+  sent) is, so the retry finds it sent.
+  """
+  def deliverable?(thread_id, run_id) do
+    state = HalC2.Streams.state(thread_id)
+
+    with %{} = thread <- StreamState.get(state, "thread")[thread_id],
+         %{} = run <- StreamState.fetch(state, "run", run_id) do
+      continued?(thread_id, run) or wanted?(thread, thread_id, run)
+    else
+      _ -> false
+    end
+  end
+
+  defp wanted?(thread, thread_id, run) do
+    state = HalC2.Streams.state(thread_id)
+    # `continue/0` holds the run as boot found it, before the restart ended it.
+    run = StreamState.fetch(state, "run", run["id"]) || run
+
+    thread["archivedAt"] == nil and thread["deletedAt"] == nil and not resting?(thread) and
+      HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
+        true and same_provider?(thread, run) and latest?(state, run) and
+      not waiting_on_user?(state, run) and not answered?(state, run) and
+      not looping?(state, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
+  end
+
+  # Upstream #18461: a thread the user settled, or snoozed until later, is not woken.
+  defp resting?(thread) do
+    thread["settledOverride"] == "settled" or
+      (HalC2.Projection.JS.epoch_ms(thread["snoozedUntil"]) || 0) > System.os_time(:millisecond)
+  end
+
+  # Upstream #18461: a cut-off turn that was waiting on the user, for an approval, a
+  # question or a secret, is not answered for: whether the request is still open (a
+  # question answered with a message) or the restart closed it (`changes/4` expires it
+  # as it ends the run).
+  defp waiting_on_user?(state, %{"status" => "interrupted"} = run) do
+    nodes = StreamState.get(state, "node")
+
+    Enum.any?(StreamState.get(state, "runtime-request"), fn {_, request} ->
+      (request["runId"] || nodes[request["nodeId"]]["runId"]) == run["id"] and
+        (request["status"] == "pending" or
+           (request["status"] == "expired" and request["resolvedAt"] == run["completedAt"]))
+    end)
+  end
+
+  defp waiting_on_user?(_state, _run), do: false
+
+  # Upstream #18461: a cut-off run whose provider turn had already ended was answered;
+  # only its run was left to finish.
+  defp answered?(state, %{"status" => "interrupted"} = run) do
+    attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]] || %{}
+    turn = StreamState.get(state, "provider-turn")[attempt["providerTurnId"]] || %{}
+    turn["status"] in ~w(completed failed cancelled)
+  end
+
+  defp answered?(_state, _run), do: false
+
+  @chain_limit 3
+  @chain_window_ms 5 * 60_000
+
+  # Upstream #18461: a turn that brings the MC down would otherwise be continued after
+  # every restart. After three continuations in a row with nothing from the user between
+  # them, the thread waits for the user. Upstream #20306: a continued run that worked
+  # longer than five minutes before the next restart breaks the chain, so a thread that
+  # works across many updates keeps being continued. A cut-off run worked until its last
+  # activity, however long the MC then stayed down.
+  defp looping?(state, run), do: links(state, run, 0) >= @chain_limit
+
+  # How many quick continuations in a row led to `run`, newest first.
+  defp links(_state, _run, n) when n >= @chain_limit, do: n
+
+  defp links(state, run, n) do
+    with "message:restart-continuation:" <> source_id <- run["userMessageId"] || "",
+         true <- quick?(run) do
+      case StreamState.fetch(state, "run", source_id) do
+        nil -> n + 1
+        source -> links(state, source, n + 1)
+      end
+    else
+      _ -> n
+    end
+  end
+
+  # A run that ended (or, still settling, is ending now) within five minutes of starting.
+  defp quick?(run) do
+    started = HalC2.Projection.JS.epoch_ms(run["startedAt"] || run["requestedAt"])
+
+    ended =
+      HalC2.Projection.JS.epoch_ms(run["lastActivityAt"] || run["completedAt"]) ||
+        System.os_time(:millisecond)
+
+    started == nil or ended - started <= @chain_window_ms
   end
 
   # A thread set to another provider since would be continued on a conversation it left.
@@ -431,35 +621,45 @@ defmodule HalC2.Orchestration.Recovery do
     HalC2.Orchestration.Effects.enqueue(
       thread_id,
       "provider-runtime.continue",
-      %{"command" => command}
+      %{"command" => command, "runId" => run["id"]}
     )
   end
 
-  defp background_text([command]),
+  defp background_text([command]) when is_binary(command),
     do:
       "The server stopped, which ended the background command `#{command}`. " <>
         "Start it again if you still need it, then continue where you left off."
 
-  defp background_text(commands),
-    do:
+  defp background_text(work) do
+    if Enum.all?(work, &is_binary/1) do
       "The server stopped, which ended these background commands: " <>
-        Enum.map_join(commands, ", ", &"`#{&1}`") <>
+        Enum.map_join(work, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
+    else
+      "The server stopped, which ended the background work this thread was waiting on: " <>
+        Enum.map_join(work, ", ", &named/1) <>
+        ". Start again what you still need, then continue where you left off."
+    end
+  end
+
+  defp named(command) when is_binary(command), do: "the command `#{command}`"
+  defp named(%{"kind" => kind, "label" => label}), do: "the #{kind} \"#{label}\""
 
   # A message the user sent since takes precedence; a held one does not when it
   # was made before `run` (a run that passed a held queue was sent after it, and
   # is numbered below it since the renumbering). A held run made after `run` —
   # a message queued behind it, held by this very settle — still counts as
   # newer-sent, so no continuation jumps it: creation order (the order of
-  # `StreamState.list/2`) tells the two apart where the ordinal no longer can.
-  defp latest?(thread_id, run) do
-    state = HalC2.Streams.state(thread_id)
+  # `StreamState.list/2`) tells the two apart where the ordinal no longer can. A wake
+  # that never started (`lost_wake?/2`) is nobody's message.
+  defp latest?(state, run) do
     runs = StreamState.list(state, "run")
     made = Map.new(Enum.with_index(runs, &{&1["id"], &2}))
 
     Enum.all?(runs, fn other ->
-      (HalC2.Projection.Shell.held_never_started?(other) and
-         made[other["id"]] <= made[run["id"]]) or
+      lost_wake?(state, other) or
+        (HalC2.Projection.Shell.held_never_started?(other) and
+           made[other["id"]] <= made[run["id"]]) or
         (other["ordinal"] || 0) <= (run["ordinal"] || 0)
     end)
   end
@@ -467,11 +667,34 @@ defmodule HalC2.Orchestration.Recovery do
   # The thread's latest run, passing over held queued runs: a run that passed a held
   # queue is numbered below the held run it passed (`Orchestration.start_ordinal/3`). A
   # queue that is not held was sent after the latest run that began, and is latest.
+  # A wake that never started (`lost_wake?/2`) is passed over too: the run before it
+  # is the one whose work the restart ended.
   defp latest_run(state),
-    do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
+    do:
+      state
+      |> StreamState.list("run")
+      |> Enum.reject(&lost_wake?(state, &1))
+      |> HalC2.Projection.Shell.latest_run()
 
+  # A wake (`HalC2.Orchestration.Wake`) whose run had not reached its provider when
+  # the MC stopped (queued or still starting), or that the restart cancelled for it.
+  # Its run replays what the provider process had sent by itself, and that process is
+  # gone, so the restart cancels it rather than requeueing or holding it, and continues
+  # from the run before it.
+  defp lost_wake?(state, run) do
+    (run["status"] in ~w(queued cancelled) or unstarted?(state, run)) and
+      run["startedAt"] == nil and
+      is_binary(run["userMessageId"]) and
+      match?(
+        %{"providerWake" => true},
+        StreamState.fetch(state, "message", run["userMessageId"])
+      )
+  end
+
+  # A run the user had asked to stop is not continued: the restart only finished the stop.
   defp continuable(state) do
     with %{"status" => "running"} = run <- latest_run(state),
+         false <- stopped?(state, run),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]] do
       run
@@ -479,6 +702,11 @@ defmodule HalC2.Orchestration.Recovery do
       _ -> nil
     end
   end
+
+  defp stopped?(state, run),
+    do:
+      StreamState.get(state, "turn-item")["turn-item:run:#{run["id"]}:signal:interrupt-request"] !=
+        nil
 
   defp requeue(run),
     do:
@@ -508,6 +736,27 @@ defmodule HalC2.Orchestration.Recovery do
 
   defp entities(state, kind), do: StreamState.get(state, kind)
 
+  # A cut-off run's end, with when it was last seen working (`lastActivityAt`): its
+  # newest turn item, message or attempt before the restart touched them, else its
+  # start. `completedAt` is the boot's, so it counts the time the MC was down.
+  defp worked(state, run, done) do
+    own =
+      for kind <- ~w(turn-item message),
+          {_, entity} <- StreamState.get(state, kind),
+          entity["runId"] == run["id"],
+          do: entity["updatedAt"]
+
+    attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]] || %{}
+
+    [run["startedAt"], run["requestedAt"], attempt["updatedAt"] | own]
+    |> Enum.filter(&HalC2.Projection.JS.epoch_ms/1)
+    |> Enum.max_by(&HalC2.Projection.JS.epoch_ms/1, fn -> nil end)
+    |> case do
+      nil -> done
+      last -> Map.put(done, "lastActivityAt", last)
+    end
+  end
+
   defp changes(state, at, trigger, capturing) do
     done = %{"status" => "interrupted", "completedAt" => at}
 
@@ -521,8 +770,15 @@ defmodule HalC2.Orchestration.Recovery do
           into: MapSet.new(),
           do: own
 
+    wakes =
+      for run <- StreamState.list(state, "run"),
+          run["status"] != "cancelled" and lost_wake?(state, run),
+          into: MapSet.new(),
+          do: run["id"]
+
+    cancelled = %{"status" => "cancelled", "completedAt" => at}
     ended = if trigger == :shutdown, do: "shut down", else: "restarted"
-    detail = "Cancelled because the server #{ended} before the provider work completed."
+    detail = "#{@cut_off}#{ended} before the provider work completed."
 
     delegated =
       for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),
@@ -541,14 +797,22 @@ defmodule HalC2.Orchestration.Recovery do
            fn run ->
              cond do
                # Queued messages wait for the user to resume the queue.
+               run["id"] in wakes -> Map.merge(run, Map.put(cancelled, "queuePosition", nil))
                run["status"] == "queued" -> Map.put(run, "queueHeld", true)
                # Never reached its provider: it goes first and starts again.
                unstarted?(state, run) -> requeue(run)
-               run["status"] in @active_runs -> Map.merge(run, done)
+               run["status"] in @active_runs -> Map.merge(run, worked(state, run, done))
                true -> nil
              end
            end},
-          {"run-attempt", &if(&1["status"] in @active, do: Map.merge(&1, done))},
+          {"run-attempt",
+           fn attempt ->
+             cond do
+               attempt["status"] not in @active -> nil
+               attempt["runId"] in wakes -> Map.merge(attempt, cancelled)
+               true -> Map.merge(attempt, done)
+             end
+           end},
           {"provider-turn", &if(&1["status"] in @active, do: Map.merge(&1, done))},
           {"node",
            &if(&1["status"] in @active and &1["id"] not in delegated, do: Map.merge(&1, done))},

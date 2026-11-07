@@ -1872,6 +1872,13 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A running update carries the output so far whole: the thread keeps its last
+  # `CommandTail.kept/0` bytes, as it does of a finished command's.
+  defp bounded_output(output) when is_binary(output),
+    do: HalC2.Orchestration.CommandTail.cut(output, HalC2.Orchestration.CommandTail.kept())
+
+  defp bounded_output(output), do: output
+
   # OpenCode names a command only once it runs (`rawInput` on an in-progress update)
   # and sends its output so far with each update.
   defp running_command(state, id, call) do
@@ -1879,7 +1886,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          fields =
            %{
              "input" => command_text(call["rawInput"] || %{}, nil),
-             "output" => content_text(call["content"])
+             "output" => bounded_output(content_text(call["content"]))
            }
            |> Map.reject(fn {key, value} -> value in [nil, ""] or item[key] == value end),
          true <- fields != %{} do
@@ -2280,7 +2287,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp start_task(state, id, task, call) do
     state = %{state | tasks: Map.put(state.tasks, task, id)}
     %{id: item_id} = state.items[id]
-    output = content_text(call["content"])
+    output = bounded_output(content_text(call["content"]))
     persistent = call["rawOutput"]["persistent"] == true
 
     commit(state, fn stream ->

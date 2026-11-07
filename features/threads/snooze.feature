@@ -10,6 +10,8 @@
 #   https://github.com/pingdotgg/t3code/pull/22202
 #   https://github.com/pingdotgg/t3code/pull/26208
 #   https://github.com/pingdotgg/t3code/pull/26427
+#   https://github.com/pingdotgg/t3code/pull/20058
+#   https://github.com/pingdotgg/t3code/pull/30063
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
 #   packages/client-runtime/src/state/threadSnoozed.test.ts (early wake rules, a queued turn start expiring after two minutes)
@@ -213,6 +215,28 @@ Feature: Snoozing threads
       | is waiting for an answer to a question |
       | has a turn queued that has not started |
 
+  # Upstream #20058: a thread waiting for an answer can be snoozed; the question stays pending.
+  # Replaces the question row of the outline above once every surface carries it.
+  @backlog @mc @desktop @mobile @tui
+  Scenario: A thread waiting for an answer to a question can be snoozed
+    Given "Refactor cart" is waiting for an answer to a question
+    When the user snoozes "Refactor cart" until tomorrow
+    Then "Refactor cart" is snoozed
+    And the question can still be answered from the thread
+
+  # Upstream #20058: a newer question wakes the thread; answering or waking it clears the snooze.
+  @backlog @mc @desktop @mobile
+  Scenario Outline: A thread snoozed over a question wakes when <event>
+    Given "Refactor cart" was snoozed while waiting for an answer to a question
+    When <event>
+    Then "Refactor cart" is no longer snoozed
+
+    Examples:
+      | event                                   |
+      | the agent asks a newer question         |
+      | the user answers the question           |
+      | the user wakes the thread               |
+
   @desktop @mobile @backlog-mobile
   Scenario: A thread with a running agent can be snoozed
     Given the agent is working in "Refactor cart"
@@ -254,6 +278,15 @@ Feature: Snoozing threads
     When a run that started before the snooze reports a failure
     Then "Refactor cart" stays snoozed
     And it is not marked as woke
+
+  # Upstream #30063: a failed run with no finish time took the next metadata update for a fresh
+  # failure, so the client showed the snoozed thread as active while the MC kept it snoozed.
+  @desktop @mobile @backlog @priority-high
+  Scenario: A snoozed thread whose failed run has no finish time stays snoozed after an update
+    Given "Refactor cart" is snoozed until tomorrow and its last run failed without a finish time
+    When the thread's details are updated
+    Then "Refactor cart" stays in Snoozed
+    But a question or approval it asks for still wakes it
 
   # Upstream #16517: pull request sync, links, renames and reordering woke snoozed threads; only
   # new activity does now.

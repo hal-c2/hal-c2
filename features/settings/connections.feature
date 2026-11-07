@@ -17,6 +17,12 @@
 #   https://github.com/pingdotgg/t3code/pull/19354
 #   https://github.com/pingdotgg/t3code/pull/20432
 #   https://github.com/pingdotgg/t3code/pull/22900
+#   https://github.com/pingdotgg/t3code/pull/31403
+#   https://github.com/pingdotgg/t3code/pull/31226
+#   https://github.com/pingdotgg/t3code/pull/31652
+#   https://github.com/pingdotgg/t3code/pull/31651
+#   https://github.com/pingdotgg/t3code/pull/31654
+#   https://github.com/pingdotgg/t3code/pull/30498
 #   apps/web/src/components/settings/ConnectionsSettings.tsx
 #   apps/desktop/src/backend/DesktopServerExposure.ts, tailscaleEndpointProvider.ts (network access, advertised addresses, Tailscale Serve)
 #   apps/desktop-qt/src/native/ConnectionsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ConnectionsSettings.qml
@@ -797,6 +803,17 @@ Feature: Connections settings
         | 2       | 1     | 2 clients · 1 pairing link   |
         | 2       | 4     | 2 clients · 4 pairing links  |
 
+    # Upstream #30498: a link created from Sharing & access went into the folded list, so sharing it took expanding the list, finding the row and pressing Share.
+    @backlog @desktop @mobile
+    Scenario: A pairing link just created shows ready to scan while the authorized clients stay folded
+      Given the authorized clients are folded
+      When the user creates a pairing link
+      Then it is the only row shown under the folded header, with its QR code open
+      When the user expands the authorized clients
+      Then every client and link is listed as before
+      When the link is used, revoked, expires or a newer link is created
+      Then it no longer shows under the folded header
+
     @backlog @desktop
     Scenario: Authorized clients are managed only where other devices can reach this machine
       Given this machine is limited to itself
@@ -1392,6 +1409,7 @@ Feature: Connections settings
       Then that suggestion is chosen instead
 
   # Upstream #25709: secret providers, a vault the provider settings can point at (behind a flag upstream)
+  # Upstream #31654: the user guide explains secret providers and secret requests.
   @backlog @priority-low
   Rule: Secret providers
 
@@ -1473,6 +1491,66 @@ Feature: Connections settings
       Given 1Password is locked when the MC starts
       Then the MC starts without waiting on it
       And the instances with references show as unavailable with "Reading secrets…" until the read finishes
+
+    # Upstream #31403: a reference saved by hand without "sensitive" showed a blank value, and
+    # saving that row could clear it.
+    @mc @shared @priority-high
+    Scenario Outline: A stored secret reference is always sensitive
+      Given the settings file holds "ANTHROPIC_API_KEY" as a reference to "Work" with <sensitive>
+      When the user opens the Claude instance in Settings
+      Then "ANTHROPIC_API_KEY" shows its reference in the secret source picker
+      And saving that row keeps the reference
+
+      Examples:
+        | sensitive                |
+        | "sensitive" set to false |
+        | no "sensitive" key       |
+
+    # Upstream #31226: every settings save rebuilt an instance stuck on an unreadable secret, so
+    # a locked vault asked to unlock on every unrelated change.
+    @mc
+    Scenario: A settings save that leaves an unreadable instance alone does not read its secret again
+      Given the Claude instance is unavailable because 1Password is locked
+      When the user changes an unrelated setting
+      Then 1Password is not asked again
+      When the user unlocks 1Password and refreshes the provider in Settings
+      Then the Claude instance reads its secret and becomes available
+
+    # Upstream #31652: three credential fields still took only plain text.
+    @shared @mc
+    Scenario Outline: The <field> can come from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the <field> at "op://vault/item/field" in "Work"
+      Then settings keep only "Work" and the reference
+      And the MC reads the value from 1Password when it needs it
+      And while the reference cannot be read the <owner> shows as unavailable with the reason
+
+      @plugin-antigravity
+      Examples: Antigravity
+        | field               | owner                |
+        | Antigravity API key | Antigravity instance |
+
+      @plugin-opencode
+      Examples: OpenCode
+        | field                    | owner             |
+        | OpenCode server password | OpenCode instance |
+
+    # Upstream #31651: references to a removed provider were left dangling, showing its raw id.
+    @mc @shared
+    Scenario: Removing a secret provider clears the fields that read from it
+      Given "ANTHROPIC_API_KEY" and the GitHub token read from "Work"
+      And the Codex instance's "OPENAI_API_KEY" reads from "Personal"
+      When the user removes "Work"
+      Then the confirmation lists "ANTHROPIC_API_KEY" and the GitHub token as fields that will be unset
+      And once removed, the GitHub token is empty and "ANTHROPIC_API_KEY" is no longer set
+      And "OPENAI_API_KEY" still reads from "Personal"
+
+    # Upstream #31651
+    @shared
+    Scenario: Removing a secret provider nothing reads from asks only to confirm
+      Given nothing reads from the secret provider "Spare"
+      When the user removes "Spare"
+      Then the confirmation lists no fields
 
     @mc
     Scenario: A terminal does not get an empty value for a secret reference

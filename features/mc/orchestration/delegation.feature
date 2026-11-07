@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23456
+#   https://github.com/pingdotgg/t3code/pull/29909
 #   https://github.com/pingdotgg/t3code/pull/22579
+#   https://github.com/pingdotgg/t3code/pull/30390
 #   https://github.com/pingdotgg/t3code/pull/22117
 #   https://github.com/pingdotgg/t3code/pull/20037
 #   https://github.com/pingdotgg/t3code/pull/16595
@@ -50,6 +53,11 @@
 #   https://github.com/pingdotgg/t3code/pull/22709
 #   https://github.com/pingdotgg/t3code/pull/28133
 #   https://github.com/pingdotgg/t3code/pull/26682
+#   https://github.com/pingdotgg/t3code/pull/25662
+#   https://github.com/pingdotgg/t3code/pull/28204
+#   https://github.com/pingdotgg/t3code/pull/29842
+#   https://github.com/pingdotgg/t3code/pull/27468
+#   https://github.com/pingdotgg/t3code/pull/29906
 Feature: Delegating tasks to subagents
   A running agent can hand a task to a subagent. The engine starts a child thread
   marked as a subagent of the caller, records the task in the caller's timeline,
@@ -224,6 +232,14 @@ Feature: Delegating tasks to subagents
     When an agent asks for the orchestrator's capabilities
     Then each provider lists the access modes it offers
 
+  # Upstream #29842: capabilities offered providers turned off for the caller's project, which
+  # delegate_task then refused.
+  @backlog @mc
+  Scenario: The orchestrator's capabilities mark a provider turned off for the caller's project
+    Given "opencode" is turned off for the project of "parent" and on in another project
+    When the agent in "parent" asks for the orchestrator's capabilities
+    Then "opencode" is listed as unable to run a child task, saying it is off for this project
+
   # Upstream #14416: agents asked for a read-only reviewer picked a supervised mode, and the
   # child sat on its first approval with nobody to answer it.
   @backlog @mc
@@ -329,6 +345,28 @@ Feature: Delegating tasks to subagents
       | the agent is waiting on the task  | the agent in "parent" is still waiting on it    |
       | the parent is archived            | "parent" is archived                            |
       | the user stopped the task         | the user stopped the task                       |
+
+  # Upstream #29909: a question notice queued behind the parent's running turn, and an orchestrator
+  # whose turn ran for hours never saw its subagents' questions.
+  @backlog @mc @priority-high
+  Scenario Outline: A subagent's question reaches a parent whose turn is still running
+    Given the agent in "parent" delegated a task and runs on <provider>
+    And the turn of "parent" is still running
+    When the subagent asks a question meant for "parent"
+    Then the question notice <arrives>
+    And the model the user picked for "parent" is left as it was
+
+    Examples:
+      | provider                                          | arrives                          |
+      | Codex                                             | is steered into the running turn |
+      | a provider that steers only by stopping its tools | is queued behind the running turn |
+
+  # Upstream #29909: a question notice whose steer missed the turn's end was lost on the retry.
+  @backlog @mc @priority-high
+  Scenario: A question notice that misses the end of the parent's turn is queued
+    Given a subagent's question notice is being steered into the turn of "parent"
+    When that turn ends before the notice lands
+    Then the notice is queued for "parent" on the model the user picked for it
 
   @mc
   Scenario: A wait gives up before the caller's MCP client would
@@ -613,6 +651,23 @@ Feature: Delegating tasks to subagents
       | completed its checkpoint       | acknowledges    | completed |
       | completed its checkpoint       | disposes        | completed |
       | completed its checkpoint       | accepts         | completed |
+
+  # Upstream #25662: a wake-policy change planned from a stale read put a checkpointed run back to running.
+  @backlog @mc @priority-high
+  Scenario: Changing a task's wake policy leaves a settled run settled
+    Given the agent in "parent" delegated a task and is waiting
+    And the run of "parent" completed its checkpoint just before the wake policy is changed to always
+    Then the run stays completed
+    And the next run of "parent" can start
+
+  # Upstream #23456: settling a finished Codex parent unloaded a subagent a client had open, so
+  # the subagent's next reply never showed and its run never ended.
+  @backlog @mc @plugin-codex @priority-high
+  Scenario: A subagent open in a client keeps its replies after its parent settles
+    Given a delegated Codex subagent of "parent" is open in a client
+    When the user settles "parent"
+    And the user sends the subagent another message
+    Then the subagent's reply is shown and its run completes
 
   @mc
   Scenario: The provider confirms it accepted a mailbox delivery
@@ -900,6 +955,29 @@ Feature: Delegating tasks to subagents
     And task "three" of the same turn finishes
     Then a wake for task "three" is queued
 
+  # Upstream #28204: interrupting a completion wake disposed the undelivered results of sibling
+  # tasks it never carried, so they never woke the caller.
+  @mc @backlog @priority-high
+  Scenario Outline: Interrupting a completion wake keeps the sibling results it did not carry
+    Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
+    And "parent" is in the wake turn for the completion of "one"
+    And "two" <when>
+    When the user interrupts the wake turn
+    Then "parent" is woken again for "two"
+    And "one" is not delivered again
+
+    Examples:
+      | when                                  |
+      | finished before the interrupt         |
+      | finishes after the interrupt          |
+
+  # Upstream #28204: Stop, unlike an interrupt, still ends every task of the cohort.
+  @mc @backlog
+  Scenario: Stopping a completion wake still stops its sibling deliveries
+    Given "parent" is in the wake turn for the completion of "one" while "two" still works
+    When the user stops "parent"
+    Then "parent" is not woken for "two"
+
   @mc
   Scenario Outline: A task result is not delivered into a caller that is gone
     Given the agent in "parent" delegated a task without waiting
@@ -1067,6 +1145,16 @@ Feature: Delegating tasks to subagents
       | a command it started was running in the background |
       | a task it delegated itself was still running       |
 
+  # Upstream #27468: a monitor the subagent left running, though it said it was not waiting on it,
+  # kept the task from finishing until the user next spoke in the parent.
+  @backlog @mc @priority-high
+  Scenario: A task finishes while its subagent leaves running a monitor it does not wait on
+    Given the agent in "parent" delegated a task
+    And the subagent answered "Done" with a monitor running that it marked as not waited on
+    When the subagent's turn ends
+    Then the task finishes with "Done"
+    And "parent" is woken once with that result
+
   @mc
   Scenario: A turn that only handled a monitor update is not the task's result
     Given the agent in "parent" delegated a task
@@ -1126,6 +1214,15 @@ Feature: Delegating tasks to subagents
   Scenario: A subagent the provider started is titled from its prompt, cut to 72 characters
     When the provider of "parent" starts a subagent with no title and a prompt of 100 characters
     Then the subagent's thread is titled with the prompt's first 69 characters followed by "..."
+
+  # Upstream #30390: an untitled subagent's title cut from its prompt could keep half of an
+  # emoji, shown where its workflow group has no name of its own.
+  # Upstream #29906: a subagent's title cut from a long task title or prompt kept half of an emoji.
+  @backlog @mc @shared @priority-low
+  Scenario: A subagent titled from its prompt does not end in a broken character
+    When the provider of "parent" starts a subagent with no title and a prompt with an emoji where the cut falls
+    Then the subagent's title is cut before the emoji, not through it, and followed by "..."
+    And the agents list shows that title without a replacement character
 
   @mc
   Scenario: A subagent starts awake whatever state its parent is in

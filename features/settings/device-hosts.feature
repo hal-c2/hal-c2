@@ -6,6 +6,11 @@
 #   https://github.com/pingdotgg/t3code/pull/21843
 #   https://github.com/pingdotgg/t3code/pull/21844
 #   https://github.com/pingdotgg/t3code/pull/21846
+#   https://github.com/pingdotgg/t3code/pull/29912
+#   https://github.com/pingdotgg/t3code/pull/31652
+#   https://github.com/pingdotgg/t3code/pull/30941
+#   https://github.com/pingdotgg/t3code/pull/27763
+#   https://github.com/pingdotgg/t3code/pull/30159
 #   apps/web/src/components/settings/DeviceHostsSettings.tsx
 #   apps/web/src/components/settings/DeviceHostEditor.tsx
 #   apps/web/src/components/settings/deviceHostsSettings.logic.ts (updateDeviceHosts)
@@ -47,6 +52,14 @@ Feature: Device hosts
       Given "Mac mini" is listed as unavailable
       When the user retries "Mac mini"
       Then "Mac mini" is still unavailable
+
+    # Upstream #29912: a failed host check shows the server's message, not an error class and stack.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A failed device host test shows the MC's reason without a stack trace
+      Given a device host "Mac mini" with the SSH target "mac-mini"
+      When the user tests the connection to "Mac mini" and it fails
+      Then the error shown for "Mac mini" is the reason the MC gave
+      And it names no error type and shows no stack trace
 
   Rule: Managing SSH device hosts from settings
 
@@ -113,6 +126,25 @@ Feature: Device hosts
       Then the tunnel uses a connection of its own
       And closing it leaves no forwards behind
 
+    # Upstream #30941: a Windows machine signed in over SSH and then refused the device host's
+    # setup behind a generic error; it now says Windows cannot host devices over SSH and to run
+    # the app there instead. SSH device hosts are dropped; a Windows machine joins as its own MC.
+    @dropped @mc
+    Scenario: Testing a Windows SSH device host explains that Windows cannot host devices over SSH
+      Given the device host "Gaming PC" signs in over SSH and runs Windows
+      When the user tests its connection
+      Then the user is told Windows cannot host devices over SSH and to run HAL-C2 on it instead
+
+    # Upstream #30159: one slow health check on a loaded host tore down the SSH forward devices
+    # were using; it now takes three in a row. SSH device hosts are dropped; a remote machine's
+    # devices come from its own MC.
+    @dropped @mc
+    Scenario: An SSH device host reconnects only after three missed health checks
+      Given the MC forwards the device host "mac-mini" over SSH
+      When one health check of "mac-mini" times out and the next answers
+      Then the forward is kept
+      And it is reconnected only after three health checks in a row are missed
+
   # Upstream #21846: an EAS Simulator host runs iOS simulators in Expo's cloud for one
   # environment, which holds the Expo credential and starts the sessions. Sessions bill the
   # Expo account until they stop, so every session is bounded. Not an SSH host and not a
@@ -165,6 +197,25 @@ Feature: Device hosts
       When the MC signs in to Expo for the EAS Simulator host
       Then the sign-in is refused naming EXPO_TOKEN
       And the token is not shown
+
+    # Upstream #27763: the Expo access token can come from a secret provider instead of being pasted in.
+    @backlog @mc @shared @priority-low
+    Scenario: An EAS Simulator host's token can come from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the access token of "Cloud iPhone" at "op://vault/expo/token" in "Work"
+      Then settings keep only "Work" and the reference
+      And the Expo account check reads the token through the reference
+      And refreshing secrets reads the token again
+
+    # Upstream #27763: every EAS session bills the account behind the token, so an unreadable
+    # reference must not quietly sign in as another Expo account.
+    @backlog @mc @priority-high
+    Scenario: An EAS token that cannot be read never falls back to another Expo login
+      Given the access token of "Cloud iPhone" is a reference to "Work", which cannot be read
+      And EXPO_TOKEN and an "eas login" session are available
+      When the MC signs in to Expo for the EAS Simulator host
+      Then the sign-in fails saying the token could not be read from the secret provider
+      And neither EXPO_TOKEN nor the "eas login" session is used
 
     # Upstream #21843: without a project on the host, sessions run under the EAS project the
     # thread's app config names.
@@ -274,6 +325,26 @@ Feature: Device hosts
         | url                                   | outcome                                             |
         | https://pool.example/v1/agent-device  | leases with the machine's token, which never leaves it |
         | https://other.example/v1/agent-device | asks for a token for the pool                        |
+
+    # Upstream #31652: a Simlock agent token can come from a secret provider, read each time it is
+    # needed, so an unlocked or rotated secret works without a restart.
+    @backlog @mc @shared
+    Scenario: A Simlock agent token can come from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the Simlock pool's agent token for "Build box" at "op://vault/simlock/token" in "Work"
+      Then settings keep only "Work" and the reference
+      And the token is checked against the gateway through the reference
+      And a rotated token in 1Password is used on the next lease without a restart
+
+    # Upstream #31652: an unreadable reference is not a blank token.
+    @backlog @mc @priority-high
+    Scenario: A Simlock token that cannot be read never falls back to the machine's own token
+      Given the Simlock pool's agent token is a reference to "Work", which cannot be read
+      And the machine's agent-device settings hold a token for the pool's gateway
+      When an agent asks to lease a device from the pool
+      Then the lease fails saying the credential could not be read from the secret provider
+      And the machine's token is not used
+      But a device leased before the secret became unreadable can still be released
 
     # Upstream #26706: a saved token is only ever sent to the gateway it was saved for.
     @backlog @mc @priority-high

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23489
+#   https://github.com/pingdotgg/t3code/pull/23396
 #   https://github.com/pingdotgg/t3code/pull/22062
 #   https://github.com/pingdotgg/t3code/pull/22302
 #   https://github.com/pingdotgg/t3code/pull/25436
@@ -54,6 +56,12 @@
 #   https://github.com/pingdotgg/t3code/pull/28549
 #   https://github.com/pingdotgg/t3code/pull/21745
 #   https://github.com/pingdotgg/t3code/pull/23461
+#   https://github.com/pingdotgg/t3code/pull/29614
+#   https://github.com/pingdotgg/t3code/pull/29885
+#   https://github.com/pingdotgg/t3code/pull/24186
+#   https://github.com/pingdotgg/t3code/pull/28613
+#   https://github.com/pingdotgg/t3code/pull/29600
+#   https://github.com/pingdotgg/t3code/pull/29865
 
 Feature: Agents drive the preview browser
   An agent can open, read and operate the thread's browser tabs through its preview tools. The
@@ -133,6 +141,20 @@ Feature: Agents drive the preview browser
       Then the tool fails with the browser's timeout
       And the agent's next action goes to the same browser
 
+    # Upstream #23489: a click that timed out said only that it timed out, even when its selector
+    # matched nothing.
+    @backlog @mc @priority-low
+    Scenario Outline: A click that times out names its target and whether it is on the page
+      Given an agent is working in a desktop browser
+      When the agent clicks <target> and the click times out
+      Then the tool fails naming that target and saying it <matches>
+      And it warns that the click may still have happened
+
+      Examples:
+        | target                                       | matches                       |
+        | the selector ".definitely-no-such-target"    | matches no element            |
+        | a locator for a button behind an open dialog | matches an element on the page |
+
     # Upstream #24356: preview_open named the 660000ms request budget when navigation stopped at 15000ms.
     @backlog @mc @priority-low
     Scenario: A page that does not load in time names the wait that ran out
@@ -211,6 +233,43 @@ Feature: Agents drive the preview browser
     Scenario: A dev-server port wins over an address given with it
       When an agent opens a preview of port 6381 in its environment and also gives the address "http://localhost:3000"
       Then the tab opens on that environment's port 6381
+
+    # Upstream #29865: a preview_open whose first load failed left a hidden tab the agent never heard
+    # of; it counted toward the agent's tabs and made the next open ask which tab to reuse.
+    @backlog @mc
+    Scenario: A new tab whose first load fails is closed
+      Given the agent's dev server on port 6381 is not running yet
+      When the agent opens a preview of "http://localhost:6381" and the load is refused
+      Then the agent is told the load failed and no tab of that open is left
+      When the dev server starts and the agent opens the preview again, and then once more
+      Then both opens reuse the one tab the agent has
+
+    # Upstream #29614: "about:blank" failed with an error naming neither the input nor the problem,
+    # and "mailto:" was read as a web address with credentials.
+    @backlog @mc @priority-low
+    Scenario Outline: An agent opening an address the preview cannot show is told its protocol is unsupported
+      When an agent opens a preview with <address>
+      Then <outcome>
+
+      Examples:
+        | address                            | outcome                                                     |
+        | the address "about:blank"          | the open fails saying the protocol "about:" is unsupported  |
+        | the address "mailto:a@example.com" | the open fails saying the protocol "mailto:" is unsupported |
+        | the address "localhost:3000"       | the tab opens on "http://localhost:3000"                    |
+        | no address                         | a blank tab opens                                           |
+
+    # Upstream #23396: a rejected address or locator answered with an internal detail, or only the
+    # field and its length, so the agent could not tell what to send instead.
+    @backlog @mc @priority-low
+    Scenario Outline: An agent whose <input> is rejected is told what it accepts
+      When an agent sends <sent>
+      Then the tool fails explaining <guidance>
+
+      Examples:
+        | input        | sent                                         | guidance                                                                |
+        | address      | preview_open with the address "about:blank"  | the address forms it accepts, and that a blank tab comes from preview_open with no address |
+        | locator      | preview_click with a locator it cannot parse | the locator forms it accepts                                            |
+        | CSS selector | preview_click with an invalid CSS selector   | how to write a CSS selector or use a locator instead                    |
 
     # Upstream #16956: agents saw only the tabs they opened, so "what is on this page?" failed.
     @backlog @mc
@@ -455,6 +514,15 @@ Feature: Agents drive the preview browser
         | 100 console messages                     | the newest 40 console messages             |
         | an accessibility tree                    | the interactive elements without the tree  |
 
+    # Upstream #29600: a cut landing inside an emoji left half of it, which strict JSON readers
+    # such as Codex's refused, failing the whole tool result.
+    @backlog @mc @priority-high
+    Scenario: A snapshot cut never splits an emoji
+      Given the page's visible text has an emoji where the snapshot cuts it
+      When an agent takes a snapshot
+      Then the snapshot's text ends on a whole character
+      And Codex reads the tool result
+
     @mc
     Scenario: A snapshot without a screenshot fails
       Given the desktop sends a snapshot with no screenshot
@@ -635,6 +703,25 @@ Feature: Agents drive the preview browser
         | floating over the chat |
         | hidden                 |
 
+    # Upstream #28613: an agent revealing a tab moved the focus into the side panel, and clicks
+    # in two tabs at once could leave the focus in the first tab's page.
+    @backlog @desktop
+    Scenario Outline: The composer keeps the focus while agents <action>
+      Given the user is typing in the composer
+      When <what>
+      Then the composer still has the focus
+
+      Examples:
+        | action                    | what                                                          |
+        | reveal a tab              | an agent in another thread reveals a tab already in the panel |
+        | click in two tabs at once | agents click in two browser tabs at the same time             |
+
+    @backlog @desktop @priority-low
+    Scenario: A click held open by a page's dialog does not hold up the other tabs
+      Given an agent's click in one tab is waiting on a confirm dialog the page opened
+      When an agent clicks in another tab
+      Then that click reaches its page
+
     @backlog @desktop @priority-low
     Scenario: A click outside the page is refused with the page's size
       Given an agent's current tab is rendered at 1280 by 800
@@ -765,6 +852,29 @@ Feature: Agents drive the preview browser
       When an agent opens a tab and the browser fails to launch it
       Then the open fails
       And the tab is not listed and does not count toward the tab limit
+
+    # Upstream #29885: a tab whose setup failed partway left its page open, and every retry left
+    # another one.
+    @backlog @desktop @priority-low
+    Scenario: A browser tab that fails while it is being set up closes its page
+      When an agent opens a tab and the page closes before the tab is set up
+      Then the open fails and the page is closed
+      And opening the tab again leaves only the new tab's page open
+
+    # Upstream #24186: with every slot held by idle agent tabs, a new agent's open was refused until
+    # tabs were closed by hand or the app restarted.
+    @backlog @mc @desktop
+    Scenario Outline: An agent's open at the 32-tab limit reclaims the longest idle agent tab nobody sees
+      Given 32 agent tabs are open across the MC and the newest agent has fewer than 8
+      And the longest idle agent tab, idle for over 30 minutes, <state>
+      When the newest agent opens a tab
+      Then <outcome>
+
+      Examples:
+        | state                         | outcome                                                    |
+        | is hidden and agent-owned     | that tab is closed and the new tab opens                   |
+        | is shown to the user          | that tab stays and the open is refused for the tab limit   |
+        | is the user's own             | that tab stays and the open is refused for the tab limit   |
 
     # Upstream #20994: file requests are intercepted only while an agent acts or a streamed
     # controller drives the tab; otherwise the desktop opens the system file picker.

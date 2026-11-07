@@ -1,8 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23198
+#   https://github.com/pingdotgg/t3code/pull/29905
 #   https://github.com/pingdotgg/t3code/pull/15477
 #   https://github.com/pingdotgg/t3code/pull/22902
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/25610
+#   https://github.com/pingdotgg/t3code/pull/30401
 #   packages/contracts/src/orchestrationV2.ts (thread.model-selection.set, thread.model-selection-updated,
 #     provider.switch, thread.provider-switched, context-handoff.updated, provider-thread.updated,
 #     provider-session.updated)
@@ -182,6 +185,21 @@ Feature: Changing model and provider mid-thread
     When the user switches "t1" back to "codex" and sends a message
     Then the background command keeps running
     And the run says the conversation cannot be replaced while that work runs
+
+  # Upstream #30401: a queued message that switched provider ended background agents and commands
+  # that a message sent at once would have waited for.
+  @backlog @mc
+  Scenario Outline: A queued provider switch leaves background work running
+    Given "t1" has a background command running in its "claudeAgent" conversation
+    And a message queued behind the current run switches "t1" to <target>
+    When the current run finishes
+    Then the background command keeps running
+    And <outcome>
+
+    Examples:
+      | target                                 | outcome                                                                     |
+      | "codex"                                | the queued message runs on "codex"                                          |
+      | another account of "claudeAgent"       | the queue is held, and resuming it once the work has ended runs the message |
 
   # Upstream #25610: a handoff too big even for a fresh conversation still fails.
   @backlog @mc
@@ -373,6 +391,24 @@ Feature: Changing model and provider mid-thread
     When the user switches "t1" to "claudeAgent" and sends a message
     Then the "codex" process of "t1" stops
 
+  # Upstream #23198: a send to a second Claude instance with its own history left the first
+  # instance's session and process running.
+  @backlog @mc @plugin-claude @priority-high
+  Scenario: Sending to another Claude instance releases the one the thread left
+    Given "t1" has a live provider process on the "claude" instance
+    And a second Claude instance "claude-work" with its own home
+    When the user switches "t1" to "claude-work" and sends a message
+    Then the "claude" process of "t1" stops
+
+  # Upstream #23198: background work, Claude's own subagents included, would have been cut off.
+  @backlog @mc @plugin-claude @priority-high
+  Scenario: Sending to another instance waits for background work on the one the thread left
+    Given "t1" on the "claude" instance has a subagent still running in the background
+    And a second Claude instance "claude-work" with its own home
+    When the user switches "t1" to "claude-work" and sends a message
+    Then the send is refused because background work is still running
+    And once that work ends, sending again starts "claude-work" and stops "claude"
+
   @backlog @mc
   Scenario: Context occupancy starts over on a new provider conversation
     Given "t1" has used 80 percent of its provider context
@@ -384,6 +420,19 @@ Feature: Changing model and provider mid-thread
     Given a finished turn of "t1" has a very long tool output
     When a run starts a new provider thread for "t1"
     Then each compacted entry of the handoff is at most 240 characters
+
+  # Upstream #29905: the handoff and side chat summaries read only a patch's first path, so the
+  # receiving agent did not know the other files of a multi-file patch had changed.
+  @backlog @mc
+  Scenario Outline: Context handed to another agent names every file of a multi-file patch
+    Given a turn of "t1" changed "src/a.ts", "src/b.ts" and "src/new.ts" in one patch
+    When <handoff>
+    Then the provider receives a file change naming "src/a.ts", "src/b.ts" and "src/new.ts"
+
+    Examples:
+      | handoff                                                  |
+      | the user switches "t1" to "claudeAgent" and sends a message |
+      | the user asks a question in a side chat of "t1"          |
 
   @mc @backlog @priority-low
   Scenario: A thread spreads new sessions across instances of the same provider

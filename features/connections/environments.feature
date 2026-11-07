@@ -37,6 +37,7 @@
 #   mobile/pairing-and-environments.feature holds managing environments from a phone.
 #   https://github.com/pingdotgg/t3code/pull/14972
 #   https://github.com/pingdotgg/t3code/pull/15467
+#   https://github.com/pingdotgg/t3code/pull/22962
 
 Feature: Managing environments on a client
   A client keeps a list of the environments it has paired with. Each shows its machine, label
@@ -456,6 +457,16 @@ Feature: Managing environments on a client
     When the WSL backend starts
     Then the WSL backend is not started
     And the Windows backend keeps running
+
+  # Upstream #22962: under WSL's default networking Windows reaches WSL through localhost, so a
+  # port a Windows program already listens on gave a pairing link to the wrong server.
+  @backlog @mc @priority-low
+  Scenario: An MC in WSL with no port configured skips ports Windows already uses
+    Given the MC runs inside WSL with no port configured
+    And a Windows program already listens on the MC's default port
+    When the MC starts
+    Then it serves clients on a port that neither WSL nor Windows uses
+    And its pairing link names that port
 
   # Legacy: apps/desktop/src/app/DesktopConnectionCatalogStore.ts, apps/desktop/src/settings/DesktopSavedEnvironments.ts
   # Uncertain: depends on how the Qt desktop stores secrets (see desktop/shell-host.feature, password store).

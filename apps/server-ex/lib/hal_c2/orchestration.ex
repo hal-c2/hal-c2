@@ -145,6 +145,30 @@ defmodule HalC2.Orchestration do
   def handle("orchestration.getFullThreadDiff", %{"threadId" => thread_id} = input),
     do: turn_diff(thread_id, 0, input["toTurnCount"], input)
 
+  # A command's output, which the thread's clients do not hold: what it has printed so
+  # far while it runs, what the thread kept once it ended (`CommandTail`).
+  def handle("orchestration.getCommandOutput", %{"threadId" => thread_id, "itemId" => item_id}) do
+    # Fetched, not read from memory: the command may belong to a run gone cold.
+    case StreamState.fetch(HalC2.Streams.state(thread_id), "turn-item", item_id) do
+      %{"type" => "command_execution"} = item ->
+        running = item["status"] == "running"
+
+        output =
+          if running,
+            do: HalC2.Orchestration.CommandTail.get(thread_id, item_id) || item["output"] || "",
+            else: item["output"] || ""
+
+        {:ok, %{"output" => output, "running" => running}}
+
+      _ ->
+        {:error,
+         %{
+           "_tag" => "OrchestrationGetTurnDiffError",
+           "message" => "That command is not in this thread."
+         }}
+    end
+  end
+
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   defp turn_diff(thread_id, from, to, input) do
@@ -2480,15 +2504,24 @@ defmodule HalC2.Orchestration do
       # A page's agent keeps working for the continuation a restart promised it
       # (`HalC2.Space.PageAgent.reconcile/1`), so it hears when that cannot happen: on a
       # refusal, which is never retried, and on the last try of a crash.
+      # It is checked again when it runs (`Recovery.deliverable?/2`), which can be well
+      # after the restart asked for it; one no longer wanted is dropped.
       "provider-runtime.continue" ->
         try do
-          dispatch(args["command"])
+          if args["runId"] == nil or
+               HalC2.Orchestration.Recovery.deliverable?(thread_id, args["runId"]),
+             do: dispatch(args["command"]),
+             else: :refused
         catch
           kind, reason ->
             unless will_retry, do: HalC2.Space.PageAgent.report(thread_id)
             :erlang.raise(kind, reason, __STACKTRACE__)
         else
           {:ok, _} ->
+            :ok
+
+          :refused ->
+            HalC2.Space.PageAgent.report(thread_id)
             :ok
 
           {:error, message} ->

@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/17540
 #   https://github.com/pingdotgg/t3code/pull/22520
+#   https://github.com/pingdotgg/t3code/pull/29146
 #   apps/web/src/components/ThreadNotificationCoordinator.tsx (titles, transitions only, archived threads skipped, toast only when focused elsewhere, Open thread, badge)
 #   apps/web/src/threadNotifications.ts (notification modes, sounds, badge)
 #   apps/web/src/shell/ShellToastBridge.tsx
@@ -90,6 +91,15 @@ Feature: Alerts when a thread needs the user
     When three background threads complete at the same moment
     Then one completion sound is played
     And a thread that asks for approval right after still plays its sound
+
+  # Upstream #29146: completion alerts waited two seconds, and the sound was loaded only when it
+  # first had to play. An alert may now come before an automatic continuation starts.
+  @backlog @shared @priority-low
+  Scenario: The completion sound plays as soon as the thread completes
+    Given alerts are set to "Sound only"
+    When a background thread completes
+    Then the completion sound plays at once, the first time too
+    And reconnecting does not play it again
 
   @desktop
   Scenario: Clicking a system notification opens its own thread
