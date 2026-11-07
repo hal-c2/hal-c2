@@ -574,12 +574,13 @@ defmodule HalC2.Orchestration.Recovery do
              do:
                &1 |> Map.delete("steer") |> Map.merge(%{"streaming" => false, "updatedAt" => at})
            )},
-          # The provider that asked is gone, so nobody can answer the request now.
+          # The provider that asked is gone, so nobody can answer the request now. A
+          # clean shutdown cancelled it; a restart finds it expired.
           {"runtime-request",
            &if(&1["status"] == "pending" and &1["id"] not in asked,
              do:
                Map.merge(&1, %{
-                 "status" => "expired",
+                 "status" => if(trigger == :shutdown, do: "cancelled", else: "expired"),
                  "responseCapability" => %{
                    "type" => "not_resumable",
                    "reason" => "The server #{ended} before this runtime request was resolved."

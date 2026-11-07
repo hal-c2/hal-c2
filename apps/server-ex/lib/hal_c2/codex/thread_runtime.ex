@@ -838,13 +838,22 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp non_empty(_value, default), do: default
 
-  # Codex takes each answered question's choices as strings.
-  defp codex_answers(answers, question_ids) do
-    for {id, value} <- answers, id in question_ids, into: %{} do
-      values = if is_list(value), do: value, else: [value]
-      {id, %{"answers" => for(v <- values, v != nil, do: to_string(v))}}
-    end
+  # Codex takes each answered question's choices as strings; what is not text is left
+  # out rather than failing the answer.
+  defp codex_answers(answers, question_ids) when is_map(answers) do
+    for {id, value} <- answers,
+        id in question_ids,
+        into: %{},
+        do: {id, %{"answers" => choices(value)}}
   end
+
+  defp codex_answers(_answers, _question_ids), do: %{}
+
+  defp choices(%{"answers" => values}), do: choices(values)
+  defp choices(values) when is_list(values), do: Enum.flat_map(values, &choices/1)
+  defp choices(value) when is_binary(value), do: [value]
+  defp choices(value) when is_number(value), do: [to_string(value)]
+  defp choices(_value), do: []
 
   defp text(value, default) when is_binary(value) do
     if String.trim(value) == "", do: default, else: String.trim(value)
