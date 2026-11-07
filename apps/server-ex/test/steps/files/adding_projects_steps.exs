@@ -2,18 +2,27 @@ defmodule HalC2.Steps.Files.AddingProjects do
   @moduledoc """
   Steps for `features/files/adding-projects.feature`. Clones run real `git` against
   a `git://` server on loopback that either holds the connection open (a clone in
-  flight) or refuses the repository (`git_server/2`); hosts are looked up through
-  fake CLIs and a fake Bitbucket API.
+  flight) or refuses the repository (`git_server/2`), or through gates the scenario
+  holds and releases at the fetch and at the checkout of the last file
+  (`HalC2.Test.CloneGate`, `gated_clone/3`); hosts are looked up through fake CLIs
+  and a fake Bitbucket API.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
   import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
 
-  alias HalC2.Test.Mc
+  alias HalC2.Test.{CloneGate, Mc}
   alias HalC2.Test.Mc.{Host, World}
 
   @fake_cli Path.expand("../../support/fake_gh.py", __DIR__)
   @clones_sub 7_001
+  # What a gated clone checks out: its last file waits at the checkout gate.
+  @gated_files %{
+    ".gitattributes" => "zz.txt filter=gate\n",
+    "README.md" => "shop\n",
+    "src/app.txt" => "app\n",
+    "zz.txt" => "last\n"
+  }
 
   # --- local folders ---------------------------------------------------------------
 
@@ -81,11 +90,208 @@ defmodule HalC2.Steps.Files.AddingProjects do
   # --- clones ----------------------------------------------------------------------
 
   step "a client starts cloning {string} into {string}", %{args: [url, dest]} = context do
-    # The host's address leads to a loopback git server that never answers.
-    port = git_server(context, :hang)
-    [origin] = Regex.run(~r{^https?://[^/]+/}, url)
-    git_env(%{"url.git://127.0.0.1:#{port}/.insteadOf" => origin})
-    start_clone(context, url, dest)
+    url = if url =~ "://", do: url, else: "https://example.com/#{url}.git"
+
+    if context[:clone] do
+      # Refused before git runs.
+      start_clone(context, url, dest)
+    else
+      # The host's address leads to the repository behind a gate that holds the fetch.
+      [origin, path] = Regex.run(~r{^(https?://[^/]+/)(.*)$}, url, capture: :all_but_first)
+      context = gates(context)
+      dir = Mc.tmp_dir(context.mc, "hosted")
+      CloneGate.repo(dir, @gated_files, Path.join(dir, path))
+      token = "fetch-#{World.slug(Path.basename(dest))}"
+      transport = "ext::python3 #{gate_script()} #{context.gate_port} #{token} %S #{dir}/"
+      git_env(gate_config(context, %{"url.#{transport}.insteadOf" => origin}))
+      context = start_clone(context, url, dest)
+
+      if match?({:ok, _}, context.reply),
+        do: Map.put(context, :gate, CloneGate.await(token)),
+        else: context
+    end
+  end
+
+  step "a client starts cloning {string} into a blank destination", %{args: [url]} = context do
+    Mc.ensure(HalC2.ProjectClones)
+
+    {reply, context} =
+      World.call(context, "projectClone.start", %{
+        "projectId" => "shop",
+        "title" => "shop",
+        "createdAt" => World.iso_from_now(0),
+        "remoteUrl" => url,
+        "destinationPath" => "   "
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} does not exist", %{args: [path]} = context do
+    Host.home(context)
+    refute File.exists?(Host.path(context, path))
+    context
+  end
+
+  step "the clone goes into {string}", %{args: [path]} = context do
+    real = Host.path(context, path)
+    assert {:ok, %{"cwd" => ^real}} = context.reply
+    assert File.dir?(real)
+    assert current_clone(context)["destinationPath"] == real
+    context
+  end
+
+  step "a clone of {string} into {string} is running", %{args: [repository, dest]} = context do
+    gated_clone(context, repository, dest)
+  end
+
+  step "no second project is created", context do
+    assert HalC2.Projects.stored_roots() == [context.clone.dest]
+    context
+  end
+
+  step "the repository {string} needs credentials the MC does not have",
+       %{args: [repository]} = context do
+    # A host that asks every request for a password, and an askpass program git
+    # must never run: the MC's own environment points git at it.
+    {:ok, {_ip, port}} =
+      ThousandIsland.listener_info(
+        start_supervised!({Bandit, plug: __MODULE__.Private, port: 0, ip: :loopback})
+      )
+
+    Host.home(context)
+    marker = Path.join(Mc.tmp_dir(context.mc, "askpass"), "asked")
+    askpass = Path.join(Path.dirname(marker), "askpass.sh")
+    File.write!(askpass, "#!/bin/sh\ntouch '#{marker}'\necho hunter2\n")
+    File.chmod!(askpass, 0o755)
+    env = [{"GIT_ASKPASS", askpass}, {"SSH_ASKPASS", askpass}, {"SSH_ASKPASS_REQUIRE", "force"}]
+    previous = for {name, _} <- env, do: {name, System.get_env(name)}
+    System.put_env(env)
+
+    on_exit(fn ->
+      for {name, value} <- previous,
+          do: if(value, do: System.put_env(name, value), else: System.delete_env(name))
+    end)
+
+    git_env(%{
+      "url.http://127.0.0.1:#{port}/.insteadOf" => "https://example.com/",
+      "credential.helper" => "",
+      "core.askPass" => askpass
+    })
+
+    context
+    |> Map.put(:askpass_marker, marker)
+    |> Map.put(:private, "https://example.com/#{repository}.git")
+  end
+
+  step "a client starts cloning it", context do
+    start_clone(context, context.private, "/home/sam/private")
+  end
+
+  step "git does not wait for a prompt", context do
+    context = await_clone(context, &(&1["phase"] == "failed"), 15_000)
+    refute File.exists?(context.askpass_marker), "git asked for a password"
+    context
+  end
+
+  step "the clone is reported as failed with the last lines git printed", context do
+    assert context.clone_snapshot["error"] =~ "terminal prompts disabled"
+    context
+  end
+
+  step "a clone of {string} is running and has written part of the files",
+       %{args: [repository]} = context do
+    context =
+      context
+      |> gated_clone(repository, "/home/sam/#{Path.basename(repository)}")
+      |> to_checkout()
+
+    assert File.exists?(Path.join(context.clone.dest, "README.md"))
+    refute File.exists?(Path.join(context.clone.dest, "zz.txt"))
+    context
+  end
+
+  step "the folder {string} still exists and is empty", %{args: [path]} = context do
+    assert File.ls!(Host.path(context, path)) == []
+    context
+  end
+
+  step "retrying the clone starts from that empty folder", context do
+    {reply, context} = call(context, "projectClone.retry", %{"projectId" => context.clone.id})
+    assert reply == {:ok, %{"applied" => true}}
+    context = Map.put(context, :gate, CloneGate.await("fetch-#{context.clone.id}"))
+    context = await_clone(context, &(&1["phase"] == "running"))
+    assert File.ls!(context.clone.dest) == [".git"]
+    context
+  end
+
+  step "a clone of {string} finishes while the user's cancel is being applied",
+       %{args: [repository]} = context do
+    context =
+      context
+      |> gated_clone(repository, "/home/sam/#{Path.basename(repository)}")
+      |> to_checkout()
+
+    server = Process.whereis(HalC2.ProjectClones)
+    id = context.clone.id
+
+    # The cancel waits in the MC's queue while git finishes; each step is seen
+    # arriving there (a trace), not waited for.
+    :ok = :sys.suspend(server)
+    :erlang.trace(server, true, [:receive])
+    cancel = Task.async(fn -> HalC2.ProjectClones.cancel(%{"projectId" => id}) end)
+    assert_receive {:trace, ^server, :receive, {:"$gen_call", _, {:cancel, ^id}}}, 5_000
+    CloneGate.release(context.gate, "ok")
+    assert_receive {:trace, ^server, :receive, {:clone_finished, _, ^id, :ok}}, 15_000
+    :erlang.trace(server, false, [:receive])
+    :ok = :sys.resume(server)
+
+    Map.put(context, :reply, Task.await(cancel, 20_000))
+  end
+
+  step "the clone is reported done", context do
+    assert context.reply == {:ok, %{"applied" => false}}
+    assert current_clone(context)["phase"] == "done"
+    context
+  end
+
+  step "the checkout is kept", context do
+    assert Enum.sort(File.ls!(context.clone.dest)) ==
+             [".git", ".gitattributes", "README.md", "src", "zz.txt"]
+
+    context
+  end
+
+  step "git reports a transfer detail or an error far longer than a notice can show", context do
+    context = gated_clone(context, "acme/shop", "/home/sam/shop")
+    detail = String.duplicate("1.20 MiB | 2.00 MiB/s ", 30)
+
+    send(
+      HalC2.ProjectClones,
+      {:clone_progress, context.clone.id,
+       HalC2.ProjectClones.progress("Receiving objects:  45% (45/100), " <> detail)}
+    )
+
+    context = await_clone(context, &(&1["stage"] == "receiving"))
+    detail = context.clone_snapshot["detail"]
+
+    CloneGate.release(
+      context.gate,
+      "remote said: " <> String.duplicate("no such repository ", 100)
+    )
+
+    context = await_clone(context, &(&1["phase"] == "failed"), 15_000)
+    Map.put(context, :long, %{detail: detail, error: context.clone_snapshot["error"]})
+  end
+
+  step "the reported detail and error are cut with an ellipsis within the contract's limit",
+       context do
+    for {text, max} <- [{context.long.detail, 200}, {context.long.error, 1000}] do
+      assert String.length(text) == max
+      assert String.ends_with?(text, "…")
+    end
+
+    context
   end
 
   step "the project {string} is listed for {string} immediately",
@@ -280,8 +486,7 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   step "git is given the address as pasted", context do
-    assert_receive {:git_connected, _}, 5_000
-    assert :sys.get_state(HalC2.ProjectClones).urls[context.clone.id] == context.clone.url
+    assert :sys.get_state(HalC2.ProjectClones).runs[context.clone.id].url == context.clone.url
     context
   end
 
@@ -291,13 +496,13 @@ defmodule HalC2.Steps.Files.AddingProjects do
   end
 
   step "a failure's message has the credentials removed", context do
-    send(
-      HalC2.ProjectClones,
-      {:clone_finished, context.clone.id,
-       {:error, "fatal: unable to access 'https://sam:s3cret@example.com/acme/shop.git/'"}}
+    # As git words a host refusing it.
+    CloneGate.release(
+      context.gate,
+      "unable to access '#{context.clone.url}/': The requested URL returned error: 403"
     )
 
-    context = await_clone(context, &(&1["phase"] == "failed"))
+    context = await_clone(context, &(&1["phase"] == "failed"), 15_000)
     refute context.clone_snapshot["error"] =~ "s3cret"
     assert context.clone_snapshot["error"] =~ "https://example.com/acme/shop.git"
     context
@@ -305,15 +510,18 @@ defmodule HalC2.Steps.Files.AddingProjects do
 
   step "a clone of {string} is running for the project {string}",
        %{args: [repository, _title]} = context do
-    context = running_clone(context, repository)
-    # What git has written so far.
-    File.mkdir_p!(Path.join(context.clone.dest, ".git"))
-    File.write!(Path.join(context.clone.dest, "partial.txt"), "half")
+    context =
+      context
+      |> gated_clone(repository, "/home/sam/#{Path.basename(repository)}")
+      |> to_checkout()
+
+    assert File.exists?(Path.join(context.clone.dest, "README.md"))
     context
   end
 
   step "the clone is stopped and no longer reported", context do
-    assert_receive {:git_closed, _}, 5_000
+    # The gate ends with git, closing its connection.
+    assert :gen_tcp.recv(context.gate, 0, 5_000) == {:error, :closed}
     client = Mc.sub(Mc.connect(context.mc), 1, clones_shape())
     {%{"clones" => clones}, _client} = Mc.await(client, &(&1["t"] == "projectClones"))
     refute Enum.any?(clones, &(&1["projectId"] == context.clone.id))
@@ -443,9 +651,22 @@ defmodule HalC2.Steps.Files.AddingProjects do
 
   defp start_clone(context, url, dest) do
     Mc.ensure(HalC2.ProjectClones)
-    real = Host.path(context, dest)
-    File.mkdir_p!(Path.dirname(real))
-    id = World.slug(Path.basename(dest))
+    # `~` paths go to the MC as typed, to expand; its parents are the MC's to make.
+    real =
+      if String.starts_with?(dest, "~") do
+        Host.home(context)
+        dest
+      else
+        File.mkdir_p!(Path.dirname(Host.path(context, dest)))
+        Host.path(context, dest)
+      end
+
+    # A second clone in a scenario is its repository's project.
+    id =
+      if context[:clone],
+        do: World.slug(Path.basename(url, ".git")),
+        else: World.slug(Path.basename(dest))
+
     client = Mc.sub(World.client(context), @clones_sub, clones_shape())
     {_, client} = Mc.await(client, &(&1["t"] == "projectClones"))
     context = World.put_client(context, client)
@@ -525,6 +746,42 @@ defmodule HalC2.Steps.Files.AddingProjects do
     Enum.find(clones, &(&1["projectId"] == context.clone.id)) ||
       flunk("the clone is not reported")
   end
+
+  # A clone of `repository` into `dest` whose git waits at its fetch gate
+  # (`context.gate`), having made the folder's `.git`.
+  defp gated_clone(context, repository, dest) do
+    context = gates(context)
+    id = World.slug(Path.basename(dest))
+    bare = CloneGate.repo(Mc.tmp_dir(context.mc, "repos"), @gated_files)
+    git_env(gate_config(context, %{}))
+    url = CloneGate.transport_url(context.gate_port, "fetch-#{id}", bare)
+    context = start_clone(context, url, dest)
+    assert {:ok, _} = context.reply, "#{repository} did not start: #{inspect(context.reply)}"
+    Map.put(context, :gate, CloneGate.await("fetch-#{id}"))
+  end
+
+  # Lets a gated clone fetch, up to where it waits to check out its last file.
+  defp to_checkout(context) do
+    CloneGate.release(context.gate, "ok")
+    Map.put(context, :gate, CloneGate.await(Path.basename(context.clone.dest)))
+  end
+
+  defp gates(%{gate_port: _} = context), do: context
+  defp gates(context), do: Map.put(context, :gate_port, CloneGate.listen())
+
+  # git configuration for gates, with `extra`.
+  defp gate_config(context, extra) do
+    Map.merge(
+      %{
+        "protocol.ext.allow" => "always",
+        "filter.gate.smudge" => CloneGate.smudge(context.gate_port, "@cwd"),
+        "filter.gate.required" => "true"
+      },
+      extra
+    )
+  end
+
+  defp gate_script, do: Path.expand("../../support/clone_gate.py", __DIR__)
 
   # A `git://` server on loopback. `:hang` reads the request and never answers,
   # telling the test when git connects and when it goes away; `{:refuse, message}`
@@ -675,6 +932,21 @@ defmodule HalC2.Steps.Files.AddingProjects do
       })
 
     Map.put(context, :reply, reply)
+  end
+
+  defmodule Private do
+    @moduledoc false
+    # A host that wants a password for everything.
+    @behaviour Plug
+    import Plug.Conn
+
+    def init(opts), do: opts
+
+    def call(conn, _opts) do
+      conn
+      |> put_resp_header("www-authenticate", ~s(Basic realm="private"))
+      |> send_resp(401, "")
+    end
   end
 
   defmodule Bitbucket do

@@ -70,4 +70,67 @@ defmodule HalC2.ProjectClonesTest do
     assert error =~ "nowhere"
     assert {:ok, %{"applied" => true}} = HalC2.ProjectClones.retry(%{"projectId" => "project-10"})
   end
+
+  describe "taking a clone's files away" do
+    setup %{origin: origin, dir: dir} do
+      File.mkdir_p!(Path.join(origin, "src/lib"))
+      File.write!(Path.join(origin, "src/lib/util.txt"), "util\n")
+      {_, 0} = System.cmd("git", ~w(add -A), cd: origin)
+
+      {_, 0} =
+        System.cmd("git", ~w(-c user.name=t -c user.email=t@t commit -q -m second), cd: origin)
+
+      dest = Path.join(dir, "shop")
+      {_, 0} = System.cmd("git", ["clone", "-q", "--", origin, dest], stderr_to_stdout: true)
+      File.write!(Path.join(dest, "mine.txt"), "the user's")
+      File.mkdir_p!(Path.join(dest, "src/notes"))
+      File.write!(Path.join(dest, "src/notes/todo.txt"), "the user's")
+      %{dest: dest, run: %{dest: dest, real: HalC2.ProjectClones.canonical(dest), url: origin}}
+    end
+
+    test "takes only what git wrote", %{dest: dest, run: run} do
+      assert HalC2.ProjectClones.remove_checkout(run) == :ok
+      assert File.ls!(dest) |> Enum.sort() == ["mine.txt", "src"]
+      assert File.ls!(Path.join(dest, "src")) == ["notes"]
+      assert File.read!(Path.join(dest, "src/notes/todo.txt")) == "the user's"
+    end
+
+    test "leaves a repository that is not the clone's", %{dest: dest, run: run} do
+      assert HalC2.ProjectClones.remove_checkout(%{run | url: "https://example.com/other.git"}) ==
+               :refused
+
+      assert File.exists?(Path.join(dest, ".git/config"))
+      assert File.exists?(Path.join(dest, "README.md"))
+    end
+
+    test "leaves a folder that holds another project", %{dest: dest, run: run} do
+      inner = Path.join(dest, "src/notes")
+
+      {:ok, _} =
+        HalC2.Projects.mutate(%{
+          "type" => "project.create",
+          "projectId" => "notes",
+          "title" => "Notes",
+          "workspaceRoot" => inner
+        })
+
+      assert HalC2.ProjectClones.remove_checkout(run) == :refused
+      assert File.exists?(Path.join(dest, "README.md"))
+    end
+
+    test "leaves a folder that became a link to somewhere else", %{dir: dir, dest: dest, run: run} do
+      moved = Path.join(dir, "moved")
+      File.rename!(dest, moved)
+      File.ln_s!(moved, dest)
+
+      assert HalC2.ProjectClones.remove_checkout(run) == :refused
+      assert File.exists?(Path.join(moved, ".git/config"))
+    end
+
+    test "leaves the root, the home folder and paths not spelled out", %{run: run} do
+      for dest <- ["/", System.user_home!(), Path.dirname(System.user_home!()), "shop", "/a/../b"] do
+        assert HalC2.ProjectClones.remove_checkout(%{run | dest: dest, real: dest}) == :refused
+      end
+    end
+  end
 end

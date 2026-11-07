@@ -556,7 +556,7 @@ Feature: Adding projects
         | failed or cancelled | The repository was not cloned. Retry the clone first. |
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (start)
-    @mc @backlog
+    @mc
     Scenario: A second clone into a folder another clone is filling is refused
       Given a clone of "acme/shop" into "/home/sam/shop" is running
       When a client starts cloning "acme/other" into "/home/sam/shop"
@@ -572,13 +572,13 @@ Feature: Adding projects
       And no project is created
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (normalizeDestinationPath)
-    @mc @backlog
+    @mc
     Scenario: A clone needs a destination folder
       When a client starts cloning "https://example.com/acme/shop.git" into a blank destination
       Then it fails with "Choose a destination path before cloning."
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (prepareDestination, normalizeDestinationPath)
-    @mc @backlog
+    @mc
     Scenario: A clone's folder is made with its missing parents and "~" is expanded
       Given "/home/sam/work" does not exist
       When a client starts cloning "https://example.com/acme/shop.git" into "~/work/shop"
@@ -593,7 +593,7 @@ Feature: Adding projects
       And a failure's message has the credentials removed
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (cloneRepository, CLONE_ENV)
-    @mc @backlog
+    @mc
     Scenario: A clone fails with git's own words when it would have asked for a password
       Given the repository "acme/private" needs credentials the MC does not have
       When a client starts cloning it
@@ -608,7 +608,7 @@ Feature: Adding projects
       But a clone that waits for its answer fails as timed out
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (cancel), SourceControlRepositoryService.ts (discardClone)
-    @mc @backlog
+    @mc
     Scenario: Cancelling a clone removes what git left but keeps the project's folder
       Given a clone of "acme/shop" is running and has written part of the files
       When the user cancels the clone
@@ -616,7 +616,7 @@ Feature: Adding projects
       And retrying the clone starts from that empty folder
 
     # Legacy: apps/server/src/project/ProjectCloneTracker.ts (cancel, discard)
-    @mc @backlog
+    @mc
     Scenario: A cancel that arrives as git finishes keeps the finished checkout
       Given a clone of "acme/shop" finishes while the user's cancel is being applied
       Then the clone is reported done
@@ -641,7 +641,7 @@ Feature: Adding projects
       But a clone that had already finished keeps its files
 
     # Legacy: apps/server/src/project/gitCloneProgress.ts, ProjectCloneTracker.ts (progress)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: Clone progress detail and errors are kept short
       Given git reports a transfer detail or an error far longer than a notice can show
       Then the reported detail and error are cut with an ellipsis within the contract's limit
