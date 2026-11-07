@@ -815,7 +815,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # The Pi `prompt` params for a message: HAL-C2's `$skill`s as Pi's own commands,
   # images Pi takes natively inline, every other file as the path it is saved at,
-  # and a file whose saved copy cannot be found named as unavailable.
+  # and a file whose saved copy cannot be found named as unavailable. An attachment's
+  # `path` is the MC's own saved copy (`HalC2.Attachments`), never a client's path.
+  # sobelow_skip ["Traversal.FileModule"]
   defp prompt_payload(state, text, attachments) do
     {state, skills} = prompt_skills(state, text)
     expanded = HalC2.Pi.expand_skills(text || "", skills)

@@ -165,6 +165,8 @@ defmodule HalC2.Pi do
   end
 
   @doc "HAL-C2's Pi extension, written to the MC's cache directory where Pi can load it."
+  # The path is fixed under the MC's own cache directory; nothing a client sends reaches it.
+  # sobelow_skip ["Traversal.FileModule"]
   def extension_path do
     path = Path.join([HalC2.Paths.cache_dir(), "pi", "pi-hal-c2-mcp-extension.ts"])
 
