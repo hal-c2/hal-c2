@@ -68,8 +68,9 @@ defmodule HalC2.Web.Protocol do
         {"items": n} to start with the newest runs holding n turn items or
         {"floor": f} to keep the window it has; the shell takes "have":
         {mc: [epoch, rev]}, each MC's rows as the client holds them, its shape's
-        "omitIdleSubagents": true to leave idle subagent threads out of the
-        snapshot (`HalC2.Shell.idle_subagent?/2`), and "settledLimit": n, to be
+        "omitIdleSubagents": true to leave idle subagent threads out of an MC
+        sent whole (`HalC2.Shell.idle_subagent?/2`; a resume delta is never
+        filtered), and "settledLimit": n, to be
         sent of an MC's rows sent whole only the n newest settled threads of each
         project, and the pinned and snoozed ones; a terminal takes
         "acks": true, to answer with "ack" and have its output held back when it falls

@@ -196,6 +196,16 @@ Feature: What the engine projects for clients
       | waits on a request or has background work    | contains         |
       | has a subagent of its own                    | contains         |
 
+  # A resume delta is never filtered: a subagent that went idle while the client
+  # was away must still replace the still-running row the client holds.
+  @mc @priority-high
+  Scenario: A subagent that goes idle while a client is away reaches it on resume
+    Given "t1" has a subagent thread "t1-child" that has a live or queued run
+    And a client holds the shell with its version and goes away
+    And "t1-child" finishes its run
+    When the client resumes the shell with its version, leaving out idle subagents
+    Then the resumed shell contains "t1-child" without a reset
+
   # Upstream #24648: cold connects skip idle subagent threads, so the client reads a subagent family
   # when a thread is opened.
   @mc @priority-high

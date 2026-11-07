@@ -168,10 +168,12 @@ defmodule HalC2.Shell do
   (`settled_left_out`). So do the resets this client is sent later.
 
   With `omit_idle_subagents: true` the rows returned here leave out idle subagent
-  threads (`idle_subagent?/2`): a cold connect pays for the rows the sidebar shows,
-  and a client reads a thread's family when it opens one (`family/1`). Only this
-  snapshot is filtered; changes after it are sent as they come, so a subagent that
-  starts work appears.
+  threads (`idle_subagent?/2`) of each MC sent whole (`reset`): a cold connect pays
+  for the rows the sidebar shows, and a client reads a thread's family when it
+  opens one (`family/1`). A resume delta is not filtered — it holds only what
+  changed, so a subagent that went idle while the client was away still reaches it
+  and replaces the row it holds. Changes after the snapshot are sent as they come,
+  so a subagent that starts work appears.
   """
   @spec subscribe(pid, %{String.t() => version},
           settled_limit: pos_integer | nil,
@@ -441,6 +443,7 @@ defmodule HalC2.Shell do
 
   def handle_call({:subscribe, pid, have, limit, omit_idle?}, _from, state) do
     kind = client_kind(limit)
+    parents = if omit_idle?, do: subagent_parents(:ets.tab2list(@table))
 
     {mcs, rows} =
       Enum.map_reduce(:ets.tab2list(@mcs), [], fn {mc, descriptor}, rows ->
@@ -452,6 +455,19 @@ defmodule HalC2.Shell do
 
         mc_rows = for {id, {kind, row}} <- sent, do: {mc, id, kind, row}
 
+        # Only an MC sent whole is filtered: a resume delta holds just what
+        # changed, and dropping a subagent that went idle from it would leave
+        # the client holding its old, still-running row.
+        mc_rows =
+          if omit_idle? and reset? do
+            Enum.reject(mc_rows, fn
+              {_mc, _id, "thread", row} -> idle_subagent?(row, parents)
+              _ -> false
+            end)
+          else
+            mc_rows
+          end
+
         entry =
           Map.merge(entry, %{
             mc: mc,
@@ -461,18 +477,6 @@ defmodule HalC2.Shell do
 
         {entry, mc_rows ++ rows}
       end)
-
-    rows =
-      if omit_idle? do
-        parents = subagent_parents(:ets.tab2list(@table))
-
-        Enum.reject(rows, fn
-          {_mc, _id, "thread", row} -> idle_subagent?(row, parents)
-          _ -> false
-        end)
-      else
-        rows
-      end
 
     put_subscriber(pid, kind)
     {:reply, %{mcs: mcs, rows: rows}, state}

@@ -1728,6 +1728,48 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context |> World.put_client(client) |> Map.put(:shell_ids, ids)
   end
 
+  step "a client holds the shell with its version and goes away", context do
+    client = Mc.connect(context.mc) |> Mc.sub(77, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 77))
+    ids = for [_mc, id, "thread", _row] <- frame["rows"], do: id
+    assert World.thread_id(context, context.child) in ids
+    Mint.HTTP.close(client.conn)
+
+    name = Atom.to_string(node())
+    %{"epoch" => epoch, "rev" => rev} = Enum.find(frame["mcs"], &(&1["mc"] == name))
+    Map.put(context, :shell_have, %{name => [epoch, rev]})
+  end
+
+  step "{string} finishes its run", %{args: [child]} = context do
+    context = World.numbered_run(context, child, 1, "completed")
+    id = World.thread_id(context, child)
+    World.await_row(id, &(&1["status"] not in ~w(queued preparing starting running)))
+    context
+  end
+
+  step "the client resumes the shell with its version, leaving out idle subagents", context do
+    client =
+      WsClient.send_json(Mc.connect(context.mc), %{
+        "t" => "sub",
+        "id" => 78,
+        "shape" => %{"type" => "shell", "omitIdleSubagents" => true},
+        "have" => context.shell_have
+      })
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 78))
+    context |> World.put_client(client) |> Map.put(:resumed_shell, frame)
+  end
+
+  step "the resumed shell contains {string} without a reset", %{args: [child]} = context do
+    frame = context.resumed_shell
+    ids = for [_mc, id, "thread", _row] <- frame["rows"], do: id
+    assert World.thread_id(context, child) in ids
+
+    name = Atom.to_string(node())
+    assert %{"reset" => false} = Enum.find(frame["mcs"], &(&1["mc"] == name))
+    context
+  end
+
   step ~r/^the shell snapshot (?<outcome>does not contain|contains) "(?<child>[^"]+)"$/,
        %{args: [outcome, child]} = context do
     assert World.thread_id(context, context.thread) in context.shell_ids
