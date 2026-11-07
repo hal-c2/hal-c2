@@ -178,6 +178,78 @@ defmodule HalC2.Projection.HistoryTest do
     refute Enum.any?(snapshot["rows"], &match?(["turn-item", "q-1", _], &1))
   end
 
+  # A run as the MC names it (`Entities.new_id("run")`): the id itself holds a colon.
+  defp real_run(n, items) do
+    id = "run:11111111-2222-4333-8444-#{String.pad_leading(Integer.to_string(n), 12, "0")}"
+    run = %{"id" => id, "ordinal" => n, "status" => "completed", "userMessageId" => "m-#{n}"}
+
+    [{"run", id, run}] ++
+      for i <- 1..items do
+        item = %{"id" => "i-#{n}-#{i}", "runId" => id, "type" => "reasoning", "ordinal" => i}
+        {"turn-item", item["id"], item}
+      end
+  end
+
+  test "a cursor naming a real run id round-trips" do
+    state = state(Enum.flat_map(1..12, &real_run(&1, 1)))
+    snapshot = History.snapshot(state)
+    assert is_binary(snapshot["cursor"])
+
+    {:ok, page} = History.page(state, snapshot["cursor"])
+    assert Enum.sort(item_ids(page)) == ["i-1-1", "i-2-1"]
+    assert page["cursor"] == nil
+  end
+
+  test "an intra-run cursor naming a real run id round-trips" do
+    state = state(real_run(1, 900))
+    snapshot = History.snapshot(state)
+    assert is_binary(snapshot["cursor"])
+    assert {:ok, page} = History.page(state, snapshot["cursor"])
+    assert length(item_ids(page)) <= 75
+  end
+
+  test "a pending request whose node is gone is carried beside one whose node resolves" do
+    request = fn id, node ->
+      {"runtime-request", id,
+       %{"id" => id, "nodeId" => node, "kind" => "user_input", "status" => "pending"}}
+    end
+
+    node = %{"id" => "node-q", "runId" => "run-1", "runtimeRequestId" => "req-1"}
+
+    item = %{
+      "id" => "q-1",
+      "runId" => "run-1",
+      "type" => "user_input_request",
+      "requestId" => "req-1",
+      "questions" => [%{"id" => "a"}]
+    }
+
+    # Its node is gone and its item belongs to no run the snapshot takes: only the
+    # item named after its node (`node:approval:x` -> `turn-item:approval:x`) finds it.
+    orphan = %{
+      "id" => "turn-item:approval:x",
+      "runId" => nil,
+      "type" => "user_input_request",
+      "requestId" => "req-2",
+      "questions" => [%{"id" => "b"}]
+    }
+
+    rows =
+      run(1, 1) ++
+        [
+          request.("req-1", "node-q"),
+          request.("req-2", "node:approval:x"),
+          {"node", "node-q", node},
+          {"turn-item", "q-1", item},
+          {"turn-item", orphan["id"], orphan}
+        ] ++
+        Enum.flat_map(2..30, &run(&1, 1))
+
+    snapshot = History.snapshot(state(rows))
+    assert row(snapshot, "q-1")["questions"] == [%{"id" => "a"}]
+    assert row(snapshot, "turn-item:approval:x")["questions"] == [%{"id" => "b"}]
+  end
+
   defp item_n("i-1-" <> n), do: String.to_integer(n)
 
   test "overBudget measures what is sent, not the history the wire drops" do

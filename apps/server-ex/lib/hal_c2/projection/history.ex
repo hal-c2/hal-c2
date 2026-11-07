@@ -115,17 +115,29 @@ defmodule HalC2.Projection.History do
   # A run over the split limit contributes only its newest slice and ends the page.
   defp take(state, before, turns) do
     shown = shown_runs(state, before)
+    candidates = candidate_runs(shown, turns)
 
-    {taken, _rest, _count, intra} =
-      Enum.reduce_while(shown, {[], shown, 0, nil}, fn run, {taken, [_ | rest], count, _} ->
-        rows = Enum.to_list(StreamState.run_rows(state, [run["id"]]))
+    # One read for every candidate, grouped back by run: a read per run rescans
+    # the thread's hot rows and rereads its cold pages each time.
+    by_run =
+      if candidates == [] do
+        %{}
+      else
+        state
+        |> StreamState.run_rows(Enum.map(candidates, & &1["id"]))
+        |> Enum.group_by(fn {_kind, _id, entity} -> entity["runId"] end)
+      end
+
+    {taken, _count, intra} =
+      Enum.reduce_while(candidates, {[], 0, nil}, fn run, {taken, count, _} ->
+        rows = Map.get(by_run, run["id"], [])
 
         if length(rows) > @split_rows do
           slice = newest_slice(rows)
-          {:halt, {[{run, slice} | taken], rest, count, length(rows) - length(slice)}}
+          {:halt, {[{run, slice} | taken], count, length(rows) - length(slice)}}
         else
           count = if user_turn?(run), do: count + 1, else: count
-          acc = {[{run, rows} | taken], rest, count, nil}
+          acc = {[{run, rows} | taken], count, nil}
 
           if count >= turns or length(taken) + 1 >= @max_runs,
             do: {:halt, acc},
@@ -154,6 +166,23 @@ defmodule HalC2.Projection.History do
 
         {rows, cursor}
     end
+  end
+
+  # The newest runs a page could take, by user turns and the run cap alone. A
+  # split run ends a page earlier than this, never later, so the runs taken
+  # over grouped rows are a prefix of these.
+  defp candidate_runs(shown, turns) do
+    {candidates, _count} =
+      Enum.reduce_while(shown, {[], 0}, fn run, {taken, count} ->
+        count = if user_turn?(run), do: count + 1, else: count
+        acc = {[run | taken], count}
+
+        if count >= turns or length(taken) + 1 >= @max_runs,
+          do: {:halt, acc},
+          else: {:cont, acc}
+      end)
+
+    Enum.reverse(candidates)
   end
 
   # Whether any history lies before `run`: an older shown run, or runless rows.
@@ -258,8 +287,10 @@ defmodule HalC2.Projection.History do
 
   # The turn items and nodes carrying a pending runtime request (its questions, its
   # prompt), which the request row alone does not hold: found through the request's
-  # node and that node's run, so a long thread is not scanned whole. A request whose
-  # node is gone or runless falls back to naming its item directly.
+  # node and that node's run, so a long thread is not scanned whole. Every request
+  # is also looked up directly — its node, and the item named after its node as
+  # `Orchestration.question_item/1` names it — so a request whose node is gone or
+  # runless is found however the other requests resolve.
   defp pending_rows(state, held) do
     pending =
       for request <- StreamState.list(state, "runtime-request"),
@@ -271,21 +302,46 @@ defmodule HalC2.Projection.History do
     nodes = StreamState.lookup(state, for(id <- node_ids, do: {"node", id}))
     runs = for {_, node} <- nodes, is_binary(node["runId"]), do: node["runId"]
 
-    candidates =
-      if runs == [] and pending != [] do
-        StreamState.rows(state, kinds: @windowed)
+    from_runs =
+      if runs == [] do
+        []
       else
-        StreamState.run_rows(state, runs)
+        for {kind, id, entity} = row <- StreamState.run_rows(state, runs),
+            MapSet.member?(ids, entity["requestId"]) or
+              MapSet.member?(ids, entity["runtimeRequestId"]) or
+              (kind == "node" and MapSet.member?(node_ids, id)),
+            do: row
       end
+
+    direct =
+      for {{kind, id}, entity} <- StreamState.lookup(state, direct_keys(pending)),
+          do: {kind, id, entity}
 
     have = MapSet.new(held, fn {kind, id, _} -> {kind, id} end)
 
-    for {kind, id, entity} = row <- candidates,
-        MapSet.member?(ids, entity["requestId"]) or
-          MapSet.member?(ids, entity["runtimeRequestId"]) or
-          (kind == "node" and MapSet.member?(node_ids, id)),
-        not MapSet.member?(have, {kind, id}),
-        do: row
+    (from_runs ++ direct)
+    |> Enum.uniq_by(fn {kind, id, _} -> {kind, id} end)
+    |> Enum.reject(fn {kind, id, _} -> MapSet.member?(have, {kind, id}) end)
+  end
+
+  # Each pending request's node and the item named after it
+  # (`node:approval:x` -> `turn-item:approval:x`).
+  defp direct_keys(pending) do
+    Enum.flat_map(pending, fn request ->
+      case request["nodeId"] do
+        "node:" <> _ = node_id ->
+          [
+            {"node", node_id},
+            {"turn-item", String.replace_prefix(node_id, "node:", "turn-item:")}
+          ]
+
+        node_id when is_binary(node_id) ->
+          [{"node", node_id}]
+
+        _ ->
+          []
+      end
+    end)
   end
 
   # A handoff waits to be delivered while `pending` or `ready` (the MC writes `ready`,
@@ -341,13 +397,18 @@ defmodule HalC2.Projection.History do
 
   defp decode(_cursor), do: invalid()
 
+  # Run ids hold a colon of their own (`run:<uuid>`), so the tag is split off
+  # first and the id is always the last, unsplit part.
   defp parse(text) do
-    case String.split(text, ":", parts: 4) do
-      ["h1", ordinal, _id] ->
-        with {ordinal, ""} <- Integer.parse(ordinal), do: {:ok, {:run, ordinal}}
+    case String.split(text, ":", parts: 2) do
+      ["h1", rest] ->
+        with [ordinal, id] when id != "" <- String.split(rest, ":", parts: 2),
+             {ordinal, ""} <- Integer.parse(ordinal),
+             do: {:ok, {:run, ordinal}}
 
-      ["h2", ordinal, index, id] ->
-        with {ordinal, ""} <- Integer.parse(ordinal),
+      ["h2", rest] ->
+        with [ordinal, index, id] when id != "" <- String.split(rest, ":", parts: 3),
+             {ordinal, ""} <- Integer.parse(ordinal),
              {index, ""} <- Integer.parse(index),
              true <- index >= 0,
              do: {:ok, {:intra, ordinal, id, index}}

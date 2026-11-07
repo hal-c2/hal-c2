@@ -78,7 +78,7 @@ defmodule HalC2.HistoryPropTest do
 
       runless_ids = for i <- 1..runless//1, do: "old-#{i}"
 
-      counts = Map.new(Enum.with_index(specs, 1), fn {{_, count}, n} -> {"run-#{n}", count} end)
+      counts = Map.new(Enum.with_index(specs, 1), fn {{_, count}, n} -> {run_id(n), count} end)
 
       # Runless rows come after every run row, and a page that holds a split
       # slice holds at most 75 items of that run.
@@ -100,11 +100,11 @@ defmodule HalC2.HistoryPropTest do
         "status" => "pending"
       }
 
-      node = %{"id" => "node-q", "runId" => "run-1", "runtimeRequestId" => "req-q"}
+      node = %{"id" => "node-q", "runId" => run_id(1), "runtimeRequestId" => "req-q"}
 
       item = %{
         "id" => "q-1",
-        "runId" => "run-1",
+        "runId" => run_id(1),
         "type" => "user_input_request",
         "requestId" => "req-q"
       }
@@ -135,6 +135,11 @@ defmodule HalC2.HistoryPropTest do
     end
   end
 
+  # A run id as the MC mints it (`Entities.new_id("run")`): `run:` and a uuid, so
+  # the colon in the id itself is part of every cursor these properties follow.
+  defp run_id(n),
+    do: "run:11111111-2222-4333-8444-#{String.pad_leading(Integer.to_string(n), 12, "0")}"
+
   defp runless_last?(_visited, []), do: true
 
   defp runless_last?(visited, runless_ids) do
@@ -157,7 +162,7 @@ defmodule HalC2.HistoryPropTest do
   defp build_sized(specs, runless) do
     rows =
       Enum.flat_map(Enum.with_index(specs, 1), fn {{kind, count}, n} ->
-        run = %{"id" => "run-#{n}", "ordinal" => n, "status" => "completed"}
+        run = %{"id" => run_id(n), "ordinal" => n, "status" => "completed"}
         run = if kind == :user, do: Map.put(run, "userMessageId", "msg-#{n}"), else: run
 
         [{"run", run["id"], run}] ++
@@ -207,7 +212,7 @@ defmodule HalC2.HistoryPropTest do
 
   defp entities(kind, n) do
     status = %{user: "completed", auto: "completed", rolled_back: "rolled_back", queued: "queued"}
-    run = %{"id" => "run-#{n}", "ordinal" => n, "status" => status[kind]}
+    run = %{"id" => run_id(n), "ordinal" => n, "status" => status[kind]}
     run = if kind in [:user, :queued], do: Map.put(run, "userMessageId", "msg-#{n}"), else: run
     item = %{"id" => "item-#{n}", "runId" => run["id"], "type" => "reasoning"}
     steer = %{"id" => "steer-#{n}", "runId" => run["id"], "role" => "user"}
