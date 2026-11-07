@@ -975,11 +975,11 @@ struct PickModel : Command {
   void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
 };
 
-// Plan or default for the open thread's next sends: it goes to the MC with the
-// next message, before it.
+// Plan or default for the open thread's next sends (it goes to the MC with the
+// next message, before it), or the draft's first.
 struct PickInteraction : Command {
   QString mode = pick(kInteractionModes);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open) || m.open == kDraft); }
   void apply(Model& m) const override {
     if (mode != m.interaction(m.open)) m.targets[m.open].interaction = mode;
   }
@@ -990,10 +990,12 @@ struct PickInteraction : Command {
   void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ")"; }
 };
 
-// New thread from an open thread: the project's draft opens with the thread's
-// interaction mode, and with its model unless the draft picked one (the
-// project names no default here).
+// New thread from an open thread: the project's draft opens again. A draft
+// with nothing of its own (just made after the user discarded the last one,
+// or never written or picked in) takes the thread's interaction mode and model
+// (the project names no default here); one the user started on keeps its own.
 struct NewThread : Command {
+  bool fresh = *rc::gen::arbitrary<bool>();
   void checkPreconditions(const Model& m) const override {
     RC_PRE(m.isThread(m.open) && m.loaded.contains(m.open));
     RC_PRE(!m.lagging);
@@ -1001,17 +1003,24 @@ struct NewThread : Command {
   void apply(Model& m) const override {
     const QString from = m.open;
     m.open = kDraft;
-    Target& draft = m.targets[kDraft];
+    const Target kept = m.targets.value(kDraft);
+    if (!fresh && (!kept.text.isEmpty() || kept.images > 0 || !kept.model.isEmpty() || !kept.interaction.isEmpty())) return;
+    Target draft;
     draft.interaction = m.interaction(from);
-    if (!draft.model.isEmpty()) return;
     const QString picked = m.targets.value(from).model;
     draft.model = picked.isEmpty() ? m.recorded.value(from) : picked;
+    m.targets[kDraft] = draft;
   }
   void run(const Model& m0, Sut& sut) const override {
+    auto* drafts = sut.native->controller<DraftController>();
+    if (fresh) drafts->remove(sut.draftId);
     sut.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    const QString opened = sut.native->controller<NavigationController>()->route().draftId;
+    RC_ASSERT((opened != sut.draftId) == fresh);
+    sut.draftId = opened;
     verify(nextState(m0), sut);
   }
-  void show(std::ostream& os) const override { os << "NewThread"; }
+  void show(std::ostream& os) const override { os << "NewThread(" << (fresh ? "after the draft was discarded" : "the project's draft again") << ")"; }
 };
 
 // The MC records a model for a thread after its sends, as it does when a run

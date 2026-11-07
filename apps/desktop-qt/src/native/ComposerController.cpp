@@ -2506,16 +2506,22 @@ QJsonObject ComposerController::projectSelection(const QString& environmentId, c
   return m_store->projectRow(environmentId, projectId).value(QLatin1String("defaultModelSelection")).toObject();
 }
 
-// The mode as picked there or as the thread has it, and the model the same
-// way unless the project has a default model of its own or the draft a model
-// picked in it. Opening a draft any other way carries nothing.
+// A new thread (DraftController::started names `from` only then) opened on a
+// draft with nothing of its own, just created or never written or picked in,
+// takes the mode as picked there or as the thread has it, and the model the
+// same way unless the project has a default model of its own. A draft the
+// user has started on keeps what it has.
 void ComposerController::carryInto(const QString& draftId, const QString& from) {
   if (from.isEmpty() || from == draftId) return;
   const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(draftId);
   if (!kept) return;
+  Draft draft = m_drafts.value(draftId);
+  if (!kept->text.isEmpty() || draft.modelSelection || !draft.interactionMode.isEmpty() || draft.multipleModels ||
+      !draft.attachments.isEmpty() || !draft.excerpts.isEmpty()) {
+    return;
+  }
   const auto thread = m_store->thread(from);
   const Draft source = m_drafts.value(from);
-  Draft draft = m_drafts.value(draftId);
   bool changed = false;
   // The mode the composer showed there.
   const QString mode = interactionModeOf(from);
@@ -2523,7 +2529,7 @@ void ComposerController::carryInto(const QString& draftId, const QString& from) 
     draft.interactionMode = mode;
     changed = true;
   }
-  if (!draft.modelSelection && projectSelection(kept->environmentId, kept->projectId).isEmpty()) {
+  if (projectSelection(kept->environmentId, kept->projectId).isEmpty()) {
     const QJsonObject model = source.modelSelection.value_or(thread ? thread->modelSelection : QJsonObject());
     if (!model.isEmpty()) {
       draft.modelSelection = model;

@@ -74,7 +74,7 @@ void DraftController::activate() {
   // The contextual create, never a project chooser.
   const QString newLocal = QStringLiteral("chat.newLocal");
   commands->add(newLocal, keybindings::commandLabel(newLocal), [this] {
-    if (const sidebar::ProjectGroup* group = defaultGroup()) startIn(*group);
+    if (const sidebar::ProjectGroup* group = defaultGroup()) startIn(*group, true);
   });
   commands->setListed(newLocal, false);
   commands->addMenu(QStringLiteral("thread.newIn"), tr("New thread in..."), [this] {
@@ -90,7 +90,7 @@ void DraftController::activate() {
       choice.description = group.summary.value(QStringLiteral("workspaceRoot")).toString();
       for (const sidebar::Project& member : group.members) choice.terms << member.title << member.workspaceRoot;
       choice.run = [this, key = group.key] {
-        if (const sidebar::ProjectGroup* chosen = NativeShell::of(this)->sidebar()->group(key)) startIn(*chosen);
+        if (const sidebar::ProjectGroup* chosen = NativeShell::of(this)->sidebar()->group(key)) startIn(*chosen, true);
       };
       if (current == group.key) {
         choices.prepend(choice);
@@ -221,7 +221,7 @@ bool DraftController::startNew(const QVariantMap& payload) {
     group = defaultGroup();
   }
   // No project yet: the sidebar offers to add one.
-  if (group) startIn(*group);
+  if (group) startIn(*group, true);
   return true;
 }
 
@@ -237,20 +237,20 @@ const sidebar::ProjectGroup* DraftController::defaultGroup() const {
 
 // A logical project that spans environments starts on the member the window
 // shows, else its representative.
-void DraftController::startIn(const sidebar::ProjectGroup& group) {
+void DraftController::startIn(const sidebar::ProjectGroup& group, bool carry) {
   QString environmentId = group.summary.value(QStringLiteral("environmentId")).toString();
   QString projectId = group.summary.value(QStringLiteral("projectId")).toString();
   const auto shown = shownProject();
   if (shown && group.memberKeys.contains(shown->first + QLatin1Char(':') + shown->second)) {
     std::tie(environmentId, projectId) = *shown;
   }
-  if (start(environmentId, projectId).isEmpty()) {
+  if (start(environmentId, projectId, carry).isEmpty()) {
     NativeShell::of(this)->controller<ToastController>()->error(
         tr("Couldn't start a new thread"), tr("The project is still available. Try opening the draft again."));
   }
 }
 
-QString DraftController::start(const QString& environmentId, const QString& projectId) {
+QString DraftController::start(const QString& environmentId, const QString& projectId, bool carry) {
   // The project's draft, unless it is being sent: a new thread then is a new
   // draft, and the sent one still becomes its thread.
   QString id;
@@ -268,12 +268,15 @@ QString DraftController::start(const QString& environmentId, const QString& proj
     changedEverywhere();
   }
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-  // What the new thread carries from: the thread or draft the window shows, else
+  // What a new thread carries from: the thread or draft the window shows, else
   // the last one it showed (the phone starts threads from its home screen).
-  const NavigationController::Route& shown = navigation->route();
-  const QString from = shown.kind == QLatin1String("thread") ? shown.threadKey
-                       : shown.kind == QLatin1String("draft") ? shown.draftId
-                                                              : m_lastShown;
+  QString from;
+  if (carry) {
+    const NavigationController::Route& shown = navigation->route();
+    from = shown.kind == QLatin1String("thread")  ? shown.threadKey
+           : shown.kind == QLatin1String("draft") ? shown.draftId
+                                                  : m_lastShown;
+  }
   navigation->open(NavigationController::Route::draft(id));
   emit started(id, from);
   return id;
