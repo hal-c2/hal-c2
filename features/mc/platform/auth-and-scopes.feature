@@ -73,7 +73,7 @@ Feature: MC authentication and scopes
     Then exactly one of them receives a session
     And the other is refused as an invalid grant
 
-  @backlog @mc
+  @mc
   Scenario: A pairing link bound to a client key only pairs that client
     Given a pairing link minted for a client's DPoP key
     When a client that holds another key exchanges it
@@ -287,7 +287,7 @@ Feature: MC authentication and scopes
     When a paired device opens a socket
     Then that client shows as connected with its last connection time
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: Paired clients are listed administrators first, then connected, then newest
     Given three paired clients, one of them an administrator
     And one of the others has an open socket
@@ -296,7 +296,7 @@ Feature: MC authentication and scopes
     And the connected client comes before the one that is not connected
     And clients that tie are listed newest first
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A client with an open socket stays listed past its expiry
     Given a paired client whose session has expired
     And it still has a socket open
@@ -304,7 +304,7 @@ Feature: MC authentication and scopes
     Then the client is listed as connected
     And once its last socket closes it is no longer listed
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: The MC's own startup link is not listed with pairing links
     Given the MC minted a link for the app that started it
     And an administrator created a pairing link labelled "Tablet"
@@ -370,7 +370,7 @@ Feature: MC authentication and scopes
     When a phone, a tablet and a desktop browser each pair
     Then the MC records each as mobile, tablet and desktop
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A client's own device description wins over its user agent
     When a client pairs presenting a device type, an operating system and a label
     Then the MC records what the client presented
@@ -381,7 +381,7 @@ Feature: MC authentication and scopes
     When a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address
     Then the authorized clients list shows the plain IPv4 address
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A command-line tool is recorded as a bot
     When curl or wget exchanges a pairing token
     Then the MC records its device type as bot
@@ -480,21 +480,21 @@ Feature: MC authentication and scopes
     Then the MC accepts it
     And a token presented with an invalid proof is refused rather than treated as a bearer
 
-  @backlog @mc
+  @mc
   Scenario: A session bound to a client key lasts one hour and is not a plain bearer
     Given a client that paired with a DPoP key
     Then its session expires after one hour, not thirty days
     And presenting that token as a plain bearer is refused
     And presenting a token that is not bound to a key under the DPoP scheme is refused
 
-  @backlog @mc
+  @mc
   Scenario: A DPoP proof works once
     Given a client that paired with a DPoP key
     And it presented its token with a proof that the MC accepted
     When the same proof is presented again
     Then the MC refuses it as a replay
 
-  @backlog @mc
+  @mc
   Scenario Outline: A DPoP proof that does not fit the request is refused for a reason
     Given a client that paired with a DPoP key
     When it presents a proof that <problem>

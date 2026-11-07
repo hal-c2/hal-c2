@@ -861,8 +861,19 @@ defmodule HalC2.Auth do
     end)
   end
 
-  defp clients(state),
-    do: with_db(state.path, &session_rows(&1, online(state), "expires_at > ?1", [now()]))
+  # Administrators first, then the connected, then the newest. A client whose session ran
+  # out stays listed while a socket it opened is open (`prune_expired/1` closes those).
+  defp clients(state) do
+    online = online(state)
+    open = MapSet.to_list(online)
+    marks = Enum.map_join(Enum.with_index(open, 2), ",", fn {_, i} -> "?#{i}" end)
+    expired = if open == [], do: "", else: " OR id IN (#{marks})"
+
+    state.path
+    |> with_db(&session_rows(&1, online, "expires_at > ?1" <> expired, [now() | open]))
+    |> Enum.sort_by(& &1["issuedAt"], :desc)
+    |> Enum.sort_by(&{"access:write" not in &1["scopes"], not &1["connected"]})
+  end
 
   defp online(_state), do: MapSet.new(:ets.match(@live, {{:socket, :_}, :"$1"}), &hd/1)
 
@@ -937,7 +948,7 @@ defmodule HalC2.Auth do
     cond do
       agent =~ ~r/iPad|Tablet/i -> "tablet"
       agent =~ ~r/Mobile|iPhone|Android/i -> "mobile"
-      agent =~ ~r/bot|curl|Elixir|node/i -> "bot"
+      agent =~ ~r/bot|curl|wget|Elixir|node/i -> "bot"
       true -> "desktop"
     end
   end
