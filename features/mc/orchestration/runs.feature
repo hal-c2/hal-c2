@@ -229,7 +229,7 @@ Feature: Runs and turns
 
   @mc @priority-high
   Scenario: A provider stream that ends without ending its turn fails the run
-    Given "t1" has a running turn
+    Given "t1" has a running turn with a subagent still running
     When the provider's event stream ends without saying the turn ended
     Then the run and its subagents are failed
     And "t1" can take its next message
@@ -319,11 +319,12 @@ Feature: Runs and turns
     Then the failure the thread records shows <shown>
 
     Examples:
-      | secret                                     | shown                                    |
-      | a URL with a user name, password and query | the URL without its credentials or query |
-      | a bearer or basic authorization value      | "[REDACTED]" in place of the value       |
-      | an API key, token, password or secret      | "[REDACTED]" in place of the value       |
-      | a URL that cannot be read                  | "[REDACTED_URL]" in place of the URL     |
+      | secret                                         | shown                                    |
+      | a URL with a user name, password and query     | the URL without its credentials or query |
+      | a bearer or basic authorization value          | "[REDACTED]" in place of the value       |
+      | an API key, token, password or secret          | "[REDACTED]" in place of the value       |
+      | a prefixed key, client secret or refresh token | "[REDACTED]" in place of the value       |
+      | a URL that cannot be read                      | "[REDACTED_URL]" in place of the URL     |
 
   @mc @priority-low
   Scenario: A very long failure message is cut short

@@ -33,6 +33,19 @@ defmodule HalC2.Orchestration.UserFacingErrors do
 
   @max_failure 4_096
 
+  @url ~r{[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s"'<>]+}
+
+  # An `Authorization` header's value, with its scheme kept.
+  @authorization ~r/((?i:authorization)["']?\s*[:=]\s*["']?(?:(?i:bearer|basic|token)\s+)?)[^\s"',\}\[]+/
+
+  # A bearer or basic credential outside a header: token-shaped (eight or more token
+  # characters, not a plain word), so "basic auth failed" reads as it was written.
+  @scheme_token ~r/\b((?i:bearer|basic)\s+)(?![A-Za-z][a-z]*\b)[A-Za-z0-9._~+\/=-]{8,}/
+
+  # `name=value` or `"name": "value"` for a secret-looking name, also under a prefix
+  # (`OPENAI_API_KEY`, `x-auth`).
+  @assignment ~r/((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*(?i:api[-_ ]?key|api[-_ ]?token|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|token|password|passwd|secret|auth)["']?\s*[:=]\s*["']?)[^\s"',\}&]+/
+
   @doc """
   A provider's failure text as a thread may record it: credentials in URLs, authorization
   values and secret-looking assignments are replaced, and the text is cut to
@@ -45,24 +58,22 @@ defmodule HalC2.Orchestration.UserFacingErrors do
 
   def sanitize_failure(message) when is_binary(message) do
     message
-    |> then(
-      &Regex.replace(~r{[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s"'<>]+}, &1, fn url -> redact_url(url) end)
-    )
-    |> then(&Regex.replace(~r/\b(bearer|basic)\s+[^\s"',\}]+/i, &1, "\\1 [REDACTED]"))
-    |> then(
-      &Regex.replace(
-        ~r/\b((?:api[-_ ]?key|api[-_ ]?token|access[-_ ]?token|token|password|passwd|secret)["']?\s*[:=]\s*["']?)[^\s"',\}&]+/i,
-        &1,
-        "\\1[REDACTED]"
-      )
-    )
+    |> then(&Regex.replace(@url, &1, fn url -> redact_url(url) end))
+    |> then(&Regex.replace(@authorization, &1, "\\1[REDACTED]"))
+    |> then(&Regex.replace(@scheme_token, &1, "\\1[REDACTED]"))
+    |> then(&Regex.replace(@assignment, &1, "\\1[REDACTED]"))
     |> truncate_failure()
   end
 
   def sanitize_failure(failure), do: failure
 
+  # Local paths stay readable; other URLs keep their host and path, without the
+  # user name, password, query or fragment, and one that cannot be parsed is dropped.
   defp redact_url(url) do
     case URI.new(url) do
+      {:ok, %URI{scheme: scheme}} when scheme in ["file", "FILE"] ->
+        url
+
       {:ok, %URI{host: host} = uri} when is_binary(host) and host != "" ->
         URI.to_string(%URI{uri | userinfo: nil, query: nil, fragment: nil})
 

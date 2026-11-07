@@ -431,6 +431,33 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # Codex's spawnAgent call, still working on its task.
+  step "{string} has a running turn with a subagent still running",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    {_, runtime} = World.codex_runtime(context, thread)
+
+    context =
+      notify(
+        context,
+        "item/started",
+        item("collabAgentToolCall", "collab-1", %{
+          "tool" => "spawnAgent",
+          "prompt" => "List the modules in lib",
+          "senderThreadId" => runtime.native_thread_id,
+          "receiverThreadIds" => ["native-child-1"],
+          "status" => "inProgress",
+          "agentsStates" => %{"native-child-1" => %{"status" => "running"}}
+        })
+      )
+
+    World.await_state(context, thread, fn state ->
+      match?([%{"status" => "running"}], HalC2.StreamState.list(state, "subagent"))
+    end)
+
+    context
+  end
+
   step "no turn item of the run is still running", context do
     await_status(context, context.running, "completed")
 
@@ -1206,6 +1233,9 @@ defmodule HalC2.Steps.Orchestration.Runs do
     "an API key, token, password or secret" =>
       {"bad api_key=sk-12345 token: t0k3n password=hunter2 secret=s3cr3t",
        "bad api_key=[REDACTED] token: [REDACTED] password=[REDACTED] secret=[REDACTED]"},
+    "a prefixed key, client secret or refresh token" =>
+      {~s(bad OPENAI_API_KEY=sk-abc client_secret=c5 body {"refresh_token":"r7"}),
+       ~s(bad OPENAI_API_KEY=[REDACTED] client_secret=[REDACTED] body {"refresh_token":"[REDACTED]"})},
     "a URL that cannot be read" =>
       {"could not reach http://[::1 broken", "could not reach [REDACTED_URL] broken"}
   }
@@ -1273,12 +1303,14 @@ defmodule HalC2.Steps.Orchestration.Runs do
   end
 
   step "the run and its subagents are failed", context do
-    state = await_status(context, context.running, "failed")
+    await_status(context, context.running, "failed")
 
-    assert Enum.all?(
-             HalC2.StreamState.list(state, "run"),
-             &(&1["status"] != "running" or &1["id"] != context.running)
-           )
+    World.await_state(context, context.thread, fn state ->
+      match?(
+        [%{"status" => "failed", "runId" => run}] when run == context.running,
+        HalC2.StreamState.list(state, "subagent")
+      )
+    end)
 
     context
   end

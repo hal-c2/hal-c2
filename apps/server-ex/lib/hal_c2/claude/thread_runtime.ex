@@ -672,6 +672,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       cond do
         state.turn && state.interrupted -> end_turn(state, "interrupted", nil)
+        # The MC ending its CLI on the way down leaves the run and its work for the
+        # next boot's recovery (`HalC2.Orchestration.Recovery.stopping?/0`).
+        HalC2.Orchestration.Recovery.stopping?() -> state
         state.turn -> end_turn(state, "failed", "Claude exited")
         true -> end_work(state, "failed")
       end
