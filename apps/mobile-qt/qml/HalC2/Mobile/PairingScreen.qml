@@ -70,15 +70,15 @@ Flickable {
             text: qsTr("Pair this device with a machine that runs HAL-C2. On that machine, create a pairing link in the desktop app under Settings → Connections, or run `hal-c2 pair --tailscale`. Then scan its QR code, or enter the link here.")
         }
 
-        // What pairing costs a device that already has an environment.
+        // What pairing does on a device that already has an environment.
         Label {
-            objectName: "pairingReplaces"
+            objectName: "pairingBeside"
             Layout.fillWidth: true
             visible: screen.adding
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(14 * Theme.fontScale)
-            text: qsTr("This device is paired with %1 at %2. It keeps one environment at a time: pairing here replaces %1.").arg(screen.environment).arg(screen.pairing !== null ? (screen.pairing.origin ?? "") : "")
+            text: qsTr("This device is paired with %1 at %2. Pairing here adds another environment beside it.").arg(screen.environment).arg(screen.pairing !== null ? (screen.pairing.origin ?? "") : "")
         }
 
         MobileButton {
