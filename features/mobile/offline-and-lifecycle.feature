@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15870
+#   https://github.com/pingdotgg/t3code/pull/16329
+#   https://github.com/pingdotgg/t3code/pull/16330
+#   https://github.com/pingdotgg/t3code/pull/18824
+#   https://github.com/pingdotgg/t3code/pull/18698
+#   https://github.com/pingdotgg/t3code/pull/18351
+#   https://github.com/pingdotgg/t3code/pull/18476
 #   apps/mobile/src/connection/app-state-wakeups.ts (probe vs reconnect after 10 seconds)
 #   apps/mobile/src/connection/background-activity.ts
 #   apps/mobile/src/connection/background-activity-scopes.ts
@@ -44,6 +51,15 @@ Feature: Staying useful through backgrounding and bad connections
     Then the phone reconnects to "My MacBook"
     And "Fix checkout" catches up on what happened while the app was away
 
+  # Upstream #16329 and #16330: the Git status read before the break stayed on screen.
+  @backlog @mobile
+  Scenario: The Git status of the open thread is refreshed after a reconnect
+    Given "Fix checkout" showed its checkout as clean
+    And a file was added to its checkout while the app was away for a minute
+    When the user returns to the app and the phone reconnects to "My MacBook"
+    Then the thread header's Git menu and the Git sheet read "1 changed"
+    And the status is asked for once for each place that shows it
+
   @backlog @mobile
   Scenario: Cached threads open without a connection
     Given "My MacBook" is unreachable
@@ -56,6 +72,65 @@ Feature: Staying useful through backgrounding and bad connections
     Given "My MacBook" is unreachable
     When the user opens a thread the phone has never loaded
     Then the user is told the thread will load when the connection returns
+
+  # Upstream #18351. Changing a pull request (reviewing, merging, commenting) still needs
+  # the connection; only reading and drafting work offline.
+  @backlog @mobile
+  Scenario: Pull requests opened before stay readable offline
+    Given the user opened pull request 42 with its activity, review guide and diffs
+    And "My MacBook" is unreachable
+    When the user opens the pull requests page and pull request 42
+    Then the last known list, details, activity, review guide and diffs are shown
+    And the user can still start working on pull request 42 or draft with the agent
+
+  @backlog @mobile
+  Scenario: Work on a pull request asked for offline is sent once the connection returns
+    Given "My MacBook" is unreachable
+    When the user starts working on pull request 42
+    Then the new task waits to be sent
+    When "My MacBook" becomes reachable
+    Then the new task is sent
+
+  @backlog @mobile
+  Scenario: A pull request whose environment is offline loads from another that has its repository
+    Given "My MacBook" is unreachable
+    And the connected "Office PC" has a checkout of the same repository
+    When the user opens pull request 42 from "My MacBook"
+    Then pull request 42 is read through "Office PC"
+    And its files, reviewers and review open through "Office PC" too
+
+  @backlog @mobile
+  Scenario: A pull request two environments list shows the connected one's copy
+    Given "My MacBook" is unreachable and the connected "Office PC" lists the same pull request 42
+    When the user opens the pull requests page
+    Then pull request 42 is listed once, from "Office PC"
+
+  @backlog @mobile
+  Scenario Outline: The phone keeps a bounded copy of pull requests per environment
+    Given the phone has cached pull requests from "My MacBook"
+    When <limit> is passed
+    Then the oldest cached pull request answers are dropped first
+
+    Examples:
+      | limit                                     |
+      | 30 days since an answer was saved         |
+      | 256 saved answers                         |
+      | 32 MiB of saved answers                   |
+
+  @backlog @mobile
+  Scenario: A pull request answer larger than 4 MiB is not kept offline
+    Given pull request 42's diff is larger than 4 MiB
+    When the user reads it and goes offline
+    Then the diff of pull request 42 will load when the connection returns
+
+  # Upstream #18476. A saved project stays chosen while its environment is offline.
+  @backlog @mobile
+  Scenario: Thread and pull request list filters are restored on the next launch
+    Given the user filtered the threads to the project "shop" on "My MacBook"
+    And the user filtered the pull requests of "My MacBook" to open ones awaiting the user's review
+    When the user closes the app and opens it again while "My MacBook" is unreachable
+    Then the threads are still filtered to "shop"
+    And the pull requests of "My MacBook" are still filtered the same way
 
   @backlog @mobile
   Scenario: The app keeps retrying on its own
@@ -110,6 +185,14 @@ Feature: Staying useful through backgrounding and bad connections
     Then the status reads "Setting up worktree…"
     When the task is not using a new worktree
     Then the status reads "Starting…"
+
+  @backlog @mobile
+  Scenario: A new task's thread is not read before the environment has created it
+    Given the user started a new task over a slow connection
+    And "My MacBook" has not created the thread yet
+    When "My MacBook" creates the thread and the agent starts
+    Then the thread shows the agent working instead of "Starting…"
+    And going back and opening the thread again shows it, not "Thread unavailable"
 
   @backlog @mobile
   Scenario: The thread's status gives way to a pending question or approval
@@ -189,6 +272,12 @@ Feature: Staying useful through backgrounding and bad connections
     When the user clears the cache for "My MacBook" and confirms
     Then offline threads for "My MacBook" are removed from the phone
     And the phone stays paired with "My MacBook"
+
+  @backlog @mobile
+  Scenario: Attached images already on the phone are not downloaded again after a reconnect
+    Given the phone has shown a thread with three attached photos
+    When the app comes back from the background and reconnects
+    Then the photos show from the phone's cache without being downloaded again
 
   @backlog @mobile
   Scenario: Clearing all client caches asks first

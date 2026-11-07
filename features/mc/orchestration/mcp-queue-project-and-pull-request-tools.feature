@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18143
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/mcp/tools/queue.ex (hal_c2_queue_list, hal_c2_queue_read, hal_c2_queue_edit,
 #     hal_c2_queue_cancel, hal_c2_queue_reorder, hal_c2_queue_promote_to_steer, hal_c2_pending_request_list,
@@ -250,3 +251,54 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Given "caller" has pull requests 10, 11 and 12 stacked on each other and 12 dismissed
     When the agent of "caller" lists its pull requests
     Then it receives 10 and 11 and the chain they form
+
+  # Upstream #18143: agents asked to prepare review guides had no tool to call.
+  @backlog @mc
+  Scenario Outline: An agent starts review guides for several pull requests at once
+    Given "Review guides (beta)" is on
+    And <situation>
+    When the agent of "caller" asks for guides of pull request 42 of "owner/repo" and pull request 43 of "<repo>"
+    Then it is told at once that the guide of 42 has started
+    And that 43 <outcome>
+
+    Examples:
+      | situation                                                  | repo       | outcome                                                                  |
+      | a guide of 43 at its head is already being written          | owner/repo | joined the guide already being written                                   |
+      | no project in this environment checks out "other/repo"      | other/repo | failed because no project checks out its repository, pointing at adding one |
+
+  @backlog @mc
+  Scenario: At most twenty pull requests are guided in one call
+    When the agent of "caller" asks for guides of 21 pull requests
+    Then the call is refused for asking for more than 20
+
+  @backlog @mc
+  Scenario: Every guide an agent asks for is refused while review guides are off
+    Given "Review guides (beta)" is off
+    When the agent of "caller" asks for guides of pull requests 42 and 43
+    Then each is refused, naming the "Review guides (beta)" setting
+
+  @backlog @mc
+  Scenario: Reading a guide never starts one
+    Given the guide of pull request 42 was written before its latest push
+    When the agent of "caller" reads the guide of pull request 42
+    Then it receives the guide, that no guide is being written and that a push left it stale
+    And no guide is started
+
+  # Writing a guide changes no thread, so it needs the pull requests permission, not
+  # control of a thread.
+  @backlog @mc
+  Scenario Outline: Who may ask for review guides
+    Given the agent of "caller" <access>
+    When it asks for a guide of pull request 42
+    Then the request is <result>
+
+    Examples:
+      | access                                                    | result   |
+      | may work with pull requests but not control threads       | accepted |
+      | runs in read-only mode                                    | refused  |
+      | belongs to a turn that has ended                          | refused  |
+
+  @backlog @shared
+  Scenario: An agent's guide requests are named in the thread's work log
+    When the agent of "caller" starts review guides and later reads one
+    Then the work log reads "Started review guides" and "Read a review guide"

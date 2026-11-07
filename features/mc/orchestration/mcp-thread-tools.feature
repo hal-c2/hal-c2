@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17791
+#   https://github.com/pingdotgg/t3code/pull/17823
+#   https://github.com/pingdotgg/t3code/pull/17145
+#   https://github.com/pingdotgg/t3code/pull/16782
 #   https://github.com/pingdotgg/t3code/pull/15627
 #   https://github.com/pingdotgg/t3code/pull/15617
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -66,6 +70,13 @@ Feature: Agents working with threads through MCP tools
   Scenario: Reading without a thread id reads the caller
     When the agent of "caller" reads without naming a thread
     Then it receives "caller"
+
+  # Upstream #17823: agents paging with "cursor" had it dropped and read from the start again.
+  @backlog @mc
+  Scenario: Reading a thread with an argument the tool does not take is refused
+    When the agent of "caller" reads "t2" with a "cursor" argument
+    Then the read is refused because "cursor" is not one of its arguments
+    And the tool's description says it takes no arguments other than its own
 
   @mc
   Scenario Outline: Sending a message picks how it is delivered
@@ -217,6 +228,27 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" launches a thread in project "nowhere"
     Then it fails with code "invalid_request" and "The project was not found."
 
+  # Upstream #17791: the launch said it succeeded and the new thread failed a moment later.
+  @backlog @mc
+  Scenario: A launch in a new worktree on a base that does not exist is refused
+    Given "demo" has no branch, tag or commit named "hal-c2/b1ffc1cb" in any namespace
+    When the agent of "caller" launches a thread in "demo" in a new worktree based on "hal-c2/b1ffc1cb" without starting from origin
+    Then it fails with code "invalid_request" naming "hal-c2/b1ffc1cb", the project and its folder
+    And no thread or run is created
+
+  @backlog @mc
+  Scenario Outline: A launch on a base the MC cannot rule out goes ahead
+    Given <situation>
+    When the agent of "caller" launches a thread in "demo" in a new worktree based on "feature/base"
+    Then a new thread exists in "demo"
+
+    Examples:
+      | situation                                                               |
+      | "feature/base" exists only as "origin/feature/base"                     |
+      | the launch starts from origin and "demo" has an origin remote           |
+      | "demo" is a repository with no commit yet                               |
+      | "demo"'s folder is not a repository                                     |
+
   @mc
   Scenario: Creating threads in a batch puts them beside the caller
     When the agent of "caller" creates 3 threads with prompts
@@ -331,6 +363,29 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" lists or reads "t2"
     Then the response includes the settlement state of "t2"
     And it says why "t2" can or cannot settle
+
+  # Upstream #16782: agents see snooze state, can filter on it, and are told how to link a thread.
+  @backlog @mc
+  Scenario: Listing or reading a thread shows whether it is snoozed and until when
+    Given thread "t2" is snoozed until tomorrow 09:00
+    When the agent of "caller" lists or reads "t2"
+    Then the response says "t2" is snoozed until tomorrow 09:00
+
+  @backlog @mc
+  Scenario Outline: Listing threads can be filtered by snooze
+    Given thread "t2" is snoozed and thread "t3" in "demo" is not
+    When the agent of "caller" lists threads with snoozed <filter>
+    Then the list holds <listed>
+
+    Examples:
+      | filter | listed                      |
+      | true   | "t2" and not "t3"           |
+      | false  | "t3" and not "t2"           |
+
+  @backlog @mc
+  Scenario: Agents are told how to link to a thread in their answers
+    When an agent reads the orchestration instructions
+    Then they say a thread is linked by its id with a thread link, not by a copied title
 
   @mc
   Scenario Outline: Organizing a thread
@@ -459,3 +514,24 @@ Feature: Agents working with threads through MCP tools
     Given a thread has an active run
     When an agent asks to settle the thread
     Then the refusal carries the reason the MC gave, up to 1000 characters
+
+  # Upstream #17145: "fix it and then settle this thread" was refused because the asking turn was still running.
+  @backlog @mc
+  Scenario Outline: An agent that settles its own thread settles it when its turn ends
+    Given the agent in "Ship checkout" asks to settle "Ship checkout" during its turn
+    Then the answer says the thread settles when the turn ends
+    When <ending>
+    Then "Ship checkout" is <outcome>
+
+    Examples:
+      | ending                                                  | outcome |
+      | the turn completes                                      | settled |
+      | the turn fails                                          | active  |
+      | the user interrupts the turn                            | active  |
+      | the user queues a message before the turn completes     | active  |
+
+  @backlog @mc
+  Scenario: A settle waiting on the agent's turn is forgotten when the MC restarts
+    Given the agent in "Ship checkout" asked to settle its own thread during its turn
+    When the MC restarts before the turn ends
+    Then "Ship checkout" stays active

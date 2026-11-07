@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18672
 #   apps/web/src/routes/_chat.index.tsx (IndexDraftLanding: the draft, the hero, the retry)
 #   apps/web/src/routes/_chat.index.tsx (HostedStaticOnboardingState), apps/web/src/routes/__root.tsx (the local environment off counts as no server)
 #   apps/web/src/components/Sidebar.logic.ts (sortScopedProjectsForSidebar, "updated_at")
@@ -55,6 +56,13 @@ Feature: A window with no thread lands on a new thread
       And the user opens "env-a:t3" from the sidebar
       When the MC deletes the thread "t3"
       Then the window shows a new draft in "proj-1"
+
+    @backlog @shared
+    Scenario: Going elsewhere before the threads have loaded is not undone by the landing
+      Given the threads have not loaded yet
+      When the user opens Settings
+      And the threads finish loading
+      Then the window still shows Settings
 
     @desktop
     Scenario: A new window lands on the same draft

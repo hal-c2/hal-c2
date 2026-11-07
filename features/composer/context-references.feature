@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16619
+#   https://github.com/pingdotgg/t3code/pull/19107
+#   https://github.com/pingdotgg/t3code/pull/16828
+#   https://github.com/pingdotgg/t3code/pull/19350
+#   https://github.com/pingdotgg/t3code/pull/19357
+#   https://github.com/pingdotgg/t3code/pull/15210
+#   https://github.com/pingdotgg/t3code/pull/20102
 #   docs/user/composer.md (slash commands, skills, context references, pull requests, threads, citing)
 #   https://github.com/pingdotgg/t3code/pull/13450 (focus returns to the draft after a quote's comment)
 #   docs/internals/composer-context-references.md
@@ -81,6 +88,14 @@ Feature: Referencing files, skills, commands and context
       | please /compact       | no provider command is offered             |
       | please /model         | the built-in model command is offered      |
 
+  @backlog @shared
+  Scenario: A slash typed after other text searches skills
+    Given the provider offers the skill "review"
+    When the user types "Please use /rev"
+    Then the skill "review" is offered
+    When the user chooses it
+    Then the draft reads "Please use " followed by the skill "review"
+
   @backlog @desktop
   Scenario Outline: Choosing a built-in command acts at once and leaves no text behind
     Given the Build and Plan toggle setting is on
@@ -118,11 +133,28 @@ Feature: Referencing files, skills, commands and context
     When the user types "#42" in a thread of this project
     Then only this project's repository pull requests are offered
 
+  @backlog @desktop @mobile
+  Scenario: A pull request linked to the thread is suggested whatever its repository
+    Given the thread links pull request 4 of "owner/repo-b"
+    And the project's repository "owner/repo-a" has its own pull request 4
+    When the user types "#4"
+    Then both are suggested, the linked one naming "owner/repo-b"
+    And a linked pull request whose details have not loaded yet is not suggested
+
   # Legacy: packages/shared/src/composerInlineTokens.ts (SCOPED_PACKAGE_REFERENCE_REGEX)
   @backlog @desktop
   Scenario: An npm package name after an at sign stays text
     When the draft reads "install @acme/widgets first"
     Then "@acme/widgets" is not shown as a project file
+
+  # Upstream #16619: a path pasted after "@" was read as markdown, so "__" pairs turned bold
+  # and the agent got "@src/**test**.tsx".
+  @backlog @desktop
+  Scenario: A path pasted after an at sign is kept as typed
+    Given the user has typed "@" in the draft
+    When the user pastes "src/__test__.tsx and **this**"
+    Then the draft sends "@src/__test__.tsx" unchanged
+    And "this" is still bold
 
   @backlog @desktop
   Scenario: Another thread on the same MC can be referenced
@@ -138,6 +170,15 @@ Feature: Referencing files, skills, commands and context
     Then the user is told the agent can only read threads on its own server
     And the draft is unchanged
 
+  @backlog @desktop
+  Scenario: A thread dropped from another environment is attached as its transcript
+    Given a thread "Remote work" lives in a different environment
+    When the user drops "Remote work" onto the composer
+    Then the draft attaches a saved transcript of "Remote work" with its history and tool output
+    And the message cannot be sent until the transcript has loaded
+    And a transcript over the file limit is refused saying it is too large
+    But a thread dropped from the same environment is referenced live
+
   @desktop
   Scenario: Part of an assistant response can be quoted with a comment
     Given the assistant replied with a paragraph about caching
@@ -151,6 +192,27 @@ Feature: Referencing files, skills, commands and context
     Given the user is writing the comment on a quote in the draft
     When the user saves the comment
     Then the caret is in the draft right after the quote
+
+  # Upstream #16828: cancelling left the space inserted with the quote, hiding the hint.
+  @backlog @desktop
+  Scenario Outline: Cancelling the comment on a new quote puts the draft back as it was
+    Given the draft reads "<before>" with the caret at "|"
+    When the user cites the assistant's words "brown fox"
+    And the user cancels the quote's comment
+    Then the draft reads "<after>"
+
+    Examples:
+      | before        | after       |
+      | \|            |             |
+      | Hello\|       | Hello       |
+      | Hello\| world | Hello world |
+
+  @backlog @desktop
+  Scenario: A quote's unsaved comment survives a question from the agent
+    Given the user is writing the comment "check this" on a quote and has not saved it
+    When the agent asks a question and the user answers it
+    Then the quote in the draft keeps the comment "check this"
+    And sending the draft includes the comment
 
   # Shift+Tab only does this directly after a quote; elsewhere it keeps switching build and plan.
   @desktop @backlog
@@ -651,6 +713,18 @@ Feature: Referencing files, skills, commands and context
     Then the reference is shown as merged
     When the user clicks the reference
     Then pull request 41 opens
+
+  @backlog @desktop
+  Scenario: Dragging a linked pull request onto the composer references it
+    Given the thread's linked pull requests list pull request 41 "Add login"
+    When the user drags pull request 41 from that list onto the composer
+    Then the draft references pull request 41 as the "#" picker would
+
+  @backlog @desktop
+  Scenario: A linked pull request whose details have not loaded is dropped as its address
+    Given the thread's linked pull requests list pull request 41 before its details have loaded
+    When the user drags it onto the composer
+    Then the draft gets the pull request's address as text
 
   @backlog @desktop
   Scenario: A thread reference follows the thread's title and opens it

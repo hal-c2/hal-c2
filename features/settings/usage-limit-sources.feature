@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11368
 #   docs/user/usage.md (CLIProxyAPI hub)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (reading hubs, errors, refresh)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (accounts, reset credit redemption)
@@ -74,6 +75,13 @@ Feature: Usage limit sources
   Scenario: The user adds a hub
     When the user adds a hub with a URL and management key but no label
     Then the hub is listed under the hub's host name
+
+  @backlog @mc
+  Scenario: A hub whose URL names no host is still listed
+    Given the user added a hub with the URL "localhost:8317" and no label
+    When the user views limits
+    Then the hub is listed under its id, with its error
+    And its saved URL is left as it was
 
   @shared @backlog-mobile
   Scenario: A hub cannot be added without a URL and key

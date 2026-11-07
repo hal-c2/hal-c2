@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17181
 #   docs/user/terminal.md (server-owned sessions, scrollback limits)
 #   docs/internals/terminal-runtime.md (bounded restore, query stripping, 512 KiB client buffer)
 #   packages/contracts/src/terminal.ts (TerminalAttachInput, TerminalAttachStreamEvent, TerminalMetadataStreamEvent, history limits)
@@ -145,6 +146,14 @@ Feature: Reattaching to terminals
       Given a terminal that keeps printing output
       When the output stops for half a second
       Then the history is written to the MC's terminal store
+
+    # Upstream #17181: a terminal that never went quiet kept the history writer to itself.
+    @backlog @mc
+    Scenario: A busy terminal does not hold up saving another terminal's history
+      Given four terminals that never stop printing
+      And a fifth terminal whose output has just gone quiet
+      When the MC next saves terminal history
+      Then the fifth terminal's history is saved after at most one batch of the busy terminals
 
     @mc
     Scenario Outline: History keeps the newest output within its limits

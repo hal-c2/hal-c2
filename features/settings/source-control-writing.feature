@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18488
 #   docs/user/source-control.md (writing style, Repository conventions)
 #   apps/web/src/components/settings/SourceControlWritingSettings.tsx
 #   apps/web/src/components/settings/SourceControlWritingSettings.test.tsx (mixed instructions, bulk apply and reset)
@@ -71,6 +72,24 @@ Feature: Source control writing settings
     Given saving settings fails
     When the user picks a writer model
     Then the user is told "Source control writer model not saved"
+
+  # Upstream #18488: both pickers chose a model but not its options.
+  @backlog @desktop @mobile
+  Scenario Outline: The <model> model's options are chosen beside it
+    Given the <model> model is "gpt-5.5" on Codex
+    When the user sets its reasoning effort to high and turns on fast mode beside the picker
+    Then the <model> model runs with high effort in fast mode
+
+    Examples:
+      | model                    |
+      | source control writer    |
+      | review guide             |
+
+  @backlog @desktop @mobile
+  Scenario: Model options are not offered while environments disagree on the model
+    Given "Laptop" and "Build box" use different source control writer models
+    When the user looks at the writer model for both
+    Then no model options are offered beside it
 
   @mc
   Scenario: A project's own writing style wins over the environment's

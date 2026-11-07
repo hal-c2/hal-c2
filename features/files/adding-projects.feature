@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17379
 #   docs/user/project-settings.md
 #   apps/server-ex/lib/hal_c2/projects.ex (project.create, browse)
 #   apps/server/src/workspace/WorkspaceEntries.ts (browse: home, relative paths, prefix, errors)
@@ -683,6 +684,26 @@ Feature: Adding projects
       When the user looks up the GitHub repository "acme/missing"
       Then the lookup fails with the host's message
       And no project is created
+
+    # Upstream #17379: a bare name stopped resolving when lookups moved off the gh CLI.
+    @backlog @mc
+    Scenario: A bare repository name is the signed-in account's repository
+      Given the user is signed in to GitHub as "octocat"
+      When the user looks up the GitHub repository " notes.git "
+      Then the repository "octocat/notes" is found on the host the user is signed in to
+
+    @backlog @mc
+    Scenario Outline: A malformed repository name is refused before GitHub is asked
+      When the user looks up the GitHub repository "<name>"
+      Then the lookup is refused without asking GitHub
+
+      Examples:
+        | name       |
+        | me/        |
+        | /notes     |
+        | a/b/c/d    |
+        | two words  |
+        |            |
 
     # Legacy: packages/client-runtime/src/operations/projects.ts (normalizePastedCloneUrl)
     @backlog @desktop @mobile @tui

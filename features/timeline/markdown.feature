@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19719
+#   https://github.com/pingdotgg/t3code/pull/19854
+#   https://github.com/pingdotgg/t3code/pull/20080
+#   https://github.com/pingdotgg/t3code/pull/20120
+#   https://github.com/pingdotgg/t3code/pull/20400
+#   https://github.com/pingdotgg/t3code/pull/17923
+#   https://github.com/pingdotgg/t3code/pull/16950
+#   https://github.com/pingdotgg/t3code/pull/19337
+#   https://github.com/pingdotgg/t3code/pull/19401
 #   https://github.com/pingdotgg/t3code/pull/15618
 #   https://github.com/pingdotgg/t3code/pull/15824
 #   https://github.com/pingdotgg/t3code/pull/13807
@@ -53,6 +62,33 @@ Feature: Formatted messages
     When the agent answers with a heading, a list, a quote, a code block and a table
     Then the heading and the list are shown as text
     And the quote, the code block and the table are each shown in their own form
+
+  @shared @backlog
+  Scenario: An ordered list past 99 keeps its whole numbers
+    When the agent answers with an ordered list numbered 96 to 103
+    Then every item shows its whole number, from "96." to "103."
+
+  @shared @backlog
+  Scenario Outline: A table right under a line of text is shown as a table
+    When the agent answers with a line of text and, on the next line with no blank line between, a table <where>
+    Then the table is shown as a table and not as a run-on paragraph
+
+    Examples:
+      | where                 |
+      | at the top level      |
+      | inside a quote        |
+      | inside a list item    |
+
+  @shared @backlog
+  Scenario: Character references in a reply are shown as their characters
+    When the agent answers with "Tom &amp; Jerry &copy; 2026"
+    Then the reply reads "Tom & Jerry © 2026"
+
+  @mobile @backlog
+  Scenario: Long pressing a link in a reply opens only the link's menu
+    When the user long presses a link in the agent's reply
+    Then the link's menu opens
+    And no text is selected and no table or code block menu opens with it
 
   @shared @backlog-mobile
   Scenario: The user copies a code block
@@ -321,6 +357,14 @@ Feature: Formatted messages
     Then the clipboard holds a link named "report.xlsx" to "outputs/report.xlsx"
     And the clipboard holds "Hello World (Document template)"
 
+  @backlog @desktop @mobile @plugin-codex
+  Scenario: A follow-up suggestion from Codex shows its label, not its markup
+    When Codex ends its reply with the follow-up suggestion "Prepare print version"
+    Then the reply shows "Prepare print version"
+    And neither the directive's markup nor its hidden prompt is shown
+    And copying the reply copies "Prepare print version"
+    But a follow-up suggestion with no label or no prompt, in code, or still streaming stays as written
+
   # Legacy: packages/client-runtime/src/markdownLinks.ts (inlineCodeFilePathCandidate)
   @backlog @desktop @mobile
   Scenario Outline: A path-shaped word in code formatting is a file chip unless it is a web host or a model id
@@ -414,6 +458,15 @@ Feature: Formatted messages
       | "/work/shop/assets/a/../logo.png"  | offered         |
       | "/work/other/logo.png"             | not offered     |
       | "/work/shop"                       | not offered     |
+
+  @backlog @desktop @mobile
+  Scenario: A host image the connection may not read says to pair again
+    Given the client's connection to the MC may not read the host's files
+    When the agent's reply embeds the image "/work/shop/assets/logo.png"
+    Then the image says it is unavailable because this connection cannot read host files
+    And it says to pair again with a new link to view it
+    And the client never asked the MC for the file
+    But an image that fails while the client is offline still says only that it is unavailable
 
   @desktop @backlog
   Scenario Outline: A file named in a reply is shown as a chip naming where it is
@@ -589,6 +642,19 @@ Feature: Formatted messages
       | the page "public/index.html" with a browser    | opening in the editor, in the in-app browser and revealing  |
       | the file "src/cart.ts"                         | opening in the editor and revealing it                      |
 
+  @backlog @mc @shared
+  Scenario Outline: A file chip shows what the path really is
+    Given the agent's reply names <path>, which is <what>
+    When the reply is shown
+    Then the chip shows the icon of <kind>
+    And its tooltip gives the file's size when it is a file
+
+    Examples:
+      | path        | what                        | kind        |
+      | "Makefile"  | a file without an extension | a file      |
+      | "src/v1.2"  | a folder with a dot         | a folder    |
+      | ".env"      | a dotfile                   | a file      |
+
   @desktop @backlog
   Scenario Outline: A file link that cannot be opened says why
     Given the agent's reply links to the file "src/cart.ts"
@@ -636,13 +702,21 @@ Feature: Formatted messages
     And no public icon service is told about "<host>"
 
     Examples:
-      | link                          | host              |
-      | http://localhost:3000/        | localhost         |
-      | http://192.168.1.20/admin     | 192.168.1.20      |
-      | http://10.0.0.5:8080/         | 10.0.0.5          |
-      | https://build.internal/runs/1 | build.internal    |
-      | https://box.example.test/     | box.example.test  |
-      | http://[fd00::1]/             | fd00::1           |
+      | link                                    | host                           |
+      | http://localhost:3000/                  | localhost                      |
+      | http://192.168.1.20/admin               | 192.168.1.20                   |
+      | http://10.0.0.5:8080/                   | 10.0.0.5                       |
+      | https://build.internal/runs/1           | build.internal                 |
+      | https://box.example.test/               | box.example.test               |
+      | http://[fd00::1]/                       | fd00::1                        |
+      | https://grafana.internal.acme-corp.com/ | grafana.internal.acme-corp.com |
+      | http://nas.lan/                         | nas.lan                        |
+      | http://wiki.corp/                       | wiki.corp                      |
+
+  @desktop @backlog
+  Scenario: A public site's icon is asked for by its name alone
+    When the agent's reply links to "https://example.com:8443/docs" with the text "the docs"
+    Then the public icon service is told only "example.com", without the port
 
   # Legacy: packages/shared/src/favicon.ts (toolActivityFaviconUrl)
   @desktop @backlog
@@ -659,6 +733,26 @@ Feature: Formatted messages
     When the user follows a link to pull request 42 in the agent's reply
     Then pull request 42 opens beside the conversation
     And the page can still be opened in a browser from there
+
+  @desktop @backlog
+  Scenario Outline: A pull request link opened with a modifier goes to the browser
+    Given the project's repository has pull request 42
+    When the user <opens> a link to pull request 42
+    Then pull request 42 opens in the system browser
+    And it does not open beside the conversation
+
+    Examples:
+      | opens                          |
+      | Ctrl or Cmd-clicks             |
+      | middle-clicks                  |
+
+  @desktop @backlog
+  Scenario: Pull request links can always open on the hosting site
+    Given the user turned off "Open pull requests in HAL-C2" in the browser settings
+    When the user follows a link to pull request 42 from a reply, a reference, the sidebar or the composer
+    Then pull request 42 opens like any other link, following where links open
+    When the user turns the setting back on
+    Then pull request links open beside the conversation again
 
   @desktop @backlog
   Scenario Outline: A pull request link can be tied to the thread from the reply

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16750
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
 #   apps/server-ex/lib/hal_c2/orchestration/entities.ex (steers?), apps/server-ex/lib/hal_c2/pi/thread_runtime.ex (steer)
@@ -200,3 +201,17 @@ Feature: Provider capabilities
     And the next message resumes it on a fresh process with the new setup
     And the folder is scanned again so the slash and dollar menus list the new skills
     And a failure shows an error toast
+
+  # Upstream #16750: a folder's skill scan goes stale after five minutes; the composer rescans
+  # it once when it opens there, so a skill added to the project shows up without a restart.
+  @backlog @mc
+  Scenario Outline: Opening the composer rescans a folder's skills only once they are stale
+    Given the skills of folder "api" were scanned <age> ago
+    And a skill "deploy" was added to "api" since
+    When the user opens the composer for a thread working in "api"
+    Then <outcome>
+
+    Examples:
+      | age        | outcome                                                     |
+      | 6 minutes  | "api" is scanned again and the dollar menu offers "deploy"  |
+      | 2 minutes  | "api" is not scanned again and "deploy" is not offered yet  |

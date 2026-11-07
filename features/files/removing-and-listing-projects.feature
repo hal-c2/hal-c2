@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15864
 #   https://github.com/pingdotgg/t3code/pull/14912 (automatic pull no longer holds readiness)
 #   docs/user/project-settings.md (Project category, removal)
 #   apps/server-ex/lib/hal_c2/projects.ex (project.update, project.delete, auto_pull)
@@ -50,6 +51,13 @@ Feature: Removing and updating projects
     When the user confirms removing "shop"
     Then "shop" is no longer listed for "laptop"
     And the draft for "shop" is gone
+
+  @backlog @shared
+  Scenario: Removing the most recent project does not open a new thread in it
+    Given "shop" is the project the user worked in most recently
+    When the user confirms removing "shop"
+    Then the app does not land on a new thread for "shop", even before the list has caught up
+    And a new thread that was already being started for "shop" is not created
 
   @desktop @mobile @tui @backlog-mobile
   Scenario: Cancelling removal keeps the project

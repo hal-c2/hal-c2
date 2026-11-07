@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19118
+#   https://github.com/pingdotgg/t3code/pull/17587
 #   https://github.com/pingdotgg/t3code/pull/14784
 #   https://github.com/pingdotgg/t3code/pull/13469 (a malformed OTEL_RESOURCE_ATTRIBUTES no longer stops startup)
 #   https://github.com/pingdotgg/t3code/pull/13355
@@ -413,6 +415,35 @@ Feature: The desktop app runs its own MC
       Given the user runs the app from a development checkout on Linux
       When the app starts
       Then the system's link handlers are left as they were
+
+    # Upstream #17587: macOS grants the browser passkeys entitlement only to web browsers.
+    @backlog @desktop
+    Scenario: On macOS HAL-C2 can be picked as the default web browser
+      Given the user runs the packaged app on macOS
+      Then HAL-C2 is offered among the system's choices of default web browser
+      And on Linux and Windows the app does not offer itself for web links
+
+    # Upstream #19118: macOS 26 offers Messages and Mail codes in any field unless the app opts out.
+    @backlog @desktop
+    Scenario: On macOS verification codes are offered only in fields that ask for one
+      Given the user runs the app on macOS 26 or later
+      And a verification code has just arrived in Messages
+      When the user focuses the composer or another text field
+      Then the system does not offer to fill in the code
+
+    @backlog @desktop
+    Scenario: A web link opened with HAL-C2 starts a thread showing the page
+      Given HAL-C2 is the default web browser on macOS
+      When the user opens "https://example.com" from another app
+      Then a new thread with no project opens
+      And its browser fills the panel showing "https://example.com"
+
+    @backlog @desktop
+    Scenario: Web links that arrive before the app is ready are all opened in order
+      Given HAL-C2 is the default web browser on macOS and is not running
+      When the user opens two web links from another app
+      Then HAL-C2 starts and opens a thread for each link, in the order they were opened
+      And a link that arrives while the window is reloading is opened once it is back
 
     # Legacy: apps/desktop/src/linuxSecretStorage.ts, apps/desktop/src/settings/DesktopAppSettings.ts (linuxPasswordStore)
     # Uncertain: depends on how the Qt desktop stores secrets; may be dropped with Electron's safeStorage.

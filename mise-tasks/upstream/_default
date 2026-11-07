@@ -81,6 +81,8 @@ while IFS=$'\t' read -r name handle; do
   if [[ -n $handle ]]; then logins[${handle,,}]=1; else bare[$name]=1; fi
 done < <(sed -nE 's/^- \[(.*)\]\(https:\/\/github\.com\/([^)]*)\)$/\1\t\2/p;t;s/^- (.+)$/\1\t/p' CREDITS.md)
 declare -A looked=()
+gh_err=$(mktemp)
+trap 'rm -f "$gh_err"' EXIT
 newcomers() {
   local name email handle who=() links=()
   while IFS=$'\t' read -r name email; do
@@ -133,6 +135,23 @@ for entry in "${commits[@]}"; do
     continue
   fi
 
+  # A (#N) GitHub cannot find (a deleted pull request, or one from another repository)
+  # is ledgered like a direct commit, by its commit URL. Any other failure stops the digest.
+  if [[ -n $pr ]]; then
+    # Bodies end in review-bot badges and HTML comments, and their headings nest under the
+    # pull request's own. Files are summarised by area.
+    view=$(gh pr view "$pr" --repo "$repo" --json number,title,url,mergedAt,labels,body,files --jq "
+      \"## #\(.number) \(.title)\",
+      \"\(.url) · merged \(.mergedAt[:10]) · ${sha:0:9}\" + (if (.labels | length) > 0 then \" · \" + ([.labels[].name] | join(\", \")) else \"\" end),
+      \"Touches: \" + ([.files[].path | split(\"/\") | if length > 2 then .[:2] else .[:1] end | join(\"/\")]
+        | group_by(.) | sort_by(-length) | map(\"\(.[0]) (\(length))\") | join(\", \")),
+      \"\",
+      (.body | gsub(\"<!--[\\\\s\\\\S]*?-->\"; \"\") | gsub(\"<a [\\\\s\\\\S]*?</a>\"; \"\")
+        | gsub(\"\\n\\\\s*\\n\"; \"\\n\\n\") | gsub(\"(?m)^(?<h>#{1,4}) \"; \"##\\(.h) \") | gsub(\"\\\\s*(---\\\\s*)?\$\"; \"\") | if length > 4000 then .[:4000] + \" …(truncated)\" else . end)" 2>"$gh_err") || {
+      grep -q 'Could not resolve to a PullRequest' "$gh_err" || { cat "$gh_err" >&2; exit 1; }
+      subject="${subject% (#$pr)} (#$pr not found upstream)" pr=""
+    }
+  fi
   echo
   if [[ -z $pr ]]; then
     echo "## ${sha:0:9} $subject (no pull request)"
@@ -141,16 +160,7 @@ for entry in "${commits[@]}"; do
     git log -1 --format=%b "$sha"
     git show --stat --format= "$sha" | tail -n 1
   else
-    # Bodies end in review-bot badges and HTML comments, and their headings nest under the
-    # pull request's own. Files are summarised by area.
-    gh pr view "$pr" --repo "$repo" --json number,title,url,mergedAt,labels,body,files --jq "
-      \"## #\(.number) \(.title)\",
-      \"\(.url) · merged \(.mergedAt[:10]) · ${sha:0:9}\" + (if (.labels | length) > 0 then \" · \" + ([.labels[].name] | join(\", \")) else \"\" end),
-      \"Touches: \" + ([.files[].path | split(\"/\") | if length > 2 then .[:2] else .[:1] end | join(\"/\")]
-        | group_by(.) | sort_by(-length) | map(\"\(.[0]) (\(length))\") | join(\", \")),
-      \"\",
-      (.body | gsub(\"<!--[\\\\s\\\\S]*?-->\"; \"\") | gsub(\"<a [\\\\s\\\\S]*?</a>\"; \"\")
-        | gsub(\"\\n\\\\s*\\n\"; \"\\n\\n\") | gsub(\"(?m)^(?<h>#{1,4}) \"; \"##\\(.h) \") | gsub(\"\\\\s*(---\\\\s*)?\$\"; \"\") | if length > 4000 then .[:4000] + \" …(truncated)\" else . end)"
+    echo "$view"
   fi
   echo "By: $(authors "$sha")"
   newcomers "$sha"

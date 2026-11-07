@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19402
+#   https://github.com/pingdotgg/t3code/pull/16886
 #   https://github.com/pingdotgg/t3code/pull/12919
 #   docs/user/remote-access.md (Load balancing, Local environment off)
 #   docs/user/install.md (Windows Subsystem for Linux)
@@ -88,6 +90,19 @@ Feature: Managing environments on a client
       | Tailscale reports a MagicDNS name and the machine has a name | the tailnet name first, then the .local name    |
       | Tailscale is not available                                   | only the machine's .local name                  |
 
+  @backlog @mc
+  Scenario Outline: Tailscale SSH alone advertises the tailnet name
+    Given no SSH server is listening on this machine
+    And Tailscale reports a MagicDNS name and <tailscale>
+    When a client asks the MC for its configuration
+    Then the MC advertises <targets> for opening workspaces over SSH
+
+    Examples:
+      | tailscale                                    | targets                |
+      | serves SSH                                   | only the tailnet name  |
+      | does not serve SSH                           | no SSH names           |
+      | was taken down with SSH still switched on    | no SSH names           |
+
   @mc
   Scenario: A slow SSH name check does not stall the configuration
     Given finding the machine's SSH names takes longer than a client should wait
@@ -150,6 +165,15 @@ Feature: Managing environments on a client
     Given "Build box" is switched off
     When the user removes "Build box" and pairs with it again
     Then "Build box" is connected
+
+  # Upstream #16886: a switched-off environment's threads leave the lists until it is back.
+  @backlog @desktop @mobile
+  Scenario: Switching an environment off hides its threads until it is switched on
+    Given "Build box" has the active thread "Fix checkout" and the settled thread "Old docs"
+    When the user switches "Build box" off
+    Then neither thread is in the thread list or on the settled shelf
+    When the user switches "Build box" on
+    Then "Fix checkout" is listed again and "Old docs" is back on the settled shelf
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).

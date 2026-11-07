@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18408
+#   https://github.com/pingdotgg/t3code/pull/17725
+#   https://github.com/pingdotgg/t3code/pull/20160
+#   https://github.com/pingdotgg/t3code/pull/15946
+#   https://github.com/pingdotgg/t3code/pull/17167
+#   https://github.com/pingdotgg/t3code/pull/17635
 #   https://github.com/pingdotgg/t3code/pull/16627
 #   https://github.com/pingdotgg/t3code/pull/16612
 #   https://github.com/pingdotgg/t3code/pull/14918
@@ -227,6 +233,26 @@ Feature: Threads that work on or link pull requests
     When the user starts a thread on pull request 42 in a new worktree
     Then the thread is not prepared
     And the user is told that both fetches failed for pull request 42
+
+  # Upstream #17725: Azure DevOps publishes only refs/pull/<n>/merge, never a head ref.
+  @backlog @mc
+  Scenario: An Azure DevOps pull request from the same repository is checked out by its branch
+    Given open Azure DevOps pull request 42 comes from the branch "feature/azure-checkout" of the checkout's own repository
+    When the user starts a thread on pull request 42 in a new worktree
+    Then "feature/azure-checkout" is fetched from the checkout's remote
+    And the thread starts in a worktree on the pull request's head that follows "origin/feature/azure-checkout"
+
+  @backlog @mc
+  Scenario Outline: An Azure DevOps pull request is not checked out from a branch that only shares its name
+    Given Azure DevOps pull request 42 <origin>
+    And the checkout's remote has a branch of the same name
+    When the user starts a thread on pull request 42 in a new worktree
+    Then that branch is not fetched in place of the pull request
+
+    Examples:
+      | origin                                                 |
+      | comes from a fork                                      |
+      | belongs to another repository of the same organization |
 
   # Legacy: apps/server/src/git/GitManager.ts (configurePullRequestHeadUpstream: Effect.catch logs)
   @mc
@@ -641,6 +667,23 @@ Feature: Threads that work on or link pull requests
     Then the user is told "Paste a full URL to link a pull request from another repository."
     And the pull request cannot be linked
 
+  # Upstream #17167. GitLab, Azure DevOps and self-hosted forges still need a checkout:
+  # their reads pick the endpoint from the checkout or the CLI's configuration.
+  @backlog @mc
+  Scenario Outline: A linked pull request is read without any checkout of its host
+    Given "Tax work" is not in a project
+    And no project in this environment is checked out from <host>
+    And the host's command line tool can read pull request 1 of "pixp/theatre"
+    When the user links "<url>" to "Tax work"
+    Then "Tax work" shows pull request 1 with its title and state
+    And watching the pull request keeps it current
+
+    Examples:
+      | host          | url                                                 |
+      | github.com    | https://github.com/pixp/theatre/pull/1              |
+      | bitbucket.org | https://bitbucket.org/pixp/theatre/pull-requests/1  |
+      | codeberg.org  | https://codeberg.org/pixp/theatre/pulls/1           |
+
   @desktop
   Scenario: A bare number on a host with no pull request address
     Given the project of "Tax work" is on a host whose pull request addresses are not known
@@ -689,6 +732,22 @@ Feature: Threads that work on or link pull requests
     Given pull requests 42, 43 and 44 are chained by their base branches on a host with no stacks of its own
     When the user opens the pull requests of "Tax work"
     Then the user is told "3 pull requests chained by base branch."
+
+  @shared @backlog
+  Scenario: Pull requests built on the same pull request stay in one stack under it
+    Given pull requests 102 and 103 are both based on the branch of pull request 101
+    And all three are linked to "Tax work"
+    When the user opens the pull requests of "Tax work"
+    Then 101, 102 and 103 are listed as one stack with 101 first
+    And 102 and 103 sit one step under 101, side by side
+    And the thread is counted as having one stack
+
+  @mc @backlog
+  Scenario: Pull requests built on the same pull request share a layer for agents
+    Given pull requests 102 and 103 are both based on the branch of pull request 101 and linked to "caller"
+    When the agent of "caller" lists its pull requests
+    Then 102 and 103 are reported at the same stack position
+    And the chain lists 101 before 102 and 103
 
   @desktop
   Scenario: A link the host has not been asked about yet shows what is known
@@ -745,6 +804,12 @@ Feature: Threads that work on or link pull requests
     When the user chooses to link pull request 42 to a thread
     Then "Tax work" is shown as "Linked" and cannot be chosen
     And the menu offers to unlink pull request 42 from this thread
+
+  @backlog @shared
+  Scenario: A pull request can be linked when no project is a repository on its host
+    Given the only project is a folder of several repositories that is not a repository itself
+    When the user links "https://github.com/acme/app/pull/42" to a thread in it
+    Then the thread lists pull request 42
 
   @desktop
   Scenario Outline: A link that could not be changed is reported
@@ -818,6 +883,13 @@ Feature: Threads that work on or link pull requests
     Then it is answered from those details without asking the host
     When the details were read 20 seconds ago instead
     Then the host is asked for the preview
+
+  @backlog @desktop
+  Scenario: A pull request's header follows the newest state its thread knows
+    Given the thread linked to pull request 42 already knows it merged
+    And an older read of pull request 42 said it was open
+    When the user looks at pull request 42
+    Then its header shows it merged and offers no merge
 
   @mc
   Scenario: Previews already held are still shown while a rate limit pauses new ones
@@ -928,6 +1000,13 @@ Feature: Threads that work on or link pull requests
     When nothing has woken it yet
     Then the thread stays in Working with a "Waiting" status and does not settle by itself
     And it returns to the inbox when the watch ends, the pull request merges or closes, the agent asks a question, or the run fails
+
+  @backlog @shared
+  Scenario: The composer names the pull request a waiting thread watches
+    Given a thread whose only wait is a watch on pull request 17627
+    When the user opens the thread
+    Then the composer's status reads "Watching pull request #17627", with nothing put before it
+    And the user can still stop the wait from there
 
   @backlog @desktop @mobile
   Scenario: The thread details card shows and stops pull request watches

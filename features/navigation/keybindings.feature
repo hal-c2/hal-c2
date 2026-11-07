@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16694
+#   https://github.com/pingdotgg/t3code/pull/14475
 #   docs/user/keybindings.md
 #   https://github.com/pingdotgg/t3code/pull/9434 (usage.open, mod+u outside a terminal)
 #   packages/contracts/src/keybindings.ts (every static command id and script.<id>.run)
@@ -118,6 +120,13 @@ Feature: Keybindings
         | preview.zoomOut           | mod+-           | in the preview                    | aligned |
         | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
+    @backlog @desktop
+    Scenario: With the model picker open a number jump picks a model, not a thread
+      Given the model picker is open
+      When the user presses mod+2
+      Then the second model is picked
+      And the selected thread does not change
+
     # rightPanel.toggleMaximized is Open in centre on the desktop: the right panel's tab
     # goes to the thread's centre and back (desktop/stage.feature, which also has the
     # desktop-only stage.* commands and their mod+alt+s and mod+alt+f defaults).
@@ -135,6 +144,14 @@ Feature: Keybindings
         | threadPanel.toggle         | mod+alt+t   |
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
+
+    @backlog @desktop
+    Scenario: The thread details panel has a default shortcut that a saved one overrides
+      Given no custom keybindings
+      When the user presses mod+shift+b outside a terminal
+      Then the command "threadPanel.toggle" runs
+      And pressing mod+shift+b in a terminal does not toggle the thread details panel
+      And a command the user bound to mod+shift+b earlier keeps that key
 
     @desktop
     Scenario: A binding outside its context does nothing

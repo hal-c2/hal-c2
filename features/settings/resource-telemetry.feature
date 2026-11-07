@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16838
+#   https://github.com/pingdotgg/t3code/pull/19399
 #   docs/internals/resource-telemetry.md
 #   apps/server/src/resourceTelemetry/NativeTelemetryClient.ts (sample intervals by power state, stale host power,
 #     restart backoff, give-up rule, request timeouts)
@@ -30,6 +32,19 @@ Feature: Resource monitor
   Scenario: The MC samples less often while nobody watches
     Given no client watches the resource monitor
     Then the MC samples every 15 seconds
+    And it keeps at most one hour of samples
+
+  # Upstream #19399 stopped idle sampling. Replaces the scenario above once the MC samples
+  # only on request.
+  @backlog @mc
+  Scenario: The MC samples only on request while nobody watches
+    Given no client watches the resource monitor
+    Then the MC takes no samples on its own
+    And the monitor's interval reads "On demand"
+    When a client starts watching the resource monitor
+    Then the MC samples at the watched cadence
+    When the last client stops watching
+    Then the MC stops sampling again
     And it keeps at most one hour of samples
 
   @mc
@@ -123,6 +138,12 @@ Feature: Resource monitor
       | the platform and architecture have no monitor build               | Resource monitoring is unsupported on <platform>/<architecture>.    |
       | no monitor build or override is found for this platform           | Resource monitor binary was not found for <platform>/<architecture>. |
       | the configured monitor path is not an executable file             | Resource monitor binary at '<path>' is not executable.             |
+
+  @backlog @mc
+  Scenario: A folder given as the monitor binary is refused
+    Given the configured monitor path is a folder
+    When the MC starts the resource monitor
+    Then the monitor is unavailable with a message naming that path as not a file
 
   @backlog @desktop
   Scenario: The desktop app reports host power to the monitor

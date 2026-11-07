@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16952
+#   https://github.com/pingdotgg/t3code/pull/17264
+#   https://github.com/pingdotgg/t3code/pull/16963 (the server-hosted browser's identity and NixOS libraries do not apply: only the desktop draws pages)
+#   https://github.com/pingdotgg/t3code/pull/16961 (View > Reload targeting the app is Electron menu roles; not carried)
+#   https://github.com/pingdotgg/t3code/pull/11005
+#   https://github.com/pingdotgg/t3code/pull/16939
+#   https://github.com/pingdotgg/t3code/pull/18419
+#   https://github.com/pingdotgg/t3code/pull/16687
 #   docs/user/browser-import.md
 #   docs/user/keybindings.md (previewOpen and previewFocus contexts)
 #   packages/contracts/src/preview.ts (PreviewOpenInput, PreviewNavigateInput, PreviewReportStatusInput, PreviewResizeInput, PreviewEvent, viewport limits and presets, zoom ladder, DiscoveredLocalServerList)
@@ -89,6 +97,20 @@ Feature: In-app preview browser
       When a client opens a browser tab for the thread at "ftp://example.com/file"
       Then no tab opens
       And the client is told the address cannot be opened
+
+    @backlog @desktop
+    Scenario Outline: Text typed in the address bar that is not an address is searched for
+      When the user types "<typed>" in a browser tab's address bar
+      Then the tab loads <loaded>
+
+      Examples:
+        | typed                   | loaded                                        |
+        | how to center a div     | a web search for "how to center a div"        |
+        | react                   | a web search for "react"                      |
+        | cnn.com                 | "https://cnn.com"                             |
+        | my-box.tailnet.ts.net   | "https://my-box.tailnet.ts.net"               |
+        | localhost:5173          | "http://localhost:5173"                       |
+        | 127.0.0.1:3000/path     | "http://127.0.0.1:3000/path"                  |
 
     @mc
     Scenario: A tab opens under the requested browser profile
@@ -254,6 +276,18 @@ Feature: In-app preview browser
       Then the thread has no browser tabs
       And the MC reports a different run number so clients drop their old tabs
 
+    @backlog @mc
+    Scenario Outline: Deleting a thread closes its browser tabs
+      Given the thread has browser tabs
+      When <deletion>
+      Then the thread has no browser tabs
+      And every client is told they closed
+
+      Examples:
+        | deletion                          |
+        | the thread is deleted             |
+        | the thread's project is deleted   |
+
     @mc
     Scenario Outline: Acting on a tab the thread does not have is refused
       When a client asks to <action> a tab the thread does not have
@@ -279,6 +313,24 @@ Feature: In-app preview browser
       Given a dev server is serving HTML on port 5173, started in a terminal of a thread
       When a client watches for local servers in that thread
       Then "http://localhost:5173" is suggested for that thread
+
+    # Upstream #16687: probing every listener sent HTTP to binary-protocol servers, which
+    # could close them. Upstream now probes only listeners its own terminals started, which
+    # narrows the machine-wide suggestions above; configured addresses are still probed.
+    @backlog @mc
+    Scenario: A program the MC's terminals did not start is never sent a probe
+      Given a database listening on port 5432 that was not started in a HAL-C2 terminal
+      And a dev server on port 5173 started in a thread's terminal
+      When a client watches for local servers
+      Then port 5432 receives nothing and stays up
+      And "http://localhost:5173" is suggested
+      And a port where any listener is not a HAL-C2 terminal's is not probed
+
+    @backlog @mc
+    Scenario: Closing the terminal that started a dev server drops its suggestion
+      Given "http://localhost:5173" is suggested for a dev server started in a thread's terminal
+      When the user closes that terminal
+      Then "http://localhost:5173" is no longer suggested
 
     @mc
     Scenario Outline: Only listeners that serve web pages are suggested
@@ -488,6 +540,18 @@ Feature: In-app preview browser
         | ERR_INTERNET_DISCONNECTED   | No internet connection                 |
         | ERR_CERT_AUTHORITY_INVALID  | Certificate authority is not trusted   |
         | ERR_TOO_MANY_REDIRECTS      | Too many redirects                     |
+
+    @backlog @desktop
+    Scenario: A tab opened at a file the browser cannot show offers to open or download it
+      When the user opens a browser tab at "http://localhost:5173/report.pdf", which downloads
+      Then the tab stops loading and says "This file can't be shown here"
+      And the tab offers "Open in browser" and "Download"
+
+    @backlog @desktop
+    Scenario: A page that links to a file keeps showing itself while the file downloads
+      Given a browser tab showing a page with a link to "report.zip"
+      When the user follows the link
+      Then the page stays shown and the download is reported
 
     @desktop
     Scenario: A load the page itself cancelled is not shown as a failure
@@ -740,6 +804,31 @@ Feature: In-app preview browser
       When the user follows a link on the page that targets a new window
       Then the page loads in the same browser tab
 
+    # Upstream #16961 and #16963 open such a link in a new tab of the thread. Replaces the
+    # scenario above once the desktop carries it.
+    @backlog @desktop
+    Scenario: A link that targets a new window opens a new tab of the thread
+      When the user follows a link on the page that targets a new window
+      Then the thread gets a new browser tab at the link, in the same profile, and it becomes active
+      And the page that opened it stays open in its own tab and can still talk to it
+
+    @backlog @desktop
+    Scenario: A link opened in the background leaves the current tab active
+      When the user opens a link on the page in a background tab
+      Then the thread gets a new browser tab at the link
+      And the tab the user was on stays active
+
+    @backlog @desktop
+    Scenario: A form sent to a new window loads in the tab
+      When the user submits a form on the page that posts to a new window
+      Then the form's result loads in the same browser tab
+
+    @backlog @desktop
+    Scenario: A page that opens a blank window keeps its own page
+      When the page opens a blank window
+      Then no tab or window opens and the page is told it was refused
+      And the page stays as it was
+
     @desktop
     Scenario: A popup cannot open further popups
       Given a sign-in popup opened by a page in a browser tab
@@ -762,10 +851,35 @@ Feature: In-app preview browser
         | the list of installed fonts        | refused |
         | anything else a page can ask for   | refused |
 
+    # Upstream #16952: on macOS a passkey prompt in a tab showed nothing and hung until it timed out.
+    @backlog @desktop
+    Scenario: A page that asks for a passkey on macOS gets a prompt to answer
+      Given the user runs the packaged app on macOS
+      When a page in a browser tab asks to sign in or register with a passkey
+      Then the user is prompted for the passkey with Touch ID or the system's passkey sheet
+      And the page receives the passkey when the user confirms
+      And a frame inside the page, a page in the background or a page that is not secure gets no prompt
+
     @backlog @desktop
     Scenario: A page is not told it is running in a different browser
       Given a page in a browser tab has an anti-abuse check that compares the browser's identity
       Then the check is not failed because the app changed how the browser calls itself
+
+    # Upstream #17264: a gateway that forwards the header refused a product name in brackets.
+    @backlog @desktop
+    Scenario: The browser names itself in a form every web server accepts
+      When a page in a browser tab is asked for by the browser
+      Then the User-Agent header names the app as product tokens with no spaces or brackets
+      And the app still shows its own name everywhere else
+
+    # Upstream #16939: automation paused every new cross-site frame and never resumed it, so
+    # sign-in checks and captchas that run in such frames never loaded.
+    @backlog @desktop
+    Scenario: Signing in and captchas work in a tab an agent is driving
+      Given an agent is driving a browser tab
+      When the page there embeds a sign-in check or captcha from another site
+      Then that frame loads and runs
+      And the user can sign in
 
     @backlog @desktop
     Scenario: Each profile keeps its own sign-ins
@@ -819,6 +933,50 @@ Feature: In-app preview browser
       When the user stops the load
       Then the tab keeps what had loaded
       And the tab offers to reload again
+
+    @backlog @desktop
+    Scenario: A frame that loads late does not bring the loading bar back
+      Given a browser tab whose page has finished loading
+      When a frame inside the page from another site starts loading
+      Then the tab does not show the page as loading
+
+    @backlog @desktop
+    Scenario: A page's full screen fills its tab and leaves the window alone
+      Given a browser tab showing a video
+      When the page asks to go full screen
+      Then the video fills the browser tab
+      And the app window does not go full screen
+
+    @backlog @desktop
+    Scenario Outline: The app's panel shortcuts work while a page has the focus
+      Given a browser tab showing a page and the focus is in the page
+      When the user presses the shortcut to <action>
+      Then the app <result>
+
+      Examples:
+        | action                        | result                                   |
+        | toggle the sidebar            | toggles the sidebar                      |
+        | toggle the right panel        | toggles the right panel                  |
+        | maximise the right panel      | maximises or restores the right panel    |
+
+    @backlog @desktop
+    Scenario: A page's link to another app asks before opening it
+      When a page in a browser tab follows the link "slack://channel?team=T1"
+      Then the user is asked whether to open this slack link
+      And the link opens in the system only if the user agrees
+      And a second such link waits until the first question is answered
+
+    @backlog @desktop
+    Scenario Outline: A page's link to a local or inline scheme is never handed to the system
+      When a page in a browser tab follows a link with the scheme "<scheme>" to another app
+      Then the system is not asked to open it
+
+      Examples:
+        | scheme     |
+        | file       |
+        | javascript |
+        | data       |
+        | blob       |
 
     @backlog @desktop
     Scenario Outline: Reload and editing shortcuts work inside the page
@@ -961,6 +1119,18 @@ Feature: In-app preview browser
       When the user chooses "Cancel annotation" or presses Escape
       Then nothing is added to the draft
       And the toolbar returns to normal
+
+    @backlog @desktop
+    Scenario Outline: An annotation comment follows the direction of its own text
+      Given the user is annotating a <page> page in a browser tab
+      When the user types the comment "<comment>"
+      Then the comment runs <direction>
+      And the annotation toolbar and element labels keep their left-to-right layout
+
+      Examples:
+        | page          | comment          | direction                |
+        | left-to-right | هذا الزر مكسور   | from the right           |
+        | right-to-left | this is broken   | from the left            |
 
     @backlog @desktop
     Scenario: Annotating the page gives the user's typing position back
@@ -1864,6 +2034,15 @@ Feature: In-app preview browser
       Given a thread with a browser tab at "http://localhost:5173"
       When the user opens the tab
       Then the page opens in the system's browser, not inside the app
+
+    # Upstream #18419 kept a reply typed into a page's prompt on the phone when another viewer
+    # joined the tab it streams from the server. The phone does not stream or control browser
+    # tabs here; its pages go to the system's browser, which owns its own dialogs.
+    @dropped @mobile
+    Scenario: A reply typed into a streamed page's prompt survives another viewer joining
+      Given the user controls a browser tab on the phone and is typing a reply to the page's prompt
+      When another device starts viewing the same tab
+      Then the phone still shows the reply the user typed
 
     @tui
     Scenario: The terminal client lists preview addresses without an embedded browser

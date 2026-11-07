@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16674
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
 #   https://github.com/pingdotgg/t3code/pull/11846 (per-thread Auto-settle behavior: Enabled, Disabled)
 #   apps/web/src/components/threadActionMenu.logic.ts (Settle thread, Un-settle thread)
@@ -165,6 +166,21 @@ Feature: Settling threads
     When the user un-settles "Ship checkout"
     And the settle sweep runs
     Then "Ship checkout" stays active
+
+  @backlog @mc
+  Scenario Outline: A snoozed thread that wakes starts its quiet spell again
+    Given the auto-settle rule is "after 1 day of inactivity"
+    And "Ship checkout" has been snoozed for 3 days with no activity
+    When <wake>
+    And the settle sweep runs
+    Then "Ship checkout" stays active
+    And it settles only after a further day with no activity
+
+    Examples:
+      | wake                                  |
+      | the user wakes "Ship checkout"        |
+      | the snooze of "Ship checkout" ends    |
+      | the user pins "Ship checkout"         |
 
   @mc
   Scenario: An automatic settle that races new activity is dropped

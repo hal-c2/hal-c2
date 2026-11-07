@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19330
+#   https://github.com/pingdotgg/t3code/pull/19313
+#   https://github.com/pingdotgg/t3code/pull/18521
+#   https://github.com/pingdotgg/t3code/pull/17714
+#   https://github.com/pingdotgg/t3code/pull/14723
+#   https://github.com/pingdotgg/t3code/pull/20015
 #   https://github.com/pingdotgg/t3code/pull/16021
 #   https://github.com/pingdotgg/t3code/pull/16218
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -43,6 +49,18 @@ Feature: ACP registry agents
     When the user searches the ACP registry for "agent"
     Then matching agents are listed, best match first, at most 20
     And agents without a build for this platform are left out
+
+  @backlog
+  Scenario Outline: Windows on ARM runs an agent's x64 build when it has no ARM build
+    Given the MC runs on Windows on ARM
+    And the agent "acme" publishes <builds>
+    When the user installs "acme"
+    Then the <chosen> build is installed and runs
+
+    Examples:
+      | builds                         | chosen        |
+      | only a Windows x64 build       | Windows x64   |
+      | Windows x64 and ARM64 builds   | Windows ARM64 |
 
   Scenario: An empty search lists every compatible agent
     When the user opens the registry search without a query
@@ -268,6 +286,15 @@ Feature: ACP registry agents
     Given "acme" reports no models
     When the user adds the custom model "acme-large" with a reasoning choice of low or high
     Then "acme-large" is offered with low and high reasoning
+
+  # Upstream #19313: Cline accepts "cline-free/*" models it does not advertise.
+  @backlog
+  Scenario: A turn on a registry agent's custom model reaches the agent
+    Given "acme" does not advertise the model "acme-free/large"
+    And the user added "acme-free/large" as a custom model
+    When the user sends a message with "acme-free/large"
+    Then the session opens and "acme" is asked to use "acme-free/large"
+    And a model id that is neither advertised nor added is still refused
 
   Scenario: Models and options that change during a session update the picker
     When "acme" reports a new model while a session runs
@@ -738,7 +765,16 @@ Feature: ACP registry agents
     Given "acme" offers more than 16 session options, one of them with more than 64 choices
     When the MC reads the options
     Then 16 options are kept, each with at most 64 choices
-    And duplicate and empty choices are dropped
+    And duplicate choices, and empty ones that are not the default, are dropped
+
+  # Upstream #19330: GitHub Copilot's default agent has the value "", and the composer
+  # picked and saved the first custom agent instead.
+  @backlog
+  Scenario: A default choice whose value is empty stays selectable
+    Given "acme" offers the option "Agent" whose default choice "Default" has the value ""
+    When the user opens the options of an "acme" model
+    Then "Agent" offers "Default", selected, alongside the custom agents
+    And picking "Default" sends "" to "acme"
 
   @backlog
   Scenario: An option value the agent does not offer is refused
@@ -1984,12 +2020,23 @@ Feature: ACP registry agents
     Then the request fails with "ACP process exited with code 7"
     And nothing is written to the agent
 
+  # Upstream made this a dropped notification instead of a failed turn
+  # (pingdotgg/t3code#20015): a notification has no reply to fail.
   @backlog
-  Scenario: A session update that does not have the protocol's shape ends the connection
+  Scenario: A session update that does not have the protocol's shape is dropped and the turn goes on
     Given a turn is running on "acme"
-    When "acme" sends a session update whose fields are of the wrong kind
-    Then the turn fails with "ACP protocol operation 'decode-notification-payload' failed for method 'session/update'."
-    And the failure does not repeat the values the agent sent
+    When "acme" sends a usage update without its "used" and "size" fields
+    And "acme" then streams the rest of its answer
+    Then the turn completes with the whole answer and no error
+    And the MC's log warns that "update.used" is missing for method "session/update"
+    And the warning does not repeat the values the agent sent
+
+  @backlog
+  Scenario: A malformed session update the agent repeats is warned about once per connection
+    Given a turn is running on "acme"
+    When "acme" sends the same malformed usage update ten times
+    Then the MC's log holds one warning for it
+    And the agent protocol log records each of the ten dropped updates
 
   @backlog
   Scenario: A sign-in method of a kind HAL-C2 does not know is left out
@@ -2076,3 +2123,18 @@ Feature: ACP registry agents
     Given an ACP agent sends its modes with one description null
     When the session starts
     Then all its modes are offered
+
+  @backlog @mc @plugin-acp-registry
+  Scenario: Copilot's parallel subagents each get their own thread
+    Given Copilot CLI runs over ACP
+    When Copilot starts three subagents that write at the same time
+    Then each subagent appears as a subagent with its own thread holding its text and tools
+    And the parent's reply holds none of the subagents' text
+    And a background subagent finishes when Copilot says it completed
+
+  @backlog @mc @plugin-acp-registry
+  Scenario: Switching back to a model after a failed switch away from it applies the model again
+    Given an ACP thread runs on model "A"
+    And switching it to model "B" failed after the agent had taken the new model
+    When the user switches back to "A" and sends a message
+    Then the agent runs the turn on "A"

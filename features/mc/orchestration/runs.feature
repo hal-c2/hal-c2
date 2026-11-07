@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19131
 #   https://github.com/pingdotgg/t3code/pull/15571
 #   https://github.com/pingdotgg/t3code/pull/15442
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -225,6 +226,14 @@ Feature: Runs and turns
     Given the provider's session cannot be opened while "t1" starts a turn
     Then the run is failed
     And "t1" can take its next message
+
+  @backlog @mc
+  Scenario: A provider stream that ends without ending its turn fails the run
+    Given "t1" has a running turn
+    When the provider's event stream ends without saying the turn ended
+    Then the run and its subagents are failed
+    And "t1" can take its next message
+    But a stream the MC ends because it is shutting down leaves the run for recovery
 
   # A delete, or a start that gave up waiting on the provider, ends a run while its
   # provider turn still starts or ends; that end stands.

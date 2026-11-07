@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18075
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/10607
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -112,6 +113,32 @@ Feature: Grok
     When the user sends a message to Grok
     Then Grok answers it
     And Grok is listed with a warning, not as unavailable
+
+  @backlog
+  Scenario Outline: Grok's health checks do not start Grok's own updater
+    Given the MC's environment lets Grok update itself
+    When the MC checks Grok's health by <probe>
+    Then Grok runs with its automatic updater turned off
+    And Grok's health, sign-in and models are still reported
+
+    Examples:
+      | probe                          |
+      | reading its version            |
+      | listing its models             |
+      | starting an agent connection   |
+      | listing a project's skills     |
+
+  @backlog
+  Scenario Outline: Grok updates itself as configured outside health checks
+    Given the MC's environment lets Grok update itself
+    When <use>
+    Then Grok runs with the MC's environment unchanged
+
+    Examples:
+      | use                                    |
+      | the user sends a message to Grok       |
+      | Grok writes a commit message or title  |
+      | the user updates Grok                  |
 
   Scenario: Grok's plan becomes a plan the user can implement
     When Grok proposes a plan

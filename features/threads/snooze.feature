@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19099
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/thread-sidebar.md (Snoozing, Custom snooze, Limited threads, Wake now)
 #   packages/client-runtime/src/state/threadSettled.ts (snooze presets, wake labels, canSnooze, raised hand)
@@ -132,6 +133,32 @@ Feature: Snoozing threads
     Given the agent is working in "Refactor cart"
     When the user snoozes "Refactor cart" until tomorrow
     Then "Refactor cart" is snoozed
+
+  # A queued message the user wrote still blocks the snooze (above); automatic wakes do not.
+  @mc @backlog
+  Scenario Outline: A thread with an automatic wake queued can be snoozed
+    Given "Refactor cart" has <wake> queued
+    When the user snoozes "Refactor cart" until tomorrow
+    Then "Refactor cart" is snoozed
+    And the wake stays queued
+
+    Examples:
+      | wake                                     |
+      | a notification wake                      |
+      | the completion of a task it delegated    |
+
+  @mc @backlog
+  Scenario Outline: Wakes held for output that was thrown away are cancelled
+    Given "Refactor cart" has a wake queued for a provider notification
+    When <discard>
+    Then that wake is cancelled
+    And a queued message the user wrote stays queued
+
+    Examples:
+      | discard                                    |
+      | the user stops "Refactor cart"             |
+      | the MC recovers "Refactor cart" at startup |
+      | the MC shuts down                          |
 
   @mc @desktop @mobile @backlog
   Scenario: A late failure from an earlier run does not wake a snoozed thread

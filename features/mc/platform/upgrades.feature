@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19311 (dropped)
 #   apps/server-ex/lib/hal_c2/upgrade.ex (plan, release upgrade, restart with exit 75, outcome)
 #   apps/server-ex/lib/hal_c2/upgrade/release.ex (release_handler: unpack, relup, install, permanent, rollback, NIFs)
 #   apps/server-ex/lib/hal_c2/upgrade/appup.ex (appups from the release diff: code_change, soft purge)
@@ -124,6 +125,16 @@ Feature: MC self-update and release upgrades
     And it booted the old version instead
     When a client reconnects
     Then the ready it receives says the update was rolled back and why
+
+  # Upstream #19311: its service launcher stopped the server, copied the database and gave
+  # the new server 120 s to prepare. The MC upgrades in place through release upgrades, with
+  # no database copy before it stops and no prepare window to miss.
+  @dropped @mc
+  Scenario: An update whose database backup cannot fit is refused before the server stops
+    Given the disk has less free space than a copy of the MC's database
+    When the user updates the MC
+    Then the update is refused and the MC keeps running
+    And a large database's first migrations do not run out the time the new version has to prepare
 
   @mc
   Scenario: Clients watching an MC see its new version after an in-place update

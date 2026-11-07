@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18461
+#   https://github.com/pingdotgg/t3code/pull/14642
+#   https://github.com/pingdotgg/t3code/pull/19722
 #   apps/web/src/components/settings/SettingsPanels.tsx (GeneralSettingsPanel, LegacyFeaturesSection, AboutVersionTitle, update track)
 #   apps/web/src/components/settings/ScopedSwitch.tsx
 #   apps/web/src/components/ui/draft-input.tsx, apps/web/src/hooks/useCommitOnBlur.ts (typed text settings)
@@ -87,6 +90,25 @@ Feature: General settings
       And a thread has had no activity for 30 days
       When the MC sweeps threads
       Then the thread is not settled
+
+    @backlog @mc
+    Scenario: Inactive settling can keep threads that have a pull request
+      Given "Auto-settle inactive threads" is on with 3 days
+      And "Keep threads with a PR" is on
+      And a thread with an open pull request has had no activity for 4 days
+      When the MC sweeps threads
+      Then the thread is not settled
+      But it still settles when its pull requests merge and merge settling is on
+      When the user turns "Keep threads with a PR" off
+      Then the MC sweeps at once and the thread is settled
+
+    @backlog @desktop
+    Scenario: Keeping threads with a PR is offered only while inactive settling is on
+      Given "Auto-settle inactive threads" is off
+      Then "Keep threads with a PR" is not shown
+      When the user turns inactive settling on
+      Then "Keep threads with a PR" is shown and off
+      And a project can override it
 
     @desktop @mobile @backlog-mobile
     Scenario: Turning inactive settling on starts from the default number of days
@@ -309,6 +331,19 @@ Feature: General settings
       When the MC starts again
       Then the thread stays interrupted
 
+    # Upstream #18461 turned it on by default once continuations were capped.
+    @backlog @mc
+    Scenario Outline: Continuing threads after restarts is on unless the user turned it off
+      Given <settings>
+      Then "Continue threads after restarts" is <state> for the project
+
+      Examples:
+        | settings                                                   | state |
+        | the user never changed "Continue threads after restarts"   | on    |
+        | the user turned it off for the environment                 | off   |
+        | the project turned it off                                  | off   |
+        | the environment's settings file cannot be read             | off   |
+
     @desktop
     Scenario: Restart continuation cannot be turned on for an environment that lacks it
       Given the settings scope includes an environment that cannot continue threads after restarts
@@ -431,6 +466,14 @@ Feature: General settings
     Scenario: Text generation is unavailable without a provider that can generate text
       Given no enabled provider in the scope can generate text
       Then the text generation model row explains why it cannot be chosen
+
+    @backlog @desktop
+    Scenario: A text generation model that is gone falls back to the provider's cheap writer
+      Given the saved text generation model is no longer in Codex's model list
+      When the user opens the text generation model setting
+      Then it shows Codex's text generation default "gpt-6-luna"
+      And not Codex's flagship chat model
+      And the provider's default chat model is shown only when it has no text generation default
 
   Rule: About and legacy features
 

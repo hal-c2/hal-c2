@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16748
+#   https://github.com/pingdotgg/t3code/pull/18238
+#   https://github.com/pingdotgg/t3code/pull/17713
+#   https://github.com/pingdotgg/t3code/pull/17348
+#   https://github.com/pingdotgg/t3code/pull/17652
+#   https://github.com/pingdotgg/t3code/pull/17954
+#   https://github.com/pingdotgg/t3code/pull/15703
+#   https://github.com/pingdotgg/t3code/pull/17017
 #   docs/internals/assistant-citations.md
 #   https://github.com/pingdotgg/t3code/pull/13530 (a running thread opens at its latest output)
 #   apps/web/src/components/ChatView.tsx (Scroll to end, stream does not pull the view back)
@@ -92,6 +100,20 @@ Feature: Moving through a thread and following links
     When the user comes back to "Cart totals" after the agent wrote more
     Then the view shows the latest output
     And the view follows new output
+
+  # Upstream #17348. Following a fast reply can leave the view a moment behind the end;
+  # that lag is not the user scrolling away.
+  @desktop @backlog
+  Scenario Outline: A thread following a fast reply still follows after the user <leaves>
+    Given the agent is writing a long reply quickly in "Cart totals" and the view is following it
+    When the user <leaves> and comes back to "Cart totals"
+    Then the view shows the latest output
+    And the view follows new output
+
+    Examples:
+      | leaves                       |
+      | opens Settings               |
+      | switches to another thread   |
 
   @desktop @backlog
   Scenario: Only the most recent threads are remembered
@@ -195,6 +217,23 @@ Feature: Moving through a thread and following links
     When the user presses Down twice and then Enter
     Then the third turn is shown
 
+  # Upstream #17652: the turn index lies over the conversation.
+  @desktop @backlog
+  Scenario: Scrolling over the turn index scrolls the conversation
+    Given the thread has ten turns
+    And the user is pointing at the turn index with a turn previewed
+    When the user scrolls up with the wheel
+    Then the conversation scrolls up by as much as it would anywhere else
+    And the view stops following new output
+
+  @desktop @backlog
+  Scenario: Selecting text keeps going under the turn index
+    Given the thread has ten turns
+    When the user starts selecting a message's text and drags onto the turn index
+    Then the selection follows the text under the pointer
+    And no turn is previewed until the button is released
+    But a drag that starts on the turn index still moves through the turns
+
   @desktop @backlog
   Scenario: A thread with a single turn has no turn index
     Given the thread has one turn
@@ -258,6 +297,16 @@ Feature: Moving through a thread and following links
       | src/cart.ts              | without holding Ctrl               | nothing is opened                           |
       | src/cart.ts              | holding Ctrl (Cmd on macOS)        | "src/cart.ts" is opened                     |
 
+  # Upstream #18238: an Option-click is a browser's "download this link", and opened a Save
+  # dialog instead of the system browser, so link routers never saw the address.
+  @desktop @backlog
+  Scenario: A link followed with Alt (Option on macOS) also held opens in the system browser
+    Given the user's links open in the system browser
+    And the agent's reply links to "https://example.com/docs"
+    When the user follows the link holding Alt (Option on macOS) as well
+    Then "https://example.com/docs" opens in the system browser
+    And no dialog offers to save the page
+
   @desktop
   Scenario Outline: A link's menu in a reply opens or copies it
     Given "src/cart.ts" has 40 lines
@@ -317,6 +366,39 @@ Feature: Moving through a thread and following links
       | has been edited            | the earlier reply is shown with "The quoted text has changed"                |
       | is no longer in the thread | the quote is still readable and "Could not open the cited response" is shown |
 
+  # Upstream #15703: a quote in a sent message opens to what it quoted and what the user said.
+  @shared @backlog
+  Scenario: A quote in a sent message shows the quoted text and the user's comment
+    Given the user sent a message quoting a reply with the comment "Too slow?"
+    When the user opens the quote in the sent message
+    Then the quoted text and "Too slow?" are shown
+    And the user can go to the quoted reply from there
+
+  # Upstream #17017: a thread link holds the thread's id; its label is the thread's title now.
+  @shared @backlog
+  Scenario Outline: A thread link in a message shows the thread's title now
+    Given a reply links to thread "t2" with the label "Old name"
+    And <thread>
+    When the user looks at the reply
+    Then the link reads <label>
+
+    Examples:
+      | thread                                                  | label                                  |
+      | "t2" is titled "Fix checkout" in the reply's environment | "Fix checkout" and opens "t2"         |
+      | "t2" is not known in the reply's environment             | "Old name"                             |
+
+  @shared @backlog
+  Scenario: Copying a thread link gives back a link by the thread's id
+    Given a reply links to thread "t2"
+    When the user copies the reply
+    Then the copied text links "t2" by its id, not by a baked title
+
+  @shared @backlog
+  Scenario: A thread link with an escaped id still finds the thread
+    Given a reply links to thread "t2" with its id percent-encoded
+    When the user follows the link
+    Then thread "t2" opens
+
   @desktop @backlog
   Scenario: A selection too long to cite says so
     Given the user selected more than 8,000 characters of the agent's reply
@@ -346,6 +428,15 @@ Feature: Moving through a thread and following links
       | reaches                                          |
       | runs from one agent reply into another           |
       | includes a button, field or other control's text |
+
+  # Upstream #17713: a triple click ran on through the tool row and the next reply's hidden
+  # heading, none of which can be selected, so the reply ending before a tool call lost Cite.
+  @backlog @desktop
+  Scenario: The last paragraph of a reply followed by a tool call can be cited
+    Given the agent wrote "Recording your answers in the session note:" and then ran a command
+    When the user triple-clicks that line
+    Then the cite action is offered
+    And citing it quotes exactly "Recording your answers in the session note:"
 
   @backlog @desktop
   Scenario: Buttons and hidden text inside a reply are left out of the quote
@@ -520,3 +611,21 @@ Feature: Moving through a thread and following links
     Given a thread from before runs existed
     When the user sends a message
     Then the view stays at the bottom
+
+  @backlog @shared
+  Scenario Outline: Opening or closing a fold at the bottom keeps the view at the bottom
+    Given the user is at the bottom of a thread
+    When the user <toggles> the last <fold>
+    Then the view is still at the very bottom, including tool output that renders late
+
+    Examples:
+      | toggles | fold          |
+      | opens   | tool group    |
+      | opens   | thinking fold |
+      | closes  | tool row      |
+
+  @backlog @shared
+  Scenario: Opening a fold while scrolled up keeps the row in place
+    Given the user has scrolled up in a thread
+    When the user opens a tool group
+    Then the tool group stays where it was on screen

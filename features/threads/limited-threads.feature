@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17867
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/thread-sidebar.md (Inspect agent work: Limited, Resume at reset, Snooze until reset)
 #   apps/web/src/components/ChatView.tsx (limit recovery)
@@ -54,6 +55,13 @@ Feature: Threads stopped by a usage limit
     Given "Port tests" is scheduled to resume at 14:00
     When the provider rejects the automatic resume
     Then "Port tests" still records 14:00 as its reset time
+
+  @backlog @shared @mobile
+  Scenario: Resuming a limited thread uses the model picked in the composer
+    Given "Port tests" stopped on a usage limit of its model
+    And the user picked another model or account in the composer
+    When the user resumes "Port tests"
+    Then the thread continues on the picked model and account, not the limited one
 
   @mc
   Scenario Outline: A scheduled resume is dropped when the user moves on

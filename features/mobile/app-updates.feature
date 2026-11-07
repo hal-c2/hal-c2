@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20422
+#   https://github.com/pingdotgg/t3code/pull/20092
 #   https://github.com/pingdotgg/t3code/pull/15070
 #   apps/mobile/src/features/updates/app-updates.ts (background install, prompts, flush first)
 #   apps/mobile/src/lib/foreground-handoff.ts (pickers, share sheet and sign-in pages hold back a restart)
@@ -184,3 +186,10 @@ Feature: Keeping the phone app up to date
     Given a Nightly build
     When the user first opens it
     Then a one-time toast and an About entry link to the beta store apps
+
+  # Dropped: upstream's About links to T3 Code's App Store and Google Play apps. HAL-C2's
+  # phone client is built from this repository and pairs by a link, not from a store.
+  @dropped @desktop
+  Scenario: About links to the mobile apps in the stores
+    When the user opens About in the settings
+    Then a Mobile app entry shows store codes and links for iPhone, iPad and Android

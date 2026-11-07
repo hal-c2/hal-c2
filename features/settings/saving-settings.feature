@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19312
 #   apps/desktop-qt/src/native/SettingsController.cpp (the MC's settings document, this device's preferences)
 #   apps/server-ex/lib/hal_c2/settings.ex (versioned put: a stale write is refused)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.readSettings, hal-c2.writeSettings)
@@ -109,3 +110,11 @@ Feature: Saving settings from the desktop
       When the desktop saves the device preference "appearance" as "dark"
       Then the desktop reports this device's preferences could not be saved
       And the device preference "appearance" is not set
+
+    # Upstream #19312: a stored value that no longer decoded blocked every later save of it.
+    @backlog @shared
+    Scenario: A device preference whose stored value cannot be read can be saved again
+      Given this device's stored value for "appearance" can no longer be read
+      Then "appearance" is shown at its default
+      When the user sets "appearance" to "dark"
+      Then this device's preferences hold "appearance" as "dark" in place of the unreadable value

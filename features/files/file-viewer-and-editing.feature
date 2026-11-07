@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19078
+#   https://github.com/pingdotgg/t3code/pull/17361
+#   https://github.com/pingdotgg/t3code/pull/17555
+#   https://github.com/pingdotgg/t3code/pull/16950
+#   https://github.com/pingdotgg/t3code/pull/17352
+#   https://github.com/pingdotgg/t3code/pull/17271
+#   https://github.com/pingdotgg/t3code/pull/15045
 #   https://github.com/pingdotgg/t3code/pull/15628
 #   https://github.com/pingdotgg/t3code/pull/11425
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
@@ -128,6 +135,52 @@ Feature: Viewing and editing files
       Then the file's contents are returned
       And the file comes back under its full path
 
+    @mc @backlog
+    Scenario: A folder on the host outside the project and its parent can be listed
+      Given the host has the folder "/home/sam/study" with "notes.md" in it
+      When a client lists "/home/sam/study" and then "/home/sam" from "shop"
+      Then each listing returns that folder's entries
+      And a listing that climbs out of the folder it was given with ".." is refused
+
+    @shared @backlog
+    Scenario: A link to a folder outside the project opens that folder
+      Given the agent linked "/home/sam/study"
+      When the user opens the link
+      Then the files panel shows a tree rooted at "/home/sam/study"
+      And its files open read-only
+
+    @shared @backlog
+    Scenario: Each folder in the path moves to that folder
+      Given the files panel shows "/home/sam/study/data/raw.csv"
+      When the user chooses "study" in its path
+      Then the files panel shows "/home/sam/study" with "data" expanded and chosen
+      And "data" and "raw.csv" stay in the path, dimmed, and lead back down
+      And "raw.csv" keeps its tab
+
+    @shared @backlog
+    Scenario: The project in the path leads to the file explorer
+      Given the files panel shows "src/lib/util.ts" in the project
+      When the user chooses the project in its path
+      Then the file explorer is shown
+
+    @shared @backlog
+    Scenario Outline: Walking up stops at the top of the path
+      Given the files panel shows a file under "<top>"
+      Then "<top>" is the highest folder the path can move to
+
+      Examples:
+        | top            |
+        | /tmp           |
+        | C:\            |
+        | \\server\share |
+
+    @shared @backlog
+    Scenario: Searching a host folder's tree filters only the folders already loaded
+      Given the files panel shows a tree rooted at "/home/sam"
+      When the user searches the tree for "notes"
+      Then only the folders already opened are searched
+      And the host folder is not indexed
+
     @tui
     Scenario: The terminal client shows an opened file with syntax colouring
       When the user browses files and opens "src/app.ts"
@@ -225,6 +278,58 @@ Feature: Viewing and editing files
       When the user opens "assets/logo.png"
       Then the file is previewed as an image
       And the image comes from the machine the thread is on
+
+    @backlog @desktop @mobile
+    Scenario Outline: Media files are previewed in a new thread before its first message
+      Given a new thread in "shop" that has no message yet
+      When the user opens "<path>" from the file tree
+      Then the file is previewed as <kind>
+
+      Examples:
+        | path              | kind       |
+        | assets/logo.png   | an image   |
+        | media/intro.mp4   | a video    |
+        | docs/manual.pdf   | a document |
+        | public/index.html | a web page |
+
+    @backlog @desktop @mobile
+    Scenario: A download link in a previewed web page downloads its file
+      Given "public/report.html" has a link that downloads "report.csv"
+      When the user previews "public/report.html" and follows that link
+      Then "report.csv" is downloaded
+      And the page still cannot open dialogs or reach the app
+
+    @backlog @desktop
+    Scenario Outline: An image in a previewed web page can be copied
+      Given "public/index.html" shows <image>
+      When the user previews "public/index.html" and copies that image
+      Then the image is on the clipboard
+
+      Examples:
+        | image                                   |
+        | a PNG image                             |
+        | an animated GIF                         |
+        | a WebP image given inline as data       |
+
+    @backlog @desktop @mobile
+    Scenario: A table of contents link in a Markdown preview moves within the file
+      Given "docs/plan.md" has a heading "1. Operating model" and a contents link to "#1-operating-model"
+      When the user previews "docs/plan.md" and follows that link
+      Then the heading "1. Operating model" scrolls into view
+      And the thread and the file stay open
+      And a contents link to a heading that does not exist does nothing
+
+    @backlog @desktop @mobile
+    Scenario Outline: A path in inline code in a Markdown preview is found from where it is written
+      Given the user previews "docs/ai/plans.md"
+      When the user opens the inline code "<code>" in it
+      Then "<opened>" opens
+
+      Examples:
+        | code              | opened            |
+        | docs/ai/design.md | docs/ai/design.md |
+        | design.md:12      | docs/ai/design.md |
+        | ../README.md      | docs/README.md    |
 
     @desktop @mobile
     Scenario Outline: A media preview that fails to load can be retried
@@ -534,6 +639,13 @@ Feature: Viewing and editing files
       Then "VS Code" opens the thread's workspace folder on the environment
       And "VS Code" stays the preferred editor for next time
 
+    @backlog @shared
+    Scenario: Picking an editor in the toolbar sets the preference without opening the folder
+      Given the user has picked "VS Code" as their preferred editor
+      When the user picks "Zed" in the toolbar's editor picker
+      Then "Zed" is the preferred editor
+      And no editor opens the workspace
+
     @desktop
     Scenario: A remote environment's workspace opens in the local editor over SSH
       Given the thread's environment is on another machine reachable over SSH as "devbox"
@@ -550,6 +662,14 @@ Feature: Viewing and editing files
       When the user looks at the editors offered for the thread's workspace
       Then "VS Code" and "Zed" are offered
       And "Sublime Text" is not among them
+
+    @backlog @desktop
+    Scenario: A remote environment's workspace opens in a JetBrains IDE over SSH
+      Given the thread's environment is on another machine reachable over SSH as "devbox"
+      And this computer has "IntelliJ IDEA" and the JetBrains Toolbox App installed
+      When the user opens the thread's workspace in "IntelliJ IDEA"
+      Then the Toolbox App opens "IntelliJ IDEA" on the workspace on "devbox" over SSH
+      And no other kind of JetBrains link is ever opened for the user
 
     @desktop
     Scenario: A remote environment with no SSH route cannot open an editor

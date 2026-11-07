@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19630
+#   https://github.com/pingdotgg/t3code/pull/19617
+#   https://github.com/pingdotgg/t3code/pull/19355
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (status words, recede, relative age)
 #   apps/desktop-qt/tests/tst_SidebarThreadRow.qml
 #   apps/desktop-qt/tests/tst_SidebarThreadRowHover.qml
@@ -71,11 +74,34 @@ Feature: Unread and status in the thread list
     When the user looks at the project "shop"
     Then the project shows that a thread needs an approval
 
+  # A delegated subagent's thread has no row of its own, so what it waits on
+  # shows on the nearest thread that does. Provider-native subagents already
+  # ask on their parent.
+  @backlog @shared
+  Scenario Outline: A thread whose delegated subagent waits on the user says so
+    Given "Build search" delegated a task whose subagent, or its own subagent, <waits>
+    When the user looks at the thread list
+    Then the row for "Build search" reads "<word>" instead of "Working"
+    And the user is alerted "<title>" for "Build search"
+    And the composer of "Build search" offers to open the subagent's request
+    And "Build search" cannot be snoozed, and wakes if it was snoozed
+
+    Examples:
+      | waits                                  | word     | title           |
+      | is waiting for an approval             | Approval | Approval needed |
+      | is waiting for an answer to a question | Input    | Input needed    |
+
   @desktop @mobile @backlog-mobile
   Scenario: A working thread shows how long it has been working
     Given the agent has been working in "Build search" for 3 minutes
     When the user looks at the thread
     Then the thread shows it has been working for 3 minutes
+
+  @backlog @desktop
+  Scenario: A waiting thread shows how long since its turn ended
+    Given the agent in "Build search" ended its turn 3 minutes ago and a background monitor will wake it
+    When the user looks at the thread list
+    Then the row for "Build search" reads "Waiting" and shows 3 minutes
 
   @desktop
   Scenario Outline: An idle thread shows its age
@@ -248,6 +274,29 @@ Feature: Unread and status in the thread list
     Then the status strip reads "Running: <command>" with a still dot
     And only subagents and monitors read "Waiting on" with a pulse
     And Stop is still offered
+
+  @backlog @mc
+  Scenario Outline: A thread whose session was released stops reading Waiting
+    Given a <provider> thread ended its turn with background work running in its session
+    When the thread is <released>
+    Then the background work the session took with it is no longer listed
+    And the thread does not read Waiting or offer Stop
+    But work a replacement session reported in the meantime stays listed
+
+    Examples:
+      | provider | released                         |
+      | Claude   | settled                          |
+      | Claude   | archived                         |
+      | Claude   | released after its session idled |
+      | Muse     | settled                          |
+
+  # OpenCode's background subagents run on a server its sessions share and can
+  # outlive the session, so its list is kept.
+  @backlog @mc
+  Scenario: An OpenCode thread keeps its background work when its session is released
+    Given an OpenCode thread ended its turn with a background subagent running
+    When the thread is settled
+    Then the subagent is still listed
 
   @backlog @shared
   Scenario: Working timers survive background wakes

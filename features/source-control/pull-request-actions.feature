@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19103
+#   https://github.com/pingdotgg/t3code/pull/10984
+#   https://github.com/pingdotgg/t3code/pull/19257
+#   https://github.com/pingdotgg/t3code/pull/17710
 #   https://github.com/pingdotgg/t3code/pull/16192
 #   docs/user/source-control.md (merge, auto-merge, revert, fork workflows, reviewers, labels)
 #   packages/contracts/src/pullRequest.ts (PullRequestAction, PullRequestMergeMethod, PullRequestUpdateMethod, PullRequestCapabilities, PullRequestViewerPermissions)
@@ -122,6 +126,43 @@ Feature: Acting on a pull request
     Given GitHub does not report whether the user may close pull request 42
     When the user looks at its actions
     Then closing is offered
+
+  # GitHub reports no repository role to a GitHub App, so the MC offers the
+  # write actions and lets GitHub refuse the ones the app was not given.
+  @backlog @mc
+  Scenario: A GitHub App installation token is offered the write actions
+    Given the MC's GitHub credential is a GitHub App installation token
+    When the user looks at the actions of pull request 42
+    Then merging, auto-merge, reverting, approving workflows, labels and reviewer requests are offered
+    And rebasing a stack whose head repository the app owns goes ahead
+
+  @backlog @mc @desktop @mobile
+  Scenario: A merged or closed pull request's branch can be deleted from its menu
+    Given pull request 42 on GitHub has merged from the branch "feature/tax" of "acme/shop"
+    When the user chooses Delete branch from its menu
+    Then the user is asked to confirm deleting "feature/tax" of "acme/shop"
+    When the user confirms
+    Then only the remote branch "feature/tax" is deleted
+    And Delete branch is no longer offered for pull request 42
+
+  @backlog @mc
+  Scenario Outline: A branch that is not safe to delete is kept
+    Given pull request 42 on GitHub has merged and <situation>
+    When the user deletes its branch
+    Then the branch is kept and the user is told why
+
+    Examples:
+      | situation                                                  |
+      | its branch is the repository's default branch              |
+      | its branch is the base of another pull request             |
+      | its branch has moved past the pull request's last commit   |
+      | the account may not write to the branch's repository       |
+
+  @backlog @desktop @mobile
+  Scenario: Deleting a branch is offered only for GitHub pull requests that are done
+    When the user opens the menu of a pull request
+    Then Delete branch is not offered for an open pull request
+    And it is not offered for a pull request on any other host
 
   @mc
   Scenario: Asking people for a review
@@ -345,26 +386,37 @@ Feature: Acting on a pull request
     When the user merges pull request 42 from its review with the default merge method
     Then the review shows pull request 42 as merged
 
+  # Upstream #17710 replaced the blocking question with a second press of the same control.
   @backlog @desktop
-  Scenario Outline: Far-reaching actions ask before they run
+  Scenario Outline: Far-reaching actions ask to be pressed again before they run
     When the user chooses to <action> pull request 42 from its review
-    Then the user is asked "<question>" and can confirm with "<confirm>"
-    And nothing is sent until the user confirms
+    Then the same control asks the user to press it again to confirm
+    And nothing is sent until the user does
+    And a menu entry stays open after the first press
 
     Examples:
-      | action                 | question                    | confirm              |
-      | merge                  | Merge pull request?         | the chosen method's name |
-      | arrange auto-merge for | Enable auto-merge?          | Enable auto-merge    |
-      | close                  | Close pull request?         | Close                |
-      | revert                 | Revert these changes?       | Create revert PR     |
-      | approve the workflows of | Approve workflows to run? | Approve and run      |
+      | action                   |
+      | merge                    |
+      | arrange auto-merge for   |
+      | close                    |
+      | revert                   |
+      | approve the workflows of |
 
   @backlog @desktop
-  Scenario: Cancelling the confirmation changes nothing
-    Given the user chose to close pull request 42 from its review
-    When the user cancels the question
-    Then pull request 42 is still open
-    And nothing was sent to the host
+  Scenario Outline: An action left unconfirmed changes nothing
+    Given the user pressed close on pull request 42 once
+    When <what happens>
+    Then the control no longer asks to confirm
+    And pull request 42 is still open and nothing was sent to the host
+
+    Examples:
+      | what happens                              |
+      | three seconds pass                        |
+      | the user presses Escape                   |
+      | the user clicks elsewhere                 |
+      | the window loses focus                    |
+      | the user starts another action            |
+      | the user opens another pull request       |
 
   @backlog @desktop
   Scenario: A confirmation says what it will do
@@ -381,23 +433,30 @@ Feature: Acting on a pull request
     When the user chooses to approve its workflows from its review
     Then the user is told "This allows 2 workflows from #42 to run. Review the code and workflow changes first."
 
+  # Upstream #17710 dropped the success toasts the updated review already shows; revert keeps
+  # its toast because it opens another pull request.
   @backlog @desktop
-  Scenario Outline: An action says what happened
+  Scenario Outline: A finished action shows in the review without a toast
     When the user <action> pull request 42 from its review
-    Then the user sees a "success" toast "<toast>"
+    Then the review shows the change
+    And no toast appears
 
     Examples:
-      | action                       | toast                                                                          |
-      | merges                       | Pull request merged                                                            |
-      | marks it ready for review    | Marked ready for review                                                        |
-      | returns to draft             | Converted to draft                                                             |
-      | closes                       | Pull request closed                                                            |
-      | reopens                      | Pull request reopened                                                          |
-      | updates the branch of        | Branch updated with the base branch                                            |
-      | arranges auto-merge for      | Auto-merge turned on — merges as soon as this is ready, sooner if it already is |
-      | cancels auto-merge of        | Auto-merge turned off                                                          |
-      | reverts                      | Revert pull request opened                                                     |
-      | approves the workflows of    | Workflows approved                                                             |
+      | action                       |
+      | merges                       |
+      | marks it ready for review    |
+      | returns to draft             |
+      | closes                       |
+      | reopens                      |
+      | updates the branch of        |
+      | arranges auto-merge for      |
+      | cancels auto-merge of        |
+      | approves the workflows of    |
+
+  @backlog @desktop
+  Scenario: A revert says the new pull request was opened
+    When the user reverts pull request 42 from its review
+    Then the user sees a "success" toast "Revert pull request opened"
 
   @backlog @desktop
   Scenario Outline: An action the host refused says what did not happen and why
@@ -902,6 +961,19 @@ Feature: Acting on a pull request
     Given Bitbucket no longer answers the repository permission lookup
     When the user looks at the actions of a Bitbucket pull request
     Then merging is offered
+
+  @backlog @mc
+  Scenario Outline: A Bitbucket permission lookup that is refused reads as granted
+    Given Bitbucket answers the workspace's repository permission lookup with <status>
+    When the user looks at the actions of a Bitbucket pull request
+    Then merging is offered
+    And a merge Bitbucket refuses fails with Bitbucket's reason
+
+    Examples:
+      | status |
+      | 403    |
+      | 404    |
+      | 410    |
 
   @backlog @mc
   Scenario: A Bitbucket permission lookup that fails for any other reason is reported
