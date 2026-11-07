@@ -85,6 +85,22 @@ Feature: Approvals, questions and plans
     Then the provider receives the answer "Postgres"
     And the user input item is completed with the answer
 
+  # Codex's own shape for chosen options, `{"answers": [...]}`, is the same answer as
+  # the list: the provider, the transcript and the recorded answer have the list.
+  @mc
+  Scenario: Options chosen in Codex's own shape are answered as chosen
+    Given the provider asked the user "Which database?"
+    When the user answers with the options "SQLite" in Codex's own shape
+    Then the provider receives the answer "SQLite"
+    And the user input item is completed with the options "SQLite"
+
+  # A runtime given answers it cannot send as text leaves them out instead of failing.
+  @mc
+  Scenario: Codex is given only the answers that are text
+    Given the provider asked the user "Which database?"
+    When the Codex runtime is given the options "SQLite" in Codex's own shape and a map
+    Then the provider receives the answer "SQLite"
+
   # Upstream #14884: unusable answers are refused while the question stays open
   @mc
   Scenario: An answer the provider cannot use is refused and the question stays open
@@ -320,3 +336,19 @@ Feature: Approvals, questions and plans
     When the user sends another message to "t1" referring to plan "p1"
     Then the command fails with "Proposed plan p1 is not active."
     And no second run starts for the plan
+
+  # A client that reconnects resends what it may not have delivered, with the same
+  # message id and a new command id.
+  @mc
+  Scenario: Resending a message that implemented a plan is not refused
+    Given plan "p1" of "t1" was implemented and is completed
+    When the client resends that message under a new command id
+    Then the resend is accepted
+    And no second run starts for the plan
+
+  @mc
+  Scenario: Two messages implementing the same plan at once implement it once
+    Given thread "t2" has an active proposed plan "p2"
+    When two devices send a message to "t1" referring to plan "p2" of "t2" at once
+    Then one message is sent and the other fails with "Proposed plan p2 is not active."
+    And plan "p2" is completed

@@ -126,6 +126,36 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  step "the user answers with the options {string} in Codex's own shape",
+       %{args: [answer]} = context do
+    context = World.answer_questions(context, "t1", %{"answers" => [answer]})
+    assert {:ok, _} = context.reply, "answering failed: #{inspect(context.reply)}"
+    context
+  end
+
+  step "the user input item is completed with the options {string}",
+       %{args: [answer]} = context do
+    item = request_item(context)
+    assert item["status"] == "completed"
+    assert item["questionAnswer"]["answers"] == %{"q1" => [answer]}
+    context
+  end
+
+  step "the Codex runtime is given the options {string} in Codex's own shape and a map",
+       %{args: [answer]} = context do
+    request = request(context, "t1")
+    response = %{"answers" => %{"q1" => %{"answers" => [answer, %{"label" => "SQLite"}]}}}
+
+    assert :ok =
+             HalC2.Codex.ThreadRuntime.respond(
+               World.thread_id(context, "t1"),
+               request["id"],
+               response
+             )
+
+    context
+  end
+
   step "the user answers {string} attaching {string}", %{args: [answer, name]} = context do
     file = upload(name, true)
     context = World.answer_questions(context, "t1", answer, attaching(file))
@@ -658,6 +688,38 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     context
   end
 
+  step "the client resends that message under a new command id", context do
+    World.command(context, Map.delete(context.sent, "commandId"))
+  end
+
+  step "the resend is accepted", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "two devices send a message to {string} referring to plan {string} of {string} at once",
+       %{args: [thread, plan, plan_thread]} = context do
+    replies =
+      for text <- ["Implement it here", "Implement it there"] do
+        Task.async(fn -> implement(context, thread, text, plan_thread, plan).reply end)
+      end
+      |> Task.await_many()
+
+    Map.put(context, :replies, replies)
+  end
+
+  step "one message is sent and the other fails with {string}",
+       %{args: [message]} = context do
+    assert [{:ok, _}, {:error, ^message, _}] =
+             Enum.sort_by(context.replies, &(elem(&1, 0) == :error))
+
+    sent =
+      for %{"text" => "Implement it " <> _} <- World.entities(context, "t1", "message"), do: 1
+
+    assert length(sent) == 1
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   defp codex(context) do
@@ -936,15 +998,17 @@ defmodule HalC2.Steps.Orchestration.RuntimeRequestsAndPlans do
     |> Map.update(:plans, %{plan_id => thread}, &Map.put(&1, plan_id, thread))
   end
 
+  # Keeps the command as `context.sent`, for a resend.
   defp implement(context, thread, text, plan_thread, plan) do
-    context =
-      World.dispatch_message(context, thread, text, %{
-        "sourcePlanRef" => %{
-          "threadId" => World.thread_id(context, plan_thread),
-          "planId" => plan
-        }
-      })
+    command = %{
+      "type" => "message.dispatch",
+      "threadId" => World.thread_id(context, thread),
+      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "text" => text,
+      "attachments" => [],
+      "sourcePlanRef" => %{"threadId" => World.thread_id(context, plan_thread), "planId" => plan}
+    }
 
-    context
+    context |> World.command(command) |> Map.put(:sent, command)
   end
 end

@@ -31,6 +31,12 @@ defmodule HalC2.OrchestrationPropTest do
   as the user's message, steering the running turn or starting the next. A closed
   question refuses an answer and a dismissal.
 
+  A thread can hold a proposed plan, which a message to it or to the other thread
+  implements (the composer's "Implement it" and "Implement in a new thread"): the plan
+  is completed once, and a second message for it is refused, also one sent while Codex
+  still holds the first one's steer. A message that was refused gives its plan back,
+  and a resend of one that implemented a plan is a resend like any other.
+
   Each message names one of two Codex instances (`codex`, and `codex-work` from the
   settings); a message for the instance the running turn is not on never joins it, and
   the thread is on the instance of the run that started last. The agent can switch the
@@ -222,6 +228,9 @@ defmodule HalC2.OrchestrationPropTest do
           not String.starts_with?(id, "async-answer:"),
           do: {t, id}
 
+    # A resend repeats the plan the message implemented.
+    plan_of = fn t, m -> Map.get(threads[t].messages[m], :plan) end
+
     on_messages =
       if sent == [],
         do: [],
@@ -230,7 +239,7 @@ defmodule HalC2.OrchestrationPropTest do
           {2,
            let(
              [{t, m} <- oneof(sent), mode <- oneof([:queue, :auto, :restart])],
-             do: {:call, __MODULE__, :resend, [t, m, mode]}
+             do: {:call, __MODULE__, :resend, [t, m, mode, plan_of.(t, m)]}
            )},
           {2,
            let(
@@ -249,6 +258,47 @@ defmodule HalC2.OrchestrationPropTest do
            )},
           {2, let({t, m} <- oneof(sent), do: {:call, __MODULE__, :interrupt_run, [t, m]})}
         ]
+
+    live = for {t, %{status: :live}} <- threads, do: t
+
+    plans =
+      for {t, %{status: s} = thread} <- threads,
+          s != :deleted,
+          p <- Map.keys(thread.plans),
+          do: {t, p}
+
+    implemented = for {t, m} <- sent, plan_of.(t, m), do: {t, m}
+
+    on_plans =
+      if(live == [],
+        do: [],
+        else: [{4, {:call, __MODULE__, :propose, [oneof(live), "plan-#{next}"]}}]
+      ) ++
+        if(plans == [],
+          do: [],
+          else: [
+            {12,
+             let(
+               [{pt, p} <- oneof(plans), mode <- oneof([:queue, :auto]), i <- oneof(@instances)],
+               do: {:call, __MODULE__, :implement, [tid, msg, mode, i, pt, p]}
+             )},
+            {8,
+             let(
+               [{pt, p} <- oneof(plans), t <- oneof(live ++ [tid])],
+               do: {:call, __MODULE__, :implement_twice, [t, msg, pt, p]}
+             )}
+          ]
+        ) ++
+        if(implemented == [],
+          do: [],
+          else: [
+            {8,
+             let(
+               [{t, m} <- oneof(implemented), mode <- oneof([:queue, :auto])],
+               do: {:call, __MODULE__, :resend, [t, m, mode, plan_of.(t, m)]}
+             )}
+          ]
+        )
 
     # A promote is worth aiming at a message that is still queued.
     queued = for {t, thread} <- threads, m <- thread.queue, do: {t, m}
@@ -332,7 +382,8 @@ defmodule HalC2.OrchestrationPropTest do
     frequency(
       always ++
         after_held_up ++
-        on_messages ++ on_queued ++ on_running ++ on_requests ++ on_limits ++ on_notices
+        on_messages ++
+        on_queued ++ on_running ++ on_requests ++ on_limits ++ on_notices ++ on_plans
     )
   end
 
@@ -389,6 +440,16 @@ defmodule HalC2.OrchestrationPropTest do
   def precondition(%{threads: threads}, {:call, _, :dismiss, [tid, rid]}),
     do: match?(%{status: :live, requests: %{^rid => _}}, threads[tid])
 
+  def precondition(%{threads: threads}, {:call, _, :propose, [tid, _]}),
+    do: match?(%{status: :live}, threads[tid])
+
+  # A plan is implemented from a thread of its project; one that was deleted is gone.
+  def precondition(%{threads: threads}, {:call, _, :implement, [tid, _, _, _, pt, plan]}),
+    do: threads[tid] != nil and planned?(threads, pt, plan)
+
+  def precondition(%{threads: threads}, {:call, _, :implement_twice, [tid, _, pt, plan]}),
+    do: match?(%{status: :live}, threads[tid]) and planned?(threads, pt, plan)
+
   def precondition(%{threads: threads}, {:call, _, :promote, [tid, msg, :archived]}),
     do:
       match?(%{status: :live}, threads[tid]) and msg in threads[tid].queue and
@@ -403,6 +464,9 @@ defmodule HalC2.OrchestrationPropTest do
     do: match?(%{status: :live}, threads[tid])
 
   def precondition(_state, _call), do: true
+
+  defp planned?(threads, pt, plan),
+    do: match?(%{status: status, plans: %{^plan => _}} when status != :deleted, threads[pt])
 
   # A restart finds every question the provider waited on expired; whatever else
   # ended a turn cancelled the ones it waited on. One answered by message outlives both.
@@ -475,6 +539,30 @@ defmodule HalC2.OrchestrationPropTest do
   # whatever state the first one is now (running, queued, steered, cancelled, edited).
   defp step(state, _result, {:call, _, :resend, _}), do: state
 
+  defp step(state, _result, {:call, _, :propose, [tid, plan]}),
+    do: update(%{state | next: state.next + 1}, tid, &put_in(&1.plans[plan], "active"))
+
+  # A message that implements a plan is sent as any other and completes it.
+  defp step(state, result, {:call, m, :implement, [tid, msg, mode, instance, pt, plan]}) do
+    case implement_refusal(state, tid, pt, plan) do
+      nil ->
+        state
+        |> step(result, {:call, m, :send, [tid, msg, mode, instance]})
+        |> update(pt, &put_in(&1.plans[plan], "completed"))
+        |> update(
+          tid,
+          &update_in(&1, [:messages, msg], fn sent -> Map.put(sent, :plan, {pt, plan}) end)
+        )
+
+      _ ->
+        %{state | next: state.next + 1}
+    end
+  end
+
+  # The second message is refused whatever the first's outcome.
+  defp step(state, result, {:call, m, :implement_twice, [tid, msg, pt, plan]}),
+    do: step(state, result, {:call, m, :implement, [tid, msg, :auto, "codex", pt, plan]})
+
   defp step(state, _result, {:call, _, :create, [tid]}) do
     if Map.has_key?(state.threads, tid),
       do: state,
@@ -487,7 +575,8 @@ defmodule HalC2.OrchestrationPropTest do
           queue: [],
           messages: %{},
           recovery: nil,
-          requests: %{}
+          requests: %{},
+          plans: %{}
         })
   end
 
@@ -869,6 +958,12 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(_state, :resend, _args), do: :ok
 
+  defp expected_reply(state, :implement, [tid, _, _, _, pt, plan]),
+    do: implement_refusal(state, tid, pt, plan) || :ok
+
+  defp expected_reply(state, :implement_twice, [tid, _, pt, plan]),
+    do: implement_refusal(state, tid, pt, plan) || :ok
+
   # A stop for the latest run, which completed as the stop arrived, counts as
   # done: the provider had nothing active to stop (commands.feature).
   defp expected_reply(state, :interrupt_run, [tid, msg]) do
@@ -937,6 +1032,13 @@ defmodule HalC2.OrchestrationPropTest do
   defp reply_matches?(expected, reply), do: expected == reply
 
   defp update(state, tid, fun), do: update_in(state.threads[tid], fun)
+
+  # The plan is checked before the message is sent; a message refused gives it back.
+  defp implement_refusal(state, tid, pt, plan) do
+    if state.threads[pt].plans[plan] == "active",
+      do: refusal(state, tid, :send),
+      else: {:error, "Proposed plan #{plan} is not active."}
+  end
 
   defp expire_requests(state) do
     threads =
@@ -1240,7 +1342,8 @@ defmodule HalC2.OrchestrationPropTest do
           {id, {m.text, m.run, shown}}
         end),
       steered: for({id, m} <- thread.messages, m.run != id, do: m.text) |> Enum.sort(),
-      requests: Map.new(thread.requests, fn {rid, r} -> {rid, r.status} end)
+      requests: Map.new(thread.requests, fn {rid, r} -> {rid, r.status} end),
+      plans: thread.plans
     }
   end
 
@@ -1271,10 +1374,78 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
-  def send(tid, msg, mode, instance) do
+  def send(tid, msg, mode, instance),
+    do: deliver(tid, message(tid, msg, mode, instance), mode, instance)
+
+  # A message implementing a proposed plan, as the composer sends one.
+  def implement(tid, msg, mode, instance, pt, plan),
+    do: deliver(tid, planned(message(tid, msg, mode, instance), {pt, plan}), mode, instance)
+
+  # A second message for the plan, sent while Codex holds the first one's steer
+  # (`hold-steer`), when the first has claimed the plan but is not in the thread yet;
+  # one sent after the first was decided when there is no turn to steer.
+  def implement_twice(tid, msg, pt, plan) do
+    steers = active_runs(tid, "codex")
+    second = planned(message(tid, msg <> "-again", :queue, "codex"), {pt, plan})
+    File.touch!(Process.get(:hold_steer))
+
+    task =
+      Task.async(fn ->
+        Orchestration.dispatch(planned(message(tid, msg, :auto, "codex"), {pt, plan}))
+      end)
+
+    {first, again} =
+      case asked(tid, msg, task) do
+        {:done, first} ->
+          File.rm!(Process.get(:hold_steer))
+          {first, Orchestration.dispatch(second)}
+
+        _ ->
+          again = Orchestration.dispatch(second)
+          File.rm!(Process.get(:hold_steer))
+          {Task.await(task, @wait_ms), again}
+      end
+
+    result =
+      if again == {:error, "Proposed plan #{plan} is not active."},
+        do: first,
+        else: {:unexpected, {first, again}}
+
+    reply(result, if(match?({:ok, _}, result), do: steers, else: []))
+  end
+
+  def propose(tid, plan) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    entity = %{
+      "id" => plan,
+      "threadId" => tid,
+      "runId" => nil,
+      "nodeId" => nil,
+      "kind" => "proposed_plan",
+      "status" => "active",
+      "markdown" => "# #{plan}",
+      "createdAt" => now,
+      "updatedAt" => now
+    }
+
+    :ok =
+      HalC2.Streams.transact(tid, :thread, fn state ->
+        {[Orchestration.upsert(state, "plan", plan, fn _ -> entity end)], :ok}
+      end)
+
+    reply({:ok, %{}}, [])
+  end
+
+  defp planned(command, nil), do: command
+
+  defp planned(command, {pt, plan}),
+    do: Map.put(command, "sourcePlanRef", %{"threadId" => pt, "planId" => plan})
+
+  defp deliver(tid, command, mode, instance) do
     ending = active_runs(tid)
     steers = active_runs(tid, instance)
-    result = Orchestration.dispatch(message(tid, msg, mode, instance))
+    result = Orchestration.dispatch(command)
     # Only a run the message steered or restarted ends.
     reply(
       result,
@@ -1335,8 +1506,8 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # The same message again, as first sent; a message the thread has ends no run.
-  def resend(tid, msg, mode),
-    do: reply(Orchestration.dispatch(message(tid, msg, mode, "codex")), [])
+  def resend(tid, msg, mode, plan),
+    do: reply(Orchestration.dispatch(planned(message(tid, msg, mode, "codex"), plan)), [])
 
   defp message(tid, msg, mode, instance) do
     extra =
@@ -2102,6 +2273,13 @@ defmodule HalC2.OrchestrationPropTest do
               [_, rid] <- [Regex.run(~r/^runtime-request:codex:(?:async:)?(ask-\d+)$/, id)],
               into: %{},
               do: {rid, request["status"]}
+            ),
+          plans:
+            for(
+              {"plan-" <> _ = id, %{"kind" => "proposed_plan"} = plan} <-
+                StreamState.get(state, "plan"),
+              into: %{},
+              do: {id, plan["status"]}
             )
         }
     end

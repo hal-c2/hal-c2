@@ -205,11 +205,18 @@ defmodule HalC2.Orchestration do
 
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
-    # Uploads join the thread before the message names them.
-    with :ok <- implementable(thread_id, command["sourcePlanRef"]),
-         {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []),
-         {:ok, _} = sent <- dispatch_message(thread_id, claimed(command, attachments)) do
-      implemented_plan(thread_id, command["sourcePlanRef"])
+    # A resend of a message the thread already has was delivered, plan and all.
+    ref = command["sourcePlanRef"]
+    plan = unless ref == nil or delivered?(thread_id, command["messageId"]), do: ref
+
+    with :ok <- claim_plan(thread_id, plan) do
+      # Uploads join the thread before the message names them.
+      sent =
+        with {:ok, attachments} <-
+               HalC2.Attachments.claim(thread_id, command["attachments"] || []),
+             do: dispatch_message(thread_id, claimed(command, attachments))
+
+      with {:error, _} <- sent, do: reopen_plan(plan)
       sent
     end
   end
@@ -685,6 +692,8 @@ defmodule HalC2.Orchestration do
     request = HalC2.Streams.get(thread_id, "runtime-request", command["requestId"])
 
     with :ok <- answerable(thread_id, request, command) do
+      command = plain_answers(command)
+
       if request && HalC2.Orchestration.TurnWriter.message_request?(request) do
         answer_with_message(thread_id, request, command)
       else
@@ -961,6 +970,20 @@ defmodule HalC2.Orchestration do
 
   defp answers_shape?(_answers), do: false
 
+  # Options chosen in Codex's own shape are the same answer as their list, which is
+  # what every runtime, the transcript and the recorded answer are given.
+  defp plain_answers(%{"answers" => %{} = answers} = command) do
+    plain =
+      Map.new(answers, fn
+        {id, %{"answers" => list}} -> {id, list}
+        answer -> answer
+      end)
+
+    %{command | "answers" => plain}
+  end
+
+  defp plain_answers(command), do: command
+
   defp questions(thread_id, request) do
     (HalC2.Streams.get(thread_id, "turn-item", question_item(request)) || %{})["questions"] ||
       []
@@ -1034,7 +1057,6 @@ defmodule HalC2.Orchestration do
   defp reply(question, answer) do
     text =
       case answer do
-        %{"answers" => list} -> Enum.join(list, ", ")
         list when is_list(list) -> Enum.join(list, ", ")
         answer when is_binary(answer) -> answer
         _ -> ""
@@ -4634,24 +4656,54 @@ defmodule HalC2.Orchestration do
     {ordinal, renumbered}
   end
 
-  # A message that implements a proposed plan completes it, whether the plan is this
-  # thread's or another thread's of the same project ("Implement in a new thread"),
-  # and whether the message started, queued or steered a run.
-  defp implemented_plan(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
+  defp delivered?(thread_id, message_id) when is_binary(message_id),
+    do: StreamState.fetch(HalC2.Streams.state(thread_id), "message", message_id) != nil
+
+  defp delivered?(_thread_id, _message_id), do: false
+
+  # A message can implement only a proposed plan that is still active, in a thread of
+  # its own project: this thread's own or another's ("Implement in a new thread").
+  # Checking the plan and completing it is one step on the plan's thread, taken before
+  # the message is sent, so two devices pressing "implement" start one run, not two.
+  # The message starting, queueing or steering a run all count. A resend that arrives
+  # between the claim and the send is refused as well: the plan is no longer active,
+  # and the message is not in the thread yet.
+  defp claim_plan(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
        when is_binary(plan_thread) do
-    project = fn state, id -> (StreamState.get(state, "thread")[id] || %{})["projectId"] end
+    project = fn state, id -> (StreamState.fetch(state, "thread", id) || %{})["projectId"] end
     project_id = project.(HalC2.Streams.state(thread_id), thread_id)
 
     HalC2.Streams.transact(plan_thread, :thread, fn state ->
-      case StreamState.get(state, "plan")[plan_id] do
-        %{"kind" => "proposed_plan"} ->
-          if project.(state, plan_thread) == project_id,
-            do:
-              {Enum.reject(
-                 [upsert(state, "plan", plan_id, &Map.put(&1, "status", "completed"))],
-                 &is_nil/1
-               ), :ok},
-            else: {[], :ok}
+      case StreamState.fetch(state, "plan", plan_id) do
+        %{"kind" => "proposed_plan"} = plan ->
+          cond do
+            plan_thread != thread_id and project.(state, plan_thread) != project_id ->
+              {[],
+               {:error,
+                "Proposed plan '#{plan_id}' belongs to thread '#{plan_thread}' in a different project."}}
+
+            plan["status"] != "active" ->
+              {[], {:error, "Proposed plan #{plan_id} is not active."}}
+
+            true ->
+              {[upsert(state, "plan", plan_id, &Map.put(&1, "status", "completed"))], :ok}
+          end
+
+        _ ->
+          {[], {:error, "Proposed plan '#{plan_id}' does not exist on thread '#{plan_thread}'."}}
+      end
+    end)
+  end
+
+  defp claim_plan(_thread_id, _ref), do: :ok
+
+  # A message that was not sent gives its plan back.
+  defp reopen_plan(%{"threadId" => plan_thread, "planId" => plan_id})
+       when is_binary(plan_thread) do
+    HalC2.Streams.transact(plan_thread, :thread, fn state ->
+      case StreamState.fetch(state, "plan", plan_id) do
+        %{"status" => "completed"} ->
+          {[upsert(state, "plan", plan_id, &Map.put(&1, "status", "active"))], :ok}
 
         _ ->
           {[], :ok}
@@ -4659,36 +4711,7 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  defp implemented_plan(_thread_id, _ref), do: :ok
-
-  # A message can implement only a proposed plan that is still active, in a thread of
-  # its own project; two devices pressing "implement" start one run, not two.
-  defp implementable(thread_id, %{"threadId" => plan_thread, "planId" => plan_id})
-       when is_binary(plan_thread) do
-    plans = HalC2.Streams.state(plan_thread)
-    project = fn state, id -> (StreamState.get(state, "thread")[id] || %{})["projectId"] end
-
-    case StreamState.get(plans, "plan")[plan_id] do
-      %{"kind" => "proposed_plan"} = plan ->
-        cond do
-          plan_thread != thread_id and
-              project.(plans, plan_thread) != project.(HalC2.Streams.state(thread_id), thread_id) ->
-            {:error,
-             "Proposed plan '#{plan_id}' belongs to thread '#{plan_thread}' in a different project."}
-
-          plan["status"] != "active" ->
-            {:error, "Proposed plan #{plan_id} is not active."}
-
-          true ->
-            :ok
-        end
-
-      _ ->
-        {:error, "Proposed plan '#{plan_id}' does not exist on thread '#{plan_thread}'."}
-    end
-  end
-
-  defp implementable(_thread_id, _ref), do: :ok
+  defp reopen_plan(_ref), do: :ok
 
   @doc "The next free turn-item ordinal in a thread."
   def next_ordinal(state) do
