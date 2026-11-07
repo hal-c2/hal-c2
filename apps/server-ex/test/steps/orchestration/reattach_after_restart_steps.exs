@@ -113,9 +113,25 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     run =
       if text == @wait, do: World.await_running(context, thread), else: latest(context, thread)
 
-    context = context |> Map.put(:thread, thread) |> Map.put(:running, run["id"])
+    context =
+      context
+      |> Map.put(:thread, thread)
+      |> Map.put(:running, run["id"])
+      |> Map.put(:cut_off, run["id"])
+
     await_checkpoint(context, thread, text == @wait)
+    if text == @wait and provider == "claudeAgent", do: await_session(context, thread)
     Map.put(context, :program, program(context, thread))
+  end
+
+  # Claude names its session as the turn begins, which is what a cut-off turn resumes on.
+  defp await_session(context, thread) do
+    World.await_state(context, thread, fn state ->
+      Enum.any?(
+        Map.values(state.entities["provider-thread"] || %{}),
+        &is_map(&1["nativeThreadRef"])
+      )
+    end)
   end
 
   defp latest(context, thread) do
@@ -186,7 +202,9 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
 
   # Every runtime goes now, as all of them go with a real VM: not all sit under what
   # the harness's stop takes down, and one left over would stop its program later.
-  step ~r/^the MC (?:dies|shuts down)$/, context do
+  step(~r/^the MC (?:dies|shuts down)$/, context, do: stop_mc(context))
+
+  defp stop_mc(context) do
     Recovery.leaving(true)
 
     for registry <- [
@@ -530,6 +548,103 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
 
   step "that provider process has been killed", context do
     await_dead(context.program)
+    context
+  end
+
+  step "no program of {string} is left running", %{args: [thread]} = context do
+    await_no_programs(context, thread)
+    if context[:program], do: await_dead(context.program)
+    context
+  end
+
+  defp await_no_programs(context, thread, tries \\ 500) do
+    cond do
+      programs(context, thread) == [] -> :ok
+      tries == 0 -> flunk("#{thread} still has a program")
+      true -> Process.sleep(10) && await_no_programs(context, thread, tries - 1)
+    end
+  end
+
+  defp meta(context) do
+    %{dir: dir} = Durable.survivors_peek()[World.thread_id(context, context.thread)]
+    {Path.join(dir, "meta"), JSON.decode!(File.read!(Path.join(dir, "meta")))}
+  end
+
+  defp snapshot_path(context) do
+    %{dir: dir} = Durable.survivors_peek()[World.thread_id(context, context.thread)]
+    Path.join(dir, "snapshot")
+  end
+
+  # Why a program cannot be reattached, done to it while no MC is there.
+  step ~r/^the program's pipes are gone$/, context do
+    %{dir: dir} = Durable.survivors_peek()[World.thread_id(context, context.thread)]
+    File.rm!(Path.join(dir, "in"))
+    context
+  end
+
+  step ~r/^the program does not answer on reattaching$/, context do
+    Application.put_env(:hal_c2, :claude_reattach_timeout_ms, 300)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:hal_c2, :claude_reattach_timeout_ms)
+    end)
+
+    {_path, %{"group" => group}} = meta(context)
+    # Stopped, it still holds its pipes and its pid; it only answers nothing.
+    System.cmd("kill", ["-STOP", "--", "-#{group}"])
+    ExUnit.Callbacks.on_exit(fn -> System.cmd("kill", ["-KILL", "--", "-#{group}"]) end)
+    context
+  end
+
+  step ~r/^the new MC cannot read the program's format$/, context do
+    path = snapshot_path(context)
+    snapshot = :erlang.binary_to_term(File.read!(path))
+    File.write!(path, :erlang.term_to_binary(%{snapshot | format: snapshot.format + 1}))
+    context
+  end
+
+  # A stand-in for the stranger: the program's whole group goes (no MC is there to hear
+  # it), and its record names a process started later under the pid it had.
+  step "the program ends and another program takes its pid", context do
+    {path, %{"group" => group} = meta} = meta(context)
+    System.cmd("kill", ["-KILL", "--", "-#{group}"])
+    await_dead(context.program)
+
+    port =
+      Port.open({:spawn_executable, System.find_executable("sleep")}, [:binary, args: ["600"]])
+
+    {:os_pid, other} = Port.info(port, :os_pid)
+    ExUnit.Callbacks.on_exit(fn -> System.cmd("kill", ["-KILL", "#{other}"]) end)
+    File.write!(path, JSON.encode!(%{meta | "pid" => other, "group" => other}))
+    Map.put(context, :other, other)
+  end
+
+  step "the other program is still running", context do
+    assert alive?(context.other)
+    context
+  end
+
+  # As `<mc> uninstall` does it, on a service manager that only records what it is told.
+  step "the user stops the MC without restarting it", context do
+    context = stop_mc(context)
+    bin = HalC2.Test.Mc.tmp_dir(context.mc, "service-bin")
+    File.mkdir_p!(bin)
+    HalC2.Test.Storage.fake_service_manager(bin)
+
+    env = [
+      service_platform: {:unix, :linux},
+      service_user_home: HalC2.Test.Mc.tmp_dir(context.mc, "service-home"),
+      systemctl_command: Path.join(bin, "systemctl"),
+      loginctl_command: Path.join(bin, "loginctl")
+    ]
+
+    for {key, value} <- env, do: Application.put_env(:hal_c2, key, value)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {key, _} <- env, do: Application.delete_env(:hal_c2, key)
+    end)
+
+    assert {:ok, _} = HalC2.Service.command(["uninstall"])
     context
   end
 end

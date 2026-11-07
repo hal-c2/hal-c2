@@ -228,10 +228,15 @@ defmodule HalC2.Service do
 
   defp restart_pending_path, do: Path.join(HalC2.Paths.state_dir(), ".restart-pending")
 
-  @doc "Stops the service and removes it from startup. Projects and settings stay."
+  @doc """
+  Stops the service and removes it from startup, and the provider programs it kept
+  through its restarts with it. Projects and settings stay.
+  """
   def uninstall do
     with manager when manager != nil <- manager() || {:error, unsupported()},
-         do: remove(manager, installed(manager))
+         :ok <- remove(manager, installed(manager)) do
+      HalC2.Subprocess.Durable.stop_all()
+    end
   end
 
   defp remove(_manager, []), do: :ok

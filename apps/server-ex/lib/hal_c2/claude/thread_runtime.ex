@@ -289,6 +289,7 @@ defmodule HalC2.Claude.ThreadRuntime do
              handler: self(),
              log: snapshot.state.thread_id
            ),
+         :ok <- answering(session),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
       # A stop that was out when the MC went keeps its deadline.
       if restored.turn != nil and restored.interrupted do
@@ -556,6 +557,20 @@ defmodule HalC2.Claude.ThreadRuntime do
         state = if cancelled?, do: interrupt_now(state), else: state
         {:reply, :ok, state}
     end
+  end
+
+  # A CLI that takes what the helper passes on and never answers (stopped, or wedged) would
+  # hold its turn running for good: it is asked something any CLI answers, at once, and
+  # an error is an answer too. One that stays quiet goes, for `Recovery` to kill.
+  defp answering(session) do
+    timeout = Application.get_env(:hal_c2, :claude_reattach_timeout_ms, 10_000)
+    _reply = Session.control(session, "mcp_status", %{}, timeout)
+    :ok
+  catch
+    :exit, _ ->
+      Process.unlink(session)
+      Process.exit(session, :kill)
+      {:error, :no_answer}
   end
 
   # Claude gets ten seconds to end the turn itself after an interrupt; after that

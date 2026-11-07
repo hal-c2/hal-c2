@@ -193,6 +193,30 @@ Feature: Reattaching to provider programs after a restart
       And the MC restarts
       Then the run of "t1" is interrupted
 
+    Scenario Outline: A program that cannot be reattached is killed before anything resumes
+      Given thread "t1" has a running turn on "claudeAgent"
+      And project "demo" continues threads after a server update
+      When the MC dies
+      And <reason>
+      And the MC restarts
+      Then that provider process has been killed
+      And the run of "t1" is interrupted
+      And "t1" receives "Continue where you left off." from the server on the same model
+
+      Examples:
+        | reason                                      |
+        | the program's pipes are gone                |
+        | the program does not answer on reattaching  |
+        | the new MC cannot read the program's format |
+
+    Scenario: A pid reused by another program is left alone
+      Given thread "t1" has a running turn on "codex"
+      When the MC dies
+      And the program ends and another program takes its pid
+      And the MC restarts
+      Then the other program is still running
+      And the run of "t1" is interrupted
+
   Rule: What a restart must not repeat or forget
 
     Scenario: Text streamed before a pause is not written again after a restart
@@ -253,6 +277,32 @@ Feature: Reattaching to provider programs after a restart
       And the MC restarts
       And the user signs out of Antigravity
       Then the provider process of "t1" has stopped
+
+    Scenario Outline: A reattached idle session is still released
+      Given thread "t1" finished a turn on "<provider>" and its provider process is live
+      When the MC dies
+      And the MC restarts
+      And "t1" has had no activity for 30 minutes
+      And the MC checks for idle sessions
+      Then the provider process of "t1" stops
+      And no program of "t1" is left running
+
+      Examples:
+        | provider    |
+        | codex       |
+        | claudeAgent |
+        | cursor      |
+        | grok        |
+        | opencode    |
+        | antigravity |
+        | pi          |
+        | muse        |
+        | acpRegistry |
+
+    Scenario: Stopping the MC for good stops its programs
+      Given thread "t1" has a running turn on "codex"
+      When the user stops the MC without restarting it
+      Then no program of "t1" is left running
 
   Rule: Still to come
 
@@ -320,54 +370,6 @@ Feature: Reattaching to provider programs after a restart
       When Claude reports the subagent completed with "3 files"
       Then the subagent of "t1" is completed with "3 files"
 
-    @backlog @priority-high
-    Scenario Outline: A reattached idle session is still released
-      Given thread "t1" finished a turn on "<provider>" and its provider process is live
-      When the MC dies
-      And the MC restarts
-      And "t1" has had no activity for 30 minutes
-      And the MC checks for idle sessions
-      Then the provider process of "t1" stops
-      And no program of "t1" is left running
-
-      Examples:
-        | provider    |
-        | codex       |
-        | claudeAgent |
-        | cursor      |
-        | grok        |
-        | opencode    |
-        | antigravity |
-        | pi          |
-        | muse        |
-        | acpRegistry |
-
-    @backlog @priority-high
-    Scenario Outline: A program that cannot be reattached is killed before anything resumes
-      Given thread "t1" has a running turn on "claudeAgent"
-      And project "demo" continues threads after a server update
-      When the MC dies
-      And <reason>
-      And the MC restarts
-      Then that provider process has been killed
-      And the run of "t1" is interrupted
-      And "t1" receives "Continue where you left off." from the server on the same model
-
-      Examples:
-        | reason                                      |
-        | the program's pipes are gone                |
-        | the program does not answer on reattaching  |
-        | the new MC cannot read the program's format |
-
-    @backlog @priority-high
-    Scenario: A pid reused by another program is left alone
-      Given thread "t1" has a running turn on "codex"
-      When the MC dies
-      And the program ends and another program takes its pid
-      And the MC restarts
-      Then the other program is still running
-      And the run of "t1" is interrupted
-
     # Windows has no named pipe that outlives its owner this way, and tracks no programs.
     @backlog @priority-low
     Scenario: On Windows a restart still interrupts the turn
@@ -375,12 +377,6 @@ Feature: Reattaching to provider programs after a restart
       And thread "t1" has a running turn on "codex"
       When the MC restarts
       Then the run of "t1" is interrupted
-
-    @backlog @priority-high
-    Scenario: Stopping the MC for good stops its programs
-      Given thread "t1" has a running turn on "codex"
-      When the user stops the MC without restarting it
-      Then no program of "t1" is left running
 
     # A service manager that kills a unit's processes when it stops (systemd's
     # KillMode=mixed) would end them before the next MC starts, so the units say otherwise.

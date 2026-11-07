@@ -1912,18 +1912,51 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  @registries [
+    HalC2.Codex.Registry,
+    HalC2.Claude.Registry,
+    HalC2.Acp.Registry,
+    HalC2.Pi.Registry,
+    HalC2.Muse.Registry
+  ]
+
   defp check(context) do
     Mc.ensure(IdleSessions)
+    context = watch_runtime(context)
     Map.put(context, :released, IdleSessions.check())
   end
+
+  # The runtime a restart reattached is not the one an earlier step watched.
+  defp watch_runtime(%{thread: thread} = context) when is_binary(thread) do
+    if is_pid(context[:runtime]) and Process.alive?(context.runtime) do
+      context
+    else
+      id = World.thread_id(context, thread)
+
+      case for(r <- @registries, Process.whereis(r), {pid, _} <- Registry.lookup(r, id), do: pid) do
+        [pid] ->
+          Process.monitor(pid)
+          Map.put(context, :runtime, pid)
+
+        _ ->
+          context
+      end
+    end
+  end
+
+  defp watch_runtime(context), do: context
 
   defp assert_released(context, thread) do
     id = World.thread_id(context, thread)
     if released = context[:released], do: assert(id in released)
     pid = context.runtime
     assert_receive {:DOWN, _, :process, ^pid, _}
-    assert Registry.lookup(HalC2.Codex.Registry, id) == []
-    assert Registry.lookup(HalC2.Claude.Registry, id) == []
+
+    for registry <- @registries, Process.whereis(registry) do
+      Mc.settle_registry(registry)
+      assert Registry.lookup(registry, id) == []
+    end
+
     context
   end
 
