@@ -4694,8 +4694,11 @@ defmodule HalC2.Orchestration do
               {[], {:error, "Proposed plan #{plan_id} is not active."}}
 
             true ->
-              claimed =
-                &Map.merge(&1, %{"status" => "completed", "implementedByMessageId" => message_id})
+              # The contract's implementedByMessageId is optional, never null.
+              by =
+                if is_binary(message_id), do: %{"implementedByMessageId" => message_id}, else: %{}
+
+              claimed = &(&1 |> Map.put("status", "completed") |> Map.merge(by))
 
               {[upsert(state, "plan", plan_id, claimed)], :ok}
           end
@@ -4715,8 +4718,11 @@ defmodule HalC2.Orchestration do
 
     HalC2.Streams.transact(plan_thread, :thread, fn state ->
       case StreamState.fetch(state, "plan", plan_id) do
-        %{"status" => "completed", "implementedByMessageId" => ^message_id} ->
-          {[upsert(state, "plan", plan_id, reopened)], :ok}
+        %{"status" => "completed"} = plan ->
+          # A message without an id leaves no claimer behind.
+          if plan["implementedByMessageId"] == message_id,
+            do: {[upsert(state, "plan", plan_id, reopened)], :ok},
+            else: {[], :ok}
 
         _ ->
           {[], :ok}
