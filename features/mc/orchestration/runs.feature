@@ -227,6 +227,7 @@ Feature: Runs and turns
     Then the run is failed
     And "t1" can take its next message
 
+  # Upstream #19131: a run fails when its provider stream ends without a terminal event
   @mc @priority-high
   Scenario: A provider stream that ends without ending its turn fails the run
     Given "t1" has a running turn with a subagent still running
@@ -508,6 +509,7 @@ Feature: Runs and turns
     Then nothing is recorded on the run of "t1"
     And the output is recorded on the run of "t2"
 
+  # Upstream #15442: Stop recovers a run whose provider is gone
   @mc @priority-high
   Scenario: Stop settles a run whose provider disappeared before it finished
     Given a run is still active because its provider vanished before reporting an end
@@ -516,6 +518,7 @@ Feature: Runs and turns
     And its pending requests are closed and its checkpoint is captured
     And a late result from the provider cannot undo the stop or replace a newer attempt
 
+  # Upstream #15571: an interrupted provider start cleans up its session
   @mc @priority-high
   Scenario: Stopping during a slow provider start leaves no session behind
     Given a provider session is still starting

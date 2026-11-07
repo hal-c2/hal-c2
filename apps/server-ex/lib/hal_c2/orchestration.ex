@@ -228,21 +228,22 @@ defmodule HalC2.Orchestration do
          do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
-  # An empty thread; launch_thread also sends a first message.
+  # An empty thread; launch_thread also sends a first message. A project whose
+  # clone has not landed takes no threads.
   def dispatch(%{"type" => "thread.create", "threadId" => thread_id} = command) do
     thread =
       command
       |> Entities.thread(Entities.now())
       |> Map.merge(Map.take(command, ~w(branch worktreePath)))
 
-    created =
-      HalC2.Streams.transact(thread_id, :thread, fn state ->
-        if StreamState.get(state, "thread")[thread_id],
-          do: {[], {:error, "Thread #{thread_id} already exists."}},
-          else: {[create("thread", thread_id, thread)], :ok}
-      end)
-
-    with :ok <- created, do: {:ok, %{"sequence" => sequence(thread_id)}}
+    with :ok <- HalC2.ProjectClones.thread_block(command["projectId"]),
+         :ok <-
+           HalC2.Streams.transact(thread_id, :thread, fn state ->
+             if StreamState.get(state, "thread")[thread_id],
+               do: {[], {:error, "Thread #{thread_id} already exists."}},
+               else: {[create("thread", thread_id, thread)], :ok}
+           end),
+         do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
   # A thread an agent created during a run shows in that run's transcript as a link.

@@ -383,6 +383,7 @@ Feature: Provider setup, updates and sign-in
     When the user reveals the email
     Then "me@example.com" is shown
 
+  # Upstream #15416: a provider no package manager is proven for falls back to its own updater
   @backlog
   Scenario: A provider installed by its own installer is updated by its own updater
     Given a provider whose package manager cannot be proven
@@ -390,6 +391,7 @@ Feature: Provider setup, updates and sign-in
     Then the MC runs the provider's own update command
     And a version check afterwards reports an updater that exited without updating
 
+  # Upstream #15539: the copied update command matches the installed CLI
   @backlog @shared
   Scenario: The copied update command matches how the MC was installed
     Given the MC runs from a global package install
@@ -397,6 +399,7 @@ Feature: Provider setup, updates and sign-in
     Then the command updates that installation rather than starting a cached copy
     And an install it cannot identify copies a relaunch command saying that it does not update the installed MC
 
+  # Upstream #15501: both update icons open the version details
   @backlog @shared @priority-low
   Scenario: Wherever a provider offers an update, its version details open
     Given a provider with an update available

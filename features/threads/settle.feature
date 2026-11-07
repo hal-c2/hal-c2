@@ -98,6 +98,7 @@ Feature: Settling threads
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
 
+  # Upstream #11846: per-thread auto-settle switch
   @shared
   Scenario: A thread's auto-settle can be turned off and back on
     When the user turns auto-settle off for "Ship checkout"
@@ -105,6 +106,7 @@ Feature: Settling threads
     When the user turns auto-settle on for "Ship checkout"
     Then "Ship checkout" settles automatically again after a quiet spell
 
+  # Upstream #11846: per-thread auto-settle switch
   @shared
   Scenario: Settling a thread with auto-settle off still works
     Given "Ship checkout" has auto-settle turned off
@@ -167,6 +169,7 @@ Feature: Settling threads
     And the settle sweep runs
     Then "Ship checkout" stays active
 
+  # Upstream #16674: inactivity restarts after a snoozed thread wakes
   @backlog @mc @priority-low
   Scenario Outline: A snoozed thread that wakes starts its quiet spell again
     Given the auto-settle rule is "after 1 day of inactivity"
@@ -240,6 +243,7 @@ Feature: Settling threads
     Then "work" keeps its previous rules
     And the user can see "work" was not updated
 
+  # Upstream #15024: threads settle as soon as an agent merges their pull request
   @backlog @mc
   Scenario: A thread settles when the agent merges its own pull request from a shell
     Given the agent ran gh pr merge or close, or the glab equivalent

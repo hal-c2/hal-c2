@@ -178,6 +178,7 @@ Feature: Committing with written or generated messages
       | the host cannot be asked and the remote's default branch is "master"                   | master  |
       | nothing records a default branch                                                       | main    |
 
+  # Upstream #18754: configured pull request bases resolve to branch names
   @mc @backlog
   Scenario Outline: A recorded base that is not a branch gives way to the default branch
     Given "feature/tax" has the recorded merge base <ref> and the host's default is "main"
@@ -190,6 +191,7 @@ Feature: Committing with written or generated messages
       | the tag "v1.2.0"        |
       | the revision "HEAD~2"   |
 
+  # Upstream #18754: configured pull request bases resolve to branch names
   @mc @backlog
   Scenario Outline: A recorded base names the branch the pull request targets
     Given "feature/tax" has the recorded merge base "<ref>"
@@ -201,6 +203,7 @@ Feature: Committing with written or generated messages
       | release        | release |
       | origin/release | release |
 
+  # Upstream #18754: configured pull request bases resolve to branch names
   @mc @backlog
   Scenario: A worktree made from a commit records no pull request base
     When the user makes a worktree for "feature/tax" from the commit "a1b2c3d"
@@ -328,12 +331,14 @@ Feature: Committing with written or generated messages
     Then the action ran on "env-c"
     And a commit "Add tax" holds both files
 
+  # Upstream #15532: failed message generation no longer stages the user's changes
   @backlog @mc @priority-high
   Scenario: Failing to write a commit message leaves staging alone
     Given some changes are unstaged
     When generating the commit message fails
     Then nothing was staged and no commit exists
 
+  # Upstream #15441: Forgejo and Gitea mergeability maps only true to mergeable
   @backlog @mc @priority-low
   Scenario: A Forgejo or Gitea pull request is not called conflicted without evidence
     Given the host reports the pull request as not mergeable

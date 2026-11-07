@@ -118,6 +118,7 @@ Feature: Home screen and lock screen widgets
     Then the first rows show the session limit of "Codex" and of "Claude"
     And the weekly limits are reached by scrolling
 
+  # Upstream #13474: Android usage widgets scroll, count their limits and omit unconfigured providers
   @backlog @mobile
   Scenario: A widget that cannot fit every limit scrolls to the rest
     Given the user is on an Android phone
@@ -126,6 +127,7 @@ Feature: Home screen and lock screen widgets
     Then the widget header counts 6 limits
     And the user can scroll to each of them
 
+  # Upstream #13474: Android usage widgets scroll, count their limits and omit unconfigured providers
   @backlog @mobile
   Scenario: The usage widget leaves out providers the user has not configured
     Given Codex and OpenCode are configured and Claude is not
@@ -221,6 +223,7 @@ Feature: Home screen and lock screen widgets
     When the user taps the widget outside any single agent
     Then the thread waiting for approval is shown
 
+  # Upstream #12047: the agent Live Activity degrades once its content goes stale
   @backlog @mobile
   Scenario: Stale agent status says out of date
     Given a live agent status that has not updated for ten minutes

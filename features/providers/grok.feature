@@ -70,12 +70,14 @@ Feature: Grok
     Then Grok shows that it uses an xAI API key
 
   # Grok's own installer owns the binary, so its own updater is the update command.
+  # Upstream #13523: Grok is updated through `grok update`
   @backlog
   Scenario: An outdated Grok is offered an update through Grok's own updater
     Given Grok was installed by its own installer and a newer version is released
     When the MC checks provider versions
     Then Grok is reported behind the latest version with an update command
 
+  # Upstream #13523: Grok is updated through `grok update`
   @backlog
   Scenario: Updating Grok runs its updater against the home its instance uses
     Given Grok was installed by its own installer and this Grok instance has its own Grok home
@@ -84,6 +86,7 @@ Feature: Grok
     And Grok is reported current
 
   # A binary that cannot be resolved is never handed to an updater it does not belong to.
+  # Upstream #13523: Grok is updated through `grok update`
   @backlog
   Scenario: A Grok binary that cannot be resolved is updated by hand
     Given the Grok instance's executable cannot be resolved
@@ -114,6 +117,7 @@ Feature: Grok
     Then Grok answers it
     And Grok is listed with a warning, not as unavailable
 
+  # Upstream #18075: health probes run Grok with its auto-updater turned off
   @backlog
   Scenario Outline: Grok's health checks do not start Grok's own updater
     Given the MC's environment lets Grok update itself
@@ -128,6 +132,7 @@ Feature: Grok
       | starting an agent connection   |
       | listing a project's skills     |
 
+  # Upstream #18075: sessions, text generation and updates keep the caller's environment
   @backlog
   Scenario Outline: Grok updates itself as configured outside health checks
     Given the MC's environment lets Grok update itself
@@ -344,6 +349,7 @@ Feature: Grok
     Then the work log shows "Context compacted" once
 
   # Legacy: apps/server/src/provider/Layers/GrokAdapter (a dead session is retired, then resumed)
+  # Upstream #10607: a terminated Grok session is retired so the next turn resumes it
   @backlog
   Scenario: A Grok process that exits between turns is resumed by the next message
     Given the Grok process ends with an error while the conversation is idle
@@ -680,6 +686,7 @@ Feature: Grok
     When a Grok session is started
     Then its task tool is passed as disallowed
 
+  # Upstream #13328: restore a compatibility policy for every harness (Grok supported at 1.0.13)
   @backlog
   Scenario Outline: The version Grok runs decides whether this HAL-C2 release supports it
     Given Grok version "<version>" is installed
@@ -694,6 +701,7 @@ Feature: Grok
       | 1.0.12  | broken  |
       | 1.0.13  | unknown |
 
+  # Upstream #14486: Grok CLIs older than 1.0.13 are marked broken
   @backlog @desktop
   Scenario: A broken Grok's warning names the version to update to
     Given Grok version "0.2.8" is installed
