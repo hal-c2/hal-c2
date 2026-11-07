@@ -221,9 +221,21 @@ void World::sync() {
   // kept copy is read, so that subscription goes out before the barrier.
   m_native->cache()->drain();
   bool done = false;
+  const qsizetype callsBefore = mc.calls.size();
+  const qsizetype connectionsBefore = mc.connections.size();
   m_native->client()->call(m_native.get(), mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
                           [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
-  waitFor([&done] { return done; }, QStringLiteral("a round trip through the MC"));
+  // Says where a lost barrier stopped: before the fake, on a dropped
+  // connection, or after its answer.
+  waitFor([&done] { return done; }, [&] {
+    bool seen = false;
+    for (qsizetype i = callsBefore; i < mc.calls.size(); ++i) seen = seen || mc.calls.at(i).method == QLatin1String("test.barrier");
+    return QStringLiteral("a round trip through the MC (client ready %1, barrier %2 the fake, connections %3 -> %4)")
+        .arg(m_native->client()->isReady())
+        .arg(seen ? QStringLiteral("reached") : QStringLiteral("never reached"))
+        .arg(connectionsBefore)
+        .arg(mc.connections.size());
+  });
 }
 
 QList<BrickAction> World::actionsOf(const QString& type) const {

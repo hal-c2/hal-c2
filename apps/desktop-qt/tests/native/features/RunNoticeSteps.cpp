@@ -246,8 +246,9 @@ const Steps steps([] {
     Brick& view = threadView(world);
     QQuickItem* action = view.find(QStringLiteral("threadNoticeAction"));
     expect(action && text(action) == c[0] && !action->property("enabled").toBool(), seen(world));
+    // The button is disabled; the action, sent anyway, is not a second stop.
     const qsizetype before = interrupts(world);
-    view.click(QStringLiteral("threadNoticeAction"));
+    world.bridge().dispatch(QStringLiteral("threadNotice.stop"), {});
     world.sync();
     expect(interrupts(world) == before, QStringLiteral("a pending stop was sent again; %1").arg(seen(world)));
     shoot(world, QStringLiteral("background-stopping"));

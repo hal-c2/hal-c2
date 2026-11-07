@@ -155,6 +155,16 @@ struct Shell {
     return n;
   }
 
+  // A round trip through the MC: every answer it sent before has been
+  // handled once it returns (a held answer stays held), so a stop's wait
+  // has started where the model's did.
+  void sync() {
+    bool done = false;
+    native.client()->call(&native, mc.environmentId, QStringLiteral("test.barrier"), QJsonValue::Null,
+                          [&done](const QJsonValue&, const std::optional<QString>&) { done = true; });
+    RC_ASSERT(prop::until([&done] { return done; }));
+  }
+
   QVariant notice() const { return bridge.state()->value(QStringLiteral("threadNotice")); }
   QVariant error() const { return bridge.state()->value(QStringLiteral("threadError")); }
 };
@@ -212,6 +222,7 @@ QVariant expectedError(const Model& model) {
 }
 
 void check(const Model& model, Shell& shell) {
+  shell.sync();
   const QVariant wanted = expectedNotice(model);
   const QVariant wantedError = expectedError(model);
   const auto same = [&] {
