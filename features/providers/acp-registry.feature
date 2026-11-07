@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19699
+#   https://github.com/pingdotgg/t3code/pull/20417
+#   https://github.com/pingdotgg/t3code/pull/24596
+#   https://github.com/pingdotgg/t3code/pull/24615
+#   https://github.com/pingdotgg/t3code/pull/23955
+#   https://github.com/pingdotgg/t3code/pull/21053
 #   https://github.com/pingdotgg/t3code/pull/21616
 #   https://github.com/pingdotgg/t3code/pull/15374
 #   https://github.com/pingdotgg/t3code/pull/20376
@@ -17,6 +23,8 @@
 #   https://github.com/pingdotgg/t3code/pull/16021
 #   https://github.com/pingdotgg/t3code/pull/16218
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/25704
+#   https://github.com/pingdotgg/t3code/pull/18277
 #   docs/user/providers-acp.md
 #   apps/server-ex/lib/hal_c2/acp.ex (acpRegistry driver, entries, probes, commandPath override)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex (search, prepare, uninstall, cache, checksums, runners)
@@ -212,6 +220,13 @@ Feature: ACP registry agents
     When the user stops the turn
     Then "acme" is told to cancel the turn
 
+  # Upstream #23955: a stopped call to an MCP server over HTTP kept waiting for the server.
+  @backlog @priority-low
+  Scenario: Stopping a turn stops the agent's MCP call over HTTP
+    Given "acme" is waiting on an MCP server over HTTP for a tool's answer
+    When the user stops the turn
+    Then the request to the MCP server is abandoned
+
   Scenario: The next turn after a rollback starts a fresh agent session
     Given an "acme" thread with three turns
     When the user rolls back to the first turn
@@ -305,6 +320,14 @@ Feature: ACP registry agents
     When the user sends a message with "acme-free/large"
     Then the session opens and "acme" is asked to use "acme-free/large"
     And a model id that is neither advertised nor added is still refused
+
+  # Upstream #19699: an agent refusing the chosen model surfaced as a generic session failure.
+  @backlog
+  Scenario: An agent that refuses the chosen model says which model and how to go on
+    Given the user added "acme-free/large" as a custom model
+    When the user sends a message with "acme-free/large" and "acme" refuses that model
+    Then the thread says "acme" would not use "acme-free/large" and to pick another model and retry
+    And the agent's own error is kept with it
 
   Scenario: Models and options that change during a session update the picker
     When "acme" reports a new model while a session runs
@@ -975,6 +998,19 @@ Feature: ACP registry agents
       | failed        | failed      |
       | was cancelled | failed      |
 
+  # Upstream #21053: a compaction's summary dropped HAL-C2's instructions and they were not re-sent.
+  @backlog
+  Scenario Outline: HAL-C2's instructions are sent again after a compaction
+    Given "acme" was given HAL-C2's browser and orchestration instructions
+    When compacting the conversation in "acme" <result>
+    Then the next prompt <resends> the instructions
+
+    Examples:
+      | result                                   | resends         |
+      | finishes                                 | carries         |
+      | finishes from "/compact" with no report  | carries         |
+      | fails                                    | does not carry  |
+
   @backlog
   Scenario Outline: Every form of plan an agent sends is shown
     When "acme" <sends>
@@ -1079,11 +1115,14 @@ Feature: ACP registry agents
     When "acme" asks for the output of the terminal "t-404" that was never created
     Then it is refused with "ACP terminal/output received an unknown terminal ID 't-404'."
 
+  # Upstream #24596: an explicit kill waited forever on a command that ignored the stop; the
+  # force-kill deadline is five seconds unless the MC is configured otherwise.
   @backlog
   Scenario: A client terminal that ignores a stop is killed
     Given "acme" runs a command in a terminal it asked the client for
     When "acme" asks to kill it and the command has not exited after five seconds
     Then the command is force-killed
+    And the agent's wait for the command's exit returns
 
   @backlog
   Scenario: Client terminals end with the agent's session
@@ -1159,6 +1198,21 @@ Feature: ACP registry agents
     When Vibe refuses a prompt with its rate limit error
     Then the turn fails as a usage limit with Vibe's message
 
+  # Upstream #24615: an agent that accepted a prompt and later reported an idle error had its
+  # turn recorded as completed.
+  @backlog
+  Scenario Outline: An agent's idle error fails its turn and the session takes the next prompt
+    Given "acme" accepted a prompt
+    When "acme" goes idle reporting <error>
+    Then the turn fails with <shown>
+    And commands that had already finished in the turn are kept as finished
+    And the user's next message reaches "acme" in the same session
+
+    Examples:
+      | error                                           | shown                                 |
+      | the error "Missing API key" and the code -32000 | "Missing API key" and the code -32000 |
+      | an error without details                        | "Provider turn failed."               |
+
   # AcpRegistryAdapterV2.ts
   @backlog
   Scenario: A prompt an agent refuses fails the turn with the agent's own words
@@ -1202,6 +1256,13 @@ Feature: ACP registry agents
       | does                    | told                       |
       | answers every question  | accepted, with the answers |
       | dismisses the questions | cancelled                  |
+
+  # Upstream #20417: Droid's answer text showed as another question, and the answer cancelled it.
+  @backlog
+  Scenario: A Factory Droid question with options and its own answer field is one question
+    When Factory Droid asks the user a question with options and a field for another answer
+    Then the user is asked one question with those options and a free answer
+    And Droid receives the chosen option, or the user's own words as another answer
 
   @backlog
   Scenario: A request for input of a kind HAL-C2 does not know is declined
@@ -1259,6 +1320,35 @@ Feature: ACP registry agents
   Scenario: An update of a kind HAL-C2 does not know is shown, not dropped
     When "acme" sends a session update of the unknown kind "hologram"
     Then the work log shows "Unsupported ACP update: hologram"
+
+  # Upstream #25704: HAL-C2 tells agents it takes session notices, so a skipped skill or an
+  # unavailable MCP server arrives as a notice, not as reply text ahead of the answer.
+  @backlog @shared
+  Scenario: A notice from the agent shows as a notice, not as part of the reply
+    When "acme" sends the notice "skill discovery warning: candidate was skipped" between two parts of its reply
+    Then the thread shows "skill discovery warning: candidate was skipped" as a notice
+    And the reply reads as one message without it
+
+  # Upstream #25704: the initialization advertises session notices.
+  @backlog
+  Scenario: The MC tells the agent it takes session notices
+    When the MC starts "acme"
+    Then the initialization says the client takes session notices
+
+  # Upstream #25704: a notice with no title is not a notice.
+  @backlog @priority-low
+  Scenario: A notice without a title is shown as an update HAL-C2 does not know
+    When "acme" sends a notice without a title
+    Then the work log shows it as an unsupported ACP update
+
+  # Upstream #18277: upstream added Vercel's fx as its own provider on the ACP adapter.
+  # Dropped: HAL-C2 carries no fx plugin. fx runs as a manual ACP agent (`fx acp`), and its
+  # warnings show through the session notices above (#25704).
+  @dropped
+  Scenario: fx is offered as its own provider
+    When the user adds a provider
+    Then fx is offered beside Codex and Claude, with Supervised and Auto modes
+    And the "$" menu lists the skills fx can invoke
 
   @backlog
   Scenario: An agent repeating the user's message does not show it twice

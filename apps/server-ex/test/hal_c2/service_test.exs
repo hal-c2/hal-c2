@@ -94,4 +94,78 @@ defmodule HalC2.ServiceTest do
     assert "systemctl --user restart hal-c2.service" in Storage.service_calls(log)
     assert %{"current" => true, "problems" => []} = Service.status()
   end
+
+  # The programs a leaving MC kept, under the home it runs on now.
+  defp kept_program(thread) do
+    {:ok, sub} = HalC2.Subprocess.start(["sh", "-c", "while read l; do :; done"], durable: thread)
+    HalC2.Orchestration.Recovery.leaving(true)
+    :detached = HalC2.Subprocess.stop(sub)
+    HalC2.Orchestration.Recovery.leaving(false)
+    {sub.durable.dir, HalC2.Subprocess.os_pid(sub)}
+  end
+
+  describe "uninstall" do
+    setup %{tmp_dir: dir} do
+      Application.put_env(:hal_c2, :durable_programs, true)
+      on_exit(fn -> Application.put_env(:hal_c2, :durable_programs, false) end)
+      %{other: Path.join(dir, "other")}
+    end
+
+    test "stops the programs of the home the unit ran on, not this command's",
+         %{tmp_dir: dir, other: other} do
+      {:ok, _} = Service.install()
+      {service_dir, service_pid} = kept_program("t1")
+
+      # The command runs on another home, where an MC in the foreground keeps its own.
+      Application.put_env(:hal_c2, :home, other)
+      {own_dir, own_pid} = kept_program("t2")
+
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
+      refute File.exists?(service_dir)
+      assert HalC2.Subprocess.Orphans.gone?(service_pid)
+      assert HalC2.Subprocess.Durable.attachable?(own_dir)
+      refute HalC2.Subprocess.Orphans.gone?(own_pid)
+
+      HalC2.Subprocess.Durable.stop(own_dir)
+      assert String.starts_with?(service_dir, Path.join(dir, "mc"))
+    end
+
+    test "reads the home from a LaunchAgent too", %{tmp_dir: dir, other: other} do
+      Application.put_env(:hal_c2, :service_platform, {:unix, :darwin})
+      Application.put_env(:hal_c2, :launchctl_command, Path.join([dir, "bin", "launchctl"]))
+      on_exit(fn -> Application.delete_env(:hal_c2, :launchctl_command) end)
+
+      {:ok, %{"unitPath" => path}} = Service.install()
+      assert String.ends_with?(path, ".plist")
+      {service_dir, service_pid} = kept_program("t1")
+      Application.put_env(:hal_c2, :home, other)
+
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
+      refute File.exists?(service_dir)
+      assert HalC2.Subprocess.Orphans.gone?(service_pid)
+    end
+
+    test "with no unit installed stops nothing", %{log: log} do
+      {own_dir, own_pid} = kept_program("t1")
+
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
+      assert HalC2.Subprocess.Durable.attachable?(own_dir)
+      refute HalC2.Subprocess.Orphans.gone?(own_pid)
+      refute File.exists?(log)
+
+      HalC2.Subprocess.Durable.stop(own_dir)
+    end
+
+    # T3 Code's units, and the Node server's, kept no programs through a restart.
+    test "a unit that names no home, as T3 Code's did, stops nothing" do
+      {:ok, %{"unitPath" => path}} = Service.install()
+      File.write!(path, String.replace(File.read!(path), ~r/^StandardOutput=.*$/m, ""))
+      {own_dir, own_pid} = kept_program("t1")
+
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
+
+      refute HalC2.Subprocess.Orphans.gone?(own_pid)
+      HalC2.Subprocess.Durable.stop(own_dir)
+    end
+  end
 end

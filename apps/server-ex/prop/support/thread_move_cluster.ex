@@ -397,6 +397,14 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     end
   end
 
+  @doc "Makes this machine's store refuse every change to the thread `id`, or none (nil)."
+  def refuse(nil), do: Application.delete_env(:hal_c2, :store_hook)
+  def refuse(id), do: Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse, [id]})
+
+  @doc false
+  def refuse(id, :append_change, id), do: raise("the disk is full")
+  def refuse(_id, _stage, _stream_id), do: :ok
+
   @doc "Tells `pid` whenever the thread `id` changes here."
   def watch(id, pid), do: HalC2.Streams.watch(id, pid)
 end

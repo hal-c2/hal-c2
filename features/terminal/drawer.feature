@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19072
 #   https://github.com/pingdotgg/t3code/pull/18340
 #   https://github.com/pingdotgg/t3code/pull/17658
 #   apps/desktop-qt/src/TerminalController.cpp (the drawer's tabs, sessions and RPCs against the MC)
@@ -223,6 +224,15 @@ Feature: The desktop's terminal drawer
       Given the user dragged the drawer to 400 pixels with "term-2" active
       When the desktop starts again
       Then the drawer is 400 pixels tall with "term-2" active
+
+    # Upstream #19072: the drawer was capped at a share of the window and could push the
+    # composer into the header.
+    @backlog @desktop
+    Scenario: The drawer leaves room for the thread's header and composer
+      Given the user dragged the drawer to 750 pixels
+      When the thread's column has room for only 500 pixels between its header and its composer
+      Then the drawer is held to 500 pixels
+      And the header and the composer stay fully shown
 
     # Upstream #17658: the clamped height used to be saved for good.
     @backlog @desktop @priority-low

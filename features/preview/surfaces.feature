@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25068
+#   https://github.com/pingdotgg/t3code/pull/17244
 #   https://github.com/pingdotgg/t3code/pull/19919
 #   https://github.com/pingdotgg/t3code/pull/19579
 #   https://github.com/pingdotgg/t3code/pull/17736
@@ -74,6 +76,9 @@
 #   https://github.com/pingdotgg/t3code/pull/14601
 #   https://github.com/pingdotgg/t3code/pull/14727
 #   https://github.com/pingdotgg/t3code/pull/15034
+#   https://github.com/pingdotgg/t3code/pull/25491
+#   https://github.com/pingdotgg/t3code/pull/25462
+#   https://github.com/pingdotgg/t3code/pull/25521
 
 Feature: In-app preview browser
   A thread can keep browser tabs beside it for the app it is building. The MC remembers each
@@ -771,6 +776,14 @@ Feature: In-app preview browser
       When the tab moves to a page on another site
       Then the first site's icon is no longer shown for it
 
+    # Upstream #25068: a page's icon in a new thread's draft was filed only once the conversation
+    # view had told it the draft's project, so it often never showed.
+    @backlog @desktop @priority-low
+    Scenario: A browser tab in a draft thread shows the page's icon
+      Given the user is writing a new thread in "shop" that has not started
+      When a browser tab of the draft loads a page with its own icon
+      Then the tab shows that icon
+
     @backlog @desktop @priority-low
     Scenario: No outside service is asked for the icon of a private address
       Given a browser tab shows a page on "localhost:5173" that gave no icon
@@ -1440,6 +1453,15 @@ Feature: In-app preview browser
       When the user cancels the recording's choice of what to share
       Then the user is not told of any failure
 
+    # Upstream #17244: a native capture failure lost its cause and showed a generic toast.
+    @backlog @desktop @priority-low
+    Scenario: A recording the system will not let start says why and how to fix it
+      Given a browser tab showing a page
+      When the system refuses to let the desktop capture the screen
+      Then the user sees "Unable to start recording" with the system's reason
+      And the user is told what to change before trying again
+      And that reason is kept even when cleaning up the failed recording also fails
+
     @backlog @desktop @priority-low
     Scenario: Only one browser tab is recorded at a time
       Given tab "Docs" is being recorded
@@ -1761,6 +1783,42 @@ Feature: In-app preview browser
       Given the user visits "http://localhost:5173" in a browser tab of a project
       When the user opens a new browser tab in another thread of that project
       Then "http://localhost:5173" is among the recent pages
+
+    # Upstream #25491: visits were not filed under the thread's project, so Recently used stayed empty.
+    @backlog @desktop
+    Scenario Outline: Pages visited in a draft or a thread are remembered with their titles
+      Given the user visits "http://localhost:5173/docs" titled "Docs" in a browser tab of <thread>
+      When the user restarts HAL-C2 and opens a new browser tab in that project
+      Then "Docs" at "http://localhost:5173/docs" is among the recent pages
+
+      Examples:
+        | thread                        |
+        | a thread of the project       |
+        | a new thread's draft          |
+
+    # Upstream #25462: titles were recorded only while the panel was open.
+    @backlog @desktop
+    Scenario: A page's title is remembered while its browser is not shown
+      Given an agent loads "http://localhost:5173/docs" titled "Docs" in a thread's browser tab
+      And the browser is not shown for that thread
+      When the user opens a new browser tab in that project
+      Then "Docs" is the title of "http://localhost:5173/docs" among the recent pages
+
+    # Upstream #25521: returning to a thread replayed the title it last saw for a shared page.
+    @backlog @desktop @priority-low
+    Scenario: Returning to a thread keeps a page's newest title
+      Given thread "A" loaded "http://localhost:5173/x" titled "Old"
+      And thread "B" of the same project later loaded it titled "New"
+      When the user switches back to thread "A"
+      Then "http://localhost:5173/x" is titled "New" among the recent pages
+
+    # Upstream #25462: a browser resized by its own handles failed while no panel showed it.
+    @backlog @desktop
+    Scenario: A browser tab resizes while no panel shows it
+      Given a thread's browser tab is not shown in a panel
+      When its viewport is resized from its own resize handles or a device toolbar
+      Then the page takes the new size
+      And "No visible browser viewport handler" is not shown
 
     @backlog @desktop
     Scenario: The history of one project does not appear in another

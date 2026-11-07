@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14859
 #   https://github.com/pingdotgg/t3code/pull/15515 (a failing handler fails only its own request)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (protocol 3 frames)
@@ -103,6 +104,15 @@ Feature: The protocol 3 WebSocket
     When more than 8 MB of changes wait unsent for that subscription
     Then the MC sends a resync for that subscription
     And the client subscribes again from its last offset
+
+  # Upstream #14859: a slow client was owed every state of a project or thread in its list, so
+  # repeated updates used up its budget.
+  @mc @backlog
+  Scenario: A slow client is sent only the latest state of each listed thread
+    Given the client subscribed to the thread list and is slow to take updates
+    When "Fix checkout" changes 50 times before the client takes any
+    Then the client is sent the latest state of "Fix checkout" once
+    And the other listed threads' updates arrive in the order they happened
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/web/socket.ex
   @mc @backlog @priority-high

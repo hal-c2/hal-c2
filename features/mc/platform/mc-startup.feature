@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19715
+#   https://github.com/pingdotgg/t3code/pull/7894
 #   https://github.com/pingdotgg/t3code/pull/12199
 #   https://github.com/pingdotgg/t3code/pull/11275
 #   https://github.com/pingdotgg/t3code/pull/14263
@@ -34,6 +36,7 @@
 #   docs/internals/remote.md (environment identity survives restarts and address changes)
 #   docs/operations/development.md (state and ports)
 #   https://github.com/pingdotgg/t3code/pull/15795
+#   https://github.com/pingdotgg/t3code/pull/22559
 
 Feature: Starting the MC
   An MC is one Elixir release that keeps its files in the user's XDG directories, or under
@@ -178,6 +181,8 @@ Feature: Starting the MC
     When the MC creates a secret it keeps on disk
     Then the secrets directory and the secret's file are not readable by other users
 
+  # Upstream #22559: a second creator racing the first read an empty secret; it now waits for
+  # the winner's whole secret.
   @backlog @mc
   Scenario: A secret that already exists is reused, never regenerated
     Given the MC already stored a secret
@@ -278,6 +283,14 @@ Feature: Starting the MC
     When the MC starts
     Then that folder is still searched
     And the folders from the login shell are searched as well
+
+  # Upstream #7894: Nushell rejected the POSIX login-shell probe, so its PATH was missed.
+  @backlog @mc
+  Scenario: The search path comes from a Nushell login shell too
+    Given the user's login shell is Nushell and its configuration adds "~/.cargo/bin" to the PATH
+    When the MC starts with a short PATH
+    Then "~/.cargo/bin" with the home folder filled in is on the MC's search path
+    And a variable the Nushell configuration does not set does not stop the others being read
 
   # Upstream #19340: the login shell's PATH also brings mise's record of what it added, so wrappers no longer loop
   @backlog @mc
@@ -400,6 +413,7 @@ Feature: Starting the MC
   # flips between them and each undoes the other's work. The desktop app can start its
   # MC at login before the background service's MC has said where it listens.
   # Upstream #16102: one owner of the state directory, a second server refuses to start
+  # Upstream #19715: a server is refused a home an older background service still runs on.
   @mc
   Scenario: A second MC on the same files stops before it opens them
     Given an MC holds its HAL-C2 home

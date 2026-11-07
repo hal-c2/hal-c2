@@ -1,5 +1,4 @@
 # Sources:
-#   https://github.com/pingdotgg/t3code/pull/21933
 #   https://github.com/pingdotgg/t3code/pull/19483
 #   https://github.com/pingdotgg/t3code/pull/22072
 #   https://github.com/pingdotgg/t3code/pull/20391
@@ -7,6 +6,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15537
 #   https://github.com/pingdotgg/t3code/pull/18789
 #   https://github.com/pingdotgg/t3code/pull/11337
+#   https://github.com/pingdotgg/t3code/pull/25457
 #   docs/user/question-attachments.md
 #   apps/tui/src/userInput.ts
 #   apps/tui/src/components/ChatView.tsx (question panel, defer and reopen)
@@ -165,6 +165,21 @@ Feature: Answering the agent's questions from the composer
     Then the chosen file is not attached to anything
     And the user is not left with a question that is no longer pending
 
+  # Upstream #25457: a question's half-written answer is let go when the question ends, wherever it ends.
+  @backlog @shared
+  Scenario Outline: A question that ends while its thread is not open lets go of its half-written answer
+    Given the user typed an answer and attached a file to "Which database?" without sending
+    And the user opened another thread
+    When <ending>
+    Then the typed answer and the file are gone, after a restart too
+    And when the agent asks a new question it starts from its suggested answer
+
+    Examples:
+      | ending                                    |
+      | another client answers the question       |
+      | the user stops the turn                   |
+      | the turn ends without an answer           |
+
   @backlog @mobile @priority-high
   Scenario: An answered question stays in the conversation with its answers and files
     Given the user answered "Which schema?" with "use this one" and attached "schema.sql"
@@ -315,30 +330,6 @@ Feature: Answering the agent's questions from the composer
     When the user types "$bro" in the answer to "Which database?" and picks the skill "bro"
     Then the answer shows the skill "bro" as a chip and the skill picker closes
     And what the user types next follows the chip
-
-  # Upstream #21933: Claude question options show their Markdown preview in the composer;
-  # options are identified by position, so two with the same value stay apart.
-  @backlog @shared
-  Scenario: An option's preview is shown while it is highlighted
-    Given the option "Postgres" carries a preview describing a hosted database
-    When the user highlights "Postgres"
-    Then the preview of "Postgres" is shown beside the options
-
-  # Upstream #21933: options with the same answer value are told apart by position.
-  @backlog @shared
-  Scenario: Two options with the same answer each show their own preview
-    Given the agent asked "Which database?" with two options that both answer "Postgres" and different previews
-    When the user highlights the second option
-    Then the second option's preview is shown, not the first one's
-
-  # Upstream #21933: a custom answer hides the preview and clearing it does not bring back an old one.
-  @backlog @shared
-  Scenario: Typing a custom answer hides the option preview
-    Given the user highlighted "Postgres" and its preview is shown
-    When the user types a custom answer
-    Then no option preview is shown
-    When the user clears the custom answer
-    Then no option preview is shown until the user highlights an option again
 
   # Upstream #22072: folder references work in typed answers too, not in choice-only questions.
   @backlog @desktop

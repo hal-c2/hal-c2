@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22777
 #   docs/user/composer.md (message limits, sending, background prompts, multiple models)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (text sync, submit, draft target, the folding toolbar, Send's accent)
 #   apps/desktop-qt/tests/tst_Composer.qml
@@ -81,6 +82,15 @@ Feature: Drafting and sending a message
     Given the user has just typed "for thread A" in thread A
     When the user switches to thread B before the draft is saved
     Then thread B's draft does not contain "for thread A"
+
+  # Upstream #22777: arrow keys in an Arabic line stopped at inline code, since the editor took
+  # its direction from the whole composer rather than the line.
+  @desktop @backlog
+  Scenario: The arrow keys in a right-to-left line move the way the line reads
+    Given the user typed "اكتب دالة `sumBy` تجمع القيم" in the composer
+    When the user walks the line with the left arrow
+    Then the caret moves on through the code to the end of the line
+    And a new line started with Shift+Enter keeps reading right to left
 
   @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: Each thread keeps its own draft
