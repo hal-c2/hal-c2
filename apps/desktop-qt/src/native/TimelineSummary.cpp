@@ -432,7 +432,7 @@ QString orchestrationLabel(const QString& action, const QList<Call>& calls) {
 QString actionOf(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("thread_created")) return QStringLiteral("thread-create");
-  if (type == QLatin1String("approval_request") && text(item, QLatin1String("requestKind")) == QLatin1String("file-read")) {
+  if (type == QLatin1String("approval_request") && approvalKind(item) == QLatin1String("file-read")) {
     return QStringLiteral("read");
   }
   if (type == QLatin1String("dynamic_tool")) {
@@ -494,6 +494,23 @@ QString listed(const QStringList& names) {
 }
 
 }  // namespace
+
+QString approvalKind(const QJsonObject& item) {
+  const QString kind = text(item, QLatin1String("requestKind"));
+  static const QStringList known{QStringLiteral("command"), QStringLiteral("file-read"), QStringLiteral("file-change"),
+                                 QStringLiteral("mcp-elicitation"), QStringLiteral("permission")};
+  if (known.contains(kind)) return kind;
+  const QString type = text(item, QLatin1String("requestType"));
+  if (type == QLatin1String("command_execution_approval") || type == QLatin1String("exec_command_approval") ||
+      type == QLatin1String("dynamic_tool_call")) {
+    return QStringLiteral("command");
+  }
+  if (type == QLatin1String("file_read_approval")) return QStringLiteral("file-read");
+  if (type == QLatin1String("file_change_approval") || type == QLatin1String("apply_patch_approval")) return QStringLiteral("file-change");
+  if (type == QLatin1String("mcp_elicitation_approval")) return QStringLiteral("mcp-elicitation");
+  if (type == QLatin1String("permission_approval")) return QStringLiteral("permission");
+  return kind;
+}
 
 bool isFileRead(const QJsonObject& item) {
   if (text(item, QLatin1String("type")) != QLatin1String("file_search")) return false;
