@@ -87,4 +87,25 @@ defmodule HalC2.PreviewTest do
     assert {:ok, %{"viewport" => ^edge}} =
              HalC2.Preview.open(%{"threadId" => "t1", "viewport" => edge})
   end
+
+  test "lengths count UTF-16 code units, not graphemes" do
+    {:ok, %{"tabId" => tab}} =
+      HalC2.Preview.open(%{"threadId" => "t1", "url" => "http://localhost/"})
+
+    # 300 emoji: 300 graphemes, 600 UTF-16 units.
+    title = String.duplicate("😀", 300)
+
+    assert {:error, %{"_tag" => "PreviewInvalidInputError", "field" => "title"}} =
+             HalC2.Preview.navigate(%{
+               "threadId" => "t1",
+               "tabId" => tab,
+               "url" => "http://localhost/a",
+               "resolvedTitle" => title
+             })
+
+    url = "http://localhost/" <> String.duplicate("😀", 1_100)
+
+    assert {:error, %{"reason" => "too-long", "inputLength" => 2_217}} =
+             HalC2.Preview.navigate(%{"threadId" => "t1", "tabId" => tab, "url" => url})
+  end
 end

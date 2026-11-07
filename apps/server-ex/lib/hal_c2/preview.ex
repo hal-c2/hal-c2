@@ -22,7 +22,8 @@ defmodule HalC2.Preview do
   end
 
   def navigate(input) do
-    with :ok <- validate_title(input["resolvedTitle"]),
+    with :ok <- validate_url(input["url"]),
+         :ok <- validate_title(input["resolvedTitle"]),
          do: GenServer.call(__MODULE__, {:navigate, input})
   end
 
@@ -166,12 +167,16 @@ defmodule HalC2.Preview do
   @dimension_max 3_840
   @area_max 3_840 * 2_160
 
+  # Lengths count UTF-16 code units, as the contract's `isMaxLength` and Qt's
+  # `QString::length` do, so every client and the MC agree on what is too long.
+  defp units(string), do: div(byte_size(:unicode.characters_to_binary(string, :utf8, :utf16)), 2)
+
   defp validate_url(nil), do: :ok
 
   defp validate_url(url) when is_binary(url) do
     cond do
       String.trim(url) == "" -> invalid_url(url, "empty")
-      String.length(url) > @url_max -> invalid_url(url, "too-long")
+      units(url) > @url_max -> invalid_url(url, "too-long")
       true -> validate_scheme(url)
     end
   end
@@ -193,7 +198,7 @@ defmodule HalC2.Preview do
   defp invalid_url(url, reason, protocol \\ nil) do
     error = %{
       "_tag" => "PreviewInvalidUrlError",
-      "inputLength" => String.length(url),
+      "inputLength" => units(url),
       "reason" => reason,
       "cause" => nil
     }
@@ -202,7 +207,7 @@ defmodule HalC2.Preview do
   end
 
   defp validate_title(title) when is_binary(title) and byte_size(title) > 0 do
-    if String.length(title) > @title_max,
+    if units(title) > @title_max,
       do: {:error, invalid_input("title", "longer than #{@title_max} characters")},
       else: :ok
   end
