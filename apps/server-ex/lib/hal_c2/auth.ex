@@ -100,14 +100,77 @@ defmodule HalC2.Auth do
   `admin: true` pairs with the operator's scopes, for tools on the host itself.
   """
   @spec create_pairing_token(String.t(), keyword) :: String.t()
-  def create_pairing_token(path, opts \\ []) do
+  def create_pairing_token(path, opts \\ []),
+    do: path |> mint_pairing_link(opts) |> Map.fetch!("credential")
+
+  @doc """
+  Like `create_pairing_token/2`, answering the whole link (`id`, `credential`, `label`,
+  `createdAt`, `expiresAt`, `scopes`). `ttl_ms` sets its lifetime (five minutes
+  otherwise) and `label` names it in Settings → Connections.
+  """
+  @spec mint_pairing_link(String.t(), keyword) :: map
+  def mint_pairing_link(path, opts \\ []) do
     scopes = if opts[:admin], do: @admin_scopes, else: @standard_scopes
+
+    link =
+      with_db(path, fn db ->
+        ensure_schema(db)
+
+        insert_pairing(
+          db,
+          opts[:label],
+          scopes,
+          opts[:ttl_ms] || @pairing_ttl,
+          nil,
+          "pairing-link"
+        )
+      end)
+
+    Map.put(link, "scopes", scopes)
+  end
+
+  @doc """
+  Issues an administrative session for `subject` straight into the store at `path`, for
+  a headless client; usable from outside the MC. Answers `{id, token, scopes, expires_at}`.
+  """
+  def issue_session(path, subject, label \\ nil) do
+    access = random_token()
+    id = "session-" <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
+    created = now()
 
     with_db(path, fn db ->
       ensure_schema(db)
-      insert_pairing(db, nil, scopes)
+
+      exec(
+        db,
+        "INSERT INTO auth_sessions (token_hash, scopes, label, created_at, expires_at, id, device_type, subject) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'bot', ?7)",
+        [
+          hash(access),
+          Enum.join(@admin_scopes, " "),
+          label,
+          created,
+          created + @session_ttl,
+          id,
+          subject
+        ]
+      )
     end)
-    |> Map.fetch!("credential")
+
+    %{id: id, token: access, scopes: @admin_scopes, expires_at: iso(created + @session_ttl)}
+  end
+
+  @doc "The pairing links waiting in the store at `path`, as Connections lists them; usable from outside the MC."
+  def pairing_links(path) do
+    with_db(path, &ensure_schema/1)
+    links(path)
+  end
+
+  @doc "Revokes the pairing link `id` in the store at `path`; usable from outside the MC."
+  def revoke_pairing_link(path, id) do
+    with_db(path, fn db ->
+      ensure_schema(db)
+      query(db, "DELETE FROM auth_pairing WHERE id = ?1 RETURNING id", [id]) != []
+    end)
   end
 
   @doc """
@@ -719,9 +782,9 @@ defmodule HalC2.Auth do
          db,
          label,
          scopes,
-         ttl \\ @pairing_ttl,
-         proof_jkt \\ nil,
-         kind \\ "pairing-link"
+         ttl,
+         proof_jkt,
+         kind
        ) do
     token = random_token()
     id = "pairing-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)

@@ -542,7 +542,7 @@ Feature: MC authentication and scopes
     Then it sees the same clients as Connections settings
     And it can revoke one of them
 
-  @backlog @mc
+  @mc
   Scenario: A pairing link from the command line can carry a lifetime, a label and a public address
     When an operator mints a pairing link with a lifetime of one hour, the label "Ana's phone" and the public address "https://mc.example.com"
     Then the printed link points at "https://mc.example.com" and carries a one-time token
@@ -550,24 +550,24 @@ Feature: MC authentication and scopes
     And Connections settings lists the link as "Ana's phone"
 
   # Upstream #14128: the readable output printed "DateTime.Utc(...)" for the expiry.
-  @backlog @mc @priority-low
+  @mc
   Scenario: A minted pairing link's readable output gives its expiry as an ISO 8601 time
     When an operator mints a pairing link from the command line
     Then the output says when the link expires as an ISO 8601 time such as "2026-09-28T00:56:46.668Z"
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: An operator can print a minted pairing link as JSON
     When an operator mints a pairing link from the command line and asks for JSON
     Then the output is only a JSON document with the link's id, label, token, scopes and expiry
 
-  @backlog @mc
+  @mc
   Scenario: A session token is issued from the command line for a headless client
     When an operator issues a session for the subject "ci" from the command line
     Then the MC prints a bearer token that signs in as a session for "ci"
     And the session has administrative scopes
     And the session is listed with the other clients and can be revoked
 
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: A session issued from the command line is printed the way the operator asked
     When an operator issues a session from the command line asking for <form>
     Then the output is <result>
@@ -577,7 +577,7 @@ Feature: MC authentication and scopes
       | the token  | only the bearer token, so a script can capture it                              |
       | JSON       | only a JSON document with the session id, token, scopes, subject and expiry    |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: Pairing links listed from the command line show their details but never their secret
     Given two pairing links are waiting to be used
     When an operator lists pairing links from the command line
@@ -585,7 +585,7 @@ Feature: MC authentication and scopes
     And no link shows its token
     But the desktop's own bootstrap link is not listed
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: Sessions listed from the command line show how each client is used
     Given a paired client that has never connected to the MC
     When an operator lists sessions from the command line
@@ -594,7 +594,7 @@ Feature: MC authentication and scopes
     And a session with no client label reads "unlabeled client"
     And bearer tokens are never shown
 
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: Listing from the command line with nothing active says so
     Given there are no <things>
     When an operator lists <things> from the command line
@@ -605,7 +605,7 @@ Feature: MC authentication and scopes
       | pairing links | No active pairing credentials.   |
       | sessions      | No active sessions.              |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Revoking from the command line says whether anything was revoked
     Given <state>
     When an operator revokes it by id from the command line

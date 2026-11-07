@@ -20,7 +20,7 @@ defmodule HalC2.PairTest do
   test "minting ahead of a first start makes the store's directory", %{home: home} do
     refute File.exists?(home)
 
-    assert {:ok, [link]} = HalC2.Pair.command(["http://127.0.0.1:3780"])
+    assert {:ok, [link, _expires]} = HalC2.Pair.command(["http://127.0.0.1:3780"])
     assert String.starts_with?(link, "http://127.0.0.1:3780/?token=")
     assert File.exists?(Path.join(home, "hal-c2.sqlite"))
   end
@@ -103,7 +103,7 @@ defmodule HalC2.PairTest do
        %{tmp_dir: dir} do
     {installed, _port} = cross_profile(dir, &"http://127.0.0.2:#{&1}")
 
-    assert {:ok, [link, _note]} = HalC2.Pair.command(["--release", "--tailscale"])
+    assert {:ok, [link, _expires, _note]} = HalC2.Pair.command(["--release", "--tailscale"])
     assert link =~ "https://box.tail.ts.net/?token="
     assert File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end

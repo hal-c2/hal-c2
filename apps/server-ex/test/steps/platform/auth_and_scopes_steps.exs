@@ -236,8 +236,8 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
 
   step "an operator mints a pairing link from the command line", context do
     base = url(context, "")
-    assert [link] = mix_output(Mix.Tasks.HalC2.Pair, [base])
-    Map.merge(context, %{link: link, base: base})
+    assert [link, _expires] = printed = mix_output(Mix.Tasks.HalC2.Pair, [base])
+    Map.merge(context, %{link: link, base: base, printed: printed})
   end
 
   step "it prints a link with a one-time token for standard scopes", context do
@@ -1394,7 +1394,9 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
   step "it can revoke one of them", context do
     [other | _] = context.others
     id = session_id(other)
-    assert ["Revoked " <> _] = mix_output(Mix.Tasks.HalC2.Auth, ["session", "revoke", id])
+
+    assert [<<^id::binary-size(byte_size(id)), ": the session was revoked">>] =
+             mix_output(Mix.Tasks.HalC2.Auth, ["session", "revoke", id])
 
     assert {401, _, _} =
              Mc.request(context.mc, :post, "/api/auth/websocket-ticket", bearer: other)
@@ -1855,6 +1857,230 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     assert {401, _, %{"reason" => "invalid_credential", "dpopFailureReason" => ^reason}} =
              context.response
 
+    context
+  end
+
+  # --- the command line, lifetimes, labels, JSON ---------------------------------
+
+  defp auth_cli(args), do: mix_output(Mix.Tasks.HalC2.Auth, args)
+
+  step ~r/^an operator mints a pairing link with a lifetime of one hour, the label "(?<label>[^"]+)" and the public address "(?<addr>[^"]+)"$/,
+       %{args: [label, addr]} = context do
+    assert [link, _expires] =
+             mix_output(Mix.Tasks.HalC2.Pair, [addr, "--ttl", "1h", "--label", label])
+
+    Map.merge(context, %{link: link, base: addr, label: label})
+  end
+
+  step ~r/^the printed link points at "(?<addr>[^"]+)" and carries a one-time token$/,
+       %{args: [addr]} = context do
+    assert String.starts_with?(context.link, addr <> "/?token=")
+    context
+  end
+
+  step "the link expires after one hour", context do
+    assert [%{"expiresAt" => expires}] = HalC2.Auth.pairing_links()
+    {:ok, expires, _} = DateTime.from_iso8601(expires)
+    assert DateTime.diff(expires, DateTime.utc_now(), :second) in 3590..3600
+    context
+  end
+
+  step ~r/^Connections settings lists the link as "(?<label>[^"]+)"$/,
+       %{args: [label]} = context do
+    assert [%{"label" => ^label}] = HalC2.Auth.pairing_links()
+    context
+  end
+
+  step "the output says when the link expires as an ISO 8601 time such as \"2026-09-28T00:56:46.668Z\"",
+       context do
+    assert [_link, "Expires " <> iso] = context.printed
+    assert {:ok, _, 0} = DateTime.from_iso8601(iso)
+    assert iso =~ ~r/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/
+    context
+  end
+
+  step "an operator mints a pairing link from the command line and asks for JSON", context do
+    Map.put(context, :printed, mix_output(Mix.Tasks.HalC2.Pair, [url(context, ""), "--json"]))
+  end
+
+  step "the output is only a JSON document with the link's id, label, token, scopes and expiry",
+       context do
+    assert [json] = context.printed
+    assert %{"id" => _, "token" => _, "scopes" => _, "expiresAt" => _} = JSON.decode!(json)
+    assert Map.has_key?(JSON.decode!(json), "label")
+    context
+  end
+
+  step ~r/^an operator issues a session for the subject "(?<subject>[^"]+)" from the command line$/,
+       %{args: [subject]} = context do
+    assert [_summary, token] = auth_cli(["session", "issue", subject])
+    Map.merge(context, %{issued: token, subject: subject})
+  end
+
+  step ~r/^the MC prints a bearer token that signs in as a session for "(?<subject>[^"]+)"$/,
+       %{args: [_subject]} = context do
+    assert {:ok, %{id: _}} = HalC2.Auth.session(context.issued)
+    context
+  end
+
+  step "the session has administrative scopes", context do
+    assert {:ok, %{scopes: scopes}} = HalC2.Auth.session(context.issued)
+    assert Enum.sort(scopes) == Enum.sort(@admin)
+    context
+  end
+
+  step "the session is listed with the other clients and can be revoked", context do
+    {:ok, session} = HalC2.Auth.session(context.issued)
+    assert Enum.any?(auth_cli(["session", "list"]), &String.starts_with?(&1, session.id))
+    assert [msg] = auth_cli(["session", "revoke", session.id])
+    assert msg =~ "the session was revoked"
+    refute match?({:ok, _}, HalC2.Auth.session(context.issued))
+    context
+  end
+
+  step ~r/^an operator issues a session from the command line asking for (?<form>the token|JSON)$/,
+       %{args: [form]} = context do
+    flag = if form == "JSON", do: "--json", else: "--token"
+    Map.merge(context, %{printed: auth_cli(["session", "issue", "ci", flag]), form: form})
+  end
+
+  step ~r/^the output is (?<result>only the bearer token, so a script can capture it|only a JSON document with the session id, token, scopes, subject and expiry)$/,
+       %{args: [result]} = context do
+    assert [line] = context.printed
+
+    if String.contains?(result, "JSON") do
+      assert %{"id" => _, "token" => _, "scopes" => _, "subject" => "ci", "expiresAt" => _} =
+               JSON.decode!(line)
+    else
+      assert {:ok, _} = HalC2.Auth.session(line)
+    end
+
+    context
+  end
+
+  step "two pairing links are waiting to be used", context do
+    for label <- ["First", "Second"],
+        do: HalC2.Auth.create_pairing_link(%{"scopes" => @standard, "label" => label})
+
+    context
+  end
+
+  step "each link shows its id, label, scopes and expiry", context do
+    assert length(context.listed) == 2
+
+    for line <- context.listed do
+      assert [id, label, scopes, "expires " <> _] = String.split(line, "\t")
+      assert id != "" and label in ["First", "Second"]
+      assert String.split(scopes, ",") == @standard
+    end
+
+    context
+  end
+
+  step "no link shows its token", context do
+    refute Enum.any?(context.listed, &(&1 =~ "token"))
+    context
+  end
+
+  step "the desktop's own bootstrap link is not listed", context do
+    assert length(context.listed) == 2
+    context
+  end
+
+  step "a paired client that has never connected to the MC", context do
+    Map.put(context, :client_access, standard!(context))
+  end
+
+  step "the client shows its scopes, method, subject, issue time and expiry", context do
+    id = session_id(context.client_access)
+    line = Enum.find(context.listed, &String.starts_with?(&1, id))
+
+    assert [^id, _label, method, subject, scopes, "issued " <> _, "expires " <> _, _] =
+             String.split(line, "\t")
+
+    assert method != "" and subject != ""
+    assert String.split(scopes, ",") == @standard
+    Map.put(context, :line, line)
+  end
+
+  step "its last connection reads \"never\"", context do
+    assert context.line =~ "last connected never"
+    context
+  end
+
+  step "a session with no client label reads \"unlabeled client\"", context do
+    id = session_id(context.client_access)
+    sql(context, "UPDATE auth_sessions SET label = NULL WHERE id = ?1", [id])
+    line = Enum.find(auth_cli(["session", "list"]), &String.starts_with?(&1, id))
+    assert line =~ "\tunlabeled client\t"
+    context
+  end
+
+  step "bearer tokens are never shown", context do
+    refute Enum.any?(context.listed, &(&1 =~ context.client_access))
+    context
+  end
+
+  step ~r/^there are no (?<things>pairing links|sessions)$/, %{args: [things]} = context do
+    sql(context, "DELETE FROM auth_pairing")
+    sql(context, "DELETE FROM auth_sessions")
+    Map.put(context, :things, things)
+  end
+
+  step ~r/^an operator lists (?<things>pairing links|sessions) from the command line$/,
+       %{args: [things]} = context do
+    kind = if things == "sessions", do: "session", else: "pairing"
+    Map.put(context, :listed, auth_cli([kind, "list"]))
+  end
+
+  step ~r/^the output says "(?<message>[^"]+)"$/, %{args: [message]} = context do
+    assert context.listed == [message]
+    context
+  end
+
+  step ~r/^(?<state>a pairing link waiting to be used|a pairing link that was already used|a paired client's session|a session that is already revoked)$/,
+       %{args: [state]} = context do
+    {:ok, link} = HalC2.Auth.create_pairing_link(%{"scopes" => @standard})
+    link_id = link["id"]
+
+    case state do
+      "a pairing link waiting to be used" ->
+        Map.merge(context, %{
+          cli: ["pairing", "revoke", link_id],
+          result: "the pairing credential was revoked"
+        })
+
+      "a pairing link that was already used" ->
+        pair!(context, link["credential"])
+
+        Map.merge(context, %{
+          cli: ["pairing", "revoke", link_id],
+          result: "no active pairing credential has that id"
+        })
+
+      "a paired client's session" ->
+        id = session_id(standard!(context))
+        Map.merge(context, %{cli: ["session", "revoke", id], result: "the session was revoked"})
+
+      "a session that is already revoked" ->
+        id = session_id(standard!(context))
+        HalC2.Auth.revoke_session(context.mc.store, id)
+
+        Map.merge(context, %{
+          cli: ["session", "revoke", id],
+          result: "no active session has that id"
+        })
+    end
+  end
+
+  step "an operator revokes it by id from the command line", context do
+    Map.put(context, :printed, auth_cli(context.cli))
+  end
+
+  step ~r/^the output says (?<result>the pairing credential was revoked|no active pairing credential has that id|the session was revoked|no active session has that id)$/,
+       %{args: [result]} = context do
+    assert [line] = context.printed
+    assert line =~ result
     context
   end
 end
