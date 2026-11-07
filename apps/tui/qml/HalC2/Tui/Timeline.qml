@@ -31,12 +31,23 @@ ScrollView {
     onTimelineChanged: if (opening && timeline.items.length > 0) settleOpening()
 
     // Rows mount over a few frames: every height change while opening goes to the
-    // bottom again. endOpening is one named function, so callLater merges the
-    // calls: the opening ends one loop turn after the last height change.
-    function endOpening() { opening = false }
+    // bottom again. opentui-qml's callLater flushes once, on the first timer turn,
+    // so it cannot wait for quiet by itself: endOpening notes the content height it
+    // was queued at and re-arms itself while that height keeps changing. Only a
+    // height that held for a full turn ends the opening.
+    property real openingHeight: -1
+    function endOpening() {
+        if (contentHeight !== openingHeight) {
+            openingHeight = contentHeight
+            Qt.callLater(endOpening)
+            return
+        }
+        opening = false
+    }
     function settleOpening() {
         heightBefore = -1
         scrollToBottom()
+        openingHeight = contentHeight
         Qt.callLater(endOpening)
     }
 
