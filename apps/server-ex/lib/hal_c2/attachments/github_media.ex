@@ -154,7 +154,19 @@ defmodule HalC2.Attachments.GitHubMedia do
       |> String.trim()
       |> String.downcase()
 
-    type = if Regex.match?(@media, type), do: type, else: MIME.from_path(file_name(url))
+    # Only a missing or generic type falls back to the file's name; an HTML page named
+    # `shot.png` stays refused.
+    type =
+      cond do
+        Regex.match?(@media, type) ->
+          type
+
+        type in ["", "application/octet-stream", "binary/octet-stream"] ->
+          MIME.from_path(file_name(url))
+
+        true ->
+          type
+      end
 
     if Regex.match?(@media, type) do
       kept =
