@@ -47,6 +47,10 @@ export type TimelineRow =
 
 type LatestTurn = OrchestrationThread["latestTurn"];
 
+/** A reply a steer cut off mid-way (the adapter marks it); it is folded, never the answer. */
+const isCutOff = (message: OrchestrationMessage | null): boolean =>
+  message !== null && (message as { cutOff?: boolean }).cutOff === true;
+
 interface OrderedItem {
   readonly id: string;
   readonly createdAt: string;
@@ -272,7 +276,10 @@ export function deriveTimelineEntries(
   // Stable sort: equal timestamps keep messages (added first) before work entries.
   ordered.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
-  const folds = deriveTurnFolds(ordered, latestTurn);
+  const folds = deriveTurnFolds(
+    ordered.filter((item) => !isCutOff(item.message)),
+    latestTurn,
+  );
   const collapsed = new Set<string>();
   for (const fold of folds.values()) {
     for (const id of fold.hiddenIds) collapsed.add(id);
@@ -298,6 +305,20 @@ export function deriveTimelineEntries(
       });
     }
     if (collapsed.has(item.id)) {
+      index += 1;
+      continue;
+    }
+    if (item.message && isCutOff(item.message)) {
+      rows.push({
+        kind: "turn-fold",
+        id: `cut-off:${item.id}`,
+        turnId: `cut-off:${item.id}`,
+        createdAt: item.createdAt,
+        label: "Cut off by a steer",
+        hiddenRows: [
+          { kind: "message", id: item.id, createdAt: item.createdAt, message: item.message },
+        ],
+      });
       index += 1;
       continue;
     }

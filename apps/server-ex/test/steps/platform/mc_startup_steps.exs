@@ -200,7 +200,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
   end
 
   step "its pairing links use that address", context do
-    [link] = World.mix_output(Mix.Tasks.HalC2.Pair, :run, [[]])
+    [link, _expires] = World.mix_output(Mix.Tasks.HalC2.Pair, :run, [[]])
     base = "http://#{context.lan_host}:#{context.mc.port}/?token="
     assert String.starts_with?(link, base), link
 

@@ -1,9 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24276
+#   https://github.com/pingdotgg/t3code/pull/24682
+#   https://github.com/pingdotgg/t3code/pull/24602
 #   https://github.com/pingdotgg/t3code/pull/14605
 #   https://github.com/pingdotgg/t3code/pull/18836
 #   https://github.com/pingdotgg/t3code/pull/20196
 #   https://github.com/pingdotgg/t3code/pull/19431
 #   https://github.com/pingdotgg/t3code/pull/19240
+#   https://github.com/pingdotgg/t3code/pull/25223
 #   apps/mobile/src/features/review/ (diff source selector, viewed files, comments, notices)
 #   apps/mobile/src/features/diffs/
 #   apps/mobile/modules/hal-c2-review-diff
@@ -36,6 +40,16 @@ Feature: Reviewing changes on a phone
       | branch changes  |
       | latest turn     |
       | second turn     |
+
+  # Upstream #25223: the review showed the newest turn for a moment before Changes, and a turn
+  # picked from the thread that had not loaded yet was swapped for Changes for good.
+  @backlog @mobile @priority-low
+  Scenario: Reviewing opens on the working tree changes and keeps a turn the user picked
+    When the user reviews "Fix checkout"
+    Then the working tree changes are shown from the start
+    When the user picks the second turn from the thread before its changes have loaded
+    Then the working tree changes are shown while it loads
+    And the second turn's changes are shown once they load
 
   @backlog @mobile
   Scenario: The list of changed files can be hidden and shown
@@ -295,6 +309,41 @@ Feature: Reviewing changes on a phone
     Then one refresh indicator is shown
     And the activity rows stay where they were
 
+  # Upstream #24602: the phone showed a pull request's labels read-only and could not edit,
+  # react or follow checks, so users still needed the host's own app.
+  @backlog @mobile
+  Scenario: The user changes a pull request's labels from the phone
+    Given the user may change the labels of pull request 42 on a host with labels
+    When the user opens the labels picker, searches for "bug" and taps it
+    Then pull request 42 carries the label "bug"
+    And tapping "bug" again removes it
+
+  @backlog @mobile
+  Scenario Outline: The user edits a pull request's <part> from the phone
+    Given the user may edit the <part> of pull request 42
+    When the user edits it on the phone and saves
+    Then pull request 42 shows the new <part>
+
+    Examples:
+      | part                       |
+      | title                      |
+      | description                |
+      | comment the user wrote     |
+
+  @backlog @mobile
+  Scenario: A reaction from the phone shows at once and is undone if the host refuses it
+    Given the user is reading pull request 42 on the phone
+    When the user reacts with a heart to its description
+    Then the heart shows at once
+    And it is taken back if the host refuses the reaction
+
+  @backlog @mobile
+  Scenario: An open pull request's checks follow its CI while it is on the phone's screen
+    Given pull request 42 is open on the phone and a check is running
+    When the check finishes
+    Then the phone shows its result without the user refreshing
+    And the phone stops reading the checks once the screen is left or the environment is offline
+
   @backlog @mobile @priority-low
   Scenario: Android offers to refresh the current diff from the menu
     Given the user is on an Android phone
@@ -343,13 +392,33 @@ Feature: Reviewing changes on a phone
     Then the large diff is shown while it is open
     And the three earlier diffs are still kept
 
-  # Upstream #19240: huge diffs are cut to 2,000 rows a file, with a notice.
+  # Upstream #19240: huge diffs are cut a file, with a notice.
+  # Upstream #24276: the cut went from 2,000 rows a file to 100,000.
   @backlog @mobile
   Scenario: A file's very large diff shows its start and says it was cut
-    Given "data.json" has a diff of 50,000 added lines
+    Given "data.json" has a diff of 150,000 added lines
     When the user reviews the changes and loads the diff of "data.json"
-    Then the first 2,000 rows of "data.json" are shown with a notice that the rest is left out
-    And "data.json" still counts 50,000 added lines
+    Then the first 100,000 rows of "data.json" are shown with a notice that the rest is left out
+    And "data.json" still counts 150,000 added lines
+
+  @backlog @mobile @priority-low
+  Scenario: A large file's diff keeps its syntax colours to its end
+    Given "parser.c" has a diff of 90,000 changed lines
+    When the user scrolls to the end of the diff of "parser.c"
+    Then the last rows are coloured by their syntax like the first
+
+  @backlog @mobile @priority-low
+  Scenario: Turning word wrap on keeps the row the user was reading on screen
+    Given the user is reading row 40,000 of a large diff
+    When the user turns word wrap on
+    Then row 40,000 is still on screen
+
+  # Upstream #24682: collapsing a large file left the next visible file without syntax colours.
+  @backlog @mobile @priority-low
+  Scenario: Collapsing a large file's diff keeps the next file coloured
+    Given the user is reviewing a diff whose first file has 96,000 lines
+    When the user collapses that file
+    Then the next file's rows are coloured by their syntax
 
   @backlog @mobile @priority-low
   Scenario: Nearby diffs are prepared before the user opens them

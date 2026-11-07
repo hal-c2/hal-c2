@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23595
+#   https://github.com/pingdotgg/t3code/pull/20101
 #   https://github.com/pingdotgg/t3code/pull/21146
+#   https://github.com/pingdotgg/t3code/pull/24521
 #   https://github.com/pingdotgg/t3code/pull/19238
 #   https://github.com/pingdotgg/t3code/pull/15674
 #   https://github.com/pingdotgg/t3code/pull/15747
@@ -51,6 +54,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15384
 #   https://github.com/pingdotgg/t3code/pull/15505
 #   https://github.com/pingdotgg/t3code/pull/15506
+#   https://github.com/pingdotgg/t3code/pull/22131
+#   https://github.com/pingdotgg/t3code/pull/22895
 
 Feature: Tool calls and file changes
   The agent's work shows as tool calls between its messages. Calls group into a short
@@ -652,6 +657,14 @@ Feature: Tool calls and file changes
     When the user opens "src/cart.ts" from the list of changed files
     Then the diff shows only "src/cart.ts"
 
+  # Upstream #20101: a file clicked in a completed turn opened the diff with it still collapsed.
+  @backlog @shared
+  Scenario: A file opened from a turn's changed files is expanded in the diff
+    Given the user collapsed "src/cart.ts" in the diff
+    When the user opens "src/cart.ts" from a turn's list of changed files
+    Then the diff shows "src/cart.ts" expanded, once its changes have loaded
+    And a later refresh of the diff leaves its folds as the user sets them
+
   @desktop
   Scenario: A turn's changed files are folded under their folders
     Given a turn changed "src/cart.ts" and "src/checkout.ts"
@@ -831,6 +844,14 @@ Feature: Tool calls and file changes
     Then the image is shown
     And the details show neither "[image]" nor "No output"
 
+  # Upstream #23595: a result with more than eight images showed eight and hid the rest.
+  @backlog @shared @priority-low
+  Scenario: A tool result's images past the first eight are marked
+    Given a tool call returned ten images
+    When the user opens the call's details
+    Then the first eight images are shown
+    And the other two are each marked "[image]"
+
   @backlog @shared @priority-low
   Scenario: A computer-use or script call reads as the action the agent named
     Given the agent ran a computer-use or JavaScript call titled "Open the billing page"
@@ -991,12 +1012,34 @@ Feature: Tool calls and file changes
     Then the page renders inline above the agent's final reply
     And it cannot read local files or reach the local network, and a link in it opens only after a user action in the frame
 
+  # Upstream #22131: the measured height wins over the agent's, up to 20,000 pixels; the agent's
+  # height came from a preview with other fonts, so pages were cropped and scrolled inside.
   @backlog @shared @priority-low
   Scenario: An inline HTML page does not hold the thread's scroll
     Given an inline page that wraps a few pixels taller than its frame
     When the user scrolls the thread with the pointer over it
     Then the thread scrolls
-    And the frame fits the page's reported content height, capped by the agent's height only when that is smaller
+    And the frame grows to the page's measured height, up to 20,000 pixels, whatever height the agent gave
+
+  # Upstream #22131: a page sized from the viewport would grow its frame without end.
+  @backlog @mc @priority-low
+  Scenario: An HTML page sized in viewport units is refused
+    When an agent publishes or previews an HTML page whose style uses "vh", "svh", "lvh" or "dvh" units
+    Then the tool refuses it and tells the agent to use fixed pixel heights
+
+  # Upstream #22895: a browser blocked from starting showed the agent an internal error.
+  @backlog @mc @priority-low
+  Scenario: An HTML preview whose browser cannot start says so
+    Given the browser that renders HTML previews is blocked from starting
+    When an agent previews or publishes an HTML page
+    Then the tool fails saying the browser could not be started
+
+  # Upstream #24521: an HTML preview kept the light color scheme on a dark theme.
+  @backlog @mc @priority-low
+  Scenario: An agent's HTML preview renders in the appearance it was asked for
+    Given an agent's HTML page styles itself by the light or dark color scheme
+    When the agent previews it in the dark appearance
+    Then the page is rendered with the dark color scheme
 
   @backlog @mobile @priority-low
   Scenario: Dragging over an inline HTML page taller than its frame scrolls the page, then the thread

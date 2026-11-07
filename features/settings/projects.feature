@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18692
 #   https://github.com/pingdotgg/t3code/pull/20231
 #   https://github.com/pingdotgg/t3code/pull/18901
 #   https://github.com/pingdotgg/t3code/pull/17860
@@ -12,6 +13,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14490
 #   https://github.com/pingdotgg/t3code/pull/14527
 #   https://github.com/pingdotgg/t3code/pull/14635
+#   https://github.com/pingdotgg/t3code/pull/21409
 
 Feature: Projects settings panel
   The Projects panel manages one project across its checkouts: its name, its icon, its
@@ -43,6 +45,21 @@ Feature: Projects settings panel
     Given the user is managing the "server" checkout of "shop"
     When that checkout is removed on another device
     Then the user is told this checkout is no longer available in the selected project and environment
+
+  # Upstream #18692: picking an environment without the project replaced the page with a dead end.
+  @backlog @desktop
+  Scenario: The environments offered for a project are the ones that have it
+    Given the environment "spare" has no checkout of "shop"
+    When the user picks the environment for "shop" in the Projects settings
+    Then "laptop" and "server" are offered and "spare" is not
+
+  # Upstream #18692: a stale link to a project on an environment without it kept no way back.
+  @backlog @desktop
+  Scenario: A project unavailable on the picked environment keeps the way back
+    Given the user opens the Projects settings for "shop" on an environment without it
+    Then the user is told why "shop" is unavailable there
+    And the project and environment pickers are still shown
+    And showing all environments keeps "shop" picked
 
   @desktop
   Scenario: The panel keeps following the project when grouping changes
@@ -85,7 +102,8 @@ Feature: Projects settings panel
     When the user manages "shop" in settings
     Then the checkouts on "laptop" and "server" are listed with their folders
 
-  @desktop
+  # Upstream #21409: the phone lists projects and checkouts and can now remove them too.
+  @desktop @mobile @backlog-mobile
   Scenario: Removing one checkout keeps the others
     When the user removes the "server" checkout of "shop" and confirms
     Then "shop" is listed only on "laptop"
@@ -96,12 +114,21 @@ Feature: Projects settings panel
     Then "shop" is no longer listed on "laptop" or "server"
     And no files are deleted on either machine
 
-  @desktop
+  # Upstream #21409
+  @desktop @mobile @backlog-mobile
   Scenario: The removal confirmation names what will be cleared
     Given the "laptop" checkout of "shop" has 3 threads
     When the user asks to remove the "laptop" checkout of "shop"
     Then the confirmation names 3 threads, the folder and "laptop"
     And the confirmation says conversation history is cleared permanently
+
+  # Upstream #21409: after removal the phone left a dead screen and kept filtering by the project.
+  @backlog @mobile
+  Scenario: Removing a project on the phone goes back and clears its drafts
+    Given the user filtered the phone's project settings to "shop" and has an unsent draft in "shop"
+    When the user removes "shop" everywhere and confirms
+    Then the phone goes back to the project list, no longer filtered by "shop"
+    And the unsent draft in "shop" is gone
 
   # Upstream #20231: removing a project returns to the project overview and keeps the chosen environment.
   @backlog @desktop

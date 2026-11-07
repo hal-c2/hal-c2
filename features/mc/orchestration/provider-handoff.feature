@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/15477
+#   https://github.com/pingdotgg/t3code/pull/22902
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.model-selection.set, thread.model-selection-updated,
 #     provider.switch, thread.provider-switched, context-handoff.updated, provider-thread.updated,
@@ -215,6 +216,24 @@ Feature: Changing model and provider mid-thread
     Given "t1" switched provider and also has a merge-back from a fork waiting
     When the user sends a message to "t1"
     Then both handoffs reach the provider within the one handoff budget
+
+  # Upstream #22902: a failed native resume put its whole-thread summary in front of an older
+  # pending handoff, so under the budget the newest turn's result was dropped.
+  @backlog @mc @priority-high
+  Scenario: A failed resume keeps the latest turn when an older handoff is waiting
+    Given "t1" has a handoff from an earlier run still waiting
+    And the latest turn of "t1" finished with "Result 3"
+    When the next run of "t1" cannot resume its provider conversation
+    Then the provider receives the handoffs oldest first, the whole-thread summary after the waiting one
+    And "Result 3" is in the history it receives
+
+  # Upstream #22902
+  @backlog @mc
+  Scenario: A failed resume does not resend a missed request after the whole-thread summary
+    Given an earlier run of "t1" failed before its provider started a turn
+    When the next run of "t1" cannot resume its provider conversation
+    Then the missed request reaches the provider once, in its place in the whole-thread summary
+    And the thread's first message is still in the history it receives
 
   @backlog @mc @priority-high
   Scenario: History that may not have reached the provider is sent again on a new conversation

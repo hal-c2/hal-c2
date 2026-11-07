@@ -28,6 +28,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15416
 #   https://github.com/pingdotgg/t3code/pull/15539
 #   https://github.com/pingdotgg/t3code/pull/15501
+#   https://github.com/pingdotgg/t3code/pull/22504
 
 @mc
 Feature: Provider setup, updates and sign-in
@@ -67,6 +68,7 @@ Feature: Provider setup, updates and sign-in
   # Neither server invents a command for an installation it cannot prove it owns
   # (provider_updates.ex update_command/2, providerMaintenance.ts manual-only);
   # settings/updates.feature covers the refusal when the user updates anyway.
+  # Upstream #22504: a Codex at a path no installer claims shows manual guidance, no update button.
   Scenario: A provider no installer owns is not offered an update
     Given Claude was installed in a way the MC cannot identify
     When the user opens Claude's update details

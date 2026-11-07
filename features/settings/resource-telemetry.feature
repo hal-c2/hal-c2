@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24229
 #   https://github.com/pingdotgg/t3code/pull/19645
 #   https://github.com/pingdotgg/t3code/pull/16838
 #   https://github.com/pingdotgg/t3code/pull/19399
@@ -278,6 +279,14 @@ Feature: Resource monitor
     Given the process monitor is stopped
     When the user retries the monitor and the retry fails
     Then the user is told "Could not restart resource monitor" with the reason
+
+  # Upstream #24229: a retry that worked left the old error on screen until a reload.
+  @backlog @desktop
+  Scenario: A retry that works clears the monitor's error
+    Given the process monitor failed to start and its error is shown
+    When the user retries the monitor and it starts
+    Then the error is no longer shown
+    And the resource timeline fills again
 
   @backlog @desktop
   Scenario: The resource timeline charts CPU and I/O for the chosen period

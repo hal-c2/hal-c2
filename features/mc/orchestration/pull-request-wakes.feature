@@ -1,8 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21314
+#   https://github.com/pingdotgg/t3code/pull/23863
+#   https://github.com/pingdotgg/t3code/pull/23904
+#   https://github.com/pingdotgg/t3code/pull/16668
 #   https://github.com/pingdotgg/t3code/pull/18835
 #   https://github.com/pingdotgg/t3code/pull/18775
 #   https://github.com/pingdotgg/t3code/pull/18120
 #   https://github.com/pingdotgg/t3code/pull/21155
+#   https://github.com/pingdotgg/t3code/pull/24781
 #   https://github.com/hal-c2/hal-c2/issues/518
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
@@ -37,6 +42,13 @@ Feature: A thread hears when a pull request it owns needs attention
       | a member publishes a review that asks for changes | New review from member-1 (changes requested). | acme/app#12: new review     |
       | the owner comments                                | New comment from owner-1.                     | acme/app#12: new comment    |
       | it comes to conflict with its base branch         | It conflicts with its base branch.            | acme/app#12: merge conflict |
+
+  # Upstream #24781: agents woken by a watch re-linked or re-watched the pull request.
+  @backlog @mc
+  Scenario: A wake says the pull request stays linked and watched
+    When its checks start failing and the MC reads "acme/app#12" again
+    Then the message to the agent of "t1" says "acme/app#12" stays linked and watched
+    And it tells the agent not to link, watch or list it again
 
   # A thread whose pull requests are all done settles on its own, unless the user
   # keeps it active or another of them is still open.
@@ -112,6 +124,22 @@ Feature: A thread hears when a pull request it owns needs attention
     Then the agent of "t1" is woken once about "acme/app#12"
     And the message says "Checks are failing."
     And the message says "New comment from owner-1."
+
+  # Upstream #21314: a wake queued before another provider took over ran on the old provider.
+  @backlog @mc @priority-high
+  Scenario: A wake queued before a provider takeover runs on the provider that took over
+    Given a wake about "acme/app#12" is queued for "t1" while it works on Codex
+    When Claude takes over "t1" before the wake is delivered
+    Then the wake runs on Claude with the thread's current model and options
+    And "t1" stays on Claude
+
+  # Upstream #21314: a queued wake was spent on a provider still at its usage limit.
+  @backlog @mc
+  Scenario: A queued wake waits while the thread's provider is at its usage limit
+    Given "t1" is on Codex and Codex has reached its usage limit
+    And a wake about "acme/app#12" is queued for "t1"
+    When the queue resumes
+    Then the wake stays queued until Codex is usable again
 
   # The account the MC reads GitHub as is often the one the agent posts with, so what
   # it posts while the thread works is the agent's own.
@@ -289,6 +317,45 @@ Feature: A thread hears when a pull request it owns needs attention
     Given a thread watches the checks of a Forgejo pull request whose branch requires "ci/test"
     When "ci/test" passes and an optional "ci/lint" fails
     Then the thread hears that the required checks passed
+
+  # Upstream #16668: Forgejo reports a job that did not run as "skipped", which was read as pending
+  # and kept the watch open after every job had finished.
+  @backlog @mc @priority-low
+  Scenario Outline: A Forgejo job that did not run does not keep the watch waiting
+    Given a thread watches the checks of a Forgejo pull request
+    When "ci/test" passes and "ci/docs" reports "<state>"
+    Then the watch counts "ci/docs" as <counted> and the checks as finished
+
+    Examples:
+      | state   | counted |
+      | skipped | skipped |
+      | warning | neutral |
+
+  # Upstream #23904: the watch said the required checks passed while other jobs still ran, and
+  # never woke the thread when they finished.
+  @backlog @mc
+  Scenario: A watch that reported required checks early wakes once more when the rest finish
+    Given a thread watches the checks of a pull request whose branch requires "ci/test"
+    And the thread heard that "ci/test" passed while "ci/e2e" was still running
+    When "ci/e2e" passes on the same commit
+    Then the thread is woken once with "All 2 checks passed"
+    And a later optional job on that commit does not wake it again
+
+  # Upstream #23863: a GitHub workflow that skips the change, such as a docs-only one, reports no
+  # checks at all, and the watch waited forever.
+  @backlog @mc
+  Scenario: A watched GitHub pull request with no checks wakes the thread once
+    Given a thread watches the checks of a GitHub pull request
+    When no check appears on its latest commit for more than 15 minutes
+    Then the thread is woken once, told no checks have reported
+    And the message does not say the checks passed
+    And neither a restart nor watching it again wakes the thread for that commit again
+
+  @backlog @mc @priority-low
+  Scenario: A GitHub pull request whose checks were seen does not count as having none
+    Given a thread watches a GitHub pull request whose checks were seen running on its latest commit
+    When no check is listed for more than 15 minutes
+    Then the thread is not told no checks have reported
 
   # Upstream #18835: an edit beyond the first page of replies kept the cached reply.
   @backlog @mc @priority-low

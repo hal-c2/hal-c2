@@ -1,6 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23170
+#   https://github.com/pingdotgg/t3code/pull/22492
 #   https://github.com/pingdotgg/t3code/pull/18265
 #   https://github.com/pingdotgg/t3code/pull/17379
+#   https://github.com/pingdotgg/t3code/pull/22780
+#   https://github.com/pingdotgg/t3code/pull/22180
+#   https://github.com/pingdotgg/t3code/pull/22254
 #   docs/user/project-settings.md
 #   apps/server-ex/lib/hal_c2/projects.ex (project.create, browse)
 #   apps/server/src/workspace/WorkspaceEntries.ts (browse: home, relative paths, prefix, errors)
@@ -416,6 +421,23 @@ Feature: Adding projects
       Then the user sees "Cloning acme/shop" with "Receiving objects · 45%"
       And the user can cancel the clone
 
+    # Upstream #22780: a clone git has gone silent on is marked stalled after 20 seconds.
+    @backlog @mc
+    Scenario: A clone with no progress for 20 seconds is reported as stalled
+      Given a clone of "acme/shop" is receiving objects at 24 percent
+      When git reports no progress for 20 seconds
+      Then the clone is reported as stalled
+      When git reports "Receiving objects:  25% (25/100)"
+      Then the clone is no longer reported as stalled
+
+    # Upstream #22780: a stalled clone shows "Stalled" instead of its last transfer speed.
+    @backlog @desktop @mobile
+    Scenario: A stalled clone says so instead of showing a frozen speed
+      Given a clone of "acme/shop" stalled while receiving objects at 24 percent at 20.69 MiB/s
+      When the user looks at the app
+      Then the user sees "Cloning acme/shop" with "Receiving objects · 24% · Stalled"
+      And the user can cancel the clone
+
     @desktop @mobile @backlog-mobile
     Scenario: A clone on another machine of the cluster shows its progress too
       Given a clone of "acme/shop" is receiving objects at 45 percent on another machine of the cluster
@@ -449,6 +471,33 @@ Feature: Adding projects
       When the user retries the clone
       Then the clone is reported as running at the "connecting" stage
       And it clones into the same folder
+
+    # Upstream #23170: GitCafe, GitLab, Bitbucket and Azure DevOps clone over SSH, and a machine
+    # with no SSH key for the host failed every time, Retry included.
+    @backlog @mc
+    Scenario: A clone whose SSH key is refused tries once more over HTTPS
+      Given the host refuses this machine's SSH key but its HTTPS credentials work
+      When the user clones "acme/shop" from GitLab without choosing SSH
+      Then the clone succeeds over HTTPS
+      And the project's remote is the HTTPS address
+
+    @backlog @mc @priority-low
+    Scenario Outline: A clone does not fall back to HTTPS when it should not
+      Given <case>
+      When the clone fails
+      Then it is not tried over HTTPS
+
+      Examples:
+        | case                                                |
+        | the user asked to clone over SSH                    |
+        | the clone failed for a reason other than its SSH key |
+        | the pasted SSH address names a custom port          |
+
+    @backlog @mc @priority-low
+    Scenario: A clone that fails over SSH and then HTTPS gives both reasons
+      Given the host refuses this machine's SSH key and its HTTPS credentials
+      When the user clones "acme/shop" from GitLab
+      Then the failure gives the SSH refusal followed by why HTTPS failed
 
     @mc
     Scenario: Retrying a clone that is still running changes nothing
@@ -783,3 +832,96 @@ Feature: Adding projects
       And GitHub says it is not authenticated and points to source control settings
       And Bitbucket gives its install hint
       And a provider the environment has not reported says to open source control settings and rescan
+
+  # Upstream #22180: "Run on" can add the project to a connected machine that lacks it, cloning
+  # it there and copying the gitignored files the user picks, ".env" files checked by default.
+  Rule: Adding a project to another machine
+
+    @backlog @desktop
+    Scenario: A machine without the project can be offered from "Run on"
+      Given "shop" is on "laptop" and the connected machine "server" does not have it
+      When the user opens "Run on" for a new thread in "shop"
+      Then "Add to another machine" offers "server"
+
+    @backlog @mc
+    Scenario: A checkout lists its gitignored files, leaving out folders ignored whole
+      Given the checkout of "shop" has the ignored files ".env" and ".env.local" and the ignored folder "node_modules"
+      When a client asks for the checkout's ignored files
+      Then ".env" and ".env.local" are listed
+      And "node_modules" is not
+
+    @backlog @desktop
+    Scenario: Adding a project to another machine offers its env files to copy
+      Given the checkout of "shop" on "laptop" has the ignored files ".env", ".dev.vars" and "notes.txt"
+      When the user adds "shop" to "server"
+      Then the user can choose SSH or HTTPS and the folder on "server"
+      And ".env" is checked to copy while ".dev.vars" and "notes.txt" are offered unchecked
+
+    @backlog @desktop
+    Scenario: The chosen files are copied once the clone on the other machine finishes
+      Given the user added "shop" to "server" with ".env" chosen to copy
+      When the clone on "server" finishes
+      Then ".env" is on "server" in the new checkout
+      And "server" is offered under "Run on" for "shop" without a reload
+
+    @backlog @desktop @priority-low
+    Scenario: Only small text files are copied to the other machine
+      Given the user chose a symlink and a text file over 1 MB among the files to copy
+      When the clone on "server" finishes
+      Then neither is copied and the user is told which were skipped
+
+    @backlog @mc
+    Scenario: A fresh clone groups with the project's other checkouts at once
+      Given "shop" has a checkout on "laptop"
+      When a clone of the same repository finishes on "server"
+      Then the new checkout is grouped with "shop" straight away
+
+    # Upstream #22492: the copy clones the checkout's origin, not its upstream remote, so a fork
+    # copies the fork and stays one project in the sidebar.
+    @backlog @desktop @mc
+    Scenario: Adding a fork to another machine clones the fork
+      Given the checkout of "shop" on "laptop" has the origin "acme-fork/shop" and the upstream "acme/shop"
+      When the user adds "shop" to "server"
+      Then "server" clones "acme-fork/shop"
+      And the sidebar shows "shop" once
+
+    # Upstream #22254: the draft moves to the target machine at once and the clone is shown in
+    # the composer, with no toasts on the way.
+    @backlog @desktop
+    Scenario: Adding a project to another machine moves the draft there
+      Given the user typed "fix the tax" for a new thread in "shop" on "laptop"
+      When the user adds "shop" to "server"
+      Then the draft is for "shop" on "server" and still reads "fix the tax"
+      And the composer shows the clone's progress and a way to cancel it
+
+    # Upstream #22254: send stays blocked until both the clone and the copied files have landed.
+    @backlog @desktop
+    Scenario: A draft on the new machine cannot be sent until its files are copied
+      Given the user added "shop" to "server" with ".env" chosen to copy
+      And the clone on "server" has finished but ".env" is still being copied
+      When the user tries to send the draft
+      Then the message is not sent until ".env" has been copied
+
+    # Upstream #22254: a failed file copy is a dismissible notice in the composer, not a toast.
+    @backlog @desktop
+    Scenario: A file that could not be copied to the new machine is called out in the composer
+      Given the user added "shop" to "server" with ".env" chosen to copy
+      When copying ".env" to "server" fails
+      Then the composer says ".env" was not copied
+      And the user can dismiss that notice
+
+    # Upstream #22254: a clone started elsewhere does not announce itself again once the user
+    # has looked at the project.
+    @backlog @desktop @priority-low
+    Scenario: A finished clone's notice does not come back after the user has seen the project
+      Given a clone of "shop" started from the command palette finished
+      And the user opened "shop"
+      When the user sends a message in "shop"
+      Then the clone's notice does not appear again
+
+    # Upstream #22254: the favicon looked up while the folder was empty was kept after the clone.
+    @backlog @mc
+    Scenario: A freshly cloned project shows its own icon
+      Given the repository "shop" has a favicon
+      When a clone of "shop" finishes into an empty folder
+      Then the project's icon is the repository's favicon, not a letter
