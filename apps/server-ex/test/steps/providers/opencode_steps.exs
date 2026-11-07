@@ -223,6 +223,27 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- version ---
+
+  # OpenCode's `initialize` names no agentInfo version.
+  step "the opencode command prints no version", context do
+    FakeAcp.install(context, "opencode", Map.put(models(@connected), "version", nil),
+      enabled: true
+    )
+  end
+
+  step "OpenCode says it could not determine the version and that 1.14.19 or newer is required",
+       context do
+    opencode = FakeAcp.find(context.providers, "opencode")
+    assert opencode["status"] == "error"
+    assert opencode["models"] == []
+
+    assert opencode["message"] ==
+             "HAL-C2 could not determine the OpenCode version. OpenCode v1.14.19 or newer is required."
+
+    context
+  end
+
   # --- no upstream providers ---
 
   step "OpenCode has no upstream providers connected", context do
@@ -1287,6 +1308,167 @@ defmodule HalC2.Steps.Providers.Opencode do
     assert [_ | _] = starts = for(s <- FakeAcp.starts(context), "acp" in s["argv"], do: s)
     assert Enum.all?(starts, &(&1["env"]["FAKE_BIN"] == bin))
     context
+  end
+
+  # --- updates ---
+
+  # The latest OpenCode release, as if already read from the registry.
+  @latest "1.15.0"
+
+  defp latest(context) do
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "opencode"},
+      {@latest, System.monotonic_time(:millisecond)}
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <- [
+            {HalC2.ProviderUpdates, "opencode"},
+            {HalC2.ProviderUpdates, "opencode", :state},
+            {HalC2.ProviderUpdates, "opencode", :offered}
+          ],
+          do: :persistent_term.erase(key)
+    end)
+
+    context
+  end
+
+  # A shell line that makes the fake report the latest version from now on.
+  defp upgrades(dir),
+    do:
+      ~s|python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@latest}"; json.dump(c,open(p,"w"))' '#{Path.join(dir, "config.json")}'|
+
+  # OpenCode's own installer keeps it in `~/.opencode/bin`, and `opencode upgrade`
+  # updates it in place.
+  step "the opencode command on the MC is OpenCode's own install under the user's home",
+       context do
+    bin = Path.join(HalC2.Test.Mc.Host.home(context), ".opencode/bin/opencode")
+
+    context =
+      context
+      |> latest()
+      |> FakeAcp.install("opencode", models(@connected), enabled: true, path: bin)
+
+    %{dir: dir, script: script} = FakeAcp.fake(context)
+
+    File.write!(bin, """
+    #!/bin/sh
+    export FAKE_DIR='#{dir}' FAKE_BIN="$0"
+    if [ "$1" = upgrade ]; then
+      echo "$@" >> '#{Path.join(dir, "updates.log")}'
+      #{upgrades(dir)}
+      exit 0
+    fi
+    exec python3 -u '#{script}' "$@"
+    """)
+
+    context
+  end
+
+  # A global npm prefix: `bin/opencode` links into `lib/node_modules/opencode-ai`, and
+  # its npm logs what it was asked and installs the latest.
+  step "the opencode command on the MC was installed with npm", context do
+    prefix = HalC2.Test.Mc.Host.path(context, "/usr/local")
+    real = Path.join(prefix, "lib/node_modules/opencode-ai/bin/opencode")
+    link = Path.join(prefix, "bin/opencode")
+
+    context =
+      context
+      |> latest()
+      |> FakeAcp.install("opencode", models(@connected), enabled: true, path: real)
+
+    %{dir: dir} = FakeAcp.fake(context)
+    File.mkdir_p!(Path.dirname(link))
+    File.ln_s!(real, link)
+    FakeAcp.settings(&put_in(&1, ["providers", "opencode", "binaryPath"], link))
+    npm = Path.join(prefix, "bin/npm")
+
+    File.write!(npm, """
+    #!/bin/sh
+    echo "$@" >> '#{Path.join(prefix, "npm.log")}'
+    #{upgrades(dir)}
+    """)
+
+    File.chmod!(npm, 0o755)
+    Map.put(context, :npm_prefix, prefix)
+  end
+
+  step "the user updates OpenCode from HAL-C2", context do
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "opencode"})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "OpenCode's own upgrade command is run", context do
+    assert File.read!(Path.join(FakeAcp.fake(context).dir, "updates.log")) == "upgrade\n"
+    updated(context)
+  end
+
+  step "the opencode-ai package is updated by npm", context do
+    prefix = context.npm_prefix
+
+    assert File.read!(Path.join(prefix, "npm.log")) ==
+             "install -g --prefix #{prefix} opencode-ai@latest\n"
+
+    updated(context)
+  end
+
+  # The update succeeded and OpenCode now reports the latest version.
+  defp updated(context) do
+    assert {:ok, %{"providers" => providers}} = context.reply
+    opencode = FakeAcp.find(providers, "opencode")
+    assert %{"version" => @latest, "updateState" => %{"status" => "succeeded"}} = opencode
+    assert opencode["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  # A thread's OpenCode is running, started at 1.14.19, when the CLI on disk is upgraded.
+  step "OpenCode was upgraded on disk to 1.15.0 while its running server still reports 1.14.19",
+       context do
+    context =
+      context
+      |> latest()
+      |> FakeAcp.install("opencode", models(@connected), enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("hello")
+
+    FakeAcp.await_run(context, "completed")
+    assert FakeAcp.probe("opencode")["version"] == "1.14.19"
+    assert [_] = serving(context)
+    FakeAcp.configure(context, &Map.put(&1, "version", @latest))
+  end
+
+  step "the user checks for provider updates", context do
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "opencode",
+        "refreshModels" => true
+      })
+
+    assert {:ok, %{"providers" => providers}} = reply
+    Map.put(context, :providers, providers)
+  end
+
+  step "OpenCode is shown as 1.15.0 and up to date", context do
+    opencode = FakeAcp.find(context.providers, "opencode")
+    assert opencode["version"] == @latest
+    assert opencode["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  step "the running server is not restarted to find out", context do
+    context = FakeAcp.send_message(context, "again")
+    FakeAcp.await_runs(context, 2)
+    assert [_] = serving(context)
+    context
+  end
+
+  # The OpenCode processes that served the thread: those in the project, not the
+  # throwaway ones that read its version and models.
+  defp serving(context) do
+    root = World.project(context).root
+    for(start <- FakeAcp.starts(context), start["cwd"] == root, "acp" in start["argv"], do: start)
   end
 
   # --- subagents ---

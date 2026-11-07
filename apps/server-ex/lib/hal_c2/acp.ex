@@ -944,8 +944,21 @@ defmodule HalC2.Acp do
   defp driver_fields(entry, "opencode", id, instance) do
     config = :persistent_term.get({__MODULE__, id, :config}, [])
 
+    path = HalC2.ProviderUpdates.executable("opencode", id)
+
     entry
     |> Map.update!("models", &opencode_options(&1, config))
+    |> then(
+      &if(path,
+        do:
+          Map.put(
+            &1,
+            "versionAdvisory",
+            HalC2.ProviderUpdates.advisory("opencode", path, &1["version"], id)
+          ),
+        else: &1
+      )
+    )
     |> opencode_version(id, instance)
   end
 
@@ -1014,6 +1027,18 @@ defmodule HalC2.Acp do
   end
 
   defp driver_fields(entry, _driver, _id, _instance), do: entry
+
+  # An OpenCode that said no version when it started (staged as "unknown") cannot be
+  # told apart from one too old to run.
+  defp opencode_version(%{"version" => "unknown", "status" => status} = entry, _id, _instance)
+       when status in ["ready", "warning"] do
+    Map.merge(entry, %{
+      "status" => "error",
+      "models" => [],
+      "message" =>
+        "HAL-C2 could not determine the OpenCode version. OpenCode v#{@opencode_minimum} or newer is required."
+    })
+  end
 
   defp opencode_version(entry, id, _instance) do
     case stable_version(entry["version"]) do

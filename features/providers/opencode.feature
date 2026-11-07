@@ -303,7 +303,7 @@ Feature: OpenCode
     Then the start is tried again up to three times, a quarter of a second apart
     And a start that fails on its configuration is not retried
 
-  @backlog @priority-low
+  @priority-low
   Scenario: An OpenCode whose version cannot be read is refused
     Given the opencode command prints no version
     When the user refreshes provider status
@@ -1025,7 +1025,6 @@ Feature: OpenCode
     And the server itself keeps running
     And a session that does not stop within a second does not hold up closing
 
-  @backlog
   Scenario Outline: Updating OpenCode uses the installer that owns it
     Given the opencode command on the MC <installed>
     When the user updates OpenCode from HAL-C2
@@ -1330,11 +1329,10 @@ Feature: OpenCode
     And the continuation runs and its result reaches the subagent's caller
 
   # Upstream #18561: an upgraded CLI kept being reported at the running server's old version.
-  @backlog
   Scenario: An OpenCode update is checked against the installed CLI
-    Given OpenCode was upgraded on disk to 1.5.0 while its running server still reports 1.4.0
+    Given OpenCode was upgraded on disk to 1.15.0 while its running server still reports 1.14.19
     When the user checks for provider updates
-    Then OpenCode is shown as 1.5.0 and up to date
+    Then OpenCode is shown as 1.15.0 and up to date
     And the running server is not restarted to find out
 
   # Upstream #27779: an OpenCode upgraded from 1.x to 2 while the MC ran kept being opened as 1.x,
