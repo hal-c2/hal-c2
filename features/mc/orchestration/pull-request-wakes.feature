@@ -351,6 +351,7 @@ Feature: A thread hears when a pull request it owns needs attention
     And the message does not say the checks passed
     And neither a restart nor watching it again wakes the thread for that commit again
 
+  # Upstream #23863: a watch whose checks were seen is not told that none reported.
   @backlog @mc @priority-low
   Scenario: A GitHub pull request whose checks were seen does not count as having none
     Given a thread watches a GitHub pull request whose checks were seen running on its latest commit

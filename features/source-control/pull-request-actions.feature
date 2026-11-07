@@ -1265,12 +1265,14 @@ Feature: Acting on a pull request
       | off                     | kept    |
       | not reported by Forgejo | kept    |
 
+  # Upstream #23471: a Forgejo merge follows the repository's settings, and is not made if unreadable.
   @backlog @mc @priority-low
   Scenario: A Forgejo merge whose settings cannot be read is not made
     Given the settings of a Forgejo repository cannot be read
     When the user merges one of its pull requests
     Then the pull request is not merged and the user is told why
 
+  # Upstream #23471: a Forgejo merge whose branch could not be deleted still reports the merge.
   @backlog @mc @priority-low
   Scenario: A Forgejo merge whose branch could not be deleted still reports the merge
     Given Forgejo merges a pull request but refuses to delete its branch

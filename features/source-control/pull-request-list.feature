@@ -143,6 +143,7 @@ Feature: Browsing pull requests
       | label  | labels                    |
       | author | people who can be authors |
 
+  # Upstream #23924: hosts without labels or people listing offer the authors already loaded.
   @backlog @desktop @mobile @priority-low
   Scenario: Hosts without labels or a people listing offer the authors already loaded
     Given every listed repository is on Bitbucket or Azure DevOps
@@ -241,6 +242,7 @@ Feature: Browsing pull requests
     Then it shows "+159 -37"
     And the lines are counted again only after a push or a change of base
 
+  # Upstream #22633: git.cafe lists no line totals, so rows showed none.
   @backlog @mc @priority-low
   Scenario: A GitCafe pull request whose changes cannot be read shows no line counts
     Given a thread links a GitCafe pull request whose changed lines git.cafe fails to return
@@ -256,18 +258,21 @@ Feature: Browsing pull requests
     Then its reviewers and labels are shown
     And the user can request a reviewer other than the author and apply a repository label
 
+  # Upstream #23034: reviewers on GitCafe are read and written through their own endpoints.
   @backlog @mc @priority-low
   Scenario: A GitCafe reviewer change made meanwhile elsewhere is not overwritten
     Given the user is requesting a reviewer on a GitCafe pull request
     When someone else changes its reviewers before the request is written
     Then the user's change fails and the other change is kept
 
+  # Upstream #23034: a GitCafe token that cannot read reviewers still opens the pull request.
   @backlog @mc @priority-low
   Scenario: A GitCafe token that may not read reviewers still opens the pull request
     Given GitCafe's token lacks the right to read reviewers
     When the user opens a GitCafe pull request
     Then it opens with no reviewers shown
 
+  # Upstream #23034: git.cafe reports conflicts as none or pending as well as unknown and conflicting.
   @backlog @mc @priority-low
   Scenario Outline: A GitCafe pull request opens whatever git.cafe says about conflicts
     Given git.cafe reports the pull request's conflicts as "<state>"
@@ -288,6 +293,7 @@ Feature: Browsing pull requests
     When the user lists GitCafe pull requests filtered to Authored
     Then only pull requests the user opened are listed, including those opened through the GitHub sync
 
+  # Upstream #23887: a GitCafe merge git.cafe is still finishing shows as armed.
   @backlog @mc @shared @priority-low
   Scenario: A GitCafe merge that git.cafe is still finishing shows as armed
     Given the user merged a GitCafe pull request and git.cafe is still finishing the merge
@@ -295,12 +301,14 @@ Feature: Browsing pull requests
     Then it shows as set to merge, with no Merge and no way to cancel
     And it reads as merged once git.cafe finishes
 
+  # Upstream #23887: the author of a GitCafe pull request may only comment in a review.
   @backlog @mc @shared @priority-low
   Scenario: The author of a GitCafe pull request may only comment in a review
     Given the user opened a GitCafe pull request
     When the user starts a review of it
     Then only Comment is offered, not Approve or Request changes
 
+  # Upstream #23887: a closed pull request whose commits are gone still shows its timeline.
   @backlog @mc @priority-low
   Scenario: A closed GitCafe pull request whose commits are gone still shows its timeline
     Given a closed GitCafe pull request whose commits git.cafe no longer has

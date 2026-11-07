@@ -577,6 +577,7 @@ Feature: Scheduled tasks
       | notEquals  | bug             | "needs more info"           | runs                 |
       | exists     |                 | nothing                     | filters the delivery |
 
+  # Upstream #23282: a webhook placeholder path ending in [] renders every element of a list.
   @backlog @mc @priority-low
   Scenario: A webhook prompt placeholder over a list renders every element
     Given a webhook task whose prompt is "Labels: {{body.issue.labels[].name}}"

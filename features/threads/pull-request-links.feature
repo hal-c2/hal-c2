@@ -123,6 +123,7 @@ Feature: Linking pull requests to threads
       | gh pr create     |
       | glab mr create   |
 
+  # Upstream #24813: addresses other commands print are not linked.
   @backlog @mc
   Scenario Outline: Addresses other commands print are not linked
     When the agent in "Cart totals" runs <command>
@@ -134,6 +135,7 @@ Feature: Linking pull requests to threads
       | gh pr view 120 && gh pr create, printing the address of 120    |
       | echo "gh pr create" with a pull request address in its output  |
 
+  # Upstream #24813: a pull request a delegated subagent opens is linked to the subagent's thread.
   @backlog @mc
   Scenario: A pull request a delegated subagent opens is linked to the subagent's thread
     Given "Cart totals" delegated a task to a subagent

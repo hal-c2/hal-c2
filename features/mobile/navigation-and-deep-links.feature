@@ -369,6 +369,7 @@ Feature: Navigating the phone app and opening links into it
       | a thread mention in a message's context  |
       | the composer's thread chip               |
 
+  # Upstream #23795: opening the thread just behind goes back to it instead of stacking another.
   @backlog @mobile @priority-low
   Scenario: Opening the thread just behind goes back to it
     Given the user opened the subagent thread "Add tests" from "Fix checkout"
@@ -384,6 +385,7 @@ Feature: Navigating the phone app and opening links into it
     Then it offers Chats, Pull requests, Usage and Settings
     And the section that is open is marked
 
+  # Upstream #24524: Settings is a workspace tab whose list stays in the sidebar beside its page.
   @backlog @mobile
   Scenario: Settings on a split layout keeps its list beside the page
     Given the layout is split
@@ -391,6 +393,7 @@ Feature: Navigating the phone app and opening links into it
     Then the settings list stays in the sidebar with "Environments" marked
     And the "Environments" page opens beside it
 
+  # Upstream #24524: tabs never open on an empty "Select a…" detail.
   @backlog @mobile
   Scenario: Switching sections never lands on an empty page
     Given the layout is split and the user was last on the "Environments" settings page

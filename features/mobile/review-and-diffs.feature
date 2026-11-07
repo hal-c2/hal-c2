@@ -318,6 +318,7 @@ Feature: Reviewing changes on a phone
     Then pull request 42 carries the label "bug"
     And tapping "bug" again removes it
 
+  # Upstream #24602: the phone edits a pull request's title, description and labels.
   @backlog @mobile
   Scenario Outline: The user edits a pull request's <part> from the phone
     Given the user may edit the <part> of pull request 42
@@ -330,6 +331,7 @@ Feature: Reviewing changes on a phone
       | description                |
       | comment the user wrote     |
 
+  # Upstream #24602: the phone reacts to a pull request's text, shown at once and undone if refused.
   @backlog @mobile
   Scenario: A reaction from the phone shows at once and is undone if the host refuses it
     Given the user is reading pull request 42 on the phone
@@ -337,6 +339,7 @@ Feature: Reviewing changes on a phone
     Then the heart shows at once
     And it is taken back if the host refuses the reaction
 
+  # Upstream #24602: an open pull request's checks follow its CI live while on screen.
   @backlog @mobile
   Scenario: An open pull request's checks follow its CI while it is on the phone's screen
     Given pull request 42 is open on the phone and a check is running
@@ -401,12 +404,14 @@ Feature: Reviewing changes on a phone
     Then the first 100,000 rows of "data.json" are shown with a notice that the rest is left out
     And "data.json" still counts 150,000 added lines
 
+  # Upstream #24276: a large file's diff keeps its syntax colours to its end.
   @backlog @mobile @priority-low
   Scenario: A large file's diff keeps its syntax colours to its end
     Given "parser.c" has a diff of 90,000 changed lines
     When the user scrolls to the end of the diff of "parser.c"
     Then the last rows are coloured by their syntax like the first
 
+  # Upstream #24276: turning word wrap on keeps the row being read on screen.
   @backlog @mobile @priority-low
   Scenario: Turning word wrap on keeps the row the user was reading on screen
     Given the user is reading row 40,000 of a large diff

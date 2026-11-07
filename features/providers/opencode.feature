@@ -103,6 +103,7 @@ Feature: OpenCode
     Then the MC reads OpenCode's models again, each interval, until they are listed
     And the reason each read failed is in the MC's log
 
+  # Upstream #23939: a server that rejects the password is marked signed out and not retried.
   @backlog @mc @priority-low
   Scenario: An OpenCode server that rejects the MC's password is not retried
     Given an OpenCode server refuses the MC's password

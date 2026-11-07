@@ -530,6 +530,7 @@ Feature: Viewing and editing files
         | data/budget.xlsx | its sheets are shown as tabs, and a selection of cells copies with its format |
         | docs/pitch.pptx  | its slides are shown with their notes, and previous and next step through them |
 
+    # Upstream #21362: a slide deck's Next stops at its last slide.
     @backlog @desktop @priority-low
     Scenario: Next stops at a deck's last slide
       Given "docs/pitch.pptx" is open rendered
@@ -537,6 +538,7 @@ Feature: Viewing and editing files
       Then the last slide is the one shown as current
       And next can no longer be chosen
 
+    # Upstream #21362: Refresh reloads an office file that was overwritten.
     @backlog @desktop @priority-low
     Scenario: Refreshing reloads an office file that was overwritten
       Given "docs/plan.docx" is open rendered
@@ -551,18 +553,21 @@ Feature: Viewing and editing files
       Then the number of lines and the file's size are shown
       And each line shows its number
 
+    # Upstream #21466: a line far down a large file is revealed when it is linked to.
     @backlog @desktop @priority-low
     Scenario: A line far down a large file is revealed when it is asked for
       Given an agent's reply links to line 500,000 of "logs/build.log"
       When the user opens the link
       Then line 500,000 is shown and marked
 
+    # Upstream #21466: End reaches the last line of a large file with word wrap on.
     @backlog @desktop @priority-low
     Scenario: End reaches the last line of a large wrapped file
       Given "logs/build.log" is open with word wrap on
       When the user presses End
       Then the last line of the file is shown in full
 
+    # Upstream #21466: a large file whose access was refused can be tried again.
     @backlog @desktop @priority-low
     Scenario: A large file whose access was refused can be tried again
       Given "logs/build.log" is open
@@ -584,6 +589,7 @@ Feature: Viewing and editing files
       When the user opens "/home/sam/screens/bug.png" in the file panel
       Then the image is shown
 
+    # Upstream #21467: a SQLite database is previewed as its tables.
     @backlog @desktop @priority-low
     Scenario: A SQLite database shows its tables
       When the user opens "data/shop.sqlite"
@@ -591,12 +597,14 @@ Feature: Viewing and editing files
       And the number of rows and columns and the file's size are shown
       And the user can switch to another table
 
+    # Upstream #21467: an archive is previewed as the folders and files in it.
     @backlog @desktop @priority-low
     Scenario: An archive lists what is in it
       When the user opens "data/export.zip"
       Then its folders and files are listed and can be opened like folders
       And the number of entries and the archive's size are shown
 
+    # Upstream #21467: a file that is not the database or archive it claims to be says so.
     @backlog @desktop @priority-low
     Scenario: A file that is not the database or archive it claims to be says so
       When the user opens "data/shop.sqlite" that is not a SQLite database
@@ -616,6 +624,7 @@ Feature: Viewing and editing files
         | docs/letter.rtf       | its text and tables are shown                                 |
         | notebooks/study.ipynb | its cells and their saved output are shown as they come into view |
 
+    # Upstream #21469: an e-book keeps its reading size from chapter to chapter.
     @backlog @desktop @priority-low
     Scenario: An e-book keeps its reading size from chapter to chapter
       Given "books/handbook.epub" is open rendered

@@ -752,6 +752,7 @@ Feature: The MC working with its host machine
       | Muse     | the agent is released after 30 minutes idle          |
       | ACP      | the session ends while a helper still holds its pipe |
 
+  # Upstream #21299: servers shared by several agents keep their helpers when one session ends.
   @backlog @mc @priority-low
   Scenario: Agents that share one server keep their helpers when a session ends
     Given Codex and OpenCode serve several threads from one server

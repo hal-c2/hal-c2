@@ -632,12 +632,14 @@ Feature: The HAL-C2 MCP server agents receive
     And the value leaves the secret store, and the file is removed 24 hours after it was made
     And the transcript never holds the value
 
+  # Upstream #24809: a retried request to save a secret to a file returns the same file.
   @backlog @mc
   Scenario: A retried file secret request returns the same file
     Given an agent asked for a secret delivered as a file and the user saved it
     When the agent repeats the same request
     Then it is given the same file path
 
+  # Upstream #24809: a secret saved as a one-use reference cannot be turned into a file.
   @backlog @mc
   Scenario: A secret asked for as a reference cannot be turned into a file
     Given the user saved a secret on a card that asked for a one-use reference

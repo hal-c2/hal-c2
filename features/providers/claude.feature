@@ -877,6 +877,7 @@ Feature: Claude
     And the parent's approval still waits for an answer
     And the reply is shown in the thread without starting a parent turn
 
+  # Upstream #23657: approval feedback is text only and the draft is kept when it cannot be sent.
   @backlog @shared @priority-low
   Scenario: An approval reply that cannot be sent keeps the draft
     Given a Claude thread waiting on a command approval
@@ -1856,6 +1857,7 @@ Feature: Claude
     Then the user is asked for permission
     And the thread says Claude's settings limited Full access
 
+  # Upstream #21806: Full access asks when Claude's settings cannot be read.
   @backlog @mc @plugin-claude @priority-high
   Scenario: Unreadable Claude settings make a Full access turn ask
     Given the project's Claude settings cannot be read
@@ -1880,6 +1882,7 @@ Feature: Claude
     Then the thread is compacted with a message sent by HAL-C2
     And the user's next message only reprocesses the summary
 
+  # Upstream #21682: a thread used again before its cache expires is not compacted.
   @backlog @mc @plugin-claude
   Scenario: A Claude thread used again before the cache expires is not compacted
     Given idle Claude threads are set to compact "Before the cache expires"
@@ -2017,6 +2020,7 @@ Feature: Claude
       | --append-system-prompt "Reply in Icelandic"     | "Reply in Icelandic"                            |
       | --append-system-prompt-file notes/rules.md     | the contents of rules.md in the thread's folder |
 
+  # Upstream #20413: a missing --append-system-prompt-file stops the turn with a reason.
   @backlog @mc @plugin-claude
   Scenario: A missing appended instructions file stops the turn with a reason
     Given the Claude instance has the launch argument "--append-system-prompt-file notes/missing.md"

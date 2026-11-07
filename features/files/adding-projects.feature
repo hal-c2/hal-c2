@@ -481,6 +481,7 @@ Feature: Adding projects
       Then the clone succeeds over HTTPS
       And the project's remote is the HTTPS address
 
+    # Upstream #23170: a clone that should stay on SSH, or HTTPS, is not retried over the other.
     @backlog @mc @priority-low
     Scenario Outline: A clone does not fall back to HTTPS when it should not
       Given <case>
@@ -493,6 +494,7 @@ Feature: Adding projects
         | the clone failed for a reason other than its SSH key |
         | the pasted SSH address names a custom port          |
 
+    # Upstream #23170: a clone that fails over SSH and then HTTPS reports both reasons.
     @backlog @mc @priority-low
     Scenario: A clone that fails over SSH and then HTTPS gives both reasons
       Given the host refuses this machine's SSH key and its HTTPS credentials

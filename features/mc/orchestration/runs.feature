@@ -266,6 +266,7 @@ Feature: Runs and turns
     Then the run is recorded as failed at the time it failed
     And "t1" no longer shows a running turn
 
+  # Upstream #23169: a follow-up first stops the provider turn an earlier failed run left running.
   @backlog @mc
   Scenario: A follow-up first stops a provider turn an earlier failed run left running
     Given an earlier run of "t1" failed while its provider turn kept running
@@ -456,6 +457,7 @@ Feature: Runs and turns
       | native   |
       | portable |
 
+  # Upstream #24172: a fork's first /compact is refused only when its handoff carries no messages.
   @backlog @mc
   Scenario: A portable fork whose handoff carries no messages cannot compact
     Given "t2" is a portable fork of "t1" whose handoff carries no messages

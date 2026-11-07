@@ -169,6 +169,7 @@ Feature: Command palette
       Then the environment is told "Refactor" was opened, once
       And "Refactor" ranks as opened lately in search on every device
 
+    # Upstream #24343: typing a query a thread was picked from before ranks that thread first.
     @backlog @mc @desktop @mobile @priority-low
     Scenario: A query the user picked a thread from before puts that thread first
       Given the user searched for "cart" and opened "Ship checkout" from the results last week
@@ -185,6 +186,7 @@ Feature: Command palette
       Then "Fix checkout" and "Checkout fork" are listed and "Checkout tests" is not
       And "Checkout tests" is not among the recent threads either
 
+    # Upstream #24343: palette rows say why they matched ("Branch: …", "PR: #…").
     @backlog @desktop @mobile
     Scenario Outline: A thread row says why it matched
       Given a thread whose <field> contains "zebra" and whose title does not
@@ -245,6 +247,7 @@ Feature: Command palette
       And the rows above and the highlight stay where they were
       And the footer said "Searching messages…" until they arrived, without the palette changing height
 
+    # Upstream #24343: choosing a message result opens the thread at that message.
     @backlog @desktop @mobile
     Scenario: Choosing a message match opens the thread at that message
       Given the palette lists a match for "zebra" inside an older message of "Fix checkout"

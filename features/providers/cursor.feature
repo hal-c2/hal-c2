@@ -314,6 +314,7 @@ Feature: Cursor
       | auto              |
       | approval required |
 
+  # Upstream #20046: Cursor has no sandbox on Windows, so a mode that needs one is refused.
   @backlog
   Scenario: A Cursor mode that needs a sandbox is refused on a Windows MC
     Given the MC runs on Windows
@@ -481,6 +482,7 @@ Feature: Cursor
     Then the turn completes instead of failing
     And the failed resume's text is not shown as the answer
 
+  # Upstream #24231: a Cursor turn that had not finished still fails when the run gives up.
   @backlog
   Scenario Outline: A Cursor run that gives up still fails when the turn had not finished
     Given a Cursor turn is running

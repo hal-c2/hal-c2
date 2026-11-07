@@ -727,6 +727,7 @@ Feature: Worktrees and setup scripts
       | "feature/cart" still exists    | on "feature/cart"                                             |
       | "feature/cart" was deleted too | with "feature/cart" started from the project's current branch |
 
+  # Upstream #18359: a thread whose worktree could not be made again stops before the agent starts.
   @backlog @mc @shared
   Scenario: A worktree that cannot be made again stops before the agent starts
     Given the thread "Fix checkout" lost its worktree and making it again fails

@@ -202,6 +202,7 @@ Feature: Antigravity
     Then the Account row says Antigravity has not reached Google yet
     And it names broken IPv6 as a common cause
 
+  # Upstream #24652: sign-in that never reached Google says so instead of reporting an expiry.
   @backlog
   Scenario: A sign-in that never reached Google says so when it gives up
     Given the user started Google sign-in
