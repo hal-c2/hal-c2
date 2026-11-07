@@ -20,14 +20,25 @@ use crate::{expect, fail};
 
 const PLAN: &str = "# Tax line\n\n- Add the line\n- Test it\n";
 
-/// What the MC's `projects.writeFile` was asked to write.
+/// What the MC's `projects.writeFile` was asked to write, and why it
+/// refuses to when `refusal` is set.
 #[derive(Default)]
 struct FakeWrites {
     files: Vec<Value>,
+    refusal: Option<String>,
 }
 
 fn downloads(world: &World) -> std::path::PathBuf {
     world.home_dir().join("downloads")
+}
+
+/// Whether the item named `name` is drawn.
+fn visible(world: &World, brick: Brick, name: &str) -> bool {
+    brick
+        .find(world, name)
+        .ok()
+        .flatten()
+        .is_some_and(|item| brick.flag(world, item, "visible"))
 }
 
 /// An entry of the plan card's menu.
@@ -35,6 +46,10 @@ fn choose(world: &mut World, entry: &str) -> Outcome {
     let directory = downloads(world);
     world.with::<Plan, _>(|plan, _| plan.set_download_directory(Some(directory)))?;
     world.mc.on_rpc("projects.writeFile", |mc, rpc| {
+        if let Some(refusal) = mc.part::<FakeWrites>().refusal.clone() {
+            mc.refuse(rpc, &refusal);
+            return Ok(());
+        }
         mc.part::<FakeWrites>().files.push(rpc.payload.clone());
         mc.reply(rpc, json!({"relativePath": rpc.payload["relativePath"]}));
         Ok(())
@@ -49,7 +64,7 @@ fn choose(world: &mut World, entry: &str) -> Outcome {
     }
     let brick = shown(world)?;
     world.wait_for("the plan card to be drawn", move |w| {
-        brick.shows(w, "Tax line").unwrap_or(false)
+        visible(w, brick, "planMore")
     })?;
     brick.click(world, "planMore")?;
     let ljos::prelude::Value::Object(menu) = brick.read(world, brick.item(world, entry)?, "menu")
@@ -68,22 +83,56 @@ fn choose(world: &mut World, entry: &str) -> Outcome {
     world.sync()
 }
 
-fn save_to(world: &mut World, path: &str) -> Outcome {
+/// Whether the plan's thread has a workspace to save into: without one the
+/// menu only says so, and no dialog opens.
+fn has_workspace(world: &World) -> bool {
+    !text(&world.state("turn")["plan"]["workspaceRoot"]).is_empty()
+}
+
+/// The save dialog, open.
+fn ask_where(world: &mut World) -> Outcome {
     choose(world, "planSave")?;
     let brick = shown(world)?;
     world.wait_for("the save dialog to open", move |w| {
-        brick
-            .item(w, "planSavePath")
-            .map(|item| brick.flag(w, item, "visible"))
-            .unwrap_or(false)
-    })?;
+        visible(w, brick, "planSavePath")
+    })
+}
+
+/// Selects all of the path field and types `path` over it (an empty one
+/// clears it).
+fn type_path(world: &mut World, path: &str) -> Outcome {
+    let brick = shown(world)?;
     brick.click(world, "planSavePath")?;
-    for ch in path.chars() {
-        let event = key_event(&format!("\"{ch}\""))?;
-        world.key(&event)?;
+    world.key(&key_event("ctrl+a")?)?;
+    if path.is_empty() {
+        world.key(&key_event("backspace")?)?;
     }
-    brick.click(world, "planSaveConfirm")?;
+    for ch in path.chars() {
+        world.key(&key_event(&format!("\"{ch}\""))?)?;
+    }
+    Ok(())
+}
+
+/// Saves to `path`, typed over the file name the dialog starts from, or to
+/// that file name when there is no `path`.
+fn save_to(world: &mut World, path: Option<&str>) -> Outcome {
+    if !has_workspace(world) {
+        return choose(world, "planSave");
+    }
+    ask_where(world)?;
+    if let Some(path) = path {
+        type_path(world, path)?;
+    }
+    shown(world)?.click(world, "planSaveConfirm")?;
     world.sync()
+}
+
+fn field_text(world: &mut World, name: &str) -> Outcome<String> {
+    let brick = shown(world)?;
+    Ok(match brick.find(world, name)? {
+        Some(item) => brick.text_of(world, item, "text"),
+        None => String::new(),
+    })
 }
 
 fn launches(world: &World) -> Vec<Value> {
@@ -236,7 +285,7 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step(&format!("the user saves the plan to {Q}"), |world, c, _| {
-        save_to(world, &c[0])
+        save_to(world, Some(&c[0]))
     });
     steps.step(
         &format!("{Q} holds the plan in the workspace"),
@@ -268,11 +317,139 @@ pub fn register(steps: &mut Steps) {
         world.sync()
     });
     steps.step("the user saves the plan to the workspace", |world, _, _| {
-        save_to(world, "docs/tax-plan.md")?;
+        save_to(world, None)?;
+        if !has_workspace(world) {
+            expect!(
+                world.mc.part::<FakeWrites>().files.is_empty(),
+                "the MC was asked to write a file"
+            );
+        }
+        Ok(())
+    });
+
+    // The copy's name, and the save dialog (ProposedPlanCard).
+    steps.step(&format!("the new thread is titled {Q}"), |world, c, _| {
+        let launched = launches(world);
+        let last = launched.last();
         expect!(
-            world.mc.part::<FakeWrites>().files.is_empty(),
-            "the MC was asked to write a file"
+            last.is_some_and(|l| text(&l["title"]) == c[0]),
+            "the MC was asked to start {}",
+            last.map_or("nothing".to_owned(), show)
         );
         Ok(())
     });
+    steps.step(&format!("the file is named {Q}"), |world, c, _| {
+        let directory = downloads(world);
+        let files = listing(&directory);
+        expect!(files == c[0], "the downloads are {files}");
+        Ok(())
+    });
+    steps.step(
+        "the user (?:chooses to save the plan to the workspace|is asked where in the workspace to save it)",
+        |world, _, _| ask_where(world),
+    );
+    steps.step(
+        "the user is asked for a path relative to the workspace",
+        |world, _, _| {
+            let hint = field_text(world, "planSaveHint")?;
+            let brick = shown(world)?;
+            expect!(
+                visible(world, brick, "planSavePath")
+                    && hint == "Enter a path relative to /work/shop.",
+                "the dialog says \"{hint}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("the path starts as {Q}"), |world, c, _| {
+        let path = field_text(world, "planSavePath")?;
+        expect!(path == c[0], "the path reads \"{path}\"");
+        Ok(())
+    });
+    steps.step("the user clears the path and saves", |world, _, _| {
+        type_path(world, "")?;
+        shown(world)?.click(world, "planSaveConfirm")?;
+        world.sync()
+    });
+    steps.step("nothing is written to the workspace", |world, _, _| {
+        let files = &world.mc.part::<FakeWrites>().files;
+        expect!(
+            files.is_empty(),
+            "the MC was asked to write {}",
+            files.first().map_or(String::new(), show)
+        );
+        Ok(())
+    });
+    // Why the plan could not be kept, as the toast gives it.
+    steps.step(
+        "the user is told \"(Could not (?:save|copy) plan)\" with the reason",
+        |world, c, _| {
+            let title = c[0].clone();
+            let reason = if title == "Could not save plan" {
+                "EACCES: permission denied"
+            } else {
+                "The clipboard could not be written."
+            };
+            world.wait_for_with(
+                move |w| {
+                    w.state("toasts")["items"].as_array().is_some_and(|items| {
+                        items.iter().any(|toast| {
+                            text(&toast["title"]) == title && text(&toast["description"]) == reason
+                        })
+                    })
+                },
+                |w| format!("the toasts are {}", show(&w.state("toasts"))),
+            )
+        },
+    );
+    steps.step("the workspace refuses the write", |world, _, _| {
+        world.mc.part::<FakeWrites>().refusal = Some("EACCES: permission denied".to_owned());
+        Ok(())
+    });
+    steps.step("the user can try another path", |world, _, _| {
+        let brick = shown(world)?;
+        world.wait_for("the save to settle", move |w| {
+            brick
+                .find(w, "planSaveConfirm")
+                .ok()
+                .flatten()
+                .is_some_and(|item| brick.flag(w, item, "enabled"))
+        })?;
+        let path = field_text(world, "planSavePath")?;
+        expect!(
+            visible(world, brick, "planSavePath") && path == "docs/tax-plan.md",
+            "the save dialog closed"
+        );
+        Ok(())
+    });
+    steps.step(
+        "the plan is kept whole with its title and ends with a single newline",
+        |world, _, _| {
+            let expected = "# Tax line\n\n- Add the line\n- Test it\n";
+            let mut kept = Vec::new();
+            let held = world.clipboard();
+            if !held.is_empty() {
+                kept.push(held);
+            }
+            if let Ok(file) = std::fs::read_to_string(downloads(world).join("tax-line.md")) {
+                kept.push(file);
+            }
+            let none_yet = kept.is_empty();
+            world.wait_for("the plan to be kept", move |w| {
+                !none_yet
+                    || w.mc
+                        .peek::<FakeWrites>()
+                        .is_some_and(|f| !f.files.is_empty())
+            })?;
+            for write in &world.mc.part::<FakeWrites>().files {
+                kept.push(text(&write["contents"]));
+            }
+            expect!(
+                kept.len() == 1 && kept[0] == expected,
+                "the plan was kept as [{}]",
+                kept.join("], [")
+            );
+            Ok(())
+        },
+    );
 }

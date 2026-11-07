@@ -29,7 +29,7 @@ use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
 
 use super::rows::{ListRows, RowChange, RowSource, int};
-use super::summary::{Obj, subagent_detail};
+use super::summary::{self, Obj, subagent_detail};
 use super::time::{self, Clock};
 use super::timeline::Timeline;
 use super::timeline_model::TimelineModel;
@@ -460,7 +460,7 @@ impl Agents {
                 if !agent {
                     return Some(Json::from(text(entity, "input").trim()));
                 }
-                let title = text(entity, "title").trim();
+                let title = summary::subagent_title(text(entity, "title").trim());
                 if !title.is_empty() {
                     return Some(Json::from(title));
                 }
@@ -491,7 +491,7 @@ impl Agents {
                 text(entity, "result"),
             )),
             "detail" => Json::from(""),
-            "modelName" => Json::from(text(entity, "model")),
+            "modelName" => Json::from(summary::subagent_model_name(text(entity, "model"))),
             "childThreadKey" => {
                 let child = text(entity, "childThreadId");
                 Json::from(if agent && !child.is_empty() {

@@ -29,6 +29,7 @@ use crate::json::Json;
 use crate::mc::Mc;
 use crate::sidebar_model::{self, Thread};
 use crate::store::{self, Row, ShellStore};
+use crate::thread_view::summary::subagent_title;
 
 /// How long a fork's row may take to arrive.
 pub const ARRIVAL_TIMEOUT_MS: u64 = 5000;
@@ -168,7 +169,10 @@ fn state(store: &ShellStore, key: &str) -> Json {
         }
         parent_state = json!({
             "key": parent_key,
-            "title": parent_thread.as_ref().map_or("This related thread is unavailable", |p| p.title.as_str()),
+            "title": parent_thread.as_ref().map_or_else(
+                || "This related thread is unavailable".to_owned(),
+                |p| subagent_title(&p.title),
+            ),
             "missing": parent_thread.is_none(),
             // A subagent's thread says whose it is, and is not merged back.
             "subagent": parent.is_empty(),
@@ -182,7 +186,7 @@ fn state(store: &ShellStore, key: &str) -> Json {
         if running(&other) {
             running_count += 1;
         }
-        forks.push(json!({"key": other.key(), "title": other.title, "running": running(&other)}));
+        forks.push(json!({"key": other.key(), "title": subagent_title(&other.title), "running": running(&other)}));
     }
     if shown_parent.is_empty() && forks.is_empty() {
         return Json::Null;

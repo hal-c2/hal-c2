@@ -30,6 +30,7 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 
 use super::cache::{self, Cursor, ThreadCache};
+use super::command_label;
 use super::file_render::extension_of;
 use super::summary::{self, Obj, as_object, flag, object, text};
 use super::time::{self, Clock};
@@ -282,6 +283,9 @@ struct Row {
     summarized: bool,
     /// A work group's: its run was stopped here, so it starts open.
     starts_open: bool,
+    /// A work group's: its turn is still running, so its latest call reads
+    /// as the live "Ran git".
+    live: bool,
 }
 
 /// An image's signed address; no `expires_at` while it is asked for.
@@ -591,6 +595,7 @@ fn call_status_label(status: &str) -> &'static str {
     match status {
         "failed" => "Failed",
         "cancelled" | "interrupted" => "Stopped",
+        "declined" => "Declined",
         "completed" => "",
         _ => "Running",
     }
@@ -1898,7 +1903,8 @@ impl Timeline {
                     row.items.push(call_id.to_owned());
                     next += 1;
                 }
-                row.summarized = row.items.len() > 1 && settled(text(run(run_id), "status"));
+                row.live = !settled(text(run(run_id), "status"));
+                row.summarized = row.items.len() > 1 && !row.live;
                 row.starts_open = self.kept_open.contains(run_id);
                 rows.push(row);
                 i = next;
@@ -1980,8 +1986,17 @@ impl Timeline {
                 self.rows.insert(i, row);
                 self.out.push(Out::Moved { from, to: i });
             }
-            if self.rows[i] != *want || self.dirty_row(want, changed) {
-                self.rows[i] = want.clone();
+            // A turn settling ends its live call, which redraws only if
+            // that changes how the call reads.
+            let unlive = Row {
+                live: self.rows[i].live,
+                ..want.clone()
+            };
+            let relabelled =
+                unlive.live != want.live && self.live_entry(&unlive) != self.live_entry(want);
+            let redraw = self.rows[i] != unlive || relabelled || self.dirty_row(want, changed);
+            self.rows[i] = want.clone();
+            if redraw {
                 self.out.push(Out::DataChanged {
                     first: i,
                     last: i,
@@ -2249,9 +2264,19 @@ impl Timeline {
 
     // --- Rows ------------------------------------------------------------------------
 
+    /// A work group's latest call as its live row draws it, or Null.
+    fn live_entry(&self, row: &Row) -> Json {
+        let Some(last) = row.items.last().filter(|_| row.kind == "work") else {
+            return Json::Null;
+        };
+        let live = row.live && self.expanded_groups.contains(&row.id) == row.starts_open;
+        self.entry(self.entity("turn-item", last), live)
+    }
+
     /// One tool call of a work group (apps/tui/src/orchestrationV2Adapter.ts
-    /// itemSummary).
-    fn entry(&self, item: &Obj) -> Json {
+    /// itemSummary); `live`, the running turn's latest, which a command
+    /// names by its program ("Ran git").
+    fn entry(&self, item: &Obj, live: bool) -> Json {
         let kind = text(item, "type");
         let status = text(item, "status");
         let title = text(item, "title").trim();
@@ -2259,7 +2284,14 @@ impl Timeline {
         entry.insert("id".into(), Json::from(text(item, "id")));
         entry.insert("type".into(), Json::from(kind));
         entry.insert("status".into(), Json::from(status));
-        entry.insert("statusLabel".into(), Json::from(call_status_label(status)));
+        // A call the provider finished whose result says it failed reads as
+        // failed.
+        let status_label = if status == "completed" && summary::call_failed(item) {
+            "Failed"
+        } else {
+            call_status_label(status)
+        };
+        entry.insert("statusLabel".into(), Json::from(status_label));
         entry.insert("icon".into(), Json::from(icon_of(item)));
         entry.insert(
             "time".into(),
@@ -2291,6 +2323,24 @@ impl Timeline {
                 } else {
                     command
                 };
+                if live {
+                    // The running turn's latest command, named by its program
+                    // and how it went.
+                    let program = command_label::command_program_name(text(item, "input"));
+                    label = format!(
+                        "{} {}",
+                        if status_label.is_empty() {
+                            "Ran"
+                        } else {
+                            status_label
+                        },
+                        if program.is_empty() {
+                            "command"
+                        } else {
+                            program.as_str()
+                        }
+                    );
+                }
                 detail = text(item, "output").to_owned();
                 entry.insert("command".into(), Json::from(text(item, "input")));
                 if is_number(item.get("exitCode")) {
@@ -2330,6 +2380,10 @@ impl Timeline {
                     Some(Json::String(name)) => name.clone(),
                     _ => "Used tool".into(),
                 };
+                let named = summary::hal_c2_tool_display_name(&label);
+                if !named.is_empty() {
+                    label = named;
+                }
                 // Its input; a result's body is not shown.
                 match item.get("input") {
                     Some(Json::Object(input)) if !input.is_empty() => {
@@ -2435,10 +2489,16 @@ impl Timeline {
                     } else {
                         row.items.len().saturating_sub(shown)
                     };
+                    let last = row.items.len().saturating_sub(1);
                     Some(Json::Array(
-                        row.items[first..]
+                        row.items
                             .iter()
-                            .map(|id| self.entry(self.entity("turn-item", id)))
+                            .enumerate()
+                            .skip(first)
+                            .map(|(i, id)| {
+                                let live = row.live && !expanded && i == last;
+                                self.entry(self.entity("turn-item", id), live)
+                            })
                             .collect(),
                     ))
                 }
@@ -2531,9 +2591,9 @@ impl Timeline {
                 String::new()
             }),
             Role::Model => Json::from(if row.kind == "subagent" {
-                text(agent, "model")
+                summary::subagent_model_name(text(agent, "model"))
             } else {
-                ""
+                String::new()
             }),
             Role::Meta => Json::from(row.meta),
             Role::MessageId => Json::from(if kind == "assistant_message" {
@@ -2571,10 +2631,12 @@ impl Timeline {
                     "" => "Error",
                     title => title,
                 }),
-                "subagent" => Json::from(match text(item, "title").trim() {
-                    "" => "Subagent",
-                    title => title,
-                }),
+                "subagent" => {
+                    Json::from(match summary::subagent_title(text(item, "title").trim()) {
+                        title if title.is_empty() => "Subagent".to_owned(),
+                        title => title,
+                    })
+                }
                 _ => return None,
             },
             Role::Text => match row.kind {

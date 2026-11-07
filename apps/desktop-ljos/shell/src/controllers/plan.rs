@@ -8,9 +8,11 @@
 //! - `plan.copy`: the plan's markdown, to the clipboard.
 //! - `plan.download`: a markdown file of it in the Downloads folder.
 //! - `plan.save {path}`: the same file at `path` of the thread's workspace
-//!   (`projects.writeFile`).
+//!   (`projects.writeFile`). An empty path is refused. It publishes
+//!   `planSave` {saving, saved}: `saved` counts the writes that went
+//!   through, so the dialog closes on one and stays open on a failure.
 //!
-//! Each says what came of it as a toast. Publishes nothing.
+//! Each says what came of it as a toast.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -38,10 +40,13 @@ pub struct Plan {
     downloads: Option<PathBuf>,
     /// An implementation thread is being started.
     starting: bool,
+    /// A save to the workspace is in flight; how many went through.
+    saving: bool,
+    saved: u64,
 }
 
 /// The plan's first heading.
-fn title_of(markdown: &str) -> String {
+pub fn title_of(markdown: &str) -> String {
     static HEADING: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?m)^\s{0,3}#{1,6}\s+(.+)$").unwrap());
     HEADING
@@ -238,22 +243,17 @@ impl Plan {
         }
     }
 
-    fn save(&self, engine: &Engine, thread_key: &str, plan: &Json, path: &str) {
+    fn publish_save(&self, engine: &Engine) {
+        self.bridge.publish(
+            engine,
+            "planSave",
+            json!({"saving": self.saving, "saved": self.saved}),
+        );
+    }
+
+    fn save(&mut self, engine: &Engine, thread_key: &str, plan: &Json, path: &str) {
         let environment = thread_key.split_once(':').map_or(thread_key, |(e, _)| e);
-        let root = store::with(engine, |s| {
-            let row = s.thread_row(thread_key)?;
-            let worktree = row.get("worktreePath").and_then(Json::as_str).unwrap_or("");
-            if !worktree.is_empty() {
-                return Some(worktree.to_owned());
-            }
-            let project = row.get("projectId").and_then(Json::as_str).unwrap_or("");
-            let project = s.project_row(environment, project)?;
-            project
-                .get("workspaceRoot")
-                .and_then(Json::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_default();
+        let root = workspace_root(engine, thread_key);
         if root.is_empty() {
             return show(
                 engine,
@@ -262,18 +262,27 @@ impl Plan {
                 "This thread does not have a workspace path to save into.",
             );
         }
+        let relative_path = path.trim().to_owned();
+        if relative_path.is_empty() {
+            return show(engine, "warning", "Enter a workspace path", "");
+        }
+        if self.saving {
+            return;
+        }
+        self.saving = true;
+        self.publish_save(engine);
         let markdown = text(plan, "markdown");
-        let relative_path = if path.trim().is_empty() {
-            file_name(markdown)
-        } else {
-            path.trim().to_owned()
-        };
+        let me = self.me.clone();
         self.mc.call(
             environment,
             "projects.writeFile",
             json!({"cwd": root, "relativePath": relative_path, "contents": exported(markdown)}),
             Box::new(move |engine, result| match result {
                 Err(e) => {
+                    me.run(engine, |p, e| {
+                        p.saving = false;
+                        p.publish_save(e);
+                    });
                     let reason = if e.message.is_empty() {
                         "An error occurred while saving."
                     } else {
@@ -282,6 +291,11 @@ impl Plan {
                     show(engine, "error", "Could not save plan", reason);
                 }
                 Ok(answer) => {
+                    me.run(engine, |p, e| {
+                        p.saving = false;
+                        p.saved += 1;
+                        p.publish_save(e);
+                    });
                     let saved = answer
                         .get("relativePath")
                         .and_then(Json::as_str)
@@ -293,6 +307,26 @@ impl Plan {
     }
 }
 
+/// The folder the thread's files are written under: its worktree, else its
+/// project's root; empty when it has neither.
+pub fn workspace_root(engine: &Engine, thread_key: &str) -> String {
+    let environment = thread_key.split_once(':').map_or(thread_key, |(e, _)| e);
+    store::with(engine, |s| {
+        let row = s.thread_row(thread_key)?;
+        let worktree = row.get("worktreePath").and_then(Json::as_str).unwrap_or("");
+        if !worktree.is_empty() {
+            return Some(worktree.to_owned());
+        }
+        let project = row.get("projectId").and_then(Json::as_str).unwrap_or("");
+        let project = s.project_row(environment, project)?;
+        project
+            .get("workspaceRoot")
+            .and_then(Json::as_str)
+            .map(str::to_owned)
+    })
+    .unwrap_or_default()
+}
+
 impl Controller for Plan {
     fn new(init: Init<'_, Self>) -> Self {
         Plan {
@@ -301,6 +335,8 @@ impl Controller for Plan {
             me: init.me,
             downloads: None,
             starting: false,
+            saving: false,
+            saved: 0,
         }
     }
 

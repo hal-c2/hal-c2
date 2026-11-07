@@ -5,7 +5,7 @@
 //! The parent is stream.rs's thread-1 ("Tax line"); the MC's side is written as
 //! delegation.ex and the Claude adapter write it. desktop-qt's SubagentSteps.cpp.
 
-use hal_c2_shell::controllers::navigation::Navigation;
+use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::panel::RightPanel;
 use hal_c2_shell::controllers::threads;
 use hal_c2_shell::thread_view::agents::{Agents, AgentsModel};
@@ -217,7 +217,73 @@ fn no_user_message(world: &mut World) -> Outcome {
     Ok(())
 }
 
+/// The MC lists a thread under `parent` as its subagent.
+fn list_subagent_thread(world: &mut World, id: &str, title: &str, parent: &str) -> Outcome {
+    let row = json!({"id": id, "title": title, "projectId": super::stream::PROJECT,
+                     "createdAt": "2026-09-23T09:30:00Z", "updatedAt": "2026-09-23T09:30:00Z",
+                     "lineage": {"rootThreadId": THREAD, "parentThreadId": parent,
+                                 "relationshipToParent": "subagent"}});
+    world.mc.threads.insert(id.into(), row.clone());
+    world.mc.send_row(id, &row);
+    world.sync()
+}
+
+/// How a subagent's title reads (SubagentDisplaySteps.cpp).
+fn register_titles(steps: &mut Steps) {
+    steps.step(&format!("a subagent whose title is {Q}"), |world, c, _| {
+        start_run(world, 60, "running")?;
+        list_subagent_thread(world, "thread-sub", &c[0], THREAD)?;
+        // A subagent of the subagent, whose lineage names it as its parent.
+        list_subagent_thread(world, "thread-sub-sub", "Grandchild", "thread-sub")?;
+        delegate(
+            world,
+            json!({"childThreadId": "thread-sub", "title": c[0], "prompt": "fix the cart"}),
+        )
+    });
+    steps.step(
+        "the user sees it in the timeline, the lineage or the agents list",
+        |world, _, _| {
+            world.dispatch("rightPanel.add", json!({"kind": "agents"}))?;
+            world.sync()?;
+            world.wait_for("the Agents tab to list the subagent", |w| {
+                agents_count(w) >= 1
+            })
+        },
+    );
+    steps.step(&format!("it is shown as {Q}"), |world, c, _| {
+        let row = row_of(world, "subagent")?;
+        let in_timeline = role(world, row, "title");
+        expect!(
+            in_timeline == c[0],
+            "the timeline shows {}",
+            show(&in_timeline)
+        );
+        let listed: Vec<Value> = (0..agents_count(world))
+            .map(|row| agent_value(world, row, "title"))
+            .collect();
+        expect!(
+            listed.iter().any(|title| title == c[0].as_str()),
+            "the agents list shows {}",
+            show(&Value::Array(listed))
+        );
+        // The subagent's own subagent names it as its parent.
+        let grandchild = key(world, "thread-sub-sub");
+        world.with::<Navigation, _>(|n, engine| n.open(engine, Route::Thread(grandchild)))?;
+        let wanted = c[0].clone();
+        world.wait_for_with(
+            move |w| at(&w.state("lineage"), "parent.title") == wanted.as_str(),
+            |w| {
+                format!(
+                    "the lineage to name the subagent; it is {}",
+                    show(&w.state("lineage"))
+                )
+            },
+        )
+    });
+}
+
 pub fn register(steps: &mut Steps) {
+    register_titles(steps);
     // Between a subagent and its parent.
     steps.step("the agent has a subagent", |world, _, _| {
         list_child_thread(world)?;

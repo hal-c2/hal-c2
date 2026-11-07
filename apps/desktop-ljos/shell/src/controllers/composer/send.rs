@@ -293,7 +293,10 @@ impl Composer {
             interaction_mode.clear();
         }
         let mut commands: Vec<Obj> = Vec::new();
-        if !runtime_mode.is_empty() && runtime_mode != thread.runtime_mode {
+        if !runtime_mode.is_empty()
+            && runtime_mode != thread.runtime_mode
+            && self.setting_mode.get(target).map(|s| s.mode.as_str()) != Some(runtime_mode.as_str())
+        {
             commands.push(object(json!({
                 "type": "thread.runtime-mode.set",
                 "threadId": thread.id,

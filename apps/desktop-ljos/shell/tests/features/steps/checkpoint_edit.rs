@@ -12,6 +12,7 @@
 use std::io::Write;
 
 use hal_c2_shell::controllers::composer;
+use ljos::prelude::{ObjectId, Value as Js};
 use serde_json::{Map, Value, json};
 
 use super::settings::publish_providers;
@@ -149,10 +150,13 @@ fn edit_from_second(world: &mut World) -> Outcome {
     let (x, y) = brick.at(world, body, 0.5, 0.5)?;
     world.hover_at(x, y + 4.0)?;
     world.hover_at(x, y)?;
+    // Its actions float over the block's edge, in the row beside the
+    // message's column.
+    let row = message_row(&brick, world, body)?;
     world.wait_for("the message to offer Edit from here", |w| {
-        matches!(brick.visible_beside(w, body, "editFromHere"), Ok(Some(_)))
+        matches!(brick.visible_in(w, row, "editFromHere"), Ok(Some(_)))
     })?;
-    let Some(button) = brick.visible_beside(world, body, "editFromHere")? else {
+    let Some(button) = brick.visible_in(world, row, "editFromHere")? else {
         fail!("the message withdrew Edit from here");
     };
     world.advance(300)?;
@@ -160,6 +164,17 @@ fn edit_from_second(world: &mut World) -> Outcome {
     world.click_at(x, y)?;
     world.sync()?;
     Ok(())
+}
+
+/// The row a user message's block is drawn in: its column's parent.
+fn message_row(brick: &Brick, world: &World, body: ObjectId) -> Outcome<ObjectId> {
+    let Js::Object(column) = brick.read(world, body, "parent") else {
+        fail!("the message is in no column");
+    };
+    let Js::Object(row) = brick.read(world, column, "parent") else {
+        fail!("the message's column is in no row");
+    };
+    Ok(row)
 }
 
 fn rollbacks(world: &World) -> Vec<Value> {
@@ -261,7 +276,9 @@ pub fn register(steps: &mut Steps) {
                 "the rollback was {}",
                 show(&rollback)
             );
-            // Turn 1 stays; the second message and what followed are gone.
+            // The MC's events follow its answer: turn 1 stays; the second
+            // message and what followed are gone.
+            super::panel::flush_rollbacks(world)?;
             world.wait_for_with(|w| answers(w) == ["Answer 1"], describe)?;
             let id = second(world)?;
             expect!(

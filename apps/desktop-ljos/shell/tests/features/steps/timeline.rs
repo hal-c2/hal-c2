@@ -288,6 +288,13 @@ fn status_label(world: &World, kind: &str) -> Outcome<String> {
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
 
+    // The clipboard every copy in the timeline writes to, the plan menu's
+    // included (desktop-qt's CentreSteps).
+    steps.step("the clipboard refuses the copy", |world, _, _| {
+        world.set_clipboard_fails(true);
+        Ok(())
+    });
+
     // Background.
     steps.step(
         &format!("a connected environment with the project {Q}"),

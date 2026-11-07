@@ -11,6 +11,7 @@
 
 pub mod agents;
 pub mod cache;
+pub mod command_label;
 pub mod diff;
 pub mod file_render;
 pub mod file_tree;

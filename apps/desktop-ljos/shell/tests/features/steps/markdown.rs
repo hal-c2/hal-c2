@@ -178,6 +178,38 @@ fn plain(world: &World, edit: ObjectId) -> Outcome<String> {
     }
 }
 
+/// Where `needle`, as the reader sees it, lies in `raw`, a reply's drawn
+/// text, as UTF-16 [start, end). Inline code is drawn with word joiners
+/// holding it together, and no-break spaces.
+fn drawn_range(raw: &str, needle: &str) -> Option<(usize, usize)> {
+    let mut at = Vec::new();
+    let mut read = Vec::new();
+    for (i, unit) in raw.encode_utf16().enumerate() {
+        if unit == 0x2060 {
+            continue;
+        }
+        at.push(i);
+        read.push(if unit == 0x00a0 {
+            u16::from(b' ')
+        } else {
+            unit
+        });
+    }
+    let needle: Vec<u16> = needle.encode_utf16().collect();
+    if needle.is_empty() {
+        return None;
+    }
+    let found = read
+        .windows(needle.len())
+        .position(|w| w == needle.as_slice())?;
+    Some((at[found], at[found + needle.len() - 1] + 1))
+}
+
+/// Drawn text as the reader means it.
+fn readable(text: &str) -> String {
+    text.replace('\u{2060}', "").replace('\u{a0}', " ")
+}
+
 /// The link under the middle of `needle` in a rich text segment, and the
 /// point the user would click in the window.
 fn link_at(
@@ -187,10 +219,10 @@ fn link_at(
     needle: &str,
 ) -> Outcome<(String, (f64, f64))> {
     let all = plain(world, edit)?;
-    let Some(byte) = all.find(needle) else {
-        fail!("\"{needle}\" is not shown in \"{all}\"");
+    let Some((start, end)) = drawn_range(&all, needle) else {
+        fail!("\"{needle}\" is not shown in \"{}\"", readable(&all));
     };
-    let at = all[..byte].encode_utf16().count() + needle.encode_utf16().count() / 2;
+    let at = (start + end) / 2;
     let rect =
         match world
             .engine()
@@ -478,15 +510,13 @@ pub fn register(steps: &mut Steps) {
             let message = reply(world, 1)?;
             let prose = one(world, message, "markdownProse")?;
             let all = plain(world, prose)?;
-            let Some(byte) = all.find(c[0].as_str()) else {
+            let Some((start, end)) = drawn_range(&all, &c[0]) else {
                 fail!("\"{}\" is not shown in \"{all}\"", c[0]);
             };
-            let start = all[..byte].encode_utf16().count() as i32;
-            let end = start + c[0].encode_utf16().count() as i32;
             if let Err(error) = world.engine().invoke_by_name(
                 prose,
                 "select",
-                &[Value::Int(start), Value::Int(end)],
+                &[Value::Int(start as i32), Value::Int(end as i32)],
             ) {
                 fail!("select: {error}");
             }

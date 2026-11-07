@@ -220,10 +220,14 @@ fn last_message(world: &mut World) -> Outcome<Value> {
 /// A proposed plan in the latest run of a thread in plan mode; `settled`
 /// ends that run.
 fn propose_plan(world: &mut World, settled: bool) -> Outcome {
+    propose_plan_of(world, settled, "# Tax line\n\n- Add the line\n- Test it")
+}
+
+/// `propose_plan` with a plan of the given markdown.
+fn propose_plan_of(world: &mut World, settled: bool, markdown: &str) -> Outcome {
     start_working(world)?;
     // Plans come from plan mode.
     update_row(world, json!({"interactionMode": "plan"}))?;
-    let markdown = "# Tax line\n\n- Add the line\n- Test it";
     stream::add_item(
         world,
         "proposed_plan",
@@ -807,6 +811,45 @@ pub fn register(steps: &mut Steps) {
                 |w| !turn(w)["plan"].is_null(),
                 |w| format!("the plan to be offered; the turn is {}", show(&turn(w))),
             )
+        },
+    );
+    // A plan of a given shape (ProposedPlanCard's preview, its title and file
+    // name, and its export).
+    fn offered(world: &mut World, markdown: &str) -> Outcome {
+        propose_plan_of(world, true, markdown)?;
+        world.wait_for_with(
+            |w| !turn(w)["plan"].is_null(),
+            |w| format!("the plan to be offered; the turn is {}", show(&turn(w))),
+        )
+    }
+    steps.step(
+        &format!("the agent has proposed a plan (?:titled|headed) {Q}"),
+        |world, c, _| {
+            let steps = "- Add the line\n- Test it";
+            if c[0] == "(no heading)" {
+                offered(world, steps)
+            } else {
+                offered(world, &format!("# {}\n\n{steps}", c[0]))
+            }
+        },
+    );
+    steps.step(
+        "the agent has proposed a plan (of 30 short lines|of 1,000 characters on 5 lines|of 15 short lines|with no heading|with trailing blank lines)",
+        |world, c, _| {
+            let lines: Vec<String> = match c[0].as_str() {
+                "with no heading" => return offered(world, "- Add the line\n- Test it"),
+                "with trailing blank lines" => {
+                    return offered(world, "# Tax line\n\n- Add the line\n- Test it\n\n\n  \n");
+                }
+                "of 1,000 characters on 5 lines" => (1..=5)
+                    .map(|n| format!("- Step {n} {}", "x".repeat(200)))
+                    .collect(),
+                shape => {
+                    let count = if shape == "of 30 short lines" { 30 } else { 15 };
+                    (1..=count).map(|n| format!("- Step {n}")).collect()
+                }
+            };
+            offered(world, &format!("# Tax line\n\n{}", lines.join("\n")))
         },
     );
     steps.step(

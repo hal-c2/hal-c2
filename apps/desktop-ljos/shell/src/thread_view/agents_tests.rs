@@ -208,7 +208,7 @@ fn the_tab_lists_the_threads_subagents() {
         w.of("Tax tests", "childThreadKey"),
         "env-1:thread-tax-tests"
     );
-    assert_eq!(w.of("Tax tests", "modelName"), "gpt-5.5");
+    assert_eq!(w.of("Tax tests", "modelName"), "GPT-5.5");
     assert_eq!(w.agents.agent_count(), 2);
     assert!(w.notes.contains(&Note::Count));
 }
