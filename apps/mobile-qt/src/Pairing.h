@@ -10,18 +10,22 @@
 #include "PairingExchange.h"
 
 class NativeShell;
+class SavedEnvironmentsController;
 class QNetworkAccessManager;
 class ShellBridge;
 
-// The phone's one paired environment. A phone runs no MC and has no host
-// process to hand it one (the desktop's host/main.ts), so it pairs by itself:
-// it reads a pairing link, spends its token on a session with the MC there
-// (PairingExchange), remembers that session between runs, and opens the
-// shell's connection with it.
+// The environments the phone is paired with. A phone runs no MC and has no
+// host process to hand it one (the desktop's host/main.ts), so it pairs by
+// itself: it reads a pairing link, spends its token on a session with the MC
+// there (PairingExchange), and keeps that session between runs.
 //
-// One environment at a time: MCs cluster and share one sidebar, so one
-// pairing already shows every machine of the cluster. Pairing with another MC
-// replaces the one remembered.
+// The first environment is the shell's own connection, kept here
+// (`pairing.json`). Every other one is paired beside it, as the desktop
+// pairs with other machines: SavedEnvironmentsController keeps it and gives
+// it a connection of its own, and the shell lists its projects and threads
+// with the first one's. Pairing with the shell's own environment again only
+// renews its session. Forgetting the shell's own puts the first one paired
+// beside it in its place, so the phone is paired while it has any.
 //
 // Publishes `pairing`:
 //   {phase:   unpaired | pairing | paired,
@@ -37,18 +41,21 @@ class ShellBridge;
 // (ConnectionHealthController), which also pairs again with an MC that refused
 // the session (`connection.pair`): the session that buys is remembered here too.
 //
-// Actions: `pairing.pair {link}` and `pairing.forget`, the way back out: the
-// session is deleted from this device, the connection closes, and the shell
-// shows nothing of the environment. `pairing.askToForget` is what the user's
-// own button dispatches: the shell's question first (MenuController, the
-// ConfirmDialog brick), which needs no connection, then `pairing.forget`.
+// The environments beside it are `savedEnvironments`.
+//
+// Actions: `pairing.pair {link}` and `pairing.forget {id}`, the way back out:
+// the session is deleted from this device, the connection closes, and the
+// shell shows nothing of the environment; `id` is one paired beside the
+// shell's own, or none for that one. `pairing.askToForget {id}` is what the
+// user's own button dispatches: the shell's question first (MenuController,
+// the ConfirmDialog brick), which needs no connection, then `pairing.forget`.
 // `pairing.add` brings the pairing screen up on a paired device and
 // `pairing.cancel` takes it away again, the environment it has untouched
 // (not while a link is being spent).
 //
 // A session is on the device before the phone says it is paired with it or
 // connects with it. One that cannot be saved is said in `error`, with the
-// link kept and the environment the device had left as it was, though the
+// link kept and the environments the device had left as they were, though the
 // link is spent: the MC has no way for a client to give its own session
 // back, so that one stays among the MC's clients until it is revoked there
 // or expires.
@@ -109,8 +116,14 @@ private:
   void add();
   void cancel();
   void paired(const pairing::Result& result);
-  void askToForget();
-  void forget();
+  // `id` is an environment paired beside the shell's own, or "" for that one.
+  void askToForget(const QString& id);
+  void forget(const QString& id);
+  // The saved environments, when `id` is one of them and not the shell's own.
+  SavedEnvironmentsController* beside(const QString& id) const;
+  // With no environment of its own, the shell connects to the first one
+  // paired beside it that it can, which then is its own; false when none is.
+  bool promote();
   // The shell connected with this credential: it is the one to remember.
   void remember(const QUrl& origin, const QString& token);
   // The connected MC described itself: its label and environment may be news.

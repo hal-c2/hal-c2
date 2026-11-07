@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26983
 #   https://github.com/pingdotgg/t3code/pull/23852
 #   https://github.com/pingdotgg/t3code/pull/22634
 #   https://github.com/pingdotgg/t3code/pull/22832
@@ -40,6 +41,15 @@ Feature: Linking pull requests to threads
     Then the environment does not look for branch pull requests
     But a turn that ends on "Cart totals" still looks for its pull request
     And the every-minute look resumes once a client is in the foreground
+  # Upstream #26983: the every-minute look asked the host about every hidden subagent thread,
+  # which pinned a core on servers running many agents.
+  @backlog @mc
+  Scenario: Looking for branch pull requests every minute skips subagent threads
+    Given "Cart totals" has three subagent threads, each on a branch of its own
+    When the environment looks for branch pull requests at startup or each minute
+    Then it asks the host only about "Cart totals"
+    But a subagent thread whose turn ends still looks for its own pull request
+
 
   # Upstream #22634: a GitCafe pull request linked as "/pull/<n>" was stored apart from "/pulls/<n>".
   @backlog @mc @priority-low

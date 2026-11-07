@@ -228,6 +228,16 @@ defmodule HalC2.McpTest do
              tool.("hal_c2_worktree_status", %{})
   end
 
+  test "a handoff from a checkout another git holds the index of says so", %{work: work} do
+    {_caller, tool} = caller("wait for it")
+    File.write!(Path.join(work, ".git/index.lock"), "")
+    on_exit(fn -> File.rm(Path.join(work, ".git/index.lock")) end)
+
+    assert {:error, text} = tool.("hal_c2_worktree_handoff", %{"branch" => "feature/locked"})
+    assert text =~ "index is locked"
+    refute text =~ "not a git repository"
+  end
+
   test "an agent renames and pins its thread, and links its pull requests" do
     {caller, tool} = caller("wait for it")
 

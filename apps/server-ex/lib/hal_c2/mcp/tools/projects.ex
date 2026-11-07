@@ -208,11 +208,14 @@ defmodule HalC2.Mcp.Tools.Projects do
   end
 
   defp repository(root) do
-    case HalC2.Vcs.local_status(root) do
-      %{"isRepo" => true} = status ->
+    case HalC2.Vcs.read_status(root) do
+      {:ok, %{"isRepo" => true} = status} ->
         {:ok, status}
 
-      _ ->
+      {:error, message} ->
+        {:error, "invalid_request", message}
+
+      {:ok, _} ->
         {:error, "invalid_request", "Project workspace '#{root}' is not a git repository."}
     end
   end

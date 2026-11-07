@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26165
+#   https://github.com/pingdotgg/t3code/pull/24734
+#   https://github.com/pingdotgg/t3code/pull/27757
+#   https://github.com/pingdotgg/t3code/pull/25230
 #   https://github.com/pingdotgg/t3code/pull/23939
 #   https://github.com/pingdotgg/t3code/pull/15672
 #   https://github.com/pingdotgg/t3code/pull/19636
@@ -44,6 +48,10 @@
 #   apps/server/src/provider/Layers/openCodeUsageLimits.ts, apps/server/src/textGeneration/OpenCodeTextGeneration.ts
 #   https://github.com/pingdotgg/t3code/pull/14978
 #   https://github.com/pingdotgg/t3code/pull/22596
+#   https://github.com/pingdotgg/t3code/pull/26182
+#   https://github.com/pingdotgg/t3code/pull/26302
+#   https://github.com/pingdotgg/t3code/pull/23591
+#   https://github.com/pingdotgg/t3code/pull/23598
 
 @plugin-opencode @mc
 Feature: OpenCode
@@ -129,6 +137,30 @@ Feature: OpenCode
     When a new thread needs a title
     Then OpenCode writes it with every tool refused
 
+  # Upstream #23598: the 3-minute limit started only after OpenCode answered the session and prompt.
+  @backlog
+  Scenario: An OpenCode title that never comes back fails within three minutes
+    Given OpenCode is picked for text generation
+    And OpenCode accepts the request but never answers it
+    When a new thread needs a title
+    Then within three minutes the title fails with "OpenCode did not finish generating in time."
+
+  # Upstream #23598: the interrupt after a timeout had no deadline of its own.
+  @backlog @priority-low
+  Scenario: An OpenCode generation that times out is not held up by a stalled interrupt
+    Given an OpenCode title generation reached its three-minute limit
+    And OpenCode does not answer the request to stop it
+    When five more seconds pass
+    Then the title has failed with "OpenCode did not finish generating in time."
+
+  # Upstream #23591: a reconnect mid-reply replaced the text already streamed with what came after.
+  @backlog @priority-high
+  Scenario: An OpenCode reply keeps its streamed text across an event stream reconnect
+    Given OpenCode has streamed one paragraph and part of a second
+    When OpenCode's event stream drops and the MC reconnects
+    And OpenCode streams the rest of the second paragraph
+    Then the reply shows both whole paragraphs
+
   # Upstream #10606: a cancelled OpenCode text generation kept running; it is now aborted.
   @backlog @priority-low
   Scenario: A cancelled OpenCode title or commit message stops OpenCode generating it
@@ -152,6 +184,15 @@ Feature: OpenCode
     Given the user runs an OpenCode server elsewhere
     When the user sets its URL and password on the OpenCode instance
     Then OpenCode threads run on that server
+
+  # Upstream #25230: health checks and session requests left out the configured password.
+  @backlog @priority-high
+  Scenario: A password-protected OpenCode server is checked and used with its password
+    Given the OpenCode instance points at a server that requires the password the user set
+    When the user starts an OpenCode thread
+    Then the server's health check and the thread's session both use that password
+    And the thread runs
+    But a server the user set up elsewhere is never sent the MC's own OpenCode password
 
   # Upstream #20446: the OpenCode server password moves to the secret store and is never read back.
   @backlog @priority-high
@@ -257,6 +298,23 @@ Feature: OpenCode
       | auto-accept edits | run a command           | asked for approval        |
       | full access       | work outside the project| allowed without asking    |
 
+  # Upstream #26182: an OpenCode session kept the rules it was created with, so a thread moved
+  # from full access to approval required was never asked. #26302 does the same for subagents,
+  # which keep their own limits such as not delegating further.
+  # Upstream #26302: subagent sessions follow the thread's access mode too, keeping their own limits.
+  @backlog @priority-high
+  Scenario Outline: Changing the access mode of an OpenCode thread changes what its sessions are asked
+    Given the thread started OpenCode in full access and <session> exists
+    When the user changes the thread to approval required and sends a message
+    Then OpenCode is asked for approval before <session> runs a command
+    And a subagent session still cannot start subagents of its own
+
+    Examples:
+      | session                                         |
+      | the thread's own session                        |
+      | a subagent session the thread started           |
+      | a subagent session the thread later resumes     |
+
   Scenario Outline: OpenCode approval decisions
     Given OpenCode asked to run a command
     When the user answers <decision>
@@ -323,6 +381,25 @@ Feature: OpenCode
     Given OpenCode is signed in to OpenCode Go and runs locally
     When the user opens the limits view
     Then OpenCode Go shows its session, weekly and monthly windows
+
+  # Upstream #27757: one timed-out usage read at startup left Go limits unavailable until restart,
+  # though OpenCode itself was ready and signed in.
+  @backlog @priority-low
+  Scenario: OpenCode Go limits come back after a usage read times out at startup
+    Given OpenCode is signed in to OpenCode Go and runs locally
+    And reading its Go usage timed out when OpenCode started
+    When the next health check comes round
+    Then the Go usage is read again without restarting OpenCode
+    And OpenCode Go shows its session, weekly and monthly windows
+
+  # Upstream #26165: a Go key replaced in OpenCode 2 lived only in its credential store, so usage used the old key.
+  @backlog @priority-low
+  Scenario: OpenCode Go limits use a Go key replaced in OpenCode 2
+    Given a local OpenCode 2 whose Go key was replaced after it imported "auth.json"
+    And the key left in "auth.json" has expired
+    When the user opens the limits view
+    Then OpenCode Go shows its session, weekly and monthly windows
+    And the user is not told "OpenCode Go could not read usage."
 
   # Upstream #21007: OpenCode 2 running Go through a Console API key showed "could not read usage".
   @backlog @priority-low
@@ -712,6 +789,15 @@ Feature: OpenCode
   Scenario: An OpenCode failure without details gets a plain message
     When OpenCode reports that a session failed without saying why
     Then the turn fails saying "OpenCode session failed without an error payload."
+
+  # Upstream #24734: a model provider's unreadable error page showed as "<none>".
+  @backlog @priority-low
+  Scenario: An OpenCode failure from an error page names the page and its status
+    Given an OpenCode turn is running
+    When OpenCode reports a provider error with no message, status 502 and an HTML page titled "Bad gateway"
+    Then the turn fails naming "Bad gateway" and status 502
+    And the failure is not shown as "<none>"
+    And a provider error with a message still shows that message
 
   @backlog
   Scenario: An OpenCode timeout without a message still fails the turn readably

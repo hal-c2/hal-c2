@@ -3440,8 +3440,10 @@ const Steps steps([] {
   step(S("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], S("raw"), table);
   });
-  // A page's name, never a path: FilesSteps opens those.
+  // A page's name, never a path: FilesSteps opens those. With no Space in the
+  // scenario, the name is a thread's.
   step(S("the user opens \"([^\"./]*)\""), [](World& world, const Captures& c, const Table&) {
+    if (fake(world.mc).current.isEmpty()) return openThread(world, c[0]);
     lookAtPage(world, idOfPage(world, c[0]));
   });
   step(S("the table is shown as its Markdown, exactly as written, in a fixed-width face"), [](World& world, const Captures&, const Table&) {

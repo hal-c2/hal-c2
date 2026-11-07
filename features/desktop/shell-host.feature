@@ -1,9 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26099
 #   https://github.com/pingdotgg/t3code/pull/23873 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/19706
 #   https://github.com/pingdotgg/t3code/pull/19554
 #   https://github.com/pingdotgg/t3code/pull/20277
 #   https://github.com/pingdotgg/t3code/pull/15044
+#   https://github.com/pingdotgg/t3code/pull/25903
+#   https://github.com/pingdotgg/t3code/pull/24111
 #   https://github.com/pingdotgg/t3code/pull/16670
 #   https://github.com/pingdotgg/t3code/pull/19118
 #   https://github.com/pingdotgg/t3code/pull/17587
@@ -314,6 +317,16 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the desktop app says the MC failed to start, with its exit code
 
+    # Upstream #25903: a release whose server crashed at boot was restarted forever behind no
+    # window, so the app showed nothing at all.
+    @backlog @desktop @priority-high
+    Scenario: An MC that keeps failing to start offers a way out
+      Given the desktop app's own MC fails three times before it answers
+      When the user starts the desktop app
+      Then a window says HAL-C2 could not start, with the reason and the end of the MC's output
+      And it offers the newer build when one is available, else the last build that started on this machine
+      And it offers to copy the details and to quit
+
     # Legacy: apps/desktop/src/app/DesktopApp.ts (handleFatalStartupError)
     @backlog @desktop
     Scenario: A failure while the app starts is shown with the step it failed in
@@ -480,6 +493,41 @@ Feature: The desktop app runs its own MC
       When the app starts
       Then the system is told that HAL-C2 opens links such as "hal-c2://pair"
       And opening such a link from a browser or another app brings up HAL-C2
+
+    # Upstream #24111: the desktop registered its links but ignored pairing ones, so a remote MC
+    # could only be added by pasting its pairing link into Settings.
+    @backlog @desktop @priority-high
+    Scenario: Opening a pairing link asks before pairing the desktop
+      Given the desktop app is running
+      When the user opens a "hal-c2://pair" link for the MC at "http://vps.example.com:3773"
+      Then the user is asked whether to add the MC at "http://vps.example.com:3773"
+      And nothing reaches that MC until the user agrees
+      When the user agrees
+      Then the desktop pairs with that MC
+
+    # Upstream #24111
+    @backlog @desktop
+    Scenario: A pairing link that starts the desktop is not lost
+      Given the desktop app is not running
+      When the user opens a "hal-c2://pair" link
+      Then the desktop starts and asks whether to add that MC
+
+    # Upstream #26099: with the local environment off, finding projects never settled, so a pull
+    # request link that started the app opened a new thread instead of the pull request.
+    @backlog @desktop
+    Scenario: A pull request link that starts the desktop waits for a remote MC's projects
+      Given the local environment is turned off and the desktop is paired with a remote MC
+      And that MC has the project of "https://github.com/hal-c2/hal-c2/pull/42"
+      When the user opens that link and the desktop starts
+      Then the desktop waits until the remote MC has listed its projects
+      And then opens pull request 42 in that project
+
+    # Upstream #24111
+    @backlog @desktop @priority-low
+    Scenario: A pairing link opened again after it paired is skipped
+      Given the desktop paired with a "hal-c2://pair" link
+      When the same link is opened again
+      Then the user is not asked again
 
     @backlog @desktop @priority-low
     Scenario: Failing to register the link handler does not stop the app

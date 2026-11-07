@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22116
 #   https://github.com/pingdotgg/t3code/pull/17436
 #   https://github.com/pingdotgg/t3code/pull/10658
 #   https://github.com/pingdotgg/t3code/pull/18857
@@ -20,6 +21,7 @@
 #   apps/desktop/src/snapShot/PortalCaptureShortcut.ts, NiriCaptureShortcut.ts, NiriSnapShot.ts (shortcut session and endpoint errors)
 #   apps/desktop/src/snapShot/GnomeCaptureSetup.ts, KdeSnapShot.ts, HyprlandSnapShot.ts (extension and helper install safety)
 #   apps/desktop/src/snapShot/DesktopSnapShot.ts, snapShot.ts (shortcut registration, modifier-pair and conflict messages)
+#   https://github.com/pingdotgg/t3code/pull/22934
 # The Qt desktop captures on Linux Wayland through the desktop portal, Niri's socket
 # and a binding in its config, or the KDE and Hyprland capture helpers, through
 # MacSnapShot on macOS, which alone carries app text, and directly on Windows.
@@ -92,6 +94,19 @@ Feature: Snap Shot settings
     When the user presses Escape
     Then the previous shortcut is kept
 
+  # Upstream #22934: on macOS and Windows a shortcut with an arrow key or Escape could not be registered.
+  @backlog
+  Scenario Outline: A shortcut with an arrow key registers
+    Given the desktop app runs on <platform>
+    When the user records Ctrl+Shift+Up as the shortcut
+    Then the shortcut is registered and starts a capture
+
+    Examples:
+      | platform |
+      | macOS    |
+      | Windows  |
+      | Linux    |
+
   Scenario Outline: A shortcut that cannot be used is refused
     When the user records <shortcut>
     Then the shortcut is refused because <reason>
@@ -107,6 +122,16 @@ Feature: Snap Shot settings
     Given Snap Shot is on and the desktop app runs on macOS
     When the user turns on including app text
     Then captures carry the app's text and controls when the app makes them available
+
+  # Upstream #22116: a terminal's title spinner ticking during a Hyprland capture dropped the
+  # window's details, as if another window had been captured.
+  @backlog @desktop @priority-low
+  Scenario: A Hyprland capture keeps the window's details when only a spinner in its title moves
+    Given Snap Shot is on in a Hyprland session
+    And a terminal window's title starts with a spinner that ticks during the capture
+    When the user captures that window
+    Then the capture keeps the window's app, title and text
+    And a capture whose window moved, resized or changed app does not keep them
 
   Scenario Outline: Choosing the capture cues
     When the user turns <cue> off

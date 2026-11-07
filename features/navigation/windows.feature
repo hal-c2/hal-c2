@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/21200
 #   https://github.com/pingdotgg/t3code/pull/13713
+#   https://github.com/pingdotgg/t3code/pull/25860
 #   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
 #   docs/user/keybindings.md (Desktop quit shortcut, mod+w)
 #   apps/web/src/components/QuitHoldOverlay.tsx
@@ -293,7 +294,8 @@ Feature: Windows, zoom and quitting
       Then no second copy of the app runs
       And the open window is shown in front, restored if it was minimized
 
-    @backlog @desktop
+    # Upstream #25860: mod+w no longer closes a window, so there is no window for a held one to close.
+    @dropped @desktop
     Scenario: Holding the close shortcut closes one window, not all of them
       Given three windows are open
       When the user holds mod+w so that it repeats

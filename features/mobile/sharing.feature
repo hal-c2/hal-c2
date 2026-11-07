@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/21659
+#   https://github.com/pingdotgg/t3code/pull/26175
 #   apps/mobile/src/features/sharing/ (incoming share inbox, project choice, warnings, retry)
 #   apps/mobile/src/features/threads/NewTaskDraftScreen.tsx (share import: cancel, retry, unavailable share, skipped files)
 #   apps/mobile/src/state/use-composer-drafts.ts (undoComposerDraftMergeState: a cancelled import keeps later edits)
@@ -9,6 +10,8 @@
 #   apps/mobile/src/features/threads/fileChipMenu.ts, useFileChipShare.ts (which choices a file link's menu offers)
 #   apps/mobile/app.config.ts (share extension: text, one URL, up to 8 media or files)
 #   docs/internals/mobile-navigation.md (Quick Look copies bytes before sharing)
+#   https://github.com/pingdotgg/t3code/pull/22115
+#   https://github.com/pingdotgg/t3code/pull/22359
 # Composer attachments are specified in features/composer/. This file covers the phone's
 # system share sheet in both directions.
 
@@ -78,6 +81,19 @@ Feature: Sharing into and out of the phone app
     When the user shares a web link and then the same web link again with some text
     Then the new task's draft holds the link once and the text after it, each on its own paragraph
 
+  # Upstream #22359: on Android a share of styled text imported nothing, and beside a file only the
+  # file arrived.
+  @backlog @mobile
+  Scenario Outline: Styled text shared on Android arrives as its text
+    Given the user shares the styled text "hi"<with> from another Android app
+    When the share is imported
+    Then the new task's draft holds the text "hi"<also>
+
+    Examples:
+      | with          | also                   |
+      |               |                        |
+      | and a photo   | and the photo attached |
+
   @backlog @mobile
   Scenario: Sharing the same content twice starts two tasks
     Given the user shared a photo and chose a project for it
@@ -127,6 +143,20 @@ Feature: Sharing into and out of the phone app
   Scenario: A shared file with no name is given one
     When the user shares a photo that arrives with no file name
     Then the photo is attached under a name made from its kind and its place in the share
+
+  # Upstream #26175: on Android a shared file named like "../files/x" was written outside the
+  # app's cache, over its private storage.
+  @backlog @mobile @priority-high
+  Scenario: A shared file whose name points elsewhere is kept in the app's cache
+    When another app shares a picture named "../files/settings"
+    Then the picture is attached as "settings"
+    And none of the app's own files are changed
+
+  # Upstream #26175
+  @backlog @mobile
+  Scenario: Two shared files with the same name are both kept
+    When the user shares "photo.jpg" from one app and then "photo.jpg" from another
+    Then each draft has its own picture
 
   @backlog @mobile
   Scenario: Sharing a file from another app never removes the original
@@ -206,6 +236,14 @@ Feature: Sharing into and out of the phone app
     When the user opens the app
     Then the import finishes into a new task
     And the photo is attached only once
+
+  # Upstream #22115: a share rewritten while the app was stopped could be left half written and skipped.
+  @backlog @mobile
+  Scenario: A share being saved when the app stops is still offered
+    Given the user shared a photo to HAL-C2
+    And the app stopped while it was saving that share again
+    When the user opens the app
+    Then the photo is offered as a new task
 
   @backlog @mobile
   Scenario: A saved share that cannot be read does not hide the others

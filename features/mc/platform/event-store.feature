@@ -16,10 +16,14 @@
 #   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar rows)
 #   apps/server-ex/lib/hal_c2/search.ex (message index backfill)
 #   apps/server-ex/lib/hal_c2/projection.ex
+#   apps/server-ex/lib/hal_c2/projection/check.ex (checking and rebuilding projections)
+#   apps/server-ex/lib/hal_c2/store/compaction.ex, store/compactor.ex (compacting the log)
+#   apps/server-ex/lib/hal_c2/doctor.ex (hal-c2-service doctor)
 #   apps/server/src/persistence/Migrations (TypeScript migrations, replaced by the MC's store)
 #   apps/server/src/orchestration-v2/ProjectionMaintenance.ts, ProjectionStore.ts (checking and
 #     rebuilding projections, compacting the log)
 #   docs/internals/overview.md (event sourcing)
+#   https://github.com/pingdotgg/t3code/pull/27629
 
 Feature: The MC's event store and projections
   Every change to a project or thread is an entity patch appended to one SQLite log.
@@ -168,11 +172,11 @@ Feature: The MC's event store and projections
     Then it rebuilds their rows without delaying startup
 
   # Upstream #21122: opening a large database no longer reads every table for planner
-  # statistics; an 11 GB copy opened in 50 to 66 ms instead of 108 s.
-  # Likely already implemented: apps/server-ex/lib/hal_c2/store.ex (opens with no ANALYZE or PRAGMA optimize)
-  @backlog @mc @priority-high
+  # statistics; an 11 GB copy opened in 50 to 66 ms instead of 108 s. The MC opens its
+  # store with no ANALYZE or PRAGMA optimize, so it reads no statistics in and gathers none.
+  @mc @priority-high
   Scenario: Opening a large store does not hold up startup
-    Given a store of many gigabytes with no table statistics
+    Given a store with no table statistics
     When the MC starts
     Then it opens the store without reading through its tables
     And it accepts clients within a second of opening the store
@@ -213,9 +217,8 @@ Feature: The MC's event store and projections
     When a client resumes the thread from before that event
     Then the event is skipped and the thread finishes syncing
 
-  # The Node server builds these checks but nothing in it runs them yet; see the audit's
-  # "Uncertain" list before implementing.
-  @mc @backlog
+  # The doctor runs these checks (below).
+  @mc
   Scenario Outline: Checking the projections against the log reports what is wrong
     Given <fault>
     When the projections are checked against the log
@@ -230,7 +233,7 @@ Feature: The MC's event store and projections
       | the projections stopped at an earlier sequence than the log | the sequence they are at and the log's |
       | the projections were written by another projection format   | the format version it found            |
 
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: Projections are rebuilt from the log
     Given the projections of the MC are damaged
     When the projections are rebuilt
@@ -239,19 +242,21 @@ Feature: The MC's event store and projections
     And the check against the log passes
 
   # Upstream #19435: superseded history is compacted in the background
-  @mc @backlog
   # Upstream keeps the oldest event of each message as well as the newest
-  # (pingdotgg/t3code#19435): a client adds a message where it first sees it.
+  # (pingdotgg/t3code#19435): a client adds a message where it first sees it. A pull
+  # request link is a field of its thread here, compacted with the thread's other updates.
+  @mc
   Scenario: Compacting the log removes only what a replay no longer needs
-    Given a thread was renamed, pinned and visited many times and its messages streamed in many updates
+    Given a thread was renamed, pinned, linked to pull requests and visited many times and its messages streamed in many updates
+    And the thread was deleted
     When the log is compacted
-    Then only the newest state of the thread is kept
-    And the oldest and the newest update of each message and pull request link are kept
-    And the thread's creation, its deletion, its runs and every timeline item update stay in the log
+    Then of the thread's updates only its creation and its deletion are kept
+    And the oldest and the newest update of each message are kept
+    And its runs and every timeline item update stay in the log
     And rebuilding the projections gives the same threads as before
 
   # Upstream #19435: superseded history is compacted in the background
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A visit does not compact away the rename that carries the thread's activity time
     Given a thread was renamed and then visited
     When the log is compacted
@@ -259,7 +264,7 @@ Feature: The MC's event store and projections
     And of the visits and marks as unread only the newest is kept
 
   # Upstream #19435: superseded history is compacted in the background
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A client resuming from before a compaction ends in the same state
     Given a client last read the log at an offset before many messages were streamed
     And the log was compacted since
@@ -267,28 +272,30 @@ Feature: The MC's event store and projections
     Then it ends with the same threads and messages, in the same order, as a client that read every event
 
   # Upstream #19435: superseded history is compacted in the background
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: The log is compacted in the background
     When the MC has been running for one minute
     Then the log is compacted
     And it is compacted again every six hours after that
     And the space it frees is given back to the disk a little at a time while the MC runs
 
-  @mc @backlog @priority-low
+  # Upstream also counts the receipts it removed; the MC's log holds none.
+  @mc @priority-low
   Scenario: Compacting the log reports what it removed and what can be reclaimed
+    Given a message was streamed in many updates
     When the log is compacted
-    Then it reports how many events and receipts it removed
+    Then it reports how many events it removed
     And how many bytes the store can now give back
 
   # Upstream #19435: superseded history is compacted in the background
-  @mc @backlog
+  @mc
   Scenario: Compacting a long log does not hold up other work
     Given a log with many thousands of events
     When the log is compacted while clients send commands
     Then the commands are accepted between the batches of 50 events it works through
 
   # Upstream #19436: t3 doctor reclaims database space
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: The doctor command reclaims the space of a store that cannot shrink online
     Given a store created before it could give space back to the disk while running
     When the user runs the MC's doctor command with "--fix"
@@ -298,8 +305,9 @@ Feature: The MC's event store and projections
     And a second run reports "Nothing to repair"
 
   # Upstream #19436: t3 doctor reclaims database space
-  @mc @backlog
+  @mc
   Scenario Outline: The doctor command asks before it repairs
+    Given a log with events no replay needs
     When the user runs the MC's doctor command <how>
     Then <outcome>
 
@@ -310,7 +318,7 @@ Feature: The MC's event store and projections
       | with "--dry-run" and "--fix" | the repairs are listed and nothing changes                 |
 
   # Upstream #19436: t3 doctor reclaims database space
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: The doctor command does not repair a store that is open
     Given an MC or a client has the store open
     When the user runs the MC's doctor command with "--fix"
@@ -328,6 +336,7 @@ Feature: The MC's event store and projections
   # Upstream #20948 lets t3 doctor delete, by opt-in, the database T3 Code kept for rolling
   # back to before 0.1.0. The MC keeps no second database: what HAL-C2 moved in from lives in
   # the old home, which HAL-C2 never changes.
+  # Upstream #27629: on Windows deleting that database failed while doctor held it open.
   @dropped @mc
   Scenario: The doctor command offers to delete the database kept for rolling back
     Given a store kept beside the current one only for rolling back to an older version
