@@ -16,6 +16,7 @@
 #include <QQuickWindow>
 #include <QSet>
 #include <QSignalSpy>
+#include <QTest>
 #include <QTimeZone>
 
 #include <cmath>
@@ -270,6 +271,90 @@ qreal drawnAt(World& world, const QString& rowId) {
   QQuickItem* row = drawnRow(world, rowId);
   if (!row) fail(S("the row %1 is not drawn").arg(rowId));
   return row->mapToScene(QPointF(0, 0)).y();
+}
+
+// A finished reply of the open thread, with `messageId` when one is named.
+void answer(World& world, const QString& text, const QString& messageId = QString()) {
+  FakeStreams& fake = world.mc.part<FakeStreams>();
+  const QString run = S("run-%1").arg(fake.ordinal + 1);
+  setEntity(world.mc, world.thread, S("run"), run,
+            {{S("id"), run}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("completed")},
+             {S("requestedAt"), iso(now())}, {S("startedAt"), iso(now())}, {S("completedAt"), iso(now().addSecs(30))}});
+  QJsonObject item{{S("id"), S("assistant_message:%1").arg(fake.ordinal + 1)}, {S("type"), S("assistant_message")},
+                   {S("runId"), run}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("completed")},
+                   {S("text"), text}, {S("updatedAt"), iso(now())}};
+  if (!messageId.isEmpty()) item.insert(S("messageId"), messageId);
+  setEntity(world.mc, world.thread, S("turn-item"), item.value(QLatin1String("id")).toString(), item);
+  if (world.mc.connected()) world.sync();
+}
+
+void collectNamed(QQuickItem* item, const QString& name, QList<QQuickItem*>& out) {
+  if (item->objectName() == name && item->isVisible()) out.append(item);
+  for (QQuickItem* child : item->childItems()) collectNamed(child, name, out);
+}
+
+QList<QQuickItem*> namedItems(World& world, const QString& name) {
+  QList<QQuickItem*> items;
+  collectNamed(world.window().contentItem(), name, items);
+  return items;
+}
+
+// A rich text segment's plain text (MarkdownSteps.cpp's plain).
+QString plainText(QQuickItem* edit) {
+  QString text;
+  QMetaObject::invokeMethod(edit, "getText", Q_RETURN_ARG(QString, text), Q_ARG(int, 0), Q_ARG(int, edit->property("length").toInt()));
+  return text.replace(QChar(0x2028), QLatin1Char('\n'));
+}
+
+QString readable(QString text) {
+  return text.remove(QChar(0x2060)).replace(QChar(QChar::Nbsp), QChar(u' '));
+}
+
+// Where `needle`, as the reader sees it, lies in `raw` (MarkdownSteps.cpp).
+std::pair<int, int> drawnRange(const QString& raw, const QString& needle) {
+  QList<int> at;
+  QString read;
+  for (int i = 0; i < raw.size(); ++i) {
+    if (raw[i] == QChar(0x2060)) continue;
+    at.append(i);
+    read.append(raw[i] == QChar(QChar::Nbsp) ? QChar(u' ') : raw[i]);
+  }
+  const int found = int(read.indexOf(needle));
+  if (found < 0 || needle.isEmpty()) return {-1, -1};
+  return {at[found], at[found + needle.size() - 1] + 1};
+}
+
+// The link under the middle of `needle` in a rich text segment, and the point
+// the user would tap in the window.
+QString linkAt(QQuickItem* edit, const QString& needle, QPoint* point = nullptr) {
+  const auto [start, end] = drawnRange(plainText(edit), needle);
+  expect(start >= 0, S("\"%1\" is not shown in \"%2\"").arg(needle, readable(plainText(edit))));
+  QRectF rect;
+  QMetaObject::invokeMethod(edit, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, (start + end) / 2));
+  const QPointF local(rect.x() + 1, rect.y() + rect.height() / 2);
+  QString link;
+  QMetaObject::invokeMethod(edit, "linkAt", Q_RETURN_ARG(QString, link), Q_ARG(qreal, local.x()), Q_ARG(qreal, local.y()));
+  if (point) *point = edit->mapToScene(local).toPoint();
+  return link;
+}
+
+// The drawn prose segment showing `needle`, waited for.
+QQuickItem* proseShowing(World& world, const QString& needle, const QString& name = S("markdownProse")) {
+  QQuickItem* found = nullptr;
+  world.waitFor([&] {
+    for (QQuickItem* item : namedItems(world, name)) {
+      if (readable(plainText(item)).contains(needle)) found = item;
+    }
+    return found != nullptr;
+  }, [&] { return S("\"%1\" drawn; the screen says: %2").arg(needle, world.texts().join(S(" | "))); });
+  return found;
+}
+
+const QString kSentence = S("The cart caches its tax rate, so a change needs a new cart.");
+
+// The composer's citations.
+QVariantList citations(World& world) {
+  return world.state(S("composer")).toMap().value(S("citations")).toList();
 }
 
 // The row at the top of the view, the one being read: where the brick's own
@@ -582,6 +667,62 @@ const Steps steps([] {
     world.waitFor([&] { return world.shows(S("A paragraph after the list"), false); },
                   [&] { return S("the end of the reply on screen; %1").arg(describeList(rows(world))); });
     expect(world.find(S("jumpToLatest")) == nullptr, S("\"Scroll to end\" is still offered at the end"));
+  });
+
+  // Bare web addresses, and citing a reply (the links half of the file).
+  step(S("the agent writes %1").arg(q), [](World& world, const Captures& c, const Table&) { answer(world, c[0]); });
+  step(S("%1 can be opened as a link").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* prose = proseShowing(world, c[0]);
+    QPoint point;
+    const QString link = linkAt(prose, c[0], &point);
+    expect(link == c[0], S("\"%1\" links to \"%2\"").arg(c[0], link));
+    // A finger has no Ctrl, so a tap on a phone opens it: a touch at the
+    // link's point, as the world's own finger taps an item's middle.
+    static QPointingDevice* finger = QTest::createTouchDevice();
+    QTest::touchEvent(&world.window(), finger).press(0, point, &world.window());
+    QTest::touchEvent(&world.window(), finger).release(0, point, &world.window());
+    world.waitFor([&] { return world.openedUrls.contains(QUrl(c[0])); },
+                  [&] { return S("the browser to open %1; it opened %2").arg(c[0], QUrl::toStringList(world.openedUrls).join(S(", "))); });
+  });
+  step(S("web addresses inside code are left as text"), [](World& world, const Captures&, const Table&) {
+    const QString address = S("https://example.com/docs");
+    answer(world, S("Try `%1` or:\n\n```\ncurl %1\n```").arg(address));
+    const QString inlineLink = linkAt(proseShowing(world, address), address);
+    expect(inlineLink.isEmpty(), S("inline code links to \"%1\"").arg(inlineLink));
+    QQuickItem* code = proseShowing(world, address, S("codeText"));
+    const QString codeLink = linkAt(code, address);
+    expect(codeLink.isEmpty() && !code->property("text").toString().contains(QLatin1String("href")),
+           S("the code block links to \"%1\"").arg(codeLink));
+  });
+  step(S("the user selects a sentence in the agent's reply and cites it"), [](World& world, const Captures&, const Table&) {
+    answer(world, kSentence + S(" Refunds reuse the old rate."), S("message:caching"));
+    QQuickItem* prose = proseShowing(world, kSentence);
+    prose->forceActiveFocus();
+    const auto [start, end] = drawnRange(plainText(prose), kSentence);
+    expect(start >= 0, S("the sentence is not drawn"));
+    QMetaObject::invokeMethod(prose, "select", Q_ARG(int, start), Q_ARG(int, end));
+    QQuickItem* button = nullptr;
+    world.waitFor([&] {
+      const QList<QQuickItem*> buttons = namedItems(world, S("citeSelection"));
+      button = buttons.isEmpty() ? nullptr : buttons.last();
+      return button != nullptr;
+    }, [&] { return S("Cite on the selection %1").arg(show(prose->property("selectedText").toString())); });
+    world.tap(button);
+  });
+  step(S("the composer holds a citation of that sentence"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return citations(world).size() == 1 && citations(world).constFirst().toMap().value(S("text")).toString() == kSentence; },
+                  [&] { return S("a quote of the sentence; the composer shows %1").arg(show(citations(world))); });
+  });
+  step(S("the user can add a comment to the citation"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* chip = world.findWhere([](QQuickItem* item) { return item->objectName().startsWith(QLatin1String("citation-")); });
+    expect(chip != nullptr, S("no citation chip is shown"));
+    world.tap(chip);
+    QQuickItem* comment = world.item(S("citationComment"));
+    world.tap(comment);
+    world.type(S("Too slow?"));
+    world.press(S("Return"));
+    world.waitFor([&] { return citations(world).size() == 1 && citations(world).constFirst().toMap().value(S("comment")).toString() == S("Too slow?"); },
+                  [&] { return S("the comment on the citation; the composer shows %1").arg(show(citations(world))); });
   });
 
   // Nothing left to load.

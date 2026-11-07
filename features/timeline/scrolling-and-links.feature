@@ -417,7 +417,7 @@ Feature: Moving through a thread and following links
     Then the thread scrolls instead
 
   # TUI: implemented in apps/tui/src/timelineLinks.ts
-  @shared @backlog-mobile
+  @shared
   Scenario: A bare web address in a message can be opened
     When the agent writes "see https://example.com/docs"
     Then "https://example.com/docs" can be opened as a link
@@ -519,7 +519,7 @@ Feature: Moving through a thread and following links
     When the user follows the link
     Then "a\b.txt" opens, not "a/b.txt"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-tui
   Scenario: The user cites part of a reply in the next message
     When the user selects a sentence in the agent's reply and cites it
     Then the composer holds a citation of that sentence
