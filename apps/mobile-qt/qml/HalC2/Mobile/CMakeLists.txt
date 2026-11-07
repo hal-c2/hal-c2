@@ -2,6 +2,7 @@
 # hand-written (no `prefer` line), as the bricks' is, so the directory works
 # compiled into the binary and as a disk import path for hot reload.
 set(hal_c2_mobile_qml_files
+    AddProjectDialog.qml
     HomeScreen.qml
     MobileBar.qml
     MobileButton.qml

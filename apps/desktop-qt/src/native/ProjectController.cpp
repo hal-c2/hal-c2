@@ -120,6 +120,12 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
     const QString path = map.value(QStringLiteral("path")).toString();
     // Without a folder, the palette's Add project.
     if (path.isEmpty()) return NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kAdd);
+    // A path typed for the environment's own machine (the phone's Add project):
+    // the MC checks it, not this device.
+    if (map.value(QStringLiteral("onEnvironment")).toBool()) {
+      addOnEnvironment(path);
+      return true;
+    }
     // Where this machine's folders are not the MC's (an MC elsewhere),
     // nothing opens.
     if (!m_bridge->localFolders()) return true;
@@ -165,6 +171,16 @@ void ProjectController::openFolder(const QString& path, bool newThread) {
     return;
   }
   addFolder(own, folder.canonicalFilePath(), QStringLiteral("Could not open folder"), newThread);
+}
+
+void ProjectController::addOnEnvironment(const QString& path) {
+  const QString own = m_store->environmentOf(m_client->mc());
+  if (!m_client->isReady() || own.isEmpty()) {
+    NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Could not open folder"),
+                                                                QStringLiteral("The environment is not connected."));
+    return;
+  }
+  addFolder(own, path, QStringLiteral("Could not open folder"), false);
 }
 
 // A scoped list follows the project the user just added or opened, so its
