@@ -109,7 +109,7 @@ Feature: The thread list
     When the user looks at the settled section
     Then the rows for "Alpha" and "Beta" count their ages from when they settled
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Collapsing and expanding a shelf
     Given the settled section is expanded
     When the user collapses the settled section
@@ -253,7 +253,7 @@ Feature: The thread list
     When the user opens "Review 1"
     Then "Review 1" is among the settled threads
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: Moving through the list with the keyboard
     Given the thread list has keyboard focus on "Beta"
     When the user presses <key>
@@ -268,13 +268,13 @@ Feature: The thread list
       | Enter     | "Beta" opens                |
       | Shift+F10 | the menu for "Beta" opens   |
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Enter on a shelf header folds the shelf
     Given the thread list has keyboard focus on the settled section header
     When the user presses Enter
     Then the settled section collapses
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A thread row keeps its place while the list updates
     Given the user is pointing at "Beta"
     When the list is republished with a new thread above "Beta"
@@ -298,7 +298,7 @@ Feature: The thread list
     When the user scopes the thread list to all projects
     Then threads from "shop" and "docs" are listed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Adding a project from the thread list
     When the user adds a project from the thread list
     Then the user can choose a project to add
@@ -310,7 +310,7 @@ Feature: The thread list
     When the user shows the thread list
     Then the thread list is back
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: Empty thread lists explain themselves
     Given <state>
     When the user looks at the thread list
