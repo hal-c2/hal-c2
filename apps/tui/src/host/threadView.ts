@@ -987,9 +987,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       }
       return;
     }
-    shownError = JSON.stringify(threadError());
     const threadChanged = (detail?.id ?? null) !== (next.detail?.id ?? null);
     detail = next.detail;
+    shownError = JSON.stringify(threadError());
     page = next.threadPage;
     if (threadChanged) {
       view = EMPTY_TIMELINE_VIEW;
