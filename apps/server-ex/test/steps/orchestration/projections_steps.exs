@@ -39,6 +39,39 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
+  # --- a cancelled queued run ----------------------------------------------------------
+
+  step "run 1 of {string} is running and run 2 was queued behind it",
+       %{args: [thread]} = context do
+    started = World.iso_from_now(-60)
+
+    context
+    |> World.numbered_run(thread, 1, "running", %{"startedAt" => started})
+    |> World.numbered_run(thread, 2, "queued")
+    |> Map.merge(%{thread: thread, started: started})
+  end
+
+  step "run 2 is cancelled before it starts", context do
+    World.numbered_run(context, context.thread, 2, "cancelled", %{
+      "startedAt" => nil,
+      "completedAt" => World.iso_from_now(0)
+    })
+  end
+
+  step "the shell row of {string} has status {string} because run {int} is the latest run",
+       %{args: [thread, status, n]} = context do
+    row = World.row(context, thread)
+    assert row["status"] == status
+    assert row["latestRunId"] == "run-#{n}"
+    context
+  end
+
+  step "the activity start time is the start of run {int}", %{args: [n]} = context do
+    assert World.row(context, context.thread)["activityRunStartedAt"] == context.started
+    assert n == 1
+    context
+  end
+
   # --- pending requests, messages, plans -----------------------------------------------
 
   step "the provider asked for approval of a command in {string}", %{args: [thread]} = context do

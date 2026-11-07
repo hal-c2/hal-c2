@@ -54,7 +54,7 @@ Feature: What the engine projects for clients
     Then the shell row has no active run
     And its activity status is waiting
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A cancelled queued run does not hide the run still running before it
     Given run 1 of "t1" is running and run 2 was queued behind it
     When run 2 is cancelled before it starts
