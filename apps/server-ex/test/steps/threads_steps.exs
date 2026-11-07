@@ -1824,7 +1824,7 @@ defmodule HalC2.Steps.Threads do
   # --- limited-threads.feature: the automatic resume ---------------------------------
 
   step ~r/^"(?<thread>[^"]+)" receives the user message "(?<text>[^"]+)" written by the server$/,
-       %{args: [thread, text]} = context do
+       %{args: [_thread, text]} = context do
     assert [%{"text" => ^text, "creationSource" => "server", "createdBy" => "user"}] =
              context.resumed
 

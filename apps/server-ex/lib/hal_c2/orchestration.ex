@@ -374,7 +374,7 @@ defmodule HalC2.Orchestration do
     with :ok <- interrupt_policy(thread_id, command["runId"]) do
       limited? =
         HalC2.Streams.transact(thread_id, :thread, fn state ->
-          {resume, limited?} = cancel_scheduled_resume(state)
+          {resume, limited?} = cancel_scheduled_resume(state, command["runId"])
           {interrupt_request(state, command) ++ resume, limited?}
         end)
 
@@ -2724,7 +2724,7 @@ defmodule HalC2.Orchestration do
   # Stopping a thread that sits on a usage limit gives up the resume for its reset for
   # good, scheduled or not yet armed; a snooze it had is kept, and the user can choose to
   # resume again. Returns the changes and whether the thread was limited.
-  defp cancel_scheduled_resume(state) do
+  defp cancel_scheduled_resume(state, named_run) do
     thread = StreamState.list(state, "thread") |> List.first()
     runs = StreamState.list(state, "run")
     run = HalC2.Projection.Shell.latest_run(runs)
@@ -2736,7 +2736,8 @@ defmodule HalC2.Orchestration do
           StreamState.list(state, "turn-item")
         )
 
-    if thread && run && run["status"] == "failed" && failure["class"] == "usage_limit" &&
+    if thread && thread["deletedAt"] == nil && run && run["status"] == "failed" &&
+         (named_run == nil or named_run == run["id"]) && failure["class"] == "usage_limit" &&
          failure["resetAt"] != nil do
       previous = thread["limitRecovery"]
 

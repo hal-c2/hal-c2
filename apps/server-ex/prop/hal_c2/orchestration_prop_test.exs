@@ -669,8 +669,15 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp step(state, _result, {:call, _, :interrupt, [tid]}) do
     case refusal(state, tid, :interrupt) do
-      nil -> update(state, tid, &(&1 |> end_running(:interrupted) |> start_next()))
-      _ -> state
+      nil ->
+        # The stop of a limit stop is the user giving up the resume scheduled for it.
+        update(state, tid, fn thread ->
+          thread = if limited(thread), do: %{thread | recovery: nil}, else: thread
+          thread |> end_running(:interrupted) |> start_next()
+        end)
+
+      _ ->
+        state
     end
   end
 
@@ -913,8 +920,9 @@ defmodule HalC2.OrchestrationPropTest do
       %{status: status, title: title} when command == :unarchive and status != :archived ->
         {:error, "#{title} is not archived."}
 
+      # Stopping a thread on a limit stop gives up its resume instead of stopping a turn.
       thread when command == :interrupt ->
-        if running(thread), do: nil, else: {:error, "no running turn"}
+        if running(thread) || limited(thread), do: nil, else: {:error, "no running turn"}
 
       %{status: :archived} when command == :resume ->
         {:error, "Thread #{tid} is not active."}
