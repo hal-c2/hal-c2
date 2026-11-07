@@ -2780,10 +2780,11 @@ defmodule HalC2.Steps.Providers.Claude do
 
   # The fake finishes "never start a turn" without a turn; "the turn fails with {string}"
   # (codex_steps.exs) reads the thread "Work".
-  step "Claude acknowledges a prompt without ever starting a turn for it", context do
+  step "Claude ends a prompt as {word} without ever starting a turn for it",
+       %{args: [ended]} = context do
     context
     |> World.fake_providers()
-    |> World.launch_on("Work", "claudeAgent", "never start a turn")
+    |> World.launch_on("Work", "claudeAgent", "never start a turn (#{ended})")
   end
 
   step "the user sends a message Claude never starts a turn for", context do

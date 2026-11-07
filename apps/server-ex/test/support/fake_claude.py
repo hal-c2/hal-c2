@@ -215,9 +215,11 @@ for line in sys.stdin:
     if "wait" in text.split("</conversation_history>")[-1]:
         continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
-    # it does one whose uuid its transcript already holds.
+    # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
+    # ends it in another lifecycle state (discarded, refused).
     if "never start a turn" in text:
-        send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg.get("uuid"), "state": "completed"})
+        ended = re.search(r"never start a turn \((\w+)\)", text)
+        send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg.get("uuid"), "state": ended.group(1) if ended else "completed"})
         continue
     # "grow the conversation": with an autoCompactWindow in --settings the conversation
     # outgrows it and Claude compacts (compact_boundary) before it answers.

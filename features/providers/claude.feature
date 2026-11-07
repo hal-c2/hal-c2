@@ -1287,10 +1287,16 @@ Feature: Claude
 
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
   @mc @plugin-claude @priority-high
-  Scenario: A prompt Claude never starts a turn for fails instead of hanging
-    Given Claude acknowledges a prompt without ever starting a turn for it
+  Scenario Outline: A prompt Claude never starts a turn for fails instead of hanging
+    Given Claude ends a prompt as <state> without ever starting a turn for it
     Then the turn fails with "Claude acknowledged the message but never started a turn for it."
     And the next message the user sends starts a turn as usual
+
+    Examples:
+      | state     |
+      | completed |
+      | discarded |
+      | refused   |
 
   @mc @plugin-claude
   Scenario: A prompt Claude never starts a turn for leaves its background work running

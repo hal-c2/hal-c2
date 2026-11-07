@@ -1373,7 +1373,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       "started" ->
         put_in(state.turn.prompt, %{prompt | started: true})
 
-      "completed" when not prompt.started ->
+      # Claude ended the prompt without running it; a cancelled one is a stop, which
+      # settles the turn itself.
+      ended when ended in ["completed", "discarded", "refused"] and not prompt.started ->
         end_turn(
           state,
           "failed",
