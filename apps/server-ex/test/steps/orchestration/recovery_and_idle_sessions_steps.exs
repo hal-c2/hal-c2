@@ -498,6 +498,56 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     Map.put(context, :orphan, sub)
   end
 
+  # An agent the killed MC started, with a command it runs in the background, and a
+  # terminal the user started outside any MC running the same kind of command. Each
+  # answers with the pid of its command; the user's is killed by that pid at the end.
+  step "an MC was killed while its agents were still running", context do
+    {:ok, sub} =
+      HalC2.Subprocess.start([
+        "sh",
+        "-c",
+        ~s(sleep 60 & echo $!; while read l; do echo "$l"; done)
+      ])
+
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    mc_died(sub)
+
+    {pid, 0} =
+      System.cmd("sh", ["-c", "setsid sleep 60 </dev/null >/dev/null 2>&1 & echo $!"])
+
+    terminal = pid |> String.trim() |> String.to_integer()
+
+    ExUnit.Callbacks.on_exit(fn ->
+      unless HalC2.Subprocess.Orphans.gone?(terminal),
+        do: System.cmd("kill", ["-9", "#{terminal}"])
+    end)
+
+    Map.merge(context, %{orphan: sub, left_command: String.to_integer(line), terminal: terminal})
+  end
+
+  step "a new MC on the same files launches its first agent", context do
+    mc = Mc.restart(context.mc)
+    assert {:ok, agent} = HalC2.Subprocess.start(["sh", "-c", "while read l; do echo $l; done"])
+    %{context | mc: mc, clients: %{}} |> Map.put(:agent, agent)
+  end
+
+  step "the agents the killed MC left are stopped first", context do
+    exit_ref = context.orphan.proc.exit_ref
+    assert_receive {^exit_ref, {:ok, 137}}, 5_000
+    assert HalC2.Subprocess.Orphans.gone?(context.left_command)
+    # The new MC's agent runs.
+    :ok = HalC2.Subprocess.write_line(context.agent, "up")
+    reader = context.agent.reader
+    assert_receive {:subprocess_lines, ^reader, ["up"]}, 5_000
+    HalC2.Subprocess.stop(context.agent)
+    context
+  end
+
+  step "terminals the user started are left alone", context do
+    refute HalC2.Subprocess.Orphans.gone?(context.terminal)
+    context
+  end
+
   # The command leaves the provider's process group (hal-c2/hal-c2#387); the provider
   # answers with its pid.
   step "a provider process with a command in a session of its own was running when the MC died",

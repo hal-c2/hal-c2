@@ -189,7 +189,9 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the helper is killed a second after it was asked to stop
     And the MC finishes shutting down
 
-  @backlog @mc @priority-high
+  # The boot kills what a dead MC's records name before it takes requests
+  # (`HalC2.Subprocess.Orphans`); a process no MC recorded is not its to stop.
+  @mc @priority-high
   Scenario: Agents a killed MC left running are stopped before new ones start
     Given an MC was killed while its agents were still running
     When a new MC on the same files launches its first agent
