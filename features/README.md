@@ -122,6 +122,22 @@ T3 Code keeps shipping, and its behaviour is ledgered here even though its code 
 `mise run upstream` digests the pull requests merged after it. The
 [upstream-ledger skill](../.agents/skills/upstream-ledger/SKILL.md) turns them into scenarios.
 
+An upstream pull request named in `# Sources:` is cited for the whole file. When it covers only some
+of the file, also put an `# Upstream #<number>` line (`# Upstream <sha>` with the full 40-character
+hash, for a commit without one) directly above the `Feature`, `Rule`, scenario or `Examples` it
+covers, where a tag line would go. It is cited for what follows it, as a tag would be, and the rest
+of the line says what upstream did:
+
+```gherkin
+# Upstream #13590: a thread whose worktree is still being checked out is in worktree mode.
+@desktop @backlog
+Scenario: A thread still preparing its worktree says "New worktree"
+```
+
+The [T3 Code Tracker](https://github.com/hal-c2/t3code-tracker-plugin) counts a pull request's
+scenarios from these lines, and marks one cited only in `# Sources:` as covering the whole file.
+It is a comment, so every runner ignores it.
+
 ## Running
 
 The mise tasks in `mise-tasks/` are the way to run them (`mise tasks ls`); globs are relative to
