@@ -115,6 +115,24 @@ defmodule HalC2.AttachmentsTest do
     assert {"content-disposition", ~s(attachment; filename="#{claimed}.png")} in headers
   end
 
+  # Claims once shared one copy per upload and thread, so a second message naming the
+  # upload deleted the first one's file when it was refused or failed part-way.
+  test "a message that gives its uploads back keeps the copies other messages claimed" do
+    {id, token} = upload()
+    :ok = Attachments.store(token, @png)
+    image = %{"type" => "image", "id" => id, "name" => "shot.png", "sizeBytes" => byte_size(@png)}
+    missing = %{image | "id" => "pending-00000000-0000-0000-0000-000000000000"}
+
+    {:ok, [sent]} = Attachments.claim("t", [image])
+    assert {:error, _} = Attachments.claim("t", [image, missing])
+    {:ok, refused} = Attachments.claim("t", [image])
+    :ok = Attachments.release([image], refused)
+
+    assert File.read!(Attachments.path(sent)) == @png
+    assert Attachments.path(hd(refused)) == nil
+    assert {:ok, [_]} = Attachments.claim("t", [image])
+  end
+
   test "the HTTP routes take an upload and serve an asset" do
     {id, token} = upload()
     conn = conn(:post, "/api/attachments/upload/" <> token, @png) |> HalC2.Web.Router.call([])

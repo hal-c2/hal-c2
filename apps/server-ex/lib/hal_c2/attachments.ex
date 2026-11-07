@@ -122,8 +122,8 @@ defmodule HalC2.Attachments do
 
   @doc """
   Moves a message's pending uploads into its thread: each is copied under a
-  thread-scoped id, which the message then names. Attachments the thread already
-  has pass through.
+  thread-scoped id of its own, which the message then names, so two messages naming
+  one upload hold two copies. Attachments the thread already has pass through.
   """
   def claim(thread_id, attachments) when is_list(attachments) do
     Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
@@ -169,9 +169,11 @@ defmodule HalC2.Attachments do
          true <-
            size == attachment["sizeBytes"] ||
              {:error, "Attachment '#{attachment["name"]}' does not match its upload."} do
-      claimed_id = "#{thread_segment(thread_id)}-#{rest}"
+      # Each claim stores a copy of its own, so `release/2` of a message the MC refused
+      # can never take a file another message names (proof/models/asset_stream.maude).
+      claimed_id = "#{thread_segment(thread_id)}-#{copy_tag()}-#{rest}"
       File.cp!(source, Path.join(dir(), claimed_id <> Path.extname(source)))
-      {:ok, attachment |> Map.put("id", claimed_id)}
+      {:ok, Map.put(attachment, "id", claimed_id)}
     else
       [] -> {:error, "Attachment '#{attachment["name"]}' was not uploaded."}
       {:error, message} when is_binary(message) -> {:error, message}
@@ -180,6 +182,8 @@ defmodule HalC2.Attachments do
   end
 
   defp claim_one(_thread_id, attachment), do: {:ok, attachment}
+
+  defp copy_tag, do: 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
 
   @doc """
   `assets.persistChatAttachments`: images a client sends inline (pasted), stored

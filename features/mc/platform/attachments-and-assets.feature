@@ -480,7 +480,6 @@ Feature: Attachments and assets served by the MC
 
   # Legacy: apps/server/src/assets/NativeAppIconResolver.ts (resolveApplicationPath,
   #   resolveNativeAppIconUncached; macOS only)
-  #   entries); the macOS lookup below is not
   @mc @priority-high
   Scenario Outline: On macOS the MC finds an application's icon in its bundle
     Given the MC runs on macOS and Spotlight knows <apps>
