@@ -59,6 +59,14 @@ defmodule HalC2.Claude.Protocol do
       List.wrap(opts[:extra_args])
   end
 
+  # Only Claude can mark its background work awaited (`hal_c2_background_wait`).
+  @background_wait_note """
+
+  ### Background work you wait on
+
+  A background command or monitor keeps this thread Working only while you mark it with `hal_c2_background_wait`. Mark the background work whose result you need before you are done (tests, a build, a deploy you watch) with its task id; leave dev servers, watchers and other processes left running unmarked. Pass `waiting: false` when you stop waiting on it.
+  """
+
   # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
   defp mcp_args(nil, _workers_only, _opts), do: []
 
@@ -82,7 +90,7 @@ defmodule HalC2.Claude.Protocol do
       # model and the effort this session runs with.
       HalC2.Mcp.Instructions.for_session(
         runtime: %{harness: "Claude Code", model: opts[:model], effort: opts[:effort]}
-      ) <> if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
+      ) <> @background_wait_note <> if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
     ]
   end
 

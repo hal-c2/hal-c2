@@ -8,7 +8,8 @@
 # (--resume-session-at); "usage limit until EPOCH" stops on a usage limit; "in the
 # background" starts a background subagent (task task-agent-N) and a background command
 # (task task-bash-N) and ends the turn while both run, their task_notification left to
-# the test; "subagent leaves work running" runs a subagent that starts a background
+# the test; "background commands: A, B" starts one background command per name and
+# ends the turn while they run; "subagent leaves work running" runs a subagent that starts a background
 # command and returns "Dev server started" while the command runs on; "subagent approve
 # run: CMD" runs a subagent that asks permission for CMD and returns "ran CMD" when
 # allowed, "was not allowed to run CMD" otherwise. Rules a
@@ -296,6 +297,21 @@ for line in sys.stdin:
               "content": [{"type": "text", "text": "Dev server started"}]}]}})
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent started the dev server"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "background commands: A, B": one background Bash per name (tool use NAME-N, task
+    # task-NAME-N, spaces as dashes, described by its name), the turn ending while they run.
+    if text.startswith("background commands: "):
+        names = [n.strip() for n in text[len("background commands: "):].split(",") if n.strip()]
+        for name in names:
+            tool = f"{name.replace(' ', '-')}-{turn}"
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}{tool}", "role": "assistant", "content": [{"type": "tool_use", "id": tool, "name": "Bash", "input": {
+                "command": f"run {name}", "description": name, "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{tool}", "tool_use_id": tool,
+                  "description": name, "task_type": "local_bash"})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool,
+                  "content": f"Command running in background with ID: task-{tool}", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "They are running"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "They are running", "session_id": session})
         continue
     # "in the background": a background subagent (agent-N) and command (bash-N); "only
     # the subagent" or "only the command" leaves the other out.

@@ -924,7 +924,7 @@ defmodule HalC2.Steps.Providers.Claude do
       id,
       &match?(
         [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
-        &1["pendingBackgroundTasks"]
+        &1["runningBackgroundTasks"]
       )
     )
 
@@ -937,7 +937,7 @@ defmodule HalC2.Steps.Providers.Claude do
       World.thread_id(context, @thread),
       &match?(
         [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
-        &1["pendingBackgroundTasks"]
+        &1["runningBackgroundTasks"]
       )
     )
 
@@ -963,7 +963,7 @@ defmodule HalC2.Steps.Providers.Claude do
       "summary" => "Monitor ended"
     })
 
-    World.await_row(World.thread_id(context, @thread), &(&1["pendingBackgroundTasks"] == []))
+    World.await_row(World.thread_id(context, @thread), &(&1["runningBackgroundTasks"] == []))
     context
   end
 

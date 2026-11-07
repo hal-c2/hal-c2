@@ -673,6 +673,8 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
   taskId: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   taskType: Schema.optional(TrimmedNonEmptyString),
+  /** The agent marked this command or monitor as work it waits on, so it holds the thread Working. */
+  awaited: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
@@ -1576,9 +1578,14 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   hasActionableProposedPlan: Schema.Boolean,
-  // Normalized post-settlement background work for sidebar Waiting pills.
+  // Normalized post-settlement background work that holds the thread Working (sidebar
+  // Waiting pills): subagents, and commands or monitors the agent marked as awaited.
   // Empty when the latest root run is still active or no pending work remains.
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  // All post-settlement background work still running, held or not (a dev server, say).
+  runningBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   // Distinct provider instances that have owned a root provider thread here,
