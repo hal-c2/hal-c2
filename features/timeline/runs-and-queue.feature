@@ -299,6 +299,14 @@ Feature: Runs, interruptions and the queue
     When a later run of the thread fails with "Rate limited"
     Then the thread shows "Rate limited" as its error
 
+  # The session keeps a failed run's error; a run that succeeds after it has none.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A later run that succeeds does not bring a dismissed error back
+    Given the thread shows the error "Rate limited"
+    And the user dismisses the error
+    When a later run of the thread completes
+    Then the thread shows no error
+
   # Upstream #21483: a structured thread error filled the banner with its raw JSON.
   @backlog @shared @priority-low
   Scenario: A structured thread error reads as its message

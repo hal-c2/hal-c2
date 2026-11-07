@@ -199,17 +199,32 @@ step("a different error on the same thread is still shown", async (ctx: ThreadWo
   expect(await snapshot(ctx)).toContain("Connection lost");
 });
 
+/** The thread's second run, ended in `state`. */
+const laterRun = (state: "error" | "completed") => ({
+  turnId: "run-2",
+  state,
+  requestedAt: "2026-07-13T00:00:00.000Z",
+  startedAt: "2026-07-13T00:00:00.000Z",
+  completedAt: "2026-07-13T00:00:05.000Z",
+  assistantMessageId: null,
+});
+
 step("a later run of the thread fails with {string}", async (ctx: ThreadWorld, error: string) => {
-  await showError(ctx, error, {
-    latestTurn: {
-      turnId: "run-2",
-      state: "error",
-      requestedAt: "2026-07-13T00:00:00.000Z",
-      startedAt: "2026-07-13T00:00:00.000Z",
-      completedAt: "2026-07-13T00:00:05.000Z",
-      assistantMessageId: null,
-    },
+  await showError(ctx, error, { latestTurn: laterRun("error") });
+});
+
+// The session keeps its last error after a run succeeds: the MC never clears it.
+step("a later run of the thread completes", async (ctx: ThreadWorld) => {
+  await showError(ctx, "Rate limited", {
+    session: { status: "ready", lastError: "Rate limited" },
+    latestTurn: laterRun("completed"),
   });
+});
+
+step("the thread shows no error", async (ctx: ThreadWorld) => {
+  const screen = await snapshot(ctx);
+  expect(screen).not.toContain("Rate limited");
+  expect(screen).not.toContain("error hidden");
 });
 
 step("the thread shows {string} as its error", async (ctx: ThreadWorld, error: string) => {
