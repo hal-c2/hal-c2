@@ -195,8 +195,8 @@ step("the next older page appears above the current one", async (ctx: World) => 
   await updateThread(ctx, (detail) => ({
     messages: [message("m-old", "assistant", "An older answer", 1), ...detail.messages],
   }));
-  // The view stays on the page that arrived; the current one is below it.
-  expect(timelineText(ctx)).toEqual(["An older answer", "▾ 1 newer entries"]);
+  // Both pages fit the window, so the page that arrived sits above the current one.
+  expect(timelineText(ctx)).toEqual(["An older answer", "The latest answer", ""]);
 });
 
 // --- answering an approval ----------------------------------------------------------

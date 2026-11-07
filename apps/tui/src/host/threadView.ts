@@ -397,6 +397,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
           },
         ]
       : []),
+    ...(viewedThreadId !== null
+      ? [
+          {
+            id: "scroll-to-end",
+            title: "Scroll to end",
+            keywords: "bottom latest jump",
+            action: "timeline.showEnd",
+          },
+        ]
+      : []),
     ...(latestReply()
       ? [
           {
@@ -426,8 +436,16 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     } else if (page?.hasMore && !page.loadingOlder) {
       pendingOlder = { detailId: detail.id, rowCount: timeline.rowCount };
       client.loadOlderThreadTurns(detail.id as never);
+      // The page lands above the row being read; the timeline keeps that row in place.
+      return;
     }
     requestScroll("top");
+  };
+
+  /** Back to the newest rows and the bottom, from wherever the window and scroll are. */
+  const showEnd = () => {
+    if (view.windowEnd !== null) setView({ windowEnd: null });
+    requestScroll("bottom");
   };
 
   const showNewer = () => {
@@ -443,6 +461,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     if (pendingOlder.detailId !== detail?.id) {
       pendingOlder = null;
     } else if (timeline.rowCount > pendingOlder.rowCount) {
+      // Everything still fits the window: the page just grows the timeline upward.
+      if (timeline.rowCount <= TIMELINE_WINDOW_SIZE) {
+        pendingOlder = null;
+        return;
+      }
       const end = timeline.rowCount - pendingOlder.rowCount;
       pendingOlder = null;
       setView({ windowEnd: end });
@@ -1090,6 +1113,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         return true;
       case "timeline.showNewer":
         showNewer();
+        return true;
+      case "timeline.showEnd":
+        showEnd();
         return true;
       case "timeline.scroll": {
         const to = field(payload, "to");
