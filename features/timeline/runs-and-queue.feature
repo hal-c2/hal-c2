@@ -278,7 +278,7 @@ Feature: Runs, interruptions and the queue
       | chooses to resume at reset | the thread continues at 3 pm             |
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
-  # TUI: renders the meter from apps/tui/src/contextWindow.ts, but the MC does not report context usage yet.
+  # The MC reports contextUsage and the TUI draws the meter (apps/tui/src/contextWindow.ts); the Qt clients do not show it yet.
   @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>

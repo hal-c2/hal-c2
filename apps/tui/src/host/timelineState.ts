@@ -707,7 +707,7 @@ function pushFoldable(
           longest,
           sender ? Bun.stringWidth(sender) : 0,
           waiting ? Bun.stringWidth(waiting) : 0,
-          marker ? Bun.stringWidth(marker) : 0,
+          marker && !waiting ? Bun.stringWidth(marker) : 0,
         ) + 4,
       ),
     );
