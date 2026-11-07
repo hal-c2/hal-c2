@@ -850,3 +850,25 @@ step("the command's final output is shown", async (ctx: CommandWorld) => {
   expect(recorded(ctx, "getCommandOutput").map(([, item]) => item)).toEqual(["call-1"]);
   expect(await snapshot(ctx)).toContain("3 passed");
 });
+
+step("the user expands a tool call", async (ctx: CommandWorld) => {
+  await startRun(ctx);
+  ctx.printed = "3 passed\n";
+  servesOutput(ctx, false);
+  await addCommand(ctx, 1);
+  await clickText(ctx, "bun test cart-1");
+  await settle();
+});
+
+step(
+  "the full call shows first and its result below it, muted, without cards or labels",
+  async (ctx: CommandWorld) => {
+    const [call, result, ...rest] = lastOf(ctx, "work").lines;
+    expect(plain(call!.text)).toContain("bun test cart-1");
+    // The result is its text alone: no label, no box, set apart by being dim.
+    expect(plain(result!.text).trim()).toBe("3 passed");
+    expect(rest).toHaveLength(0);
+    const colour = (text: NonNullable<typeof call>["text"], at: number) => text.chunks[at]!.fg;
+    expect(colour(result!.text, 0)).not.toEqual(colour(call!.text, 1));
+  },
+);

@@ -949,7 +949,8 @@ Feature: Tool calls and file changes
     Then the MC supplies its stored output, limited to 256 KiB per value
     And a call with nothing more to show does not expand
 
-  @backlog @shared @priority-high
+  # TUI: commands only; other tool calls carry no output the MC can supply.
+  @shared @backlog-desktop @backlog-mobile @priority-high
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call
     Then the full call shows first and its result below it, muted, without cards or labels
