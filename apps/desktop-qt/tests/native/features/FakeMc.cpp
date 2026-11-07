@@ -470,9 +470,10 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
   // A refusal is for every command of a type, or (`type:threadId`) one thread's.
   const QString one = type + QLatin1Char(':') + rpc.payload.value(QLatin1String("threadId")).toString();
   const QString refused = refusals.contains(one) ? one : type;
-  auto answer = [this, rpc, type, known = refusals.contains(refused), refusal = refusals.value(refused)] {
+  auto answer = [this, rpc, type, known = refusals.contains(refused), refusal = refusals.value(refused),
+                 detail = refusalDetails.value(refused)] {
     if (known) {
-      refuse(rpc, refusal);
+      refuse(rpc, refusal, detail);
     } else {
       for (const auto& effect : std::as_const(effects)) effect(rpc.payload);
       QJsonObject result{{QStringLiteral("sequence"), commands.size()}};

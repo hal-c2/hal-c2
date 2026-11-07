@@ -156,6 +156,8 @@ public:
   // Every call, in order, whoever answers it.
   QList<Rpc> calls;
   QHash<QString, QString> refusals;
+  // The `detail` a refusal carries, by the same key.
+  QHash<QString, QJsonObject> refusalDetails;
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.
   QList<std::function<void(const QJsonObject& command)>> effects;

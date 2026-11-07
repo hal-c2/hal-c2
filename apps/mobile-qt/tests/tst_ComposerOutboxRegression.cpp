@@ -1,7 +1,5 @@
-// What tst_ComposerOutboxProp found of the phone's outbox, kept as a plain
-// case: opened again while its MC is away, the phone opened only the thread
-// it last showed (NavigationController refused thread.open before the MC
-// answered), so another cached thread could not be opened, or written in.
+// What tst_ComposerOutboxProp and review found of the phone's outbox, kept as
+// plain cases.
 
 #include <QTest>
 
@@ -11,6 +9,7 @@
 #include "FakeMc.h"
 #include "McClient.h"
 #include "NativeShell.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
@@ -63,6 +62,7 @@ struct Phone {
     native->setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")),
                          home.filePath(QStringLiteral("cache")));
     native->controller<ComposerController>()->setWaitsOffline(true);
+    native->controller<ComposerController>()->setOutboxRetryDelays({10});
     native->restoreWindows();
     native->open(mc.origin(), QStringLiteral("mc-token"));
   }
@@ -91,12 +91,23 @@ struct Phone {
     bridge->dispatch(QStringLiteral("composer.submit"),
                      QVariantMap{{QStringLiteral("edit"), sent}, {QStringLiteral("text"), text}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
   }
-  QStringList sent() const {
+  QVariantMap composer() const { return bridge->state()->value(QStringLiteral("composer")).toMap(); }
+  QString draft() const { return composer().value(QStringLiteral("text")).toString(); }
+  QStringList sent(const QString& type = QStringLiteral("message.dispatch")) const {
     QStringList texts;
     for (const QJsonObject& command : mc.commands) {
-      if (command.value(QLatin1String("type")) == QLatin1String("message.dispatch")) texts.append(command.value(QLatin1String("text")).toString());
+      if (command.value(QLatin1String("type")) == type) texts.append(command.value(QLatin1String("text")).toString());
     }
     return texts;
+  }
+  // The next message the MC takes, it takes and then drops the connection
+  // under, so the phone sends it again.
+  void dropUnderNextMessage(std::function<void()> then = {}) {
+    mc.effects.append([this, then, armed = std::make_shared<bool>(true)](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch") || !std::exchange(*armed, false)) return;
+      if (then) then();
+      mc.drop();
+    });
   }
 };
 
@@ -132,6 +143,54 @@ private slots:
     phone.mc.startAccepting();
     QTRY_COMPARE(phone.sent(), QStringList{QStringLiteral("add a test")});
     QTRY_VERIFY(phone.outbox().isEmpty());
+  }
+
+  // Review of #1159: the MC holds a steer its provider has not taken yet, and
+  // answers its repeat "still being sent". That is no refusal: the message
+  // waits and is asked again, and the prompt never comes back to the draft,
+  // where it would be sent a second time.
+  void aSteerTheMcIsStillSendingWaits() {
+    Phone phone;
+    phone.start();
+    QTRY_VERIFY(phone.native->isActive());
+    phone.open(QStringLiteral("t1"));
+    QTRY_COMPARE(phone.composerTarget(), keyOf(QStringLiteral("t1")));
+    const QString key = QStringLiteral("message.dispatch:t1");
+    phone.dropUnderNextMessage([&] {
+      phone.mc.refusals.insert(key, QStringLiteral("This message is still being sent. Try again."));
+      phone.mc.refusalDetails.insert(key, QJsonObject{{QStringLiteral("code"), QStringLiteral("message_still_sending")}});
+    });
+    phone.send(QStringLiteral("look here instead"));
+    // The repeat heard "still being sent", and was asked again.
+    QTRY_VERIFY(phone.sent().size() >= 3);
+    QCOMPARE(phone.draft(), QString());
+    QCOMPARE(phone.outbox(), QStringList{QStringLiteral("look here instead")});
+    // The provider takes it: the next repeat hears it was sent.
+    phone.mc.refusals.remove(key);
+    QTRY_VERIFY(phone.outbox().isEmpty());
+    QCOMPARE(phone.draft(), QString());
+  }
+
+  // Review of #1159: a send whose answer the connection took goes again as
+  // the message alone. Its mode change went with the first attempt, and sent
+  // again under a fresh command id it could undo one made since elsewhere.
+  void aResentMessageLeavesItsModeChangeBehind() {
+    Phone phone;
+    phone.start();
+    QTRY_VERIFY(phone.native->isActive());
+    phone.open(QStringLiteral("t1"));
+    QTRY_COMPARE(phone.composerTarget(), keyOf(QStringLiteral("t1")));
+    auto* settings = phone.native->controller<SettingsController>();
+    settings->setDevicePath(phone.home.filePath(QStringLiteral("config/preferences.json")));
+    QVERIFY(settings->writeDevice(QStringLiteral("planModeEnabled"), true));
+    QTRY_VERIFY(phone.composer().value(QStringLiteral("showInteractionModeToggle")).toBool());
+    phone.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("plan")}});
+    QTRY_COMPARE(phone.composer().value(QStringLiteral("interactionMode")).toString(), QStringLiteral("plan"));
+    phone.dropUnderNextMessage();
+    phone.send(QStringLiteral("plan the fix"));
+    QTRY_COMPARE(phone.sent(), (QStringList{QStringLiteral("plan the fix"), QStringLiteral("plan the fix")}));
+    QTRY_VERIFY(phone.outbox().isEmpty());
+    QCOMPARE(phone.sent(QStringLiteral("thread.interaction-mode.set")).size(), 1);
   }
 };
 

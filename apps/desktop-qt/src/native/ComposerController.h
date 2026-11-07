@@ -352,8 +352,8 @@ private:
     QJsonObject launch;
     // The outbox's (setWaitsOffline): the commands as they were written, the
     // mode changes ahead of the message, sent once the thread's environment
-    // is connected; and the draft's model and modes, which a refusal gives
-    // back with the prompt.
+    // is connected (the message alone once they may have reached the MC); and
+    // the draft's model and modes, which a refusal gives back with the prompt.
     QList<QJsonObject> commands;
     QJsonObject choices;
     // Waiting its turn to be sent rather than on its way, and whether it ever
@@ -438,9 +438,11 @@ private:
   // connected, in the order they were written; drops those of a thread the
   // environment no longer has. One window drains it.
   void drainOutbox();
-  // A send the connection dropped: it and the ones behind it wait again, and
-  // the thread is tried again after the next delay.
-  void waitAgain(const QString& target, const QList<Send>& sends);
+  // A send the connection dropped, or the MC is still sending: it and the ones
+  // behind it wait again, and the thread is tried again after the next delay.
+  // `notSentFrom` is the first send's first command that never left, or -1
+  // when the one it stopped at may have reached the MC.
+  void waitAgain(const QString& target, const QList<Send>& sends, qsizetype notSentFrom);
   // The outbox's messages of the route thread, for `turn.outbox`.
   QVariantList outboxState(const QString& target) const;
   // Pulls a waiting message back into the composer.
@@ -451,7 +453,10 @@ private:
   std::optional<QString> newestBefore(const QString& thread) const;
   static QJsonObject excerptJson(const Excerpt& excerpt);
   static Excerpt excerptOf(const QJsonObject& kept);
-  void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);
+  // The send's commands in order; `done` has the first error, its detail, and
+  // the index of the command it stopped at.
+  using Dispatched = std::function<void(const std::optional<QString>& error, const QJsonValue& detail, qsizetype at)>;
+  void dispatchAll(const Send& send, qsizetype index, Dispatched done);
   bool attach(const QVariantList& files);
   static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.

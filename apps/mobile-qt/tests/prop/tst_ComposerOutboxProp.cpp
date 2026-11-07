@@ -3,10 +3,12 @@
 // thread's outbox, and goes once the MC is back and has sent its thread list,
 // in the order the user sent it, each thread's apart. The MC goes away and comes
 // back, drops the connection under a send it took (so the phone sends it again
-// with the same message id, which the MC takes once), and the app is closed and
-// opened again, online or not; a restart offline shows the cached thread and
-// takes sends before the MC has answered. No message is lost, none reaches the
-// MC twice, and none is sent while it is away.
+// with the same message id, which the MC takes once), holds a steer its
+// provider has not taken yet under such a drop (answering the repeat "still
+// being sent" until it has), and the app is closed and opened again, online
+// or not; a restart offline shows the cached thread and takes sends before the
+// MC has answered. No message is lost, none reaches the MC twice, none comes
+// back to the draft to be sent again, and none is sent while it is away.
 
 #include "ComposerController.h"
 #include "FakeMc.h"
@@ -48,6 +50,10 @@ struct Sut {
   int edit = 0;
   // The next send the MC takes, it takes and then drops the connection under.
   bool dropNext = false;
+  // And holds as a steer its provider has not taken: the message is kept
+  // but not in the thread yet, and its repeats are still being sent.
+  bool pendNext = false;
+  std::optional<QJsonObject> pending;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -83,18 +89,13 @@ struct Sut {
     // The MC keeps a message once, by its id, as the real one does.
     mc.effects.append([this](const QJsonObject& command) {
       if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) return;
-      const QString thread = command.value(QLatin1String("threadId")).toString();
-      const QString id = command.value(QLatin1String("messageId")).toString();
-      const bool known = std::any_of(messages[thread].cbegin(), messages[thread].cend(),
-                                     [&](const QJsonObject& message) { return message.value(QLatin1String("id")) == id; });
-      if (!known) {
-        const QJsonObject message{{QStringLiteral("id"), id},
-                                  {QStringLiteral("role"), QStringLiteral("user")},
-                                  {QStringLiteral("createdBy"), QStringLiteral("user")},
-                                  {QStringLiteral("createdAt"), fixedClock().addSecs(++seq).toString(Qt::ISODateWithMs)},
-                                  {QStringLiteral("text"), command.value(QLatin1String("text"))}};
-        messages[thread].append(message);
-        publish(thread, message);
+      if (std::exchange(pendNext, false)) {
+        pending = command;
+        const QString key = QStringLiteral("message.dispatch:") + command.value(QLatin1String("threadId")).toString();
+        mc.refusals.insert(key, QStringLiteral("This message is still being sent. Try again."));
+        mc.refusalDetails.insert(key, QJsonObject{{QStringLiteral("code"), QStringLiteral("message_still_sending")}});
+      } else {
+        keep(command);
       }
       if (std::exchange(dropNext, false)) mc.drop();
     });
@@ -186,6 +187,31 @@ struct Sut {
                                  {QStringLiteral("intent"), QStringLiteral("foreground")}});
   }
 
+  void keep(const QJsonObject& command) {
+    const QString thread = command.value(QLatin1String("threadId")).toString();
+    const QString id = command.value(QLatin1String("messageId")).toString();
+    const bool known = std::any_of(messages[thread].cbegin(), messages[thread].cend(),
+                                   [&](const QJsonObject& message) { return message.value(QLatin1String("id")) == id; });
+    if (known) return;
+    const QJsonObject message{{QStringLiteral("id"), id},
+                              {QStringLiteral("role"), QStringLiteral("user")},
+                              {QStringLiteral("createdBy"), QStringLiteral("user")},
+                              {QStringLiteral("createdAt"), fixedClock().addSecs(++seq).toString(Qt::ISODateWithMs)},
+                              {QStringLiteral("text"), command.value(QLatin1String("text"))}};
+    messages[thread].append(message);
+    publish(thread, message);
+  }
+
+  // The pending steer's provider takes it: it joins its thread, and the next
+  // repeat hears it was sent.
+  void takePending() {
+    const QJsonObject command = *std::exchange(pending, std::nullopt);
+    mc.refusals.remove(QStringLiteral("message.dispatch:") + command.value(QLatin1String("threadId")).toString());
+    keep(command);
+  }
+
+  QString draft() const { return bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("text")).toString(); }
+
   // What the MC holds from the user in a thread.
   QStringList sent(const QString& thread) const {
     QStringList texts;
@@ -226,6 +252,8 @@ void verify(const Model& m, Sut& sut) {
   (void)prop::until([&] { return sut.outbox() == m.waiting.value(m.open); });
   RC_LOG() << "outbox " << show(sut.outbox()) << " expected " << show(m.waiting.value(m.open)) << std::endl;
   RC_ASSERT(sut.outbox() == m.waiting.value(m.open));
+  // Nothing the phone sent comes back to be sent again.
+  RC_ASSERT(sut.draft().isEmpty());
 }
 
 using Command = rc::state::Command<Model, Sut>;
@@ -263,6 +291,35 @@ struct Send : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << (dropped ? "SendDropped(" : "Send(") << thread.toStdString() << ", " << text.toStdString() << ")"; }
+};
+
+// A steer the MC takes and holds until its provider has it, and the
+// connection drops before the answer: the phone asks again, hears "still being
+// sent", and keeps it in the outbox, out of the draft, until the MC has it.
+struct SendStillSending : Command {
+  QString thread = pick(kThreads);
+  QString text;
+  explicit SendStillSending(const Model& m) : text(QStringLiteral("message %1").arg(m.written + 1)) {}
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.up); }
+  void apply(Model& m) const override {
+    ++m.written;
+    m.open = thread;
+    m.sent[thread].append(text);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    const auto attempts = [&] { return qsizetype(sut.dispatched().size()); };
+    const qsizetype before = attempts();
+    sut.dropNext = true;
+    sut.pendNext = true;
+    sut.send(thread, text);
+    // The first, and two repeats the MC answered "still being sent".
+    RC_ASSERT(prop::until([&] { return attempts() >= before + 3; }));
+    RC_ASSERT(sut.draft().isEmpty());
+    RC_ASSERT(sut.outbox().contains(text));
+    sut.takePending();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "SendStillSending(" << thread.toStdString() << ", " << text.toStdString() << ")"; }
 };
 
 struct GoDown : Command {
@@ -313,7 +370,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, GoDown, ComeBack, Restart>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Send, Send, Send, SendStillSending, GoDown, ComeBack, Restart>()));
       rc::state::runAll(commands, model, sut);
       // Every message the MC was sent twice was sent again after a drop.
       const QStringList ids = sut.dispatched();

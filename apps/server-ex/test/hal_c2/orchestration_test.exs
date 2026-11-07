@@ -1818,7 +1818,8 @@ defmodule HalC2.OrchestrationTest do
       # The repeat is decided while Codex holds the first.
       first = Task.async(steer)
       :ok = await_turn_item(thread_id, "turn-item:user:m2")
-      assert {:error, %{"message" => still}} = steer.()
+      # A code, not the words, tells a client to ask again.
+      assert {:error, %{"code" => "message_still_sending", "message" => still}} = steer.()
       assert still =~ "still being sent"
       File.touch!(Path.join(gates, "steer"))
       assert {:ok, _} = Task.await(first)
