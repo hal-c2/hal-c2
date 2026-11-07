@@ -124,6 +124,7 @@ Feature: Preparing a new thread's worktree
     When the user answers it
     Then the setup script runs and its completion is reported
 
+  # Upstream #24775: a setup shell that exits while starting runs nothing.
   @backlog @mc
   Scenario: A setup shell that exits while starting runs nothing
     Given the setup shell exits before it is ready for a command

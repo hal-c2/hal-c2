@@ -273,6 +273,7 @@ Feature: Antigravity
     Then the Account row does not say Antigravity has not reached Google while it starts
     And it says so only once 30 seconds pass after the start without a Google link
 
+  # Upstream #24652: sign-in that never reached Google says so instead of reporting an expiry.
   @backlog
   Scenario: A sign-in that never reached Google says so when it gives up
     Given the user started Google sign-in

@@ -889,6 +889,7 @@ Feature: Runs, interruptions and the queue
       | the agent of the thread "Review the 2.4 notes" | "Review the 2.4 notes" |
       | an agent whose thread is not known          | "Agent"                |
 
+  # Upstream #23135: another agent's folded message opens whole and leads to its thread.
   @backlog @shared
   Scenario: Opening another agent's message shows it whole and leads to its thread
     Given the agent of "Review the 2.4 notes" sent a message into the thread
@@ -896,12 +897,14 @@ Feature: Runs, interruptions and the queue
     Then the whole message is shown with its time, a copy action and "Open thread"
     And "Open thread" opens "Review the 2.4 notes"
 
+  # Upstream #23135: finding text inside a folded agent message opens it.
   @backlog @shared @priority-low
   Scenario: Finding text inside a folded agent message opens it
     Given a folded message from another agent mentions "release blocker"
     When the user finds "release blocker" in the thread
     Then the message opens with the match shown
 
+  # Upstream #23135: messages HAL-C2 itself sends stay whole.
   @backlog @shared @priority-low
   Scenario: Messages HAL-C2 sends stay whole
     Given a delegated task's result was sent into the thread by HAL-C2
