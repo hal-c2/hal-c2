@@ -155,7 +155,7 @@ defmodule HalC2.Orchestration do
 
         output =
           if running,
-            do: HalC2.Orchestration.CommandTail.get(thread_id, item_id) || "",
+            do: HalC2.Orchestration.CommandTail.get(thread_id, item_id) || item["output"] || "",
             else: item["output"] || ""
 
         {:ok, %{"output" => output, "running" => running}}

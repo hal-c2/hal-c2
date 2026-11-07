@@ -73,6 +73,30 @@ defmodule HalC2.StreamsColdTest do
              })
   end
 
+  # ACP providers put a running command's output on the item and never write a tail.
+  test "a running command with output on the item and no tail gives that output" do
+    {:ok, _} =
+      Streams.commit("th", :thread, [
+        {"run", "r0", %{"s" => %{"id" => "r0", "ordinal" => 0, "status" => "running"}}},
+        {"turn-item", "r0-acp",
+         %{
+           "s" => %{
+             "runId" => "r0",
+             "threadId" => "th",
+             "type" => "command_execution",
+             "status" => "running",
+             "output" => "building\n"
+           }
+         }}
+      ])
+
+    assert {:ok, %{"output" => "building\n", "running" => true}} =
+             HalC2.Orchestration.handle("orchestration.getCommandOutput", %{
+               "threadId" => "th",
+               "itemId" => "r0-acp"
+             })
+  end
+
   test "a whole client and a windowed one that pages back hold what a fold holds", %{path: path} do
     for i <- 1..8, do: run("th", i, 3)
 
