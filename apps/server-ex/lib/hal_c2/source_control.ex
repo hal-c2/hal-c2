@@ -363,7 +363,12 @@ defmodule HalC2.SourceControl do
 
     with {:ok, url, repository} <- remote(input),
          {:ok, _} <-
-           HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest], timeout: timeout) do
+           HalC2.Git.ok(Path.dirname(dest), ["clone", "--", url, dest],
+             timeout: timeout,
+             # git's children (index-pack, remote-https) must be gone before
+             # `discard_clone/2` removes what they write into `dest`.
+             stop_children: {:clone, dest}
+           ) do
       {:ok, %{"cwd" => dest, "remoteUrl" => url, "repository" => repository}}
     else
       {:error, {_status, detail}} ->
