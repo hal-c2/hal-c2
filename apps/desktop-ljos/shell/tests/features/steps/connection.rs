@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::brick::Brick;
-use crate::harness::{Q, Steps};
+use crate::harness::{Outcome, Q, Steps};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -124,7 +124,7 @@ pub fn register(steps: &mut Steps) {
         "the screenshot shows the app's native window, not an empty view",
         |world, _, _| {
             let brick = crate::brick::shown(world)?;
-            let title = brick.item(world, "homeTitle")?;
+            let title = home_state(world, &brick, "emptyStateTitle")?;
             let shown = brick.flag(world, title, "visible")
                 && !brick.text_of(world, title, "text").is_empty();
             expect!(shown, "the home page has no title");
@@ -192,4 +192,13 @@ pub fn register(steps: &mut Steps) {
             })
         },
     );
+}
+
+/// The part of home's empty state named `name` (`emptyStateTitle`, ...).
+fn home_state(world: &World, brick: &Brick, name: &str) -> Outcome<ljos::prelude::ObjectId> {
+    let state = brick.item(world, "homeState")?;
+    match brick.find_under(world, state, name)? {
+        Some(item) => Ok(item),
+        None => fail!("home's empty state has no {name}"),
+    }
 }

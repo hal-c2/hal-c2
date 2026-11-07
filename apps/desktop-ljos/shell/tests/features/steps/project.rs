@@ -506,7 +506,7 @@ pub fn register(steps: &mut Steps) {
         "the user is asked what they should work on",
         |world, _, _| {
             let brick = crate::brick::shown(world)?;
-            let title = brick.item(world, "homeTitle")?;
+            let title = home_state(world, &brick, "emptyStateTitle")?;
             let words = brick.text_of(world, title, "text");
             expect!(
                 brick.flag(world, title, "visible") && words == "What should we work on?",
@@ -517,7 +517,7 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step("the user is offered to add a project", |world, _, _| {
         let brick = crate::brick::shown(world)?;
-        let action = brick.item(world, "homeAction")?;
+        let action = home_state(world, &brick, "emptyStateAction")?;
         let words = brick.text_of(world, action, "text");
         expect!(
             brick.flag(world, action, "visible") && words == "Add project",
@@ -804,4 +804,13 @@ pub fn register(steps: &mut Steps) {
         world.sync()?;
         route_is_home(world)
     });
+}
+
+/// The part of home's empty state named `name` (`emptyStateTitle`, ...).
+fn home_state(world: &World, brick: &Brick, name: &str) -> Outcome<ljos::prelude::ObjectId> {
+    let state = brick.item(world, "homeState")?;
+    match brick.find_under(world, state, name)? {
+        Some(item) => Ok(item),
+        None => fail!("home's empty state has no {name}"),
+    }
 }
