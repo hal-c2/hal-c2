@@ -36,7 +36,7 @@ Feature: Source control from the terminal
     Then the prompt has focus
     And the panel stays visible
 
-  @backlog @tui
+  @backlog @tui @priority-low
   Scenario: The source-control panel is titled inside a rounded border
     Given the terminal is 150 columns wide
     When the user presses "Ctrl+L"
@@ -52,7 +52,7 @@ Feature: Source control from the terminal
     Then the panel's first row reads "Source Control · working…"
     And " · working…" is in the warning colour
 
-  @backlog @tui
+  @backlog @tui @priority-low
   Scenario: Without git status the panel says so, indented
     Given the terminal is 150 columns wide
     And git status could not be read

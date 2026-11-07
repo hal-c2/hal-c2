@@ -103,7 +103,7 @@ Feature: Approvals, questions and plans
     Then the provider is told the questions were dismissed
     And the request is no longer pending
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A question the provider is blocked on cannot be dismissed
     Given the provider is blocked until it gets an answer to "Which database?"
     When the user dismisses the questions
@@ -142,14 +142,14 @@ Feature: Approvals, questions and plans
     When the user answers attaching "error.png"
     Then the command fails with "This question is no longer pending."
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Answers given by message reach the agent as one message of questions and answers
     Given the provider asked "Which database?" and "Which port?" without waiting on them
     When the user answers "Postgres" and "5432"
     Then "t1" receives one user message pairing each question with its answer, in the order asked
     And the questions are closed as answered
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: An answer given by message is delivered the way the provider can take it
     Given "t1" runs on a provider that <steering>
     And the provider asked a question it does not wait on and its turn is still running
@@ -174,7 +174,7 @@ Feature: Approvals, questions and plans
     Then the command fails with "Enter an answer before sending."
     And nothing is sent to the thread
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A request that can no longer be answered refuses the answer with its reason
     Given a request of "t1" is still pending but marked as one that cannot be resumed, with a reason
     When the user responds to it
@@ -202,7 +202,7 @@ Feature: Approvals, questions and plans
     Then the request is cancelled and marked not resumable
     And it says the server shut down before the request was resolved
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A question that can be answered by message survives a restart
     Given the provider asked a question the user can answer with a message
     When the MC restarts
@@ -233,7 +233,7 @@ Feature: Approvals, questions and plans
       | fails          |
       | is interrupted |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: An answer given just as the turn ends is not erased
     Given the provider asked the user a question
     And the provider's turn ends at the same moment the user answers
@@ -248,7 +248,7 @@ Feature: Approvals, questions and plans
     Then "t2" has a pending request the user can answer
     And the answer reaches the provider
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A run waiting on a request shows as waiting
     When the provider asks for approval of a command
     Then the run of "t1" is waiting
@@ -266,7 +266,7 @@ Feature: Approvals, questions and plans
     Then "t1" has an active to-do plan
     And the plan completes when every step is done
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A to-do step records how long it took
     Given the provider reported a to-do list whose first step is in progress
     When the provider reports that step done

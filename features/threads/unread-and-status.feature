@@ -62,7 +62,7 @@ Feature: Unread and status in the thread list
       | had its last run fail                  | Error            |
       | finished work the user has not seen    | Completed        |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: The most urgent state wins
     Given "Build search" has an agent working and is waiting for an approval
     When the user looks at the thread list
@@ -119,7 +119,7 @@ Feature: Unread and status in the thread list
 
   # Pinning, snoozing, waking and renaming also move the thread's update time; the age
   # does not follow it, as on the web (latestUserMessageAt ?? updatedAt).
-  @desktop @mobile @backlog-mobile @tui @backlog-tui
+  @desktop @mobile @backlog-mobile @tui @backlog-tui @priority-low
   Scenario: Pinning a thread does not change its age
     Given the last message in "Build search" was 3 hours ago
     When the environment records that "Build search" was pinned just now
@@ -173,13 +173,13 @@ Feature: Unread and status in the thread list
     When a client marks "Build search" unread
     Then "Build search" is unread on every device
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Marking a thread unread from its menu
     Given "Build search" is read
     When the user marks "Build search" unread
     Then the row for "Build search" reads "Done"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Marking the open thread unread is not undone by still looking at it
     Given the user has "Build search" open and it is read
     When the user marks "Build search" unread
@@ -213,7 +213,7 @@ Feature: Unread and status in the thread list
     When the row is the last one above the window's bottom edge
     Then the preview shows over the row instead
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The preview warns when the checkout is on another branch
     Given "Build search" works on the branch "feature/search"
     And the checkout is on the branch "main"
@@ -226,7 +226,7 @@ Feature: Unread and status in the thread list
     When the user rests the pointer on "Build search"
     Then the preview shows the thread's model and the name of its provider instance
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The preview says which providers a thread was handed off from
     Given "Build search" was handed off from Codex to Claude
     When the user rests the pointer on "Build search"
@@ -251,12 +251,12 @@ Feature: Unread and status in the thread list
     And the preview says "2 terminal processes running"
 
   # Upstream #13673: zsh prompt helpers made idle shells look busy.
-  @mc @desktop @tui @backlog
+  @mc @desktop @tui @backlog @priority-high
   Scenario: An idle shell does not make its thread look busy
     Given "Build search" has one terminal waiting at an idle prompt
     Then "Build search" is not shown as busy
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The preview lists the thread's pull requests
     Given "Build search" is linked to pull requests 12 and 14
     When the user rests the pointer on "Build search"
@@ -275,7 +275,7 @@ Feature: Unread and status in the thread list
     And only subagents and monitors read "Waiting on" with a pulse
     And Stop is still offered
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A thread whose session was released stops reading Waiting
     Given a <provider> thread ended its turn with background work running in its session
     When the thread is <released>
@@ -292,19 +292,19 @@ Feature: Unread and status in the thread list
 
   # OpenCode's background subagents run on a server its sessions share and can
   # outlive the session, so its list is kept.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An OpenCode thread keeps its background work when its session is released
     Given an OpenCode thread ended its turn with a background subagent running
     When the thread is settled
     Then the subagent is still listed
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: Working timers survive background wakes
     Given a thread has been running for 30 minutes
     When a background command finishes and wakes the agent
     Then the Working timer keeps counting from the original start
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: Dismissing Woke clears it on every device
     Given a thread shows Woke
     When the user dismisses it from the pill or the chat banner

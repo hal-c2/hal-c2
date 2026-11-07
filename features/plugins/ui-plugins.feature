@@ -202,20 +202,20 @@ Feature: UI plugins
     When the same plugin file is loaded on the desktop app
     Then the desktop sidebar footer shows "quota"
 
-  @shared @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @shared @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
   Scenario: The same plugin file works on every surface
     Given the plugin file "quota.qml" uses only shared components
     When it is loaded on the desktop app, the mobile app and the TUI
     Then each surface shows "quota" in its sidebar footer
 
-  @shared @desktop @mobile @tui @backlog-mobile
+  @shared @desktop @mobile @tui @backlog-mobile @priority-low
   Scenario: A slot a surface does not have is skipped quietly
     Given the plugin "hover-card" contributes only to "thread.hovercard"
     When it is loaded on a surface without that slot
     Then the plugin is listed as loaded with no visible contributions
     And no error is reported
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: A plugin shows times in the time format the user chose
     Given the user prefers a 24-hour clock
     And the plugin "shift" shows 6:05 PM with Format.time in "statusbar"
@@ -235,7 +235,7 @@ Feature: UI plugins
     Then the plugin is downloaded, checked and loaded
     And the plugin is listed with that URL as its source
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-low
   Scenario: A plugin URL that cannot be reached is reported
     When the user pastes a plugin URL that cannot be reached
     Then the user is told the plugin could not be downloaded
@@ -274,7 +274,7 @@ Feature: UI plugins
     Then a plugin error names "clock"
     And the previous version of "clock" keeps running
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile @priority-low
   Scenario: Plugin errors are visible to the user
     Given the plugin "flaky" failed to load
     When the user opens the plugin list

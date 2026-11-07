@@ -375,14 +375,17 @@ Feature: Charts on a page
   @backlog @mc @shared
   Rule: What a chart is not
 
+    @priority-low
     Scenario: The user asks for a generated applet
       When the user asks for "/visualize a mortgage calculator" on the page "Status"
       Then the page shows an applet the model wrote, running in a sandbox
 
+    @priority-low
     Scenario: The user asks for custom sliders
       When the user asks for "/visualize turns with a slider for the week" on the page "Status"
       Then the page shows a slider that redraws the chart
 
+    @priority-low
     Scenario: The user asks for a simulator
       When the user asks for "/visualize a queue simulator" on the page "Status"
       Then the page shows a simulator the model wrote, running in a sandbox

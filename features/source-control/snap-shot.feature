@@ -14,7 +14,7 @@
 # text or capture effects, and directly on macOS, where captures can carry the
 # app's text.
 
-@desktop
+@desktop @priority-low
 Feature: Snap Shot captures another app's window into the draft
   With a global shortcut the user captures the window they are working in and it lands
   in the current draft, optionally with the app's text and controls.

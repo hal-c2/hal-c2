@@ -15,7 +15,7 @@
 #   apps/server/src/provider/acp/XAiBackgroundTasks.ts (how background tasks are listed and ended)
 #   https://github.com/pingdotgg/t3code/pull/14486
 
-@plugin-grok @mc
+@plugin-grok @mc @priority-low
 Feature: Grok
   Grok runs the local grok CLI as an ACP agent. Sign-in stays with the Grok CLI, or with
   an xAI API key in the instance's environment.

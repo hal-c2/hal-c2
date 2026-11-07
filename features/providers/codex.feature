@@ -364,19 +364,19 @@ Feature: Codex
     When Codex's usage has been checked
     Then Codex shows the account's email and its ChatGPT Pro plan
 
-  @backlog
+  @backlog @priority-low
   Scenario: A ChatGPT Pro Max plan is shown by name
     Given Codex is signed in with a ChatGPT Pro Max subscription
     When Codex's usage has been checked
     Then Codex shows the account's email and its "ChatGPT Pro Max Subscription" plan
 
-  @backlog
+  @backlog @priority-low
   Scenario: A ChatGPT plan HAL-C2 does not know still signs the account in
     Given Codex is signed in with a ChatGPT plan named by a newer Codex
     When Codex's account is read
     Then Codex shows as signed in and its plan is shown by the plan's own name
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The Ultrafast service tier is offered for a model that lists it
     Given the selected Codex model lists the "ultrafast" service tier
     When the user opens the service tier choices
@@ -385,7 +385,7 @@ Feature: Codex
   # Upstream #18200. Codex shares one model catalog cache between every client on the
   # machine, and the plain CLI's catalog has no Ultrafast. Codex started by the MC asks for
   # HAL-C2's own catalog, and the probe waits briefly for that refresh before it lists.
-  @backlog @mc @plugin-codex
+  @backlog @mc @plugin-codex @priority-low
   Scenario: Ultrafast stays offered after another Codex client refreshes the catalog
     Given the ChatGPT account is entitled to the Ultrafast tier
     And another Codex client on the machine wrote a model catalog without it
@@ -393,7 +393,7 @@ Feature: Codex
     Then the models still list the Ultrafast tier
     And a thread set to Ultrafast stays on Ultrafast
 
-  @backlog @mc @plugin-codex
+  @backlog @mc @plugin-codex @priority-low
   Scenario: Ultrafast is no longer offered once the account loses it
     Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
     When the MC checks Codex's models
@@ -428,14 +428,14 @@ Feature: Codex
     When the user disconnects the account
     Then Codex on that environment is no longer signed in with it
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A connected ChatGPT account's email is hidden until the user reveals it
     Given Codex is connected with a ChatGPT account
     Then the account's email is not shown
     When the user asks to show it
     Then the email is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The first ChatGPT connection explains that plan usage counts against the plan
     Given the user has never connected a ChatGPT account
     When the user connects one
@@ -481,13 +481,13 @@ Feature: Codex
 
   # Upstream #13547: a model catalog's own default-mode text replaced the instructions sent
   # inside the collaboration mode, so HAL-C2's details went missing on newer models.
-  @mc @plugin-codex @backlog
+  @mc @plugin-codex @backlog @priority-high
   Scenario: A model whose catalog replaces default mode still gets HAL-C2's runtime details
     Given the "hal-c2" server is attached to a Codex thread on a model whose catalog replaces default mode
     When the user sends a message in default mode
     Then Codex is told the runtime, the model's name and slug, and the PR linking rules
 
-  @mc @plugin-codex @backlog
+  @mc @plugin-codex @backlog @priority-high
   Scenario: Codex gets HAL-C2's runtime and tool instructions again after compacting the thread
     Given the "hal-c2" server is attached to a Codex thread
     When Codex compacts the thread's context
@@ -914,7 +914,7 @@ Feature: Codex
 
   # Upstream #17663: Codex 0.160 writes the lock at its home's root; a shadow home used
   # on its own kept a real one and the instance stayed disabled.
-  @backlog
+  @backlog @priority-low
   Scenario: A Codex account's own sqlite maintenance lock is replaced by the shared one
     Given a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file
     When the instance is prepared
@@ -963,14 +963,14 @@ Feature: Codex
       | 0.155.0 | unsupported |
       | 0.156.0 | supported   |
 
-  @backlog
+  @backlog @priority-high
   Scenario: A thread whose Codex session was archived outside HAL-C2 resumes it
     Given the native Codex session of a thread was archived by Codex itself
     When the user sends a turn
     Then the MC unarchives that same session and resumes it once
     And an unrelated resume error is shown as it is
 
-  @backlog @mc @plugin-codex
+  @backlog @mc @plugin-codex @priority-high
   Scenario: Stop ends a Codex command after its thread was settled
     Given Codex left a command running and the thread was settled
     And Codex has since unloaded the thread
@@ -1014,28 +1014,28 @@ Feature: Codex
         | sends a message to the thread           |
         | downloads a file                        |
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: What an MCP app tells the model goes with the next message
       Given an MCP app in a Codex thread gave the model some context
       When the user sends the next message
       Then that context goes with it, cut to 16 KiB
       And a fork of the thread keeps it and a rollback past it drops it
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: An MCP app in a thread whose session stopped says so
       Given the Codex session of a thread with an MCP app has stopped
       When the user opens the app
       Then the app says the session has stopped
       And no session is started for it
 
-    @backlog
+    @backlog @priority-low
     Scenario: Deleting a thread removes its MCP apps' documents
       Given a Codex thread with an MCP app
       When the user deletes the thread
       Then the app's stored documents are removed with it
 
     # Upstream #17026: a Confluence result's canvas stayed white under dark text.
-    @backlog @shared @mc
+    @backlog @shared @mc @priority-low
     Scenario: An MCP app follows the app's light or dark appearance
       Given an MCP app is open in a Codex thread
       When the user switches the app between light and dark
@@ -1043,7 +1043,7 @@ Feature: Codex
       And an MCP app stored in the thread before this works the same
 
     # Upstream #17027: Jira's app threw on reading cookies in its sandbox and vanished.
-    @backlog @shared @mc
+    @backlog @shared @mc @priority-low
     Scenario: An MCP app that reads cookies in its sandbox still shows
       Given a Codex tool call returned an MCP app that reads its cookies while it starts
       When the user looks at the tool call
@@ -1051,7 +1051,7 @@ Feature: Codex
       And the app sees no cookies and keeps none it sets
 
     # Upstream #17040: a short card left a large gap under a fixed 420 point frame.
-    @backlog @mobile
+    @backlog @mobile @priority-low
     Scenario Outline: An MCP app in a thread on the phone is as tall as its content
       Given an MCP app in a Codex thread reports content <height> points tall
       When the user reads the thread on the phone

@@ -203,7 +203,7 @@ Feature: Carrying threads and context across servers and agents
     Then "Alpha" has all 2502 of its messages
     And that install offers "Alpha" as imported
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Threads from the first version are migrated once
     Given the first version's database holds the thread "Legacy work"
     When the environment starts for the first time on the new version
@@ -285,7 +285,7 @@ Feature: Carrying threads and context across servers and agents
     When the user sends a message after switching agents
     Then the user is told the conversation is too large to hand over
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: The handoff budget follows its setting
     Given the handoff token cap is set to <cap>
     When a conversation is handed to another agent

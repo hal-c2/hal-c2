@@ -9,7 +9,7 @@
 #   Proved today by apps/desktop-qt/tests/tst_Shell*.qml and tests/native/tst_ShellRuntime.cpp;
 #   no Gherkin step runs QML yet.
 
-@desktop @backlog-desktop
+@desktop @backlog-desktop @priority-low
 Feature: Shared controls follow the theme
   Switches, check boxes, number fields, text fields, tooltips, menus and select popups take their
   colours from the active theme, so they hold in light, dark and custom themes.

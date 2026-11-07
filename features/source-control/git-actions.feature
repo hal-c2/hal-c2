@@ -106,7 +106,7 @@ Feature: Recommended git action and the git menu
     And the staged, unstaged and untracked files are left as they were
 
   # The shell's git bridge words these itself (apps/web/src/hooks/useGitActions.ts).
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: The shell's git menu names why pushing or creating a pull request cannot run
     Given the checkout <state>
     When the user opens the git menu
@@ -150,7 +150,7 @@ Feature: Recommended git action and the git menu
       | GitHub | Create PR            |
       | GitLab | Create MR            |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Running the recommended action from the phone
     Given the checkout has uncommitted changes on a feature branch with a remote
     When the user runs the recommended git action from the phone

@@ -209,7 +209,7 @@ Feature: Project actions
       Then "mod+shift+d" no longer runs "Dev"
 
     # Legacy: apps/web/src/lib/projectScriptKeybindings.ts (decodeProjectScriptKeybindingRule), projectScriptEditor.tsx
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A shortcut that is not a key combination is refused before the action is saved
       When the user saves a new action named "Test" with the shortcut "mod+shift+"
       Then the form says "Invalid keybinding."
@@ -228,13 +228,13 @@ Feature: Project actions
       When the user sets the preview address "http://localhost:3000"
       Then opening the preview automatically can be turned on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Actions with the same name are both kept
       When the user adds another action named "Dev" running "bun run dev:api"
       Then "shop" has two actions named "Dev"
       And each of them runs its own command
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Waiting for setup to finish can only be chosen for the setup script
       When the user edits "Dev" so it does not run on worktree creation
       Then waiting for it to finish before the agent starts cannot be turned on
@@ -250,13 +250,13 @@ Feature: Project actions
       When the environment accepts saves again and the user saves
       Then "shop" has the action "Test"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An action cannot be saved twice while it is being saved
       When the user saves a new action named "Test" and presses save again before it finishes
       Then "shop" has one action named "Test"
       And the form cannot be edited until the save finishes
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Closing the form while saving ignores the result
       Given the user saved a new action and the save is still running
       When the user cancels the form and opens it again for another action
@@ -269,13 +269,13 @@ Feature: Project actions
       Then the form opens filled in with "Lint"
       And the form shows why it could not be imported
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: An action that was set to wait for setup keeps that when imported
       Given the checkout's hal-c2.json declares the setup action "Install" that does not run alongside the agent
       When the user imports "Install"
       Then "Install" waits for it to finish before the agent starts
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: An action's identity may be too old to carry a shortcut
       Given "shop" has an action with the identity "<id>" from an earlier version
       When the user opens the actions of "shop"
@@ -287,7 +287,7 @@ Feature: Project actions
         | install-javascript-dependencies  |
         | A.b                              |
 
-    @backlog @shared
+    @backlog @shared @priority-low
     Scenario: Changing or clearing an action's shortcut leaves no stale rule
       Given an action with a shortcut
       When the user changes the shortcut, clears it, or deletes the action

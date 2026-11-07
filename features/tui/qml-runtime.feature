@@ -301,7 +301,7 @@ Feature: The opentui-qml runtime
       | a second plugin with the same pluginId         |
       | a plugin whose contribution is not visual      |
 
-  @backlog @tui
+  @backlog @tui @priority-low
   Scenario Outline: v1 non-goals of the QML runtime
     Given a QML document that uses <feature>
     When it is loaded

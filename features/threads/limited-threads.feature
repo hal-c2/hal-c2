@@ -32,7 +32,7 @@ Feature: Threads stopped by a usage limit
     When the user looks at the thread list
     Then the row for "Port tests" reads "Limited"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: The conversation says the thread stopped on a usage limit
     Given "Port tests" stopped on a usage limit
     When the user opens "Port tests"
@@ -50,7 +50,7 @@ Feature: Threads stopped by a usage limit
     When the user cancels the scheduled resume
     Then "Port tests" does not continue at 14:00
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A rejected automatic resume keeps the reset time
     Given "Port tests" is scheduled to resume at 14:00
     When the provider rejects the automatic resume
@@ -119,7 +119,7 @@ Feature: Threads stopped by a usage limit
     When the user switches "Port tests" to Codex and sends a message
     Then Codex continues the conversation
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A reset time that has already passed cannot be snoozed until
     Given "Port tests" stopped on a usage limit that reset at 14:00
     And it is now 15:00
@@ -167,7 +167,7 @@ Feature: Threads stopped by a usage limit
     Then "Port tests" is snoozed until the reset at 14:00
     And "also update the changelog" stays queued until the user resumes the queue
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A limit that had already reset when the agent stopped is never resumed on its own
     Given the user turned on auto-resume for limited threads
     When Claude stops "Port tests" at 14:05 on a usage limit that reset at 14:00
@@ -189,7 +189,7 @@ Feature: Threads stopped by a usage limit
     Then "Port tests" does not continue
     And it continues on its own once the snooze ends at 16:00
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A scheduled resume is not sent when the thread changed underneath it
     Given "Port tests" is scheduled to resume at 14:00
     And <change> before 14:00
@@ -202,7 +202,7 @@ Feature: Threads stopped by a usage limit
       | "Port tests" started waiting on an approval     |
       | the user deleted "Port tests"                   |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Turning off snooze until reset leaves a snooze the user set by hand
     Given "Port tests" was snoozed until its limit resets at 14:00
     And the user then snoozed "Port tests" until 18:00

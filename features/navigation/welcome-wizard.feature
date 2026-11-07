@@ -184,7 +184,7 @@ Feature: Welcome wizard
       And the selected computer "laptop" failed its first attempt and keeps retrying
       Then the user can continue
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A switched-off computer is not selected by default
       Given a saved computer "laptop" that is switched off
       Then "laptop" is not selected
@@ -213,7 +213,7 @@ Feature: Welcome wizard
       Then "studio" reads "Connected"
       And "laptop" reads "Connecting…"
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A switched-off computer reads "Off" rather than "Not connected"
       Given a computer "laptop" the user switched off
       Then "laptop" reads "Off"
@@ -420,6 +420,7 @@ Feature: Welcome wizard
       When the wizard checks agents
       Then only Claude Code and Codex are listed
 
+  @priority-low
   Rule: Import your projects
 
     @mc

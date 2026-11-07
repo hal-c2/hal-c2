@@ -129,7 +129,7 @@ Feature: Pairing a client with an environment
     Then the command fails naming "1 to 65535"
     And no pairing link is listed
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A pairing link keeps its token out of the address a server sees
     When an operator asks the MC for a pairing link
     Then the printed link carries its token after a "#", not in the query
@@ -218,7 +218,7 @@ Feature: Pairing a client with an environment
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The user pairs by pasting a pairing link
     Given a pairing link from another machine
     When the user adds an environment with that link
@@ -227,7 +227,7 @@ Feature: Pairing a client with an environment
 
   # The TUI reaches only the server that launched it: the host has no environment
   # list, pairing or access management (`connection.environments` is that one server).
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The user pairs by entering a host and a pairing code
     When the user adds an environment with host "192.168.1.20:3780" and a pairing code
     Then the client pairs with that environment

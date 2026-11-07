@@ -25,7 +25,7 @@ Feature: Home screen and thread list on a phone
   Background:
     Given the phone is paired with "My MacBook" and "Office Mac"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Home lists threads from every paired environment
     When the user opens the app
     Then threads from "My MacBook" and "Office Mac" are listed together
@@ -48,7 +48,7 @@ Feature: Home screen and thread list on a phone
     When the user shows all projects
     Then threads from every project are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: List options survive rotating to a tablet layout
     Given the list shows only "Office Mac"
     When the screen becomes wide enough for a sidebar
@@ -86,7 +86,7 @@ Feature: Home screen and thread list on a phone
     When the user looks at the list
     Then the two projects are listed separately
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Projects are ordered by their latest activity
     Given "shop" has an older thread than "docs"
     When the user looks at the list
@@ -94,13 +94,13 @@ Feature: Home screen and thread list on a phone
     When the user starts a new task in "shop"
     Then "shop" is listed before "docs"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Archived threads do not move a project up the list
     Given "docs" has a thread archived just now and "shop" has a thread active an hour ago
     When the user looks at the list
     Then "shop" is listed before "docs"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A thread row names its environment while the phone is paired with several
     Given "Fix cart" is a thread of "Office Mac"
     When the user looks at the list
@@ -113,7 +113,7 @@ Feature: Home screen and thread list on a phone
     When the user looks at the list
     Then the row of "Fix cart" does not name an environment
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A thread row marks its provider account only when the logo alone would not tell
     Given the thread "Fix cart" runs on the Codex account "Work" of its environment
     And <accounts>
@@ -127,13 +127,13 @@ Feature: Home screen and thread list on a phone
       | "Work" has an accent colour set                   | marks it as the "Work" account       |
       | another environment has a second Codex account    | shows the provider without the badge |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A project with no threads is named in the empty list
     Given the list shows only the project "docs"
     And "docs" has no threads
     Then the list says "No threads in docs"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user searches threads by title
     When the user searches threads for "checkout"
     Then only threads whose title matches "checkout" are listed
@@ -143,7 +143,7 @@ Feature: Home screen and thread list on a phone
     When the user searches threads for "zzz"
     Then the user is told there are no results
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user searches what was said in a thread, not only its title
     Given the user wrote "the checkout total is wrong" in "Fix cart"
     When the user searches threads for "checkout"
@@ -163,7 +163,7 @@ Feature: Home screen and thread list on a phone
     When the user looks at the thread list
     Then "Fix cart" is listed with the active threads and not on the settled shelf
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: The status line tells the user how current the list is
     Given <situation>
     Then the list status reads "<status>"
@@ -176,7 +176,7 @@ Feature: Home screen and thread list on a phone
       | the environments are catching up on threads | Syncing threads...        |
       | no environment is connected                 | Not connected             |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A connection that drops for less than a second shows no status
     Given the list is connected
     When "Office Mac" drops and reconnects within half a second
@@ -190,13 +190,13 @@ Feature: Home screen and thread list on a phone
     When "Office Mac" is connected again
     Then the list status goes away at once
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Tapping the status line opens environment settings
     Given "Office Mac" is reconnecting
     When the user taps the list status
     Then the environment settings open
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: Empty states explain what is missing
     Given <situation>
     Then the user is told "<message>"
@@ -209,7 +209,7 @@ Feature: Home screen and thread list on a phone
       | the only environment is still connecting       | Connecting to environment     |
       | the only environment is unavailable            | Environment unavailable       |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: Each thread shows the status that needs the user most
     Given a thread <state>
     Then the thread is labelled "<label>"
@@ -231,13 +231,13 @@ Feature: Home screen and thread list on a phone
     Then "Fix cart" is shown quieter than "Fix tax"
     And a working thread the user has open is not shown quieter
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Opening a finished thread on another device clears its Done label on the phone
     Given a thread is labelled "Done"
     When the user opens that thread on the desktop
     Then the thread is no longer labelled "Done" on the phone
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario Outline: A failed or limited thread says why on its row
     Given a thread <state> with the message "<reason>"
     Then the thread's row shows "<reason>" in place of its branch and environment
@@ -247,7 +247,7 @@ Feature: Home screen and thread list on a phone
       | ended its last turn in error  | Process exited unexpectedly  |
       | hit a provider usage limit    | Usage limit reached          |
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A thread that was handed off shows the agents it came from
     Given "Fix cart" was handed off from Codex to Claude
     Then the row of "Fix cart" shows the Claude icon with the Codex icon receding behind it
@@ -268,7 +268,7 @@ Feature: Home screen and thread list on a phone
       | a task written offline that is waiting to be sent      | Sends on reconnect |
       | a task that was written but not started                | Draft             |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A subagent's own thread is not listed but a fork of the thread is
     Given "Fix cart" has a subagent thread and a fork "Fix cart fork"
     When the user looks at the thread list
@@ -277,20 +277,20 @@ Feature: Home screen and thread list on a phone
     When the user searches threads for the subagent's title
     Then the subagent's thread is not among the results
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The thread being read stays listed when its shelf is collapsed
     Given the user is reading a settled thread on a tablet
     When the user collapses the settled shelf
     Then the thread being read is still listed
     And the shelf's other threads are hidden
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Threads snoozed elsewhere stay listed on an environment that cannot snooze
     Given the environment predates snoozing threads
     And a thread there carries a snooze time
     Then the thread is listed with the active threads
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The snoozed shelf can be collapsed and expanded
     Given some threads are snoozed
     When the user collapses the snoozed shelf
@@ -298,7 +298,7 @@ Feature: Home screen and thread list on a phone
     When the user expands the snoozed shelf
     Then snoozed threads are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Collapsed shelves stay collapsed after the app restarts
     Given the user has collapsed the settled shelf
     When the app restarts
@@ -313,7 +313,7 @@ Feature: Home screen and thread list on a phone
     When the user asks to show more
     Then 35 settled threads are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The new task button hides while scrolling on Android
     Given the user is on an Android phone
     When the user scrolls down the thread list
@@ -321,21 +321,21 @@ Feature: Home screen and thread list on a phone
     When the user scrolls back up
     Then the new task button shows again
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The new task button on Android waits for an environment
     Given the user is on an Android phone
     And no environment is paired
     When the user looks at the home screen
     Then no new task button is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A task written offline waits in the list until it can be sent
     Given the phone has no network
     When the user starts a new task in "shop"
     Then the task is listed as pending in "shop"
     And the task is sent when the environment is reachable again
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user deletes a pending task before it is sent
     Given a pending task is waiting in "shop"
     When the user deletes the pending task and confirms
@@ -349,7 +349,7 @@ Feature: Home screen and thread list on a phone
     Then the pending task is still listed
     And it is still sent when the environment is reachable
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A pending task that cannot be removed is reported and kept
     Given a pending task is waiting in "shop"
     And the phone cannot remove it from its waiting messages
@@ -384,19 +384,19 @@ Feature: Home screen and thread list on a phone
     Then the unstarted tasks are listed before the pending tasks
     And within each group the newest comes first
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An unstarted task with only attachments is named by their count
     Given the user attached one photo to a new task for "shop" and wrote no text
     Then the unstarted task is listed as "1 attachment"
     When the user attaches a second photo
     Then it is listed as "2 attachments"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A new task with only a model choice is not listed
     Given the user opened a new task for "shop" and only picked a model
     Then no unstarted task is listed for "shop"
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: A new task opens its thread straight away while it is being sent
     Given the user starts a new task "Add search" in "shop" while offline
     Then the thread of "Add search" opens showing the prompt
@@ -422,7 +422,7 @@ Feature: Home screen and thread list on a phone
       | merged |
       | closed |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: A thread row says when several pull requests are linked
     Given a thread is linked to <links>
     Then its row shows <badge>
@@ -433,13 +433,13 @@ Feature: Home screen and thread list on a phone
       | a stack of 3 pull requests            | the stack and its 3 layers            |
       | pull request 12, status not yet known | "#12" with its status pending         |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A thread row keeps its last known pull request state while it refreshes
     Given a thread row showed pull request 12 as open
     When the row is scrolled away and back while the environment is unreachable
     Then the row still shows pull request 12 as open
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Archived threads are listed newest first and can be searched
     Given the user has archived threads
     When the user opens archived threads
@@ -447,7 +447,7 @@ Feature: Home screen and thread list on a phone
     When the user searches archived threads for "checkout"
     Then only matching archived threads are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user unarchives a thread from the phone
     Given the thread "Fix checkout" is archived
     When the user unarchives "Fix checkout"
@@ -459,13 +459,13 @@ Feature: Home screen and thread list on a phone
     When the user opens archived threads
     Then the user is told threads they archive will appear there
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Archived threads can be narrowed to one environment
     Given "My MacBook" and "Office Mac" each have archived threads
     When the user narrows archived threads to "Office Mac"
     Then only the archived threads of "Office Mac" are listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Archived threads can be listed oldest first
     Given the user has archived threads
     When the user sorts archived threads by oldest first
@@ -498,13 +498,13 @@ Feature: Home screen and thread list on a phone
     Then the user is told there are no matching threads
     And the user is told to try another search or environment
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: Archived threads are fetched again each time the user opens them
     Given the user archived "Fix checkout" on another device after the phone last listed archived threads
     When the user opens archived threads
     Then "Fix checkout" is listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Archived threads say they are loading the first time
     Given the phone has not yet heard back about archived threads
     When the user opens archived threads
@@ -540,7 +540,7 @@ Feature: Home screen and thread list on a phone
     When the user adds the same folder as a project again
     Then the user is told the project already exists
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A project's icon shows a placeholder until its picture has loaded
     Given "shop" has a picture as its icon that has not loaded yet
     When the user looks at the thread list
@@ -553,13 +553,13 @@ Feature: Home screen and thread list on a phone
     When the user looks at the thread list
     Then "shop" keeps its folder placeholder
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A project's icon seen before shows at once and without the network
     Given the user has seen the icon of "shop" in the thread list
     When the phone has no network and the user looks at the thread list again
     Then "shop" shows its icon at once
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A project's icon is kept small on the phone
     Given "shop" has an icon picture larger than the phone needs
     When the user has looked at the thread list

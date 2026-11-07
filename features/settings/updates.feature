@@ -385,7 +385,7 @@ Feature: Updating the server, the desktop app and providers
 
     # Upstream #13575: a .deb updates itself through dpkg, so the Linux refusal below changes
     # once the desktop carries it.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario Outline: A Linux build that cannot update itself says why
       Given <situation>
       When the user checks for updates
@@ -395,7 +395,7 @@ Feature: Updating the server, the desktop app and providers
         | situation                                                  | reason                                                                    |
         | the app on Linux is neither the AppImage nor a .deb build  | Automatic updates on Linux require the AppImage or .deb build.            |
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A .deb install downloads the new .deb and installs it with the admin password
       Given the app on Linux was installed from a .deb package and a newer version exists
       When the user installs the update
@@ -744,14 +744,14 @@ Feature: Updating the server, the desktop app and providers
       When the MC would check provider versions
       Then no version check is made
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Provider update checks also gate the model catalog
       Given the user turned off provider update checks
       When the user refreshes provider status
       Then the MC does not fetch the newer model catalog
       And models that are only in the newer catalog are not offered
 
-    @backlog @desktop @mobile
+    @backlog @desktop @mobile @priority-low
     Scenario: The provider update checks setting says it also brings new models
       When the user reads the provider update checks setting
       Then it says it also fetches model catalog updates

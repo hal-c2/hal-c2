@@ -41,7 +41,7 @@ Feature: Searching threads
     When the user starts a search from the thread list
     Then the command palette opens ready to search threads
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: Title search ignores case and project details
     When the user searches threads for "DARK"
     Then "Add dark mode" is found
@@ -104,7 +104,7 @@ Feature: Searching threads
       | https://github.com/acme/app/pull/12 |
       | refresh tokens                      |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: Threads are found by their branch's pull request
     Given "Fix OAuth loop" is on a branch whose pull request is 12 of "acme/app", and is not linked to it
     When the user searches threads for "<query>"
@@ -117,7 +117,7 @@ Feature: Searching threads
       | acme/app#12                         |
       | https://github.com/acme/app/pull/12 |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Threads matching by title or pull request come before threads matching by message
     Given "Add dark mode" has a message containing "oauth"
     When the user searches threads for "oauth"
@@ -183,7 +183,7 @@ Feature: Searching threads
     When the user chooses "Find in thread" in the command palette
     Then the find bar opens on the open thread
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Going back from the first match wraps to the last
     Given the find bar shows "1/5" for "deploy"
     When the user goes to the previous match
@@ -196,45 +196,45 @@ Feature: Searching threads
     Then earlier history loads until the turn is there
     And the turn unfolds and the thread scrolls to the match, in the normal timeline
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: New matches before the selected one do not move the selection
     Given the find bar shows "3/5" for "deploy"
     When the agent writes "deploy" in a message before the selected match
     Then the selected match stays the one the user was on
     And the count grows to 6
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Several quick presses of next all count
     Given the selected match is still loading
     When the user goes to the next match three times
     Then the find bar lands three matches further on
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Closing the find bar keeps the reading position
     Given the user went to a match in a turn that was collapsed
     When the user closes the find bar
     Then the thread stays where it is and the turn stays open
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Find starts afresh after switching environments
     Given the user is finding "deploy" in thread "t1" on "home"
     When the user switches to thread "t1" on "work"
     Then the find bar no longer shows the search from "home"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Find in thread explains when the MC is too old for it
     Given the environment's MC cannot search within a thread
     When the user presses mod+f in a thread
     Then the user is told the MC needs updating
     And the command palette does not offer "Find in thread"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Matches follow the text as it is displayed
     Given a message has "**deploy** now" in Markdown
     When the user finds "deploy now"
     Then the message counts as one match
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The colours of find matches come from the theme
     Given a theme sets the find match and selected find match colours
     When the user finds text in a thread

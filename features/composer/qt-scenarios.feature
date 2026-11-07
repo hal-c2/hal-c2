@@ -37,7 +37,7 @@ Feature: Desktop shell scenarios: composer
     Then the item is indented to "  - item"
     And the composer keeps the keyboard
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario: The composer offers each model option once
     Given a model with a reasoning effort, a context window and fast mode
     Then the composer shows one reasoning picker, one context window picker and one fast mode toggle

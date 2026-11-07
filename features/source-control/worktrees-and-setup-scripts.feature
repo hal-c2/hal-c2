@@ -110,21 +110,21 @@ Feature: Worktrees and setup scripts
     Then the worktree first sits on the temporary branch "hal-c2/42a5d641"
     And the branch is renamed to a name the writer model derives from the message
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Subagents made before the temporary branch is renamed pick up the new name
     Given a thread in a new worktree delegated to two subagents while the worktree was on its temporary branch
     And one of the subagent threads is archived
     When the temporary branch is renamed to "feature/add-tax"
     Then the thread and both subagent threads record the branch "feature/add-tax"
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A thread that moved off the worktree keeps its branch when the temporary branch is renamed
     Given a subagent recorded the new worktree's temporary branch
     And it was moved to another worktree before the rename
     When the temporary branch is renamed to "feature/add-tax"
     Then the subagent keeps the branch of the worktree it moved to
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A provider's own subagent made on the temporary branch records the worktree's current branch
     Given the temporary branch of a new worktree was renamed to "feature/add-tax"
     When the provider starts its own subagent carrying the temporary branch from the turn's start
@@ -186,7 +186,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #14917: Git for Windows refuses paths over 260 characters unless core.longpaths is
   # set, and a removal that fails partway strands the folder where nothing cleans it up.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A worktree with long paths works on Windows whatever Git's long-path setting
     Given the MC runs on Windows and Git's long-path setting is <setting>
     And "shop" tracks a file whose path in the worktree is longer than 260 characters
@@ -624,13 +624,13 @@ Feature: Worktrees and setup scripts
     When the user opens a new thread in "shop"
     Then that thread's worktree starts from origin
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A new worktree honors the submodule setting
     Given the submodule setting is "skip" and the project has no worktree script of its own
     When a worktree is created
     Then submodules are not initialized
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A temporary worktree branch gets its name from the prefix
     Given <state>
     When a worktree thread is provisioned

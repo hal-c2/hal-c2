@@ -37,7 +37,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then the branch is pushed to "origin/feature/tax" and tracks it from now on
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolvePushRemoteName)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario Outline: The first push goes to the remote the repository's settings name
     Given "feature/tax" has never been pushed
     And <settings>
@@ -51,7 +51,7 @@ Feature: Pushing, pulling and guarding the default branch
       | no push remote or push default is set and "origin" and "upstream" exist               | origin/feature/tax      |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: upstream is the branch's base)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A branch cut from another branch is pushed under its own name
     Given "feature/tax" was cut from "origin/dev" and tracks it
     And "feature/tax" is 1 commit ahead
@@ -69,7 +69,7 @@ Feature: Pushing, pulling and guarding the default branch
     Then "origin/effect-atom" has the new commit
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (pushCurrentBranch: remoteName option)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Pushing to a chosen remote publishes the branch there and tracks it
     Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
     And the repository also has the remote "fork"
@@ -115,7 +115,7 @@ Feature: Pushing, pulling and guarding the default branch
 
   # Upstream #17376: git's diffstat for a large fast-forward ran past the output cap, so a
   # pull that had applied was reported as failed.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A fast-forward that prints more than a megabyte is still a pull
     Given "feature/tax" is 13,000 files behind its upstream and git prints 1.5 MB while pulling
     When the user pulls, or the MC pulls it automatically
@@ -183,7 +183,7 @@ Feature: Pushing, pulling and guarding the default branch
     When the user chooses to create a feature branch and continue
     Then the work is committed on a new branch and pushed there instead of "main"
 
-  @tui @mobile @backlog-mobile
+  @tui @mobile @backlog-mobile @priority-high
   Scenario: The default-branch confirmation on the terminal client and phone
     Given the checkout is on the default branch "main"
     When the user runs "Commit & push"

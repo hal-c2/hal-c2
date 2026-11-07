@@ -102,7 +102,7 @@ Feature: Editing the draft
 
   # Upstream #13553: paste and typing go to the composer after the user clicks away, unless a
   # menu on the page is actually open.
-  @desktop @backlog
+  @desktop @backlog @priority-high
   Scenario: Pasting after clicking the thread's timeline puts the text in the composer
     Given the user clicked the timeline and no menu is open
     When the user pastes text
@@ -155,7 +155,7 @@ Feature: Editing the draft
     Then "bug.png" is attached
     And that line is not part of the prompt text
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Earlier prompts are recalled in an empty composer
     Given the user sent "first" and then "second" in this thread
     And the composer is empty
@@ -235,7 +235,7 @@ Feature: Editing the draft
     Then the sidebar stays as it was
 
   # Upstream #13409: the layout's letter decides the shortcut, so a Cyrillic or Greek layout bolds too.
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The bold shortcut formats the selection on a non-Latin keyboard layout
     Given rich text editing is on
     And the keyboard types a non-Latin letter on the bold key
@@ -321,7 +321,7 @@ Feature: Editing the draft
       | Ctrl+Up  |
       | Cmd+Up   |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Each thread recalls only its own prompts
     Given the user sent "about tax" in thread A and "about search" in thread B
     And the user recalled "about tax" in thread A
@@ -358,7 +358,7 @@ Feature: Editing the draft
       | an image with no text                     |
       | the request to implement a proposed plan  |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Enter does not send while it is doing something else
     Given the draft reads "konnichiwa"
     When the user presses Enter <while>
@@ -370,7 +370,7 @@ Feature: Editing the draft
       | and holds it so the key repeats                    |
       | with the keyboard focus on a task's checkbox       |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Enter in a list starts the next item
     Given the draft's last line reads "<line>" with the caret at its end
     When the user adds a new line
@@ -543,7 +543,7 @@ Feature: Editing the draft
       | a file reference   |
       | text shown in bold |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: An arrow key steps over a reference in one press
     Given the caret is just <side> a file reference in the draft
     When the user presses <key>
@@ -554,7 +554,7 @@ Feature: Editing the draft
       | after  | Left  |
       | before | Right |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: Home and End on macOS go to the edges of the line as shown
     Given the user is on macOS
     And the draft holds one long paragraph wrapped onto three lines, with the caret in the second
@@ -581,7 +581,7 @@ Feature: Editing the draft
     Then the draft reads "half-finished idea"
     And the thread still runs on Claude
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Stashed prompts are still there after a restart
     Given the user stashed "half-finished idea" with an image
     When the app is restarted
@@ -651,7 +651,7 @@ Feature: Editing the draft
       | the thread is being rolled back             | nothing is stashed and the draft is unchanged        |
       | a question from the agent is waiting        | the stash opens or closes and the answer is not stashed |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Holding the stash shortcut stashes the prompt once
     Given the draft reads "half-finished idea" and nothing is stashed
     When the user holds the stash shortcut so the key repeats
@@ -682,7 +682,7 @@ Feature: Editing the draft
       | one file and no text                      | (1 file)                            |
       | one image, one file and no text           | (2 attachments)                     |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The stash is worked from the keyboard
     Given the user stashed "first idea" and "second idea" and the stash is open
     When the user presses Up on the first prompt
@@ -692,7 +692,7 @@ Feature: Editing the draft
     When the user opens the stash again and presses Escape
     Then the stash closes and nothing is restored
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A stashed prompt is deleted from the keyboard
     Given the user stashed "first idea" and "second idea" and the stash is open
     When the user presses Ctrl+Backspace on "second idea"
@@ -700,34 +700,34 @@ Feature: Editing the draft
     When the user deletes "first idea" as well
     Then the stash closes
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: An empty stash says how to fill it
     Given nothing is stashed
     When the user opens the stash
     Then the stash says "Nothing stashed yet. Press Ctrl+S with a prompt in the composer to stash it."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The stash closes when the user goes back to writing
     Given the stash is open
     When the user types in the composer
     Then the stash closes
     And the same happens when a suggestion list opens
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A stashed prompt whose images are still being kept says so
     Given the user stashed a prompt with two large images a moment ago
     When the user opens the stash
     Then the prompt says it is saving 2 images
     And a prompt that lost an image says "1 image dropped"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Images still being kept are not lost when their prompt is restored at once
     Given the user stashed a prompt with two large images
     When the user restores it before the images are kept
     Then the user sees a "warning" toast "Stashed images did not attach"
     And the user is told to attach the 2 images again if they are still needed
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A prompt that cannot be kept in the stash stays in the composer
     Given the draft reads "half-finished idea"
     When the user stashes the prompt and the stash cannot be written
@@ -754,7 +754,7 @@ Feature: Editing the draft
     When the user presses the stash shortcut
     Then the browser does not offer to save the page
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: An empty composer says what it is waiting for
     Given the composer is empty
     And <state>
@@ -771,7 +771,7 @@ Feature: Editing the draft
       | no provider can be used                            | Enable a provider in Settings to send a message                      |
       | the environment is disconnected                    | Ask for changes, send follow-ups, or attach images                   |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A draft that holds only a reference shows no hint
     Given the draft carries a terminal excerpt and no text
     Then the composer shows the excerpt and no hint about what to type
@@ -790,25 +790,25 @@ Feature: Editing the draft
       | a question with only fixed choices is waiting      |
       | the user's answer to a question is being submitted |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Turning rich text on or off keeps the draft
     Given the draft reads "fix **this** and - [ ] that" with a file reference
     When the user turns rich text editing on and then off again
     Then the draft reads the same text with the same file reference
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A ticked task is written the same way however the user typed it
     Given rich text editing is on
     When the user types "- [X] milk"
     Then the message is sent as "- [x] milk"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Moving the caret from elsewhere in the app brings it into view
     Given the draft is long enough to scroll and is scrolled to its start
     When a reference is added at the end of the draft
     Then the draft scrolls so the caret and the new reference can be seen
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Cancelling the comment on a quote just made takes the quote out again
     Given the user cited the assistant's paragraph about caching and has not yet saved a comment
     When the user cancels the comment
@@ -823,13 +823,13 @@ Feature: Editing the draft
     And loading and empty results are announced
     And closing the menu leaves nothing dangling for the reader
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: One undo undoes one action
     Given the user typed, pasted, then typed more
     When the user undoes once
     Then only the last action is undone
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Typing before or after bold at a line's edge can be plain
     Given rich text editing is on and a line starts with bold text
     When the user moves the caret to the start of the line

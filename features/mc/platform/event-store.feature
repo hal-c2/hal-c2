@@ -207,7 +207,7 @@ Feature: The MC's event store and projections
       | the projections stopped at an earlier sequence than the log | the sequence they are at and the log's |
       | the projections were written by another projection format   | the format version it found            |
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Projections are rebuilt from the log
     Given the projections of the MC are damaged
     When the projections are rebuilt
@@ -226,28 +226,28 @@ Feature: The MC's event store and projections
     And the thread's creation, its deletion, its runs and every timeline item update stay in the log
     And rebuilding the projections gives the same threads as before
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A visit does not compact away the rename that carries the thread's activity time
     Given a thread was renamed and then visited
     When the log is compacted
     Then the rename stays in the log
     And of the visits and marks as unread only the newest is kept
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A client resuming from before a compaction ends in the same state
     Given a client last read the log at an offset before many messages were streamed
     And the log was compacted since
     When the client resumes from its offset
     Then it ends with the same threads and messages, in the same order, as a client that read every event
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: The log is compacted in the background
     When the MC has been running for one minute
     Then the log is compacted
     And it is compacted again every six hours after that
     And the space it frees is given back to the disk a little at a time while the MC runs
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Compacting the log reports what it removed and what can be reclaimed
     When the log is compacted
     Then it reports how many events and receipts it removed
@@ -259,7 +259,7 @@ Feature: The MC's event store and projections
     When the log is compacted while clients send commands
     Then the commands are accepted between the batches of 50 events it works through
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: The doctor command reclaims the space of a store that cannot shrink online
     Given a store created before it could give space back to the disk while running
     When the user runs the MC's doctor command with "--fix"
@@ -279,13 +279,13 @@ Feature: The MC's event store and projections
       | with "--dry-run"             | the repairs are listed and nothing changes                 |
       | with "--dry-run" and "--fix" | the repairs are listed and nothing changes                 |
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: The doctor command does not repair a store that is open
     Given an MC or a client has the store open
     When the user runs the MC's doctor command with "--fix"
     Then it refuses and changes nothing
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: The doctor command pauses this home's background service while it repairs
     Given the MC runs as a background service for this home
     When the user runs the MC's doctor command with "--fix"

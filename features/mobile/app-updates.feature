@@ -8,6 +8,7 @@
 #   apps/mobile/app.config.ts (expo-updates on load, fingerprint runtime version, variants)
 # MC hot upgrades are specified in features/connections/ and the MC domains.
 
+@priority-low
 Feature: Keeping the phone app up to date
   The app updates itself without losing work. Store builds replace the whole app; smaller
   updates install when the user is not looking.

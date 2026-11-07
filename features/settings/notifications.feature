@@ -33,7 +33,7 @@ Feature: Thread notifications
     # The web app bundled its own completion and input sounds (apps/web/src/assets/*.mp3).
     # The Qt desktop (main.cpp) only asks the Linux sound theme's player, so another system
     # or a Linux desktop without one stays silent.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: The notification sound plays on every system
       Given the notification mode is "Sound only"
       And the user is on <system>
@@ -55,14 +55,14 @@ Feature: Thread notifications
       Then the notification mode is unchanged
       And the user is told to allow notifications and that sound only is still available
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Notifications need a secure page in a web browser
       Given the user is using HAL-C2 over plain HTTP in a web browser
       When the user chooses notifications only
       Then the user is told notifications need HTTPS or the desktop app and that sound only is still available
 
     # Legacy: apps/web/src/components/settings/NotificationSettings.tsx (permission request throws)
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A permission request that cannot be made keeps the mode and offers sound only
       Given the system cannot show the permission request
       When the user chooses notifications with sound
@@ -121,7 +121,7 @@ Feature: Thread notifications
       Then the notifications are dismissed and the badge is cleared
 
     # Likely already implemented: apps/desktop-qt/src/native/AlertController.cpp
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A thread that stays waiting does not notify again
       Given the notification mode is "Notifications only"
       And HAL-C2 is in the background
@@ -178,20 +178,20 @@ Feature: Thread notifications
       When "Fix login" finishes
       Then the toast titled "Thread completed" is shown as a success
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Changing the notification mode clears waiting notifications
       Given two system notifications are waiting
       When the user changes the notification mode
       Then the notifications are dismissed and the badge is cleared
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Removing an environment clears its waiting notifications
       Given a system notification is waiting for a thread on the environment "work"
       When the user removes the environment "work"
       Then that notification is dismissed
       And the badge no longer counts it
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A badge over nine says so
       Given ten system notifications are waiting
       Then the badge reads "9+" where the platform draws the count

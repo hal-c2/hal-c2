@@ -235,14 +235,14 @@ Feature: Threads that work on or link pull requests
     And the user is told that both fetches failed for pull request 42
 
   # Upstream #17725: Azure DevOps publishes only refs/pull/<n>/merge, never a head ref.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps pull request from the same repository is checked out by its branch
     Given open Azure DevOps pull request 42 comes from the branch "feature/azure-checkout" of the checkout's own repository
     When the user starts a thread on pull request 42 in a new worktree
     Then "feature/azure-checkout" is fetched from the checkout's remote
     And the thread starts in a worktree on the pull request's head that follows "origin/feature/azure-checkout"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An Azure DevOps pull request is not checked out from a branch that only shares its name
     Given Azure DevOps pull request 42 <origin>
     And the checkout's remote has a branch of the same name
@@ -733,7 +733,7 @@ Feature: Threads that work on or link pull requests
     When the user opens the pull requests of "Tax work"
     Then the user is told "3 pull requests chained by base branch."
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: Pull requests built on the same pull request stay in one stack under it
     Given pull requests 102 and 103 are both based on the branch of pull request 101
     And all three are linked to "Tax work"
@@ -742,7 +742,7 @@ Feature: Threads that work on or link pull requests
     And 102 and 103 sit one step under 101, side by side
     And the thread is counted as having one stack
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Pull requests built on the same pull request share a layer for agents
     Given pull requests 102 and 103 are both based on the branch of pull request 101 and linked to "caller"
     When the agent of "caller" lists its pull requests
@@ -805,7 +805,7 @@ Feature: Threads that work on or link pull requests
     Then "Tax work" is shown as "Linked" and cannot be chosen
     And the menu offers to unlink pull request 42 from this thread
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A pull request can be linked when no project is a repository on its host
     Given the only project is a folder of several repositories that is not a repository itself
     When the user links "https://github.com/acme/app/pull/42" to a thread in it
@@ -932,13 +932,13 @@ Feature: Threads that work on or link pull requests
     Then no read is made and the watch carries on
     And reads that fail for another reason are the only ones that count toward giving up
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Threads watching the same pull request share one read
     Given two threads in one project watch the same pull request
     When the watches are checked
     Then the pull request is read once for both
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A pull request with nothing in flight is read only when it changed
     Given a watched pull request whose state, checks, mergeability and review decision have not changed
     When the watch is checked
@@ -953,7 +953,7 @@ Feature: Threads that work on or link pull requests
     Then the agent is woken once for the edit
     And a reaction on the comment wakes nothing
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A required check that was never seen pending still counts
     Given a watched pull request whose required checks all passed
     When a required check appears and finishes between two reads
@@ -981,14 +981,14 @@ Feature: Threads that work on or link pull requests
     And no watch wake starts another turn on the stopped thread
     And cancelling a finished task also ends the watches its thread left
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A subagent cannot watch a pull request
     Given a subagent of a thread that owns a pull request
     When the subagent asks to watch it
     Then the tool says the parent thread owns the pull request
     And a watch left on a subagent ends on the next pass
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A new subagent does not inherit its parent's pull request links
     Given a parent thread linked to pull request 123
     When it delegates a task
@@ -1008,32 +1008,32 @@ Feature: Threads that work on or link pull requests
     Then the composer's status reads "Watching pull request #17627", with nothing put before it
     And the user can still stop the wait from there
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The thread details card shows and stops pull request watches
     Given a thread watching an open pull request
     When the user opens the thread's details
     Then that pull request's row shows it is watched
     And one click stops the watch the same way the pull request panel does
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The pull request panel opens for any linked pull request
     Given a thread has a pull request linked through the MCP tool or the dialog
     When the user opens the pull request panel
     Then it is enabled and shows that pull request
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A pull request link that is really an issue says so
     Given a chat link of the form "/pull/N" where N is an issue
     When the user opens it
     Then the viewer says the host has no such pull request, with no retry that cannot succeed
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A linked pull request's actions open from a secondary click
     Given a thread has a linked pull request
     When the user secondary-clicks the pull request's row
     Then the same actions open as from the row's menu, at the pointer
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Holding a modifier on a linked pull request offers its quick actions
     Given a thread has a linked pull request
     When the user holds the quick-action modifier over its row

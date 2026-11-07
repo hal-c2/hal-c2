@@ -13,6 +13,7 @@
 #   apps/desktop-qt/tests/tst_ProvidersSettings.qml (the add and remove dialogs)
 #   apps/tui/src/host/sections/usageHubs.ts, apps/tui/src/host/sections/usageLimits.ts
 
+@priority-low
 Feature: Usage limit sources
   A CLIProxyAPI hub pools many provider accounts. Adding it as a usage source
   puts its accounts' limits next to the machine's own in Limits.

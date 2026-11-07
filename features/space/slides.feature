@@ -272,10 +272,12 @@ Feature: Slide decks in a Space
     Background:
       Given the deck "Pitch" with the slides "One, Two"
 
+    @priority-low
     Scenario: The user keeps speaker notes on a slide
       When the user writes the speaker note "Slow down" on the slide "One"
       Then the presenter shows the note "Slow down" on the slide "One"
 
+    @priority-low
     Scenario: The user exports a deck to PowerPoint
       When the user exports the deck "Pitch" as PowerPoint
       Then the file has a slide for "One" and for "Two"
@@ -284,6 +286,7 @@ Feature: Slide decks in a Space
       When the user puts an image on the slide "One"
       Then the slide "One" shows the image
 
+    @priority-low
     Scenario: A deck has a theme
       When the user picks a theme for the deck "Pitch"
       Then each slide of "Pitch" is drawn in that theme

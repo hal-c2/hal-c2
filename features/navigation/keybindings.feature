@@ -120,7 +120,7 @@ Feature: Keybindings
         | preview.zoomOut           | mod+-           | in the preview                    | aligned |
         | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: With the model picker open a number jump picks a model, not a thread
       Given the model picker is open
       When the user presses mod+2
@@ -145,7 +145,7 @@ Feature: Keybindings
         | rightPanel.toggleMaximized | mod+alt+m   |
         | script.test.run            | mod+alt+r   |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The thread details panel has a default shortcut that a saved one overrides
       Given no custom keybindings
       When the user presses mod+shift+b outside a terminal
@@ -298,13 +298,13 @@ Feature: Keybindings
       Then the command does not run
       And the character is typed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A binding written with esc is the Escape key
       Given "diff.toggle" is bound to "mod+esc"
       When the user presses mod and Escape
       Then the command "diff.toggle" runs
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A shadowed command shows no shortcut
       Given "diff.toggle" is bound to mod+shift+y
       And later "chat.new" is bound to mod+shift+y in the same context
@@ -312,7 +312,7 @@ Feature: Keybindings
       Then no shortcut is shown for it
       And "chat.new" shows mod+shift+y
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Shortcuts are written the way the platform writes them
       Given the user is on <platform>
       When a shortcut for <chord> is displayed
@@ -374,7 +374,7 @@ Feature: Keybindings
       When the user starts a new local thread
       Then a new thread starts in the current project without asking
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: A new thread starts at once when there is only one project to choose
       Given the user has one project
       When the user starts a new thread
@@ -454,7 +454,7 @@ Feature: Keybindings
       When the user presses mod+shift+j again
       Then the preview is hidden
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: The preview shortcut in a browser says the preview needs the desktop app
       Given the user is looking at a thread in a browser
       When the user presses mod+shift+j
@@ -462,7 +462,7 @@ Feature: Keybindings
       And the user is told to open HAL-C2 in the desktop app to use it
 
     # These need the in-app browser, which the desktop does not have yet.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: Preview shortcuts act on the focused preview
       Given the preview has keyboard focus at 100% zoom
       When the user presses <key>
@@ -477,7 +477,7 @@ Feature: Keybindings
         | mod+0 | the page returns to 100% zoom |
 
     # These need the in-app browser, which the desktop does not have yet.
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Preview shortcuts do nothing outside the preview
       Given the composer has keyboard focus
       When the user presses mod+l

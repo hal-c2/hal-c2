@@ -397,7 +397,7 @@ Feature: Images in a Space
       When the user opens the page "Roadmap"
       Then the page shows the text "[image: cat.png]"
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Rule: Still to come
 
     Scenario: The user generates an image from reference images

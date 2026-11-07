@@ -59,6 +59,9 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
   `@mc` and `mise run features:mc <file>` runs it and passes. Client scenarios stay
   `@backlog` here: no runner covers every surface `@shared` names (there is no mobile runner,
   and the desktop one reads only its own files), so the backlog job clears them per surface.
+- **A priority for new backlog work.** Give each new backlog scenario `@priority-high`,
+  `@priority-low` or nothing (normal) by the rubric in `features/README.md`, consistent with
+  its neighbours; a scenario added under a group tag inherits it.
 - **Every surface tag that applies.** Anything a user sees needs client tags (`@shared`, or
   `@desktop` / `@mobile` / `@tui`), not only `@mc`, or the client runners never select it.
 - **Existing plugin ids only.** `grep -rhoE '@plugin-[a-z0-9-]+' features | sort -u` lists

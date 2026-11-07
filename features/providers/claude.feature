@@ -160,7 +160,7 @@ Feature: Claude
 
   # Upstream #18364. Claude 5.1 and later send the words written for the user just before
   # a tool call as a thinking block; earlier models send them as text.
-  @backlog
+  @backlog @priority-low
   Scenario Outline: What <model> writes just before a tool call is shown as its answer
     Given the thread runs on <model>
     When Claude thinks, then writes "I need to ask which file you mean", then asks the user a question
@@ -298,7 +298,7 @@ Feature: Claude
       | Opus 4.5       | there is no context window option and it runs 200k       |
       | Haiku 4.5      | there is no context window option and it runs 200k       |
 
-  @backlog
+  @backlog @priority-low
   Scenario: A context window saved on a Claude 5 thread is ignored
     Given a thread on Opus 5.5 that saved a 200k context window
     When the user sends a message
@@ -338,7 +338,7 @@ Feature: Claude
     Then the conversation is compacted first
     And "Carry on" is sent once compaction finishes
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Switching the compact chip to the full history keeps it for one send
     Given the composer offers "Compact 140k" on a long idle Claude thread
     When the user switches it to "Full" and sends "Carry on"
@@ -383,7 +383,7 @@ Feature: Claude
     Then the thread shows the message that resumed it
     And the parent thread does not
 
-  @backlog
+  @backlog @priority-high
   Scenario: A Claude subagent cancelled by a restart and then resumed keeps updating its own thread
     Given a Claude subagent was working when the MC restarted
     And recovery marked it cancelled
@@ -444,7 +444,7 @@ Feature: Claude
       | runs through Bedrock or Vertex                         | signed in                                          |
       | is too old to report its account                       | signed in                                          |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: The HAL-C2 tools' credential is never in Claude's command line
     Given the project allows the HAL-C2 tools
     When a Claude turn starts
@@ -709,7 +709,7 @@ Feature: Claude
 
   # Upstream #17778: a gateway such as 9router wraps Claude's 429 as a 503 that names its
   # cooldown, and Claude reports it as an API error with no reset time.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A gateway's wrapped rate limit is a usage limit that resets when it says
     When a Claude turn ends at 13:00 with a 503 rate_limit_error saying "(reset after <cooldown>)"
     Then the thread is marked as limited with a reset time of <reset>
@@ -721,7 +721,7 @@ Feature: Claude
       | 1h 2m 3s  | 14:02:03 |
       | 7s        | 13:00:07 |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A 503 that is not a wrapped rate limit stays a provider error
     When a Claude turn ends with a 503 <error>
     Then the run fails with a provider error and the thread is not marked as limited
@@ -825,7 +825,7 @@ Feature: Claude
 
   # Upstream #13999: Claude gets a few seconds to record an interrupted turn before its session
   # closes, so the conversation it saved can be continued.
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A stopped Claude turn is recorded before its session closes
     Given the user stopped a running Claude turn
     When Claude records the interrupted turn within three seconds
@@ -1086,7 +1086,7 @@ Feature: Claude
       | 2.1.279 | graceful    |
       | 2.1.280 | unknown     |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A Claude-initiated result does not end a /compact turn early
     Given a resumed Claude thread whose previous process left a background task
     When the user compacts the thread
@@ -1094,20 +1094,20 @@ Feature: Claude
     And no made-up "Compacted context" row is shown
     And the thread does not stay busy afterwards
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Claude subagent shows the model its agent file picks
     Given a subagent whose agent file sets its own model
     When the subagent runs
     Then its row and thread show that model, not the parent's
     And an agent it spawns starts with its owner's model
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Claude MCP tool calls show their names and icons
     When Claude calls an MCP tool
     Then the item is titled with the tool's display name and server, with its icon
     And the raw name like "Mcp__server__tool" is not shown
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A model change that would kill background agents is refused
     Given Claude has a background agent or shell still running
     When the user sends a message on a different model or option
@@ -1140,7 +1140,7 @@ Feature: Claude
       | thinking turned off                             |
       | a model that has no effort, such as Haiku 4.5   |
 
-  @backlog
+  @backlog @priority-low
   Scenario: Claude's probe and generated text work next to an administrator's managed MCP settings
     Given an administrator installed Claude Code's managed MCP settings on the machine
     When the MC checks Claude's status or asks Claude for a thread title
@@ -1148,7 +1148,7 @@ Feature: Claude
     And the check still starts none of the user's own MCP servers
 
   # Upstream #19320: some claude wrappers refuse to run outside a project, and the MC may start in $HOME.
-  @backlog
+  @backlog @priority-low
   Scenario: Claude's status check runs in the MC's own folder, not the home folder
     Given the claude command refuses to run in the user's home folder
     And the MC was started from the home folder
@@ -1175,61 +1175,61 @@ Feature: Claude
 
   # T3 Code's #18887 took back showing the last block as text: under summarized thinking
   # Claude's progress updates cannot be told apart from its reasoning.
-  @backlog
+  @backlog @priority-low
   Scenario: Claude's reasoning before a tool call stays a thought
     Given Claude writes a block of reasoning and then a second block before calling a tool
     Then both blocks show as collapsed thoughts with the tool calls
     And neither shows as text addressed to the user
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: Claude skill calls show the skill name
     When Claude calls a skill
     Then the row reads "Skill: <name>"
     And expanding it shows only the arguments as plain text
     And a call with no arguments does not expand
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A thread stays working while Claude starts a wake turn
     Given a Claude thread waiting on a background command
     When the command finishes and Claude begins reacting
     Then the thread never leaves working in between
 
-  @backlog
+  @backlog @priority-high
   Scenario: A Claude command the user stops is recorded as interrupted
     Given a Claude turn is running a command
     When the user stops the turn
     Then the command is recorded as interrupted, as Codex and Cursor record it
     And agents reading the thread are told it was interrupted, not that it failed
 
-  @backlog
+  @backlog @priority-high
   Scenario: A thread stays out of plan mode that Claude entered itself
     Given Claude calls EnterPlanMode during a turn on a thread whose mode is not plan
     When the user sends the next turn
     Then Claude can edit again and the subagents it starts do not inherit plan mode
     And ExitPlanMode still captures the plan as a proposed plan and denies the tool
 
-  @backlog
+  @backlog @priority-low
   Scenario: A skill whose description holds a colon is still listed
     Given a Claude skill whose frontmatter description contains an unquoted ": "
     When the skill picker is opened
     Then the skill is listed with its invocation metadata
     And a skill with malformed structure is still left out
 
-  @backlog
+  @backlog @priority-high
   Scenario: Slash commands are discovered in the thread's own workspace
     Given a project with commands under its ".claude/commands"
     When the user opens the slash menu in a thread of that project
     Then those commands are listed, not only the ones found in the MC's directory
     And if command discovery fails the workspace's skills are still listed
 
-  @backlog
+  @backlog @priority-low
   Scenario: Normal and unset fast mode count as the same selection
     Given a Claude thread has a command running in the background
     When a follow-up arrives with fast mode off where the first turn left it unset
     Then the follow-up is accepted and the background command keeps running
     And a real model or settings change is still refused while that command runs
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: Child completion notices wait for Claude's pending tools
     Given Claude has tool calls pending
     When a delegated task finishes, or a scheduled prompt comes due
@@ -1243,7 +1243,7 @@ Feature: Claude
     Then the goal's state and the number of checks show in the thread
     And the goal shows complete only when Claude ends the turn normally
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: The commands Claude runs never see the MC's tool credential
     Given a Claude thread has HAL-C2's tools
     When Claude runs a shell command, a hook or a local MCP server
@@ -1263,7 +1263,7 @@ Feature: Claude
     When a Claude 5 model creates tasks, updates one to in progress and lists them
     Then the thread's task list shows those tasks with their status
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-low
   Scenario: A Claude usage limit leaves the context meter where it was
     Given a Claude thread's context meter shows 244,541 tokens used
     When the next turn is stopped by a usage limit
@@ -1280,7 +1280,7 @@ Feature: Claude
     And it reads the messages it missed before the new one
 
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: A prompt Claude never starts a turn for fails instead of hanging
     Given Claude acknowledges a prompt without ever starting a turn for it
     Then the turn fails with "Claude acknowledged the message but never started a turn for it."

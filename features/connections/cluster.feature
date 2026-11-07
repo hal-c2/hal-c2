@@ -630,7 +630,7 @@ Feature: Clustering one person's machines
     Then the second talks only to a machine holding the certificate the invite names
     And a machine answering in the first's place learns nothing about the second
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Members on one network find each other without being told where
     Given a cluster of two members on one LAN whose addresses changed
     When both are online
@@ -719,7 +719,7 @@ Feature: Clustering one person's machines
       Then it is told which settings are shared with the other members, keybindings among them
       And none of them is one whose secrets the MC keeps apart
 
-    @shared @backlog-desktop @backlog-mobile @backlog-tui
+    @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: Settings that follow the person are marked in settings
       Given a client connected to a member of a cluster
       When the user opens settings

@@ -78,6 +78,7 @@ Feature: Menus, pickers and confirmations
       When the window closes before the user answers
       Then the action is declined and never done
 
+  @priority-low
   Rule: Menus and pickers
 
     @backlog @desktop

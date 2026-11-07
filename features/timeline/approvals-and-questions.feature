@@ -32,7 +32,7 @@ Feature: Approvals and agent questions
     And the user is looking at a thread in "shop" whose agent is working
 
   # TUI: approve and decline are implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario Outline: The user answers an approval request
     Given the agent asks to run "rm -rf dist"
     When the user chooses to <decision>
@@ -71,7 +71,7 @@ Feature: Approvals and agent questions
     And the agent asks to run "npm test"
     Then the user is asked again
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario Outline: A request says what kind of permission it wants
     When the agent requests <kind>
     Then the request is titled "<title>"
@@ -91,7 +91,7 @@ Feature: Approvals and agent questions
     Then the warning is shown next to that option
 
   # TUI: implemented in apps/tui/src/components/ChatView.tsx
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: Several pending approvals are answered one at a time
     Given the agent has three pending approvals
     Then the user sees "1/3"
@@ -101,7 +101,7 @@ Feature: Approvals and agent questions
     Then the user sees "1/3"
 
   # Legacy: packages/client-runtime/src/pendingRequests.ts (derivePendingRequests sorts by createdAt)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: Pending requests are answered in the order they were asked
     Given the agent asked "Which database?" and then asked to run "npm test"
     When the user opens the pending requests
@@ -109,7 +109,7 @@ Feature: Approvals and agent questions
 
   # Upstream #17637: a request arriving mid-sentence took over the composer and caught
   # the rest of the draft as its answer.
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A request that arrives while the user is typing waits until they stop
     Given the user is typing a follow-up in the thread's composer
     When the agent asks a question or an approval
@@ -124,19 +124,19 @@ Feature: Approvals and agent questions
     And a request that arrives while the user is not typing appears at once
 
   # Legacy: packages/client-runtime/src/pendingRequests.ts (closedApprovals, closedUserInputs)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A request that was settled stays settled whatever order the news arrived in
     Given the client hears that an approval was resolved before it hears that it was asked
     Then the approval is not offered to the user
 
   # Legacy: packages/client-runtime/src/pendingRequests.ts (parseQuestions)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A question with nothing the user could answer is not shown
     Given the agent asked a question that has no options and allows no custom answer
     Then the user is not asked it
 
   # Legacy: packages/client-runtime/src/pendingRequests.ts (requestKindFromRequestType)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: An approval recorded by an older version is shown as the kind of request it was
     Given a thread recorded an approval of the native type "<type>"
     When the user opens the thread
@@ -149,7 +149,7 @@ Feature: Approvals and agent questions
       | file_read_approval         | read a file           |
       | mcp_elicitation_approval   | answer an MCP request |
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A request whose agent is gone cannot be answered
     Given the provider process stopped while an approval was pending
     Then the approval cannot be answered
@@ -185,7 +185,7 @@ Feature: Approvals and agent questions
     And the approval is still open so the user can answer again
 
   # TUI: implemented in apps/tui/src/components/ComposerPendingUserInputPanel.tsx
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario Outline: The user answers the agent's question
     Given the agent asks "Which database?" with the options "Postgres", "SQLite" and "MySQL"
     And the question allows <choices>
@@ -197,7 +197,7 @@ Feature: Approvals and agent questions
       | one answer      | "SQLite"               | "SQLite"               |
       | several answers | "Postgres" and "MySQL" | "Postgres" and "MySQL" |
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: The user writes their own answer
     Given the agent asks "Which database?" with three options
     When the user answers "DuckDB, in memory"
@@ -226,7 +226,7 @@ Feature: Approvals and agent questions
     Then the question is closed as dismissed
     And the agent is not given an answer
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: A question stays answerable after its turn ends
     Given the agent asked a question that can be answered by message
     When the turn ends before the user answers

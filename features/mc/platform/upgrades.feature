@@ -172,7 +172,7 @@ Feature: MC self-update and release upgrades
       | ^1.2.0 |
       | 1.2    |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A staged version that cannot run on this machine is refused before the MC stops
     Given the MC downloaded and staged the target version
     And the staged version's own preflight says it cannot run here
@@ -220,7 +220,7 @@ Feature: MC self-update and release upgrades
     Then the update fails saying the bundle does not match its checksum
     And the running version is unchanged
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A download cut off midway leaves no half-installed version
     Given the MC is downloading a version to install
     When the download is interrupted
@@ -233,7 +233,7 @@ Feature: MC self-update and release upgrades
     When the MC updates to that version
     Then it replaces the partial install with a complete one
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A complete installed version survives a failed re-install
     Given a version that is fully installed
     When another install of the same version fails its checks
@@ -385,7 +385,7 @@ Feature: MC self-update and release upgrades
     Then the MC updates as it would for a client
     And the command asks before interrupting running turns
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A failed restart returns to the previous version
     Given a restart into a new version fails before it is ready
     Then the service wrapper starts the previous version again

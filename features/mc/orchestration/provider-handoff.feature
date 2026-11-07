@@ -183,7 +183,7 @@ Feature: Changing model and provider mid-thread
     When the user sends "Carry on" to "t1"
     Then each item of the handoff is marked as historical, with its role, kind and status and the thread and run it came from
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A handoff tells the agent its history is context, not a new request
     Given the conversation of "t1" is longer than the handoff budget
     When a run starts a new provider thread for "t1"
@@ -215,7 +215,7 @@ Feature: Changing model and provider mid-thread
     When the user sends a message to "t1"
     Then both handoffs reach the provider within the one handoff budget
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: History that may not have reached the provider is sent again on a new conversation
     Given the MC could not confirm that the handed-over history of "t1" reached "claudeAgent"
     When the user sends the next message to "t1"
@@ -271,13 +271,13 @@ Feature: Changing model and provider mid-thread
     Then "Next" resumes the same provider conversation on that instance
     And no handoff is created
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Switching to a provider instance that cannot run is refused
     Given provider instance "claudeAgent" is disabled
     When the user switches "t1" to "claudeAgent"
     Then the command fails with "The target provider instance is unavailable."
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A model change the running agent cannot take is refused
     Given "t1" runs on an ACP agent whose session does not offer switching models
     When the user sets another model for "t1"
@@ -325,7 +325,7 @@ Feature: Changing model and provider mid-thread
     When a run starts a new provider thread for "t1"
     Then each compacted entry of the handoff is at most 240 characters
 
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A thread spreads new sessions across instances of the same provider
     Given two instances of "codex" with different accounts
     When the first is at its usage limit

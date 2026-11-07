@@ -317,7 +317,7 @@ Feature: Pages that update themselves
   # Scheduled tasks live in each MC's own file and are not replicated, and a Space lives
   # on one MC, so a page's update exists on one member and cannot fire twice today. The
   # scheduler has no lease to lean on once a Space is shared.
-  @mc @backlog @blocked
+  @mc @backlog @blocked @priority-low
   Rule: Clustered MCs
 
     # Waits for "A Space is shared across the cluster" in space/beyond-pages.feature.

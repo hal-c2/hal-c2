@@ -163,7 +163,7 @@ Feature: Pairing a phone with environments
     Then the environment is added to the phone
 
   # Likely already implemented: apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: An environment cannot be added without an address
     Given the pairing form has no address
     Then the user cannot add the environment
@@ -207,14 +207,14 @@ Feature: Pairing a phone with environments
     Then the user is shown a notice titled "Client not supported" that says why
     And no environment is added
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The pairing form is emptied once the environment is added
     Given the pairing form has an address and a pairing code
     When the user adds the environment
     Then the environment is added to the phone
     And the pairing form is empty
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A pairing that fails without a reason says so plainly
     Given the environment fails the pairing without saying why
     When the user tries to pair with it
@@ -230,7 +230,7 @@ Feature: Pairing a phone with environments
     When the user edits the pairing code
     Then the failure is no longer shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Adding an environment asks for the camera only when the user chooses to scan
     Given the app has not been granted camera access
     When the user opens the screen to add an environment
@@ -243,7 +243,7 @@ Feature: Pairing a phone with environments
     When the user tries to pair with an environment
     Then the add action shows it is connecting until the pairing succeeds or fails
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An iPhone that is refused local network access is told how to allow it
     Given the phone has not allowed HAL-C2 to find devices on the local network
     When the user tries to pair with an environment on the local network
@@ -356,7 +356,7 @@ Feature: Pairing a phone with environments
     Then the user is told the link is not a pairing link
     And no environment is added
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user renames an environment on the phone
     Given the phone is paired with an environment labelled "devbox"
     When the user renames it to "My MacBook"
@@ -394,7 +394,7 @@ Feature: Pairing a phone with environments
     Then the trace id is on the clipboard
 
   # Likely already implemented: apps/mobile/src/features/connection/ConnectionEnvironmentRow.tsx
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user switches an environment off without removing it
     Given the phone is paired with "My MacBook"
     When the user switches "My MacBook" off
@@ -410,7 +410,7 @@ Feature: Pairing a phone with environments
     Then the phone shows no connection problem for "My MacBook"
     And the phone's overall connection follows "Office Mac" alone
 
-  @backlog @mobile
+  @backlog @mobile @priority-high
   Scenario: The user switches an environment back on
     Given "My MacBook" is switched off
     When the user switches "My MacBook" on
@@ -659,7 +659,7 @@ Feature: Pairing a phone with environments
     Then the full error is shown
     And the user can copy its trace ID
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The user chooses how an environment may use GitHub
     Given the phone is paired with "My MacBook"
     When the user sets GitHub access for "My MacBook" to "<level>"
@@ -699,7 +699,7 @@ Feature: Pairing a phone with environments
     Then "Office Mac" is not added
     And the environments the phone already had are not erased
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: The environment lists the phone by what kind of device it is
     Given the user pairs from <device> running <system>
     When the user looks at the environment's authorized clients
@@ -711,13 +711,13 @@ Feature: Pairing a phone with environments
       | a Pixel 9       | Android 15.2.1 | phone  | Android | 15    | Pixel 9           |
       | an iPad Pro     | iPadOS 18.2    | tablet | iOS     | 18    | iPad Pro 13-inch  |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The environment is told the app version the phone runs
     Given the phone runs app version "1.2.3"
     When the user pairs with "My MacBook"
     Then "My MacBook" lists the phone with the app version "1.2.3"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Adding an environment offers scanning wherever it starts
     Given the app runs on <device>
     When the user adds an environment from <entry>

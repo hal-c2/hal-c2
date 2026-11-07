@@ -9,6 +9,7 @@
 # Provider usage limits are specified in features/providers/. This file covers the
 # home screen and lock screen widgets that show them on a phone.
 
+@priority-low
 Feature: Home screen and lock screen widgets
   Widgets show subscription limits and agent activity without opening the app. They say
   plainly when their data is stale and open the app at the right place when tapped.

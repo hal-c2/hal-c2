@@ -25,7 +25,7 @@
 #   apps/server/src/orchestration-v2/Adapters/piHalC2McpExtensionSource.ts (approval hook, HAL-C2 tools bridge, OpenRouter output cap)
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
-@plugin-pi @mc
+@plugin-pi @mc @priority-low
 # Pi has no built-in subagents, so the subagents setting (features/settings/subagents.feature) has nothing to turn off here.
 Feature: Pi
   Pi uses the user's existing Pi installation with its own models, logins, extensions,
@@ -275,7 +275,7 @@ Feature: Pi
     Then Pi runs with every tool and extension turned off
     And no Pi session file is left behind
 
-  @backlog
+  @backlog @priority-high
   Scenario: Pi never inherits another session's HAL-C2 credential
     Given the MC itself was started by an agent that holds a HAL-C2 tools credential
     When a Pi thread starts

@@ -81,7 +81,7 @@ Feature: Tool calls and file changes
   # before it at its end. It changes as calls land and never animates.
   # Proved by tst_Timeline.qml (test_runningToolCallsReadAsOneLiveRow), not yet by a step (hal-c2/hal-c2#213).
   # TUI: the latest call and "+N previous tool calls" are still two lines (apps/tui/src/host/timelineState.ts).
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A running turn's tool calls read as one live row
     Given the agent has run five tool calls in a row in the running turn
     Then one row shows the latest tool call with "+4 previous tool calls" beside it
@@ -255,7 +255,7 @@ Feature: Tool calls and file changes
       | hal_c2_thread_read completed      |
 
   # Upstream #13140: a thread read names the thread by its title now and links to it.
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: Reading another thread names that thread
     Given the agent <state> HAL-C2's thread-reading tool on thread "t2"
     And "t2" is titled "Fix checkout"
@@ -268,7 +268,7 @@ Feature: Tool calls and file changes
       | called            | Read thread “Fix checkout”       |
       | failed to call    | Failed to read thread “Fix checkout” |
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: A thread read on a thread the client cannot show stays generic
     Given the agent called HAL-C2's thread-reading tool on thread "t2"
     And "t2" is <state>
@@ -344,7 +344,7 @@ Feature: Tool calls and file changes
     Then the details show its input
     And no exit code is shown
 
-  @mc @shared @backlog
+  @mc @shared @backlog @priority-high
   Scenario: An opened command shows its output while it runs
     Given the agent's command is still running and printing
     When the user opens the command's details
@@ -352,13 +352,13 @@ Feature: Tool calls and file changes
     And new output is added as it is printed, at most every 100 ms
     And once the command ends the output is replaced by the output the thread kept
 
-  @mc @shared @backlog
+  @mc @shared @backlog @priority-high
   Scenario: A finished command's output is fetched when it is opened
     Given the agent ran a command that finished
     When the user opens the command's details
     Then the command's final output is shown
 
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Command output does not ride the thread
     Given the agent's command prints 17 MB of output
     And no client has opened the command's details
@@ -377,7 +377,7 @@ Feature: Tool calls and file changes
     Then it is sent the whole kept output instead of the missed parts, at most every 500 ms
     And what it shows afterwards matches what a client that kept up shows
 
-  @mc @shared @backlog
+  @mc @shared @backlog @priority-low
   Scenario: Progress bars in command output show only their latest frame
     Given the agent's command draws a progress bar that redraws its line
     When the user opens the command's details
@@ -385,7 +385,7 @@ Feature: Tool calls and file changes
     And the output's colours are shown
     And other terminal control codes are not shown
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: Coloured command output stays readable
     Given the agent's command prints dark text on a dark background
     When the user opens the command's details
@@ -607,7 +607,7 @@ Feature: Tool calls and file changes
       | "src/cart.ts" and "src/checkout.ts" with 5 lines added in all      | 2 changed files +5            |
       | "src/cart.ts" and "src/checkout.ts" with no line counts            | 2 changed files               |
 
-  @backlog @shared @mobile
+  @backlog @shared @mobile @priority-low
   Scenario: Large line counts are grouped the way the user's locale writes numbers
     Given the user's locale is English
     And a turn changed files with 85000 lines added and 30000 removed
@@ -759,14 +759,14 @@ Feature: Tool calls and file changes
       | "/tmp/outside.png" outside the workspace    | the path is shown and no image is loaded  |
       | "notes.txt" in the thread's workspace       | the path is shown and no image is loaded  |
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A file read that returned only an image shows the image without a placeholder
     Given Claude read "assets/logo.png" in the thread's workspace and got back only the image
     When the user opens the call's details
     Then the image is shown
     And the details show neither "[image]" nor "No output"
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A computer-use or script call reads as the action the agent named
     Given the agent ran a computer-use or JavaScript call titled "Open the billing page"
     When the user looks at the timeline
@@ -857,27 +857,27 @@ Feature: Tool calls and file changes
     Then the failure row stays open with its message
     And the row has nothing more to expand
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: The thinking row after a failed call still opens the run's tool calls
     Given the latest tool call of a running turn failed and the live row reads "Thinking"
     When the user opens that row
     Then the run's tool calls show below it and close again when it is closed
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Tool inputs that are JSON are highlighted
     Given a tool call whose input is valid JSON
     When the user inspects the call
     Then the input is highlighted for the current theme
     And an input that is not JSON shows as plain text
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: An expanded command or tool call shows its output
     Given a finished command whose output was not sent with the thread
     When the user expands the call
     Then the MC supplies its stored output, limited to 256 KiB per value
     And a call with nothing more to show does not expand
 
-  @backlog @shared
+  @backlog @shared @priority-high
   Scenario: An expanded call shows the call above a muted result
     When the user expands a tool call
     Then the full call shows first and its result below it, muted, without cards or labels
@@ -890,13 +890,13 @@ Feature: Tool calls and file changes
     And it shows the server's logo when the provider supplies one
     And a run of calls to that server groups as "Used Firecrawl integration"
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An agent's own built-in tools are not shown as an integration
     Given an agent labels its built-in shell and edit tools like MCP tools
     When they are shown
     Then they keep their command and diff display and are not grouped as an integration
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An expanded shell command is syntax highlighted
     Given a command row with a chained command, or a script inside a heredoc or a shell wrapper
     When the user expands it
@@ -912,21 +912,21 @@ Feature: Tool calls and file changes
     Then the image is shown, also when the output is larger than the 256 KiB the expanded read allows
     And no base64 text is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An agent can show an HTML page inline above its reply
     Given an agent published a self-contained HTML page in the thread
     When the thread is shown
     Then the page renders inline above the agent's final reply
     And it cannot read local files or reach the local network, and a link in it opens only after a user action in the frame
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An inline HTML page does not hold the thread's scroll
     Given an inline page that wraps a few pixels taller than its frame
     When the user scrolls the thread with the pointer over it
     Then the thread scrolls
     And the frame fits the page's reported content height, capped by the agent's height only when that is smaller
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Dragging over an inline HTML page taller than its frame scrolls the page, then the thread
     Given an inline page taller than the most its frame can show
     When the user drags up over the page on the phone
@@ -934,7 +934,7 @@ Feature: Tool calls and file changes
     And once the page is at its end the thread carries on scrolling
     And a page that is only too wide lets vertical drags scroll the thread and sideways drags pan the page
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: An inline HTML page shows the shape of its layout while it loads
     Given an agent published an HTML page with a heading, an image and a table
     When the thread is shown before the page has loaded
@@ -942,14 +942,14 @@ Feature: Tool calls and file changes
     And the MC described that outline when the page was published, in at most 48 boxes
     And a page published before outlines existed shows a generic placeholder
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: An inline HTML page opened full screen is not downloaded again
     Given an inline HTML page has loaded in the thread
     When the user opens it full screen
     Then it opens from the copy already loaded, as long as its address is valid for more than five more minutes
     And addresses the MC hands out for that page within the same half hour are the same address
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An inline HTML page opens full screen with zoom
     Given an agent published an HTML page in the thread
     Then the page offers "Open full screen" and no longer offers opening it in the side panel
@@ -958,7 +958,7 @@ Feature: Tool calls and file changes
     When the user closes it
     Then focus returns to the page in the thread, still loaded
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Clicking an image in an inline HTML page opens it in the image viewer
     Given an agent published an HTML page with an image
     When the user clicks the image, inline or full screen
@@ -967,7 +967,7 @@ Feature: Tool calls and file changes
     And a click with a modifier key, or one the page itself handled, does not open the viewer
     And closing the viewer leaves the page open
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: A link in an inline HTML page opens the way a chat link does
     Given an agent published an HTML page linking to <target>
     When the user <clicks> the link
@@ -979,14 +979,14 @@ Feature: Tool calls and file changes
       | "https://example.com/docs"              | clicks                    | it opens where the "Open links in" setting says            |
       | "https://example.com/docs"              | Cmd- or Ctrl-clicks       | it opens in the system browser                             |
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: App shortcuts keep working while an inline HTML page has focus
     Given the user clicked into an inline HTML page
     When the user presses the command palette's shortcut
     Then the command palette opens
     And the page's own handling of a key, or a key typed into a field in the page, stays with the page
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An inline HTML page cannot press a shortcut that changes a thread
     Given an inline HTML page sends the app a key it made up itself
     When that key is the shortcut to settle, steer or undo

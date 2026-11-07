@@ -160,7 +160,7 @@ Feature: Preparing a new thread's worktree
     Then the conversation offers no retry
 
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A setup that went cleanly leaves the conversation once the agent is replying
     Given the setup of "Cart totals" finished with every step done
     When the agent starts replying in "Cart totals"
@@ -168,7 +168,7 @@ Feature: Preparing a new thread's worktree
     But a setup that failed, or whose script failed, or that was cancelled, stays shown
 
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The setup is history once the user sends a follow-up
     Given the setup of "Cart totals" failed
     When the user sends another message in "Cart totals"
@@ -196,20 +196,20 @@ Feature: Preparing a new thread's worktree
     Then the conversation says how long the agent has been working
     And the user can open the setup progress by naming the script that is still running
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The setup details show the last lines of the setup script's output
     Given the setup script of "Cart totals" is running or failed
     When the user opens the setup details
     Then the user sees the last few lines of the script's output
 
-  @backlog @mc @shared @mobile
+  @backlog @mc @shared @mobile @priority-high
   Scenario: A new worktree thread keeps its worktree when the agent starts
     Given a new worktree thread whose setup script runs alongside the agent
     When the agent starts its first turn
     Then the thread stays on its worktree and branch
     And the first turn completes
 
-  @backlog @mc @shared @mobile
+  @backlog @mc @shared @mobile @priority-high
   Scenario: A message sent while the worktree is being set up is queued
     Given a new worktree thread is still checking out its worktree or running a setup script it must wait for
     When the user sends a follow-up

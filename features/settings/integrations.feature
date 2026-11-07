@@ -24,6 +24,7 @@ Feature: Integrations settings
   Background:
     Given the user has opened the Integrations settings
 
+  @priority-low
   Rule: Browser defaults belong to this device
     # The Qt desktop embeds no browser (previews open in the user's own), so
     # these wait for one there.
@@ -330,7 +331,7 @@ Feature: Integrations settings
 
     # Legacy: apps/server/src/device/DeviceService.test.ts (manual updates, failed installs, retry, inspect)
     # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (updateTool, inspectOnly, retryHostId)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: Updating one device tool starts nothing and changes no permission
       Given device support and agent device access are off
       When the user updates the agent device tool
@@ -359,7 +360,7 @@ Feature: Integrations settings
         | device support is on, agent access is off | the hub starts and agent tools do not |
         | device support and agent access are on    | the hub and the agent tools start     |
 
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: A failed version check keeps what was known
       Given the device hub is off and its tools are installed
       And the MC cannot read the installed tool versions
@@ -379,14 +380,14 @@ Feature: Integrations settings
       And the other older versions are removed
 
     # Legacy: apps/server/src/device/deviceToolMaintenance.test.ts (pruneTools)
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Old device tool versions stay until the required version has finished installing
       Given only an older version of the device hub tool is completely installed
       When the MC prunes old device tool versions
       Then the older version is not removed
 
     # Legacy: apps/server/src/device/deviceToolMaintenance.test.ts (process scan failure)
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Nothing is pruned when the MC cannot tell which versions are running
       Given older versions of the device hub tool are installed
       And the MC cannot list the machine's processes
@@ -395,7 +396,7 @@ Feature: Integrations settings
 
     # Legacy: apps/server/src/device/DeviceToolchain.test.ts, deviceToolMaintenance.test.ts
     # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (installed?, tool_version)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A tool version that did not finish installing is not reported or removed
       Given a device tool folder for a version that never wrote its completion mark
       And a staging folder from an interrupted install
@@ -404,7 +405,7 @@ Feature: Integrations settings
       And pruning leaves both alone
 
     # Legacy: apps/server/src/device/deviceToolMaintenance.test.ts (maintenance lock)
-    @backlog @mc
+    @backlog @mc @priority-low
     Scenario: Two MCs pruning one tool folder take turns
       Given two MC processes share a tool folder
       And a previous prune died holding the maintenance lock
@@ -415,7 +416,7 @@ Feature: Integrations settings
 
     # Legacy: apps/server/src/device/DeviceToolchain.test.ts (ensureDeviceHub)
     # Likely already implemented: apps/server-ex/lib/hal_c2/devices.ex (ensure_tool staging)
-    @backlog @mc
+    @backlog @mc @priority-high
     Scenario: A failed tool install names its step and leaves no half-installed tree
       Given the registry rejects the install with a message that contains an address with a password
       When the MC installs the device hub tool
@@ -508,21 +509,21 @@ Feature: Integrations settings
       When the user looks at agent device access
       Then it cannot be turned on
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A device tool update names the version it installs
       Given the device hub tool is older than the required version
       Then the update offers "Update to v" followed by the required version
       And while it installs it says "Updating…"
       And nothing is offered when the installed versions already include the required one
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A device tool check says it is checking
       Given the device hub supports inspecting its tools
       When the user checks versions
       Then the control says "Checking…" until the answer arrives
       And it is not offered for a host that cannot inspect its tools
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario Outline: A device tool's version is shown beside its switch
       Given the device hub tool is <state>
       Then the version beside the switch reads "<label>"
@@ -534,20 +535,20 @@ Feature: Integrations settings
         | not installed                                  | Not installed   |
         | not yet reported by the host                   | Version unknown |
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A device tool's version details list what runs, what is required and what is installed
       Given the device hub tool requires 1.4.0 and has 1.3.0 and 1.4.0 installed but not running
       When the user opens the tool's version details
       Then it lists "Not running" as the running version, "1.4.0" as required and "1.3.0, 1.4.0" as installed
       And it says tools update automatically on this host when needed
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: Version details before the first check say so
       Given the host has not reported its tool versions
       When the user opens the device tools' version details
       Then it says "Versions have not been checked."
 
-    @backlog @desktop
+    @backlog @desktop @priority-low
     Scenario: A version check that fails shows its reason in the version details
       Given the last version check failed with "Host unreachable"
       Then the control reads "Versions unavailable"
@@ -627,14 +628,14 @@ Feature: Integrations settings
         | im       |
         | mpim     |
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The page shows how to make the Slack app
       When the user opens the Slack section
       Then it offers to copy a Slack app manifest with the scopes, events and Socket Mode HAL-C2 needs
 
     # The MC turns the page down when HalC2.Slack is not running or the MC serving the
     # environment is out of reach, and follows nothing for it until the user asks again.
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
     Scenario: The Slack section that could not load says why and tries again
       Given Slack is connected
       And the MC cannot reach the environment's Slack connection

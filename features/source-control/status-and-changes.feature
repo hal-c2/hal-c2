@@ -44,7 +44,7 @@ Feature: Repository status and working tree changes
     And a git action given " leading.txt" acts on that file, not on "leading.txt"
 
   # Upstream #16771: counting the lines of thousands of untracked files pegged the CPU.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Status over 5,000 untracked files says its totals are incomplete
     Given "shop" has 6,000 untracked files and a change to "src/cart.ts"
     When status is read for "shop"
@@ -141,7 +141,7 @@ Feature: Repository status and working tree changes
     And no failure is reported
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (statusDetails: unborn HEAD)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A repository with no commits yet still reports its branch and changes
     Given the project "notes" is a git repository with no commits
     And "notes" holds a staged "a.txt" and an untracked "b.txt"
@@ -150,7 +150,7 @@ Feature: Repository status and working tree changes
     And "a.txt" and "b.txt" are listed with their changed line counts
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (readStatusDetailsLocal: index lock)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A checkout whose git index is locked reports that instead of a status
     Given another git process is holding the index lock of "shop"
     When status is read for "shop"
@@ -286,7 +286,7 @@ Feature: Repository status and working tree changes
     And the pull request is not linked to the thread until the user links it
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus), GitManager.ts (refreshMissingPullRequest)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A pull request opened outside HAL-C2 shows up when the next turn ends
     Given a client in front is showing a thread in "shop"
     And the status has no pull request for "feature/tax"
@@ -318,7 +318,7 @@ Feature: Repository status and working tree changes
       | a newer turn of the thread is already running             |
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus: resolves the checked-out branch again)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A pull request found for one branch is not shown after the agent checks out another
     Given the status of "shop" carries the pull request of "feature/tax"
     And the agent checks out "feature/other", which has no pull request, during its turn
@@ -339,21 +339,21 @@ Feature: Repository status and working tree changes
       | the user creates the pull request     |
 
   # Legacy: apps/server/src/git/GitManager.ts (STATUS_RESULT_CACHE_TTL)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Many clients asking for status in the same second cause one read
     Given five clients ask for the status of "shop" within one second
     Then git is asked once for the checkout's status
     And all five get the same answer
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (fingerprints)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A refresh that finds nothing new sends nothing to watchers
     Given a client is watching the status of "shop"
     When the status is refreshed and nothing about the checkout changed
     Then the client receives no update
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (poller per cwd)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Clients watching one checkout share a single background fetch
     Given two clients are watching the status of "shop"
     When the fetch interval elapses
@@ -361,7 +361,7 @@ Feature: Repository status and working tree changes
     And both clients receive the result
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (remoteRefreshFailureDelay)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A remote that fails to fetch is retried less and less often
     Given the automatic Git fetch interval is 30 seconds
     And the remote of "shop" cannot be reached
@@ -393,7 +393,7 @@ Feature: Repository status and working tree changes
       | is on a branch other than its default           | is not pulled                |
 
   # Legacy: apps/server/src/vcs/VcsProjectConfig.ts
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A project can say which version control system it uses
     Given the project folder or a folder above it holds "<file>" naming the system "jj"
     When status is read for "shop"
@@ -405,14 +405,14 @@ Feature: Repository status and working tree changes
       | .t3/vcs.json        |
 
   # Legacy: apps/server/src/vcs/VcsProjectConfig.ts (a bad file falls back to automatic detection)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: A version control file that cannot be read is ignored
     Given the project holds ".hal-c2/vcs.json" that is not valid JSON
     When status is read for "shop"
     Then the system is detected automatically and the status is read
 
   # Legacy: apps/server/src/vcs/VcsProjectConfig.ts (findConfigPath, configuredKind)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: Which version control file the project's choice comes from
     Given <files>
     When status is read for "shop"
@@ -427,7 +427,7 @@ Feature: Repository status and working tree changes
       | a folder above "shop" names "jj" and "shop" itself holds no file                         | Jujutsu  |
 
   # Legacy: apps/server/src/vcs/VcsDriverRegistry.ts (resolve), VcsProvisioningService.ts (resolveRequestedKind)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario Outline: A version control system the MC cannot use is named when it is asked for
     Given <situation>
     When <request>
@@ -441,14 +441,14 @@ Feature: Repository status and working tree changes
       | the system to initialize is left unknown              | the user initializes "notes"             | A concrete VCS driver kind is required for repository provisioning. |
 
   # Legacy: apps/server/src/vcs/VcsProvisioningService.ts (resolveRequestedKind)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: Initializing without naming a system creates a git repository
     Given the project "notes" is not in a git repository
     When the user initializes "notes" without naming a version control system
     Then "notes" becomes a git repository
 
   # Legacy: apps/server/src/vcs/VcsDriverRegistry.ts (null detections are not cached)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A folder that has just become a repository is noticed at once
     Given status was just read for "notes" and said it is not a repository
     When "notes" is initialized as a git repository
@@ -462,19 +462,19 @@ Feature: Repository status and working tree changes
     And no more than 4 GitHub CLI commands run at once
 
   # Legacy: apps/server/src/vcs/VcsProcess.ts (isTransientGitExit, CHECKPOINT_CAPTURE_OPERATION)
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A checkpoint is not lost to a brief git lock
     Given git reports a lock file or a vanished file while a checkpoint is being captured
     When the capture command is retried
     Then the checkpoint is captured if the second or third attempt succeeds
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Jujutsu checkout reports its status
     Given the project "shop" is a Jujutsu repository
     When status is read for "shop"
     Then the status reports the Jujutsu driver with its bookmark and working copy changes
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Reading status never takes the git index lock
     Given the MC keeps the status of "shop" fresh in the background
     When the user runs "git checkout" or "git commit" in "shop" while a status read is under way

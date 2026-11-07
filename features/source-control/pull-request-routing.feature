@@ -44,7 +44,7 @@ Feature: Sharing GitHub access between environments
     When a client asks "build-box" who it is on "github.com"
     Then the answer comes without asking GitHub again
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: Sharing is off until the user allows it
     Given the user never changed GitHub sharing for "build-box"
     When the local environment cannot read "acme/shop"
@@ -166,26 +166,26 @@ Feature: Sharing GitHub access between environments
     When the user opens it
     Then the last copy is shown
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Changing an environment's address clears its sharing
     Given the user allowed "build-box" to read and act on pull requests
     When the user changes the address of "build-box"
     Then GitHub sharing for "build-box" is off again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A pull request of another repository is refused when only the project's own is meant
     Given "build-box" has the project "shop" for "acme/shop" on "github.com"
     When a client asks for pull request 7 of "acme/other" for "shop" without naming a host
     Then it is refused with "The change request does not belong to the selected project."
     And the host is not asked anything
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A pull request on a host no project of the environment reads is unsupported
     Given "build-box" has no project on "git.example.test"
     When a client asks for pull request 7 of "team/app" on "git.example.test"
     Then the answer is that the provider is unsupported there
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Which tool owns an unrecognised host is asked once in five minutes
     Given the projects "web" and "api" have remotes on "acme.ghe.com", a host the MC does not recognise
     When pull requests are read for both projects twice within five minutes
@@ -208,7 +208,7 @@ Feature: Sharing GitHub access between environments
 
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (targetsVerifiedHost, executeRaw)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (refuses other or implicit hosts before exposing a scoped credential to gh)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A verified credential is only handed to a command that names its own host
     Given "build-box" verified its account on "github.com"
     When a GitHub command is run for that account that <command>
@@ -231,7 +231,7 @@ Feature: Sharing GitHub access between environments
     Then each read runs with only its own account's credential
     And neither account's credential is overridden by one set in the environment
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A list that cannot read the environment's projects says so
     Given "build-box" cannot read its list of projects
     When a client lists pull requests through "build-box"
@@ -240,7 +240,7 @@ Feature: Sharing GitHub access between environments
   # Upstream #12537: the port of an ssh:// remote addresses the SSH server, not the provider's web API.
   # MC drops the port already (HalC2.PullRequests.parse_remote uses URI.host); no step definitions yet,
   # so it stays @backlog until features:mc can run it.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A remote reached over SSH on a custom port still finds its pull requests on the provider
     Given the project's remote is "ssh://git@git.example.com:2222/team/app.git" on a self-hosted provider
     When the user looks for the branch's pull request

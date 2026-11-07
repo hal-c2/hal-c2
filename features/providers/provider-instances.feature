@@ -79,20 +79,20 @@ Feature: Provider instances
       | 9lives          | Instance ID must start with a letter and use only letters, digits, '-', or '_'. |
       | codex           | An instance named 'codex' already exists.                                 |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: An instance can be renamed and given an accent colour
     Given the instance "claudeAgent_work"
     When the user renames it to "Work Claude" and picks a green accent
     Then the model picker shows "Work Claude" in green
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Clearing the accent colour goes back to the default
     Given the instance "claudeAgent_work" has a green accent
     When the user clears the accent colour
     Then the instance uses the default colour
 
   # Legacy: apps/web/src/components/settings/ProviderAccentColorPicker.tsx
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A typed accent colour is taken only as a complete hex value
     Given the instance "claudeAgent_work" has a green accent
     When the user types "<typed>" as its accent colour
@@ -105,7 +105,7 @@ Feature: Provider instances
       | #22C55E | becomes #22c55e        |
 
   # Legacy: apps/web/src/components/settings/ProviderAccentColorPicker.tsx (FALLBACK_ACCENT_COLOR)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The accent chooser starts from a blue when the instance has none
     Given the instance "claudeAgent_work" has no accent colour
     When the user opens its accent colour chooser
@@ -127,7 +127,7 @@ Feature: Provider instances
       | codex            | names only with the driver's own label     | Codex              |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, shouldShowInstanceBadge)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: An instance's icon carries a badge only where the brand alone would be ambiguous
     Given <situation>
     When the user sees the icon of the instance
@@ -142,7 +142,7 @@ Feature: Provider instances
       | two instances of the same agent from the ACP registry                       | have a badge with initials  |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (providerInstanceInitials, normalizeProviderAccentColor)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: A badge shows up to two initials of the instance's name
     Given the instance is shown as "<name>"
     When the user sees its badge
@@ -157,7 +157,7 @@ Feature: Provider instances
       | 🙂 Smile       | 🙂S      |
 
   # Legacy: packages/client-runtime/src/state/providerInstanceDisplay.ts (normalizeProviderAccentColor)
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A stored accent colour that is not a complete hex value is ignored
     Given the settings give the instance "claudeAgent_work" the accent "green"
     When the user sees the instance in a picker or a thread row
@@ -241,7 +241,7 @@ Feature: Provider instances
     When the user removes that variable
     Then Grok no longer runs with it
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-high
   Scenario: A client with view-only access cannot change providers
     Given the client has view-only access to the environment
     When the user opens provider settings
@@ -340,7 +340,7 @@ Feature: Provider instances
 
   # The Node server persists each instance's last status under its instance id and sorts
   # built-in providers first (providerStatusCache.ts hydrateCachedProvider, orderProviderSnapshots).
-  @backlog
+  @backlog @priority-low
   Scenario: Providers are listed in a stable order
     Given Codex, Claude, Cursor, Grok, OpenCode, Antigravity and a custom "acme" instance are configured
     When a client lists the providers
@@ -368,7 +368,7 @@ Feature: Provider instances
     When the MC restarts and a client lists the providers
     Then "codex_work" is not listed with that status
 
-  @backlog
+  @backlog @priority-low
   Scenario: A last known model list keeps what is still configured
     Given Codex's last known models included a custom model the user has since removed
     And a built-in model it has not reported again
@@ -376,7 +376,7 @@ Feature: Provider instances
     Then the removed custom model is not listed
     And the built-in model is still listed
 
-  @backlog
+  @backlog @priority-low
   Scenario: A damaged last known status is ignored
     Given the last known status of Codex cannot be read
     When the MC restarts and a client lists the providers
@@ -447,13 +447,13 @@ Feature: Provider instances
       | Codex    | codex_work  | /opt/codex-work/bin/codex   |
       | Claude   | claude_work | /opt/claude-work/bin/claude |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A disabled provider is not checked for updates
     Given the Codex instance "codex_work" is disabled
     When the MC refreshes the providers' status
     Then the MC does not look for the binary of "codex_work" or check it for updates
 
-  @backlog @mc @plugin-antigravity
+  @backlog @mc @plugin-antigravity @priority-low
   Scenario: A disabled Antigravity records no account changes
     Given the Antigravity instance is disabled
     When the user signs in or out of Antigravity elsewhere

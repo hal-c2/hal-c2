@@ -58,7 +58,7 @@ Feature: Checkpoints and rewinding
     Then turns 2 and 3 are no longer shown
     And the agent no longer remembers turns 2 and 3
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Editing from a message returns the prompt to the composer
     Given the composer holds the draft "also check tax"
     When the user edits from the second message and reverts the files too
@@ -76,13 +76,13 @@ Feature: Checkpoints and rewinding
       | and files restored      | matches the end of turn 1                |
       | without restoring files | keeps every change made by turns 2 and 3 |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: The user cancels a rewind
     When the user starts editing from the second message
     And the user cancels
     Then the conversation and the workspace are unchanged
 
-  @shared @backlog-mobile
+  @shared @backlog-mobile @priority-high
   Scenario: Rolling back to a checkpoint asks first because it cannot be undone
     When the user rolls back to a checkpoint
     Then the user is asked to confirm that the rollback cannot be undone
@@ -113,7 +113,7 @@ Feature: Checkpoints and rewinding
       | another thread shares the workspace     | File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead. |
       | the thread has no provider conversation | No active provider thread exists for rollback.                                                                                                               |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: The client explains why it cannot rewind
     Given <situation>
     When the user edits from the second message
@@ -132,7 +132,7 @@ Feature: Checkpoints and rewinding
     Then the user is told "Reconnect studio before reverting checkpoints."
     And the conversation and the workspace are unchanged
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A message whose attachments cannot be brought back is not rewound
     Given the second message carries <attachment>
     When the user edits from the second message
@@ -144,26 +144,26 @@ Feature: Checkpoints and rewinding
       | the file "notes.pdf", which the environment no longer has | Could not restore attachment: notes.pdf                 |
       | an attachment of a kind the composer cannot hold         | This message has an attachment that cannot be restored. |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Editing from a message that has already gone says so
     Given another client rewound the thread past the second message
     When the user edits from the second message
     Then the thread shows "The message to rewind is no longer available."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A rewind the environment never finishes stops waiting after two minutes
     Given the environment accepts a rewind but never reports it done
     When the user edits from the second message and two minutes pass
     Then the thread shows "Timed out waiting for the thread to rewind."
     And the thread can be used again
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Editing from a message keeps what the user had already drafted
     Given the draft reads "also update the docs"
     When the user edits from the second message, which read "fix the totals"
     Then the draft reads "also update the docs", a blank line, then "fix the totals"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A rewind does not ask to confirm before it has been refused
     Given the agent is still working
     When the user rolls back to a checkpoint

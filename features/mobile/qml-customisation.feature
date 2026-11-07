@@ -6,6 +6,7 @@
 # is specified in features/plugins/. This file covers only the phone user's journey:
 # choosing a file, previewing, applying, reverting, and per-environment memory.
 
+@priority-low
 Feature: Customising the phone UI with a QML file
   A user can load a QML file that changes how parts of the app look or behave. The user
   sees it before committing to it, can always get back to the standard UI, and each

@@ -101,7 +101,7 @@ Feature: Linking pull requests to threads
       | merged |
       | closed |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A finished pull request is kept while the folder is on another branch
     Given "Cart totals" is linked to pull request 42, which was merged
     And the folder is on "main", which has an open pull request of its own
@@ -115,7 +115,7 @@ Feature: Linking pull requests to threads
     Then the side panel shows pull request 57
     But a side panel showing a different pull request is left on it
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A thread that could not be moved to its new pull request says so
     Given "Cart totals" is linked to the merged pull request 42 and pull request 57 is open for its branch
     When the environment refuses to link pull request 57
@@ -146,7 +146,7 @@ Feature: Linking pull requests to threads
     Then the user is asked "Merge pull request?" and told it merges #42 using squash
     And nothing is merged unless the user confirms
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A merge that was being confirmed is withdrawn when the pull request stops being mergeable
     Given the user is being asked whether to merge pull request 42 from the thread's details
     When the checks of pull request 42 start running again

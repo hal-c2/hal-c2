@@ -109,7 +109,7 @@ Feature: Attaching images and files to a message
       | schema.sql | its URL as text          |
       | café.sql   | its encoded URL as text  |
 
-  @tui @desktop @backlog-desktop
+  @tui @desktop @backlog-desktop @priority-high
   Scenario Outline: An image that cannot be attached is refused with a reason
     When the user tries to attach <image>
     Then nothing is attached
@@ -123,7 +123,7 @@ Feature: Attaching images and files to a message
       | an image that is already attached    | bug.png is already attached.            |
       | a 101st image                        | You can attach up to 100 images.        |
 
-  @backlog @shared @mobile
+  @backlog @shared @mobile @priority-high
   Scenario Outline: A message of only images asks the agent to respond to them
     Given the draft carries "bug.png" and <text>
     When the user sends it, in a thread or as a new task
@@ -153,7 +153,7 @@ Feature: Attaching images and files to a message
     When more than 24 hours pass
     Then the MC discards the unclaimed upload
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A failed upload blocks sending until it is retried or removed
     Given the upload of "design.pdf" failed
     When the user tries to send the message
@@ -170,7 +170,7 @@ Feature: Attaching images and files to a message
     Then the text is inserted into the draft where it can be edited
 
   # Legacy: packages/client-runtime/src/textPaste.ts (pastedTextDisposition, nextPastedTextFileName, wouldTextPasteExceedLimit)
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: A paste is folded into a text file when it is big or would not fit
     When the user pastes <paste>
     Then the paste is <result>
@@ -253,7 +253,7 @@ Feature: Attaching images and files to a message
       | clip.mov   | no type             | a video  |
       | data.xyz   | no type             | a file   |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: An image over the size limit is scaled down to fit instead of being refused
     When the user attaches a 12 MB photo
     Then the photo is attached at a size under 10 MB
@@ -271,7 +271,7 @@ Feature: Attaching images and files to a message
       | it is not a readable image               | 'huge.png' could not be read as an image.                   |
 
   # Legacy: apps/web/src/lib/imageCompression.ts (prepareImageForAttachment, MAX_COMPRESSIBLE_SOURCE_BYTES, MAX_HEIC_DECODE_PIXELS)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A HEIC photo is attached as a JPEG
     When the user attaches "IMG_2041.heic"
     Then "IMG_2041.jpg" is attached
@@ -294,7 +294,7 @@ Feature: Attaching images and files to a message
     Then nothing is attached
     And the user is told "'broken.heic' could not be read as an image."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A very large photo is scaled to a longest side of 2000 pixels before quality is given up
     When the user attaches a 6000 by 4000 pixel photo over the size limit
     Then the attached photo's longest side is at most 2000 pixels
@@ -314,7 +314,7 @@ Feature: Attaching images and files to a message
       | a 3000 by 3000 pixel GIF                   | the original file                                            |
       | a 3000 by 2000 pixel PNG that cannot be decoded | the original file                                       |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A message is not sent while a pasted image is still being scaled down
     Given the user pasted a large image that is still being prepared
     When the user sends the message
@@ -354,7 +354,7 @@ Feature: Attaching images and files to a message
     Then nothing is pasted
     And the user sees an "error" toast "Pasted text is too large to attach" saying "Reduce the clipboard contents or save a smaller excerpt as a file."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A large paste says how to keep it as text
     When the user pastes 40 KiB of log output
     Then the user is told the paste was attached, its size, and the shortcut that pastes it as text instead
@@ -386,7 +386,7 @@ Feature: Attaching images and files to a message
     When the user opens "demo.mp4" from the draft
     Then the video plays
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A long attachment name is shortened in the middle and keeps its ending
     When the user attaches "quarterly-revenue-forecast-final-reviewed-v12.xlsx"
     Then its name is shown shortened in the middle, still ending in ".xlsx"
@@ -398,7 +398,7 @@ Feature: Attaching images and files to a message
     Then "design.pdf" is listed as needing to be attached again
     And resting on it reads "design.pdf was not saved with this draft. Attach it again to send it."
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: An interrupted file blocks sending until it is attached again or removed
     Given the draft lists <files> whose upload a restart interrupted
     When the user tries to send the message
@@ -447,13 +447,13 @@ Feature: Attaching images and files to a message
     And "trace.log" is no longer uploading
 
   # Legacy: apps/web/src/lib/attachmentUploadQueue.ts (MAX_UPLOADS_PER_ENVIRONMENT, UPLOAD_TIMEOUT_MS)
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: At most three files upload to one MC at a time
     Given the user attaches five files to a thread on "studio"
     Then three of them upload at once
     And the other two wait their turn and start as earlier ones finish
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A stalled upload to one MC does not hold up uploads to another
     Given three uploads to "studio" are stalled
     When the user attaches a file to a thread on "laptop"
@@ -512,7 +512,7 @@ Feature: Attaching images and files to a message
     Then "cart.png" is attached to the draft
     And the draft's text is still empty
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: An image attached while the composer takes no typing is still shown in the draft
     Given the composer is empty and <state>
     When the user drops the image "cart.png" on the composer
@@ -524,7 +524,7 @@ Feature: Attaching images and files to a message
       | an approval is waiting for the user    |
       | the user has not chosen a project yet  |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A draft image that could not be kept on this device says it may be lost
     Given the app could not keep a copy of the draft image "cart.png"
     When the user looks at the draft

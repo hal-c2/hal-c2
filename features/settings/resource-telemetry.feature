@@ -19,6 +19,7 @@
 #   apps/web/src/components/settings/ProcessSignalActions.tsx
 #   apps/tui/src/host/sections/resourceMonitor.ts (groups by purpose)
 
+@priority-low
 Feature: Resource monitor
   The resource monitor shows live CPU and memory for everything the MC runs,
   grouped by what it is for, and keeps a bounded history.
@@ -58,7 +59,7 @@ Feature: Resource monitor
     Then host power state is shown as unavailable
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/diagnostics.ex (stale host power)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Host power that stops being reported is shown as stale
     Given a client reported the host's power state to the MC
     When no newer report arrives for longer than the reporting interval plus a grace period

@@ -11,6 +11,7 @@
 #   apps/tui/src/features.backlog.test.ts (provider maintenance and server diagnostics)
 #   apps/tui/src/host/sections/diagnostics.ts (bounded lists, the force kill that asks first)
 
+@priority-low
 Feature: Diagnostics
   Diagnostics lets the user see what the MC has started, how much it uses,
   stop runaway processes, and read recent failures.
@@ -77,28 +78,28 @@ Feature: Diagnostics
     Then the latest failures, most common failures and slowest spans are listed
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Trace diagnostics list the latest warnings and errors
     Given the MC recorded warning and error logs inside its spans
     When the user asks for trace diagnostics
     Then the latest warnings and errors are listed with the span they happened in
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Trace diagnostics count spans that take a second or more
     Given the MC recorded spans that took under a second and spans that took a second or more
     When the user asks for trace diagnostics
     Then the slow span count includes only the spans that took a second or more
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Trace diagnostics skip lines they cannot read and say how many
     Given the trace file has lines that are not trace records
     When the user asks for trace diagnostics
     Then the unreadable lines are left out and their count is reported
 
   # Likely already implemented: apps/server-ex/lib/hal_c2/traces.ex (diagnostics/0)
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Trace diagnostics with no trace file yet say so
     Given tracing is on but the MC has not written a trace file
     When the user asks for trace diagnostics

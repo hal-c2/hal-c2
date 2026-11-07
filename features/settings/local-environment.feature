@@ -37,7 +37,7 @@ Feature: Local environment
       Then the app restarts with its local environment
       And this machine is listed as an environment again
 
-    @backlog @desktop
+    @backlog @desktop @priority-high
     Scenario: The switch to turn the local environment back on stays reachable
       Given the local environment is off
       And no other environment is selected

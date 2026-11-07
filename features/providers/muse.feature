@@ -16,7 +16,7 @@
 #
 # Steering, the hidden plan/build toggle and the missing rewind are in capabilities.feature.
 
-@plugin-muse @mc
+@plugin-muse @mc @priority-low
 Feature: Muse Code
   Muse Code uses the user's own Muse installation and login on the environment. Muse Code is in
   beta: it stays off until the user enables it.

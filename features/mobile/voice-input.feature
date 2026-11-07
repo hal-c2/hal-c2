@@ -5,6 +5,7 @@
 # Composer drafting is specified in features/composer/. Dictation is phone-only.
 #   https://github.com/pingdotgg/t3code/pull/15502
 
+@priority-low
 Feature: Dictating a message
   The user can speak a message into the composer. Dictation only ever edits the draft; the
   user always reviews and sends it themselves.

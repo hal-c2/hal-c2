@@ -266,7 +266,7 @@ Feature: Composer controls and new-thread drafts in the terminal
     And "access ▸ " is in the accent colour and "↑/↓ or click · Enter apply · Esc cancel" in the dim colour
     And the prompt is still shown under the picker
 
-  @tui @backlog
+  @tui @backlog @priority-low
   Scenario: Each picker option is its name over its description
     When the user opens the runtime access picker
     Then the picker's rows read:

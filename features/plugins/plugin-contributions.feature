@@ -176,14 +176,14 @@ Feature: What plugins add to the clients
       Then the settings say "Failed: plugin.json is not valid JSON."
       And the settings offer no restart
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
     Scenario: Enabling a plugin shows the permissions before it runs
       Given "code-review" is disabled
       When the user enables "code-review"
       Then the user is shown each permission it asks for with its reason
       And "code-review" runs only after the user accepts them
 
-    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
     Scenario: Declining the permissions leaves the plugin disabled
       Given "code-review" is disabled
       When the user enables "code-review" and declines its permissions

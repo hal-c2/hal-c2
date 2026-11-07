@@ -7,6 +7,7 @@
 #   apps/web/src/components/desktop/SnapShotCoordinator.tsx (delivery target, errors, sound, animation)
 #   apps/web/src/lib/snapShotSource.ts, snapShotSetupResume.ts, snapShotShortcut.ts, snapShotAnimation.ts
 
+@priority-low
 Feature: Desktop shell gaps: composer
   Composer behaviour the web app and the Electron desktop app have that the native desktop
   composer does not yet deliver.

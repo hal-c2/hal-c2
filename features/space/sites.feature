@@ -325,24 +325,24 @@ Feature: A page published as a site
       Then the browser reads "a chart"
 
   # Out of scope for the first version of sites.
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A published page reads from a database
     Given the page "Roadmap" shows a database of tasks
     When the user publishes the page "Roadmap" as a site
     Then the site shows the database as it was at that moment
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A site asks its readers to sign in
     Given the page "Roadmap" is published as a site for signed-in readers
     When a browser with no sign-in opens the site link of the page "Roadmap"
     Then the browser is asked to sign in
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A site spans several pages
     When the user publishes the page "Roadmap" and the pages inside it as one site
     Then the site's links between those pages work
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A site has its own domain
     When the user gives the site of the page "Roadmap" the domain "roadmap.example.com"
     Then the browser reaches the site at that domain
@@ -358,7 +358,7 @@ Feature: A page published as a site
     When the user publishes the page "Roadmap" as a site
     Then the browser shows the image
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A site is hosted outside the MC
     When the user publishes the page "Roadmap" to an outside host
     Then the site stays up while the MC is off

@@ -104,7 +104,7 @@ Feature: Forking threads and merging work back
     Then Codex resumes its own conversation
     And receives only what happened while Claude was working
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: Forking from a response in the conversation
     When the user forks "Plan billing" from the agent's latest response
     Then "Plan billing fork" opens
@@ -185,13 +185,13 @@ Feature: Forking threads and merging work back
     Then "Tax tests" is listed as a subagent
     And "Research" is listed as a context transfer
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A thread is never its own relative
     Given context was transferred from "Plan billing" to "Plan billing"
     When the user looks at the relatives of "Plan billing"
     Then "Plan billing" is not listed
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Relatives are listed with the parent first and then the newest
     Given "Try Stripe" is a fork of "Plan billing"
     And "Try Stripe" has the forks "Webhooks" and "Refunds", made in that order
@@ -199,20 +199,20 @@ Feature: Forking threads and merging work back
     Then "Plan billing" is listed first
     And "Refunds" is listed before "Webhooks"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Relatives do not move when their threads get new messages
     Given the relatives of "Plan billing" are listed
     When a relative receives a message or changes status
     Then the relatives stay in the order they were in
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A relative that is no longer available is listed last
     Given "Try Stripe" has the fork "Webhooks" and a fork that was deleted
     When the user looks at the relatives of "Try Stripe"
     Then the deleted fork is listed after "Webhooks"
     And it says "This related thread is unavailable"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Relatives from archived threads are listed too
     Given "Try Stripe" is a fork of "Plan billing" and "Plan billing" is archived
     When the user looks at the relatives of "Try Stripe"
@@ -236,7 +236,7 @@ Feature: Forking threads and merging work back
     When the user asks for more
     Then 12 more are listed
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A subagent relative shows how long it has worked and what it did
     Given "Plan billing" has the subagent "Tax tests" that started 3 minutes ago
     When the user looks at the relatives of "Plan billing"
@@ -266,7 +266,7 @@ Feature: Forking threads and merging work back
     When the user looks at merging "Try Stripe" back
     Then merging is unavailable until that run settles
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The user disconnects a thread's agent session from its relatives
     Given "Plan billing" has an agent session that is neither stopped nor failed
     When the user chooses "Disconnect agent session" from the thread's lineage actions

@@ -29,7 +29,7 @@ Feature: Navigating the phone app and opening links into it
     When the user opens "Fix checkout" from the home screen
     Then going back returns to the home screen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A tap right after swiping back opens what was tapped
     Given the user opened "Fix checkout" from the home screen
     When the user swipes back and at once taps "Fix checkout" again
@@ -104,7 +104,7 @@ Feature: Navigating the phone app and opening links into it
     When the phone opens the app with a link that has no path
     Then "Fix checkout" is still shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: Each app build answers only its own link scheme
     Given the user has the <build> build installed
     When the user follows a "<scheme>" link
@@ -116,20 +116,20 @@ Feature: Navigating the phone app and opening links into it
       | preview     | hal-c2-preview:// |
       | development | hal-c2-dev://    |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Sheets and previews do not change the layout behind them
     Given the user is looking at "Fix checkout" beside the thread list on a tablet
     When the user opens settings over it
     And the user closes settings
     Then "Fix checkout" is still shown beside the thread list
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A preview stays open after its source disappears
     Given the user is previewing an image attached to a message
     When the message is removed from the thread
     Then the preview stays open until the user closes it
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Android launcher shortcuts offer a new task and recent threads
     Given the user is on an Android phone
     And the user recently opened "Fix checkout", "Add search" and "Refactor auth"
@@ -137,57 +137,57 @@ Feature: Navigating the phone app and opening links into it
     Then the user is offered to start a new task
     And the user is offered up to three recent threads
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A recent thread shortcut opens that thread with home behind it
     Given the app is not running
     When the user opens "Fix checkout" from a launcher shortcut
     Then "Fix checkout" is shown
     And going back returns to the home screen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A shortcut to a thread that no longer exists falls back to home
     Given "Fix checkout" has been deleted
     When the user opens "Fix checkout" from a launcher shortcut
     Then the home screen is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The new task launcher shortcut starts a task
     Given the app is running on an Android phone
     When the user chooses "New task" from the app icon's shortcuts
     Then a new task opens
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Reopening a recent thread moves it to the front of the shortcuts
     Given the launcher shortcuts list "Fix checkout", "Add search" and "Refactor auth"
     When the user opens "Refactor auth"
     Then the launcher lists "Refactor auth" first
     And "Refactor auth" is listed only once
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A fourth recent thread pushes the oldest out of the shortcuts
     Given the launcher shortcuts list "Fix checkout", "Add search" and "Refactor auth"
     When the user opens "Tax line"
     Then the launcher lists "Tax line", "Fix checkout" and "Add search"
     And "Refactor auth" is no longer listed
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A recent thread with no title is listed as a thread
     Given the user opened a thread that has no title yet
     Then the launcher lists it as "Thread"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A recent thread keeps its name while the thread loads
     Given the launcher lists "Fix checkout"
     When the user reopens it and its title has not loaded yet
     Then the launcher still lists "Fix checkout"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: A shortcut that points anywhere but a new task or a thread goes nowhere
     Given a launcher shortcut left over from another version points to another screen
     When the user chooses it
     Then nothing opens beyond the app itself
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Recent threads that cannot be read do not erase the saved list
     Given the app cannot read the saved list of recent threads on launch
     Then the launcher offers a new task and no recent threads
@@ -196,19 +196,19 @@ Feature: Navigating the phone app and opening links into it
     Then the recent threads are offered again
 
   # New behaviour: the React Native app has no Siri or App Shortcuts integration.
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Siri and App Shortcuts can start a task
     Given the user is on an iPhone
     When the user asks Siri to start a HAL-C2 task in "shop"
     Then a new task opens in "shop"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Siri and App Shortcuts can open a recent thread
     Given the user is on an iPhone
     When the user runs the shortcut to open "Fix checkout"
     Then "Fix checkout" is shown
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario Outline: An Android screen header keeps its first actions in view and puts the rest in a menu
     Given the user is on an Android screen whose header has <count> actions
     And the screen is <width> wide
@@ -221,14 +221,14 @@ Feature: Navigating the phone app and opening links into it
       | 4     | under 600 dp    | 1      |
       | 4     | 600 dp or more  | 3      |
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An action in a header's "More actions" menu keeps its checked and unavailable states
     Given an Android screen header has a toggle that is on and an action that is unavailable under "More actions"
     When the user opens "More actions"
     Then the toggle is shown as on
     And the unavailable action cannot be chosen
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: An Android screen header can go back with "Navigate up"
     Given the user opened a screen that has a screen behind it on an Android phone
     When the user chooses "Navigate up" in its header

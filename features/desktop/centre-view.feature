@@ -82,7 +82,7 @@ Feature: The desktop shell draws the thread in the window's centre
 
   Rule: Closed tabs can be reopened
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Reopening the last closed tab
     Given the user closed a file, diff, pull request, browser or device tab
     When the user switches thread or opens settings and reopens the closed tab
@@ -98,7 +98,7 @@ Feature: The desktop shell draws the thread in the window's centre
     Then it opens the saved page, profile and viewport in a new session
     And incognito tabs are not kept across a restart
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A shortcut opens the menu for a new side-panel tab
     Given the side panel is open and the terminal does not have focus
     When the user presses the new-tab shortcut

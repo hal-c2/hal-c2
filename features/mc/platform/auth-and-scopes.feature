@@ -60,13 +60,13 @@ Feature: MC authentication and scopes
     When a client exchanges it
     Then the exchange fails as an invalid grant
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Pairing tokens can be typed by hand
     When the MC mints a pairing token
     Then it is 12 characters long
     And it uses no characters that look alike, such as 0 and O or 1 and I
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Two clients racing for one pairing token leave exactly one session
     Given a pairing token that has not been exchanged
     When two clients exchange it at the same moment
@@ -287,7 +287,7 @@ Feature: MC authentication and scopes
     When a paired device opens a socket
     Then that client shows as connected with its last connection time
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Paired clients are listed administrators first, then connected, then newest
     Given three paired clients, one of them an administrator
     And one of the others has an open socket
@@ -296,7 +296,7 @@ Feature: MC authentication and scopes
     And the connected client comes before the one that is not connected
     And clients that tie are listed newest first
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A client with an open socket stays listed past its expiry
     Given a paired client whose session has expired
     And it still has a socket open
@@ -304,14 +304,14 @@ Feature: MC authentication and scopes
     Then the client is listed as connected
     And once its last socket closes it is no longer listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The MC's own startup link is not listed with pairing links
     Given the MC minted a link for the app that started it
     And an administrator created a pairing link labelled "Tablet"
     When an administrator lists pairing links
     Then only the "Tablet" link is listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A client's surface and app version are recorded when it connects
     Given a paired client
     When it opens a socket reporting its surface and app version
@@ -332,12 +332,12 @@ Feature: MC authentication and scopes
       | the same scope twice                            | refuses the link as an invalid scope       |
       | the default scopes without holding all of them  | refuses the link as an invalid scope       |
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: Responses that carry credentials are never cached
     When a client exchanges a pairing token or asks for a socket ticket
     Then the answer is marked as not storable by browsers or proxies
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A call is refused when the session lacks the scope that matches what it changes
     Given a client whose session lacks <scope>
     When it <action>
@@ -360,18 +360,18 @@ Feature: MC authentication and scopes
     When a phone, a tablet and a desktop browser each pair
     Then the MC records each as mobile, tablet and desktop
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A client's own device description wins over its user agent
     When a client pairs presenting a device type, an operating system and a label
     Then the MC records what the client presented
     And only what it left out is read from the user agent
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: The address a client paired from is recorded without IPv6 wrapping
     When a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address
     Then the authorized clients list shows the plain IPv4 address
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A command-line tool is recorded as a bot
     When curl or wget exchanges a pairing token
     Then the MC records its device type as bot
@@ -437,7 +437,7 @@ Feature: MC authentication and scopes
     Then the client's socket is closed as revoked
     And it cannot reconnect with its old session
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: A session that ends closes the sockets it has open
     Given a paired client has an open socket
     When <ending>
@@ -540,12 +540,12 @@ Feature: MC authentication and scopes
     And Connections settings lists the link as "Ana's phone"
 
   # Upstream #14128: the readable output printed "DateTime.Utc(...)" for the expiry.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A minted pairing link's readable output gives its expiry as an ISO 8601 time
     When an operator mints a pairing link from the command line
     Then the output says when the link expires as an ISO 8601 time such as "2026-09-28T00:56:46.668Z"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An operator can print a minted pairing link as JSON
     When an operator mints a pairing link from the command line and asks for JSON
     Then the output is only a JSON document with the link's id, label, token, scopes and expiry
@@ -557,7 +557,7 @@ Feature: MC authentication and scopes
     And the session has administrative scopes
     And the session is listed with the other clients and can be revoked
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: A session issued from the command line is printed the way the operator asked
     When an operator issues a session from the command line asking for <form>
     Then the output is <result>
@@ -567,7 +567,7 @@ Feature: MC authentication and scopes
       | the token  | only the bearer token, so a script can capture it                              |
       | JSON       | only a JSON document with the session id, token, scopes, subject and expiry    |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Pairing links listed from the command line show their details but never their secret
     Given two pairing links are waiting to be used
     When an operator lists pairing links from the command line
@@ -575,7 +575,7 @@ Feature: MC authentication and scopes
     And no link shows its token
     But the desktop's own bootstrap link is not listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Sessions listed from the command line show how each client is used
     Given a paired client that has never connected to the MC
     When an operator lists sessions from the command line
@@ -584,7 +584,7 @@ Feature: MC authentication and scopes
     And a session with no client label reads "unlabeled client"
     And bearer tokens are never shown
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Listing from the command line with nothing active says so
     Given there are no <things>
     When an operator lists <things> from the command line
@@ -615,14 +615,14 @@ Feature: MC authentication and scopes
     Then both commands work against the MC's stored access records
     And the minted link works once the MC starts
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: A pairing link with limited scopes pairs with exactly those
     Given a pairing link granting only some scopes
     When a client exchanges it asking for those scopes
     Then the session holds exactly those scopes
     And a request the link cannot grant is refused before the link is used up
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: Sensitive actions need their own scope
     Given a session without the scope "<scope>"
     When it <action>
@@ -647,14 +647,14 @@ Feature: MC authentication and scopes
     Then it sees the history and live output, including a session that has exited
     And it cannot send input, resize, clear, restart or close it
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario: An older client keeps its connection across new scopes
     Given a client that does not know a newly added scope
     When it pairs or reads its permissions
     Then scopes it does not know are left out of what it is told
     And it stays connected, with single features denied rather than the connection
 
-  @backlog @mc
+  @backlog @mc @priority-high
   Scenario Outline: An action needs its own narrower scope, not only orchestration
     Given a session with the orchestration scopes but without "<scope>"
     When it <action>

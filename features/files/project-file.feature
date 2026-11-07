@@ -151,7 +151,7 @@ Feature: The hal-c2.json project file
 
   # Legacy: apps/server/src/project/HalC2ProjectFileLoader.ts (HAL_C2_PROJECT_FILE_NAMES)
   # Likely already implemented: apps/server-ex/lib/hal_c2/project_file.ex
-  @mc @backlog
+  @mc @backlog @priority-high
   Scenario: A checkout that only has the old t3.json is read from it
     Given the checkout has a "t3.json" declaring the action "Dev" and no hal-c2.json
     When the user looks at the actions of "shop"

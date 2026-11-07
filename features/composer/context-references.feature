@@ -48,7 +48,7 @@ Feature: Referencing files, skills, commands and context
   Background:
     Given a project with an open thread
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario Outline: A trigger character offers matching suggestions
     When the user types "<typed>"
     Then the user is offered <suggestions>
@@ -59,25 +59,25 @@ Feature: Referencing files, skills, commands and context
       | $rev      | skills matching "rev"                 |
       | /mo       | commands matching "mo"                |
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario: Choosing a file suggestion puts the file into the draft
     Given the user has typed "@read"
     When the user chooses "README.md" from the suggestions
     Then the draft references "README.md"
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-high
   Scenario: Dismissing suggestions does not send the message
     Given the user is offered suggestions
     When the user dismisses them with Escape
     Then no suggestion is inserted
     And nothing has been sent
 
-  @backlog @tui
+  @backlog @tui @priority-high
   Scenario: The terminal client offers file, skill and command suggestions
     When the user types "@src" in the prompt
     Then the user is offered files and folders matching "src"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Provider commands only apply at the start of a message
     When the user types "<typed>"
     Then <outcome>
@@ -96,7 +96,7 @@ Feature: Referencing files, skills, commands and context
     When the user chooses it
     Then the draft reads "Please use " followed by the skill "review"
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Choosing a built-in command acts at once and leaves no text behind
     Given the Build and Plan toggle setting is on
     When the user chooses the built-in command "<command>"
@@ -156,7 +156,7 @@ Feature: Referencing files, skills, commands and context
     Then the draft sends "@src/__test__.tsx" unchanged
     And "this" is still bold
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: Another thread on the same MC can be referenced
     Given the environment has a thread "Auth refactor"
     When the user references the thread "Auth refactor"
@@ -207,7 +207,7 @@ Feature: Referencing files, skills, commands and context
       | Hello\|       | Hello       |
       | Hello\| world | Hello world |
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario: A quote's unsaved comment survives a question from the agent
     Given the user is writing the comment "check this" on a quote and has not saved it
     When the agent asks a question and the user answers it
@@ -281,14 +281,14 @@ Feature: Referencing files, skills, commands and context
     When the user copies that text and pastes it into another thread's draft
     Then the other draft references "npm test output" as well
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying a sent message brings its references along
     Given the user sent "look at this" with a reference to "src/cart.ts"
     When the user copies that message from the thread
     And pastes it into another draft
     Then the other draft holds "look at this" and the reference to "src/cart.ts"
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: Copying a sent message without references puts only its text on the clipboard
     Given the user sent "look at this" with no references
     When the user copies that message from the thread
@@ -369,52 +369,52 @@ Feature: Referencing files, skills, commands and context
     When the user opens the annotation
     Then the user sees the page, the comment, the picked elements and the requested style changes
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits closes once the agent spends quota again
     Given the user opened "/usage-limits" in a Codex thread
     When the agent resumes after the user answers its approval request
     Then the limits shown above the composer close
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits closes when the user switches model
     Given the user opened "/usage-limits" in a Codex thread
     When the user switches the thread to Claude
     Then the limits shown above the composer close
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits is left to providers without limits in HAL-C2
     Given a thread on a provider whose limits HAL-C2 does not know
     When the user sends "/usage-limits"
     Then "/usage-limits" is sent to the provider as a message
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: /usage-limits with nothing to show says so and keeps the draft
     Given a Codex thread whose limits HAL-C2 has not been able to read
     When the user sends "/usage-limits"
     Then the user sees an "info" toast "Usage limits are unavailable for this provider"
     And nothing is sent to the provider and the draft still reads "/usage-limits"
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: /feedback in a Codex thread sends feedback to OpenAI
     Given a Codex thread that has run a turn
     When the user sends "/feedback The agent stopped early"
     Then the draft is cleared and the user sees that feedback is being sent to OpenAI
     And once it is sent the user sees the feedback thread id and can copy it
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: /feedback before the first Codex turn is refused
     Given a Codex thread with no messages yet
     When the user sends "/feedback"
     Then the user is told to send a message before submitting feedback
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: Feedback that fails to upload says why
     Given a Codex thread that has run a turn
     When the user sends "/feedback" and the upload fails
     Then the user is told the feedback could not be sent to OpenAI and why
     And the user can dismiss the notice
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario Outline: /feedback is an ordinary message outside a plain Codex draft
     Given <situation>
     When the user sends "/feedback slow"
@@ -474,7 +474,7 @@ Feature: Referencing files, skills, commands and context
     When the user presses Down
     Then the first suggestion is highlighted
 
-  @backlog @desktop
+  @backlog @desktop @priority-high
   Scenario Outline: Enter or Tab takes the highlighted suggestion
     Given the user typed "@read" and "README.md" is highlighted
     When the user presses <key>
@@ -747,7 +747,7 @@ Feature: Referencing files, skills, commands and context
     When the user rests on the reference
     Then the user reads "This context is no longer available. Remove it or attach it again."
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Copying the thread id from the feedback notice can fail
     Given the feedback notice shows the thread id
     When the user copies the id and the clipboard refuses

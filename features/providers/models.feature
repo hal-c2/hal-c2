@@ -80,14 +80,14 @@ Feature: Models
     Then the last usable manifest is kept
 
   # Upstream #14152 adds Claude Sonnet 5.5. The bundled manifest does not list it yet.
-  @backlog
+  @backlog @priority-high
   Scenario: The Claude catalog lists Claude Sonnet 5.5
     Given the MC uses its bundled model manifest
     When the MC has read Claude's model list
     Then "claude-sonnet-5-5" is offered in the model picker for Claude
 
   # Upstream #16903: Haiku 5.5 joins the current Claude models; Opus 5 and Sonnet 5 move to legacy.
-  @backlog
+  @backlog @priority-high
   Scenario: The Claude catalog's current models are the 5.5 family and Fable 5.1
     Given the MC uses its bundled model manifest
     When the user opens the model picker for Claude
@@ -95,7 +95,7 @@ Feature: Models
     And "Opus 5" and "Sonnet 5" are listed as legacy
     And the aliases "opus", "sonnet" and "haiku" pick the 5.5 models
 
-  @backlog
+  @backlog @priority-low
   Scenario: Claude Haiku 5.5 offers reasoning effort but not fast mode
     Given the installed Claude is version 2.1.293 or newer
     When the user opens the options for "Haiku 5.5"
@@ -129,13 +129,13 @@ Feature: Models
 
   # Refresh rules of apps/server/src/provider/ModelManifest.ts (TTL one hour, retry five
   # minutes, ten second download limit).
-  @backlog
+  @backlog @priority-low
   Scenario: The manifest is downloaded at most once an hour
     Given the MC fetched the model manifest less than an hour ago
     When the MC would refresh the manifest
     Then no download is made
 
-  @backlog
+  @backlog @priority-low
   Scenario: A failed manifest download is retried after five minutes
     Given the MC's last manifest download failed two minutes ago
     When the MC would refresh the manifest
@@ -143,20 +143,20 @@ Feature: Models
     When five minutes have passed since the failed download
     Then the manifest is downloaded again
 
-  @backlog
+  @backlog @priority-low
   Scenario: A manifest download that takes too long is abandoned
     Given the manifest server does not answer within ten seconds
     When the MC refreshes the manifest
     Then the last usable manifest is kept
     And no error is shown to the user
 
-  @backlog
+  @backlog @priority-low
   Scenario: Refreshing the manifest by hand ignores the schedule
     Given the MC fetched the model manifest a minute ago
     When the user refreshes the models
     Then the manifest is downloaded again
 
-  @backlog
+  @backlog @priority-low
   Scenario: The manifest is not downloaded when provider update checks are off
     Given the user turned off provider update checks
     When the MC would refresh the manifest
@@ -178,7 +178,7 @@ Feature: Models
     When the MC has read the provider's model list
     Then "model-a" stays the default
 
-  @backlog
+  @backlog @priority-low
   Scenario: Custom models are never marked legacy by the manifest
     Given the user added a custom model that the manifest does not list
     When the MC has read the provider's model list
@@ -229,7 +229,7 @@ Feature: Models
       | the custom model "my-model" twice         | "my-model" once                         |
 
   # Every provider that takes custom models; Antigravity has none.
-  @backlog
+  @backlog @priority-low
   Scenario: A named custom model with a built-in's id renames the built-in
     When the settings for Codex are saved with the custom model "gpt-5.5" named "Team GPT"
     Then Codex's models list "gpt-5.5" once, still built in, named "Team GPT"
@@ -254,13 +254,13 @@ Feature: Models
     When the user removes the custom model "my-model"
     Then it is no longer offered or listed as a favourite
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-high
   Scenario: Favourite, hidden and ordered models are remembered on the device
     When the user favourites one model, hides another and moves a third up
     Then the model picker on this device reflects those choices
     And other devices keep their own choices
 
-  @desktop @mobile @backlog-mobile @backlog-mc
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-high
   Scenario: A hidden model can be shown again
     Given the user hid the model "Haiku"
     When the user shows "Haiku" in the picker again
@@ -276,7 +276,7 @@ Feature: Models
     When the user shows "Haiku" again on the phone
     Then the desktop offers "Haiku" again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Model preferences saved on a device move to the environment once
     Given a client kept favourite and hidden models on its device before the environment kept them
     When it connects to an environment that keeps none yet
@@ -288,12 +288,12 @@ Feature: Models
     Given the desktop favourites "Opus" while the phone hides "Haiku" at the same time
     Then the environment keeps "Opus" as a favourite and "Haiku" hidden
 
-  @backlog @mobile
+  @backlog @mobile @priority-low
   Scenario: The phone can hide and restore models
     When the user opens "Manage hidden models" from the phone's model picker
     Then the user can hide a model and restore a hidden one
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Hidden models are left out of the models agents delegate to
     Given the user hid "Haiku" and added the custom model "my-model"
     When an agent asks the MC for its orchestrator capabilities

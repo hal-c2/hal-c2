@@ -54,7 +54,7 @@ Feature: Projects settings panel
     When the user renames "shop" to "Shop web" in settings
     Then "Shop web" is shown for the checkouts on "laptop" and "server"
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-low
   Scenario: A project name cannot be empty
     When the user clears the name of "shop" in settings
     Then the user is told the project title cannot be empty
@@ -72,14 +72,14 @@ Feature: Projects settings panel
     When the user renames "shop" to "Shop web" in settings
     Then the user is told the rename failed on "server"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The icon of a project is chosen and reset from the panel
     When the user chooses the emoji "🛒" as the icon of "shop" in settings
     Then "shop" shows "🛒" on every checkout
     When the user sets the icon of "shop" back to automatic
     Then "shop" shows its automatic icon
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The panel lists every checkout with where it lives
     When the user manages "shop" in settings
     Then the checkouts on "laptop" and "server" are listed with their folders
@@ -152,7 +152,7 @@ Feature: Projects settings panel
     Then the project is still created
     And a warning says why the first commit failed
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: The new project name step names the machine
     Given more than one environment is connected
     When the user opens the New project name step
@@ -165,7 +165,7 @@ Feature: Projects settings panel
     When the user creates a new project with "Create private repository on GitHub" on
     Then the repository is published after the project is created
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: mod+Enter creates the new project while an option is highlighted
     Given the user typed a name in the New project step
     And "Create private repository on GitHub" is highlighted
@@ -181,7 +181,7 @@ Feature: Projects settings panel
     Then the user can pick GitHub or GitLab, with GitHub first
     And the repository is published to the chosen host, and the messages name it
 
-  @backlog @shared @mobile
+  @backlog @shared @mobile @priority-low
   Scenario Outline: A host is offered for a new project only when it can say where the repository goes
     Given <host> is signed in <how>
     When the user creates a new project with publishing on
@@ -193,7 +193,7 @@ Feature: Projects settings panel
       | Bitbucket    | with an API token that names no username | not offered |
       | Azure DevOps | with an account                         | not offered |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A cloned project shows its favicon at once
     Given a repository with a favicon is being cloned as a project
     When the clone finishes

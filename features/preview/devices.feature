@@ -294,7 +294,7 @@ Feature: Device panel
 
     # Upstream #18326. An idle simulator can go minutes without a keyframe of its own, so
     # only the video is reconnected; input and the 3D view stay connected.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A simulator picture that fell behind catches up within seconds
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
@@ -312,7 +312,7 @@ Feature: Device panel
 
     # Upstream #17566: a decoder backlog switched the viewer to still pictures for good and
     # lost the 3D view.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A decoder that falls behind starts again at a keyframe and keeps the video
       Given the thread has the iOS Simulator "iPhone 17" open in 3D
       And the user is watching the "iPhone 17" tab
@@ -320,7 +320,7 @@ Feature: Device panel
       Then the decoder starts again from the device's next keyframe
       And the tab keeps showing video in the same 3D view
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A still picture that arrives late does not cover newer video
       Given the "iPhone 17" tab has shown decoded video
       When the device's first still picture arrives after it
@@ -447,7 +447,7 @@ Feature: Device panel
       Then the body turns with the drag
       And when the drag ends the body settles on the nearest view that faces its screen
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: An iPhone Duo shows both of its screens on a body that folds
       Given the thread has the iOS Simulator "iPhone Duo" open
       And the user is watching the "iPhone Duo" tab
@@ -455,28 +455,28 @@ Feature: Device panel
       Then both of its screens are shown on a body with a hinge between them
       And the device's screen is live on the screen facing the user
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: The user picks a posture for an iPhone Duo
       Given the user is viewing the iOS Simulator "iPhone Duo" in 3D
       When the user picks the "Laptop" posture
       Then the body folds into that posture
       And both screens stay live
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: Touches reach a Duo screen only once it faces the user
       Given the user is viewing the iOS Simulator "iPhone Duo" in 3D
       And the posture turns one screen away from the user
       When the device turns the other screen to the user
       Then touches go to that screen only after the device confirms the change and shows a fresh picture on it
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A device host that cannot report a Duo's posture shows it flat
       Given the thread has the iOS Simulator "iPhone Duo" open
       And the device host cannot report the Duo's posture
       When the user shows the device in 3D
       Then the device is shown in the flat view with its live screen
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A foldable Android emulator changes its picture when it is folded or opened
       Given the thread has the Android Emulator "Pixel 9 Pro Fold" open
       And the user is watching the "Pixel 9 Pro Fold" tab
@@ -484,20 +484,20 @@ Feature: Device panel
       Then the picture changes to the new size without the tab being reopened
 
     # Upstream #13534: the fold controls drive the emulator's hinge and animate the 3D model.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: The user folds and unfolds a foldable Android emulator from the device panel
       Given the thread has the Android Emulator "Pixel 10 Pro Fold" open in 3D
       When the user folds the device and then unfolds it
       Then the 3D model animates through each hinge angle
       And the picture follows the device's posture
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: Fold controls appear only for an emulator that reports folding
       Given the thread has an Android Emulator open that does not report a fold posture
       Then no fold controls are shown
 
     # Upstream #13574: the fold model is sized from the inner screen, so a landscape panel is not stretched.
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: The fold model keeps the shape of a landscape inner screen
       Given the thread has the Android Emulator "Pixel Fold" open with a landscape inner screen
       Then the 3D model is drawn with a landscape inner screen, not stretched
@@ -812,7 +812,7 @@ Feature: Device panel
       Given the wizard is at "Device hub" and the hub is off
       Then the user cannot continue
 
-    @desktop @backlog
+    @desktop @backlog @priority-low
     Scenario: A ready remote machine lets the wizard go on without local device tools
       Given the thread's environment has no simulator tooling and its own hub is idle
       And the remote machine "Mac mini" has its device tools ready with "iOS Simulator"

@@ -513,7 +513,7 @@ Feature: Where HAL-C2 keeps its files
         | XDG_STATE_HOME is not set             | ~/.local/state/hal-c2/ssh-launch    |
         | XDG_STATE_HOME is "/var/lib/me/state" | /var/lib/me/state/hal-c2/ssh-launch |
 
-    @desktop @backlog-desktop
+    @desktop @backlog-desktop @priority-low
     Scenario Outline: A WSL distro keeps its runtime state in its own state directory
       Given a WSL distro where <setting>
       When the desktop app starts a server inside that distro

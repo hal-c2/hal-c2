@@ -136,38 +136,38 @@ Feature: Adding a project from the command palette
     When the user presses mod+Enter
     Then the highlighted folder is added as a project
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Windows-style paths are only understood on Windows
     Given the environment runs on Linux
     When the user types "C:\code" while adding a project
     Then the path is not treated as a drive path
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Open WSL folder is offered when a WSL environment runs beside Windows
     Given the desktop app on Windows also runs the WSL environment "Ubuntu"
     When the user looks at the palette's actions
     Then "Open WSL folder" is offered for "Ubuntu"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Open WSL folder is not offered without a WSL environment
     Given the desktop app runs no WSL environment
     When the user looks at the palette's actions
     Then "Open WSL folder" is not offered
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A folder chosen inside WSL is added to the WSL environment
     Given the desktop app on Windows also runs the WSL environment "Ubuntu"
     When the user runs "Open WSL folder" and chooses "\\wsl$\Ubuntu\home\sam\shop"
     Then "shop" is added to "Ubuntu" at "/home/sam/shop"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A WSL folder whose environment is not running is refused
     Given the WSL environment for "Debian" is not running
     When the user chooses a folder inside "Debian"
     Then the user is told "Could not add WSL project"
     And the user is told to start the matching WSL backend and choose the folder again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The folder chooser is named after the host's file manager
     Given the desktop app runs on <platform>
     And the user is browsing for a project folder on this device
@@ -180,7 +180,7 @@ Feature: Adding a project from the command palette
       | Windows  | File Explorer |
       | Linux    | Files         |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The host's folder chooser starts in the folder being browsed
     Given the user is browsing "~/code/" for a project folder on this device
     When the user chooses to open the folder in the file manager
@@ -188,7 +188,7 @@ Feature: Adding a project from the command palette
     And the folder it returns is added as a project
 
   # Legacy: apps/desktop/src/wsl/wslPathParsing.ts (resolveWslPickFolderDefaultPath), apps/desktop/src/ipc/methods/window.ts
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The host's folder chooser for a WSL environment starts inside the distro
     Given the user is browsing for a project folder inside the WSL environment "Ubuntu"
     And the distro's home is "/home/sam"
@@ -202,33 +202,33 @@ Feature: Adding a project from the command palette
       | /srv/work       | \\wsl.localhost\Ubuntu\srv\work  |
       | nothing typed   | \\wsl.localhost\Ubuntu\home      |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A WSL folder chooser still opens when the distro's home cannot be read
     Given the user is browsing "~/shop" inside the WSL environment "Ubuntu"
     And the distro's home cannot be read
     When the user chooses to open the folder in the file manager
     Then the host's folder chooser opens at the distro's "home" folder joined with "shop"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A folder chosen in one distro is read by that distro
     Given the desktop app runs the WSL environment "Ubuntu"
     When the user chooses the folder "\\wsl.localhost\Debian\home\sam\shop" for the environment "Debian"
     Then the folder is understood as "/home/sam/shop" by "Debian", not by "Ubuntu"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Closing the host's folder chooser leaves the palette as it was
     Given the host's folder chooser is open from the palette
     When the user closes it without choosing a folder
     Then the palette is still open
     And nothing is added
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The host's folder chooser is not offered for another machine's filesystem
     Given the user is browsing for a project folder on another machine
     When the user looks at the palette's footer
     Then it does not offer the file manager
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A folder chooser for a WSL environment waits until that environment is known
     Given the user is browsing for a project folder inside a WSL environment
     And the desktop app has not yet resolved that environment's backend
@@ -236,7 +236,7 @@ Feature: Adding a project from the command palette
     Then it does not offer the file manager
     And no Windows folder can be added against the WSL environment by mistake
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The submit action says whether the folder will be created
     Given the user is <step>
     When the typed path <existence>

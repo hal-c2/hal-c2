@@ -253,7 +253,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     Then it receives 10 and 11 and the chain they form
 
   # Upstream #18143: agents asked to prepare review guides had no tool to call.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An agent starts review guides for several pull requests at once
     Given "Review guides (beta)" is on
     And <situation>
@@ -266,18 +266,18 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | a guide of 43 at its head is already being written          | owner/repo | joined the guide already being written                                   |
       | no project in this environment checks out "other/repo"      | other/repo | failed because no project checks out its repository, pointing at adding one |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: At most twenty pull requests are guided in one call
     When the agent of "caller" asks for guides of 21 pull requests
     Then the call is refused for asking for more than 20
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Every guide an agent asks for is refused while review guides are off
     Given "Review guides (beta)" is off
     When the agent of "caller" asks for guides of pull requests 42 and 43
     Then each is refused, naming the "Review guides (beta)" setting
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Reading a guide never starts one
     Given the guide of pull request 42 was written before its latest push
     When the agent of "caller" reads the guide of pull request 42
@@ -286,7 +286,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
 
   # Writing a guide changes no thread, so it needs the pull requests permission, not
   # control of a thread.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Who may ask for review guides
     Given the agent of "caller" <access>
     When it asks for a guide of pull request 42
@@ -298,7 +298,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | runs in read-only mode                                    | refused  |
       | belongs to a turn that has ended                          | refused  |
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: An agent's guide requests are named in the thread's work log
     When the agent of "caller" starts review guides and later reads one
     Then the work log reads "Started review guides" and "Read a review guide"

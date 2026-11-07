@@ -23,6 +23,7 @@ Feature: Custom themes
   Background:
     Given the user is in Settings → Appearance
 
+  @priority-low
   Rule: Creating and editing
 
     @desktop
@@ -481,6 +482,7 @@ Feature: Custom themes
       Then the light palette is rebuilt from its two colors
       And the dark palette is saved exactly as it was shown
 
+  @priority-low
   Rule: Adding themes
 
     @backlog @desktop
@@ -914,6 +916,7 @@ Feature: Custom themes
       When it is applied
       Then switches, input borders and focus rings stay distinguishable
 
+  @priority-low
   Rule: Sharing and removing
 
     @desktop
@@ -1008,7 +1011,7 @@ Feature: Custom themes
       When HAL-C2 starts
       Then the renamed theme is used
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Dark+ and Light+ import from VS Code
     Given the VS Code themes "Dark+" and "Light+"
     When the user imports them

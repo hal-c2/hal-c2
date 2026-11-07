@@ -137,7 +137,7 @@ Feature: Browsing pull requests
     When the user lists pull requests
     Then GitLab is listed as not configured with "This host cannot be browsed here yet."
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Listing change requests on other hosts
     Given the project "infra" has its remote on <host>
     When the user lists open pull requests
@@ -152,7 +152,7 @@ Feature: Browsing pull requests
 
   # Upstream #17681 adds GitCafe (git.cafe) as a host. Line comments in reviews, reviewer
   # requests, labels, commit diffs and updating a branch outside a stack are refused for now.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: GitCafe pull requests are listed, read and reviewed
     Given the project "cafe" has its remote on git.cafe
     When the user lists open pull requests, filtered to Authored or Reviewing
@@ -160,7 +160,7 @@ Feature: Browsing pull requests
     And a pull request's detail, activity, diff, checks and stack can be read
     And the user can comment, reply, resolve a conversation, submit a review and merge
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: GitCafe's token is sent only to GitCafe
     Given GitCafe's token comes from <source>
     When the MC talks to <host>
@@ -172,7 +172,7 @@ Feature: Browsing pull requests
       | the cafe CLI's git credential helper      | git.cafe                     | is sent     |
       | CAFE_TOKEN with CAFE_HOST naming git.cafe | a page git.cafe redirects to | is not sent |
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario: A thread's linked git.cafe pull request is shown as GitCafe
     Given a thread links "https://git.cafe/acme/shop/pulls/7"
     When the user looks at the thread's pull request
@@ -190,7 +190,7 @@ Feature: Browsing pull requests
       | the GitHub CLI is not signed in         | the user should run gh auth login and retry     |
 
   # Upstream #17725: "az devops login" signs in with a token that "az account show" does not know.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps CLI signed in with a token lists its pull requests
     Given the Azure DevOps CLI is signed in only with a personal access token
     And the user has opened a pull request in "dev.azure.com/acme/shop/_git/web"
@@ -198,7 +198,7 @@ Feature: Browsing pull requests
     Then the pull requests of "web" are listed
     And the user's own pull request is under Authored
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A token sign-in that has opened no pull request cannot name its viewer
     Given the Azure DevOps CLI is signed in only with a personal access token
     And the user has opened no pull request in "dev.azure.com/acme/shop/_git/web"
@@ -641,7 +641,7 @@ Feature: Browsing pull requests
     Then pull requests from that host are matched against an author actually named "me"
 
   # Upstream #19934: the Draft menu and the search box say the same thing.
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: The Draft menu shows a draft qualifier typed into the search
     Given the user is on the pull requests page
     When the user types "<typed>" into the search
@@ -653,7 +653,7 @@ Feature: Browsing pull requests
       | draft:true  | Drafts only |
       | draft:false | Hide drafts |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario Outline: Choosing a Draft value replaces a typed draft qualifier
     Given the user typed "fix draft:false" into the pull request search
     When the user chooses "<choice>" for Draft
@@ -665,19 +665,19 @@ Feature: Browsing pull requests
       | Drafts only | only draft pull requests               |
       | All         | drafts and ready pull requests alike   |
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Changing another filter leaves a typed qualifier alone
     Given the user typed "draft:false" into the pull request search
     When the user chooses the merged state
     Then the search still reads "draft:false"
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: A typed qualifier outranks the filter chosen in the menu
     Given the user chose "Drafts only" for Draft
     When the user types "draft:false" into the search
     Then only pull requests that are not drafts are listed
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: Clearing a search that held only a qualifier shows loading, not an empty list
     Given the user typed "draft:false" into the pull request search
     When the user clears the search
@@ -1139,13 +1139,13 @@ Feature: Browsing pull requests
     Then the page lists pull requests of every project
     And before they arrive the scope is left as it was
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The Scratch folder is not a project to filter pull requests by
     When the user opens the project menu
     Then Scratch is not offered
     And a saved scope naming Scratch lists pull requests of every project
 
-  @backlog @desktop @mobile
+  @backlog @desktop @mobile @priority-low
   Scenario: The project menu lists projects in the sidebar's order
     Given the sidebar orders the projects "web", "api" and "docs"
     When the user opens the project menu
@@ -1639,13 +1639,13 @@ Feature: Browsing pull requests
     When the user searches pull requests for "   "
     Then the list is not narrowed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A GitLab project in a nested group is addressed by its full path
     Given the project "infra" has its remote on GitLab at "acme/platform/infra"
     When the user lists open merge requests
     Then the merge requests of "acme/platform/infra" are listed
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Host states are shown as open, closed or merged
     Given a change request on <host> that the host calls <host state>
     When the user lists change requests
@@ -1662,14 +1662,14 @@ Feature: Browsing pull requests
       | GitLab       | locked              | open     |
       | GitLab       | closed with a merge time | merged |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Azure DevOps rows are dated by when they closed
     Given a completed pull request on Azure DevOps that was closed on 5 July
     When the user lists pull requests
     Then the row is dated 5 July
 
   # Legacy: apps/server/src/sourceControl/azureDevOpsPullRequests.ts (azureDevOpsPullRequestWebUrl)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: An Azure DevOps pull request is opened at the host's own link or one built from what it said
     Given pull request 7 on Azure DevOps comes with <given>
     When the user lists pull requests
@@ -1684,7 +1684,7 @@ Feature: Browsing pull requests
       | nothing but a programming address of another kind                                              | that address as it came                                         |
 
   # Legacy: apps/server/src/sourceControl/gitLabMergeRequests.ts, forgejoPullRequests.ts, azureDevOpsPullRequests.ts, bitbucketPullRequests.ts
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Each host marks a draft in its own way
     Given a change request on <host> that <marking>
     When the user lists change requests
@@ -1701,7 +1701,7 @@ Feature: Browsing pull requests
       | Azure DevOps | is flagged as a draft                               | a draft      |
       | Bitbucket    | is flagged as a draft                               | a draft      |
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that reports no line counts leaves them out
     Given an open merge request on GitLab
     When the user lists open pull requests
@@ -1735,7 +1735,7 @@ Feature: Browsing pull requests
     And pull request 42 is reported as not found
     And pull requests 41 and 43 are not read again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A malformed row in a listing is skipped
     Given GitHub answers a listing of open pull requests with one row that cannot be read
     When the user lists open pull requests
@@ -1872,14 +1872,14 @@ Feature: Browsing pull requests
     Then reads of pull requests go to the host instead of being remembered
     And the user is not shown an error
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A self-hosted project of an unrecognised kind is identified before it is listed
     Given the project "docs" has its remote on "code.example.test", which no built-in rule recognises
     When the user lists pull requests
     Then the MC asks which kind of host "code.example.test" is before listing "docs"
     And its merge requests are listed as GitLab ones from "code.example.test"
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Another checkout on the same host identifies it when one is gone
     Given two projects have their remote on "code.example.test"
     And the folder of the first project no longer exists
@@ -1887,14 +1887,14 @@ Feature: Browsing pull requests
     Then the host is identified through the second project
     And both projects are listed under GitLab
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A host that stays unidentified is reported but not read
     Given a project has its remote on a host whose kind cannot be identified
     When the user lists pull requests
     Then that host is reported as one the MC cannot read yet
     And the other hosts are listed as usual
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A review request is flagged for the user, spelled any way, but not on their own pull request
     Given the user is "bilal" and a review of pull request 1 is requested of "Bilal"
     And pull request 2 was written by "bilal" and lists "bilal" among its requested reviewers
@@ -1902,81 +1902,81 @@ Feature: Browsing pull requests
     Then pull request 1 is flagged as awaiting the user's review
     And pull request 2 is not
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A summary is made from details the MC already holds
     Given the details of pull request 1 were read a moment ago
     When a client asks for the summary of pull request 1
     Then the summary carries the title, draft flag, line counts, mergeability, review decision and checks of those details
     And the host is not asked again
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An older answer never replaces a newer one
     Given the MC holds a summary of pull request 1 updated at 10:05
     When details of pull request 1 updated at 10:00 arrive late
     Then the summary still shows the 10:05 state
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A merged pull request just observed settles without another read
     Given the MC saw pull request 1 merge a moment ago
     When a client asks for its state to settle a thread
     Then it is answered as merged without asking the host
 
   # Legacy: apps/server/src/pullRequest/GitHubPullRequestCli.ts (matchesInvolvement), gitHubPullRequestJson.ts (hasTeamReviewRequest)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: On GitHub a review asked of a team is listed among those awaiting the user's review
     Given pull request 1 on GitHub has a review requested of the team "acme/core" and of no person
     When the user lists pull requests where their review is requested
     Then pull request 1 is listed
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestCli.ts (AzureDevOpsViewerUnavailableError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps sign-in that names no account cannot be listed for
     Given the Azure CLI answers for the current sign-in with no account
     When the user lists their pull requests on Azure DevOps
     Then the user is told "Azure CLI returned no account for the current sign-in."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketViewerUnavailableError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Bitbucket credentials that name no account cannot be listed for
     Given Bitbucket answers for the configured credentials with no account name
     When the user lists their pull requests on Bitbucket
     Then the user is told "Bitbucket returned no account name for the configured credentials."
 
   # Legacy: apps/server/src/pullRequest/BitbucketPullRequestApi.ts (BitbucketRepositoryUnsupportedError)
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: A Bitbucket repository that is not a workspace and a name is refused
     Given a project whose Bitbucket repository is not written as workspace/repository
     When the user lists its pull requests
     Then the user is told "A Bitbucket repository is addressed as workspace/repository."
 
   # Legacy: apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts (toChangeRequest: additions 0, deletions 0, labels [])
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: An Azure DevOps row has no labels and no line counts, since the host keeps neither on the pull request
     Given an open pull request on Azure DevOps
     When the user lists open pull requests
     Then its row shows no labels
     And the row claims no added or removed lines
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The pull request list offers one-click actions on request
     When the user asks for quick actions on the list
     Then open pull requests offer close and merge, drafts close and ready for review, closed ones reopen
     And merged ones offer none, and ending the request restores the rows
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Fast close and merge clicks are queued
     Given the user presses close and merge on several rows quickly
     When the actions run
     Then each runs once, in order, and one does not restart another's checks
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Shift-drag closes a batch
     Given the user holds Shift and presses Close
     When they drag across rows of one group and release
     Then the rows are closed in order, failures do not stop the rest, and one summary reports the result
     And Escape cancels, before or after the drag starts
 
-  @backlog @mc @shared
+  @backlog @mc @shared @priority-low
   Scenario Outline: Quick actions follow what each host can do
     Given pull requests on <host>
     When the user asks for quick actions on the list or on a thread's linked pull request

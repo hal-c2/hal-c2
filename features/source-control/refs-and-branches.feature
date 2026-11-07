@@ -61,7 +61,7 @@ Feature: Picking, switching and creating branches
     But it is listed when the user asks for matching remote refs too
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (listRefs: snapshot cache, epoch bumps)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Paging through a long branch list does not read the repository again
     Given "shop" has 400 branches
     When a client reads every page of the branch list
@@ -83,7 +83,7 @@ Feature: Picking, switching and creating branches
       | renames the temporary branch of a new worktree |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (LIST_REFS_REFRESH_COALESCE_TTL, LIST_REFS_REFRESH_FAILURE_COOLDOWN)
-  @mc @backlog
+  @mc @backlog @priority-low
   Scenario: Asking for a fresh branch list again and again does not hammer the repository
     Given clients ask for a fresh branch list of "shop" several times within five seconds
     Then the repository's refs are read once
@@ -109,7 +109,7 @@ Feature: Picking, switching and creating branches
     Then "feature/old" is marked with that worktree's path
 
   # Upstream #19315: "git worktree list -z" needs git 2.36, and older git dropped every path.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Worktree paths are found on git older than 2.36
     Given the machine's git is 2.25
     And "feature/old" is checked out in another worktree
@@ -175,7 +175,7 @@ Feature: Picking, switching and creating branches
     When the user looks at the thread list
     Then the thread in "shop" shows the branch "feature/tax"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: Copying the branch name
     When the user copies the thread's branch name
     Then "feature/tax" is on the clipboard
@@ -196,7 +196,7 @@ Feature: Picking, switching and creating branches
     When the status updates
     Then the thread's branch reads "feature/pay"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: A new branch name made of several words is made with dashes
     Given the user searched the branch list for "<typed>"
     When the user creates it
@@ -208,14 +208,14 @@ Feature: Picking, switching and creating branches
       | fix  the   cart  | fix-the-cart   |
       | Feature/Pay      | Feature/Pay    |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: Typing a name with spaces still finds the branch that has dashes
     Given the project has the branch "new-branch"
     When the user searched the branch list for "new branch"
     Then "new-branch" is listed
     And no entry offers to create "new-branch" again
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The entry to create a branch comes and goes with the search text
     Given the user is <picking>
     When the user searched the branch list for "<text>"
@@ -244,7 +244,7 @@ Feature: Picking, switching and creating branches
     Then the thread says the folder is on "main" but the thread last ran on "feature/tax"
     And sending would continue on "main"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The branch notice appears once the user starts writing
     Given the thread last ran on "feature/tax" and the folder is now on "main"
     When the user has not typed anything yet
@@ -271,7 +271,7 @@ Feature: Picking, switching and creating branches
       | git refuses to switch the folder                         | Failed to switch checkout                            |
       | the folder switched but the thread could not be updated  | Checkout switched, but the thread could not be updated |
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: The branch notice can be dismissed
     Given the branch notice is shown for "feature/tax"
     When the user dismisses it
@@ -299,18 +299,18 @@ Feature: Picking, switching and creating branches
     When the user looks at the thread list
     Then the thread's row says the folder is currently checked out on another branch
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A new thread's base ref is labelled as coming from origin when it starts from there
     Given the user chose a new worktree for a new thread based on the local branch "main"
     When the user chooses to start the worktree from origin
     Then the base reads "From origin/main"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario: A base that is a remote branch reads as itself
     Given the user chose a new worktree for a new thread based on the remote branch "origin/release"
     Then the base reads "From origin/release"
 
-  @backlog @desktop
+  @backlog @desktop @priority-low
   Scenario Outline: The branch list says when it is still loading or has nothing to show
     Given <state>
     When the user opens the branch list

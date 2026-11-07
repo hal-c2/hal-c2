@@ -598,13 +598,13 @@ Feature: Plans and subagents
     When the context handoff fails
     Then the marker "Context handoff" is shown as a failure
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: A pending context handoff is not marked on a thread with nothing in it
     Given no message has been sent on the thread
     When the user switches the thread to another provider
     Then the timeline does not mark "Context handoff pending"
 
-  @shared @backlog
+  @shared @backlog @priority-low
   Scenario: A pending context handoff is marked once the timeline has rows
     Given the loaded part of the thread's timeline holds only tool calls
     When the user switches the thread to another provider
@@ -938,7 +938,7 @@ Feature: Plans and subagents
     When the user opens "Tax tests" from the Agents tab
     Then the subagent's thread is shown
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Subagent descriptions read as display names
     Given a subagent description containing a filesystem path or a "Subagent:" prefix
     When it is listed as pending background work
@@ -957,7 +957,7 @@ Feature: Plans and subagents
     When the user opens the thread's lineage
     Then the subagent is listed as running with its timer going, not as done
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: A subagent's finish notification looks like its card
     Given a delegated task finished
     When the notification appears in the parent thread
@@ -971,7 +971,7 @@ Feature: Plans and subagents
     Then the subagent shows that model instead of "Not reported"
     And a known model is kept when a later update leaves the model out
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario Outline: A subagent's details show the effort and speed it was started with
     Given a subagent ran on a model with the saved effort "<effort>" and speed "<speed>"
     When the user looks at the subagent's details
@@ -998,7 +998,7 @@ Feature: Plans and subagents
     Then that subagent reads as stopped
     And the Claude run, the other subagent and the thread's queued work keep going
 
-  @backlog @mc @shared @plugin-claude
+  @backlog @mc @shared @plugin-claude @priority-low
   Scenario: A Claude subagent's details show the effort it really runs at
     Given a Claude thread runs at high effort
     When Claude starts a subagent on a model alias such as "opus"
@@ -1026,7 +1026,7 @@ Feature: Plans and subagents
     When the workflow's coordinator fails, the Claude process exits or the MC restarts
     Then no member or member thread is left reading as running
 
-  @backlog @mc @plugin-claude
+  @backlog @mc @plugin-claude @priority-high
   Scenario: A finished Claude subagent does not read as running again
     Given a Claude subagent has finished
     When Claude replays an older start of that subagent
@@ -1049,7 +1049,7 @@ Feature: Plans and subagents
 
   # Upstream #16634: the parent only read Waiting while the child, hidden from the sidebar,
   # waited on a question.
-  @backlog @shared @mobile
+  @backlog @shared @mobile @priority-high
   Scenario: A subagent's waiting question is shown on its parent
     Given a delegated subagent hidden from the sidebar asks "Which colour?"
     When the user opens the parent thread
@@ -1057,7 +1057,7 @@ Feature: Plans and subagents
     And the user can answer it from there
     And answering resumes the subagent and clears the notice from the parent
 
-  @backlog @shared
+  @backlog @shared @priority-low
   Scenario: Expanding the lineage keeps the workspace options
     Given a thread with dozens of previous agents
     When the user expands the previous agents or asks to see more

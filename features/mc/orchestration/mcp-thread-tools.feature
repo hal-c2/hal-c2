@@ -72,7 +72,7 @@ Feature: Agents working with threads through MCP tools
     Then it receives "caller"
 
   # Upstream #17823: agents paging with "cursor" had it dropped and read from the start again.
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario: Reading a thread with an argument the tool does not take is refused
     When the agent of "caller" reads "t2" with a "cursor" argument
     Then the read is refused because "cursor" is not one of its arguments
@@ -371,7 +371,7 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" lists or reads "t2"
     Then the response says "t2" is snoozed until tomorrow 09:00
 
-  @backlog @mc
+  @backlog @mc @priority-low
   Scenario Outline: Listing threads can be filtered by snooze
     Given thread "t2" is snoozed and thread "t3" in "demo" is not
     When the agent of "caller" lists threads with snoozed <filter>

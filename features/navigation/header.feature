@@ -90,7 +90,7 @@ Feature: The thread's header on the desktop
     When "env-c" is reachable again
     Then the header no longer says the thread is offline
 
-  @desktop @backlog-desktop
+  @desktop @backlog-desktop @priority-low
   Scenario Outline: Icon-only buttons name themselves on hover
     When the user hovers the <button> button
     Then a tooltip reads <name>

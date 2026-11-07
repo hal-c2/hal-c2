@@ -187,7 +187,7 @@ Feature: Keymaps
     Then the binding is listed as unavailable on that surface
     And no error is reported
 
-  @backlog @desktop @mobile @tui
+  @backlog @desktop @mobile @tui @priority-low
   Scenario: A keymap file can be installed as a plugin from a paired MC or a URL
     When the user installs the keymap "vim-nav" from a paired MC
     Then "vim-nav" is listed with the installed plugins
@@ -199,13 +199,13 @@ Feature: Keymaps
     When the user connects the TUI to the same environment
     Then pressing "ctrl+shift+n" in the TUI starts a new thread
 
-  @backlog @desktop @tui
+  @backlog @desktop @tui @priority-low
   Scenario: Two keymaps that bind the same key at the same priority are flagged
     Given the keymaps "vim-nav" and "emacs-nav" both bind "ctrl+n" at the same priority
     When the user opens the keybinding reference
     Then "ctrl+n" is flagged as a conflict naming both keymaps
 
-  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
   Scenario: Resetting keybindings removes every override
     Given the user has several keybinding overrides
     When the user resets keybindings to the defaults
