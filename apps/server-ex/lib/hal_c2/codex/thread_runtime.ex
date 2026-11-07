@@ -733,7 +733,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     # turn: the run stays as it is for the next boot's recovery to settle.
     state =
       if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
-        do: end_turn(state, "failed", "Codex exited unexpectedly"),
+        do: end_turn(state, "failed", "Codex exited unexpectedly", :ended),
         else: state
 
     # Its terminals went with it (and, when stopping, are left marked for the next boot).
@@ -763,7 +763,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     state =
       if state.turn,
-        do: end_turn(state, "failed", "Codex sent output that is not a protocol message"),
+        do: end_turn(state, "failed", "Codex sent output that is not a protocol message", :ended),
         else: state
 
     {:noreply, end_background(state, "failed")}
@@ -2202,7 +2202,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     state
   end
 
-  defp end_turn(state, status, failure) do
+  # `stream` is `:ended` when the turn ends because its app-server (and with
+  # it the event stream) is gone, not because Codex reported the turn's end.
+  defp end_turn(state, status, failure, stream \\ :open) do
     state = flush(state)
 
     state =
@@ -2228,11 +2230,13 @@ defmodule HalC2.Codex.ThreadRuntime do
           if status == "interrupted", do: end_background(state, status), else: state
       end
 
-    # The turn's subagents end with an interrupted turn (Stop stops them too);
-    # a failed or completed turn's carry on in their own threads, settled by
-    # Codex's own reports of them.
+    # The turn's subagents end with an interrupted turn (Stop stops them too)
+    # and with a turn whose stream ended: the app-server that held their
+    # threads is gone, so nothing will report them again. A failed or
+    # completed turn Codex itself reported leaves them carrying on in their
+    # own threads, settled by Codex's own reports of them.
     state =
-      if status == "interrupted" do
+      if status == "interrupted" or stream == :ended do
         subagents =
           for {thread, entry} <- Map.get(state, :subagents, %{}), into: %{} do
             if entry.done do
