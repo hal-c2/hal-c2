@@ -2820,7 +2820,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   # A start that outlived its caller's timeout can end after the next run started and
   # moved them on for itself. That run resumed Claude where it is now, so the head stays
   # its own; it counted what to hand over from this run, so what this one did not send
-  # is still owed, unless it was handed another agent's work since this one.
+  # is still owed. What that run was handed is handed once more: a repeat costs less
+  # than context Claude never sees.
   defp unsent(state, turn) do
     own = turn.run_ordinal
 
@@ -2842,27 +2843,13 @@ defmodule HalC2.Claude.ThreadRuntime do
             end)
 
           %{"lastRunOrdinal" => later} = thread when is_integer(later) and later > own ->
-            if handed_since?(stream, thread["id"], own, later),
-              do: nil,
-              else: Map.put(thread, "lastRunOrdinal", turn[:seen_run_ordinal])
+            Map.put(thread, "lastRunOrdinal", turn[:seen_run_ordinal])
 
           _ ->
             nil
         end)
       ]
     end)
-  end
-
-  # Whether the run at ordinal `later` was handed another agent's work done after the run
-  # at `ordinal` (`HalC2.Orchestration.Handoff`'s delta).
-  defp handed_since?(stream, own, ordinal, later) do
-    stream
-    |> StreamState.list("run")
-    |> Enum.any?(
-      &(&1["ordinal"] > ordinal and &1["ordinal"] < later and
-          &1["status"] in ~w(completed interrupted failed) and
-          &1["providerThreadId"] not in [nil, own])
-    )
   end
 
   defp end_turn(state, status, failure, opts \\ []) do

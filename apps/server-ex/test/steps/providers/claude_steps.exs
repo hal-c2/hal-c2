@@ -4164,6 +4164,13 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "a Claude turn ended while Claude started for it, and the next one was handed another agent's work",
+       context do
+    abandon_starting(context, :handed)
+    World.await_latest_run(context, @thread, "completed")
+    context
+  end
+
   step "Claude's process is let go and the user sends a new message", context do
     release_claude(context)
     context = World.post_message(context, @thread, "where are we")
@@ -4209,6 +4216,14 @@ defmodule HalC2.Steps.Providers.Claude do
             "interrupted",
             nil
           )
+
+        # Another agent works before the next message, so that turn is handed its work.
+        if overtaken == :handed do
+          context = switch_provider(context, "codex", "gpt-5.4")
+          context = World.post_message(context, @thread, "Meanwhile")
+          World.await_latest_run(context, @thread, "completed")
+          switch_provider(context, "claudeAgent", "claude-opus-4-6")
+        end
 
         if overtaken do
           next = Task.async(fn -> World.post_message(context, @thread, "and again") end)

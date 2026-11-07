@@ -1715,6 +1715,14 @@ Feature: Claude
     When the user sends a new message
     Then the context the failed turns did not send is sent with the new message
 
+  # What the next turn was handed is handed once more: a repeat costs less than lost context.
+  @mc @plugin-claude
+  Scenario: A Claude turn that ended while Claude started still owes what it did not send after the next turn's handover
+    Given a Claude thread another agent worked on since Claude last ran
+    And a Claude turn ended while Claude started for it, and the next one was handed another agent's work
+    When the user sends a new message
+    Then the context the failed turns did not send is sent with the new message
+
   # Upstream #25372: a stalled registration failed a resumed turn outright, and the old Claude
   # process could still be running when its replacement started.
   # Dropped: the MC registers nothing for a turn to wait on. HAL-C2's tools reach Claude
