@@ -383,6 +383,200 @@ defmodule HalC2.Steps.Platform.Diagnostics do
     context
   end
 
+  # --- host CPU ----------------------------------------------------------------------
+
+  # The host's CPU counters `{idle, total, cores}`, read in turn: the sampler's two readings.
+  defp counters(context, readings) do
+    {:ok, agent} = Agent.start_link(fn -> readings end)
+
+    put_env(:cpu_counters, fn ->
+      Agent.get_and_update(agent, fn [reading | rest] -> {{:ok, reading}, rest ++ [reading]} end)
+    end)
+
+    context
+  end
+
+  step "the host's CPU counters advance between two readings a moment apart", context do
+    # 40 of 100 ticks idle.
+    counters(context, [{100, 1_000, 8}, {140, 1_100, 8}])
+  end
+
+  step "the host's CPU counters did not advance", context do
+    counters(context, [{100, 1_000, 8}])
+  end
+
+  step "the host's CPU counters belong to a different number of cores than before", context do
+    counters(context, [{100, 1_000, 8}, {140, 1_100, 4}])
+  end
+
+  step "CPU use is the share of that interval not idle", context do
+    assert_in_delta context.host["cpuUtilization"], 0.6, 1.0e-9
+    context
+  end
+
+  step "CPU use is left blank", context do
+    assert context.host["cpuUtilization"] == nil
+    context
+  end
+
+  # --- history bounds ----------------------------------------------------------------
+
+  @units %{"ms" => 1, "second" => 1_000, "minute" => 60_000, "hour" => 3_600_000}
+
+  defp duration(text) do
+    [amount, unit] = String.split(text, " ")
+
+    String.to_integer(amount) *
+      Map.fetch!(@units, if(unit == "ms", do: unit, else: String.trim_trailing(unit, "s")))
+  end
+
+  step ~r/^a client asks for resource history over (?<window>.+) in buckets of (?<bucket>.+)$/,
+       %{args: [window, bucket]} = context do
+    {history, context} =
+      rpc!(context, "server.getResourceTelemetryHistory", %{
+        "windowMs" => duration(window),
+        "bucketMs" => duration(bucket)
+      })
+
+    Map.put(context, :history, history)
+  end
+
+  step ~r/^the history covers (?<window>.+) in buckets of (?<bucket>.+)$/,
+       %{args: [window, bucket]} = context do
+    assert context.history["windowMs"] == duration(window)
+    assert context.history["bucketMs"] == duration(bucket)
+    context
+  end
+
+  # --- peak, deltas and reused ids ---------------------------------------------------
+
+  # A sampled row of the provider, for seeding samples that were "taken" earlier.
+  defp provider_row do
+    %{samples: [{_, rows} | _]} = :sys.get_state(HalC2.Diagnostics)
+    Enum.find(rows, &(&1.command =~ ~r{/codex\s}))
+  end
+
+  defp seed_samples(samples),
+    do: :sys.replace_state(HalC2.Diagnostics, &%{&1 | samples: samples})
+
+  @mib 1_048_576
+
+  step "a process whose memory reached 2 GiB an hour ago and has been 300 MiB since",
+       context do
+    row = provider_row()
+    now = System.system_time(:millisecond)
+    sized = fn rss -> [%{row | rss: rss * @mib}] end
+
+    seed_samples([
+      {now - 60_000, sized.(300)},
+      {now - 5 * 60_000, sized.(300)},
+      {now - 59 * 60_000, sized.(2048)}
+    ])
+
+    context
+  end
+
+  step "a client asks for the last ten minutes of resource history", context do
+    window = %{"windowMs" => 10 * 60_000, "bucketMs" => 60_000}
+    {telemetry, context} = rpc!(context, "server.getResourceTelemetryHistory", window)
+    {process, context} = rpc!(context, "server.getProcessResourceHistory", window)
+    Map.merge(context, %{history: telemetry, process_history: process})
+  end
+
+  step "that process's peak memory for the window is 300 MiB", context do
+    codex = &(&1["command"] =~ ~r{/codex\s})
+    assert Enum.find(context.history["topProcesses"], codex)["peakRssBytes"] == 300 * @mib
+    assert Enum.find(context.process_history["topProcesses"], codex)["maxRssBytes"] == 300 * @mib
+    context
+  end
+
+  step ~r/^a process with a reading of (?<earlier>\d+) and then a reading of (?<later>\d+) taken (?<apart>\d+) seconds$/,
+       %{args: [earlier, later, apart]} = context do
+    row = provider_row()
+    now = System.system_time(:millisecond)
+    reading = fn bytes -> [%{row | io: {String.to_integer(bytes), 0}}] end
+
+    seed_samples([
+      {now, reading.(later)},
+      {now - String.to_integer(apart) * 1_000, reading.(earlier)}
+    ])
+
+    context
+  end
+
+  step ~r/^the interval adds (?<added>\d+|nothing)$/, %{args: [added]} = context do
+    {history, _context} =
+      rpc!(context, "server.getResourceTelemetryHistory", %{
+        "windowMs" => @hour,
+        "bucketMs" => @hour
+      })
+
+    expected = if added == "nothing", do: 0, else: String.to_integer(added)
+    assert history["buckets"] |> Enum.map(& &1["ioReadBytes"]) |> Enum.sum() == expected
+    context
+  end
+
+  step "a process was sampled and then exited", context do
+    # The provider's id, as an earlier process with another start time held it.
+    row = provider_row()
+    now = System.system_time(:millisecond)
+    old = %{row | started: row.started - 60_000, rss: 8_192 * @mib, io: {9_999_999, 9_999_999}}
+    seed_samples([{now - 5_000, [old]}])
+    Map.put(context, :reused_id, row.pid)
+  end
+
+  step "a new process took the same id with a different start time", context do
+    # The provider process itself is the new one; the seeded sample above is the old.
+    context
+  end
+
+  step "the MC takes the next sample", context do
+    {result, context} = rpc!(context, "server.retryResourceTelemetry")
+    Map.put(context, :snapshot, result["snapshot"])
+  end
+
+  step "the new process is counted from zero rather than as a continuation of the old one",
+       context do
+    process =
+      Enum.find(context.snapshot["processes"], &(&1["identity"]["pid"] == context.reused_id))
+
+    assert process
+    assert process["peakResidentBytes"] == process["residentBytes"]
+    assert process["residentBytes"] < 8_192 * @mib
+    assert process["ioReadBytesPerSecond"] == 0
+    {:ok, first_seen, _} = DateTime.from_iso8601(process["firstSeenAt"])
+    assert DateTime.diff(DateTime.utc_now(), first_seen, :millisecond) < 5_000
+    context
+  end
+
+  # --- trace file rotation -----------------------------------------------------------
+
+  step "the trace file reaches 10 MiB", context do
+    path = HalC2.Traces.path()
+    File.mkdir_p!(Path.dirname(path))
+    for n <- 1..10, do: File.write!("#{path}.#{n}", "backup-#{n}\n")
+    File.write!(path, :binary.copy("x", 10 * @mib))
+    context
+  end
+
+  step "it moves aside as the newest backup and the oldest backup is dropped", context do
+    # The next record is what finds the file full.
+    HalC2.Traces.finished("trace.rolled", %{}, System.system_time(:millisecond))
+    path = HalC2.Traces.path()
+    assert File.stat!("#{path}.1").size == 10 * @mib
+    assert File.read!("#{path}.2") == "backup-1\n"
+    assert File.read!("#{path}.10") == "backup-9\n"
+    refute File.exists?("#{path}.11")
+    context
+  end
+
+  step "the MC keeps writing to a new trace file", context do
+    HalC2.Traces.finished("trace.after", %{}, System.system_time(:millisecond))
+    lines = HalC2.Traces.path() |> File.read!() |> String.split("\n", trim: true)
+    assert Enum.map(lines, &JSON.decode!(&1)["name"]) == ["trace.rolled", "trace.after"]
+    context
+  end
+
   # --- signals ---------------------------------------------------------------------
 
   step "the process list shows a provider process", context do
@@ -506,12 +700,17 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
   step "tracing is enabled on the MC", context do
     put_env(:trace, true)
+    Mc.ensure({Registry, keys: :duplicate, name: HalC2.Traces.Registry})
     context
   end
 
   step "a turn runs", context do
+    :ok = HalC2.Traces.subscribe("provider.turn")
     context = send_message(context, "hello")
     run = await_run(context, &(&1["status"] == "completed"))
+    # The run completes before its span is written; the span's receipt says it is in the file.
+    run_id = run["id"]
+    assert_receive {:hal_c2_span, "provider.turn", %{"run.id" => ^run_id}}, 5_000
     Map.put(context, :run, run)
   end
 
@@ -701,6 +900,88 @@ defmodule HalC2.Steps.Platform.Diagnostics do
 
     # The runtime still saw every delta.
     assert Enum.count(context.handled, &String.ends_with?(&1, ["delta", "Delta"])) == 6
+    context
+  end
+
+  # --- credentials -----------------------------------------------------------------
+
+  @codex_contents %{
+    "a value that starts with \"Bearer \"" => ~s({"note": "Bearer sk-live-1"}),
+    "a field whose name ends in authorization, apikey, token, password or secret" =>
+      ~s({"Authorization": "sk-live-1", "api_key": "sk-live-1", "accessToken": "sk-live-1", "dbPassword": "sk-live-1", "clientSecret": "sk-live-1", "inputTokens": 12}),
+    "a credential field that holds an object rather than text" =>
+      ~s({"apiKey": {"value": "sk-live-1"}, "authorization": {"type": "bearer", "credentials": "sk-live-1"}}),
+    "a bearer token in the middle of a command line or tool output" =>
+      ~s({"command": "curl -H 'Authorization: Bearer sk-live-1' https://example.test"}),
+    "either of those inside JSON carried as text" =>
+      ~s({"text": "{\\"auth\\": \\"Bearer sk-live-1\\", \\"password\\": \\"sk-live-1\\"}"})
+  }
+
+  step ~r/^a Codex protocol message carries (?<content>.+)$/, %{args: [content]} = context do
+    params = Map.fetch!(@codex_contents, content)
+
+    context =
+      scripted_provider(context, """
+      import json, sys
+      for line in sys.stdin:
+          msg = json.loads(line)
+          print(json.dumps({"method": "account/updated", "params": json.loads(#{inspect(params)})}), flush=True)
+          print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+      """)
+
+    {:ok, _} = HalC2.JsonRpc.Connection.call(context.conn, "go", %{})
+    Map.put(context, :secret_content, content)
+  end
+
+  step ~s(the log shows "[REDACTED]" in its place), context do
+    raw = "thread-logged" |> HalC2.ProviderLog.path() |> File.read!()
+    refute raw =~ "sk-live-1"
+    assert raw =~ "[REDACTED]"
+    [{_, notification}, _] = log_records()
+    assert notification["method"] == "account/updated"
+
+    if context.secret_content =~ "field whose name" do
+      # Only credentials: a token counter stays a number.
+      assert notification["params"]["inputTokens"] == 12
+      assert notification["params"]["Authorization"] == "[REDACTED]"
+    end
+
+    context
+  end
+
+  step "a Claude session starts with the \"hal-c2\" server attached", context do
+    script = Path.join(Mc.tmp_dir(context.mc, "claude"), "claude.py")
+    File.write!(script, "import sys\nfor line in sys.stdin:\n    pass\n")
+
+    {:ok, session} =
+      HalC2.Claude.Session.start_link(
+        command: ["python3", "-u", script],
+        handler: self(),
+        log: "thread-logged",
+        model: "claude-sonnet-4-5",
+        permission_mode: "acceptEdits",
+        cd: context.mc.home,
+        env: [{"ANTHROPIC_API_KEY", "sk-live-1"}],
+        mcp: %{url: "http://127.0.0.1:1/mcp", authorization: "Bearer sk-live-1"}
+      )
+
+    Map.put(context, :session, session)
+  end
+
+  step "the logged options name the model, mode and working folder", context do
+    assert [{_, options}] = log_records()
+    assert options["model"] == "claude-sonnet-4-5"
+    assert options["permissionMode"] == "acceptEdits"
+    assert options["cwd"] == context.mc.home
+    assert options["mcpServers"] == ["hal-c2"]
+    context
+  end
+
+  step "they hold no environment values and no credential for the \"hal-c2\" server", context do
+    raw = "thread-logged" |> HalC2.ProviderLog.path() |> File.read!()
+    refute raw =~ "sk-live-1"
+    refute raw =~ "ANTHROPIC_API_KEY"
+    refute raw =~ "Authorization"
     context
   end
 end

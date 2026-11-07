@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22442
+#   https://github.com/pingdotgg/t3code/pull/27191
+#   https://github.com/pingdotgg/t3code/pull/25025
 #   https://github.com/pingdotgg/t3code/pull/21882
 #   https://github.com/pingdotgg/t3code/pull/18291
 #   https://github.com/pingdotgg/t3code/pull/24857
@@ -56,6 +59,7 @@ Feature: Generated titles, branch names and source control text
     Then the title writer is asked to follow "Start with the ticket number"
     And with no instructions set the title request is unchanged
 
+  # Upstream #21882: thread title instructions are set in the text generation settings.
   @backlog @desktop @tui
   Scenario: Thread title instructions are set under text generation
     When the user sets thread title instructions in the text generation settings
@@ -114,6 +118,15 @@ Feature: Generated titles, branch names and source control text
     Given the text model's provider cannot be used and only "claudeAgent" is installed and enabled
     When a title is generated
     Then "claudeAgent" writes it with "claude-haiku-5-5"
+
+  # Upstream #22442: many OpenCode users have no access to "openai/gpt-5", so the default moved
+  # to OpenCode's own model. Replaces the "opencode" row above once the MC carries it.
+  @backlog @mc @plugin-opencode
+  Scenario: OpenCode writes with Big Pickle by default
+    Given the text model's provider cannot be used and only "opencode" is installed and enabled
+    When a title is generated
+    Then "opencode" writes it with "opencode/big-pickle"
+    And a text generation model the user saved for OpenCode is kept
 
   @backlog @mc
   Scenario: A saved Haiku 4.5 text model is kept
@@ -378,6 +391,21 @@ Feature: Generated titles, branch names and source control text
     Then it fails saying Antigravity wrote files during text generation
     And the folder and the session it made are removed
 
+  # Upstream #27191: Antigravity creates empty skill folders when its session starts, and a valid
+  # title was refused as a file write because of them.
+  @backlog @mc @plugin-antigravity @priority-high
+  Scenario Outline: The empty skill folders Antigravity makes on start are not taken for written files
+    Given Antigravity makes empty ".agents/skills" and ".gemini/skills" folders in its working folder when it starts
+    When "antigravity" writes a <text> and leaves <left>
+    Then <outcome>
+
+    Examples:
+      | text           | left                                      | outcome                                                  |
+      | title          | only those empty folders                  | the title is used                                        |
+      | commit message | only those empty folders                  | the commit message is used                               |
+      | title          | a file inside ".agents/skills"            | it fails saying Antigravity wrote files during text generation |
+      | title          | a folder Antigravity does not make on start | it fails saying Antigravity wrote files during text generation |
+
   # Legacy: apps/server/src/textGeneration/GrokTextGeneration.ts, GrokTextGeneration.test.ts
   @backlog @mc @priority-low
   Scenario Outline: Grok's answer must hold the JSON that was asked for
@@ -448,6 +476,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given the source's title and its messages up to the fork point, across forks of forks
     And it is asked for the inherited subject together with the fork's new direction
 
+  # Upstream #24857: forked threads get titles from the history they inherit.
   @backlog @mc
   Scenario: A fork whose source is gone is titled from its own messages
     Given a forked thread whose source thread was deleted
@@ -611,6 +640,26 @@ Feature: Generated titles, branch names and source control text
       | only one markdown file in ".github/PULL_REQUEST_TEMPLATE"                            | that file                                   |
       | a file in ".github/PULL_REQUEST_TEMPLATE" and "pull_request_template.md"             | "pull_request_template.md"                  |
 
+  # Upstream #25025: GitHub accepts text templates and any capitalisation of their names.
+  @mc @backlog
+  Scenario Outline: A text or differently capitalised template is found
+    Given the base branch has only <template>
+    When pull request text is generated
+    Then the writer is given that template for the body
+
+    Examples:
+      | template                                         |
+      | ".github/Pull_Request_Template.md"               |
+      | ".github/pull_request_template.txt"              |
+      | one text file in ".github/PULL_REQUEST_TEMPLATE" |
+
+  # Upstream #25025
+  @mc @backlog @priority-low
+  Scenario: The exact spelling of a template's name wins over another capitalisation
+    Given the base branch has ".github/pull_request_template.md" and ".github/PULL_REQUEST_TEMPLATE.MD"
+    When pull request text is generated
+    Then the writer is given ".github/pull_request_template.md" for the body
+
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (readTemplateBlob, parseTemplateTreeEntries)
   @mc @priority-high
   Scenario: A very long template is cut and says so
@@ -658,6 +707,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given a short account of the thread's visible history with the check and its result
     And turns that were rolled back are left out of it
 
+  # Upstream #18291: generated pull requests include the thread's context, such as the checks it ran.
   @mc @backlog
   Scenario: Pull request text from a thread needs permission to read the thread
     Given a client that may write to source control but may not read threads

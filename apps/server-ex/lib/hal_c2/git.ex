@@ -22,7 +22,22 @@ defmodule HalC2.Git do
   """
   @spec run(Path.t(), [String.t()], keyword) :: {:ok, result} | {:error, String.t()}
   def run(cwd, args, opts \\ []) do
-    argv = [Application.get_env(:hal_c2, :git_command, "git") | args]
+    # A bare repository among a project's files is not opened as the repository of the
+    # folder it sits in, as its config and hooks would then run (a repository that is
+    # meant is named: `GIT_DIR`). Reads never take the index lock a user's git needs.
+    argv = [
+      Application.get_env(:hal_c2, :git_command, "git"),
+      "-c",
+      "safe.bareRepository=explicit" | args
+    ]
+
+    opts =
+      Keyword.update(
+        opts,
+        :env,
+        [{"GIT_OPTIONAL_LOCKS", "0"}],
+        &[{"GIT_OPTIONAL_LOCKS", "0"} | &1]
+      )
 
     run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
 

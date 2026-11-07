@@ -314,19 +314,35 @@ defmodule HalC2.ProviderUsageLimits do
         if existing == next, do: {acc, changed}, else: {Map.put(acc, next["id"], next), true}
       end)
 
-    if not changed and previous != nil and previous["unavailable"] == nil do
+    # A kept failed-check marker does not make an unchanged reading a change: that
+    # would republish (and push to every client) on each event of a turn.
+    if not changed and previous != nil and failed_marker(previous) == previous["unavailable"] do
       previous
     else
       checked_at
       |> limits(Map.values(merged))
       |> put_present("resetCredits", (previous || %{})["resetCredits"])
+      |> put_present("unavailable", failed_marker(previous))
     end
   end
+
+  # A reading from a running turn is not a check: a failed check stays marked until a
+  # full check succeeds.
+  defp failed_marker(%{"unavailable" => %{"reason" => "probeFailed"} = marker}), do: marker
+  defp failed_marker(_), do: nil
 
   @doc "What to publish after a probe: a failed probe keeps the last good windows."
   def after_probe(%{} = published, %{"unavailable" => %{"reason" => "probeFailed"}})
       when not is_map_key(published, "unavailable"),
       do: published
+
+  # Readings a turn reported under a failed-check marker survive the next failed check,
+  # which names its own reason.
+  def after_probe(
+        %{"windows" => [_ | _], "unavailable" => %{"reason" => "probeFailed"}} = published,
+        %{"unavailable" => %{"reason" => "probeFailed"} = marker}
+      ),
+      do: Map.put(published, "unavailable", marker)
 
   def after_probe(_published, probed), do: probed
 
@@ -433,11 +449,7 @@ defmodule HalC2.ProviderUsageLimits do
 
         if now == nil or now["checkedAt"] == (before || %{})["checkedAt"] or
              get_in(now, ["unavailable", "reason"]) == "probeFailed" do
-          {:reply,
-           setup_error(
-             instance,
-             "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
-           ), state}
+          {:reply, setup_error(instance, unconfirmed(outcome)), state}
         else
           {:reply, {:ok, %{"outcome" => outcome}}, state}
         end
@@ -449,6 +461,15 @@ defmodule HalC2.ProviderUsageLimits do
          %{state | redeem_keys: Map.put(state.redeem_keys, instance, key)}}
     end
   end
+
+  # Only a redemption that reset the limit needs its new limits confirmed; a refused one
+  # says why, since nothing was applied.
+  defp unconfirmed("alreadyRedeemed"), do: "That credit was already redeemed."
+  defp unconfirmed("nothingToReset"), do: "Nothing to reset right now."
+  defp unconfirmed("noCredit"), do: "No reset credit left."
+
+  defp unconfirmed(_),
+    do: "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
 
   @impl true
   def handle_cast({key, instance, value}, state) when key in [:account, :commands] do

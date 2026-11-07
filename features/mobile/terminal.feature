@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22161
+#   https://github.com/pingdotgg/t3code/pull/24928
 #   https://github.com/pingdotgg/t3code/pull/18063
 #   https://github.com/pingdotgg/t3code/pull/20284
 #   https://github.com/pingdotgg/t3code/pull/20051
@@ -214,6 +216,20 @@ Feature: Using a terminal on a phone
     When the user presses Backspace in the terminal
     Then the character before the cursor is deleted
 
+  # Upstream #24928: on Android a hardware Enter sent the command and then moved focus off the
+  # terminal; the keypad's Enter did nothing.
+  @backlog @mobile
+  Scenario Outline: A hardware Enter keeps the terminal focused
+    Given a hardware keyboard is attached to an Android phone
+    When the user presses <key> in the terminal
+    Then the terminal receives one Return
+    And the next keys the user types still go to the terminal
+
+    Examples:
+      | key              |
+      | Enter            |
+      | the keypad Enter |
+
   @mobile
   Scenario: The shell is told the size that fits when the phone changes shape
     Given the terminal is shown
@@ -252,6 +268,7 @@ Feature: Using a terminal on a phone
     Then the terminal receives a Control-C
     And "ctrl" is no longer waiting for a key
 
+  # Upstream #22161: Ctrl with an arrow sent a plain arrow, and Alt sent an extra escape.
   @mobile
   Scenario Outline: A modifier key applies to the arrow keys too
     Given the thread's environment runs on <system>

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26074
 #   https://github.com/pingdotgg/t3code/pull/19704
 #   https://github.com/pingdotgg/t3code/pull/21187
 #   https://github.com/pingdotgg/t3code/pull/2829
@@ -16,6 +17,7 @@
 #     (terminals and attached files cleaned up after archive and delete)
 #   docs/internals/glossary.md
 #   https://github.com/pingdotgg/t3code/pull/14104
+#   https://github.com/pingdotgg/t3code/pull/27990
 Feature: Thread lifecycle in the orchestration engine
   A thread is the durable conversation for a project. The engine creates it,
   records its metadata, and moves it between active, archived and deleted, with
@@ -105,6 +107,15 @@ Feature: Thread lifecycle in the orchestration engine
     Given thread "t1" has no messages
     When a client asks to regenerate the title of "t1"
     Then the title regeneration mark is cleared without asking a model
+
+  # Upstream #27990: a provider subagent's thread copied its parent's pending title mark, which
+  # only the parent's title job ever cleared, so the child showed "Regenerating…" forever.
+  @backlog @mc
+  Scenario: A subagent started while its parent's title is generating is not marked regenerating
+    Given thread "t1" is regenerating its title
+    When the provider in "t1" starts a subagent with a thread of its own
+    Then the subagent's thread has no title regeneration mark
+    And its title can be regenerated
 
   @mc
   Scenario: Setting a title explicitly cancels a pending regeneration
@@ -202,6 +213,13 @@ Feature: Thread lifecycle in the orchestration engine
     When a client deletes "t1"
     Then both attached files are removed from the MC's attachment storage
     And a file that is already gone does not stop the rest from being removed
+
+  # Upstream #26074: files attached to answers to an agent's questions were left behind when the thread was deleted.
+  @mc @backlog
+  Scenario: Deleting a thread removes the files attached to its question answers
+    Given the user answered a question in thread "t1" with an attached file
+    When a client deletes "t1"
+    Then the attached file and its extracted text are removed from the MC's attachment storage
 
   @mc @backlog
   Scenario: Cleanup after deleting a thread is finished after a restart

@@ -102,6 +102,8 @@ defmodule HalC2.Claude.Session do
 
         case Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable])) do
           {:ok, sub} ->
+            HalC2.ProviderLog.options(Keyword.get(opts, :log), opts)
+
             case Subprocess.write_line(
                    sub,
                    Protocol.control_request("init", "initialize", %{

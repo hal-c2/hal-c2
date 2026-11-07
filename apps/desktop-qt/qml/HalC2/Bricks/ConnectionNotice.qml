@@ -136,6 +136,17 @@ Item {
                 wrapMode: Text.Wrap
             }
 
+            // What still works meanwhile: the threads already loaded.
+            Label {
+                objectName: "connectionNoticeCached"
+                Layout.fillWidth: true
+                visible: notice.troubled && notice.model !== null && (notice.model.state === "retrying" || notice.model.state === "offline")
+                text: qsTr("What was loaded stays readable until the connection returns.")
+                font.pixelSize: Theme.type.meta.size
+                color: Theme.palette.color("textMuted", "#a1a1aa")
+                wrapMode: Text.Wrap
+            }
+
             ServerUpdateAction {
                 Layout.fillWidth: true
                 visible: offered && !notice.troubled && notice.warning !== null

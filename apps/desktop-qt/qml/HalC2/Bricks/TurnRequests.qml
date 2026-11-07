@@ -24,6 +24,9 @@ Item {
     readonly property var plan: shown ? turn.plan ?? null : null
     readonly property var queue: shown ? turn.queue : []
     readonly property var waiting: shown ? turn.waiting ?? [] : []
+    // The messages this device keeps until it can send them (the phone's
+    // outbox): the route thread's, known or not to a store that has not loaded.
+    readonly property var outbox: turn !== null && turn.kind === "thread" ? turn.outbox ?? [] : []
     // The running turn's task list, summed up; `tasksOpen` lists every step.
     // It closes on another thread, and when the list goes (an approval or a
     // question takes its place, or the turn ends).
@@ -68,7 +71,7 @@ Item {
 
     // Whether the turn waits on anything. The height follows this and not
     // `visible`, which a host may bind to more than this.
-    readonly property bool pending: approval !== null || question !== null || plan !== null || tasks !== null || queue.length > 0 || waiting.length > 0
+    readonly property bool pending: approval !== null || question !== null || plan !== null || tasks !== null || queue.length > 0 || waiting.length > 0 || outbox.length > 0
 
     visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
@@ -816,6 +819,75 @@ Item {
                     primary: true
                     text: refine ? qsTr("Refine") : qsTr("Implement")
                     onClicked: refine ? Shell.dispatch("composer.submit", {}) : Shell.dispatch("composer.plan.implement", {})
+                }
+            }
+        }
+
+        // The messages written with no connection, in the order they go once
+        // it returns. One still waiting can be pulled back into the composer.
+        ShellCard {
+            objectName: "outboxCard"
+            visible: requests.outbox.length > 0
+            Layout.fillWidth: true
+            implicitHeight: outboxColumn.implicitHeight
+
+            ColumnLayout {
+                id: outboxColumn
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                spacing: 0
+
+                Repeater {
+                    model: requests.outbox
+
+                    delegate: RowLayout {
+                        id: waitingRow
+
+                        required property var modelData
+                        readonly property var attachments: modelData.attachments ?? []
+
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 32
+                        Layout.leftMargin: 12
+                        Layout.rightMargin: Theme.space.sm
+                        spacing: Theme.space.sm
+
+                        ShellIcon {
+                            name: "clock"
+                            size: 13
+                            color: requests.muted
+                        }
+                        Text {
+                            objectName: "outboxText-" + waitingRow.modelData.messageId
+                            Layout.fillWidth: true
+                            text: waitingRow.modelData.text.length > 0 || waitingRow.attachments.length === 0 ? waitingRow.modelData.text : qsTr("%n attachment(s)", "", waitingRow.attachments.length)
+                            textFormat: Text.PlainText
+                            color: requests.foreground
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                        }
+                        Text {
+                            objectName: "outboxStatus-" + waitingRow.modelData.messageId
+                            text: waitingRow.modelData.sending ? qsTr("Sending…") : qsTr("Waiting to send")
+                            color: requests.muted
+                            font.family: requests.uiFont
+                            font.pixelSize: Theme.type.meta.size
+                        }
+                        ShellButton {
+                            objectName: "outboxEdit-" + waitingRow.modelData.messageId
+                            implicitHeight: 24
+                            subtle: true
+                            text: qsTr("Edit")
+                            // On its way, the environment may already have it.
+                            enabled: !waitingRow.modelData.sending
+                            onClicked: Shell.dispatch("composer.outbox.edit", {
+                                messageId: waitingRow.modelData.messageId
+                            })
+                        }
+                    }
                 }
             }
         }

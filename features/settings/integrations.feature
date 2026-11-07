@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22002
 #   https://github.com/pingdotgg/t3code/pull/17569
 #   https://github.com/pingdotgg/t3code/pull/17688
 #   https://github.com/pingdotgg/t3code/pull/22048
@@ -297,6 +298,14 @@ Feature: Integrations settings
       When the user clears the data of "Work"
       Then the user is told "Could not clear Work's data"
       And "Work" is still listed
+    # Upstream #22002: clearing a profile's data left the pages' Cache Storage behind.
+    @backlog @desktop
+    Scenario: Clearing a profile's data removes what its pages stored, Cache Storage included
+      Given a page opened under "Work" stored responses in its Cache Storage and values in local storage
+      When the user clears the cookies and cache of "Work", or removes "Work"
+      Then the page finds neither its Cache Storage nor its local storage when it opens again under "Work"
+      And the data of "Personal" is untouched
+
 
     @backlog @desktop
     Scenario: The profile limit is twenty-four
