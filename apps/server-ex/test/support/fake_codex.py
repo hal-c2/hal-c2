@@ -636,7 +636,8 @@ for line in sys.stdin:
     # fails once while the FAKE_CODEX_CONSUME_FAIL file exists.
     elif method == "account/read":
         kind = os.environ.get("FAKE_CODEX_ACCOUNT", "chatgpt")
-        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": "pro"}
+        # FAKE_CODEX_PLAN is the planType the account reports (default "pro").
+        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": os.environ.get("FAKE_CODEX_PLAN", "pro")}
         send({"id": mid, "result": {"account": account, "requiresOpenaiAuth": True}})
     # FAKE_CODEX_RESET_CREDITS sets how many reset credits are banked (default two);
     # FAKE_CODEX_CONSUME_OUTCOME is what a redemption answers (default "reset").
@@ -653,9 +654,13 @@ for line in sys.stdin:
         else:
             credits = {"availableCount": int(count), "credits": [
                 {"status": "available", "expiresAt": 1800000000 + i} for i in range(int(count))]}
-        main = {"limitId": "codex", "planType": "pro",
+        # FAKE_CODEX_USAGE_PLAN is the planType the usage read reports ("none" omits it).
+        usage_plan = os.environ.get("FAKE_CODEX_USAGE_PLAN", os.environ.get("FAKE_CODEX_PLAN", "pro"))
+        main = {"limitId": "codex",
                 "primary": {"usedPercent": 0 if reset else 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
+        if usage_plan != "none":
+            main["planType"] = usage_plan
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},

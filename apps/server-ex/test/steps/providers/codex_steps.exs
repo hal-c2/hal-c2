@@ -1356,6 +1356,72 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- plan names ------------------------------------------------------------------------
+
+  step "Codex is signed in with the ChatGPT plan Codex reports as {string}",
+       %{args: [plan]} = context do
+    context = World.fake_providers(context)
+    World.put_env("FAKE_CODEX_PLAN", plan)
+    context
+  end
+
+  step "Codex is signed in with a ChatGPT plan named by a newer Codex", context do
+    context = World.fake_providers(context)
+    World.put_env("FAKE_CODEX_PLAN", "proultra9000")
+    Map.put(context, :reported_plan, "proultra9000")
+  end
+
+  step "Codex's account is read", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex"])
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Codex shows the account's email and its {string} plan", %{args: [plan]} = context do
+    assert %{"email" => "me@example.com", "type" => "chatgpt", "label" => ^plan} =
+             codex(context.providers)["auth"]
+
+    context
+  end
+
+  step "Codex shows the plan as {string}", %{args: [plan]} = context do
+    assert codex(context.providers)["auth"]["label"] == plan
+    context
+  end
+
+  step "Codex shows as signed in and its plan is shown by the plan's own name", context do
+    auth = codex(context.providers)["auth"]
+    assert auth["type"] == "chatgpt"
+    assert auth["email"] == "me@example.com"
+    assert auth["label"] == context.reported_plan
+    context
+  end
+
+  step "Codex's account says ChatGPT Pro from its cached login", context do
+    context = World.fake_providers(context)
+    World.put_env("FAKE_CODEX_PLAN", "pro")
+    context
+  end
+
+  @usage_plans %{
+    "ChatGPT Free" => "free",
+    "no plan" => "none",
+    "an unknown plan" => "plan-from-the-future"
+  }
+
+  step ~r/^Codex's usage read reports (?<plan>ChatGPT Free|no plan|an unknown plan)$/,
+       %{args: [plan]} = context do
+    World.put_env("FAKE_CODEX_USAGE_PLAN", Map.fetch!(@usage_plans, plan))
+    context
+  end
+
+  step ~r/^Codex shows the (?<plan>ChatGPT Free|ChatGPT Pro) plan$/, %{args: [plan]} = context do
+    assert codex(context.providers)["auth"]["label"] =~ plan
+    context
+  end
+
   # --- health states -----------------------------------------------------------------------
 
   step "the Codex binary path is the default", context do
@@ -2047,6 +2113,110 @@ Red"} <- StreamState.get(state, "message")[message],
              ),
              do: assert(File.read(Path.join(context.codex_shadow, name)) == shadow)
     end
+
+    context
+  end
+
+  # --- a shadow home's locks and stray files ------------------------------------------------
+
+  step "its {string} folder is a link to the shared home's", %{args: [name]} = context do
+    assert File.read_link!(Path.join(context.codex_shadow, name)) ==
+             Path.join(context.codex_shared, name)
+
+    context
+  end
+
+  step ~r/^a Codex instance's shadow home has its own "thread-writer-locks" folder holding (?<locks>no thread lock|a thread lock)$/,
+       %{args: [locks]} = context do
+    context = shadow_setup(context)
+    folder = Path.join(context.codex_shadow, "thread-writer-locks")
+    File.mkdir_p!(folder)
+    if locks == "a thread lock", do: File.write!(Path.join(folder, "native-1.lock"), "")
+    Map.put(context, :writer_locks, folder)
+  end
+
+  step "the folder is replaced by a link to the shared home's", context do
+    assert File.read_link!(context.writer_locks) ==
+             Path.join(context.codex_shared, "thread-writer-locks")
+
+    context
+  end
+
+  step "the folder is kept with a warning, and replaced once its locks are gone", context do
+    assert {:ok, %File.Stat{type: :directory}} = File.lstat(context.writer_locks)
+    File.rm_rf!(Path.join(context.writer_locks, "native-1.lock"))
+    assert {:ok, _} = HalC2.Codex.Home.env(@second)
+
+    assert File.read_link!(context.writer_locks) ==
+             Path.join(context.codex_shared, "thread-writer-locks")
+
+    context
+  end
+
+  step "the instance is enabled", context do
+    assert {:ok, [{"CODEX_HOME", _home}]} = context.prepare_result
+    context
+  end
+
+  step ~S|a Codex instance's shadow home has "auth.lock" as a link to the shared home's|,
+       context do
+    context = shadow_setup(context)
+    File.mkdir_p!(context.codex_shadow)
+    File.write!(Path.join(context.codex_shared, "auth.lock"), "")
+
+    File.ln_s!(
+      Path.join(context.codex_shared, "auth.lock"),
+      Path.join(context.codex_shadow, "auth.lock")
+    )
+
+    context
+  end
+
+  step ~S|the link is removed and the account keeps its own "auth.lock"|, context do
+    assert {:ok, _} = context.prepare_result
+
+    case File.lstat(Path.join(context.codex_shadow, "auth.lock")) do
+      {:ok, %File.Stat{type: type}} -> assert type == :regular
+      {:error, :enoent} -> :ok
+    end
+
+    context
+  end
+
+  step ~S|a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file|,
+       context do
+    context = shadow_setup(context)
+    File.mkdir_p!(context.codex_shadow)
+    File.write!(Path.join(context.codex_shared, ".sqlite-maintenance.lock"), "shared")
+    File.write!(Path.join(context.codex_shadow, ".sqlite-maintenance.lock"), "mine")
+    context
+  end
+
+  step "the lock is replaced by a link to the shared home's lock", context do
+    assert File.read_link!(Path.join(context.codex_shadow, ".sqlite-maintenance.lock")) ==
+             Path.join(context.codex_shared, ".sqlite-maintenance.lock")
+
+    context
+  end
+
+  step ~S|a Codex account's home folder holds only a ".DS_Store" file left by Finder|,
+       context do
+    context = shadow_setup(context)
+    File.mkdir_p!(context.codex_shadow)
+    File.write!(Path.join(context.codex_shadow, ".DS_Store"), "finder")
+    context
+  end
+
+  step "the account is set up", context do
+    Map.put(context, :prepare_result, HalC2.Codex.Home.env(@second))
+  end
+
+  step "its home is set up as if the folder were empty", context do
+    assert {:ok, [{"CODEX_HOME", home}]} = context.prepare_result
+    assert home == context.codex_shadow
+
+    assert File.read_link!(Path.join(context.codex_shadow, "config.toml")) ==
+             Path.join(context.codex_shared, "config.toml")
 
     context
   end

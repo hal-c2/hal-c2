@@ -574,7 +574,7 @@ Feature: Codex
     Then Codex shows the account's email and its ChatGPT Pro plan
 
   # Upstream #24978: after a downgrade the badge kept the plan cached in Codex's login token.
-  @backlog @mc
+  @mc
   Scenario Outline: Codex's plan follows its usage read after the plan changes
     Given Codex's account says ChatGPT Pro from its cached login
     And Codex's usage read reports <usage plan>
@@ -628,14 +628,12 @@ Feature: Codex
     And the user is told "Request copied · Send it to your workspace admin."
 
   # Upstream #24200: the top Pro plan is now called Pro 500.
-  @backlog @priority-low
   Scenario: A ChatGPT Pro 500 plan is shown by name
     Given Codex is signed in with the ChatGPT plan Codex reports as "promax"
     When Codex's usage has been checked
     Then Codex shows the account's email and its "ChatGPT Pro 500 Subscription" plan
 
   # Upstream #24200: OpenAI renamed its plans; Codex accounts showed the old names.
-  @backlog @priority-low
   Scenario Outline: Codex shows the ChatGPT plan by its current name
     Given Codex is signed in with the ChatGPT plan Codex reports as "<plan>"
     When Codex's account is read
@@ -648,7 +646,6 @@ Feature: Codex
       | team                        | ChatGPT Business Subscription        |
       | self_serve_business_prolite | ChatGPT Business Premium Subscription |
 
-  @backlog @priority-low
   Scenario: A ChatGPT plan HAL-C2 does not know still signs the account in
     Given Codex is signed in with a ChatGPT plan named by a newer Codex
     When Codex's account is read
@@ -1523,7 +1520,6 @@ Feature: Codex
       | the login file is a link                              | the login must be a real file, not a link                |
 
   # Upstream #18991: Finder metadata no longer blocks shadow-home setup
-  @backlog @priority-low
   Scenario: A Finder ".DS_Store" does not stop a Codex account's home being set up
     Given a Codex account's home folder holds only a ".DS_Store" file left by Finder
     When the account is set up
@@ -1531,7 +1527,6 @@ Feature: Codex
 
   # Upstream #17663: Codex 0.160 writes the lock at its home's root; a shadow home used
   # on its own kept a real one and the instance stayed disabled.
-  @backlog @priority-low
   Scenario: A Codex account's own sqlite maintenance lock is replaced by the shared one
     Given a Codex instance's shadow home holds its own ".sqlite-maintenance.lock" file
     When the instance is prepared
@@ -1540,14 +1535,12 @@ Feature: Codex
 
   # Upstream #26286: Codex 0.165 keeps one writer per thread through lock files in
   # "thread-writer-locks"; a shadow home with its own folder let two Codex processes write one thread.
-  @backlog @priority-high
   Scenario: Accounts sharing a Codex home share its thread writer locks
     Given a shared Codex home and a second Codex instance with its own shadow home
     When the second instance is prepared
     Then its "thread-writer-locks" folder is a link to the shared home's
 
   # Upstream #26286: a lock still in the shadow home's own folder may belong to a live writer.
-  @backlog
   Scenario Outline: A Codex account's own thread writer locks are replaced only when no thread is locked
     Given a Codex instance's shadow home has its own "thread-writer-locks" folder holding <locks>
     When the instance is prepared
@@ -1560,7 +1553,6 @@ Feature: Codex
       | a thread lock  | the folder is kept with a warning, and replaced once its locks are gone        |
 
   # Upstream #26286: Codex 0.166 guards its login with "auth.lock", which is each account's own.
-  @backlog
   Scenario: A Codex account's login lock is its own
     Given a Codex instance's shadow home has "auth.lock" as a link to the shared home's
     When the instance is prepared
