@@ -192,12 +192,14 @@ Feature: Thread menu and selecting several threads
     Then "A" is deleted
     And no thread is selected
 
+  # Upstream #10637: a context menu on draft threads in the sidebar
   @backlog @desktop @priority-low
   Scenario: A draft row has its own menu
     When the user opens the menu of a draft thread in the sidebar
     Then it offers Copy path or branch (only what the draft has), Project settings, and Discard draft
     And discarding shows the same undo notice as the hover discard
 
+  # Upstream #15436: the thread picker opens for unsent drafts
   @backlog @shared
   Scenario: Linking an unsent draft opens the thread picker
     Given a draft that has not been sent

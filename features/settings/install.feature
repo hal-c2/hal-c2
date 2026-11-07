@@ -246,6 +246,8 @@ Feature: Installing and uninstalling
   # Dropped: upstream #16676 and #16683 give the Electron app a launcher for the server CLI it
   # bundles, and a Settings action to put it on PATH. The Qt desktop bundles no server; the MC
   # is its own release, run by the operating system's service manager (background-service.feature).
+  # Upstream #16676: setup prompts name a t3 that runs on desktop installs
+  # Upstream #16683: Settings installs the t3 command
   @dropped @desktop
   Scenario Outline: The desktop app puts its bundled command on the PATH
     Given only the desktop app is installed
@@ -259,6 +261,7 @@ Feature: Installing and uninstalling
 
   # Dropped with the desktop's bundled command above: upstream #17351 refuses to link it behind
   # another t3 that comes first on the PATH. The hal-c2 command comes from the MC's install.
+  # Upstream #17351: the t3 command warns instead of installing behind another t3
   @dropped @desktop
   Scenario: The desktop app will not put its command behind another one on the PATH
     Given another "t3" comes earlier on the PATH than the folder the app would link into

@@ -206,6 +206,7 @@ Feature: What the engine projects for clients
     Then the page holds the whole turn, from the user's message to its last item
     And the steering messages do not count as turns of their own
 
+  # Upstream #19423: a notification that starts a run counts as a turn, so a woken thread's window stays bounded
   @mc @backlog
   Scenario: Automatic turns cannot make a page of history unbounded
     Given "t1" has hundreds of turns started by background work between two user messages

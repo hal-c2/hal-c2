@@ -425,7 +425,7 @@ Rectangle {
         // canSend reflects the text the controller has seen, which lags this
         // input by the debounce; with local text, let the controller validate
         // the send (it echoes the prompt back if it declines).
-        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0) {
+        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0 && (composer.model.editingQueuedRunId ?? null) === null) {
             return;
         }
         textDebounce.stop();
@@ -1412,11 +1412,13 @@ Rectangle {
                             id: primaryAction
                             objectName: "primaryAction"
 
-                            readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
-                            readonly property bool sendable: composer.ready && !stopMode && (composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
+                            // An edit of a queued message saves with its Update button, even emptied (the controller says why not).
+                            readonly property bool editing: composer.ready && (composer.model.editingQueuedRunId ?? null) !== null
+                            readonly property bool stopMode: composer.ready && composer.model.isRunning && !editing && input.text.trim().length === 0 && composer.attachments.length === 0
+                            readonly property bool sendable: composer.ready && !stopMode && (editing || composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                             // A send during a turn joins it or waits behind it, per the
                             // follow-up setting; the button says which before the click.
-                            readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
+                            readonly property string followUp: composer.model?.isRunning && !stopMode && !editing ? (composer.model.followUpBehavior ?? "steer") : ""
                             readonly property color accent: Theme.palette.color("accent", "#3b6fe0")
 
                             implicitWidth: Theme.control.md
@@ -1427,8 +1429,12 @@ Rectangle {
                             Accessible.role: Accessible.Button
                             // With a plan offered, sending implements it, or refines it with what was typed.
                             readonly property string planAction: composer.model?.planAction ?? ""
-                            Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
+                            // What the button does, which is also its accessible name.
+                            readonly property string label: stopMode ? qsTr("Stop")
+                                : editing ? qsTr("Update queued message")
+                                : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
                                 : planAction === "refine" ? qsTr("Refine") : planAction === "implement" ? qsTr("Implement") : qsTr("Send")
+                            Accessible.name: label
                             ToolTip.visible: hovered && followUp.length > 0
                             ToolTip.delay: 400
                             ToolTip.text: followUp === "steer"

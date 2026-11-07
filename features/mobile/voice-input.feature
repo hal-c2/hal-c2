@@ -222,6 +222,7 @@ Feature: Dictating a message
     When dictation ends
     Then the music plays again
 
+  # Upstream #15502: keep dictation running across navigation
   @backlog @mobile
   Scenario: Dictation keeps running when the user navigates away
     Given the user is dictating into a prompt
@@ -229,6 +230,7 @@ Feature: Dictating a message
     Then recording continues behind a small pill showing the time and its target
     And finishing returns the transcript to the prompt where it began
 
+  # Upstream #17896: choose the microphone order for voice input
   @backlog @mobile
   Scenario: Dictation records from the first connected microphone in the user's order
     Given the user ordered the microphones as the built-in microphone, then Bluetooth
@@ -236,6 +238,7 @@ Feature: Dictating a message
     When the user starts dictating
     Then the phone's own microphone records
 
+  # Upstream #17896: choose the microphone order for voice input
   @backlog @mobile
   Scenario: A new microphone joins the order just above its kind
     Given the user's microphone order has a row for other Bluetooth microphones
