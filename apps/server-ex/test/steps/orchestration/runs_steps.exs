@@ -681,14 +681,14 @@ defmodule HalC2.Steps.Orchestration.Runs do
             "runId" => context.running
           })
 
+        # The app-server goes, and its event stream with it, so nothing can report the
+        # subagent again. A failure Codex itself reports leaves the subagent to carry on
+        # in its own thread (`codex_turn_end_test.exs`).
         "failed" ->
-          notify(context, "turn/completed", %{
-            "turn" => %{
-              "id" => native_turn(context),
-              "status" => "failed",
-              "error" => %{"message" => "boom"}
-            }
-          })
+          {_, runtime} = World.codex_runtime(context, context.thread)
+          os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+          {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+          context
 
         "cancelled" ->
           World.command(context, %{
