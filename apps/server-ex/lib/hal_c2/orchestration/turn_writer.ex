@@ -329,10 +329,11 @@ defmodule HalC2.Orchestration.TurnWriter do
   Opens an approval prompt: a pending runtime request, the waiting approval item,
   and its node. `request_kind` is a `ProviderRequestKind` ("command", "file-change",
   "file-read", "permission"). Returns `{state, request_id}`; the runtime keeps what
-  it needs to answer the provider under that id.
+  it needs to answer the provider under that id. `fields` go on the approval item
+  as it is created, such as the provider's reason for asking.
   """
-  def open_request(state, native, request_kind, prompt, options \\ nil),
-    do: open(state, native, {:approval, request_kind, prompt, options})
+  def open_request(state, native, request_kind, prompt, options \\ nil, fields \\ %{}),
+    do: open(state, native, {:approval, request_kind, prompt, options, fields})
 
   @doc """
   Opens questions for the user (`OrchestrationV2UserInputQuestion`s): a pending
@@ -364,8 +365,8 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     {node_kind, request_kind, item_fields} =
       case what do
-        {:approval, kind, prompt, options} ->
-          fields = %{"requestId" => request_id, "requestKind" => kind}
+        {:approval, kind, prompt, options, extra} ->
+          fields = Map.merge(extra, %{"requestId" => request_id, "requestKind" => kind})
 
           fields =
             if(is_binary(prompt) and prompt != "",

@@ -788,7 +788,7 @@ Feature: Claude
     Then the thread shows the message that resumed it
     And the parent thread does not
 
-  @backlog @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A Claude subagent cancelled by a restart and then resumed keeps updating its own thread
     Given a Claude subagent was working when the MC restarted
     And recovery marked it cancelled
@@ -822,7 +822,7 @@ Feature: Claude
     And the plan stays pending until the user answers
 
   # Upstream #17963: Claude's plan mode asks before writes even in Auto and Full access
-  @backlog @priority-high
+  @priority-high
   Scenario: Claude in plan mode asks before a write whatever the access mode
     Given a Claude thread in plan mode with full access
     When Claude asks to write a file while planning
@@ -1121,7 +1121,7 @@ Feature: Claude
       | --dangerously-skip-permissions | bypassPermissions |
 
   # Upstream #15687: on a model without Auto, Claude ran the first turn in Manual and follow-ups failed retrying Auto.
-  @backlog @priority-high
+  @priority-high
   Scenario: A Claude thread in auto on a model without it keeps working on follow-ups
     Given a Claude thread in auto on a model that Claude runs without its auto mode
     And Claude ran the first turn in its default mode
@@ -1658,7 +1658,7 @@ Feature: Claude
     And Claude continues from the compacted conversation
 
   # Upstream #21151: reverting to a turn that ended in a subagent's message keeps the thread working.
-  @backlog @priority-high
+  @priority-high
   Scenario: Reverting a Claude thread to a turn that ended in a subagent keeps it working
     Given a Claude turn whose last message came from one of its subagents
     When the user reverts the thread to that turn
@@ -1666,7 +1666,7 @@ Feature: Claude
     Then Claude answers from the conversation as it stood at that turn
 
   # Upstream #25695: an interrupted run after a revert kept the old conversation head pinned.
-  @backlog @priority-high
+  @priority-high
   Scenario: A run stopped after a revert keeps what Claude already wrote
     Given the user reverted a Claude thread to an earlier turn
     And a later run was stopped after Claude wrote part of its reply
@@ -1675,24 +1675,60 @@ Feature: Claude
     And reverting again and sending still works
 
   # Upstream #25695: a run stopped before Claude wrote anything leaves the conversation as it was.
-  @backlog
   Scenario: A run stopped before Claude wrote anything after a revert continues from the revert
     Given the user reverted a Claude thread to an earlier turn
     And a later run was stopped before Claude wrote anything
     When the user sends a new message
     Then Claude continues from the turn the thread was reverted to
 
+  # A run that failed leaves the resume point cleared: Claude may have failed on it, and
+  # resuming the whole conversation is how the thread recovers.
+  @mc @plugin-claude
+  Scenario: A revert Claude cannot resume at does not stop the thread
+    Given the user reverted a Claude thread to a message Claude cannot resume at
+    When the next message fails because Claude cannot resume there
+    Then Claude answers the message after it from the whole conversation
+
   # Upstream #25660: an MCP registration timeout before the prompt was sent dropped the native session.
-  @backlog @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A turn that failed before its prompt was sent keeps the Claude session
-    Given two Claude turns failed because HAL-C2's tools did not register in time
+    Given a Claude thread another agent worked on since Claude last ran
+    And two Claude turns failed before Claude got their prompts
+    And a Claude turn ended while Claude started for it
     When the user sends a new message
     Then Claude resumes its original session
     And the context the failed turns did not send is sent with the new message
 
+  # A start that outlived its caller's timeout can end after the next run started. The next
+  # run resumed Claude where it is now, and counted what to hand over from the ended one.
+  @mc @plugin-claude
+  Scenario: A Claude turn that ended while Claude started leaves the next turn's resume point alone
+    Given the user reverted a Claude thread to an earlier turn
+    And a Claude turn ended while Claude started for it, after the next one started
+    When Claude's process is let go and the user sends a new message
+    Then Claude answers from the whole conversation, the next turn's exchange included
+
+  @mc @plugin-claude
+  Scenario: A Claude turn that ended while Claude started still owes what it did not send
+    Given a Claude thread another agent worked on since Claude last ran
+    And a Claude turn ended while Claude started for it, after the next one started
+    When the user sends a new message
+    Then the context the failed turns did not send is sent with the new message
+
+  # What the next turn was handed is handed once more: a repeat costs less than lost context.
+  @mc @plugin-claude
+  Scenario: A Claude turn that ended while Claude started still owes what it did not send after the next turn's handover
+    Given a Claude thread another agent worked on since Claude last ran
+    And a Claude turn ended while Claude started for it, and the next one was handed another agent's work
+    When the user sends a new message
+    Then the context the failed turns did not send is sent with the new message
+
   # Upstream #25372: a stalled registration failed a resumed turn outright, and the old Claude
   # process could still be running when its replacement started.
-  @backlog @priority-high
+  # Dropped: the MC registers nothing for a turn to wait on. HAL-C2's tools reach Claude
+  # in `--mcp-config` at launch (`HalC2.Claude.McpConfig`), and Claude Code connects to
+  # them itself, so no turn stalls or fails on a registration.
+  @dropped @priority-high
   Scenario Outline: A stalled registration of HAL-C2's tools is retried once only for a resumed session
     Given the user sends a message to <session>
     And HAL-C2's tools do not register with Claude within 90 seconds
@@ -1704,7 +1740,8 @@ Feature: Claude
       | a Claude thread starting afresh | the turn fails without a retry                                                  |
 
   # Upstream #25372: the registration timeout keeps its own message through the failure report.
-  @backlog
+  # Dropped with the registration wait above: no turn fails on one.
+  @dropped
   Scenario: A turn that failed because HAL-C2's tools did not register says so
     Given HAL-C2's tools did not register with Claude in time, even after the retry
     Then the thread's error says the tools did not register in time, not only that the turn failed
@@ -1993,7 +2030,7 @@ Feature: Claude
       | 2.1.279 | graceful    |
       | 2.1.280 | unknown     |
 
-  @backlog @mc @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A Claude-initiated result does not end a /compact turn early
     Given a resumed Claude thread whose previous process left a background task
     When the user compacts the thread
@@ -2024,7 +2061,8 @@ Feature: Claude
     When Claude reports a usage limit while the subagent runs
     Then the subagent's row and thread still show "haiku"
 
-  @backlog @mc @priority-high
+  # Upstream #14860: Claude Code's `tool_use_meta` titles an MCP call and names its server.
+  @mc @priority-high
   Scenario: Claude MCP tool calls show their names and icons
     When Claude calls an MCP tool
     Then the item is titled with the tool's display name and server, with its icon
@@ -2258,7 +2296,11 @@ Feature: Claude
     And the log names the servers but none of the error text
 
   # Upstream #24654: tool search set to an auto mode sent every tool schema and missed the cache.
-  @backlog @mc @plugin-claude
+  # Dropped: Claude Code keeps tool search on when ENABLE_TOOL_SEARCH is unset, and once an
+  # auto mode turns it on in a conversation it stays on, so the schemas are not sent again
+  # (https://code.claude.com/docs/en/mcp, "Configure tool search"). The MC leaves the
+  # variable to the user's settings rather than overriding a threshold they chose.
+  @dropped @mc @plugin-claude
   Scenario Outline: Claude keeps tool search on unless the user's settings turn it off
     Given the user's Claude settings set ENABLE_TOOL_SEARCH to <value>
     When a Claude turn starts
@@ -2355,7 +2397,8 @@ Feature: Claude
     And Claude is told the user asked for "review" and where its instructions are
 
   # Upstream #19196: a wake run that only got a background completion never ended.
-  @backlog @mc @plugin-claude @priority-high
+  # HAL-C2's ends at once: with nothing of Claude's to follow, it has nothing to wait for.
+  @mc @plugin-claude @priority-high
   Scenario: A Claude wake run ends when Claude never opens the wake turn
     Given a Claude thread is woken by a background subagent finishing
     When Claude does not start a turn for the wake within two minutes
@@ -2373,7 +2416,7 @@ Feature: Claude
     And the thread stops showing working
 
   # Upstream #19543: a later empty notification hid the usage-limit failure before it.
-  @backlog @mc @plugin-claude @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A Claude usage limit is not hidden by an empty notice that follows it
     Given a Claude turn hits a usage limit
     When Claude then reports a background task notice with nothing in it
@@ -2389,7 +2432,7 @@ Feature: Claude
     And an existing child thread keeps its title and model
 
   # Upstream #21188: rolling back a Claude fork's first run lost the history it inherited.
-  @backlog @mc @plugin-claude @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: Rolling back a Claude fork's first turn keeps the history it was forked with
     Given a Claude thread forked from another thread's second turn
     And the fork has run one turn of its own
@@ -2397,15 +2440,15 @@ Feature: Claude
     Then Claude still has the conversation the fork inherited
 
   # Upstream #21806: Full access approved requests Claude's settings meant to ask the user about.
-  @backlog @mc @shared @plugin-claude @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @plugin-claude @priority-high
   Scenario: A Claude whose settings restrict bypass still asks the user in Full access
     Given the project's or the managed Claude settings restrict bypassing permissions
     When a Claude thread in Full access wants to run a tool those settings guard
     Then the user is asked for permission
     And the thread says Claude's settings limited Full access
 
-  # Upstream #21806: Full access asks when Claude's settings cannot be read.
-  @backlog @mc @plugin-claude @priority-high
+  # Upstream #21806: settings HAL-C2 cannot read limit only the turn that read them.
+  @mc @plugin-claude @priority-high
   Scenario: Unreadable Claude settings make a Full access turn ask
     Given the project's Claude settings cannot be read
     When a Claude thread in Full access runs a turn
@@ -2552,7 +2595,7 @@ Feature: Claude
 
   # Upstream #22546: in Full access Claude still asks when its own safety check or a user ask rule
   # fires; the approval says why.
-  @backlog @mc @shared @plugin-claude @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @plugin-claude @priority-high
   Scenario Outline: A Claude approval in Full access says why Claude asked
     Given a Claude thread in Full access
     When <cause> makes Claude ask to run a command
@@ -2563,6 +2606,14 @@ Feature: Claude
       | cause                                               | explanation               |
       | Claude's own safety check on a recursive delete     | Claude's own safety check |
       | an ask rule in the user's Claude permissions        | the user's ask rule       |
+
+  # Upstream #22546: only an ask rule and Claude's own safety checks are named; a hook that asks is neither.
+  @mc @plugin-claude
+  Scenario: A Claude approval a hook asked for in Full access names no Full access check
+    Given a Claude thread in Full access
+    When a hook in the user's Claude settings makes Claude ask to run a command
+    Then the approval shows Claude's reason
+    And the approval does not say which Full access check asked
 
   # Upstream #22546: when Claude forbids remembering the answer, the approval offers only decline
   # and approve.

@@ -1211,6 +1211,13 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The provider's own reason for asking, when it says more than the prompt. */
+    reason: Schema.optional(Schema.String),
+    /**
+     * Why a Full access thread still asked: one of the provider's own safety checks
+     * no setting skips, or an ask rule in the user's provider permissions.
+     */
+    fullAccessOverride: Schema.optional(Schema.Literals(["provider_check", "ask_rule"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1957,6 +1964,13 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The provider's own reason for asking, when it says more than the prompt. */
+    reason: Schema.optional(Schema.String),
+    /**
+     * Why a Full access thread still asked: one of the provider's own safety checks
+     * no setting skips, or an ask rule in the user's provider permissions.
+     */
+    fullAccessOverride: Schema.optional(Schema.Literals(["provider_check", "ask_rule"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
