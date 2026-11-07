@@ -439,7 +439,7 @@ Feature: Writing to an agent from a phone
     Then the attachment shows how much has uploaded
     And only a failed upload stops the message from being sent
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A failed upload can be retried
     Given an attachment failed to upload
     When the user retries the upload
@@ -500,7 +500,7 @@ Feature: Writing to an agent from a phone
     When the user goes back to the home screen
     Then the upload still completes
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The user removes an attachment from the draft
     Given the draft has a photo attached
     When the user opens the photo and removes it from the draft
@@ -986,7 +986,7 @@ Feature: Writing to an agent from a phone
     And it is not shown below the agent's latest reply
 
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A usage limit is explained above the composer
     Given the provider has hit its usage limit for the thread
     Then the user is told when the limit resets
@@ -1026,7 +1026,7 @@ Feature: Writing to an agent from a phone
     Then "also update docs" runs after the current turn
 
   # Upstream #21473: a queue holding only the agent's own wakes showed no way to resume on the phone.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A queue held with only the agent's own wakes can be resumed on the phone
     Given the user stopped a turn while a delegated task result was queued in the thread
     And no message of the user's is queued
