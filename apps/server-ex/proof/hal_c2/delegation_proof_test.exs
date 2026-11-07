@@ -24,9 +24,10 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.finished/3" => "finished",
       "HalC2.Orchestration.Delegation.settle_if_quiet/1" => ~w(finished check sweep),
       "HalC2.Orchestration.Delegation.report/5" => "report-fail",
-      "HalC2.Orchestration.Delegation.cancel/2" => ~w(cancel cancel-refused),
+      # Whether the child's interrupt stops its own tasks too is a later cancel of theirs.
+      "HalC2.Orchestration.Delegation.cancel/3" => ~w(cancel cancel-refused),
       # Stop on the caller cancels each task it has not ended; Stop on a child that
-      # never ran cancels its task. Both are cancel/2, whatever the child is doing.
+      # never ran cancels its task. Both are cancel/3, whatever the child is doing.
       "HalC2.Orchestration.Delegation.stop_delegated/1" => ~w(cancel cancel-refused),
       "HalC2.Orchestration.Delegation.child_stopped/1" => "cancel",
       "HalC2.Orchestration.Delegation.reconcile/2" => ~w(reconcile-boot reconcile-after),

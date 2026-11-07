@@ -2717,7 +2717,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     result =
       HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
-        "threadId" => World.thread_id(context, "subagent")
+        "threadId" => World.thread_id(context, "subagent"),
+        "stopDelegated" => true
       })
 
     Map.put(context, :stop_result, result)
@@ -2791,11 +2792,36 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # The Stop a client's Stop button sends.
   defp press_stop(context, parent) do
     HalC2.Orchestration.dispatch(%{
       "type" => "run.interrupt",
-      "threadId" => World.thread_id(context, parent)
+      "threadId" => World.thread_id(context, parent),
+      "stopDelegated" => true
     })
+
+    context
+  end
+
+  step "an agent interrupts the run of {string} with hal_c2_thread_interrupt",
+       %{args: [parent]} = context do
+    assert {:ok, %{"interrupted" => true}} =
+             World.mcp_tool(context, parent, "hal_c2_thread_interrupt", %{
+               "threadId" => World.thread_id(context, parent)
+             })
+
+    World.await_runs(context, parent, ["completed", "interrupted"])
+    context
+  end
+
+  step "the subagent of {string} keeps working", %{args: [name]} = context do
+    task_id = context.named_tasks[name]
+    child = World.state(context, name)
+    assert StreamState.list(child, "run") |> Enum.map(& &1["status"]) == ["running"]
+
+    assert StreamState.get(World.state(context, context.task_parent), "subagent")[task_id][
+             "status"
+           ] == "running"
 
     context
   end

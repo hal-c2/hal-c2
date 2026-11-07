@@ -583,7 +583,12 @@ defmodule HalC2.Mcp.Tools.Threads do
           %{"id" => model["slug"], "label" => model["name"]}
           |> then(&if(options? and options, do: Map.put(&1, "options", options), else: &1))
         end,
-      "runtimeModes" => provider["supportedRuntimeModes"] || @runtime_modes,
+      # As `Delegation` checks a requested mode: an empty list offers every mode.
+      "runtimeModes" =>
+        case provider["supportedRuntimeModes"] do
+          [_ | _] = modes -> modes
+          _ -> @runtime_modes
+        end,
       "canRunChildTask" => constraints == [],
       "canRunCrossProviderChildTask" => constraints == [],
       "constraints" => constraints

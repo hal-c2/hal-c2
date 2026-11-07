@@ -38,7 +38,10 @@ defmodule HalC2.DelegationPropTest do
     leaves the child nothing queued, whatever the child was doing (also nothing at
     all); cancelling one that ended is refused and changes nothing;
   - the user stopping a child that never started a run cancels its task, which wakes
-    no one.
+    no one;
+  - an interrupt of the caller's run that is not the user's Stop (an agent's
+    `hal_c2_thread_interrupt`, a scheduled prompt's clean-up) leaves the task and its
+    child as they were: only its result stops waking that run.
   """
 
   use ExUnit.Case, async: false
@@ -104,7 +107,8 @@ defmodule HalC2.DelegationPropTest do
         {1, {:call, __MODULE__, :restart, []}},
         {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}},
         {1, {:call, __MODULE__, :check, []}},
-        {1, {:call, __MODULE__, :cancel, []}}
+        {1, {:call, __MODULE__, :cancel, []}},
+        {1, {:call, __MODULE__, :interrupt_caller, []}}
       ] ++
         if(state.runs == [], do: [{1, {:call, __MODULE__, :stop_child, []}}], else: []) ++
         if(running == [],
@@ -310,6 +314,8 @@ defmodule HalC2.DelegationPropTest do
 
   def next_state(state, _result, {:call, _, :stop_child, []}), do: state
 
+  def next_state(state, _result, {:call, _, :interrupt_caller, []}), do: state
+
   def next_state(state, _result, {:call, _, :delegate_blank, _}), do: state
 
   def next_state(state, _result, {:call, _, :restart_unresumed, []}) do
@@ -359,6 +365,18 @@ defmodule HalC2.DelegationPropTest do
           task["subagent"]["status"] == "cancelled" and
             task["subagent"]["completionDelivery"]["state"] == "disposed" and
             not Enum.any?(runs(child), &(&1["status"] == "queued"))
+  end
+
+  # Nothing of the task changes but its delivery, which the interrupted run no longer
+  # waits on. A cancel cascading from it would show here, or in the checks of the
+  # commands after it (the task settled while its child works).
+  def postcondition(_state, {:call, _, :interrupt_caller, []}, {before, task, _child}) do
+    unwaited = fn task ->
+      update_in(task, ["subagent"], &Map.drop(&1, ["completionDelivery", "updatedAt"]))
+    end
+
+    agree?(task) and delivered_once?() and pending_has_wake?() and wakes_agree?() and
+      unwaited.(before) == unwaited.(task)
   end
 
   # Every command returns the task before and after it, and the child's stream after.
@@ -778,6 +796,17 @@ defmodule HalC2.DelegationPropTest do
   def stop_child do
     observe(fn ->
       HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @child})
+    end)
+  end
+
+  # An agent's `hal_c2_thread_interrupt` of the caller's turn, not the user's Stop.
+  def interrupt_caller do
+    observe(fn ->
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => @parent,
+        "runId" => "parent-run"
+      })
     end)
   end
 

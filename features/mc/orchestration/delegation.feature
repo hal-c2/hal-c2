@@ -961,6 +961,15 @@ Feature: Delegating tasks to subagents
     When the user presses Stop on "parent" again
     Then the subagent of "one" is stopped
 
+  # Only the user's Stop reaches the subagents: an agent interrupting a run (or a scheduled
+  # prompt's clean-up, or a move) stops that run and leaves the delegated work going.
+  @mc
+  Scenario: An agent interrupting a thread's run leaves its delegated tasks running
+    Given the agent in "parent" delegated task "one" in an earlier turn
+    And the subagent of "one" is still working
+    When an agent interrupts the run of "parent" with hal_c2_thread_interrupt
+    Then the subagent of "one" keeps working
+
   @mc
   Scenario Outline: Acknowledging tasks of a queued wake trims or cancels the wake
     Given a wake for the finished tasks "one" and "two" of "parent" is queued

@@ -230,8 +230,12 @@ defmodule HalC2.Orchestration.Delegation do
   `task_cancel`: cancels a task that has not ended, what its child has queued, a user's
   messages too, and interrupts the child; its result, if any, stays. A task whose child
   has nothing left to interrupt is cancelled too: nothing would ever end it otherwise.
+
+  The child's interrupt stops what the child delegated in turn, as the user's Stop does,
+  unless `stop_delegated: false`: a caller that stops the child's tasks itself
+  (`Orchestration.stop_plugin_thread/3`) asks for one cascade, not two.
   """
-  def cancel(thread_id, task_id) do
+  def cancel(thread_id, task_id, opts \\ []) do
     with %{} = task <-
            subagent(thread_id, task_id) ||
              {:error, "task_not_found", "The task was not found for this thread."},
@@ -246,7 +250,11 @@ defmodule HalC2.Orchestration.Delegation do
       hook(:cancelling, task_id)
 
       _ =
-        Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => task["childThreadId"]})
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => task["childThreadId"],
+          "stopDelegated" => Keyword.get(opts, :stop_delegated, true)
+        })
 
       {:ok, status(thread_id, task_id)}
     else
@@ -771,7 +779,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   Stops what `thread_id` delegated, from whichever turn, as the user's Stop on the thread
-  does: each task that has not ended is cancelled (`cancel/2`), which stops its child and,
+  does: each task that has not ended is cancelled (`cancel/3`), which stops its child and,
   in turn, what the child delegated. Each is cancelled in a process of its own, so a
   child slow to stop holds up neither the Stop nor the others.
   """
@@ -788,7 +796,7 @@ defmodule HalC2.Orchestration.Delegation do
   @doc """
   Called when the user stops `thread_id`: when it is the child of a task that has not
   ended and has not started a run for it, nothing would end that task, so it is
-  cancelled (`cancel/2`), and its caller is not woken for it. A child that ran ends its
+  cancelled (`cancel/3`), and its caller is not woken for it. A child that ran ends its
   task from how that run ended, as it always does.
   """
   def child_stopped(thread_id) do
