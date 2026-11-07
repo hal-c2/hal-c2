@@ -474,10 +474,10 @@ defmodule HalC2.Auth do
     }
   end
 
-  @doc "The address a request came from as clients list it, IPv4 unwrapped."
-  def client_address(nil), do: nil
+  # The address a request came from as clients list it, IPv4 unwrapped.
+  defp client_address(nil), do: nil
 
-  def client_address(ip) do
+  defp client_address(ip) do
     ip =
       case ip do
         {0, 0, 0, 0, 0, 0xFFFF, _, _} -> :inet.ipv4_mapped_ipv6_address(ip)
