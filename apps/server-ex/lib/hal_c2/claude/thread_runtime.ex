@@ -583,19 +583,19 @@ defmodule HalC2.Claude.ThreadRuntime do
     %{state | interrupted: true}
   end
 
+  # What a CLI stopped for another instance's (`ensure_session/2`), or one killed for
+  # not answering on reattaching, had already sent belongs to no turn of this one, and
+  # its checkpoints would save this state over its dir.
   @impl true
+  def handle_info({:claude, session, _message}, %{session: current} = state)
+      when session != current,
+      do: {:noreply, state}
+
   def handle_info({:claude, _session, {:checkpoint, checkpoint}}, state),
     do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
 
   def handle_info(:durable_save, state),
     do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
-
-  # What a CLI stopped for another instance's (`ensure_session/2`) had already sent
-  # belongs to no turn of this one.
-  @impl true
-  def handle_info({:claude, session, _message}, %{session: current} = state)
-      when session != current,
-      do: {:noreply, state}
 
   def handle_info({:claude, _session, {:message, message}}, state),
     do: {:noreply, receive_message(message, state)}
