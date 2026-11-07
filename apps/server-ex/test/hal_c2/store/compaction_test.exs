@@ -106,10 +106,16 @@ defmodule HalC2.Store.CompactionTest do
     :ok = Store.put_meta("import.thread.t1", "{}")
     assert %{events: 0} = Compaction.run(Store)
 
+    # Other threads go on changing while the import waits, and later runs move past it.
+    {:ok, last} = Store.append([{:thread, "t2", [{"thread", "t2", %{"s" => %{"title" => "x"}}}]}])
+    assert %{events: 0} = Compaction.run(Store)
+    assert Store.meta(path, "compaction.through") == Integer.to_string(last)
+
     :ok = Store.delete_meta("import.thread.t1")
     before = events(path)
     assert %{streams: 1, events: 1} = Compaction.run(Store)
     same_from_every_offset(before, path)
+    assert Store.meta(path, "compaction.skipped") == "{}"
   end
 
   test "a later run reads only the entities changed since the last", %{path: path} do

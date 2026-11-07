@@ -22,7 +22,7 @@ defmodule HalC2.Store.Compaction do
   Runs, turn items and everything else in the log stay as they are: rollbacks and
   the space history read those, and they are not superseded. A thread whose import
   is still running is left alone, as `HalC2.Import.PreviousInstall` resumes it from
-  its event count.
+  its event count; the first run after its import finishes compacts it.
   """
 
   require Logger
@@ -32,6 +32,7 @@ defmodule HalC2.Store.Compaction do
   @kinds ~w(thread message)
   @batch 50
   @through "compaction.through"
+  @skipped "compaction.skipped"
 
   @type op :: {:rewrite, pos_integer, String.t(), String.t(), Patch.t()} | {:delete, pos_integer}
   @type report :: %{
@@ -53,12 +54,22 @@ defmodule HalC2.Store.Compaction do
     through = if opts[:all], do: 0, else: String.to_integer(Store.meta(path, @through) || "0")
     importing = HalC2.Import.PreviousInstall.unfinished(path)
     ends = Store.stream_ends(path, "thread", through)
-    {skipped, ends} = Enum.split_with(ends, fn {id, _} -> MapSet.member?(importing, id) end)
+    log_end = ends |> Enum.map(&elem(&1, 1)) |> Enum.max(fn -> through end)
+
+    lasts = Map.new(ends)
+
+    # Each thread to plan, by the seq it has changed since: those with events since the
+    # last run, and those an earlier run skipped while their import ran, from then.
+    # Threads still importing wait for a later run.
+    {waiting, due} =
+      Map.new(ends, fn {id, _} -> {id, through} end)
+      |> Map.merge(JSON.decode!(Store.meta(path, @skipped) || "{}"), fn _, a, b -> min(a, b) end)
+      |> Map.split_with(fn {id, _} -> MapSet.member?(importing, id) end)
 
     report =
-      ends
-      |> Enum.reduce(%{streams: 0, events: 0, rewritten: 0}, fn {id, last}, report ->
-        case plan(path, id, last, since: through) do
+      due
+      |> Enum.reduce(%{streams: 0, events: 0, rewritten: 0}, fn {id, since}, report ->
+        case plan(path, id, Map.get(lasts, id, log_end), since: since) do
           [] ->
             report
 
@@ -75,22 +86,10 @@ defmodule HalC2.Store.Compaction do
         end
       end)
 
-    :ok =
-      Store.put_meta(store, @through, Integer.to_string(log_end(path, through, ends, skipped)))
+    :ok = Store.put_meta(store, @skipped, JSON.encode!(waiting))
+    :ok = Store.put_meta(store, @through, Integer.to_string(log_end))
 
     Map.put(report, :reclaimable, Store.space(path).free)
-  end
-
-  # How far the next run may start: the log's end, or short of the first event since
-  # `through` of a thread skipped while its import ran, so the next run plans it all.
-  defp log_end(path, through, ends, skipped) do
-    last = (ends ++ skipped) |> Enum.map(&elem(&1, 1)) |> Enum.max(fn -> through end)
-
-    firsts =
-      for {id, _} <- skipped,
-          do: Store.reduce_stream(path, id, through, nil, fn e, _ -> e.seq - 1 end, limit: 1)
-
-    Enum.min([last | firsts])
   end
 
   @doc """

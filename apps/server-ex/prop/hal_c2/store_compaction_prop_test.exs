@@ -9,7 +9,9 @@ defmodule HalC2.StoreCompactionPropTest do
   entities, the seqs they were created, changed and deleted at, the stream's last
   seq and its `updated_at`. A compaction runs over every thread or, as the MC's
   background one does, over what changed since the last; either way a compaction of
-  every thread straight after it removes nothing.
+  every thread straight after it removes nothing. Imports start and finish on streams:
+  compaction leaves a stream alone while its import runs, and the runs after it
+  finishes catch up on it, so the compaction of every thread still finds nothing.
   `HalC2.StoreCompactionParallelPropTest` runs compaction alongside appends and
   resumes.
   """
@@ -47,7 +49,8 @@ defmodule HalC2.StoreCompactionPropTest do
   # --- model ------------------------------------------------------------------
 
   # events: stream => [event] oldest first, as written. seq: the log's last seq.
-  def initial_state, do: %{seq: 0, events: %{}}
+  # importing: the streams an import is still bringing in.
+  def initial_state, do: %{seq: 0, events: %{}, importing: MapSet.new()}
 
   def command(state), do: commands_for(state, :sequential)
 
@@ -59,7 +62,15 @@ defmodule HalC2.StoreCompactionPropTest do
         {6, {:call, __MODULE__, :append, [oneof(@streams), changes(mode), state.seq]}},
         {3, {:call, __MODULE__, :resume, [oneof(@streams), offset(state)]}},
         {2, {:call, __MODULE__, :compact, [mode, boolean()]}}
-      ] ++ if(mode == :sequential, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
+      ] ++
+        if(mode == :sequential,
+          do: [
+            {1, {:call, __MODULE__, :restart, []}},
+            {3, {:call, __MODULE__, :import_starts, [oneof(@streams)]}},
+            {3, {:call, __MODULE__, :import_finishes, [oneof(@streams)]}}
+          ],
+          else: []
+        )
     )
   end
 
@@ -67,7 +78,18 @@ defmodule HalC2.StoreCompactionPropTest do
   # Concurrent appends to one entity may land in either order, so they never append
   # to a string, which only the order they were generated in makes valid.
   defp changes(:parallel), do: resize(5, list(no_appends()))
-  defp changes(:sequential), do: resize(5, list(PatchGenerators.event_raw()))
+
+  defp changes(:sequential),
+    do: resize(5, list(frequency([{3, PatchGenerators.event_raw()}, {2, superseded()}])))
+
+  # An update of one thread or message entity, so a stream gathers events compaction
+  # removes, as any other kind or entity would leave it nothing to do.
+  defp superseded do
+    let {{_kind, _id, {_op, sets, appends, unsets, quiet}}, kind} <-
+          {PatchGenerators.event_raw(), oneof(["thread", "message"])} do
+      {kind, "e1", {:update, sets, appends, unsets, quiet}}
+    end
+  end
 
   defp no_appends do
     let {kind, id, {op, sets, _appends, unsets, quiet}} <- PatchGenerators.event_raw() do
@@ -77,6 +99,12 @@ defmodule HalC2.StoreCompactionPropTest do
 
   defp offset(%{seq: 0}), do: 0
   defp offset(state), do: integer(0, state.seq)
+
+  def precondition(state, {:call, _, :import_starts, [stream]}),
+    do: not MapSet.member?(state.importing, stream)
+
+  def precondition(state, {:call, _, :import_finishes, [stream]}),
+    do: MapSet.member?(state.importing, stream)
 
   def precondition(_state, _call), do: true
 
@@ -90,6 +118,12 @@ defmodule HalC2.StoreCompactionPropTest do
     %{state | seq: seq, events: Map.put(state.events, stream, events)}
   end
 
+  def next_state(state, _result, {:call, _, :import_starts, [stream]}),
+    do: %{state | importing: MapSet.put(state.importing, stream)}
+
+  def next_state(state, _result, {:call, _, :import_finishes, [stream]}),
+    do: %{state | importing: MapSet.delete(state.importing, stream)}
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :append, [_, raws, _]}, result),
@@ -98,8 +132,13 @@ defmodule HalC2.StoreCompactionPropTest do
   def postcondition(state, {:call, _, :resume, [stream, offset]}, read),
     do: resumes?(Map.get(state.events, stream, []), offset, read)
 
-  def postcondition(state, {:call, _, :compact, [:sequential, _all]}, {report, again, logs}) do
+  def postcondition(
+        state,
+        {:call, _, :compact, [:sequential, _all]},
+        {before, report, again, logs}
+      ) do
     again.events == 0 and report.events >= 0 and
+      Enum.all?(state.importing, &(Map.get(logs, &1) == Map.get(before, &1))) and
       Enum.all?(@streams, fn stream ->
         written = Map.get(state.events, stream, [])
         read = Map.get(logs, stream, [])
@@ -114,7 +153,9 @@ defmodule HalC2.StoreCompactionPropTest do
   def postcondition(_state, {:call, _, :compact, [:parallel, _all]}, result),
     do: match?(%{}, result)
 
-  def postcondition(_state, {:call, _, :restart, []}, result), do: result == :ok
+  def postcondition(_state, {:call, _, cmd, _}, result)
+      when cmd in [:restart, :import_starts, :import_finishes],
+      do: result == :ok
 
   # The event a raw change makes against the stream's events so far: valid against the
   # entity its key holds then, numbered and timed as the store writes it.
@@ -157,11 +198,16 @@ defmodule HalC2.StoreCompactionPropTest do
   def compact(:parallel, all), do: Compaction.run(Store, all: all)
 
   def compact(:sequential, all) do
+    before = Map.new(@streams, &{&1, resume(&1, 0)})
     report = Compaction.run(Store, all: all)
     again = Compaction.run(Store, all: true)
     logs = Map.new(@streams, &{&1, resume(&1, 0)})
-    {report, again, logs}
+    {before, report, again, logs}
   end
+
+  # How `HalC2.Import.PreviousInstall` marks a thread it is still bringing in.
+  def import_starts(stream), do: Store.put_meta(Store, "import.thread." <> stream, "{}")
+  def import_finishes(stream), do: Store.delete_meta(Store, "import.thread." <> stream)
 
   def restart, do: HalC2.Prop.restart_service(Store)
 end
