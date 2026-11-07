@@ -112,6 +112,8 @@ defmodule HalC2.Steps.Settings.Storage do
         "Any local files" -> "any-local-files"
         "Uncommitted changes" -> "uncommitted-changes"
         "Edited tracked files" -> "tracked-changes"
+        # A typo, or a choice a newer client offers.
+        "One this MC does not know" -> "keep-newer"
       end
 
     if (List.first(default) || "") == "" do
@@ -124,13 +126,13 @@ defmodule HalC2.Steps.Settings.Storage do
     end
   end
 
-  step ~r/^an idle thread's worktree has (?<changes>only an ignored "\.env" file|only "node_modules"|an untracked file|an edited tracked file)$/,
+  step ~r/^an idle thread's worktree has (?<changes>only an ignored "\.env" file|only "node_modules"|an untracked file|an edited tracked file|a repository with unpushed commits in an ignored folder)$/,
        %{args: [changes]} = context do
     context = idle_worktree(context, "idle work")
     path = context.worktree.path
 
-    if String.starts_with?(changes, "only") do
-      File.write!(Path.join(path, ".gitignore"), ".env\nnode_modules/\n")
+    if String.starts_with?(changes, "only") or String.starts_with?(changes, "a repository") do
+      File.write!(Path.join(path, ".gitignore"), ".env\nnode_modules/\ndeps/\n")
       World.git!(path, ~w(add .gitignore))
       World.git!(path, ~w(commit -q -m ignore))
     end
@@ -152,7 +154,53 @@ defmodule HalC2.Steps.Settings.Storage do
       "an edited tracked file" ->
         File.write!(Path.join(path, "README.md"), "changed\n")
         Map.put(context, :expected_reason, "Has uncommitted changes (1 file)")
+
+      # A library checked out by hand, with a commit that exists nowhere else.
+      "a repository with unpushed commits in an ignored folder" ->
+        nested = Path.join(path, "deps/lib")
+        File.mkdir_p!(nested)
+        World.git!(nested, ~w(init -q))
+        File.write!(Path.join(nested, "fix.txt"), "unpushed\n")
+        World.git!(nested, ~w(add fix.txt))
+        World.git!(nested, ~w(commit -q -m fix))
+        Map.put(context, :expected_reason, "Has a nested repository (deps/)")
     end
+  end
+
+  # The sweep's `:removing` stage holds the worktree's lease after every look but the
+  # last; the agent's change lands there.
+  step ~r/^the agent (?<change>edits a tracked file|adds an untracked file|adds an ignored "\.env" file) just as the sweep removes the worktree$/,
+       %{args: [change]} = context do
+    {file, content, reason} =
+      case change do
+        "edits a tracked file" -> {"README.md", "changed\n", "Has uncommitted changes (1 file)"}
+        "adds an untracked file" -> {"notes.txt", "draft\n", "Has uncommitted changes (1 file)"}
+        ~s(adds an ignored ".env" file) -> {".env", "SECRET=1\n", "Has ignored files (.env)"}
+      end
+
+    path = context.worktree.path
+    hook = {__MODULE__, :write_at, [Path.join(path, file), content]}
+    World.put_app_env(:storage_cleanup_hook, hook)
+    files = Map.put(files(path), Path.join(path, file), content)
+    Map.merge(context, %{expected_reason: reason, files: files})
+  end
+
+  @doc false
+  def write_at(file, content, :removing, _path), do: File.write!(file, content)
+  def write_at(_file, _content, _stage, _path), do: :ok
+
+  step "the worktree is kept with every file in it", context do
+    assert kept_reason(context) == context.expected_reason
+    assert files(context.worktree.path) == context.files
+    context
+  end
+
+  # Every file in the worktree but Git's own, with what it holds.
+  defp files(path) do
+    for file <- Path.wildcard(Path.join(path, "**"), match_dot: true),
+        File.regular?(file) and Path.basename(file) != ".git",
+        into: %{},
+        do: {file, File.read!(file)}
   end
 
   step "the thread keeps its branch so it can be checked out again", context do
@@ -586,6 +634,28 @@ defmodule HalC2.Steps.Settings.Storage do
 
   def hold_effect(_test, _thread, _type, _stage, _record), do: :ok
 
+  step "a thread was deleted and one of its cleanup steps failed for good", context do
+    HalC2.Test.Mc.ensure(HalC2.Orchestration.Effects)
+    context = World.worktree_thread(context, "deleted work")
+    id = World.thread_id(context, "deleted work")
+    World.put_app_env(:effects_hook, {__MODULE__, :fail_effect, [id, "attachment.cleanup"]})
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+    World.await_row(id, & &1["deletedAt"])
+    # Every try fails; the drain returns once the last one is recorded.
+    :ok = HalC2.Orchestration.Effects.drain(id)
+
+    assert [%{"type" => "attachment.cleanup", "status" => "failed"}] =
+             HalC2.Orchestration.Effects.effects(id)
+
+    context
+  end
+
+  @doc false
+  def fail_effect(thread, type, :execute, %{"threadId" => thread, "type" => type}),
+    do: raise("the attached files could not be removed")
+
+  def fail_effect(_thread, _type, _stage, _record), do: :ok
+
   step "its worktree is kept", context do
     assert File.dir?(context.worktree.path)
     assert kept_reason(context) == "Thread deletion is still pending"
@@ -600,7 +670,7 @@ defmodule HalC2.Steps.Settings.Storage do
 
     assert Enum.all?(
              HalC2.Orchestration.Effects.effects(id),
-             &(&1["status"] in ["succeeded", "cancelled"])
+             &(&1["status"] not in ["pending", "running"])
            )
 
     World.sweep_storage(context)

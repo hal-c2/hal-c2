@@ -17,7 +17,9 @@ defmodule HalC2.StorageCleanup do
   is to lose is the rules' `worktreeKeepWhen`: "any-local-files" (the default)
   counts changed, untracked and ignored files besides `node_modules`;
   "uncommitted-changes" leaves out ignored files; "tracked-changes" counts only
-  edits to tracked files, and the removal cleans away the untracked ones first.
+  edits to tracked files, and the removal cleans away the untracked ones first. A
+  repository nested in the worktree, outside `node_modules`, keeps it under every
+  choice. Any other choice counts as "any-local-files".
   The last look and the removal hold the worktree's `HalC2.WorkspaceLease`, which
   terminals take while they start. The branch and path stay on the thread, so it
   can check the worktree out again.
@@ -67,7 +69,12 @@ defmodule HalC2.StorageCleanup do
       %{"mode" => "off"} -> @off
       _ -> Map.merge(@off, Map.take(settings["storageCleanup"] || %{}, Map.keys(@off)))
     end
+    |> Map.update!("worktreeKeepWhen", &keep_when/1)
   end
+
+  # A choice this MC does not know (a typo, a newer client's) keeps the most.
+  defp keep_when(choice) when choice in ["uncommitted-changes", "tracked-changes"], do: choice
+  defp keep_when(_), do: "any-local-files"
 
   @impl true
   def init(nil) do
@@ -447,7 +454,7 @@ defmodule HalC2.StorageCleanup do
 
       {:ok, out} ->
         case changed_files(String.split(out, <<0>>, trim: true), 0) do
-          0 -> if keep_when in [nil, "any-local-files"], do: ignored_files(path)
+          0 -> if keep_when == "any-local-files", do: ignored_files(path)
           1 -> "Has uncommitted changes (1 file)"
           count -> "Has uncommitted changes (#{count} files)"
         end
@@ -470,7 +477,7 @@ defmodule HalC2.StorageCleanup do
       {:ok, out} when byte_size(out) <= 64 * 1024 ->
         out
         |> String.split(<<0>>, trim: true)
-        |> Enum.find(&(not Regex.match?(~r{(^|/)node_modules/$}, &1)))
+        |> Enum.find(&(not dependencies?(&1)))
         |> case do
           nil -> nil
           file -> "Has ignored files (#{file})"
@@ -647,15 +654,9 @@ defmodule HalC2.StorageCleanup do
              do: "Settings changed since check"
            ),
          {:ok, force} <- submodules(path, rules["worktreeKeepWhen"]),
-         nil <- if(force, do: local_changes(path, rules["worktreeKeepWhen"])),
-         _ = hook(:removing, path) do
+         _ = hook(:removing, path),
+         nil <- last_look(path, rules["worktreeKeepWhen"]) do
       repo = look.project["workspaceRoot"]
-
-      # Untracked files are not worth keeping under this rule, but Git refuses to
-      # remove a worktree that has them; a tracked edit made since the last look
-      # still stops the removal.
-      if rules["worktreeKeepWhen"] == "tracked-changes",
-        do: {:ok, _} = git(path, ~w(clean -ffdxq))
 
       # Git requires force for submodules; the checks above are what keeps them safe.
       case HalC2.Vcs.remove_worktree(%{"cwd" => repo, "path" => path, "force" => force}) do
@@ -667,6 +668,60 @@ defmodule HalC2.StorageCleanup do
       reason when is_binary(reason) -> {:keep, reason}
     end
   end
+
+  # Right before removal, so that only the removal itself is left to race: the local
+  # changes `keep_when` counts, again, then, under a choice that lets ignored files
+  # go, a repository nested in the worktree, whose commits may be nowhere else, since
+  # Git deletes an ignored one with the worktree. Nil when the worktree may go.
+  defp last_look(path, keep_when) do
+    with nil <- local_changes(path, keep_when),
+         nil <- if(keep_when != "any-local-files", do: nested_repository(path)) do
+      if keep_when == "tracked-changes", do: clean_untracked(path)
+    end
+  end
+
+  # Under "tracked-changes" untracked files may go too, but Git refuses to remove a
+  # worktree that has them, so they are cleaned first; no other choice ever cleans.
+  # One `-f` never lets the clean delete a nested repository, and anything left after
+  # it (made meanwhile) keeps the worktree rather than going with a forced removal.
+  defp clean_untracked(path) do
+    with {:ok, _} <- Git.ok(path, ~w(clean -fdxq)),
+         {:ok, left} <- Git.ok(path, ~w(ls-files --others --directory -z)) do
+      case Enum.reject(String.split(left, <<0>>, trim: true), &dependencies?/1) do
+        [] -> nil
+        [entry | _] -> "Has untracked files (#{entry})"
+      end
+    else
+      {:error, _} -> "Untracked files could not be cleaned"
+    end
+  end
+
+  # What the clean would skip besides installed dependencies: the untracked and
+  # ignored entries it would not remove whole, which are nested repositories or
+  # folders holding one.
+  defp nested_repository(path) do
+    dry = ~w(-c core.quotePath=false clean -ndx)
+
+    with {:ok, others} <- Git.ok(path, ~w(ls-files --others --directory -z)),
+         {:ok, plan} <- Git.ok(path, dry, env: [{"LC_ALL", "C"}]) do
+      removed =
+        for "Would remove " <> entry <- String.split(plan, "\n", trim: true),
+            into: MapSet.new(),
+            do: String.trim_trailing(entry, "/")
+
+      others
+      |> String.split(<<0>>, trim: true)
+      |> Enum.find(&(String.trim_trailing(&1, "/") not in removed and not dependencies?(&1)))
+      |> case do
+        nil -> nil
+        entry -> "Has a nested repository (#{entry})"
+      end
+    else
+      {:error, _} -> "Untracked files could not be read"
+    end
+  end
+
+  defp dependencies?(entry), do: Regex.match?(~r{(^|/)node_modules/$}, entry)
 
   defp checkout_head(path, branch) do
     with {:ok, "refs/heads/" <> ^branch} <- git(path, ~w(symbolic-ref --quiet HEAD)),
@@ -712,11 +767,15 @@ defmodule HalC2.StorageCleanup do
       not idle?(latest) or activity_at(latest) != activity_at(previous)
   end
 
-  # A deleted thread's own cleanup (its terminals, attachments) has not all finished
-  # or been cancelled: its worktree waits for it.
+  # A deleted thread's own cleanup (its terminals, attachments) still waits or runs:
+  # its worktree waits for it. Finished effects are deleted, and failed ones (any
+  # type, kept a week for diagnosis) will not run again, so neither holds it.
   defp deletion_pending?(thread_id) do
     HalC2.Orchestration.Effects.effects(thread_id)
-    |> Enum.any?(&(&1["status"] not in ["succeeded", "cancelled"]))
+    |> Enum.any?(
+      &(&1["type"] in ["terminal.cleanup", "attachment.cleanup"] and
+          &1["status"] in ["pending", "running"])
+    )
   rescue
     _ -> false
   catch

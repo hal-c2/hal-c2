@@ -91,8 +91,8 @@ captures and log retention remain machine-wide.
 
 Worktrees can be removed after a chosen number of inactive days, after merging, or when they
 have no commits beyond the default branch. Only HAL-C2-managed worktrees are eligible. Active
-sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
-prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
+sessions, shared worktrees, uncommitted changes, repositories cloned inside the worktree, and
+ignored files other than `node_modules` prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
 Merge cleanup requires the commits to be included in the remote default branch, or a squash-merged
 pull request whose last commit is the worktree's current one.
 

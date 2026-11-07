@@ -99,15 +99,36 @@ Feature: Storage cleanup
       Then the worktree is <outcome>
 
       Examples:
-        | choice                             | changes                     | outcome |
-        | "Any local files", the default     | only an ignored ".env" file | kept    |
-        | "Any local files", the default     | an untracked file           | kept    |
-        | "Any local files", the default     | only "node_modules"         | removed |
-        | "Uncommitted changes"              | an untracked file           | kept    |
-        | "Uncommitted changes"              | only an ignored ".env" file | removed |
-        | "Edited tracked files"             | an edited tracked file      | kept    |
-        | "Edited tracked files"             | an untracked file           | removed |
-        | "Edited tracked files"             | only an ignored ".env" file | removed |
+        | choice                         | changes                                                 | outcome |
+        | "Any local files", the default | only an ignored ".env" file                             | kept    |
+        | "Any local files", the default | an untracked file                                       | kept    |
+        | "Any local files", the default | only "node_modules"                                     | removed |
+        | "Uncommitted changes"          | an untracked file                                       | kept    |
+        | "Uncommitted changes"          | only an ignored ".env" file                             | removed |
+        | "Edited tracked files"         | an edited tracked file                                  | kept    |
+        | "Edited tracked files"         | an untracked file                                       | removed |
+        | "Edited tracked files"         | only an ignored ".env" file                             | removed |
+        | "Edited tracked files"         | a repository with unpushed commits in an ignored folder | kept    |
+        | "Uncommitted changes"          | a repository with unpushed commits in an ignored folder | kept    |
+        | "One this MC does not know"    | only an ignored ".env" file                             | kept    |
+
+    # hal-c2#1148 review: what the choice counts is looked for once more inside the worktree's
+    # lease, right before removal, and "Edited tracked files" cleans untracked files only then,
+    # so a change the agent makes meanwhile loses nothing.
+    @mc @priority-high
+    Scenario Outline: A worktree changed just as it is being removed is kept with every file
+      Given the user turned on deleting worktrees idle for 8 days
+      And "Keep worktrees with local changes" is set to <choice>
+      And an idle thread's worktree has <changes>
+      And the agent <change> just as the sweep removes the worktree
+      When the MC sweeps storage
+      Then the worktree is kept with every file in it
+
+      Examples:
+        | choice                         | changes                     | change                      |
+        | "Edited tracked files"         | only an ignored ".env" file | edits a tracked file        |
+        | "Uncommitted changes"          | only an ignored ".env" file | adds an untracked file      |
+        | "Any local files", the default | only "node_modules"         | adds an ignored ".env" file |
 
     @backlog @mc @shared
     Scenario: Delete now runs the cleanup rules at once and says what happened
@@ -212,6 +233,14 @@ Feature: Storage cleanup
       When the MC sweeps storage
       Then its worktree is kept
       When the cleanup steps have finished and the MC sweeps storage again
+      Then the worktree is removed
+
+    # hal-c2#1148 review: a failed step is kept a week for diagnosis but never runs again.
+    @mc
+    Scenario: A deleted thread's cleanup step that failed for good does not keep its worktree
+      Given the user turned on deleting worktrees of deleted threads
+      And a thread was deleted and one of its cleanup steps failed for good
+      When the MC sweeps storage
       Then the worktree is removed
 
     @mc @priority-high
