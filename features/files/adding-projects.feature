@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/24915
+#   https://github.com/pingdotgg/t3code/pull/30798
 #   https://github.com/pingdotgg/t3code/pull/26068
 #   https://github.com/pingdotgg/t3code/pull/26767
 #   https://github.com/pingdotgg/t3code/pull/24698
@@ -45,6 +46,11 @@
 #   https://github.com/pingdotgg/t3code/pull/28243
 #   https://github.com/pingdotgg/t3code/pull/23024
 #   https://github.com/pingdotgg/t3code/pull/24005
+#   https://github.com/pingdotgg/t3code/pull/28365
+#   https://github.com/pingdotgg/t3code/pull/28460
+#   https://github.com/pingdotgg/t3code/pull/24904
+#   https://github.com/pingdotgg/t3code/pull/31642
+#   https://github.com/pingdotgg/t3code/pull/29843
 
 Feature: Adding projects
   A project is a folder on an environment. The user adds one by picking a folder on that
@@ -104,6 +110,19 @@ Feature: Adding projects
       When the user types "/home/sam/sh" while adding a local folder
       Then the folders "Shared" and "shop" are offered
       And "notes.txt" is not offered
+
+    # Upstream #31642: deleting the leading "/" or a drive letter stopped the text being a path,
+    # the field was rebuilt and the caret jumped to the end.
+    @backlog @shared @priority-low
+    Scenario Outline: Editing the start of a typed folder path keeps the caret there
+      Given the user typed "<path>" while adding a local folder
+      When the user deletes "<deleted>" at the start and types "<typed>"
+      Then the path reads "<result>"
+
+      Examples:
+        | path              | deleted | typed | result            |
+        | /tmp/project      | /       | /     | /tmp/project      |
+        | C:\Users\sam\shop | C       | D     | D:\Users\sam\shop |
 
     @mc
     Scenario Outline: Browsing shows hidden folders only when asked for
@@ -219,11 +238,35 @@ Feature: Adding projects
       Then the MC answers that "/home/sam/missing" does not exist on this machine
       And no project is created
 
+    # Upstream #28460: a path copied from Finder or Explorer arrives quoted or escaped for a shell,
+    # was read as a new folder under home, and could create a junk folder and project.
+    @backlog @shared
+    Scenario Outline: A pasted folder path copied from a file manager names that folder
+      Given "/Users/sam/Monarch Money" and "/Users/sam/Bob's Stuff" are folders
+      When the user pastes <pasted> while adding a local folder
+      Then the folder to add is "<folder>"
+      And no folder is offered to be created
+
+      Examples:
+        | pasted                         | folder                   |
+        | '/Users/sam/Monarch Money'   | /Users/sam/Monarch Money |
+        | /Users/sam/Bob\\'s\\ Stuff   | /Users/sam/Bob's Stuff   |
+        | "/Users/sam/Monarch Money"   | /Users/sam/Monarch Money |
+
     @mc
     Scenario: A folder is created for a new project when the client asks for it
       When a client creates a project at "/home/sam/fresh" and asks to create the folder
       Then the folder "/home/sam/fresh" exists
       And the project "fresh" is listed for "laptop"
+
+    # Upstream #29843: a new named project's starter files are written with LF endings, and a git that
+    # refuses LF files (core.safecrlf with CRLF conversion) failed the project and removed its folder.
+    @backlog @mc
+    Scenario: A new named project is created when git refuses files with LF line endings
+      Given the user's git refuses to stage files whose LF endings it would convert
+      When the user creates the new project "fresh" by name
+      Then the project "fresh" is listed for "laptop" with its starter files staged in a new repository
+      And the user's own commits still follow that git setting
 
     @tui
     Scenario Outline: A project path the environment cannot use is refused before anything is sent
@@ -550,6 +593,7 @@ Feature: Adding projects
       Then the clone succeeds over HTTPS
       And the project's remote is the HTTPS address
 
+    # Upstream #23170: a clone that should stay on SSH, or HTTPS, is not retried over the other.
     @backlog @mc @priority-low
     Scenario Outline: A clone does not fall back to HTTPS when it should not
       Given <case>
@@ -562,6 +606,16 @@ Feature: Adding projects
         | the clone failed for a reason other than its SSH key |
         | the pasted SSH address names a custom port          |
 
+    # Upstream #28365: a clone the MC tracked dropped the protocol the user asked for, so a clone
+    # asked over SSH still fell back to HTTPS, on Retry too.
+    @backlog @mc
+    Scenario: A clone asked over SSH stays on SSH when it is retried
+      Given the user cloned "acme/shop" over SSH and the host refused this machine's SSH key
+      When the user retries the clone
+      Then it is tried over SSH again
+      And it is not tried over HTTPS
+
+    # Upstream #23170: a clone that fails over SSH and then HTTPS reports both reasons.
     @backlog @mc @priority-low
     Scenario: A clone that fails over SSH and then HTTPS gives both reasons
       Given the host refuses this machine's SSH key and its HTTPS credentials
@@ -915,6 +969,30 @@ Feature: Adding projects
       Then the destination is that "shop" folder and not "shop/shop"
       And the match ignores case where the environment's file system does
 
+    # Upstream #24904: every clone went to "<folder for new projects>/<repo>", so a fork or a
+    # second "api" clashed with the first, and ghq users typed the whole path each time.
+    @backlog @mc @shared @priority-low
+    Scenario Outline: Cloning into host folders proposes a folder per host and owner
+      Given "laptop" keeps new projects in "/home/sam/code"
+      And "Clone into host folders" is <setting>
+      When the user clones "https://github.com/sam/shop.git" from <entry>
+      Then the folder proposed is "<folder>"
+
+      Examples:
+        | setting | entry                         | folder                               |
+        | on      | the command palette           | /home/sam/code/github.com/sam/shop   |
+        | on      | a link in a prompt            | /home/sam/code/github.com/sam/shop   |
+        | on      | adding it to another machine  | /home/sam/code/github.com/sam/shop   |
+        | on      | adding a project on the phone | /home/sam/code/github.com/sam/shop   |
+        | off     | the command palette           | /home/sam/code/shop                  |
+
+    # Upstream #24904: the host folders a clone will make need not exist yet.
+    @backlog @mobile @priority-low
+    Scenario: A proposed clone folder that does not exist yet says the clone makes it
+      Given "Clone into host folders" is on and "/home/sam/code/github.com" does not exist
+      When the user chooses where to clone "sam/shop" on the phone
+      Then the folder reads "Cloning creates it" instead of an error
+
     # Legacy: packages/client-runtime/src/operations/projects.ts (buildAddProjectRemoteSourceReadiness, sortAddProjectProviderSources)
     @backlog @desktop @tui
     Scenario: Clone sources that are ready are listed first, each unready one with its reason
@@ -961,6 +1039,19 @@ Feature: Adding projects
         | from                                                    | protocol | to                                                      |
         | "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo"   | HTTPS    | "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo" |
         | "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo" | SSH      | "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo"   |
+
+    # Upstream #30798: an SSH address whose host is a bracketed IPv6 address turned into an
+    # invalid HTTPS address, split at the first colon inside the brackets.
+    @backlog @desktop @mc @priority-low
+    Scenario Outline: An address whose host is an IPv6 address keeps it when switched between SSH and HTTPS
+      Given the checkout of "shop" on "laptop" has the remote <from>
+      When the user adds "shop" to "server" and chooses <protocol>
+      Then "server" clones from <to>
+
+      Examples:
+        | from                                   | protocol | to                                       |
+        | "git@[2001:db8::1]:org/repo.git"       | HTTPS    | "https://[2001:db8::1]/org/repo.git"     |
+        | "https://[2001:db8::1]/org/repo.git"   | SSH      | "git@[2001:db8::1]:org/repo.git"         |
 
     @backlog @desktop
     Scenario: The chosen files are copied once the clone on the other machine finishes

@@ -23,7 +23,7 @@ defmodule Mix.Tasks.HalC2.Server do
   """
   def announce do
     Mix.shell().info(
-      "HAL-C2 MC #{node()} #{HalC2.Web.base_url("ws")}/ws?token=#{HalC2.Web.token()}"
+      "HAL-C2 MC #{node()} #{HalC2.Web.base_url("ws")}/ws?protocol=#{HalC2.Web.Protocol.version()}&token=#{HalC2.Web.token()}"
     )
 
     Mix.shell().info(

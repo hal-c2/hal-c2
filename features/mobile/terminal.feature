@@ -5,6 +5,8 @@
 #   https://github.com/pingdotgg/t3code/pull/20284
 #   https://github.com/pingdotgg/t3code/pull/20051
 #   https://github.com/pingdotgg/t3code/pull/21398
+#   https://github.com/pingdotgg/t3code/pull/30546
+#   https://github.com/pingdotgg/t3code/pull/24983
 #   apps/mobile/src/features/terminal/ (sessions, status, text size, accessory keys, context)
 #   apps/mobile/modules/hal-c2-terminal
 #   apps/mobile/src/features/threads/ThreadGitControls.tsx (terminal menu: scripts, sessions, new terminal)
@@ -175,6 +177,29 @@ Feature: Using a terminal on a phone
     Given the user is on an Android phone with a password manager
     When the user touches the terminal to type
     Then the keyboard opens without offering saved logins to fill
+
+  # Upstream #30546: the iOS terminal offered only the English keyboard and sent each keystroke at
+  # once, so Pinyin, Kana and Hangul could not compose.
+  @backlog @mobile
+  Scenario Outline: The terminal takes <language> typed with an input method
+    Given the phone has the <keyboard> keyboard
+    When the user types "<keys>" in the terminal with it and picks "<word>"
+    Then the terminal receives "<word>" once
+    And none of "<keys>" is sent before the word is picked
+
+    Examples:
+      | language | keyboard | keys  | word |
+      | Chinese  | Pinyin   | nihao | 你好   |
+      | Japanese | Kana     | にほん   | 日本   |
+      | Korean   | Hangul   | ㅎㅏㄴ   | 한    |
+
+  # Upstream #24983: keyboards that delete through the input method (FUTO, AOSP) swallowed the
+  # first Backspace presses, because the terminal's input field had already been cleared.
+  @backlog @mobile
+  Scenario: Backspace deletes in the terminal on the first press with any Android keyboard
+    Given the user typed "ls -la" in the terminal with a keyboard that deletes through the input method
+    When the user presses Backspace once
+    Then the terminal receives one delete
 
   @mobile
   Scenario: Dragging a finger over the terminal scrolls its history

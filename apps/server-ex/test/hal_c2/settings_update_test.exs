@@ -47,4 +47,26 @@ defmodule HalC2.SettingsUpdateTest do
 
     assert :persistent_term.get({HalC2.Acp, "work", :models}, nil) == nil
   end
+
+  test "a save keeps a hand edit the check has not read yet, unless it changes that very setting" do
+    {:ok, 1} = HalC2.Settings.update(&Map.merge(&1, %{"a" => 1, "b" => 1}))
+    {read, 1} = HalC2.Settings.get()
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.write!(path, JSON.encode!(%{"a" => 1, "b" => 2, "hand" => true}))
+
+    assert {:ok, 2} = HalC2.Settings.put(Map.merge(read, %{"a" => 9, "b" => 1}), 1)
+    assert HalC2.Settings.settings() == %{"a" => 9, "b" => 2, "hand" => true}
+    assert JSON.decode!(File.read!(path)) == HalC2.Settings.settings()
+  end
+
+  test "a save over a file that is not valid JSON is refused and leaves the text" do
+    {:ok, 1} = HalC2.Settings.update(&Map.put(&1, "a", 1))
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.write!(path, "{oops")
+
+    assert {:error, message} = HalC2.Settings.update(&Map.put(&1, "a", 2))
+    assert message =~ "Fix or remove it"
+    assert File.read!(path) == "{oops"
+    assert {%{"a" => 1}, 1} = HalC2.Settings.get()
+  end
 end

@@ -38,6 +38,7 @@
 #   docs/operations/development.md (Reusable dev credential)
 #   AGENTS.md (npx hal-c2 pair, HAL_C2_DEV_AUTH_TOKEN)
 #   https://github.com/pingdotgg/t3code/pull/23782
+#   https://github.com/pingdotgg/t3code/pull/30337
 
 Feature: MC authentication and scopes
   An MC issues its own sessions. Pairing hands out a session with a set of scopes, a
@@ -162,6 +163,7 @@ Feature: MC authentication and scopes
       | the RPC socket     | a media stream     |
       | media streams      | the RPC socket     |
 
+  # Upstream #24554: a DPoP session's socket ticket needs a fresh proof from the session's key.
   @mc @priority-high
   Scenario Outline: A DPoP session's RPC ticket needs a fresh proof from the session's key
     Given a DPoP client bought an RPC socket ticket
@@ -175,6 +177,7 @@ Feature: MC authentication and scopes
       | a proof from another key                | refuses it       |
       | a proof that was already used           | refuses it       |
 
+  # Upstream #24554: a ticket bought without naming a route keeps opening either socket.
   @mc
   Scenario: A ticket bought without naming a route still opens either
     Given an older client bought a socket ticket without naming a route
@@ -298,6 +301,20 @@ Feature: MC authentication and scopes
       | Bearer |
       | bearer |
       | bEaReR |
+
+  # Upstream #30337: a DPoP token sent as "dpop" matched neither scheme and was refused as no credential.
+  @backlog @mc @priority-low
+  Scenario Outline: The DPoP scheme is read in any letter case
+    Given a client holds a DPoP-bound access token and a fresh proof from its key
+    When it sends the token with the scheme "<scheme>"
+    Then the MC says it is authenticated
+    And a refused request is challenged for DPoP whatever the scheme's case
+
+    Examples:
+      | scheme |
+      | DPoP   |
+      | dpop   |
+      | DPOP   |
 
   # Upstream #23782: refusals say which part was wrong, without repeating the credential.
   @mc @priority-low

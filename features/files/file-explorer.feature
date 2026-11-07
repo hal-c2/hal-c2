@@ -23,6 +23,8 @@
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   https://github.com/pingdotgg/t3code/pull/21920
 #   https://github.com/pingdotgg/t3code/pull/23398
+#   https://github.com/pingdotgg/t3code/pull/28521
+#   https://github.com/pingdotgg/t3code/pull/29650
 
 Feature: Exploring project files
   The user can walk a project's files from any client without leaving the thread.
@@ -137,6 +139,15 @@ Feature: Exploring project files
     Given "shop" is not a git repository or git is not installed
     When a client lists the folder "" of "shop"
     Then its entries are returned with none marked as ignored
+
+  # Upstream #29650: git refuses paths inside a submodule from the outer repository, so nothing
+  # inside a submodule was marked ignored and Expand all walked into its "node_modules".
+  @mc @backlog
+  Scenario: Folders a submodule ignores are marked as ignored
+    Given "shop" has the submodule "vendor/ui", which ignores its "node_modules" folder
+    When a client lists the folder "vendor/ui" of "shop"
+    Then "vendor/ui/node_modules" is marked as ignored
+    And a plain clone inside "shop" is still judged by the ignore rules of "shop"
 
   # Legacy: apps/server/src/workspace/WorkspaceSearchIndex.ts (withDirectoryAncestors)
   @mc @backlog
@@ -268,6 +279,15 @@ Feature: Exploring project files
     Then the tree lists the change
     And the open file shows its new contents
     And an active filter is applied to the new listing
+
+  # Upstream #28521: clicking a file in the tree moved keyboard focus to the row that last had it
+  # in that file's tab, so the selection and the focus sat on different rows.
+  @backlog @desktop
+  Scenario: Clicking a file in the tree keeps the keyboard on that row
+    Given the user had focused "src/lib/tax.ts" in the tree and then opened another file
+    When the user clicks "src/lib/cart.ts" in the tree
+    Then "src/lib/cart.ts" opens and is the focused and selected row
+    And the arrow keys move from "src/lib/cart.ts"
 
   @backlog @desktop @priority-low
   Scenario: Choosing a file in the tree does not clear the user's filter

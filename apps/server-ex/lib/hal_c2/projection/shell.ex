@@ -78,6 +78,9 @@ defmodule HalC2.Projection.Shell do
     |> Map.take(@optional_fields)
     |> json()
     |> Map.merge(error)
+    |> Map.merge(
+      if automatic_run?(state, latest_run), do: %{"latestRunAutomatic" => true}, else: %{}
+    )
     |> Map.merge(%{
       "createdBy" => get(thread, "createdBy"),
       "creationSource" => get(thread, "creationSource"),
@@ -186,6 +189,20 @@ defmodule HalC2.Projection.Shell do
   @spec held_never_started?(map) :: boolean
   def held_never_started?(run),
     do: get(run, "status") in ["queued", "cancelled"] and get(run, "queueHeld") == true
+
+  # The latest run answers a message the MC sent for the agent (a notification, a delegated
+  # result), a wake rather than something the user wrote. Present only when true.
+  defp automatic_run?(_state, nil), do: false
+
+  defp automatic_run?(state, run) do
+    case StreamState.get(state, "message")[get(run, "userMessageId")] do
+      %{} = message ->
+        get(message, "notification") != nil or get(message, "delegatedCompletion") != nil
+
+      _ ->
+        false
+    end
+  end
 
   defp interruptible?(run), do: get(run, "status") in @interruptible
 

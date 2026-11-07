@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/18412
+#   https://github.com/pingdotgg/t3code/pull/31857
 #   https://github.com/pingdotgg/t3code/pull/13903
 #   https://github.com/pingdotgg/t3code/pull/18891
 #   https://github.com/pingdotgg/t3code/pull/20891
@@ -182,6 +183,22 @@ Feature: Project actions
       When the user makes "Stop db" run when a thread settles
       Then "Stop db" runs when a thread settles
       And "Teardown" no longer does
+
+    # Upstream #31857: a project action's dev server kept running after its thread settled; an
+    # action can now opt in to having its terminal stopped then.
+    @backlog @mc @shared
+    Scenario Outline: An action that stops on settle has its terminal stopped when the thread settles
+      Given "Dev" of "shop" is set to stop when its thread settles
+      And the user ran "Dev" in a thread of "shop", and its dev server is running
+      When the thread settles <how>
+      Then "Dev"'s terminal and the processes it started are stopped
+      And its output can still be read
+      But a terminal the user opened in that thread keeps running
+
+      Examples:
+        | how                       |
+        | by the user's hand        |
+        | automatically after a day |
 
   Rule: Adding, editing and removing actions
 

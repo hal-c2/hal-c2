@@ -9,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/21503
 #   https://github.com/pingdotgg/t3code/pull/21393
 #   https://github.com/pingdotgg/t3code/pull/26255
+#   https://github.com/pingdotgg/t3code/pull/30744
 #   docs/user/permission-modes.md
 #   packages/contracts/src/orchestrationV2.ts (runtime-request.respond, thread.user-input.dismiss, approval_request, user_input_request)
 #   packages/contracts/src/providerPolicy.ts (ProviderApprovalDecision)
@@ -277,6 +278,15 @@ Feature: Approvals and agent questions
     Given the agent asks "Which database?" and the user has typed "DuckDB" without sending it
     When the user opens a new thread and comes back
     Then the answer still reads "DuckDB" on the same question
+
+  # Upstream #30744: on iOS a written answer kept typos the composer would have corrected.
+  @backlog @mobile
+  Scenario: The phone's keyboard corrects words in a written answer
+    Given the agent asks "Which database?" with three options
+    When the user writes "hellp definately" with the keyboard's corrections on
+    Then the answer reads "Hello definitely"
+    When the user picks an option and then writes again
+    Then the option is unchecked and the written answer is corrected the same way
 
   @backlog @shared
   Scenario: A link in the agent's question opens the way a chat link does
