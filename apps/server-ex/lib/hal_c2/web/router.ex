@@ -632,6 +632,8 @@ defmodule HalC2.Web.Router do
   defp json(conn, status, body) do
     conn
     |> put_resp_content_type("application/json")
+    # Tokens, tickets and links ride in these answers: no browser or proxy keeps them.
+    |> put_resp_header("cache-control", "no-store")
     |> send_resp(status, JSON.encode_to_iodata!(body))
   end
 
