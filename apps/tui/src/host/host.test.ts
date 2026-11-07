@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { DEFAULT_SERVER_SETTINGS } from "@hal-c2/contracts";
 
-import { fakeClient, projectTwo, shell } from "../../features/support/fakeClient.ts";
+import { fakeClient, projectTwo, shell, thread } from "../../features/support/fakeClient.ts";
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 import { createHost } from "./host.ts";
 
@@ -108,6 +108,34 @@ describe("createHost", () => {
       sidebarShowSettledPluginThreads: false,
     });
     expect(get("sidebar").settledTotal).toBe(1);
+    host.destroy();
+  });
+
+  it("does not redraw the timeline for the error of the thread it left", () => {
+    const { host, connect, emitShell, emitThread, get } = boot();
+    connect();
+    const rows = shell([
+      {
+        id: "t1",
+        projectId: "p1",
+        title: "Thread one",
+        updatedAt: NOW,
+        session: { status: "error", lastError: "Rate limited" },
+        latestTurn: null,
+      },
+      { id: "t2", projectId: "p1", title: "Thread two", updatedAt: NOW, session: null },
+    ] as unknown as OrchestrationShellSnapshot["threads"]);
+    emitShell(rows);
+    // Thread two was read before, so opening it shows it at once.
+    emitThread({ ...thread(), id: "t2", title: "Thread two" } as never);
+    host.dispatch("thread.open", { key: "local:t1" });
+    emitThread(thread());
+    host.dispatch("thread.open", { key: "local:t2" });
+    expect(get("page")).toMatchObject({ kind: "thread", title: "Thread two" });
+
+    const drawn = get("timeline");
+    emitShell(rows);
+    expect(get("timeline")).toBe(drawn);
     host.destroy();
   });
 
