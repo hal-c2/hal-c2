@@ -93,12 +93,13 @@ defmodule HalC2.Devices do
       }
       |> Map.reject(fn {_, value} -> not is_boolean(value) end)
 
-    settings = update_settings(changes)
-    GenServer.call(__MODULE__, {:settings, settings}, 30_000)
+    with {:ok, settings} <- update_settings(changes) do
+      GenServer.call(__MODULE__, {:settings, settings}, 30_000)
 
-    case if(input["agentAccessEnabled"] == true, do: agent_if_supported()) do
-      {:error, _} = error -> error
-      _ -> list(%{})
+      case if(input["agentAccessEnabled"] == true, do: agent_if_supported()) do
+        {:error, _} = error -> error
+        _ -> list(%{})
+      end
     end
   end
 
@@ -1043,8 +1044,10 @@ defmodule HalC2.Devices do
     next = Map.merge(settings, changes)
 
     case HalC2.Settings.put(next, version) do
-      {:ok, _} -> next
+      {:ok, _} -> {:ok, next}
       {:error, :stale} -> update_settings(changes)
+      # A settings.json the MC cannot read refuses the save (`ServerSettingsError`).
+      {:error, _} = error -> error
     end
   end
 
