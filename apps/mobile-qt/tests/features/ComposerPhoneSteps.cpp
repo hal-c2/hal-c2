@@ -4,6 +4,7 @@
 // steps are ComposerSteps.cpp; these reuse its fake stream and config.
 
 #include <QBuffer>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
@@ -12,7 +13,9 @@
 
 #include "FakeThreads.h"
 #include "Harness.h"
+#include "NativeShell.h"
 #include "Phone.h"
+#include "SettingsController.h"
 #include "ShellBridge.h"
 #include "World.h"
 
@@ -193,6 +196,64 @@ const Steps phoneSteps([] {
     world.tap(S("attachmentRetry:report.pdf"));
     world.sync();
   });
+  // Sending during a turn: a provider that cannot steer, and restarting.
+  step(S("the agent's provider cannot steer a running turn"), [](World& world, const Captures&, const Table&) {
+    setEntity(world.mc, world.thread, S("provider-session"), S("session-1"),
+              {{S("id"), S("session-1")},
+               {S("status"), S("ready")},
+               {S("capabilities"), QJsonObject{{S("turns"), QJsonObject{{S("supportsActiveSteering"), false}}}}}});
+    world.sync();
+  });
+  step(S("the follow-up setting is steer"), [](World& world, const Captures&, const Table&) {
+    saveOwnSetting(world.mc, S("followUpBehavior"), S("steer"));
+    world.native().controller<SettingsController>()->writeDevice(S("followUpBehavior"), S("steer"));
+    world.sync();
+  });
+  step(S("the user is not offered another way to send the follow-up"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* action = world.item(S("primaryAction"));
+    expect(!action->property("sendModesOffered").toBool(), S("the send control still offers other ways"));
+    bool offered = false;
+    QElapsedTimer held;
+    held.start();
+    world.hold(action,
+               [&] {
+                 QQuickItem* restart = world.find(S("sendModeRestart"));
+                 offered = offered || (restart != nullptr && restart->isVisible());
+                 return held.elapsed() > 1200;
+               },
+               S("a long press on the send control"));
+    expect(!offered, S("a long press offered another way to send"));
+  });
+  step(S("the user sends %1 to restart the turn").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    world.type(c[0]);
+    expect(input->property("text").toString() == c[0], S("the composer reads %1").arg(input->property("text").toString()));
+    QQuickItem* action = world.item(S("primaryAction"));
+    world.hold(action,
+               [&] {
+                 QQuickItem* restart = world.find(S("sendModeRestart"));
+                 return restart != nullptr && restart->isVisible();
+               },
+               S("the restart way to send"));
+    world.tap(S("sendModeRestart"));
+    world.sync();
+  });
+  step(S("the current turn stops and a new one starts"), [](World& world, const Captures&, const Table&) {
+    world.waitFor(
+        [&] {
+          for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+            if (command.value(QLatin1String("type")) == QLatin1String("message.dispatch") &&
+                command.value(QLatin1String("deliveryIntent")) == QLatin1String("restart") &&
+                command.value(QLatin1String("threadId")) == world.thread)
+              return true;
+          }
+          return false;
+        },
+        S("the MC to be told to restart the turn with the message"));
+  });
+
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.waitFor(
         [&] {

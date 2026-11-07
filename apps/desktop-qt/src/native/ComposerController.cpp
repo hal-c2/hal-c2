@@ -767,9 +767,17 @@ bool ComposerController::submit(const QVariantMap& payload) {
 
   QString mode = QStringLiteral("auto");
   if (running(target)) {
-    const bool queue = setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue");
-    const bool alternate = payload.value(QStringLiteral("intent")).toString() == QLatin1String("alternate");
-    mode = queue != alternate ? QStringLiteral("queue") : QStringLiteral("steer");
+    const QString intent = payload.value(QStringLiteral("intent")).toString();
+    if (intent == QLatin1String("restart") && canSteerActive()) {
+      mode = QStringLiteral("restart");
+    } else if (intent == QLatin1String("queue") || intent == QLatin1String("steer")) {
+      mode = intent == QLatin1String("steer") && !canSteerActive() ? QStringLiteral("queue") : intent;
+    } else {
+      const bool queue = setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue");
+      const bool alternate = intent == QLatin1String("alternate");
+      mode = queue != alternate ? QStringLiteral("queue") : QStringLiteral("steer");
+      if (mode == QLatin1String("steer") && !canSteerActive()) mode = QStringLiteral("queue");
+    }
   }
   return sendTurn(target, text, mode, planFollowUp, true);
 }
@@ -2956,6 +2964,19 @@ bool ComposerController::running(const QString& target) const {
   return thread && thread->activeRunId.has_value();
 }
 
+bool ComposerController::canSteerActive() const {
+  if (!m_timeline) return true;
+  for (const QJsonObject& session : m_timeline->entities(QStringLiteral("provider-session"))) {
+    const QJsonValue steers = session.value(QLatin1String("capabilities"))
+                                  .toObject()
+                                  .value(QLatin1String("turns"))
+                                  .toObject()
+                                  .value(QLatin1String("supportsActiveSteering"));
+    if (steers.isBool() && !steers.toBool()) return false;
+  }
+  return true;
+}
+
 void ComposerController::toast(const QString& title, const QString& description) {
   NativeShell::of(this)->controller<ToastController>()->error(title, description);
 }
@@ -3925,9 +3946,11 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       // More words for a page's working agent go to its thread, so a page
       // has no queue or steering: its send button sends, or stops.
       {QStringLiteral("followUpBehavior"), page ? QString()
-                                         : setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
+                                         : !canSteerActive() || setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
                                                ? QStringLiteral("queue")
                                                : QStringLiteral("steer")},
+      // A provider that cannot take a steer is offered no other way either.
+      {QStringLiteral("canSteer"), canSteerActive()},
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), isDraft,
                                                               isRunning && !page)},
@@ -4051,6 +4074,7 @@ QVariantMap ComposerController::imagesComposerState() const {
       {QStringLiteral("sendDisabledReason"), disabledReason},
       {QStringLiteral("isRunning"), false},
       {QStringLiteral("followUpBehavior"), QString()},
+      {QStringLiteral("canSteer"), true},
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), false, false)},
       {QStringLiteral("isSendBusy"), busy},

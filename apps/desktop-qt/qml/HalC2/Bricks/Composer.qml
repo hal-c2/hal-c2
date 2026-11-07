@@ -1443,7 +1443,59 @@ Rectangle {
                             ToolTip.text: followUp === "steer"
                                 ? qsTr("Steer the running turn (%1+Enter to queue)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
                                 : qsTr("Queue after the running turn (%1+Enter to steer)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
-                            onClicked: stopMode ? Shell.dispatch("composer.interrupt") : composer.submit("foreground")
+                            // The other ways to send during a turn, on a long press
+                            // (a finger's) or the secondary button: the opposite of
+                            // the follow-up setting, and restarting the turn with
+                            // the message. A provider that cannot steer offers none.
+                            readonly property bool sendModesOffered: followUp.length > 0 && sendable && composer.model?.canSteer !== false
+                            property bool holdOpened: false
+                            onPressed: holdOpened = false
+                            onPressAndHold: {
+                                if (!sendModesOffered)
+                                    return;
+                                holdOpened = true;
+                                sendModes.popup();
+                            }
+                            TapHandler {
+                                acceptedButtons: Qt.RightButton
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                enabled: primaryAction.sendModesOffered
+                                onTapped: sendModes.popup()
+                            }
+                            ShellMenu {
+                                id: sendModes
+
+                                objectName: "sendModes"
+
+                                ShellMenuItem {
+                                    objectName: "sendModeQueue"
+                                    text: qsTr("Queue after this turn")
+                                    iconName: "list-plus"
+                                    visible: primaryAction.followUp !== "queue"
+                                    onTriggered: composer.submit("queue")
+                                }
+                                ShellMenuItem {
+                                    objectName: "sendModeSteer"
+                                    text: qsTr("Steer this turn")
+                                    iconName: "corner-down-right"
+                                    visible: primaryAction.followUp !== "steer"
+                                    onTriggered: composer.submit("steer")
+                                }
+                                ShellMenuItem {
+                                    objectName: "sendModeRestart"
+                                    text: qsTr("Restart the turn with this")
+                                    iconName: "rotate-ccw"
+                                    onTriggered: composer.submit("restart")
+                                }
+                            }
+                            onClicked: {
+                                if (holdOpened)
+                                    return;
+                                if (stopMode)
+                                    Shell.dispatch("composer.interrupt");
+                                else
+                                    composer.submit("foreground");
+                            }
 
                             Behavior on scale {
                                 NumberAnimation {

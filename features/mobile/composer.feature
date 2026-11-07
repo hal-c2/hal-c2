@@ -175,8 +175,8 @@ Feature: Writing to an agent from a phone
       | run after the current turn    | the message waits until the current turn ends   |
       | steer now                     | the agent receives the message during the turn  |
 
-  # The composer has no way to restart a turn with a message yet; the MC does (features/mc/orchestration/queue-and-steering.feature).
-  @backlog @mobile @priority-high
+  # A long press on the send control offers it; the MC does the restart (features/mc/orchestration/queue-and-steering.feature).
+  @mobile @priority-high
   Scenario: A message sent while the agent works can restart the turn
     Given the agent is working on a turn
     When the user sends "also update docs" to restart the turn
@@ -199,7 +199,7 @@ Feature: Writing to an agent from a phone
     Given the agent is idle but the message must wait for a connection
     Then the send control reads "Queue"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: An agent that cannot take a steer is only offered the queue
     Given the agent is working on a turn
     And the agent's provider cannot steer a running turn

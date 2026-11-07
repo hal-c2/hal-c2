@@ -553,6 +553,10 @@ private:
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
+  // Whether the shown thread's provider can take a message into its running
+  // turn (its session's `turns.supportsActiveSteering`); a provider that
+  // cannot is only offered the queue. No session known reads as able.
+  bool canSteerActive() const;
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();
