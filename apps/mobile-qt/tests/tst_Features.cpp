@@ -119,6 +119,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/review-diffs.feature"),
     QStringLiteral("source-control/pull-request-threads.feature"),
     QStringLiteral("timeline/tool-calls.feature"),
+    QStringLiteral("timeline/approvals-and-questions.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

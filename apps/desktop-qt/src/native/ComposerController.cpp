@@ -75,6 +75,26 @@ bool stillSending(const QJsonValue& detail) {
   return detail.toObject().value(QLatin1String("code")) == QLatin1String("message_still_sending");
 }
 
+// An approval recorded by an older version names a native request type
+// instead of a kind (the removed client-runtime's
+// requestKindFromRequestType).
+QString approvalKind(const QJsonObject& item) {
+  const QString kind = str(item, QLatin1String("requestKind"));
+  static const QStringList known{QStringLiteral("command"), QStringLiteral("file-read"), QStringLiteral("file-change"),
+                                 QStringLiteral("mcp-elicitation"), QStringLiteral("permission")};
+  if (known.contains(kind)) return kind;
+  const QString type = str(item, QLatin1String("requestType"));
+  if (type == QLatin1String("command_execution_approval") || type == QLatin1String("exec_command_approval") ||
+      type == QLatin1String("dynamic_tool_call")) {
+    return QStringLiteral("command");
+  }
+  if (type == QLatin1String("file_read_approval")) return QStringLiteral("file-read");
+  if (type == QLatin1String("file_change_approval") || type == QLatin1String("apply_patch_approval")) return QStringLiteral("file-change");
+  if (type == QLatin1String("mcp_elicitation_approval")) return QStringLiteral("mcp-elicitation");
+  if (type == QLatin1String("permission_approval")) return QStringLiteral("permission");
+  return kind;
+}
+
 // The title of an approval whose request names none.
 QString approvalTitle(const QString& kind) {
   if (kind == QLatin1String("mcp-elicitation")) return QStringLiteral("App access approval");
@@ -3144,7 +3164,7 @@ QVariantMap ComposerController::turnState() const {
   for (const QJsonObject& item : itemsOf(items, QStringLiteral("approval_request"))) {
     QVariantMap approval;
     if (!pending(item, approval, true)) continue;
-    const QString title = approvalTitle(str(item, QLatin1String("requestKind")));
+    const QString title = approvalTitle(approvalKind(item));
     QVariantList options;
     for (const QJsonValue& value : item.value(QLatin1String("options")).toArray()) {
       const QJsonObject option = value.toObject();
@@ -3169,10 +3189,15 @@ QVariantMap ComposerController::turnState() const {
     const QHash<QString, QList<Attachment>> files = m_answerFiles.value(question.value(QStringLiteral("requestId")).toString());
     QVariantList asked;
     for (const QJsonValue& value : item.value(QLatin1String("questions")).toArray()) {
-      QVariantMap one = value.toObject().toVariantMap();
+      // A question with nothing the user could answer is not shown (the
+      // removed client-runtime's parseQuestions).
+      const QJsonObject raw = value.toObject();
+      if (raw.value(QLatin1String("options")).toArray().isEmpty() && raw.value(QLatin1String("allowCustomAnswer")).toBool(true) == false) continue;
+      QVariantMap one = raw.toVariantMap();
       one.insert(QStringLiteral("attachments"), shownAttachments(files.value(one.value(QStringLiteral("id")).toString())));
       asked.append(one);
     }
+    if (asked.isEmpty()) continue;
     question.insert(QStringLiteral("questions"), asked);
     questions.append(question);
   }
