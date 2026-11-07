@@ -754,7 +754,9 @@ defmodule HalC2.Steps.Orchestration.Commands do
       answer(context, %{
         "type" => "run.interrupt",
         "threadId" => World.thread_id(context, "t1"),
-        "runId" => context.running
+        "runId" => context.running,
+        # The scenario is about the cancelled effect; the queued message should still run.
+        "holdQueue" => false
       })
 
     assert {:ok, _} = context.reply

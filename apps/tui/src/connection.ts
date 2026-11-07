@@ -71,6 +71,7 @@ import {
   interruptThreadTurn,
   respondToThreadApproval,
   respondToThreadUserInput,
+  resumeThreadQueue,
   setThreadAutoSettle as setThreadAutoSettleOp,
   setThreadInteractionMode,
   setThreadRuntimeMode,
@@ -663,6 +664,8 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
     planId: string,
   ) => Promise<void>;
   readonly interrupt: (threadId: ThreadId) => Promise<void>;
+  /** Starts a held queue again (`queue.resume`). */
+  readonly resumeQueue: (threadId: ThreadId) => Promise<void>;
   readonly approve: (
     threadId: ThreadId,
     requestId: string,
@@ -1201,6 +1204,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
 
     interrupt: (threadId) =>
       runtime.runPromise(interruptThreadTurn({ threadId }).pipe(Effect.asVoid)),
+
+    resumeQueue: (threadId) =>
+      runtime.runPromise(resumeThreadQueue({ threadId }).pipe(Effect.asVoid)),
 
     approve: (threadId, requestId, decision) =>
       runtime.runPromise(

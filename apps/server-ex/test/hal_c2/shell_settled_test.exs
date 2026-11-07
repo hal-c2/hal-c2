@@ -141,6 +141,52 @@ defmodule HalC2.ShellSettledTest do
       refute Map.has_key?(version, :settled_left_out)
     end
 
+    defp subagent(status) do
+      row = %{
+        "id" => "child",
+        "projectId" => "shop",
+        "status" => status,
+        "activeRunId" => nil,
+        "activityRunStatus" => nil,
+        "pendingRuntimeRequest" => nil,
+        "pendingBackgroundTasks" => [],
+        "lineage" => %{
+          "parentThreadId" => "th-1",
+          "relationshipToParent" => "subagent",
+          "rootThreadId" => "th-1"
+        }
+      }
+
+      if status == "running",
+        do: Map.merge(row, %{"activeRunId" => "run-1", "activityRunStatus" => "running"}),
+        else: row
+    end
+
+    test "omit idle subagents filters a cold snapshot but not a resume delta" do
+      Shell.put_row("child", {"thread", subagent("running")})
+      :ok = Shell.sync()
+
+      # The client holds the subagent running as of this version.
+      %{mcs: [%{epoch: epoch, rev: rev}]} = Shell.subscribe(spawn(fn -> :ok end), %{})
+
+      # It finishes while the client is away: the delta must still carry its new
+      # row, or the client keeps showing it running.
+      Shell.put_row("child", {"thread", subagent("completed")})
+      :ok = Shell.sync()
+
+      reply =
+        Shell.subscribe(self(), %{Atom.to_string(node()) => {epoch, rev}},
+          omit_idle_subagents: true
+        )
+
+      assert [%{reset: false}] = reply.mcs
+      assert "child" in sent(reply)
+
+      cold = Shell.subscribe(spawn(fn -> :ok end), %{}, omit_idle_subagents: true)
+      assert [%{reset: true}] = cold.mcs
+      refute "child" in sent(cold)
+    end
+
     test "the rows a limited client is sent whole after a restart are trimmed again" do
       %{mcs: [%{epoch: before}]} = Shell.subscribe(self(), %{}, settled_limit: 3)
 
