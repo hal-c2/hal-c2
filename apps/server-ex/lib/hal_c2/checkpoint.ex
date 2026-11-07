@@ -327,7 +327,11 @@ defmodule HalC2.Checkpoint do
   # Git refuses for a moment while another git holds a lock, or while a file it is
   # indexing is replaced under it; the capture is tried up to three times.
   @capture_attempts 3
-  @transient ~r/\.lock['"]?:? File exists|Another git process|unable to (index|stat) file '[^']*': No such file or directory|failed to insert into database/i
+  @transient ~r/\.lock['"]?:? File exists|Another git process|open\("[^"]*"\): No such file or directory|unable to index file '|unable to stat '[^']*': No such file or directory|failed to insert into database/i
+
+  @doc false
+  # The git messages a capture is tried again for (exposed for the test).
+  def transient?(message), do: Regex.match?(@transient, message)
 
   @doc """
   Commits the whole worktree (tracked and untracked, minus ignored) to `ref`, trying
@@ -336,7 +340,7 @@ defmodule HalC2.Checkpoint do
   def capture(cwd, ref, attempt \\ 1) do
     case capture_once(cwd, ref) do
       {:error, {_status, err}} = error when is_binary(err) and attempt < @capture_attempts ->
-        if Regex.match?(@transient, err) do
+        if transient?(err) do
           Process.sleep(Application.get_env(:hal_c2, :checkpoint_retry_ms, 100))
           capture(cwd, ref, attempt + 1)
         else

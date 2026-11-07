@@ -135,8 +135,11 @@ defmodule HalC2.Vcs.Watch do
     end
   end
 
-  def handle_cast({:pr_found, branch, remote}, %{pr_branch: branch} = state),
-    do: {:noreply, update(state, state.local, remote)}
+  # Only the pull request is the lookup's: counts a refresh published meanwhile stay.
+  def handle_cast({:pr_found, branch, found}, %{pr_branch: branch} = state) do
+    remote = Map.put(state.remote || found, "pr", found["pr"])
+    {:noreply, update(state, state.local, remote)}
+  end
 
   def handle_cast({:pr_found, _other_branch, _remote}, state), do: {:noreply, state}
 

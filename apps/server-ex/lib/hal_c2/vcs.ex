@@ -152,21 +152,30 @@ defmodule HalC2.Vcs do
     with true <- files < max_files and bytes < max_bytes,
          {:ok, %{type: :regular, size: size}} when size <= @untracked_read_limit <-
            File.lstat(full),
-         {:ok, data} <- File.read(full),
-         false <- String.contains?(data, <<0>>) do
-      lines =
-        data
-        |> :binary.matches("\n")
-        |> length()
-        |> Kernel.+(if data == "" or String.ends_with?(data, "\n"), do: 0, else: 1)
-
-      {file(path, lines, 0, nil), {files + 1, bytes + byte_size(data)}}
+         {:ok, data} <- File.read(full) do
+      # A binary file was read as much as a text one: it spends the budget too.
+      budget = {files + 1, bytes + byte_size(data)}
+      untracked_lines(path, data, budget)
     else
       _ -> {file(path, 0, 0, nil), budget}
     end
   end
 
   defp untracked_file(_cwd, path, false, budget), do: {file(path, 0, 0, nil), budget}
+
+  defp untracked_lines(path, data, budget) do
+    if String.contains?(data, <<0>>) do
+      {file(path, 0, 0, nil), budget}
+    else
+      lines =
+        data
+        |> :binary.matches("\n")
+        |> length()
+        |> Kernel.+(if data == "" or String.ends_with?(data, "\n"), do: 0, else: 1)
+
+      {file(path, lines, 0, nil), budget}
+    end
+  end
 
   # Without a known default branch, main and master count as the default.
   defp default_ref?(nil, _default), do: false

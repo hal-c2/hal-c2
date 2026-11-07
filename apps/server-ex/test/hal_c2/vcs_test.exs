@@ -75,6 +75,30 @@ defmodule HalC2.VcsTest do
     assert Enum.count(files, &(&1["insertions"] == 0)) == 20
   end
 
+  test "binary files spend the untracked budget as text files do", %{repo: repo} do
+    for n <- 1..520,
+        do: File.write!(Path.join(repo, "b#{String.pad_leading("#{n}", 3, "0")}.bin"), <<0, 1>>)
+
+    File.write!(Path.join(repo, "z-text.txt"), "x\n")
+
+    assert %{"workingTree" => %{"insertions" => 0}} = Vcs.local_status(repo)
+  end
+
+  test "a pull request found late does not roll back newer counts", %{repo: repo} do
+    HalC2.Vcs.Watch.subscribe(repo, self())
+    [{pid, _}] = Registry.lookup(HalC2.Vcs.Registry, repo)
+
+    File.write!(Path.join(repo, "c.txt"), "c\n")
+    git!(repo, ~w(add c.txt))
+    commit!(repo, "local")
+    :ok = HalC2.Vcs.Watch.refresh(repo)
+    assert %{remote: %{"aheadCount" => 1}} = :sys.get_state(pid)
+
+    stale = %{"aheadCount" => 0, "pr" => %{"number" => 42}}
+    GenServer.cast(pid, {:pr_found, "main", stale})
+    assert %{remote: %{"aheadCount" => 1, "pr" => %{"number" => 42}}} = :sys.get_state(pid)
+  end
+
   test "ahead and behind, after a fetch", %{repo: repo, other: other} do
     File.write!(Path.join(other, "b.txt"), "b\n")
     git!(other, ~w(add b.txt))
