@@ -404,6 +404,7 @@ Feature: Follow-ups while the agent is working
     When the user resumes the queue
     Then the MC is asked to resume the queue
 
+  # Upstream #14725: steers keep the newest next-turn selection
   @backlog @mc @priority-high
   Scenario: Steers keep the newest next-turn selection
     Given a provider that steers live but cannot restart the turn
@@ -411,6 +412,7 @@ Feature: Follow-ups while the agent is working
     Then the saved next-turn selection is the newest choice
     And a steer that misses the turn starts the follow-up on that choice
 
+  # Upstream #15417: removing a queued message on mobile is tappable
   @backlog @mobile @priority-high
   Scenario: A queued message can be removed on the phone
     When the user removes a queued message on the phone

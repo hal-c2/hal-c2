@@ -910,6 +910,7 @@ Feature: Custom themes
       Then the search box is empty and no results are shown
       And the sort order is back to Most downloaded
 
+    # Upstream #14498: imported themes keep switches and focus rings visible
     @backlog @shared
     Scenario: An imported theme keeps switches and focus rings visible
       Given an imported theme whose input border or focus colour is transparent
@@ -1011,6 +1012,7 @@ Feature: Custom themes
       When HAL-C2 starts
       Then the renamed theme is used
 
+  # Upstream #14499: Dark+ and Light+ import under non-reserved ids instead of colliding with built-ins
   @backlog @shared @priority-low
   Scenario: Dark+ and Light+ import from VS Code
     Given the VS Code themes "Dark+" and "Light+"

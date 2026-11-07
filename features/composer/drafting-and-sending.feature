@@ -282,6 +282,7 @@ Feature: Drafting and sending a message
     When the user types "hello" into the composer
     Then the send control can be used and is the composer's accent
 
+  # Upstream #15050: mod+alt+enter on an existing thread sends and opens a new thread
   @backlog @shared
   Scenario: Send and start a new thread from an existing thread
     Given the user has written a follow-up in an existing thread

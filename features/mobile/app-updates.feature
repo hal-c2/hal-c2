@@ -182,6 +182,7 @@ Feature: Keeping the phone app up to date
 
   # Dropped: upstream's Nightly told its users to join the beta mobile apps because the store
   # apps could not talk to its server. HAL-C2 ships its own mobile client against the MC.
+  # Upstream #15070: Nightly tells its users to get the beta mobile app
   @dropped @shared
   Scenario: Nightly builds point to a beta mobile app
     Given a Nightly build
@@ -190,6 +191,7 @@ Feature: Keeping the phone app up to date
 
   # Dropped: upstream's About links to T3 Code's App Store and Google Play apps. HAL-C2's
   # phone client is built from this repository and pairs by a link, not from a store.
+  # Upstream #20422: About links to the mobile apps in the stores
   @dropped @desktop
   Scenario: About links to the mobile apps in the stores
     When the user opens About in the settings
