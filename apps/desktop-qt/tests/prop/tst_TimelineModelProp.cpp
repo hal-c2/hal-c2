@@ -26,6 +26,7 @@
 #include <optional>
 
 #include "LocalCache.h"
+#include "SubagentDisplay.h"
 #include "TimelineModel.h"
 #include "TimelineSummary.h"
 
@@ -557,6 +558,26 @@ QList<Row> project(const Model& model) {
       continue;
     }
     const QString kind = kindOf(item);
+    // Subagents a turn started together are one closed group ("2 subagents",
+    // their statuses); a lone one is its own row.
+    if (kind == QLatin1String("subagent")) {
+      QStringList statuses;
+      qsizetype next = i;
+      for (; next < shown.size(); ++next) {
+        const Item& other = shown.at(next);
+        if (next > i && foldBefore.contains(other.id)) break;
+        if (kindOf(other) != QLatin1String("subagent") || folded.contains(other.id) || other.run != item.run) break;
+        statuses.append(other.status);
+      }
+      if (statuses.size() > 1) {
+        Row row{QStringLiteral("subagents:") + item.id, QStringLiteral("subagents")};
+        row.title = QStringLiteral("%1 subagents").arg(statuses.size());
+        row.text = subagents::summarizeStatuses(statuses);
+        rows.append(row);
+        i = next;
+        continue;
+      }
+    }
     if (kind == QLatin1String("work")) {
       Row row{QStringLiteral("work:") + item.id, kind};
       QStringList calls;

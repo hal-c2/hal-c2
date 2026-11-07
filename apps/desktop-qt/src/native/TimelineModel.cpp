@@ -1647,7 +1647,8 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     if (cutOff(item)) {
       const QString fold = QStringLiteral("cut-off:") + id;
       const bool open = m_expandedFolds.contains(fold);
-      rows.append({QStringLiteral("fold:") + fold, QStringLiteral("fold"), {}, {}, QStringLiteral("Cut off by a steer"), 1, open,
+      // The reply it folds is its item, so keepFrom() reads its run.
+      rows.append({QStringLiteral("fold:") + fold, QStringLiteral("fold"), {id}, {}, QStringLiteral("Cut off by a steer"), 1, open,
                    itemTime(item)});
       if (!open) {
         ++i;

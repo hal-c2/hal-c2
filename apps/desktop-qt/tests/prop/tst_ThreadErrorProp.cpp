@@ -4,8 +4,8 @@
 // open thread only: what this client reported on it, else its row's last
 // error; a usage limit the thread's failed run stopped on is left to the
 // timeline. Dismissing hides that error of that run on that thread, and only
-// that error: the same one again stays hidden, a different one, or the same
-// one from a later run, shows.
+// that error: the same one again in the row stays hidden, a different one,
+// the same one from a later run, or this client reporting it again, shows.
 
 #include "Prop.h"
 
@@ -188,7 +188,10 @@ struct McError : Command {
 struct Report : Command {
   QString thread = *rc::gen::elementOf(std::vector<QString>(kThreads.begin(), kThreads.end()));
   QString message = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("Rate limited"), QStringLiteral("Failed to stop background work.")});
-  void apply(Model& model) const override { model.local.insert(thread, message); }
+  void apply(Model& model) const override {
+    model.dismissed.remove({thread, QString::number(model.rows.value(thread).run) + QChar(0) + message});
+    model.local.insert(thread, message);
+  }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);

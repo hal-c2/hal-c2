@@ -4,7 +4,7 @@
 // (`lastError`). A usage limit the thread's failed run stopped on is left to
 // the timeline, whose warning line names when to retry. Dismissing hides that
 // error of that run on that thread until the app restarts; a different one,
-// or the same one from a later run, shows.
+// the same one from a later run, or this client reporting it again, shows.
 //
 // Publishes `threadError`: null, or {threadKey, message, warning}; warning
 // for a usage limit.
@@ -45,6 +45,8 @@ bool ThreadErrorController::handle(const QString& action, const QVariant&) {
 
 void ThreadErrorController::report(const QString& threadKey, const QString& message) {
   if (threadKey.isEmpty() || message.isEmpty()) return;
+  // A report is a new event: the same refusal twice in one run is said twice.
+  m_dismissed.remove(dismissal(threadKey, message));
   m_local.insert(threadKey, message);
   publish();
 }
