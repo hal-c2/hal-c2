@@ -243,6 +243,9 @@ defmodule HalC2.OrchestrationTest do
 
     assert %{"status" => "queued", "queuePosition" => 1} =
              StreamState.get(state, "run")[third["id"]]
+
+    # Going first interrupts the turn it was to steer, so that turn ends steered by it.
+    assert StreamState.get(state, "run")[active["id"]]["steeredByRunId"] == third["id"]
   end
 
   test "a message runs a Codex turn and streams it into the thread" do

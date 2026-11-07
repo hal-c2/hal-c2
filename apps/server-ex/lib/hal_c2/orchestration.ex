@@ -900,7 +900,17 @@ defmodule HalC2.Orchestration do
             )
 
           positions = with_changes(state, requeued) |> first_in_queue(run_id)
-          {requeued ++ Enum.reject(positions, &is_nil/1), queue_waits(thread)}
+
+          # Queued again, the message interrupts the target and runs next (the
+          # caller restarts it), so the target ends steered by it.
+          case queue_waits(thread) do
+            :queued ->
+              steered = steered_by(state, target_id, run_id)
+              {requeued ++ Enum.reject([steered | positions], &is_nil/1), :queued}
+
+            waits ->
+              {requeued ++ Enum.reject(positions, &is_nil/1), waits}
+          end
       end
     end
   end
