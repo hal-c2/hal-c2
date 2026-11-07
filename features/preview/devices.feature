@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/26797
+#   https://github.com/pingdotgg/t3code/pull/25971
 #   https://github.com/pingdotgg/t3code/pull/23339
 #   https://github.com/pingdotgg/t3code/pull/19975
 #   https://github.com/pingdotgg/t3code/pull/21197
@@ -42,6 +43,7 @@
 #   https://github.com/pingdotgg/t3code/pull/24106
 #   https://github.com/pingdotgg/t3code/pull/25248
 #   https://github.com/pingdotgg/t3code/pull/21430
+#   https://github.com/pingdotgg/t3code/pull/28323
 
 Feature: Device panel
   A thread's Device tab lists the simulators and emulators of the thread's environment,
@@ -156,6 +158,38 @@ Feature: Device panel
       When the user or an agent lists the machine's devices
       Then the warning names the cause, "Unable to connect to CoreSimulatorService"
       And it is one line without the tools' stack trace
+
+    # Upstream #25971: a failed or hung simulator listing dropped the known devices, and setup
+    # then advised installing an iOS runtime that was already there.
+    @backlog @mc @desktop
+    Scenario Outline: Known devices stay listed when a listing <fails>
+      Given the machine "studio" listed the iOS Simulator "iPhone 17"
+      When its next simulator listing <fails>
+      Then "iPhone 17" is still listed
+      And the list says the iOS Simulators of "studio" may be incomplete, and why
+      And setup does not advise installing an iOS runtime
+      And the warning clears once a listing succeeds again
+
+      Examples:
+        | fails                           |
+        | fails                           |
+        | does not answer within 40 seconds |
+
+    # Upstream #25971: the incomplete-listing warning can be put away until its cause changes.
+    @backlog @desktop @priority-low
+    Scenario: An incomplete device listing warning can be dismissed until its cause changes
+      Given the device list says the iOS Simulators of "studio" may be incomplete
+      When the user dismisses the warning
+      Then it is not shown again for that cause
+      But it comes back when the cause or the platforms it names change
+
+    # Upstream #25971: a device booted while its platform's listing was incomplete opened the
+    # stale entry, such as an emulator by its virtual device name.
+    @backlog @mc @priority-low
+    Scenario: A booted device is not opened from a listing that may be incomplete
+      Given the Android listing of "studio" may be incomplete
+      When the user starts the emulator "Pixel 9" and opens it
+      Then opening it is refused until a listing names the running emulator
 
     @desktop
     Scenario: Only one device is opened at a time from the list
@@ -931,6 +965,7 @@ Feature: Device panel
       When its session ends while the user is looking at another thread
       Then "iPhone 17" no longer floats over "Fix checkout"
 
+    # Upstream #25714: closing the right panel floated a device whose session had already ended.
     @backlog @desktop @priority-low
     Scenario: Closing the right panel does not float a device whose session ended
       Given the right panel shows the "iPhone 17" tab and its session has ended
@@ -1280,6 +1315,16 @@ Feature: Device panel
         | the iOS Simulator "iPhone 17"  | https:// or myapp://     | myapp://cart         | Open   | open "myapp://cart"             |
         | the iOS Simulator "iPhone 17"  | Bundle ID to launch      | com.example.shop     | Launch | launch "com.example.shop"       |
         | the Android Emulator "Pixel 9" | Package name to launch   | com.example.shop     | Launch | launch "com.example.shop"       |
+
+    # Upstream #28323: the address and app fields were emptied even when the device refused, so a
+    # hand-typed deep link or bundle ID had to be typed again to retry.
+    @backlog @desktop
+    Scenario: An address the device refuses to open stays in its field
+      Given the user has the tools open for the iOS Simulator "iPhone 17"
+      And the device refuses to open "myapp://cart"
+      When the user types "myapp://cart" into "https:// or myapp://" and chooses "Open"
+      Then the tools say why the device refused
+      And the field still reads "myapp://cart"
 
     @desktop
     Scenario: An empty address or app name cannot be sent

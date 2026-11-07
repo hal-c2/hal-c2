@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/24148
+#   https://github.com/pingdotgg/t3code/pull/32325
 #   https://github.com/pingdotgg/t3code/pull/24788
 #   https://github.com/pingdotgg/t3code/pull/24718
 #   https://github.com/pingdotgg/t3code/pull/13608
@@ -131,6 +132,14 @@ Feature: General settings
       When the user turns it on
       Then the number of days before settling is shown with its default
       And the user can change the number of days
+
+    # Upstream #32325: the default rose from 3 to 7 days, so work paused over a weekend stays active.
+    @backlog @mc @desktop @mobile @priority-low
+    Scenario: Inactive settling waits 7 days unless the user chose otherwise
+      Given the user never set the number of days before settling
+      When the user turns inactive settling on
+      Then the number of days before settling is 7
+      And a number of days the user chose before, or turning it off, is kept
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (AutoSettleDaysInput), packages/contracts/src/settings.ts (1 to 90 days)
     @backlog @desktop @priority-low

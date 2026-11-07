@@ -19,6 +19,8 @@
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/modelCatalog.ts (reasoning effort tiers)
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/protocol.ts (approval choices)
 #   https://github.com/pingdotgg/t3code/pull/22346
+#   https://github.com/pingdotgg/t3code/pull/29910
+#   https://github.com/pingdotgg/t3code/pull/32154
 #
 # Steering, the hidden plan/build toggle and the missing rewind are in capabilities.feature.
 
@@ -99,6 +101,16 @@ Feature: Muse Code
     Given a Muse Code thread with history
     When Muse Code exits and the user sends another message
     Then Muse Code continues the same session
+
+  # Upstream #32154: Muse resumed a session whose history view was unavailable and still took the
+  # turn, whose events never arrived, so the thread ran forever.
+  @backlog
+  Scenario: A resumed Muse Code session whose history is unavailable is replaced by a fresh one
+    Given a Muse Code thread with history
+    And Muse Code resumes its session reporting that the session's history is unavailable
+    When the user sends another message
+    Then the turn runs in a fresh Muse Code session that is handed the conversation so far
+    And the thread does not stay running
 
   Scenario Outline: A Muse Code host that answers <command> for another id is replaced
     Given a Muse Code thread whose host answers <command> for another id
@@ -485,3 +497,11 @@ Feature: Muse Code
     Then the approval is given without showing it to the user
     And the thread does not wait on it after a reconnect
     But if giving it fails while the agent is still running, the user is asked
+
+  # Upstream #29910: the thread's error banner showed the failure unredacted and uncut, while the
+  # timeline redacted it.
+  @backlog
+  Scenario: A failed Muse Code turn shows the same redacted error in the banner as in the timeline
+    Given a Muse Code turn fails with "Provider rejected this turn: api_key=abc123"
+    Then the timeline and the thread's error banner both show "api_key=[REDACTED]"
+    And a failure longer than 4,096 characters is cut the same way in both

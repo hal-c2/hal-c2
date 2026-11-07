@@ -152,13 +152,18 @@ step("the client buys a socket ticket from the MC over HTTP", async (ctx: Launch
   expect(mc(ctx).ticketBearers.length).toBeGreaterThanOrEqual(1);
 });
 
-step("the socket URL carries only that ticket", (ctx: LaunchWorld) => {
-  const [socket] = sessionSockets(ctx);
-  const url = new URL(socket!.url);
-  expect(url.pathname).toBe("/ws");
-  expect([...url.searchParams.keys()]).toEqual(["wsTicket"]);
-  expect(url.searchParams.get("wsTicket")).toBe(socket!.ticket);
-});
+step(
+  "the socket URL carries that ticket and the protocol version, and no token",
+  (ctx: LaunchWorld) => {
+    const [socket] = sessionSockets(ctx);
+    const url = new URL(socket!.url);
+    expect(url.pathname).toBe("/ws");
+    // The ticket and the protocol version, and no token.
+    expect([...url.searchParams.keys()].toSorted()).toEqual(["protocol", "wsTicket"]);
+    expect(url.searchParams.get("protocol")).toBe("3");
+    expect(url.searchParams.get("wsTicket")).toBe(socket!.ticket);
+  },
+);
 
 step("the terminal client is connected to an MC", async (ctx: LaunchWorld) => {
   runningMc(ctx);

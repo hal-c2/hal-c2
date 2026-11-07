@@ -1,8 +1,10 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/24489
+#   https://github.com/pingdotgg/t3code/pull/22160
 #   https://github.com/pingdotgg/t3code/pull/24109
 #   https://github.com/pingdotgg/t3code/pull/23900
 #   https://github.com/pingdotgg/t3code/pull/20073
+#   https://github.com/pingdotgg/t3code/pull/29643
 #   apps/web/src/components/threadActionMenu.logic.ts (Archive thread, Delete)
 #   apps/web/src/hooks/useThreadActions.ts (archiveThread and deleteThread: where the open thread's window goes)
 #   apps/web/src/components/Sidebar.logic.ts (getFallbackThreadIdAfterDelete)
@@ -214,6 +216,20 @@ Feature: Archiving and deleting threads
     When the user deletes "Old spike"
     Then "Newer work" opens
 
+  # Upstream #29643: the thread opened after a delete could be one parked on the snoozed or settled shelf.
+  @backlog @desktop @mobile
+  Scenario Outline: Deleting the open thread skips a <parked> thread
+    Given the user is viewing "Old spike"
+    And "Newer work" is the next thread in "shop" but is <parked>
+    And "Older work" is the next thread in "shop" that is neither snoozed nor settled
+    When the user deletes "Old spike"
+    Then "Older work" opens
+
+    Examples:
+      | parked  |
+      | snoozed |
+      | settled |
+
   @desktop @mobile @backlog-mobile
   Scenario: Deleting the open thread opens the latest thread left in its project
     Given "Newer work" is the top remaining thread in "shop"
@@ -271,6 +287,15 @@ Feature: Archiving and deleting threads
     Given "Old spike" is archived
     When the user deletes "Old spike" from the archived threads
     Then "Old spike" is no longer in the archived threads
+
+  # Upstream #22160: Settings → Archive offers Delete beside Unarchive on each row, with the same
+  # confirmation as the thread menu, which now names the thread.
+  @backlog @desktop @priority-low
+  Scenario: An archived thread's row offers Delete beside Unarchive, asking first by name
+    Given "Old spike" is archived
+    When the user chooses Delete on the row of "Old spike" in the archived threads
+    Then the confirmation names "Old spike"
+    And while the delete is under way the row takes no other action
 
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: An unarchived thread leaves the archived threads at once

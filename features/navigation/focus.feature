@@ -9,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/23676
 #   https://github.com/pingdotgg/t3code/pull/23780
 #   https://github.com/pingdotgg/t3code/pull/25877
+#   https://github.com/pingdotgg/t3code/pull/26690
 #   docs/user/keyboard-focus.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
@@ -253,17 +254,32 @@ Feature: Keyboard focus and keyboard-only use
       Then the menu for thread "B" opens beside it
 
     # Upstream #25877: the thread list is one tree with one Tab stop; Right and Left fold its groups.
+    # Upstream #26690: the thread list went back to a list whose every row Tab reaches, keeping
+    # Right and Left.
     @backlog @desktop
-    Scenario Outline: The thread list moves like a tree
+    Scenario Outline: Right and Left fold the thread list's project folders
       Given the thread list has keyboard focus on the project folder "shop"
       When the user presses <key>
       Then <result>
 
       Examples:
-        | key   | result                                                 |
-        | Left  | "shop" closes without opening a thread                 |
+        | key   | result                                                     |
+        | Left  | "shop" closes without opening a thread                     |
         | Right | "shop" opens, and a second Right moves to its first thread |
-        | Tab   | focus leaves the thread list for the next area         |
+
+    # Upstream #26690: with one Tab stop a screen reader reached one thread and its buttons, then
+    # left the sidebar, and each row read its title, status, buttons and branch as one name.
+    @backlog @desktop
+    Scenario: Tab goes through every thread and its buttons
+      Given the thread list has keyboard focus on thread "B"
+      When the user presses Tab past thread "B"'s own buttons
+      Then keyboard focus is on the next row of the thread list
+
+    @backlog @desktop @priority-low
+    Scenario: A screen reader browses the thread list without entering focus mode
+      Given a screen reader is in browse mode
+      When the user moves down onto thread "B"
+      Then the screen reader reads thread "B" as a button named by its title and project
 
     # Upstream #25877: Tab from a thread reaches that thread's own buttons.
     @backlog @desktop

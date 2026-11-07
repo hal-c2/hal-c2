@@ -1,10 +1,20 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/17896
 #   https://github.com/pingdotgg/t3code/pull/26096
+#   https://github.com/pingdotgg/t3code/pull/31799
+#   https://github.com/pingdotgg/t3code/pull/31800
+#   https://github.com/pingdotgg/t3code/pull/31801
+#   https://github.com/pingdotgg/t3code/pull/31769
+#   https://github.com/pingdotgg/t3code/pull/31778 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/26734
+#   https://github.com/pingdotgg/t3code/pull/31030
+#   https://github.com/pingdotgg/t3code/pull/31300
 #   apps/mobile/src/features/voice-input/ (on-device dictation states, errors, draft safety)
 #   packages/client-runtime/src/voice-input/controller.ts, transcription.ts (where the transcript goes, spacing)
-# Composer drafting is specified in features/composer/. Dictation is phone-only.
+# Composer drafting is specified in features/composer/. Dictating on the phone itself or to a cloud
+# provider is phone-only; dictating to an environment is in composer/environment-dictation.feature.
 #   https://github.com/pingdotgg/t3code/pull/15502
+#   https://github.com/pingdotgg/t3code/pull/28698
 
 @priority-low
 Feature: Dictating a message
@@ -67,7 +77,25 @@ Feature: Dictating a message
       | English     | "Please\|"     | "Please run the tests"     |
       | English     | "\|now"        | "run the tests now"        |
       | English     | "Please \|now" | "Please run the tests now" |
-      | another one | "Please\|"     | "Pleaserun the tests"      |
+      | Japanese    | "Please\|"     | "Pleaserun the tests"      |
+
+  # Upstream #31799: dictation spaced words only in English, so Korean and Hindi words ran
+  # together; it now follows the recording's language and any script's letters and marks.
+  @backlog @mobile
+  Scenario Outline: A dictated word is spaced the way its language separates words
+    Given the dictation language is <language>
+    And the draft is <draft> with the cursor at "|"
+    When the user dictates <words>
+    Then the draft reads <result>
+
+    Examples:
+      | language    | draft        | words    | result            |
+      | Korean      | "코드를\|"   | "검토"    | "코드를 검토"       |
+      | Hindi       | "नमस्ते\|"    | "दोस्त"    | "नमस्ते दोस्त"        |
+      | Japanese    | "コード\|"   | "確認"    | "コード確認"        |
+      | Thai        | "สวัสดี\|"    | "ครับ"    | "สวัสดีครับ"         |
+      | auto-detect | "Hello\|"    | "world"  | "Hello world"     |
+      | auto-detect | "Hello\|"    | "世界"    | "Hello世界"        |
 
   @backlog @mobile
   Scenario: The user cancels dictation
@@ -105,6 +133,72 @@ Feature: Dictating a message
       | situation                                              | reason                                   |
       | the phone's language has no on-device transcription    | the language is not supported            |
       | the phone cannot transcribe on the device              | this device does not support dictation   |
+
+  # Upstream #28698: the microphone settings offered permission and input order on a phone where
+  # dictation could not run, and the composer had no microphone.
+  @backlog @mobile
+  Scenario: The microphone settings say why dictation is unavailable
+    Given the phone cannot transcribe on the device
+    When the user opens the microphone settings
+    Then they say dictation is unavailable on this device and why
+    And they do not suggest that granting the microphone would turn it on
+
+  # Upstream #31800: on-device dictation followed the app's language, so a phone set to Korean
+  # or German first was still transcribed as English.
+  @backlog @mobile
+  Scenario: On-device dictation follows the phone's preferred languages in order
+    Given the phone prefers Korean, then German, and the app is in English
+    And the phone cannot transcribe Korean on the device
+    When the user dictates
+    Then the recording is transcribed as German
+    But cancelling or failing the download of the first language's model ends the dictation without trying another language
+
+  # Upstream #31801: the first on-device dictation in a language waited for the speech model
+  # before recording, so "one, two, three" came out as "two, three".
+  @backlog @mobile
+  Scenario: Dictation records at once while the language's model is still being prepared
+    Given the phone has not yet prepared its on-device model for the dictation language
+    When the user starts dictating and at once says "one, two, three"
+    And the user finishes dictating
+    Then the transcript waits for the model and reads "one, two, three"
+    And cancelling instead discards the recording, and the next dictation does not wait on it
+
+  # Upstream #31769: Settings → Voice → Transcribe with offers OpenAI, Grok and OpenRouter beside
+  # the phone; a saved key or a paired client never opts a device into sending audio.
+  @backlog @mobile
+  Scenario Outline: Cloud dictation is used only on a phone that chose it
+    Given the environment has a saved <provider> key
+    And this phone has not chosen where to transcribe
+    When the user dictates
+    Then the recording is transcribed on the phone
+    When the user chooses <provider> under "Transcribe with" on this phone
+    And the user dictates again
+    Then only the finished recording is sent to <provider>
+    And other phones keep transcribing where they chose
+
+    Examples:
+      | provider   |
+      | OpenAI     |
+      | Grok       |
+      | OpenRouter |
+
+  # Upstream #31769: an unavailable model or unreadable key stops transcription; there is no fallback.
+  @backlog @mobile @priority-low
+  Scenario: Cloud dictation that cannot reach its provider does not fall back
+    Given this phone transcribes with OpenRouter
+    And the environment's OpenRouter key cannot be read
+    When the user dictates
+    Then the user is told transcription could not run and why
+    And the recording is not sent to another provider or model
+
+  # Upstream #31778: microphone audio sent to an environment reached through the relay was refused
+  # before it was sent. HAL-C2 has no relay; an environment the phone reaches directly can
+  # transcribe (composer/environment-dictation.feature).
+  @dropped @mobile
+  Scenario: Dictation can be transcribed by an environment reached through the relay
+    Given the user chose an environment reached through the relay under "Send microphone audio to"
+    When the user dictates
+    Then that environment transcribes the recording
 
   @backlog @mobile
   Scenario: A failed transcription can be retried
@@ -210,6 +304,42 @@ Feature: Dictating a message
   Scenario: A phone known up front to have no on-device transcription offers no dictation
     Given the phone already reports no on-device transcription for its language before the composer opens
     Then the composer offers no way to start dictating
+
+  # Upstream #26734: Android had no dictation; it now uses Google's on-device speech recognition,
+  # and every sentence spoken between pauses is kept.
+  @backlog @mobile
+  Scenario: An Android phone dictates on the device and keeps every sentence across pauses
+    Given the user is on an Android phone with on-device speech recognition for their language
+    When the user dictates two sentences with a pause between them
+    And the user finishes dictating
+    Then both sentences are added to the draft, separated as the recognizer separates them
+
+  # Upstream #26734: support is checked again when the app returns, so a model downloaded meanwhile shows the microphone.
+  @backlog @mobile
+  Scenario: Dictation becomes available once the phone gains on-device recognition
+    Given the composer offers no dictation because the phone has no on-device recognition for its language
+    When the phone gains it while the app is in the background
+    And the user returns to the app
+    Then the composer offers dictation
+
+  # Upstream #31030: a regional preference such as Celsius adds an extension to Android's locale
+  # ("en-US-u-mu-celsius"), and on-device recognition then reported every language unavailable.
+  @backlog @mobile
+  Scenario: An Android phone with regional preferences set still dictates on the device
+    Given the user is on an Android phone with on-device speech recognition for US English
+    And the phone's regional preferences use Celsius and Monday as the first day of the week
+    When the user opens the microphone settings
+    Then dictation is available
+    And the recording is transcribed as US English
+
+  # Upstream #31300: Android fed the recording to the recognizer only after Stop, so a minute of
+  # speech took another minute to come out.
+  @backlog @mobile
+  Scenario: An Android recording is transcribed while the user speaks
+    Given the user is on an Android phone with on-device speech recognition for their language
+    When the user dictates for a minute and finishes
+    Then the transcript is added soon after, without another minute of transcribing
+    And no speech from the end of the recording is lost
 
   @backlog @mobile
   Scenario: The screen stays awake while recording

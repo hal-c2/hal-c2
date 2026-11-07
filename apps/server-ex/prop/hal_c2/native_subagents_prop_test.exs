@@ -300,15 +300,18 @@ defmodule HalC2.NativeSubagentsPropTest do
           method in ~w(thread/start thread/resume),
           do: {:started, get_in(request, ["params", "config", "features"])}
 
+    # The instructions ride `additionalContext` (`HalC2.Mcp.Instructions.codex_context/1`),
+    # which Codex sends the model in sorted key order.
     [instructions] =
-      for {"turn/start", request} <- requests,
-          do:
-            get_in(request, [
-              "params",
-              "collaborationMode",
-              "settings",
-              "developer_instructions"
-            ])
+      for {"turn/start", request} <- requests do
+        case get_in(request, ["params", "additionalContext"]) do
+          entries when is_map(entries) ->
+            entries |> Enum.sort() |> Enum.map_join(fn {_, %{"value" => value}} -> value end)
+
+          nil ->
+            nil
+        end
+      end
 
     %{features: List.first(started, :none), instructions: told(instructions)}
   end
@@ -319,9 +322,14 @@ defmodule HalC2.NativeSubagentsPropTest do
   # what they contain, not by equality with the orchestration text alone.
   defp told(text) do
     cond do
-      is_binary(text) and String.contains?(text, HalC2.Mcp.workers_only_note()) -> :workers
-      is_binary(text) and String.contains?(text, HalC2.Mcp.instructions()) -> :anything
-      true -> {:other, text}
+      is_binary(text) and String.contains?(text, String.trim(HalC2.Mcp.workers_only_note())) ->
+        :workers
+
+      is_binary(text) and String.contains?(text, HalC2.Mcp.instructions()) ->
+        :anything
+
+      true ->
+        {:other, text}
     end
   end
 

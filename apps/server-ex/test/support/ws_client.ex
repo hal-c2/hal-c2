@@ -1,8 +1,15 @@
 defmodule HalC2.Test.WsClient do
   @moduledoc "Minimal blocking WebSocket client for tests, speaking JSON text frames."
 
-  @doc "Connects and upgrades; `transport_opts` go to the socket (`:gen_tcp`)."
-  def connect(port, path, host \\ "127.0.0.1", transport_opts \\ []) do
+  @doc """
+  Connects and upgrades; `transport_opts` go to the socket (`:gen_tcp`). An MC socket
+  (`/ws`) names the protocol the MC speaks, as clients do, unless its path names one.
+  """
+  def connect(port, path, host \\ "127.0.0.1", transport_opts \\ []),
+    do: upgrade(port, with_protocol(path), host, transport_opts)
+
+  @doc "As `connect/4`, with the path as given: a socket that names no protocol."
+  def upgrade(port, path, host \\ "127.0.0.1", transport_opts \\ []) do
     {:ok, conn} = Mint.HTTP.connect(:http, host, port, transport_opts: transport_opts)
     {:ok, conn, ref} = Mint.WebSocket.upgrade(:ws, conn, path, [])
     {conn, [{:status, ^ref, status}, {:headers, ^ref, headers} | rest]} = recv_http(conn, [])
@@ -24,6 +31,18 @@ defmodule HalC2.Test.WsClient do
       {:error, status}
     end
   end
+
+  defp with_protocol("/ws" <> rest = path) when rest == "" or binary_part(rest, 0, 1) == "?" do
+    if path =~ ~r/[?&]protocol=/,
+      do: path,
+      else:
+        "/ws?" <> URI.encode_query(%{"protocol" => HalC2.Web.Protocol.version()}) <> query(rest)
+  end
+
+  defp with_protocol(path), do: path
+
+  defp query(""), do: ""
+  defp query("?" <> query), do: "&" <> query
 
   def send_json(client, message) do
     {:ok, ws, data} =

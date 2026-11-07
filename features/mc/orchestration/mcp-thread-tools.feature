@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29163
+#   https://github.com/pingdotgg/t3code/pull/31815
+#   https://github.com/pingdotgg/t3code/pull/31819
 #   https://github.com/pingdotgg/t3code/pull/26718
 #   https://github.com/pingdotgg/t3code/pull/26642
 #   https://github.com/pingdotgg/t3code/pull/18194
@@ -19,6 +22,8 @@
 #   https://github.com/pingdotgg/t3code/pull/25306
 #   https://github.com/pingdotgg/t3code/pull/16654
 #   https://github.com/pingdotgg/t3code/pull/26442
+#   https://github.com/pingdotgg/t3code/pull/27273
+#   https://github.com/pingdotgg/t3code/pull/27139
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_thread_list, hal_c2_thread_read, hal_c2_thread_send,
 #     hal_c2_thread_wait, hal_c2_thread_interrupt, hal_c2_thread_search, hal_c2_environment_read,
 #     hal_c2_environment_preferences_update)
@@ -94,6 +99,13 @@ Feature: Agents working with threads through MCP tools
     Given a message of "t2" is 30,000 characters long
     When the agent of "caller" reads it with a limit of 20,000 characters
     Then the text is cut to 20,000 characters and can be read on from an offset
+
+  # Upstream #27273: a page could end in half of an emoji and the next start with the other half.
+  @backlog @mc @priority-low
+  Scenario: A page of a long item ends before an emoji, not through it
+    Given a message of "t2" reads "a😀bc"
+    When the agent of "caller" reads it with a limit of 2 characters
+    Then the pages read "a", "😀b" and "c"
 
   # Upstream #22901: limits above their maximum failed the read.
   @mc
@@ -303,6 +315,16 @@ Feature: Agents working with threads through MCP tools
     Then the new thread works in the project root with no worktree
     And it does not share the caller's worktree or branch
 
+  # Upstream #31819: an independent worktree inherited the caller's feature branch, which
+  # stacked its pull request on unrelated work.
+  @backlog @mc
+  Scenario: A launch in a new worktree that names no base starts from the default branch
+    Given thread "caller" works in worktree "/work/x" on branch "feature/x"
+    And "demo"'s default branch on its remote is "origin/main"
+    When the agent of "caller" launches an independent thread in "demo" in a new worktree without naming a base
+    Then the new worktree is based on a freshly fetched "origin/main", not on "feature/x"
+    But a launch that names "feature/x" as its base is based on it
+
   # Legacy: apps/server/src/mcp/toolkits/project/tools.ts, attachment/tools.ts (input schemas)
   @mc
   Scenario Outline: A launch or an attachment send over the input limits is refused
@@ -409,6 +431,12 @@ Feature: Agents working with threads through MCP tools
       | title "Audit deps"                 | "Audit deps"                              |
       | no title and a 100-character prompt | the first 77 characters followed by "..." |
       | no title and no prompt, 2nd in batch | the caller's title followed by " thread 2" |
+
+  # Upstream #29163: a default title cut at 77 characters could end in half of an emoji.
+  @mc @backlog
+  Scenario: A batch-created title cut from its prompt does not end in a broken character
+    When the agent of "caller" creates a thread with no title and a prompt whose 77th character is an emoji
+    Then its title is cut before the emoji, not through it, and followed by "..."
 
   @mc
   Scenario: A batch holds at most 20 threads
@@ -540,6 +568,14 @@ Feature: Agents working with threads through MCP tools
   Scenario: Agents are told how to link to a thread in their answers
     When an agent reads the orchestration instructions
     Then they say a thread is linked by its id with a thread link, not by a copied title
+
+  # Upstream #27139: Claude followed its own tool's description and ran an agent asked for "in the
+  # background" as its native subagent.
+  @backlog @mc @priority-low
+  Scenario: Agents are told work asked for in the background goes to delegate_task
+    When an agent reads the orchestration instructions
+    Then they say a subagent asked for in the background is started with delegate_task
+    And that the provider's own subagent is for lookups that finish within the turn
 
   # Upstream #24784: every thread tool result carries the thread's link ready-made, so agents
   # do not build it from a bare id or a title.
@@ -743,8 +779,28 @@ Feature: Agents working with threads through MCP tools
       | the user interrupts the turn                            | active  |
       | the user queues a message before the turn completes     | active  |
 
+  # Upstream #31815: a notification that started another turn before the settle committed
+  # dropped the agent's settle request, leaving the thread active.
   @backlog @mc
-  Scenario: A settle waiting on the agent's turn is forgotten when the MC restarts
+  Scenario Outline: A settle the agent asked for waits through automatic follow-ups
     Given the agent in "Ship checkout" asked to settle its own thread during its turn
-    When the MC restarts before the turn ends
-    Then "Ship checkout" stays active
+    And <follow-up> starts another turn before the thread settles
+    When <ending>
+    Then "Ship checkout" is <outcome>
+
+    Examples:
+      | follow-up                         | ending                                         | outcome |
+      | a background command notification | the follow-up turn completes                   | settled |
+      | a delegated task's delivery       | the follow-up turn completes                   | settled |
+      | a background command notification | the follow-up turn fails                       | active  |
+      | a background command notification | the user sends a message                       | active  |
+      | a background command notification | the user steers the follow-up turn             | active  |
+
+  # Upstream #31815: the settle request is kept in the run's saved events and retried from them,
+  # so it is no longer lost with the MC's memory.
+  @backlog @mc
+  Scenario: A settle waiting on the agent's turn survives an MC restart
+    Given the agent in "Ship checkout" asked to settle its own thread during its turn
+    And the MC restarts before the turn ends
+    When the turn then completes
+    Then "Ship checkout" is settled

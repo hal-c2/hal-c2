@@ -89,6 +89,32 @@ defmodule HalC2.PluginsTest do
     assert stored("notes") == %{"count" => 2}
   end
 
+  test "a toggle or save that settings.json refuses is answered with why, and the host stays" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    host = Process.whereis(Plugins)
+    File.write!(settings_file(), "{ not json")
+
+    for request <- [
+          fn -> Plugins.handle("enable", %{"id" => "notes"}) end,
+          fn -> Plugins.handle("disable", %{"id" => "notes"}) end,
+          fn -> save("notes", %{"count" => 3, "token" => "s3cret"}) end
+        ] do
+      assert {:error, %{"_tag" => "ServerSettingsError", "message" => message}} = request.()
+      assert message =~ "Could not read"
+    end
+
+    assert Process.whereis(Plugins) == host
+    refute listed("notes")["enabled"]
+    assert stored("notes") == %{}
+    # A secret is kept only with a document that says it is set.
+    assert File.ls(Path.join(HalC2.Paths.data_dir(), "secrets")) in [{:ok, []}, {:error, :enoent}]
+
+    # Removed, the file is the MC's document again, and saves go through.
+    File.rm!(settings_file())
+    assert {:ok, %{"enabled" => true}} = Plugins.handle("enable", %{"id" => "notes"})
+  end
+
   test "a plugin that takes settings live keeps its process, and work in it, through a save" do
     pid = enable_worker("live", :live)
 
@@ -528,6 +554,7 @@ defmodule HalC2.PluginsTest do
   end
 
   defp listed(id), do: Plugins |> GenServer.call(:list) |> Enum.find(&(&1["id"] == id))
+  defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
 
   # A package of UI parts only, with a number and a secret among its settings.
