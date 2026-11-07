@@ -1135,14 +1135,14 @@ Feature: Writing to an agent from a phone
     Then nothing is sent
     And the user is told to wait for uploads to finish or retry failed uploads
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message with more attachments than one message can carry is not sent
     Given the draft has more than 100 attachments
     When the user sends the message
     Then nothing is sent
     And the user is told to remove attachments until there are at most 100
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message whose context is too large is not sent
     Given the draft carries more referenced context than a message can hold
     When the user sends the message
@@ -1163,7 +1163,7 @@ Feature: Writing to an agent from a phone
     Then nothing is sent
     And the user is told to set Antigravity up on the desktop or choose another model
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Attaching files is refused by an environment that takes none
     Given "My MacBook" does not accept file attachments
     When the user attaches a file

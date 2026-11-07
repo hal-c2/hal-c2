@@ -174,6 +174,11 @@ QString newestUserMessage(const QHash<QString, QJsonObject>& messages, const QSe
 constexpr qsizetype kMaxStashEntries = 20;
 // packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
 constexpr qsizetype kMaxPromptChars = 120000;
+// What one message can carry (packages/contracts: a provider turn's
+// attachments, and COMPOSER_CONTEXT_MAX_RECORDS / its serialized size).
+constexpr qsizetype kMaxAttachments = 100;
+constexpr qsizetype kMaxContextRecords = 200;
+constexpr qsizetype kMaxContextChars = 16000000;
 // What Claude's ultrathink choice puts at the start of a prompt.
 const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
 
@@ -601,6 +606,28 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
 }
 
 // Why a prompt cannot be sent for its length, else empty.
+QString ComposerController::carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts) {
+  if (attachments.size() > kMaxAttachments) {
+    return QStringLiteral("Remove attachments until there are at most %1.").arg(kMaxAttachments);
+  }
+  // Each excerpt rides as one context record (withExcerpts); a quote rides
+  // as a link with none.
+  qsizetype records = 0;
+  qsizetype chars = 0;
+  for (const Excerpt& context : contexts) {
+    if (!context.citation.isEmpty() || context.text.trimmed().isEmpty()) continue;
+    ++records;
+    chars += context.text.size() + context.terminalLabel.size();
+  }
+  if (records > kMaxContextRecords) {
+    return QStringLiteral("Remove context items until there are at most %1.").arg(kMaxContextRecords);
+  }
+  if (chars > kMaxContextChars) {
+    return QStringLiteral("This draft has too much context to send. Remove some context items and try again.");
+  }
+  return {};
+}
+
 QString ComposerController::promptProblem(const QString& text) {
   const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
   if (excess <= 0) return {};
@@ -764,6 +791,10 @@ bool ComposerController::submit(const QVariantMap& payload) {
   if (!text.trimmed().isEmpty()) m_usageLimits.remove(target);
   if (!m_draftId.isEmpty()) return submitDraft(target, payload);
   const Draft& kept = m_drafts.value(target);
+  if (const QString problem = carryProblem(kept.attachments, kept.excerpts); !problem.isEmpty()) {
+    toast(QStringLiteral("Message not sent"), problem);
+    return true;
+  }
   const bool hasExtras = !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
   const bool planFollowUp = !hasExtras && turnState().value(QStringLiteral("plan")).isValid();
   if (text.trimmed().isEmpty() && !hasExtras && !planFollowUp) return true;
@@ -993,6 +1024,10 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   QList<Attachment> attachments = m_drafts.value(draftId).attachments;
   const QList<Excerpt> contexts = m_drafts.value(draftId).excerpts;
   if (text.trimmed().isEmpty() && attachments.isEmpty() && contexts.isEmpty()) return true;
+  if (const QString problem = carryProblem(attachments, contexts); !problem.isEmpty()) {
+    toast(QStringLiteral("Message not sent"), problem);
+    return true;
+  }
   if (stopForExpiredExcerpts(text, m_drafts.value(draftId))) return true;
   if (m_launching.contains(draftId)) return true;
 
@@ -1944,9 +1979,17 @@ bool ComposerController::attach(const QVariantList& files) {
   const QString target = this->target();
   if (target.isEmpty()) return true;
   const QString environmentId = environmentOf(target);
+  const bool acceptsFiles = m_store->acceptsFileAttachments(environmentId);
+  bool refusedFile = false;
   QStringList added;
   for (const QVariant& value : files) {
     const QVariantMap file = value.toMap();
+    // An environment that takes no file attachments refuses files as they
+    // are chosen; images, which ride with the message, still attach.
+    if (!acceptsFiles && !file.contains(QStringLiteral("base64"))) {
+      refusedFile = true;
+      continue;
+    }
     const QString name = file.value(QStringLiteral("name")).toString();
     const QString mimeType = file.value(QStringLiteral("mimeType")).toString();
     QList<Attachment>& attachments = m_drafts[target].attachments;
@@ -1980,6 +2023,11 @@ bool ComposerController::attach(const QVariantList& files) {
     }
     attachments.append(attachment);
     added.append(attachment.id);
+  }
+  if (refusedFile) {
+    NativeShell::of(this)->controller<ToastController>()->show(
+        QStringLiteral("warning"), QStringLiteral("File not attached"),
+        QStringLiteral("The server does not support file attachments."));
   }
   save();
   publish();

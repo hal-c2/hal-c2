@@ -495,6 +495,9 @@ private:
   void stepHistory(const QString& target, bool backward);
   // Why the prompt cannot be sent as it is, or nothing: its length.
   static QString promptProblem(const QString& text);
+  // Why a draft carrying this much cannot be sent (the contracts' attachment
+  // and context limits), or empty when it can.
+  static QString carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);

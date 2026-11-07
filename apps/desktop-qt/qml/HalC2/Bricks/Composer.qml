@@ -854,10 +854,23 @@ Rectangle {
                     }
 
                     // Attached images, terminal selections and quoted replies living on the draft.
-                    Flow {
+                    // A draft can carry a hundred: the chips scroll in a strip
+                    // a few rows tall instead of pushing the prompt off screen.
+                    ScrollView {
+                        id: attachmentsScroll
+
                         Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(attachmentsFlow.implicitHeight, Theme.control.md * 3)
                         visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
-                        spacing: Theme.space.sm
+                        clip: true
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                        Flow {
+                            id: attachmentsFlow
+
+                            width: attachmentsScroll.availableWidth
+                            spacing: Theme.space.sm
 
                         Repeater {
                             model: composer.attachments
@@ -1027,6 +1040,7 @@ Rectangle {
                                     }
                                 }
                             }
+                        }
                         }
                     }
 

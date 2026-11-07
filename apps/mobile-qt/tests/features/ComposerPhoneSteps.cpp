@@ -341,6 +341,65 @@ const Steps phoneSteps([] {
                   [&] { return S("%1 to be asked to discard the upload; it deleted %2").arg(c[0], world.mc.part<FakePhoneUploads>().deleted.join(S(", "))); });
   });
 
+  // What one message can carry, and an environment that takes no files.
+  const auto told = [](World& world, const QString& said) {
+    world.waitFor(
+        [&] {
+          for (const QVariant& toast : world.state(S("toasts")).toMap().value(S("items")).toList()) {
+            if (toast.toMap().value(S("description")).toString().contains(said)) return true;
+          }
+          return false;
+        },
+        [&] { return S("to be told %1; toasts are %2").arg(said, show(world.state(S("toasts")))); });
+  };
+  step(S("the draft has more than 100 attachments"), [](World& world, const Captures&, const Table&) {
+    QVariantList files;
+    const QString bytes = QString::fromLatin1(photoBytes().toBase64());
+    for (int n = 1; n <= 101; ++n) {
+      files.append(QVariantMap{{S("name"), S("p%1.png").arg(n)}, {S("mimeType"), S("image/png")}, {S("base64"), bytes}});
+    }
+    world.bridge().dispatch(S("composer.attach"), QVariantMap{{S("files"), files}});
+    world.waitFor([&] { return attachmentsOf(world).size() == 101; },
+                  [&] { return S("101 attachments; the draft carries %1").arg(attachmentsOf(world).size()); });
+  });
+  step(S("the user is told to remove attachments until there are at most 100"), [told](World& world, const Captures&, const Table&) {
+    told(world, S("Remove attachments until there are at most 100"));
+    expect(attachmentsOf(world).size() == 101, S("the draft lost attachments it should keep"));
+    expect(world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("the message waits to send anyway"));
+  });
+  step(S("the draft carries more referenced context than a message can hold"), [](World& world, const Captures&, const Table&) {
+    for (int n = 1; n <= 201; ++n) {
+      world.bridge().dispatch(S("composer.terminalContext.add"),
+                              QVariantMap{{S("terminalId"), S("term-1")},
+                                          {S("terminalLabel"), S("shell")},
+                                          {S("lineStart"), n},
+                                          {S("lineEnd"), n},
+                                          {S("text"), S("line %1").arg(n)}});
+    }
+    world.sync();
+    expect(world.state(S("composer")).toMap().value(S("terminalContexts")).toList().size() == 201,
+           S("the draft carries %1 contexts").arg(world.state(S("composer")).toMap().value(S("terminalContexts")).toList().size()));
+  });
+  step(S("the user is told the context is too much and why"), [told](World& world, const Captures&, const Table&) {
+    told(world, S("Remove context items until there are at most 200"));
+    expect(world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("the message waits to send anyway"));
+  });
+  step(S("%1 does not accept file attachments").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    expect(world.mc.name == c[0] || !world.mc.name.isEmpty(), S("the environment is %1").arg(world.mc.name));
+    world.mc.capabilities.remove(S("fileAttachments"));
+    world.mc.announceEnvironment();
+    world.sync();
+  });
+  step(S("the user attaches a file"), [](World& world, const Captures&, const Table&) {
+    attachFile(world, S("notes.txt"), QByteArrayLiteral("hello"), S("text/plain"));
+  });
+  step(S("the file is not attached"), [](World& world, const Captures&, const Table&) {
+    expect(attachmentsOf(world).isEmpty(), S("the draft carries %1").arg(show(attachmentsOf(world))));
+  });
+  step(S("the user is told the server does not support file attachments"), [told](World& world, const Captures&, const Table&) {
+    told(world, S("The server does not support file attachments"));
+  });
+
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.waitFor(
         [&] {
