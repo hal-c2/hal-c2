@@ -448,6 +448,7 @@ Feature: Scheduled tasks
       Then the scheduled tasks settings of that environment open with "Check Sentry" ready to edit
       And "Manage scheduled tasks" opens the same settings without a task chosen
 
+  # Upstream #15085: scheduled tasks can run on a webhook
   @backlog @mc @shared
   Scenario: A task can run on a webhook
     Given a task whose trigger is a webhook
@@ -457,6 +458,8 @@ Feature: Scheduled tasks
     And a signature can be required, with its header, encoding and prefix set, and a write-only secret
     And a task is limited to 60 requests a minute and 1 MiB a body
 
+  # Upstream #15087: mobile creates and copies webhook automations
+  # Upstream #15088: web creates webhook automations and inspects their deliveries
   @backlog @shared
   Scenario: A webhook task shows its URL and deliveries
     Given a saved webhook task
