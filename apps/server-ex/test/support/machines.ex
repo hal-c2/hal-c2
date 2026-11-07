@@ -230,6 +230,19 @@ defmodule HalC2.Test.Machines do
 
   def hold_move(_test, _held, _stage, _id), do: :ok
 
+  @doc """
+  Makes this MC's store refuse every change to the stream `id`, as a full disk would
+  (`:store_hook`); `nil` takes that back.
+  """
+  def refuse_changes(nil), do: Application.delete_env(:hal_c2, :store_hook)
+
+  def refuse_changes(id),
+    do: Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_change, [id]})
+
+  @doc false
+  def refuse_change(id, :append_change, id), do: raise("the disk is full")
+  def refuse_change(_id, _stage, _stream_id), do: :ok
+
   @doc "The diff of a thread's runs `from` to `to` on this MC (`HalC2.Checkpoint.turn_diff/5`)."
   def turn_diff(id, from, to) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))

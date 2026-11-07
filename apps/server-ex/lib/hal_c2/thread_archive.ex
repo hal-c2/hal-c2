@@ -44,8 +44,9 @@ defmodule HalC2.ThreadArchive do
 
   @doc """
   The archive of a thread on this MC, by id or title. `opts[:session]` false
-  leaves the agent's session out. `discard/1` it once it is written or sent: the
-  bundles it carries are files made for it.
+  leaves the agent's session out, and `opts[:terminal_logs]` false its terminals'
+  scrollback. `discard/1` it once it is written or sent: the bundles it carries are
+  files made for it.
   """
   @spec build(String.t(), keyword) :: {:ok, archive} | {:error, String.t()}
   def build(ref, opts \\ []) do
@@ -60,7 +61,10 @@ defmodule HalC2.ThreadArchive do
       {:ok,
        Map.merge(archive, %{
          "terminalLogs" =>
-           for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
+           if(Keyword.get(opts, :terminal_logs, true),
+             do: for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
+             else: []
+           ),
          "checkpoints" => checkpoints(state, root, have),
          "worktree" => worktree(thread, have),
          "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
@@ -112,20 +116,36 @@ defmodule HalC2.ThreadArchive do
      }}
   end
 
-  @doc "Writes a thread's archive to `path`, readable only by the user."
+  @doc """
+  Writes a thread's archive to a new file at `path`, readable only by the user; a file
+  that is already there is refused. Terminal scrollback, which may hold secrets, goes
+  only with `opts[:terminal_logs]` true. Returns `summary/1` with the file's `:path`.
+  """
   @spec export_file(String.t(), Path.t(), keyword) :: {:ok, map} | {:error, String.t()}
   def export_file(ref, path, opts \\ []) do
-    with {:ok, archive} <- build(ref, opts) do
-      path = Path.expand(path)
+    path = Path.expand(path)
+    opts = Keyword.put_new(opts, :terminal_logs, false)
+
+    with :ok <- new_file(path),
+         {:ok, archive} <- build(ref, opts) do
       File.mkdir_p!(Path.dirname(path))
 
       try do
-        write_file(path, archive)
-        File.chmod!(path, 0o600)
-        {:ok, summary(archive)}
+        case write_file(path, archive) do
+          :ok -> {:ok, archive |> summary() |> Map.put(:path, path)}
+          {:error, :eexist} -> new_file(path)
+          {:error, reason} -> {:error, "Could not write #{path}: #{:file.format_error(reason)}."}
+        end
       after
         discard(archive)
       end
+    end
+  end
+
+  defp new_file(path) do
+    case File.lstat(path) do
+      {:ok, _} -> {:error, "The output file #{path} already exists. Nothing was exported."}
+      _ -> :ok
     end
   end
 
@@ -228,8 +248,9 @@ defmodule HalC2.ThreadArchive do
   end
 
   # The archive's JSON with the files on disk in it as base64, written a piece at a
-  # time: each stands in the JSON as a marker and its sha256, which is cut there for
-  # its bytes.
+  # time to a new file only the user can read: each stands in the JSON as a marker and
+  # its sha256, which is cut there for its bytes. A file that is already at `path` is
+  # left as it is (`{:error, :eexist}`); one this left part written is removed.
   defp write_file(path, archive) do
     marker = "hal-c2-file-#{Base.encode16(:crypto.strong_rand_bytes(12))}-"
 
@@ -258,17 +279,27 @@ defmodule HalC2.ThreadArchive do
       |> encode()
       |> String.split(marker)
 
-    File.open!(path, [:write, :raw, :binary], fn out ->
-      write_json(out, first, entities)
+    with {:ok, out} <- :file.open(path, [:write, :exclusive, :raw, :binary]) do
+      try do
+        :ok = File.chmod(path, 0o600)
+        write_json(out, first, entities)
 
-      for <<sha::binary-size(64), rest::binary>> <- pieces do
-        on_disk[sha]
-        |> File.stream!(@piece)
-        |> Enum.each(&(:ok = :file.write(out, Base.encode64(&1))))
+        for <<sha::binary-size(64), rest::binary>> <- pieces do
+          on_disk[sha]
+          |> File.stream!(@piece)
+          |> Enum.each(&(:ok = :file.write(out, Base.encode64(&1))))
 
-        write_json(out, rest, entities)
+          write_json(out, rest, entities)
+        end
+
+        :ok = :file.close(out)
+      rescue
+        error ->
+          :file.close(out)
+          File.rm(path)
+          reraise error, __STACKTRACE__
       end
-    end)
+    end
   end
 
   # A piece of the archive's JSON, with the entities file copied in where its marker is.
@@ -305,7 +336,7 @@ defmodule HalC2.ThreadArchive do
         import_archive(archive, opts)
       else
         {:unreadable, reason} ->
-          {:error, "Could not read #{path}: #{:file.format_error(reason)}."}
+          {:error, "Could not read #{path}: #{:file.format_error(reason)}. Nothing was imported."}
 
         # Not a thread file, or one that names a file on this machine or keeps base64
         # somewhere other than a file it carries: read whole, it is told apart there.
@@ -408,10 +439,27 @@ defmodule HalC2.ThreadArchive do
   def import_archive(data, opts \\ []) do
     with {:ok, archive} <- decode(data),
          :ok <- not_here(archive, opts),
+         :ok <- no_clash(archive),
          {:ok, project} <- resolve_project(archive, opts[:project]) do
       write(archive, project, opts)
     end
   end
+
+  # An attachment lands under its own name, so a different file this machine already
+  # has there is never replaced; an identical one is kept as it is.
+  defp no_clash(%{"thread" => meta} = archive) do
+    Enum.find_value(archive["attachments"], :ok, fn %{"fileName" => name} = file ->
+      path = Path.join(Attachments.dir(), name)
+
+      if File.exists?(path) and not same_file?(file, path),
+        do:
+          {:error,
+           "The attachment #{name} already exists on #{label()} with different contents. #{meta["title"]} was not imported."}
+    end)
+  end
+
+  defp same_file?(%{"sha256" => sha}, path),
+    do: File.regular?(path) and file_sha256(path) == String.downcase(to_string(sha))
 
   @doc """
   Checks an archive: its format, version and every checksum. Returns it decoded:
@@ -437,7 +485,8 @@ defmodule HalC2.ThreadArchive do
          "This file needs a newer HAL-C2: it was written in version #{version} of the thread file format and this machine reads up to version #{@version}. Nothing was imported."}
 
   def decode(%{"format" => @format, "version" => version} = archive) when version in [1, 2] do
-    with {:ok, attachments} <- verify(archive["attachments"], "the attachment"),
+    with :ok <- safe_names(archive),
+         {:ok, attachments} <- verify(archive["attachments"], "the attachment"),
          {:ok, logs} <- verify(archive["terminalLogs"] || [], "the terminal log"),
          {:ok, checkpoints} <- verify_bundle(archive["checkpoints"], "the checkpoints"),
          {:ok, worktree} <- verify_bundle(archive["worktree"], "the worktree's branch"),
@@ -456,6 +505,67 @@ defmodule HalC2.ThreadArchive do
 
   def decode(_),
     do: {:error, "The file is damaged: it is not a HAL-C2 thread file. Nothing was imported."}
+
+  # The attachments and terminal logs an archive carries land under the names it gives
+  # them: a name that is a path, or one that is another thread's, would write over
+  # what is not the thread's.
+  defp safe_names(%{"thread" => %{"id" => id} = meta} = archive) when is_binary(id) do
+    title = meta["title"] || id
+    ours = attachment_ids(archive)
+
+    problem =
+      Enum.find_value(List.wrap(archive["attachments"]), fn file ->
+        name = file["fileName"]
+
+        cond do
+          not plain_name?(name) -> "the attachment #{inspect(name)} is named with a folder path"
+          not ours.(Path.rootname(name)) -> "the attachment #{name} is not one of #{title}'s"
+          true -> nil
+        end
+      end) ||
+        Enum.find_value(List.wrap(archive["terminalLogs"]), fn file ->
+          name = file["fileName"]
+
+          cond do
+            not plain_name?(name) ->
+              "the terminal log #{inspect(name)} is named with a folder path"
+
+            archive["version"] == 1 and v1_terminal(name, id) == nil ->
+              "the terminal log #{name} is not one of #{title}'s"
+
+            true ->
+              nil
+          end
+        end)
+
+    if problem,
+      do: {:error, "The file is not safe to import: #{problem}. Nothing was imported."},
+      else: :ok
+  end
+
+  defp safe_names(_archive), do: :ok
+
+  defp plain_name?(name),
+    do:
+      is_binary(name) and name not in ["", ".", ".."] and
+        not String.contains?(name, ["/", "\\", <<0>>])
+
+  # Whether an attachment id is the thread's: one its messages show (version 2), or one
+  # named for it, as an earlier install named them (version 1).
+  defp attachment_ids(%{"version" => 1, "thread" => %{"id" => id}}) do
+    prefix = String.downcase(Attachments.thread_segment(id)) <> "-"
+    &(Attachments.valid_id?(&1) and String.starts_with?(String.downcase(&1), prefix))
+  end
+
+  defp attachment_ids(archive) do
+    ids =
+      for [kind, _, entity] when kind == "message" <- List.wrap(archive["entities"]),
+          %{"id" => id} <- List.wrap(entity["attachments"]),
+          into: MapSet.new(),
+          do: id
+
+    &(Attachments.valid_id?(&1) and MapSet.member?(ids, &1))
+  end
 
   defp verify(nil, _what), do: {:ok, []}
 
@@ -617,27 +727,71 @@ defmodule HalC2.ThreadArchive do
       |> Enum.map(&with_session(&1, carried_session))
       |> Enum.map(&with_move(&1, id, opts[:from], opts[:move]))
 
-    for %{"fileName" => name} = file <- archive["attachments"] do
-      path = Path.join(Attachments.dir(), Path.basename(name))
-      File.mkdir_p!(Path.dirname(path))
-      put(file, path)
+    terminals =
+      for %{"fileName" => terminal} = file <- archive["terminalLogs"], do: {terminal, file}
+
+    placing_files(archive, id, terminals, fn ->
+      at = archive["updatedAt"] || System.os_time(:millisecond)
+      commit(id, changes(id, entities, at))
+
+      {:ok,
+       %{
+         thread: id,
+         title: meta["title"],
+         project: project["id"],
+         session: carried_session != nil,
+         notes: checkpoint_notes ++ worktree_notes ++ session_notes
+       }}
+    end)
+    |> case do
+      {:error, _} = failed ->
+        if worktree,
+          do:
+            HalC2.Vcs.remove_worktree(%{"cwd" => dest_root, "path" => worktree, "force" => true})
+
+        failed
+
+      done ->
+        done
     end
+  end
 
-    for %{"fileName" => terminal} = file <- archive["terminalLogs"],
-        do: Terminal.put_scrollback(id, terminal, bytes(file))
+  # Writes the archive's attachments and the scrollback of `terminals` (`[{terminal,
+  # file}]`), then runs `fun`, which records the thread. When that fails part way the
+  # files are taken back: an attachment that was not here goes and every terminal's
+  # scrollback is as it was, so the import leaves nothing behind.
+  defp placing_files(archive, id, terminals, fun) do
+    title = archive["thread"]["title"]
+    had = Map.new(Terminal.saved_scrollback(id))
 
-    at = archive["updatedAt"] || System.os_time(:millisecond)
-    changes = changes(id, entities, at)
-    commit(id, changes)
+    new =
+      for %{"fileName" => name} = file <- archive["attachments"],
+          path = Path.join(Attachments.dir(), Path.basename(name)),
+          not File.exists?(path),
+          do: {file, path}
 
-    {:ok,
-     %{
-       thread: id,
-       title: meta["title"],
-       project: project["id"],
-       session: carried_session != nil,
-       notes: checkpoint_notes ++ worktree_notes ++ session_notes
-     }}
+    try do
+      for {file, path} <- new do
+        File.mkdir_p!(Path.dirname(path))
+        put(file, path)
+      end
+
+      for {terminal, file} <- terminals, do: Terminal.put_scrollback(id, terminal, bytes(file))
+      fun.()
+    rescue
+      error ->
+        for {_file, path} <- new, do: File.rm(path)
+
+        for {terminal, _file} <- terminals do
+          case had do
+            %{^terminal => text} -> Terminal.put_scrollback(id, terminal, text)
+            _ -> Terminal.delete_scrollback(id, terminal)
+          end
+        end
+
+        {:error,
+         "The import of #{title} failed: #{Exception.message(error)}. Nothing was imported."}
+    end
   end
 
   # The thread's entity knows where it came from, so the agent can be told the project
@@ -730,7 +884,16 @@ defmodule HalC2.ThreadArchive do
 
   # --- version 1 (an earlier install's archive) ----------------------------------------
 
-  defp write_v1(archive, project) do
+  defp write_v1(%{"thread" => %{"id" => id}} = archive, project) do
+    terminals =
+      for %{"fileName" => name} = file <- archive["terminalLogs"],
+          terminal = v1_terminal(name, id),
+          do: {terminal, file}
+
+    placing_files(archive, id, terminals, fn -> write_v1_thread(archive, project) end)
+  end
+
+  defp write_v1_thread(archive, project) do
     meta = archive["thread"]
     id = meta["id"]
 
@@ -785,16 +948,6 @@ defmodule HalC2.ThreadArchive do
     after
       File.rm(source)
     end
-
-    for %{"fileName" => name} = file <- archive["attachments"] do
-      path = Path.join(Attachments.dir(), Path.basename(name))
-      File.mkdir_p!(Path.dirname(path))
-      put(file, path)
-    end
-
-    for %{"fileName" => name} = file <- archive["terminalLogs"],
-        terminal = v1_terminal(name, id),
-        do: Terminal.put_scrollback(id, terminal, bytes(file))
   end
 
   @doc "The terminal an earlier install's scrollback file `name` belongs to in `thread_id`, or `nil`."
@@ -1186,6 +1339,29 @@ defmodule HalC2.ThreadArchive do
       [] -> {:error, "There is no thread #{ref} on #{label()}."}
       _ -> {:error, "Several threads on #{label()} are called #{ref}. Name it by its id."}
     end
+  end
+
+  @doc """
+  The threads the store at `path` holds that can be exported, most recently updated
+  first, as `%{"id", "title", "project", "updatedAt"}` with the project's folder. Only
+  reads the file, so it works while the MC is stopped.
+  """
+  def exportable(path) do
+    rows = for {_id, kind, row} <- Store.list_shell(path), do: {kind, row}
+
+    folders =
+      for {"project", %{"id" => id} = row} <- rows, into: %{}, do: {id, row["workspaceRoot"]}
+
+    for({"thread", row} <- rows, row["deletedAt"] == nil, row["movedTo"] == nil, do: row)
+    |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
+    |> Enum.map(fn row ->
+      %{
+        "id" => row["id"],
+        "title" => row["title"],
+        "project" => folders[row["projectId"]],
+        "updatedAt" => row["updatedAt"]
+      }
+    end)
   end
 
   # This MC's sidebar rows as stored, which a stream writes before it tells the shell.

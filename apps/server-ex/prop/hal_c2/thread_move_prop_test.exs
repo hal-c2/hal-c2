@@ -166,7 +166,7 @@ defmodule HalC2.ThreadMovePropTest do
                 do: [
                   {4,
                    {:call, __MODULE__, :move, [state.held.t, state.held.at, onward(state.held)]}},
-                  {4, {:call, __MODULE__, :settle, [state.held]}}
+                  {4, {:call, __MODULE__, :settle, [state.held, oneof([:back, :removed])]}}
                 ],
                 else: []
               ),
@@ -259,7 +259,7 @@ defmodule HalC2.ThreadMovePropTest do
     do: update_in(state.held, &%{&1 | killed: true, let_go: let_go?(&1)})
 
   # Not while the mover lets go: one lets go at a time, and the mover is.
-  def next_state(state, _result, {:call, _, :settle, [_]}),
+  def next_state(state, _result, {:call, _, :settle, [_, _]}),
     do: update_in(state.held, &%{&1 | let_go: let_go?(&1)})
 
   def next_state(%{held: %{from: mc}} = state, _result, {:call, _, :restart, [mc, :thread_move]}),
@@ -371,7 +371,9 @@ defmodule HalC2.ThreadMovePropTest do
     do: settled?(next_state(state, nil, call), world, held(state))
 
   # The destination has the move: nothing is left to settle again, unless the mover is
-  # letting go.
+  # letting go. Told its destination was removed from the cluster, a source that still
+  # reaches it settles as when it comes back: the move is called off only when the
+  # destination cannot say it arrived.
   def postcondition(state, {:call, _, :settle, _} = call, {result, world}) do
     again = if state.held.stage == :letting_go, do: [id(state.held.t)], else: []
     result == again and settled?(next_state(state, nil, call), world, held(state))
@@ -531,9 +533,16 @@ defmodule HalC2.ThreadMovePropTest do
     {:ok, world()}
   end
 
-  # The source settles the held move, as it does when the destination comes back.
-  def settle(held) do
-    result = :erpc.call(mcs()[held.from], HalC2.ThreadMove, :settle, [id(held.t)], 60_000)
+  # The source settles the held move, as it does when the destination comes back
+  # (`:back`) or when it hears the destination was removed from the cluster (`:removed`).
+  def settle(held, why) do
+    which =
+      case why do
+        :back -> id(held.t)
+        :removed -> {:removed, :erpc.call(mcs()[held.to], HalC2.Environment, :id, [])}
+      end
+
+    result = :erpc.call(mcs()[held.from], HalC2.ThreadMove, :settle, [which], 60_000)
     {result, world()}
   end
 

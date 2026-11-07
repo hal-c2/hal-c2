@@ -66,7 +66,6 @@ Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/provider
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/provider_secrets.ex | tmp
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/secrets.ex | tmp
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/settings.ex | tmp
-Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/usage_limit_sources.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/usage_limit_sources.ex | tmp
 Traversal.FileModule: Directory Traversal in `File.chmod!` | lib/hal_c2/web.ex | path
@@ -77,6 +76,7 @@ Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/portable_
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/secrets.ex | dir
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/secrets.ex | path
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/space/files.ex | temp
+Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.chmod` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.copy!` | lib/hal_c2/migration.ex | from
@@ -178,7 +178,6 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/store.
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/terminal.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/thread_archive.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/thread_archive.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/thread_archive.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/thread_archive.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/thread_archive.ex | scratch_dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/thread_move.ex | staged
@@ -214,7 +213,6 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/usage.e
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/usage/pricing.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/workspace.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir` | lib/hal_c2/paths.ex | dir
-Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_archive.ex | to
 Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_move.ex | path
@@ -422,6 +420,8 @@ Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/subprocess/o
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/terminal.ex | id_path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/terminal.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/text_generation.ex | base and suffix
+Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
+Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/thread_archive.ex | path

@@ -191,11 +191,17 @@ defmodule HalC2.Steps.Files.FilesOnAnotherMachine do
     context
   end
 
+  # What `HalC2.Cluster.remove/1` tells this MC, which these scenarios run without: the
+  # sidebar forgets the machine and a move cut off on its way there is called off.
   step "{string} is removed from the cluster", %{args: [label]} = context do
-    assert File.dir?(folder(context, label))
-    HalC2.Shell.forget(Machines.machine(context, label).environment)
+    if context[:machine_files], do: assert(File.dir?(folder(context, label)))
+    environment = Machines.machine(context, label).environment
+    HalC2.Shell.forget(environment)
     :ok = HalC2.Shell.sync()
-    :ok = MachineFiles.sync()
+    :ok = HalC2.Shell.subscribe(self())
+    HalC2.ThreadMove.removed(environment)
+    await_no_move_to(environment)
+    if context[:machine_files], do: :ok = MachineFiles.sync()
     context
   end
 
@@ -219,6 +225,23 @@ defmodule HalC2.Steps.Files.FilesOnAnotherMachine do
   defp on_machine(_context, _label, path), do: path
 
   defp folder(context, label), do: Path.join(context.machine_files, label)
+
+  # Until no thread here is still moving to `environment`: each settle reaches the sidebar.
+  defp await_no_move_to(environment) do
+    moving? =
+      Enum.any?(
+        HalC2.Store.list_shell(HalC2.Store.path()),
+        &match?({_id, "thread", %{"moving" => %{"environmentId" => ^environment}}}, &1)
+      )
+
+    if moving? do
+      receive do
+        {:hal_c2_shell, _} -> await_no_move_to(environment)
+      after
+        10_000 -> flunk("a move to #{environment} was never called off")
+      end
+    end
+  end
 
   # Where `path` on `label` is on this machine, `..` and all left to the kernel.
   defp through(context, label, path),

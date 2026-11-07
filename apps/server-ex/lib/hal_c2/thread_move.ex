@@ -942,6 +942,13 @@ defmodule HalC2.ThreadMove do
     {:ok, %{after_turn: %{}, again: MapSet.new(), movers: %{}, task: nil, asked: [], queue: nil}}
   end
 
+  @doc """
+  The member `environment_id` was removed from the cluster (`HalC2.Cluster.remove/1`).
+  A move to it that was cut off is called off: it will not come back to say whether
+  it took the thread, so the thread stays here and can be used again.
+  """
+  def removed(environment_id), do: GenServer.cast(__MODULE__, {:removed, environment_id})
+
   @impl true
   def handle_call({:after_turn, id, to, opts}, _from, state) do
     :ok = Streams.watch(id, self())
@@ -950,6 +957,9 @@ defmodule HalC2.ThreadMove do
   end
 
   @impl true
+  def handle_cast({:removed, environment}, state),
+    do: {:noreply, settle_later(state, {:removed, environment})}
+
   def handle_cast({:watch, pid, id, move}, state),
     do: {:noreply, put_in(state, [:movers, Process.monitor(pid)], {id, move})}
 
@@ -1055,23 +1065,34 @@ defmodule HalC2.ThreadMove do
   end
 
   @doc """
-  Settles moves that were cut off: to `mc`, of the thread `id`, or all (`:all`). A
-  thread marked `moving` becomes a forwarding record if its move arrived, and is
-  released if the destination is reachable and says it did not. Returns the threads to
-  settle again: those a destination is still taking or did not answer for, and those
-  whose mover was letting go.
+  Settles moves that were cut off: to `mc`, of the thread `id`, to a machine removed
+  from the cluster (`{:removed, environment_id}`), or all (`:all`); a member that comes
+  back also settles the moves to removed machines. A thread marked `moving` becomes a
+  forwarding record if its move arrived, and is released if the destination is
+  reachable and says it did not. A destination removed from the cluster (as
+  `{:removed, environment_id}` says, or `HalC2.Cluster.removed?/1`) cannot say, so the
+  other members are asked: the move arrived if one holds it, and is released once all
+  say it did not. Returns the threads to settle again: those a destination is still
+  taking or did not answer for, and those whose mover was letting go.
   """
   def settle(which \\ :all) do
     for {"thread", %{"id" => id, "moving" => %{"mc" => name}}} <- local_rows(),
         mc = String.to_atom(name),
-        which in [:all, mc, id],
         # As the move is now: the destination may be told to take it while it is asked.
         moving = thread(id)["moving"],
-        again?(id, mc, moving),
+        is_map(moving),
+        settles?(which, mc, id, moving["environmentId"]),
+        again?(id, mc, moving, match?({:removed, _}, which)),
         do: id
   end
 
-  defp again?(id, mc, moving) do
+  # A member coming back may be one a move to a removed machine waits to hear from.
+  defp settles?(which, mc, id, environment),
+    do:
+      which in [:all, mc, id, {:removed, environment}] or
+        (is_atom(which) and removed?(environment))
+
+  defp again?(id, mc, moving, told_removed) do
     case remote(mc, :arrived?, [id, moving["id"]]) do
       true ->
         dest = %{mc: mc, label: moving["label"], environment: moving["environmentId"]}
@@ -1080,13 +1101,68 @@ defmodule HalC2.ThreadMove do
       :arriving ->
         true
 
-      # A destination that is offline settles when it comes back.
+      # A destination that is offline settles when it comes back, unless it was
+      # removed from the cluster.
       {:error, _} ->
-        mc in Node.list()
+        cond do
+          mc in Node.list() -> true
+          told_removed or removed?(moving["environmentId"]) -> forsake(id, mc, moving)
+          true -> false
+        end
 
       _ ->
         not release(id, moving)
     end
+  end
+
+  defp removed?(nil), do: false
+  defp removed?(environment), do: HalC2.Cluster.removed?(environment)
+
+  # The destination `mc` was removed from the cluster and will not say whether the move
+  # arrived, but the thread may have gone on from it. A member that holds the move's
+  # record says it arrived (`arrived?/2` stays true once it moved the thread on), and
+  # the move is let go. It is called off only once every other member says it did not;
+  # one taking the thread is asked again, one not reached when it is back. Says whether
+  # to settle again.
+  defp forsake(id, mc, moving) do
+    answers = for other <- members() -- [mc], do: remote(other, :arrived?, [id, moving["id"]])
+
+    cond do
+      true in answers ->
+        dest = %{mc: mc, label: moving["label"], environment: moving["environmentId"]}
+        not let_go(id, moving["id"], dest, %{project: nil})
+
+      :arriving in answers ->
+        true
+
+      Enum.all?(answers, &(&1 == false)) ->
+        call_off(id, moving["id"])
+
+      true ->
+        false
+    end
+  end
+
+  # The other MCs of the cluster, connected or not.
+  defp members do
+    known =
+      if Process.whereis(HalC2.Cluster),
+        do: for({id, _addresses} <- HalC2.Cluster.peers(), do: HalC2.Cluster.mc_name(id)),
+        else: []
+
+    Enum.uniq(Node.list() ++ known)
+  end
+
+  # The move `move` to a machine removed from the cluster ends here: the thread stays.
+  # Not while a mover is letting go of it, which finishes first; says whether to settle
+  # again.
+  defp call_off(id, move) do
+    :global.trans(
+      letting_go_lock(id),
+      fn -> release_own(id, move) end,
+      [node()],
+      0
+    ) == :aborted
   end
 
   defp local_rows,

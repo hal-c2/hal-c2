@@ -82,13 +82,196 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   # --- export and import ---------------------------------------------------------------
 
+  # --- listing threads from the command line ------------------------------------------
+
+  step "{string} holds threads {string} and {string} in different projects and a deleted thread {string}",
+       %{args: [machine, first, second, deleted]} = context do
+    assert Machines.machine(context, machine) == :local
+
+    context =
+      context
+      |> World.create_project("blog")
+      |> World.create_thread(second, "blog")
+      |> World.create_thread(deleted, "shop")
+
+    delete_thread(context, deleted)
+    # The first, written to last, is the most recently updated.
+    World.add_message(context, first, "user", "one more thing")
+    context
+  end
+
+  step "{string} holds no threads", %{args: [machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    for title <- Map.keys(context.threads), do: delete_thread(context, title)
+    context
+  end
+
+  step "a thread's title contains line breaks and tabs", context do
+    World.create_thread(context, "Line\nbroken\r\ttitle", "shop")
+  end
+
+  step "the MC on {string} is stopped", %{args: [machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    Map.put(context, :mc_stopped, true)
+  end
+
+  step "the user lists the threads of {string} from the command line",
+       %{args: [machine]} = context do
+    list_threads(context, machine, [])
+  end
+
+  step "the user lists the threads of {string} from the command line asking for JSON",
+       %{args: [machine]} = context do
+    list_threads(context, machine, ["--json"])
+  end
+
+  step "each of {string} and {string} is listed with its id, its project folder and its title",
+       %{args: titles} = context do
+    for title <- titles do
+      id = World.thread_id(context, title)
+      assert "#{id}\t#{folder_of(context, title)}\t#{title}" in context.listed
+    end
+
+    context
+  end
+
+  step "the most recently updated thread is listed first", context do
+    titles = Map.new(context.threads, fn {title, id} -> {id, title} end)
+
+    stamps =
+      for line <- context.listed,
+          do: World.row(context, titles[line |> String.split("\t") |> hd()])["updatedAt"]
+
+    assert stamps == Enum.sort(stamps, :desc)
+    assert hd(context.listed) =~ World.thread_id(context, "Alpha")
+    context
+  end
+
+  step "the threads are listed from what {string} has stored", %{args: [_machine]} = context do
+    assert Enum.any?(context.listed, &String.starts_with?(&1, World.thread_id(context, "Alpha")))
+    context
+  end
+
+  step "nothing on {string} is changed", %{args: [_machine]} = context do
+    assert context.store_before == context.store_after
+    context
+  end
+
+  step "the user is told no threads were found", context do
+    assert context.listed == ["No threads found."]
+    context
+  end
+
+  step "the complete list is printed as one JSON document with each thread's id, title and project",
+       context do
+    assert [document] = context.listed
+    listed = JSON.decode!(document)
+    assert [%{"id" => id, "title" => "Alpha", "project" => folder}] = listed
+    assert id == World.thread_id(context, "Alpha")
+    assert folder == folder_of(context, "Alpha")
+
+    context
+  end
+
+  step "the thread is printed on one line with the breaks shown as spaces", context do
+    id = World.thread_id(context, "Line\nbroken\r\ttitle")
+    assert "#{id}\t#{World.project(context, "shop").root}\tLine broken  title" in context.listed
+    context
+  end
+
   step "the user exports {string} on {string} to the file {string}",
+       %{args: [title, machine, file]} = context do
+    assert Machines.machine(context, machine) == :local
+    try_export(context, title, file, [])
+  end
+
+  step "the user exports {string} on {string} to the file {string} asking for terminal scrollback",
        %{args: [title, machine, file]} = context do
     assert Machines.machine(context, machine) == :local
     context = furnish(context, title)
     before = World.state(context, title)
     context = export(context, title, file)
     Map.put(context, :before, before)
+  end
+
+  step "the user is told there is no thread {string} on {string}",
+       %{args: [title, machine]} = context do
+    assert context.exported == {:error, "There is no thread #{title} on #{machine}."}
+    context
+  end
+
+  step "no file is written", context do
+    refute File.exists?(context.thread_file)
+    assert File.ls!(Path.dirname(context.thread_file)) == []
+    context
+  end
+
+  step "{string} has two threads called {string}", %{args: [machine, title]} = context do
+    assert Machines.machine(context, machine) == :local
+    World.create_thread(context, "#{title} again", "shop", %{"title" => title})
+  end
+
+  step "the user is told several threads are called {string} and to name one by its id",
+       %{args: [title]} = context do
+    assert context.exported ==
+             {:error, "Several threads on laptop are called #{title}. Name it by its id."}
+
+    context
+  end
+
+  step "the file {string} already exists", %{args: [file]} = context do
+    path = export_path(context, file)
+    File.write!(path, "the user's own file")
+    Map.put(context, :existing, path)
+  end
+
+  step "the user is told the output file already exists", context do
+    assert {:error, message} = context.exported
+    assert message == "The output file #{context.existing} already exists. Nothing was exported."
+    context
+  end
+
+  step "the existing file is untouched", context do
+    assert File.read!(context.existing) == "the user's own file"
+    context
+  end
+
+  step "no other user of {string} can read the file", %{args: [machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    assert [_] = context.exported
+    assert Bitwise.band(File.stat!(context.thread_file).mode, 0o077) == 0
+    context
+  end
+
+  step "{string} has terminal scrollback that may contain secrets", %{args: [title]} = context do
+    context = furnish(context, title)
+    assert [{"term-1", _}] = HalC2.Terminal.saved_scrollback(World.thread_id(context, title))
+    context
+  end
+
+  step "the user exports {string} on {string} without asking for terminal scrollback",
+       %{args: [title, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    export(context, title, "#{World.slug(title)}.hal-c2-thread", [])
+  end
+
+  step "the user exports {string} again asking for terminal scrollback",
+       %{args: [title]} = context do
+    export(context, title, "#{World.slug(title)}-with-scrollback.hal-c2-thread")
+  end
+
+  step "the file holds no terminal scrollback", context do
+    archive = context.thread_file |> File.read!() |> JSON.decode!()
+    assert archive["terminalLogs"] == []
+    refute File.read!(context.thread_file) =~ Base.encode64("$ npm run dev")
+    context
+  end
+
+  step "the file holds the terminal scrollback", context do
+    archive = context.thread_file |> File.read!() |> JSON.decode!()
+    assert [%{"fileName" => "term-1", "dataBase64" => data}] = archive["terminalLogs"]
+    assert Base.decode64!(data) == "$ npm run dev\nready on :3000\n"
+    context
   end
 
   step "the file holds the thread with its history, attachments, terminal scrollback, checkpoints and the agent's session",
@@ -220,6 +403,163 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "a path where there is no file", context do
+    Map.put(context, :thread_file, export_path(context, "missing.hal-c2-thread"))
+  end
+
+  step "a file that is not a HAL-C2 thread file", context do
+    path = export_path(context, "notes.hal-c2-thread")
+    File.write!(path, "These are my notes, not a thread.\n")
+    Map.put(context, :thread_file, path)
+  end
+
+  step "a thread file cut short", context do
+    context = ensure_file(context, "alpha.hal-c2-thread")
+    data = File.read!(context.thread_file)
+    File.write!(context.thread_file, binary_part(data, 0, div(byte_size(data), 2)))
+    context
+  end
+
+  step "the user is told the file could not be used", context do
+    assert {:error, message} = context.imported
+    assert message =~ ~r/^(Could not read .*|The file is damaged: .*)Nothing was imported\.$/
+    context
+  end
+
+  step "the user imports {string} on {string} into the project {string}",
+       %{args: [file, machine, project]} = context do
+    context
+    |> ensure_file(file)
+    |> import_file(machine, project: project)
+  end
+
+  step "the user is told {string} has no project {string}",
+       %{args: [machine, project]} = context do
+    assert context.imported ==
+             {:error, "There is no project #{project} on #{machine}. Alpha was not imported."}
+
+    context
+  end
+
+  step "a thread file whose attachment is named with a folder path", context do
+    rename_carried(context, "attachments", &"../../#{&1}")
+  end
+
+  step "a thread file whose attachment is named for a different thread", context do
+    rename_carried(context, "attachments", fn _ -> "th-someone-else-cart.png" end)
+  end
+
+  step "a thread file whose terminal log is named with a folder path", context do
+    rename_carried(context, "terminalLogs", &"../#{&1}")
+  end
+
+  step "a thread file whose terminal log is named for a different thread", context do
+    context = legacy_file(context)
+    other = Base.url_encode64("th-someone-else", padding: false)
+    rename_carried(context, "terminalLogs", fn _ -> "terminal_#{other}.log" end)
+  end
+
+  step "the user is told the file is not safe to import", context do
+    assert {:error, message} = context.imported
+    assert message =~ ~r/^The file is not safe to import: .*\. Nothing was imported\.$/
+    context
+  end
+
+  step "{string} already has a file under the name of one of the thread file's attachments",
+       %{args: [machine]} = context do
+    context = ensure_file(context, "alpha.hal-c2-thread")
+    put_attachment(context, machine, "the destination's own image")
+  end
+
+  step "its contents differ from the attachment's", context do
+    %{bytes: bytes} = context.had_file
+    refute bytes == <<0x89, "PNG cart">>
+    context
+  end
+
+  step "the user imports the file on {string}", %{args: [machine]} = context do
+    import_file(context, machine, [])
+  end
+
+  step "the user is told the attachment already exists with different contents", context do
+    assert context.imported ==
+             {:error,
+              "The attachment #{context.image}.png already exists on #{context.import_machine} with different contents. Alpha was not imported."}
+
+    context
+  end
+
+  step "the file {string} had is untouched", %{args: [machine]} = context do
+    %{path: path, bytes: bytes} = context.had_file
+    assert Machines.on(context, machine, File, :read!, [path]) == bytes
+    context
+  end
+
+  step "{string} already has an identical copy of one of the thread file's attachments",
+       %{args: [machine]} = context do
+    context = ensure_file(context, "alpha.hal-c2-thread")
+    context = put_attachment(context, machine, <<0x89, "PNG cart">>)
+    old = {{2020, 1, 1}, {0, 0, 0}}
+    :ok = Machines.on(context, machine, File, :touch, [context.had_file.path, old])
+
+    put_in(
+      context,
+      [:had_file, :mtime],
+      Machines.on(context, machine, File, :stat!, [context.had_file.path]).mtime
+    )
+  end
+
+  step "{string} is listed under {string} with all its attachments",
+       %{args: [title, machine]} = context do
+    assert {:ok, _} = context.imported
+    assert remote_row(context, machine, World.thread_id(context, title))
+    path = Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => context.image}])
+    assert Machines.on(context, machine, File, :read!, [path]) == <<0x89, "PNG cart">>
+    context
+  end
+
+  step "the identical copy is not written again", context do
+    %{path: path, mtime: mtime} = context.had_file
+    assert Machines.on(context, context.import_machine, File, :stat!, [path]).mtime == mtime
+    context
+  end
+
+  step "the destination cannot take the thread's events after its files were copied",
+       context do
+    context = ensure_file(context, "alpha.hal-c2-thread")
+    id = World.thread_id(context, "Alpha")
+    Machines.on(context, "desktop", Machines, :refuse_changes, [id])
+
+    ExUnit.Callbacks.on_exit(fn ->
+      safely(fn -> Machines.on(context, "desktop", Machines, :refuse_changes, [nil]) end)
+    end)
+
+    context
+  end
+
+  step "the user is told the import failed", context do
+    Machines.on(context, context.import_machine, Machines, :refuse_changes, [nil])
+    assert {:error, message} = context.imported
+    assert message == "The import of Alpha failed: the disk is full. Nothing was imported."
+    context
+  end
+
+  step "the attachments and terminal scrollback the import copied are removed", context do
+    machine = context.import_machine
+    id = World.thread_id(context, "Alpha")
+
+    assert Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => context.image}]) ==
+             nil
+
+    assert Machines.on(context, machine, HalC2.Terminal, :saved_scrollback, [id]) == []
+    context
+  end
+
+  step "{string} lists no thread {string}", %{args: [machine, title]} = context do
+    refute remote_row(context, machine, World.thread_id(context, title))
+    context
+  end
+
   step "the user is told the file is damaged", context do
     assert {:error, message} = context.imported
     assert message =~ "The file is damaged"
@@ -228,6 +568,10 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   step "a thread file exported by the previous server", context do
+    legacy_file(context)
+  end
+
+  defp legacy_file(context) do
     root = World.project(context, "shop").root
     id = "th-legacy-#{System.unique_integer([:positive])}"
     at = "2026-09-01T00:00:00.000Z"
@@ -1543,6 +1887,61 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     held_result(context)
   end
 
+  step "a move of {string} was cut off while {string} was taking it",
+       %{args: [title, to]} = context do
+    # Running, as in an MC, to hear of the removal.
+    Mc.ensure(HalC2.ThreadMove)
+    context = hold(context, title, to, to, :taking)
+    Machines.stop(Machines.machine(context, to))
+    context = held_result(context)
+
+    assert World.thread(context, title)["moving"]["environmentId"] ==
+             Machines.machine(context, to).environment
+
+    context
+  end
+
+  # The source's move process dies while `to` takes the thread, so nothing on the source
+  # settles it before `HalC2.ThreadMove` runs; `to` imports it all the same.
+  step "a move of {string} was cut off after {string} took it", %{args: [title, to]} = context do
+    context = hold(context, title, to, to, :taking)
+    Task.shutdown(context.held.task, :brutal_kill)
+    context = release_held(context)
+    id = World.thread_id(context, title)
+    assert remote_row(context, to, id)["movedTo"] == nil
+
+    assert World.thread(context, title)["moving"]["environmentId"] ==
+             Machines.machine(context, to).environment
+
+    context
+  end
+
+  step "{string} moved {string} on to {string}", %{args: [from, title, to]} = context do
+    id = World.thread_id(context, title)
+
+    assert {:ok, %{"status" => "moved"}} =
+             Machines.on(context, from, HalC2.ThreadMove, :move, [id, to, [confirmed: true]])
+
+    Machines.stop(Machines.machine(context, from))
+    # Running, as in an MC, to hear of the removal.
+    Mc.ensure(HalC2.ThreadMove)
+    context
+  end
+
+  step "{string} keeps only a forwarding record of {string}",
+       %{args: [machine, title]} = context do
+    assert Machines.machine(context, machine) == :local
+    thread = World.thread(context, title)
+    assert thread["moving"] == nil
+    assert %{"environmentId" => _} = thread["movedTo"]
+    context
+  end
+
+  step "{string} has not come back", %{args: [machine]} = context do
+    refute Machines.machine(context, machine).mc in Node.list()
+    context
+  end
+
   step "{string} stays on {string} and can be used again", %{args: [title, machine]} = context do
     assert Machines.machine(context, machine) == :local
     not_moved!(context, title)
@@ -2269,6 +2668,54 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     do: flunk("not moved: #{inspect(context.move)}")
 
   # The thread is still the source's own: not moving, not moved.
+  defp delete_thread(context, title) do
+    id = World.thread_id(context, title)
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+  end
+
+  # The folder of the project `title` is in.
+  defp folder_of(context, title) do
+    project = World.row(context, title)["projectId"]
+    Enum.find_value(context.projects, fn {_, p} -> if p.id == project, do: p.root end)
+  end
+
+  # Runs `mix hal_c2.thread.list` on `machine`, while its MC is stopped if a step said so,
+  # and keeps what it printed (`listed`) and what the store held around it.
+  defp list_threads(context, machine, args) do
+    assert Machines.machine(context, machine) == :local
+    run = fn -> Mc.run_task(Mix.Tasks.HalC2.Thread.List, args) end
+
+    context =
+      if context[:mc_stopped] do
+        store = context.mc.store
+        me = self()
+
+        mc =
+          Mc.restart(context.mc, fn ->
+            before = stored(store)
+            listed = run.()
+            send(me, {:listed, before, listed, stored(store)})
+          end)
+
+        assert_received {:listed, before, listed, after_}
+        Map.merge(context, %{mc: mc, listed: listed, store_before: before, store_after: after_})
+      else
+        Map.put(context, :listed, run.())
+      end
+
+    # The titles, for the steps that check a list of names.
+    Map.put(
+      context,
+      :listing,
+      for(line <- context.listed, do: List.last(String.split(line, "\t")))
+    )
+  end
+
+  # What a store holds: each stream's last event and the sidebar. Not its bytes, which a
+  # checkpoint of what the stopped MC wrote may still change.
+  defp stored(store),
+    do: {HalC2.Store.list_streams(store), Enum.sort(HalC2.Store.list_shell(store))}
+
   defp not_moved!(context, title) do
     thread = World.thread(context, title)
     assert thread["moving"] == nil and thread["movedTo"] == nil
@@ -2333,11 +2780,59 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     Map.merge(context, %{furnished: true, image: image})
   end
 
-  defp export(context, title, file) do
-    path = Path.join(Mc.tmp_dir(context.mc, "exports"), file)
-    assert [line] = Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path])
-    assert line =~ "Exported #{title} to #{path}"
-    Map.put(context, :thread_file, path)
+  # Exports with the terminals' scrollback (`args`), as a thread file carries everything.
+  defp export(context, title, file, args \\ ["--terminal-scrollback"]) do
+    path = export_path(context, file)
+    assert [line] = Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path | args])
+    assert line =~ "Exported #{title} (#{World.thread_id(context, title)}) to #{path} ("
+    Map.merge(context, %{thread_file: path, exported: [line]})
+  end
+
+  # An export as the user runs it, which may be refused: `:exported` is what they are told.
+  defp try_export(context, title, file, args) do
+    context =
+      if Map.has_key?(context[:threads] || %{}, title), do: furnish(context, title), else: context
+
+    before = if Map.has_key?(context[:threads] || %{}, title), do: World.state(context, title)
+    path = export_path(context, file)
+
+    Map.merge(context, %{
+      thread_file: path,
+      before: before,
+      exported: Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path | args])
+    })
+  end
+
+  # One folder of exports a scenario, so a file named twice is the same file.
+  defp export_path(context, file) do
+    dir = Path.join([context.mc.home, "tmp", "exports"])
+    File.mkdir_p!(dir)
+    Path.join(dir, file)
+  end
+
+  # The thread file with the names of the files under `key` changed by `rename`.
+  defp rename_carried(context, key, rename) do
+    context = ensure_file(context, "alpha.hal-c2-thread")
+    archive = context.thread_file |> File.read!() |> JSON.decode!()
+    assert [first | rest] = archive[key]
+    renamed = %{first | "fileName" => rename.(first["fileName"])}
+    File.write!(context.thread_file, JSON.encode!(%{archive | key => [renamed | rest]}))
+    context
+  end
+
+  # A file of `machine`'s own under the name of the thread file's image.
+  defp put_attachment(context, machine, bytes) do
+    dir = Machines.on(context, machine, HalC2.Attachments, :dir, [])
+    path = Path.join(dir, context.image <> ".png")
+    :ok = Machines.on(context, machine, File, :mkdir_p, [dir])
+    :ok = Machines.on(context, machine, File, :write, [path, bytes])
+    Map.put(context, :had_file, %{path: path, bytes: bytes})
+  end
+
+  defp safely(fun) do
+    fun.()
+  catch
+    _, _ -> :ok
   end
 
   defp ensure_file(%{thread_file: _} = context, _name), do: context
@@ -2364,7 +2859,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     refute Enum.any?(streams, &(&1.id == id))
     assert Machines.on(context, machine, HalC2.Terminal, :saved_scrollback, [id]) == []
 
-    if image = context[:image],
+    # A file the machine had under the image's name is its own (`put_attachment/3`).
+    if (image = context[:image]) && !context[:had_file],
       do:
         assert(Machines.on(context, machine, HalC2.Attachments, :path, [%{"id" => image}]) == nil)
 

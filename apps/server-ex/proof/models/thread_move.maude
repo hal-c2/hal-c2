@@ -28,6 +28,9 @@ mod THREAD-MOVE is
   --- An MC: whether it runs, its record of the thread, and its settle, which runs one at
   --- a time: idle, or waiting on a destination's `arrived?/2` for the move as it saw it.
   op mc : Mc Bool Rec Slot -> Item [ctor] .
+  --- An MC removed from the cluster for good (HalC2.Cluster.remove/1): it is stopped
+  --- and never comes back; its store keeps its record of the thread.
+  op out : Mc Rec -> Item [ctor] .
   op idle : -> Slot [ctor] .
   op asked : Mc Moving -> Slot [ctor] .
 
@@ -295,6 +298,33 @@ mod THREAD-MOVE is
   rl [release] :
     msg(D, S, arrivedAns(no)) mc(S, true, R, asked(D, M)) => mc(S, true, seen(M, R), idle) .
 
+  --- The destination was removed from the cluster and will not say whether the move
+  --- arrived, but the thread may have gone on from it: settle/1 asks the other members,
+  --- in forsake/3. One that holds the move's record, which it keeps once it moved the
+  --- thread on, says it arrived, and the move is let go. Called off by call_off/2, under the
+  --- let-go lock, only once every other member says it did not; one taking the thread,
+  --- or not reached, waits, and is asked when it is back.
+  --- The code asks them one after another; one step here, as an MC that holds the
+  --- record keeps it, and the thread reaches another only from one that holds it.
+  crl [found] :
+    { mc(S, true, live(mv(N, D, T), Ms), idle) out(D, R) mc(Y, U, R', Q') C }
+    => { mc(S, true, live(mv(N, D, T), Ms), letting(N, checked)) out(D, R) mc(Y, U, R', Q') C }
+    if has(N, moves(R'))
+       /\ linked(S, Y, mc(S, true, live(mv(N, D, T), Ms), idle) mc(Y, U, R', Q') C)
+       /\ not freeing?(S, mc(S, true, live(mv(N, D, T), Ms), idle) mc(Y, U, R', Q') C) .
+  crl [forsake] :
+    { mc(S, true, live(mv(N, D, T), Ms), idle) out(D, R) C }
+    => { mc(S, true, live(still, Ms), idle) out(D, R) C }
+    if not freeing?(S, mc(S, true, live(mv(N, D, T), Ms), idle) C)
+       /\ not unsure(S, N, C, mc(S, true, live(mv(N, D, T), Ms), idle) C) .
+  --- Whether a member other than S might hold the move N's record, or come to: it is not
+  --- reached, is taking the thread, or holds it. `W` is the whole configuration.
+  op unsure : Mc Nat Conf Conf -> Bool .
+  var W' : Conf .
+  eq unsure(S, N, mc(Y, U, R', Q') C, W')
+    = not linked(S, Y, W') or locked(Y, W') or has(N, moves(R')) or unsure(S, N, C, W') .
+  eq unsure(S, N, C, W') = false [owise] .
+
   --- environment --------------------------------------------------------------------
 
   rl [crash] :
@@ -302,6 +332,15 @@ mod THREAD-MOVE is
     => { down(X, sever(X, a, sever(X, b, sever(X, c, mc(X, true, R, Q) C)))) faults(F) } .
 
   rl [restart] : mc(X, false, R, Q) => mc(X, true, R, idle) .
+
+  --- An MC is removed from the cluster: it stops as in a crash, and never restarts.
+  rl [remove] :
+    { mc(X, T, R, Q) faults(s F) C }
+    => { out(X, R) without(X, down(X, sever(X, a, sever(X, b, sever(X, c, mc(X, T, R, Q) C)))))
+         faults(F) } .
+  --- What `down` left of it.
+  op without : Mc Conf -> Conf .
+  eq without(X, mc(X, false, R, idle) C) = C .
 
   crl [partition] :
     { faults(s F) C } => { split(X, Y) sever(X, Y, C) faults(F) }
@@ -335,12 +374,14 @@ mod THREAD-MOVE is
   eq three(K, F) = { mc(a, true, live(still, none), idle) mc(b, true, nothing, idle)
                      mc(c, true, nothing, idle) moves(K) faults(F) next(1) } .
 
-  --- The thread writable on two MCs; on none; a session stopped under a thread that
+  --- The thread writable on two MCs of the cluster (a removed one's copy is no longer
+  --- the cluster's); on none, removed ones included; a session stopped under a thread that
   --- stays; a source told its move did not arrive when it did; and nothing left to do.
   ops twice lost hurts wrong broken settled : Sys -> Bool .
   eq twice({ mc(X, T, live(still, Ms), Q) mc(Y, U, live(still, Ms'), Q') C }) = true .
   eq twice({ C }) = false [owise] .
   eq lost({ mc(X, T, live(M, Ms), Q) C }) = false .
+  eq lost({ out(X, live(M, Ms)) C }) = false .
   eq lost({ C }) = true [owise] .
   eq hurts({ hurt(X) C }) = true .
   eq hurts({ C }) = false [owise] .
