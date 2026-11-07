@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19949
+#   https://github.com/pingdotgg/t3code/pull/19166
 #   docs/user/project-settings.md (Import actions, Submodules)
 #   packages/contracts/src/halC2ProjectFile.ts
 #   packages/shared/src/halC2ProjectFile.ts (parseHalC2ProjectFile)
@@ -136,6 +138,7 @@ Feature: The hal-c2.json project file
     Then the user is warned that hal-c2.json is invalid
     And no actions are offered from it
 
+  # Upstream #19166: a block comment holding a URL hid the project file's settings; comments are now stripped in one pass.
   @desktop
   Scenario: hal-c2.json may contain comments
     Given the checkout's hal-c2.json has comments and declares the action "Dev"
@@ -164,3 +167,11 @@ Feature: The hal-c2.json project file
     When the user looks at the actions of "shop"
     Then no actions are offered from either file
     And a warning is logged that the project file could not be read
+
+  # Upstream #19949: a missing t3.json is not a failed read.
+  @backlog @mc
+  Scenario: A project without hal-c2.json or t3.json is not reported as failing to read it
+    Given the project has neither hal-c2.json nor t3.json
+    When the MC reads the project's settings
+    Then the project uses the defaults
+    And no read failure is reported or logged

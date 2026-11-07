@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19239
 #   https://github.com/pingdotgg/t3code/pull/13491
 #   https://github.com/pingdotgg/t3code/pull/13356
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe accessibility hint)
@@ -126,6 +127,13 @@ Feature: Accessibility on phones and tablets
     Given the user turned on reduced motion
     And an agent is working
     Then the working status is shown without continuous animation
+
+  # Upstream #19239: with Remove animations on, the toolbar stayed at its animation's zero opacity.
+  @backlog @mobile @priority-low
+  Scenario: The composer's buttons show with reduced motion
+    Given the user turned on reduced motion
+    When the user opens a thread
+    Then the composer's buttons are visible
 
   @backlog @mobile
   Scenario: Collapsible sections announce whether they are expanded

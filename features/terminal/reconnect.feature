@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18444
+#   https://github.com/pingdotgg/t3code/pull/9221
 #   https://github.com/pingdotgg/t3code/pull/17181
 #   docs/user/terminal.md (server-owned sessions, scrollback limits)
 #   docs/internals/terminal-runtime.md (bounded restore, query stripping, 512 KiB client buffer)
@@ -84,6 +86,7 @@ Feature: Reattaching to terminals
       Then the client is asked to attach again
       And attaching again follows the terminal's output
 
+    # Upstream #18444: opening a closed terminal again on purpose still starts a new shell.
     # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
     #   closed and reopened)
     @mc
@@ -93,6 +96,16 @@ Feature: Reattaching to terminals
       Then the client is told the terminal closed
       And receives a snapshot of the new shell
       And does not have to attach again
+
+    # Upstream #18444: a resumed attach reports a closed terminal as closed instead of reopening it;
+    # a terminal the MC lost in a restart is still opened again.
+    @backlog @mc
+    Scenario: Reconnecting does not reopen a terminal the user closed
+      Given a client attached to "term-1"
+      And the user closed "term-1"
+      When the client reconnects and resumes its attach to "term-1"
+      Then the client is told "term-1" is closed
+      And no shell starts for "term-1"
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (buffers attach output delivered during the
     #   initial snapshot callback; streams attach snapshots followed by live events without duplicates)
@@ -121,6 +134,22 @@ Feature: Reattaching to terminals
       When a client closes the terminal without deleting its history
       And later opens the same terminal again
       Then the new shell's history begins with "migrations applied"
+
+    # Upstream #9221: replayed history could leave a new shell in a dead app's alternate
+    # screen, with a hidden cursor and its keyboard and mouse modes; reopening now resets them.
+    @backlog @mc
+    Scenario: A shell that died inside a full-screen program does not leave its modes behind
+      Given a terminal whose shell exited while a full-screen program had hidden the cursor and captured the mouse
+      When a client opens the terminal again
+      Then the history is shown with the cursor visible
+      And keys and the mouse reach the new shell as ordinary input
+
+    # Upstream #9221: a reopened terminal keeps at most the 512 KiB a client replays.
+    @backlog @mc @priority-low
+    Scenario: A reopened terminal keeps only as much history as a client replays
+      Given a terminal that printed 2 MiB before its shell exited
+      When a client opens the terminal again
+      Then the new shell's history holds the newest 512 KiB of that output
 
     @mc
     Scenario: A terminal whose id is too long for a file name keeps its history

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17540
 #   apps/web/src/components/ThreadNotificationCoordinator.tsx (titles, transitions only, archived threads skipped, toast only when focused elsewhere, Open thread, badge)
 #   apps/web/src/threadNotifications.ts (notification modes, sounds, badge)
 #   apps/web/src/shell/ShellToastBridge.tsx
@@ -80,6 +81,14 @@ Feature: Alerts when a thread needs the user
       | Notifications only       | shown        | not played |
       | Sound only               | not shown    | played     |
       | Notifications with sound | shown        | played     |
+
+  # Upstream #17540: threads that finish together play one completion sound.
+  @backlog @desktop @priority-low
+  Scenario: Threads finishing together play one sound
+    Given alerts are set to "Sound only"
+    When three background threads complete at the same moment
+    Then one completion sound is played
+    And a thread that asks for approval right after still plays its sound
 
   @desktop
   Scenario: Clicking a system notification opens its own thread

@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19177
+#   https://github.com/pingdotgg/t3code/pull/18813
 #   https://github.com/pingdotgg/t3code/pull/19179
 #   https://github.com/pingdotgg/t3code/pull/19180
 #   https://github.com/pingdotgg/t3code/pull/17681
@@ -1605,6 +1607,7 @@ Feature: Browsing pull requests
     Then the readable rows are listed
     And more can still be loaded
 
+  # Upstream #18813: on Bitbucket a full page sharing one update time made Load more return the same page; the pull requests already delivered are left out of the next request.
   @backlog @mc
   Scenario: Pull requests with the same update time are not lost between pages
     Given several pull requests were updated at the same instant across a page boundary
@@ -1747,6 +1750,14 @@ Feature: Browsing pull requests
     Given the user is looking at a pull request or the pull requests page
     When the user keeps it open and keeps working
     Then it is read again about every five minutes
+
+  # Upstream #19177: pulling to refresh a pull request on the phone showed the cached checks.
+  @backlog @mobile
+  Scenario: Pulling to refresh a pull request on the phone reads its checks again
+    Given the phone shows pull request 42 with a check still running
+    And the check has since passed on the host
+    When the user pulls down to refresh
+    Then the check reads as passed
 
   @backlog @desktop
   Scenario: A pull request view stops refreshing when nobody is there

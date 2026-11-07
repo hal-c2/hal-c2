@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15636
+#   https://github.com/pingdotgg/t3code/pull/19900
+#   https://github.com/pingdotgg/t3code/pull/11933
+#   https://github.com/pingdotgg/t3code/pull/14961
+#   https://github.com/pingdotgg/t3code/pull/19928
 #   https://github.com/pingdotgg/t3code/pull/18494
 #   https://github.com/pingdotgg/t3code/pull/16069
 #   https://github.com/pingdotgg/t3code/pull/13590
@@ -178,6 +183,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user removes it from the favourites
     Then it is no longer listed among the favourites
 
+  # Upstream #14961: the model picker offers every saved custom model, not just the first 32
+  @backlog @shared
+  Scenario: Every saved custom model is offered
+    Given the user has saved 40 custom models for Codex
+    When the user opens the model picker
+    Then all 40 custom models are offered
+    And a thread set to the 40th custom model shows that model as chosen
+
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: A started thread can move to another provider
     Given the thread has already run a turn on Codex
@@ -247,6 +260,24 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the new thread is in "scratch" on "server"
     And the prompt is still there
 
+  # Upstream #15636: grouped choices hid reachable checkouts behind an offline one; every
+  # checkout is now listed, connected first, and unavailable ones keep their status.
+  @backlog @desktop
+  Scenario: Every checkout of the project is offered for a new thread, connected ones first
+    Given "shop" has checkouts on "laptop" and "server", which are connected, and on "office", which is not
+    When the user opens the machine picker for a new thread in "shop"
+    Then "laptop" and "server" are listed before "office"
+    And "office" is listed as not connected
+    When "office" connects while the picker is open
+    Then "office" is listed as connected
+
+  # Upstream #15636: choosing one checkout pins the draft and clears Auto balance.
+  @backlog @desktop
+  Scenario: Choosing a checkout pins the new thread to that machine
+    Given the user chose "Auto balance" for a new thread in "shop"
+    When the user chooses the checkout on "server"
+    Then the new thread will start on "server" whatever the machines' free resources
+
   @backlog @desktop
   Scenario: The user lets a new thread's machine be picked automatically
     Given the project exists on two connected machines and load balancing is on
@@ -312,6 +343,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the machine "server" is shown
     And it cannot be changed
 
+  # Upstream #19900: a started thread offered other machines, and picking one did nothing.
+  @backlog @desktop @priority-low
+  Scenario: A started thread names its machine without offering others
+    Given a thread has started on the machine "server" in a project on several machines
+    When the user looks at the thread's composer
+    Then the machine "server" is shown
+    And no other machine is offered, by the menu or by the machine shortcut
+
   @backlog @desktop @priority-low
   Scenario: The machine is left out when it is the only one and it is this one
     Given the project runs on the machine being used and no other machine is connected
@@ -347,6 +386,15 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user opens "Legacy models"
     Then the three older models are listed
     And the section is already open when the thread runs on one of them
+
+  # Upstream #11933: a favourited legacy model was hidden in the folded "Legacy models" section.
+  @backlog @desktop
+  Scenario: A favourite older model is listed outside the folded section
+    Given Codex lists the legacy model "gpt-4.1" and the user marked it as a favourite
+    When the user looks through Codex's models
+    Then "gpt-4.1" is listed above Codex's current models without opening "Legacy models"
+    When the user removes it from the favourites
+    Then "gpt-4.1" is back in "Legacy models"
 
   @backlog @desktop
   Scenario: Searching the models finds a provider's older models too
@@ -510,6 +558,82 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user opens the model's options
     Then the effort reads "Ultrathink" and cannot be changed
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
+
+  # Upstream #19928: two commands step the composer's effort one level without opening the picker.
+  @backlog @desktop @tui
+  Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
+    Given the thread runs on a model whose efforts are low, medium and high
+    And the effort is <from> and the user is typing a draft
+    When the user steps the effort <direction>
+    Then the effort is <to>
+    And the draft and where the user was typing are unchanged
+    And the effort picker stays closed
+
+    Examples:
+      | from   | direction | to   |
+      | medium | up        | high |
+      | high   | up        | low  |
+      | medium | down      | low  |
+      | low    | down      | high |
+
+  # Upstream #19928: stepping into Ultrathink follows the same rules as choosing it.
+  @backlog @desktop @tui @priority-low
+  Scenario: Stepping the effort into Ultrathink adds its prefix and keeps the caret in place
+    Given the thread runs on Claude at the effort just below Ultrathink
+    And the user has typed "design the cache" with the caret before "cache"
+    When the user steps the effort up
+    Then the effort reads "Ultrathink"
+    And the draft reads "Ultrathink: design the cache"
+    And the caret is still before "cache"
+
+  # Upstream #19928: slash commands never get the Ultrathink prefix, so stepping skips it.
+  @backlog @desktop @tui @priority-low
+  Scenario: Stepping the effort skips Ultrathink for a slash command
+    Given the thread runs on Claude at the effort just below Ultrathink
+    And the user has typed "/review the cache"
+    When the user steps the effort up
+    Then the effort wraps past Ultrathink to Claude's lowest effort
+    And the draft reads "/review the cache"
+
+  # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
+  @backlog @desktop @tui @priority-low
+  Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
+    Given the thread runs on Claude
+    And the user has typed "please ultrathink about the cache"
+    When the user steps the effort up
+    Then the effort still reads "Ultrathink"
+
+  # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
+  # steps from the model's default instead of doing nothing.
+  @backlog @desktop @tui @priority-low
+  Scenario: An effort outside the model's levels steps from the model's default
+    Given the provider reports an effort the model does not list
+    And the model's default effort is medium
+    When the user steps the effort up
+    Then the effort is high
+
+  # Upstream #19928: stepping saves the same options as the picker, so Cursor's Fast stays off.
+  @backlog @desktop @tui @plugin-cursor @priority-low
+  Scenario: Stepping the effort leaves Cursor's Fast mode off unless the user chose it
+    Given the thread runs on a Cursor model whose default turns Fast mode on
+    And the user has not chosen Fast mode
+    When the user steps the effort up
+    Then the next turn runs without Fast mode
+
+  # Upstream #19928: the step stands down whenever something else owns the composer.
+  @backlog @desktop @tui
+  Scenario Outline: Stepping the effort does nothing while the composer is taken
+    Given <situation>
+    When the user steps the effort up
+    Then the effort is unchanged
+
+    Examples:
+      | situation                                            |
+      | an approval is waiting for the user                  |
+      | the agent's question is waiting for an answer        |
+      | the user is editing a queued message                 |
+      | no provider is available                             |
+      | the user is holding the step key down after one step |
 
   @backlog @desktop @priority-high
   Scenario: Each model keeps the options the user last gave it

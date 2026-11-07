@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21616
+#   https://github.com/pingdotgg/t3code/pull/15374
+#   https://github.com/pingdotgg/t3code/pull/20376
+#   https://github.com/pingdotgg/t3code/pull/18807
+#   https://github.com/pingdotgg/t3code/pull/21614
+#   https://github.com/pingdotgg/t3code/pull/19567
+#   https://github.com/pingdotgg/t3code/pull/19519
+#   https://github.com/pingdotgg/t3code/pull/21617
+#   https://github.com/pingdotgg/t3code/pull/21618
 #   https://github.com/pingdotgg/t3code/pull/19330
 #   https://github.com/pingdotgg/t3code/pull/19313
 #   https://github.com/pingdotgg/t3code/pull/18521
@@ -214,6 +223,7 @@ Feature: ACP registry agents
     When the user switches the thread to the other model
     Then the agent's session uses the new model for the next turn
 
+  # Upstream #19519: agents naming their models only in session state showed just Default, and picks never reached them.
   Scenario: Discovering and switching models from an agent such as Kimi
     Given "acme" offers models through the session model list
     When the user switches the thread to the other model
@@ -795,6 +805,15 @@ Feature: ACP registry agents
     Then one model "Default" is offered
     And for an agent that reports models, the one it is currently using is marked as the default
 
+  # Upstream #18807: a completed discovery replaces the model list whatever the sign-in state;
+  # a readiness or failed check keeps the last list.
+  @backlog
+  Scenario: Models an agent stopped reporting are no longer offered
+    Given "acme" needs no sign-in and used to report "acme-large" and "acme-small"
+    When the MC checks the instance and "acme" reports only "acme-large"
+    Then only "acme-large" is offered
+    And a check that fails leaves the offered models as they were
+
   @backlog
   Scenario: An agent that withdraws its commands clears the composer's list
     Given a running "acme" session offered the command "/review"
@@ -984,6 +1003,13 @@ Feature: ACP registry agents
     Then the thread shows it as a HAL-C2 tool
     And a tool of another MCP server with a similar name is not shown as one
 
+  # Upstream #20376: an agent's own tool named like a HAL-C2 tool is not taken for one.
+  @backlog
+  Scenario: An agent's own tool that shares a HAL-C2 tool's name is shown as the agent's
+    Given the registry agent Hermes has its own tool "delegate_task"
+    When Hermes calls it with the title "delegate_task: summarise the logs"
+    Then the call is shown as Hermes' own tool, not as HAL-C2's delegation
+
   @backlog
   Scenario: A file request with a relative path is refused
     When "acme" asks the client for the file "src/app.ts" without a full path
@@ -1144,6 +1170,13 @@ Feature: ACP registry agents
   Scenario: A sign-in address request without an id is declined
     When "acme" asks the user to open a sign-in address with an empty request id
     Then the request is declined without being shown to the user
+
+  # Upstream #15374: ACP request ids stay inside the signed 32-bit range.
+  @backlog
+  Scenario: An agent that only reads 32-bit request ids still answers
+    Given a registry agent built on the Kotlin ACP SDK, such as Junie
+    When the agent has been asked more requests than a 32-bit id can count
+    Then it still answers every request
 
   @backlog
   Scenario: A long sign-in address request is cut down before it is shown
@@ -1519,6 +1552,15 @@ Feature: ACP registry agents
     When the user opens the options of an "acme" model
     Then the option offers every choice of every group in one list
     And an option left without a usable choice is not offered at all
+
+  # Upstream #19567: models are offered and set through the same session option
+  @backlog
+  Scenario: A model is offered and chosen through one session option of the agent
+    Given "acme" offers two model options, after a toggle option
+    When the user opens the models of "acme"
+    Then the models offered are the choices of the first model option, groups included
+    And a picked model is set through that same option when the session starts
+    And a model only the second option offers is refused before reaching "acme"
 
   # AcpClientTerminals.ts
   @backlog
@@ -1975,6 +2017,13 @@ Feature: ACP registry agents
     Then the turn ends at the idle report, with the stop reason and usage it carries
     And an idle report that gives no stop reason ends the turn as an ordinary end of turn
 
+  # Upstream #21614: an idle report that carries a failure keeps the agent's explanation
+  @backlog
+  Scenario: An idle report that says the work failed fails the turn with the agent's reason
+    Given "acme" answered the initialization as generation 2
+    When "acme" reports the session idle with a failure "Context window exceeded"
+    Then the turn fails with "Context window exceeded"
+
   @backlog
   Scenario: A second prompt for a session that already has one is refused
     Given "acme" answered the initialization as generation 2
@@ -2138,3 +2187,16 @@ Feature: ACP registry agents
     And switching it to model "B" failed after the agent had taken the new model
     When the user switches back to "A" and sends a message
     Then the agent runs the turn on "A"
+
+  # Upstream #21617: an ACP agent's native child sessions are shown as child threads and resumed;
+  # Upstream #21618: Claude through the registry gets the same background lifecycle.
+  # Upstream #21616: a finished foreground reply no longer reads Thinking while its background children work.
+  @backlog @shared
+  Scenario: A registry agent's own subagent runs in a child thread and lets its parent finish
+    Given a thread runs Claude through the ACP registry
+    When Claude starts a background subagent during the turn
+    Then the subagent's work appears in a child thread of the thread
+    And the parent's reply finishes while the subagent is still working
+    And the parent is not left reading "Thinking"
+    When the MC restarts while the subagent is working
+    Then the child thread resumes its session

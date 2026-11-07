@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/18388
+#   https://github.com/pingdotgg/t3code/pull/19241
 #   https://github.com/pingdotgg/t3code/pull/16729
 #   https://github.com/pingdotgg/t3code/pull/15047
 #   apps/mobile/src/features/files/ (tree, search, previews, copy, save or share, attachments)
@@ -56,8 +58,10 @@ Feature: Browsing a thread's files on a phone
     When the user searches files for "cart"
     Then "src/cart.ts" is listed
 
+  # Upstream #18388: the phone lists exactly the files the MC's search returned, typos and all,
+  # instead of filtering them again by its own rules; how the MC matches is files/search.feature.
   @backlog @mobile
-  Scenario Outline: A file search matches the way the user remembers the name
+  Scenario Outline: A file search lists the files the MC's search found
     Given the workspace has "src/cartTotal.ts"
     When the user searches files for "<query>"
     Then "src/cartTotal.ts" is listed
@@ -68,6 +72,7 @@ Feature: Browsing a thread's files on a phone
       | total       |
       | src cart    |
       | crttl       |
+      | cart totla  |
 
   @backlog @mobile
   Scenario: A search lists the folders around each match
@@ -76,11 +81,13 @@ Feature: Browsing a thread's files on a phone
     Then "src", "src/lib" and "src/lib/cart.ts" are listed
     And folders that hold no match are not listed
 
+  # Upstream #18388: the phone no longer filters the MC's matches with its own stricter rules,
+  # so it no longer requires every word to match.
   @backlog @mobile @priority-low
-  Scenario: Every word of a file search has to match
-    Given the workspace has "src/cart.ts" and "src/price.ts"
-    When the user searches files for "cart price"
-    Then no file is listed
+  Scenario: A file search lists nothing the MC's search did not return
+    Given the phone has listed "src/price.ts" before
+    When the user searches files for "cart" and the MC's search does not return "src/price.ts"
+    Then "src/price.ts" is not listed
 
   @backlog @mobile @priority-low
   Scenario: A search that matches too many files asks for a narrower one
@@ -689,6 +696,13 @@ Feature: Browsing a thread's files on a phone
     When the user pinches the picture apart
     Then the picture zooms in
     And swiping does not close the picture, but its close button and Back do
+
+  # Upstream #19241: the Android image viewer keeps panning after an interrupted pinch.
+  @backlog @mobile @priority-low
+  Scenario: A zoomed picture still pans after a pinch was interrupted
+    Given the user is zooming a full-screen picture with a pinch
+    When one finger leaves the screen before the other
+    Then the user can still drag the zoomed picture around
 
   @backlog @mobile @priority-low
   Scenario: A full-screen picture's name and media actions stay above it

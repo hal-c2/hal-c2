@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21659
 #   apps/mobile/src/features/sharing/ (incoming share inbox, project choice, warnings, retry)
 #   apps/mobile/src/features/threads/NewTaskDraftScreen.tsx (share import: cancel, retry, unavailable share, skipped files)
 #   apps/mobile/src/state/use-composer-drafts.ts (undoComposerDraftMergeState: a cancelled import keeps later edits)
@@ -31,6 +32,14 @@ Feature: Sharing into and out of the phone app
       | three photos        |
       | a video             |
       | a PDF               |
+
+  # Upstream #21659: a shared non-image file was attached to the new task without showing in it.
+  @backlog @mobile
+  Scenario: A file shared into a new task shows in the draft before it is sent
+    When the user shares "swim-results.json" to HAL-C2 from another app and picks "shop"
+    Then the new task's draft shows "swim-results.json" with its size
+    When the user removes "swim-results.json" from the draft
+    Then nothing is left to send
 
   @backlog @mobile
   Scenario: The user chooses which project receives shared content

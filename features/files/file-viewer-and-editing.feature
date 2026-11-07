@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19526
+#   https://github.com/pingdotgg/t3code/pull/19898
+#   https://github.com/pingdotgg/t3code/pull/18819
+#   https://github.com/pingdotgg/t3code/pull/14044
+#   https://github.com/pingdotgg/t3code/pull/18647
+#   https://github.com/pingdotgg/t3code/pull/16955
+#   https://github.com/pingdotgg/t3code/pull/20449
 #   https://github.com/pingdotgg/t3code/pull/19078
 #   https://github.com/pingdotgg/t3code/pull/17361
 #   https://github.com/pingdotgg/t3code/pull/17555
@@ -342,6 +349,15 @@ Feature: Viewing and editing files
         | design.md:12      | docs/ai/design.md |
         | ../README.md      | docs/README.md    |
 
+    # Upstream #18647: Markdown file previews reload their embedded images when reopened or edited.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A Markdown preview shows an embedded image created or changed after it first loaded
+      Given "docs/plan.md" embeds "docs/diagram.svg", which did not exist when the user first previewed it
+      When "docs/diagram.svg" is created and the user previews "docs/plan.md" again
+      Then the preview shows "docs/diagram.svg"
+      When "docs/diagram.svg" is replaced and the user previews "docs/plan.md" again
+      Then the preview shows the new "docs/diagram.svg"
+
     @desktop @mobile
     Scenario Outline: A media preview that fails to load can be retried
       Given loading "<path>" fails once
@@ -628,6 +644,29 @@ Feature: Viewing and editing files
         | Linux                           | Reveal in Files           |
         | Linux where reveal runs through Windows (WSL) | Reveal in File Explorer |
 
+    # Upstream #19526: reveal on Windows opens the default file manager.
+    @backlog @mc @desktop @priority-low
+    Scenario: Revealing a file on Windows uses the default file manager
+      Given a Windows computer whose default file manager is not File Explorer
+      When the user reveals "src/app.ts"
+      Then the default file manager opens with "src/app.ts" selected
+
+    # Upstream #14044: revealing a file on Linux selects it in the file manager
+    @backlog @desktop @priority-low
+    Scenario: Revealing a file on Linux selects it in the file manager
+      Given the environment's host is Linux
+      When the user reveals "src/app.ts"
+      Then the file manager opens "src" with "app.ts" selected
+      And a file manager that cannot select files opens "src" instead
+
+    # Upstream #16955: the file preview's Open in menu reveals the previewed file in the file manager.
+    @backlog @desktop
+    Scenario: Opening a previewed file in the file manager reveals it there
+      Given the user is previewing "docs/notes.md"
+      When the user opens it in the host's file manager
+      Then the host's file manager shows "docs/notes.md" selected in its folder
+      And no app opens "docs/notes.md" itself
+
     @desktop @tui
     Scenario: A file opens in the user's editor when the thread runs on this computer
       Given the thread runs on this computer, which has the editor "VS Code"
@@ -664,6 +703,13 @@ Feature: Viewing and editing files
       Given the thread's environment is on another machine reachable over SSH as "devbox"
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
+
+    # Upstream #19898: a previewed file of a remote environment opens as that file in VS Code.
+    @backlog @desktop
+    Scenario: A remote environment's file opens as that file in the local editor
+      Given the user is previewing "src/app.ts" of a remote environment reached over SSH
+      When the user opens it in VS Code
+      Then VS Code opens "src/app.ts" on the remote host, not only its folder
 
     # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors); the names
     # are the ones the MC advertises (connections/environments.feature).
@@ -787,6 +833,16 @@ Feature: Viewing and editing files
       And a client paired with terminal access
       When a client writes ".bashrc" with the project folder "/home/sam"
       Then the outside file "/home/sam/.bashrc" has the written contents
+
+    # Upstream #20449 refuses a save in any folder that is not a project, a managed worktree
+    # or a non-deleted thread's worktree, whatever the session may do. HAL-C2 lets a session
+    # with terminal access save anywhere a shell in its terminal could, and keeps a session
+    # without it to its projects and their threads' worktrees (above).
+    @dropped @mc
+    Scenario: A save in a folder no project or thread knows is refused whatever the session's access
+      Given a client paired with terminal access
+      When that client writes ".bashrc" with the project folder "/home/sam"
+      Then the MC answers that the folder is not a project or a thread's worktree
 
     @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
@@ -991,6 +1047,55 @@ Feature: Viewing and editing files
       Given the folder of "shop" was deleted
       When a client lists the files of "shop"
       Then the MC answers that the project folder does not exist
+
+    # Upstream #20449: a save never lands in git's own folders, so the file editor cannot rewrite
+    # a repository's config or hooks. A bare repository kept inside the project counts too.
+    @backlog @mc @priority-high
+    Scenario Outline: A save into git's own folders is refused
+      When a client writes "<path>" in "shop"
+      Then the MC refuses the save
+      And nothing at "<path>" changed
+
+      Examples:
+        | path                  |
+        | .git/config           |
+        | .git/hooks/pre-commit |
+        | vendor/lib.git/config |
+
+    # Upstream #20449: only git's folders are refused; files that merely start with .git save.
+    @backlog @mc
+    Scenario Outline: A file named like git's own outside its folders still saves
+      When a client writes "<path>" in "shop"
+      Then "<path>" exists with the written contents
+
+      Examples:
+        | path                     |
+        | .gitignore               |
+        | .github/workflows/ci.yml |
+
+    # Upstream #18819: saves no longer follow a link out of the project, or a link to nothing.
+    # Upstream #20449: the deepest existing part of a save's path is resolved, and a link
+    # that leads out of the project, or to nothing, is refused.
+    # Likely already implemented: apps/server-ex/lib/hal_c2/workspace.ex (inside/3 resolves links with real/1 before a write).
+    @backlog @mc @priority-high
+    Scenario Outline: A save through a link that leaves the project is refused
+      Given "<link>" in "shop" is a link to <target>
+      When a client writes "<path>" in "shop"
+      Then the MC answers that the path is outside the project
+      And nothing outside "shop" changed
+
+      Examples:
+        | link         | target                     | path                   |
+        | link-to-home | the user's home folder     | link-to-home/notes.txt |
+        | dangling     | a folder that is not there | dangling/notes.txt     |
+        | dangling.txt | a file that is not there   | dangling.txt           |
+
+    # Upstream #18819: a link that stays inside the project still saves through it.
+    @backlog @mc
+    Scenario: A save through a link that stays inside the project is written
+      Given "docs" in "shop" is a link to its folder "notes"
+      When a client writes "docs/todo.txt" in "shop"
+      Then "notes/todo.txt" exists with the written contents
 
   Rule: Viewing attachments
 

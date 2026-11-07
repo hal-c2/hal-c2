@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15738
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/background_policy.ex (presets, leases, run_scope_work?)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex (automatic git fetch and status under the policy)
@@ -69,6 +70,14 @@ Feature: Background work and storage cleanup on the MC
     Given a client holds activity leases
     When its socket closes
     Then its leases end at once
+
+  # Upstream #15738: an activity report cut off by a reconnect no longer stops later reports.
+  @backlog @shared
+  Scenario: A client keeps reporting activity after a report is cut off
+    Given a client in front reports it shows a checkout's status
+    When its connection is replaced while a report is on its way
+    Then the client's next report still reaches the MC
+    And the MC keeps refreshing that checkout's git status
 
   @mc
   Scenario: The performance profile works for clients in the background too

@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/21197
+#   https://github.com/pingdotgg/t3code/pull/16040
+#   https://github.com/pingdotgg/t3code/pull/17020
+#   https://github.com/pingdotgg/t3code/pull/14534
 #   https://github.com/pingdotgg/t3code/pull/17566
 #   https://github.com/pingdotgg/t3code/pull/18502
 #   https://github.com/pingdotgg/t3code/pull/18326
@@ -620,6 +624,15 @@ Feature: Device panel
       When the user presses the device's Home button
       Then the device receives the "home" button
 
+    # Upstream #17020: right and middle clicks on the device's screen are no longer sent as touches.
+    @backlog @desktop
+    Scenario: Only the primary button touches the device
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user right-clicks the middle of the screen
+      And the user middle-clicks the middle of the screen
+      Then the device receives no touch
+
     @desktop
     Scenario: Touches, keys and buttons reach an emulator through the MC
       Given the thread has the Android Emulator "Pixel 9" open
@@ -670,6 +683,24 @@ Feature: Device panel
       When the user clicks the device's screen and types "a"
       Then the device receives the key "a" going down and up
 
+    # Upstream #14534: letters typed on a focused device screen no longer jump to the composer.
+    @backlog @desktop
+    Scenario: Letters typed on the device's screen do not move to the composer
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user clicks the device's screen and types "hello"
+      Then the device receives the keys "h", "e", "l", "l" and "o"
+      And the composer stays empty
+
+    # Upstream #14534: coming back to the window leaves focus on the device screen.
+    @backlog @desktop
+    Scenario: Coming back to the window keeps the device's screen focused
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user clicked the "iPhone 17" screen
+      When the user switches to another app and back
+      Then the device's screen still has the focus
+      And the composer does not take it
+
     @desktop
     Scenario: Command shortcuts stay with the app while the device has the focus
       Given the thread has the iOS Simulator "iPhone 17" open
@@ -703,6 +734,14 @@ Feature: Device panel
       And the user is watching the "iPhone 17" tab
       Then on a Mac the app keeps every Command chord but Command with "R"
 
+    # Upstream #21197: pasting into the focused device screen types the text into the Android device.
+    @backlog @desktop
+    Scenario: Pasting into a focused Android screen types into the device
+      Given an Android device's screen has the focus
+      When the user pastes "hello@example.com"
+      Then the device receives "hello@example.com" as typed text
+      And the composer does not receive it
+
   Rule: Closing
 
     @desktop
@@ -732,6 +771,17 @@ Feature: Device panel
       Then the right panel shows the "iPhone 17" tab
       When the user goes back to the first thread
       Then the right panel has no "iPhone 17" tab
+
+    # Upstream #16040: a device action's progress and error stay with the thread that started it.
+    @backlog @desktop
+    Scenario: A device action's progress and error stay with the thread that started it
+      Given the user starts opening the iOS Simulator "iPhone 17" in a thread
+      And the MC is slow to answer
+      When the user switches to another thread
+      Then that thread's Device tab shows no progress and offers its own device choice
+      When the MC answers that "iPhone 17" could not be opened
+      And the user goes back to the first thread
+      Then the first thread's Device tab says the device could not be opened
 
     @desktop
     Scenario: A device that cannot be powered off stays open and says why

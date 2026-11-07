@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12567
 #   apps/web/src/components/settings/NotificationSettings.tsx
 #   apps/web/src/threadNotifications.ts
 #   apps/web/src/assets/notification-completion.mp3, notification-input.mp3 (the sounds)
@@ -86,6 +87,7 @@ Feature: Thread notifications
         | asks a question          | Input needed        |
         | hits its usage limit     | Usage limit reached |
 
+    # Upstream #12567: clicking a thread notification restores and raises the window.
     @desktop
     Scenario: Clicking a notification opens the thread
       Given a system notification for "Fix login" is shown

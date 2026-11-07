@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19491
+#   https://github.com/pingdotgg/t3code/pull/18109
+#   https://github.com/pingdotgg/t3code/pull/20411
+#   https://github.com/pingdotgg/t3code/pull/19393
 #   https://github.com/pingdotgg/t3code/pull/16909
 #   https://github.com/pingdotgg/t3code/pull/19751
 #   https://github.com/pingdotgg/t3code/pull/16741
@@ -154,6 +158,15 @@ Feature: The HAL-C2 MCP server agents receive
       | providerInstanceId "nowhere"                 | it fails with code "invalid_request"                             |
       | model 7                                      | each provider lists at most 25 models, each with an id and a label |
 
+  # Upstream #18109: a disabled provider is reported only as disabled, not as missing its
+  # executable or failing its health and sign-in checks, which it never ran.
+  @mc @backlog
+  Scenario: A switched-off provider is reported as switched off and nothing else
+    Given provider "claude" is switched off
+    When the agent of "caller" asks for the orchestrator capabilities
+    Then "claude" is unavailable because it is switched off
+    And it is not reported as missing, unhealthy or signed out
+
   @mc
   Scenario: A tool the MC does not implement is refused by name
     When the agent of "caller" calls a tool "hal_c2_teleport"
@@ -293,6 +306,14 @@ Feature: The HAL-C2 MCP server agents receive
     When it calls a tool
     Then the call is refused with "invalid_mcp_credential"
 
+  # Upstream #19491: expiry deleted the credential, so the next turn had nothing to renew.
+  @backlog @mc
+  Scenario: An idle credential works again once its thread starts a turn
+    Given the credential of "caller" expired while the thread was idle
+    When "caller" starts a new turn and its agent calls a tool
+    Then the call is allowed
+    But a credential that was revoked stays refused
+
   @mc
   Scenario: Stopping a provider session revokes its credentials
     Given the provider session of "caller" stops
@@ -430,6 +451,7 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent receives its first prompt, then another in the same mode, then one after the mode changed
     Then the instructions are in the first prompt and in the one after the change, but not in the second
 
+  # Upstream #19393: native slash commands keep their prompt shape
   @mc
   Scenario: A slash command stays at the start of an ACP prompt
     When the user sends "/compact" to an ACP agent of "caller"
@@ -573,3 +595,10 @@ Feature: The HAL-C2 MCP server agents receive
       | plain http at "http://studio.lan:3773", connected            | on "http://studio.lan:3773"   |
       | "https://studio.ts.net" not connected and "http://10.0.0.5:3773" connected | on "http://10.0.0.5:3773" |
       | "https://studio.ts.net" and "http://10.0.0.5:3773", neither connected | on the first ranked of them, "https://studio.ts.net" |
+
+  # Upstream #20411: optional tool arguments accept null as left out.
+  @backlog @mc
+  Scenario: A HAL-C2 tool called with null for an optional argument treats it as left out
+    When an agent reads a thread with "afterPosition" set to null
+    Then the thread is read as if "afterPosition" had not been given
+    And an argument where null means clearing, such as a project's icon, still clears it

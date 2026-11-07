@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/16623
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   packages/contracts/src/orchestrationV2.ts (thread.fork, thread.merge_back, thread.created,
 #     context-transfer.created, context-transfer.updated, context-handoff.updated)
@@ -104,6 +105,14 @@ Feature: Forking a thread and merging work back
     # "a client deletes" is the thread step; "the user deletes" names a file elsewhere.
     When a client deletes "t1"
     Then "f1" still shows the copied history and its diffs
+
+  # Upstream #16623: a fork keeps its pull request links but does not watch them.
+  @backlog @mc
+  Scenario: A fork keeps the pull request links but not their watches
+    Given a thread is linked to a pull request it watches
+    When the user forks the thread
+    Then the fork is linked to the pull request
+    And the fork does not watch it
 
   @mc
   Scenario: A fork on the same provider continues the provider's own conversation

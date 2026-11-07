@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20299
+#   https://github.com/pingdotgg/t3code/pull/21417
+#   https://github.com/pingdotgg/t3code/pull/21474
+#   https://github.com/pingdotgg/t3code/pull/21483
+#   https://github.com/pingdotgg/t3code/pull/18919
+#   https://github.com/pingdotgg/t3code/pull/22052
+#   https://github.com/pingdotgg/t3code/pull/21499
 #   https://github.com/pingdotgg/t3code/pull/19849
 #   https://github.com/pingdotgg/t3code/pull/17539
 #   https://github.com/pingdotgg/t3code/pull/17945
@@ -91,6 +98,9 @@ Feature: Runs, interruptions and the queue
     Then "A" joins the running turn
     And the queue is empty
 
+  # Upstream #21417: the phone marks sent steer and queued messages like the desktop, as muted
+  # text beside the time, not tappable pills.
+  # Since upstream #21474 a message that waited in the queue carries no marker; see the replacement below.
   @shared @backlog-mobile @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
@@ -102,14 +112,19 @@ Feature: Runs, interruptions and the queue
       | sent as a steer                      | Steered the active turn                                   |
       | queued and later promoted to a steer | Originally queued, then promoted to steer the active turn |
 
-  # The marker only shows on a message that has already gone out, so it must
-  # not read as still waiting; messages still waiting stay in the queue above
-  # the composer.
-  @backlog @shared
-  Scenario: A message sent from the queue reads as sent, not as waiting
-    Given the user's message was queued while the agent was busy and has since run
-    Then the message is marked "From queue"
-    And the marker explains "Queued while the agent was busy"
+  # Upstream #21474: a sent message that had waited in the queue carries no marker; steers and
+  # queued messages promoted to steers keep theirs. Replaces the scenario above once the clients
+  # carry it.
+  @backlog @shared @priority-high
+  Scenario Outline: A sent message is marked only when it steered the agent
+    When the user's message was <how>
+    Then the message is <marked>
+
+    Examples:
+      | how                                  | marked                                                              |
+      | queued behind the active turn        | not marked                                                          |
+      | sent as a steer                      | marked "Steered the active turn"                                    |
+      | queued and later promoted to a steer | marked "Originally queued, then promoted to steer the active turn" |
 
   @backlog @shared @priority-high
   Scenario: A reply that finished before a steer stays the turn's answer
@@ -246,6 +261,14 @@ Feature: Runs, interruptions and the queue
     And "watch tests" is still running
     Then the user can ask to stop it again
 
+  # Upstream #22052: a thread can be stopped without knowing which run is active.
+  @backlog @desktop @priority-high
+  Scenario: Background work left by a turn that is not loaded can still be stopped
+    Given an earlier turn left the task "watch tests" running
+    And that turn is older than the part of the thread the client has loaded
+    When the user stops the thread
+    Then "watch tests" is stopped
+
   @backlog @desktop
   Scenario: Background work that cannot be stopped says why
     Given the turn has finished and left the task "watch tests" running
@@ -260,6 +283,14 @@ Feature: Runs, interruptions and the queue
     When the user dismisses the error
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
+
+  # Upstream #21483: a structured thread error filled the banner with its raw JSON.
+  @backlog @shared @priority-low
+  Scenario: A structured thread error reads as its message
+    Given the thread's error is a payload whose message is "Your request was blocked"
+    When the user looks at the thread's error
+    Then the error reads "Your request was blocked"
+    And the user can open the full error to read the whole payload
 
   @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A usage limit is one warning line naming when to retry
@@ -560,8 +591,35 @@ Feature: Runs, interruptions and the queue
     Then the answer to "/usage-limits" is the notice shown
     And the composer no longer says there are other notices
 
+  # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
+  # actions; errors, warnings and urgent notices now come first, activity behind them.
   @backlog @desktop
-  Scenario: What the agent is doing stays in front of every notice
-    Given the thread says it is waiting on the background work "watch tests"
-    And the thread shows the error "Rate limited"
-    Then the notice about "watch tests" is the one shown and the error waits behind it
+  Scenario Outline: Errors and warnings stay in front of what the agent is doing
+    Given the thread <activity>
+    And the thread shows <notice>
+    Then <notice> is the notice shown
+    And the notice about what the agent is doing waits behind it
+
+    Examples:
+      | activity                                                | notice                                  |
+      | says it is waiting on the background work "watch tests" | the error "Rate limited"                |
+      | is working toward a goal                                | a usage limit with its recovery actions |
+
+  # Upstream #20299: a time that rounds up to a minute reads as a minute.
+  @backlog @shared @priority-low
+  Scenario: A time just under a minute reads as one minute
+    Given a turn has been working for 59.5 seconds
+    Then its elapsed time reads "1m", not "60s"
+
+  # Upstream #21499: a turn blocked only in a thread wait looked busy (its label is upstream #21500).
+  @backlog @mc @shared
+  Scenario: A turn that only waits on another thread says so
+    Given a thread's agent waits for the thread "Add search" to finish
+    And nothing else in the turn is running
+    Then the thread shows it is waiting on another thread, not working
+
+  @backlog @mc @shared
+  Scenario: A turn that waits on another thread and runs a command reads as working
+    Given a thread's agent waits for the thread "Add search" to finish
+    And the agent also runs a command
+    Then the thread shows it is working

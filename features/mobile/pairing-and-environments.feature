@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/17677
+#   https://github.com/pingdotgg/t3code/pull/15107
 #   https://github.com/pingdotgg/t3code/pull/17092
 #   https://github.com/pingdotgg/t3code/pull/16019
 #   https://github.com/pingdotgg/t3code/pull/19331
@@ -423,19 +425,30 @@ Feature: Pairing a phone with environments
     When the user opens the details of "My MacBook"
     Then reconnecting is not offered until "My MacBook" is switched on
 
+  # Upstream #15107: an environment found incompatible stayed blocked after its server was
+  # updated; switching it on checks it again.
   @backlog @mobile
-  Scenario: An environment the app cannot talk to cannot be switched on
-    Given an environment runs a server version the app does not support
-    Then the user cannot switch it on
-    And it is explained as not supported rather than shown as off
+  Scenario: An environment found incompatible is checked again when switched on
+    Given the phone found that "Office Mac" runs a server version the app does not support
+    Then "Office Mac" is explained as not supported rather than shown as off
+    When HAL-C2 on "Office Mac" is updated and the user switches "Office Mac" on
+    Then the phone checks "Office Mac" again and connects
 
+  # Upstream #15107: a check that still finds the versions apart switches it back off.
+  @backlog @mobile
+  Scenario: Switching on an environment that still does not match switches it off again
+    Given the phone found that "Office Mac" runs a server version the app does not support
+    When the user switches "Office Mac" on
+    Then the phone checks "Office Mac" again
+    And "Office Mac" is switched off again and explained as not supported
+
+  # Upstream #15107: the row no longer keeps its switch disabled; switching on checks again.
   @backlog @mobile
   Scenario Outline: An incompatible environment's row says which side to update
     Given the environment "Office Mac" runs <host version> than the app supports
     When the user opens the list of environments
     Then the row for "Office Mac" says <guidance>
     And a long sentence can be tapped to read it in full
-    And the row's switch stays disabled
 
     Examples:
       | host version     | guidance                                                     |
@@ -728,3 +741,11 @@ Feature: Pairing a phone with environments
       | a tablet | the new task screen            |
       | a tablet | settings                       |
       | a phone  | the new task screen            |
+
+  # Upstream #17677: an environment's switch takes its own taps.
+  @backlog @mobile @priority-low
+  Scenario: Switching an environment off from the list does not open it
+    Given the environments "Alpha" and "Beta" are on
+    When the user switches "Alpha" off in the list of environments
+    Then "Alpha" is off and "Beta" stays on
+    And "Alpha"'s details are not opened

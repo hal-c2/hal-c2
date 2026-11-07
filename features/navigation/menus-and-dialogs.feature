@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20841
 #   https://github.com/pingdotgg/t3code/pull/18565
 #   https://github.com/pingdotgg/t3code/pull/17962
 #   apps/web/src/components/ConfirmDialogHost.tsx (the question and detail, Cancel and Confirm, closing)
@@ -94,6 +95,7 @@ Feature: Menus, pickers and confirmations
         | presses Escape            |
         | clicks outside the menu   |
 
+    # Upstream #20841: tapping away from the model picker on a phone no longer presses what is under it
     # Upstream #18565: on iOS the tap that closed a menu also opened the pull request under it.
     @backlog @mobile
     Scenario: A tap that closes a menu does not press what is under it
