@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QNetworkAccessManager>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -164,6 +165,68 @@ const Steps steps([] {
   step(S("the app has never been paired"), [](World& world, const Captures&, const Table&) {
     expect(!world.isOpen(), S("the app is already open"));
     expect(!QFile::exists(pairingFile(world)), S("the phone already keeps a pairing"));
+  });
+
+  // Before it paired with several environments the phone kept its one in
+  // pairing.json, with no session expiry and no catalog of others beside it.
+  step(S("the phone holds environments paired with an earlier version of the app"), [](World& world, const Captures&, const Table&) {
+    if (world.isOpen()) world.close();
+    world.environment.sessions = {};
+    world.environment.sessions.append(S("session-from-an-earlier-version"));
+    QDir().mkpath(QFileInfo(pairingFile(world)).absolutePath());
+    QFile file(pairingFile(world));
+    expect(file.open(QIODevice::WriteOnly), S("the earlier pairing could not be written"));
+    file.write(QJsonDocument(QJsonObject{{S("origin"), world.mc.origin().toString()},
+                                         {S("token"), world.environment.sessions.last()},
+                                         {S("label"), world.mc.label},
+                                         {S("environmentId"), world.mc.environmentId}})
+                   .toJson(QJsonDocument::Compact));
+  });
+
+  step(S("the user opens the updated app"), [](World& world, const Captures&, const Table&) { world.open(); });
+
+  step(S("the same environments are paired on the phone"), [](World& world, const Captures&, const Table&) {
+    awaitConnection(world);
+    const QVariantMap pairing = world.state(S("pairing")).toMap();
+    expect(pairing.value(S("label")) == world.mc.label && pairing.value(S("origin")) == world.mc.origin().toString(),
+           S("the phone is paired with %1").arg(show(pairing)));
+    expect(world.native().store()->environments() == QStringList{world.mc.environmentId},
+           S("the phone holds %1").arg(world.native().store()->environments().join(S(", "))));
+    // On the session the earlier version kept: nothing asked the user to pair again.
+    expect(world.environment.sessions == QStringList{S("session-from-an-earlier-version")}, S("the MC sold %1 sessions").arg(world.environment.sessions.size()));
+  });
+
+  step(S("they are kept in the phone's current format"), [](World& world, const Captures&, const Table&) {
+    // Saved again once the environment has described itself, as the phone saves a pairing now.
+    world.waitFor([&] { return keptPairing(world).value(QLatin1String("environmentId")) == world.mc.environmentId; },
+                  [&] { return S("the pairing to be saved again; the phone keeps %1").arg(show(keptPairing(world).toVariantMap())); });
+    const QJsonObject kept = keptPairing(world);
+    expect(kept.value(QLatin1String("origin")) == world.mc.origin().toString() && kept.value(QLatin1String("token")) == S("session-from-an-earlier-version") &&
+               kept.value(QLatin1String("label")) == world.mc.label,
+           S("the phone keeps %1").arg(show(kept.toVariantMap())));
+  });
+
+  step(S("the phone's record of paired environments is damaged"), [](World& world, const Captures&, const Table&) {
+    if (world.isOpen()) world.close();
+    const qsizetype sockets = world.mc.connections.size();
+    QDir().mkpath(QFileInfo(pairingFile(world)).absolutePath());
+    QFile file(pairingFile(world));
+    expect(file.open(QIODevice::WriteOnly), S("the pairing could not be written"));
+    file.write(QByteArrayLiteral("{\"origin\": \"http://127.0.0.1:1\", \"tok"));
+    world.mc.part<Seen>().sockets = sockets;
+  });
+
+  step(S("the app starts"), [](World& world, const Captures&, const Table&) { world.open(); });
+
+  step(S("the phone starts with no paired environments"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.find(S("pairingScreen")) != nullptr; }, [&] { return S("the pairing screen; the phone says: %1").arg(screenTexts(world)); });
+    expect(pairingPhase(world) == QLatin1String("unpaired"), S("the phone is %1").arg(pairingPhase(world)));
+    // Paired beside it, none either. What the phone cached of its threads may
+    // stay: pairing another environment empties it, pairing this one again shows it.
+    const QVariantList beside = world.state(S("savedEnvironments")).toMap().value(S("environments")).toList();
+    expect(beside.isEmpty(), S("the phone keeps %1").arg(show(beside)));
+    expect(world.find(S("homeScreen")) == nullptr, S("the home screen is showing"));
+    expect(world.mc.connections.size() == world.mc.part<Seen>().sockets, S("the phone connected to an environment"));
   });
 
   // A closed app starts; one left in the background comes back to the front.

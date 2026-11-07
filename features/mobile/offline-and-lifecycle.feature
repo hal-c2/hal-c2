@@ -569,15 +569,14 @@ Feature: Staying useful through backgrounding and bad connections
     And clearing caches is not offered
     And the paired environments and their credentials are untouched
 
-  # Likely already implemented: apps/mobile/src/connection/catalog-store.ts
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Environments saved by an earlier version of the app are still paired after updating
     Given the phone holds environments paired with an earlier version of the app
     When the user opens the updated app
     Then the same environments are paired on the phone
     And they are kept in the phone's current format
 
-  @backlog @mobile
+  @mobile
   Scenario: A damaged record of paired environments is discarded
     Given the phone's record of paired environments is damaged
     When the app starts
