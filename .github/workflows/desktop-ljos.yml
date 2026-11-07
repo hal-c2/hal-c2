@@ -95,6 +95,17 @@ jobs:
           rustup toolchain install "$version" --profile minimal --component rustfmt,clippy
           rustup default "$version"
 
+      # The Terminal's hof_vt builds libghostty-vt from Ghostty's source with
+      # Zig, at the version mise.toml pins.
+      - &zig
+        name: Setup Zig
+        run: |
+          version="$(sed -n 's/^zig = "\([0-9.]*\)"/\1/p' mise.toml)"
+          mkdir -p "$RUNNER_TOOL_CACHE/zig"
+          curl -fsSL "https://ziglang.org/download/$version/zig-x86_64-linux-$version.tar.xz" \
+            | tar -xJ -C "$RUNNER_TOOL_CACHE/zig"
+          echo "$RUNNER_TOOL_CACHE/zig/zig-x86_64-linux-$version" >> "$GITHUB_PATH"
+
       # Font discovery links fontconfig and the audio sink links ALSA (Ljós's
       # own CI installs the same two).
       - &packages
@@ -120,6 +131,7 @@ jobs:
     steps:
       - *checkout
       - *rust
+      - *zig
       - *packages
 
       - uses: Swatinem/rust-cache@v2
@@ -139,6 +151,7 @@ jobs:
     steps:
       - *checkout
       - *rust
+      - *zig
       - *packages
 
       # dbus-daemon: the notification tests start a session bus of their own.
@@ -183,6 +196,7 @@ jobs:
     steps:
       - *checkout
       - *rust
+      - *zig
       - *packages
 
       - name: Install test packages
