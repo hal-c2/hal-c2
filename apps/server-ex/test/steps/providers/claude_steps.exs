@@ -4030,6 +4030,42 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- a revert Claude cannot resume at -------------------------------------------------------
+
+  # A head in a subagent's transcript, which the fake, like Claude Code, cannot resume
+  # the conversation at: its process exits at startup. Set as a rollback sets one.
+  step "the user reverted a Claude thread to a message Claude cannot resume at", context do
+    context = World.fake_providers(context)
+    context = World.launch_on(context, @thread, "claudeAgent", "first question")
+    World.await_runs(context, @thread, ["completed"])
+    thread_id = World.thread_id(context, @thread)
+    {:ok, patch} = HalC2.Claude.ThreadRuntime.rollback(thread_id, %{head: "sub-uuid-1"})
+
+    :ok =
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        [id] = Map.keys(stream.entities["provider-thread"])
+        {[HalC2.Orchestration.upsert(stream, "provider-thread", id, &Map.merge(&1, patch))], :ok}
+      end)
+
+    context
+  end
+
+  step "the next message fails because Claude cannot resume there", context do
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "failed")
+    context
+  end
+
+  step "Claude answers the message after it from the whole conversation", context do
+    context = World.post_message(context, @thread, "where are we")
+    World.await_latest_run(context, @thread, "completed")
+
+    assert "resumed at None fork False history False" in World.replies(context, @thread),
+           inspect(World.replies(context, @thread))
+
+    context
+  end
+
   # Stops the running turn, then lets go of the thread's Claude as the idle sweep does
   # (`ThreadRuntime`'s `:release`), so the next message starts Claude again from the
   # recorded session instead of the process that ran the stopped turn.

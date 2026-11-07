@@ -5,14 +5,18 @@ defmodule HalC2.ClaudeResumePropTest do
   answers ("where are we", which says the message its process resumed at), turns the
   user stops after Claude wrote part of its answer ("answer halfway") or before it
   wrote anything ("wait"), rewinds to a message an earlier turn ended at (or to the
-  thread's start), and the idle sweep letting go of the thread's Claude process.
+  thread's start, or to a message Claude cannot resume at, which ends its process at
+  startup as a subagent's message does), and the idle sweep letting go of the thread's
+  Claude process.
 
   A rewind is played as the orchestration plays one: `ThreadRuntime.rollback/2`, and
   its patch on the provider thread.
 
   The promise: a new Claude process resumes at the message the last rewind went back
   to, as long as no turn since had Claude write anything; once one did, it resumes
-  the whole conversation. A live process keeps the conversation it has.
+  the whole conversation. A live process keeps the conversation it has. A turn that
+  fails because Claude cannot resume at the message lets the next one resume the whole
+  conversation, so the thread recovers by itself.
   """
 
   use ExUnit.Case, async: false
@@ -90,11 +94,15 @@ defmodule HalC2.ClaudeResumePropTest do
 
   # --- model ----------------------------------------------------------------------
 
+  # The fake cannot resume at a subagent's message, as Claude Code cannot, and exits.
+  @broken "sub-uuid-1"
+
   # session: whether the thread's Claude process is up; resumed: the message that
   #   process resumed at (nil: the whole conversation, or a new one); turns: how many
   #   messages it has taken, which the fake numbers its answers by (uuid-N);
-  #   pinned: the message a new process would resume at; heads: the messages turns
-  #   Claude answered ended at, which a rewind can go back to; n: a counter.
+  #   pinned: the message a new process would resume at (@broken: one it cannot);
+  #   heads: the messages turns Claude answered ended at, which a rewind can go back
+  #   to; n: a counter.
   def initial_state,
     do: %{session: false, resumed: nil, turns: 0, pinned: nil, heads: [], n: 1}
 
@@ -115,7 +123,8 @@ defmodule HalC2.ClaudeResumePropTest do
         if(state.n > 1,
           do: [{2, {:call, __MODULE__, :rewind, [rewind_to(state.heads)]}}],
           else: []
-        )
+        ) ++
+        if(state.heads != [], do: [{1, {:call, __MODULE__, :rewind, [@broken]}}], else: [])
     )
   end
 
@@ -124,8 +133,17 @@ defmodule HalC2.ClaudeResumePropTest do
   defp rewind_to(heads), do: frequency([{1, nil}, {3, oneof(heads)}])
 
   # A rewind needs a provider thread, which the first turn makes.
+  # Claude only resumes at a message, @broken included, in a conversation it has.
+  def precondition(state, {:call, _, :rewind, [@broken]}), do: state.heads != []
   def precondition(state, {:call, _, :rewind, _}), do: state.n > 1
+  # A new process fails at startup on @broken, before the user could stop it.
+  def precondition(state, {:call, _, :stopped, _}), do: not broken?(state)
   def precondition(_state, _call), do: true
+
+  # The process exits at startup; no turn of Claude's resumed anywhere.
+  def next_state(state, _result, {:call, _, :answered, [_n]})
+      when not state.session and state.pinned == @broken,
+      do: %{state | pinned: nil, n: state.n + 1}
 
   def next_state(state, _result, {:call, _, :answered, [_n]}) do
     state = message(state)
@@ -152,6 +170,10 @@ defmodule HalC2.ClaudeResumePropTest do
   defp message(state),
     do: %{state | session: true, resumed: state.pinned, turns: 1, n: state.n + 1}
 
+  def postcondition(state, {:call, _, :answered, [_n]}, seen)
+      when not state.session and state.pinned == @broken,
+      do: seen.status == "failed"
+
   def postcondition(state, {:call, _, :answered, [_n]}, seen) do
     resumed = message(state).resumed
     # A rewind here leaves the turns it went back past in place, so a new conversation
@@ -163,6 +185,8 @@ defmodule HalC2.ClaudeResumePropTest do
   def postcondition(_state, {:call, _, :stopped, _}, seen), do: seen.status == "interrupted"
   def postcondition(_state, {:call, _, :rewind, _}, seen), do: seen == :ok
   def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
+
+  defp broken?(state), do: not state.session and state.pinned == @broken
 
   # --- commands -------------------------------------------------------------------
 

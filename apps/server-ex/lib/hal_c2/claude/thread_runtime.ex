@@ -354,7 +354,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
 
-    # Where the turn resumes the conversation, until Claude writes (`kept_head/2`).
+    # Where the turn resumes the conversation, until Claude writes (`kept_head/3`).
     turn =
       turn
       |> Map.put(:ids, ids)
@@ -1581,7 +1581,7 @@ defmodule HalC2.Claude.ThreadRuntime do
          state
        ) do
     # The last assistant message is where a rollback to this turn resumes. Once Claude
-    # writes, the turn no longer sits where it resumed the conversation (`kept_head/2`).
+    # writes, the turn no longer sits where it resumed the conversation (`kept_head/3`).
     state =
       if uuid = message["uuid"],
         do: update_in(state.turn, &(&1 |> Map.put(:head, uuid) |> Map.delete(:resumed_at))),
@@ -2750,11 +2750,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  # A turn Claude wrote nothing in (stopped or failed before it answered) leaves the
-  # conversation where the turn resumed it, so the head a rollback set, which the run's
-  # start cleared, goes back: a later session resumes there again, not at the end of a
-  # transcript the rollback cut (Upstream #25695). A turn Claude wrote in moved it on.
-  defp kept_head(%{resumed_at: head, ids: ids}, stream) when is_binary(head),
+  # A turn the user stopped before Claude wrote anything leaves the conversation where
+  # the turn resumed it, so the head a rollback set, which the run's start cleared, goes
+  # back: a later session resumes there again, not at the end of a transcript the
+  # rollback cut (Upstream #25695). A turn Claude wrote in moved it on. A failed one
+  # keeps it cleared: Claude may have failed on that very head ("No message found with
+  # message.uuid"), and resuming the whole conversation is how the thread recovers.
+  defp kept_head(%{resumed_at: head, ids: ids}, "interrupted", stream) when is_binary(head),
     do:
       Orchestration.upsert(
         stream,
@@ -2763,7 +2765,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         &Map.put(&1, "nativeConversationHeadRef", Entities.provider_ref(head, "claudeAgent"))
       )
 
-  defp kept_head(_turn, _stream), do: nil
+  defp kept_head(_turn, _status, _stream), do: nil
 
   defp end_turn(state, status, failure, opts \\ []) do
     state = flush(state)
@@ -2789,7 +2791,7 @@ defmodule HalC2.Claude.ThreadRuntime do
             state.turn.ids.provider_turn,
             &Map.put(&1, "nativeTurnRef", Entities.provider_ref(head, "claudeAgent"))
           ),
-          kept_head(state.turn, stream)
+          kept_head(state.turn, status, stream)
         ]
       end)
     end
