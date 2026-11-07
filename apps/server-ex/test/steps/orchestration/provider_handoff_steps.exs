@@ -53,6 +53,106 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     long_conversation(context, thread)
   end
 
+  # A fork of the thread did work and was merged back; the thread has not run since, so
+  # the merge-back waits for its next run.
+  step "{string} has a handoff from an earlier run still waiting", %{args: [thread]} = context do
+    id = "th-fork-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.fork",
+        "commandId" => "cmd-fork-#{id}",
+        "sourceThreadId" => World.thread_id(context, thread),
+        "targetThreadId" => id,
+        "sourcePoint" => %{"type" => "latest_stable"},
+        "createdBy" => "user",
+        "creationSource" => "web"
+      })
+
+    World.await_row(id, & &1)
+    context = context |> put_in([:threads, "fork"], id) |> run("fork", "repeat fork work")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.merge_back",
+        "commandId" => "cmd-merge-#{id}",
+        "sourceThreadId" => id,
+        "targetThreadId" => World.thread_id(context, thread),
+        "sourcePoint" => %{"type" => "latest_stable"},
+        "createdBy" => "user"
+      })
+
+    assert [%{"status" => "pending"}] =
+             context
+             |> World.entities(thread, "context-transfer")
+             |> Enum.filter(&(&1["type"] == "merge_back"))
+
+    context
+  end
+
+  # Recorded rather than run, so the waiting handoff stays waiting.
+  step "the latest turn of {string} finished with {string}", %{args: [thread, text]} = context do
+    ordinal = length(finished(context, thread)) + 1
+    context = World.add_run(context, thread, "completed", nil, %{"ordinal" => ordinal})
+    run = World.latest_run(context, thread)
+
+    context
+    |> World.add_message(thread, "user", "Try three", nil, %{"runId" => run["id"]})
+    |> World.add_message(thread, "assistant", text, nil, %{"runId" => run["id"]})
+  end
+
+  step "an earlier run of {string} failed before its provider started a turn",
+       %{args: [thread]} = context do
+    ordinal = length(finished(context, thread)) + 1
+    context = World.add_run(context, thread, "failed", nil, %{"ordinal" => ordinal})
+    run = World.latest_run(context, thread)
+    World.add_message(context, thread, "user", "The missed request", nil, %{"runId" => run["id"]})
+  end
+
+  # Codex lost the conversation: its app-server is gone, and the new one cannot find it.
+  step "the next run of {string} cannot resume its provider conversation",
+       %{args: [thread]} = context do
+    {_, runtime} = World.codex_runtime(context, thread)
+    ref = Process.monitor(runtime.conn)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    World.put_os_env("FAKE_CODEX_RESUME_ERROR", "no rollout found for thread id")
+    context = run(context, thread, "Carry on")
+    assert %{"status" => "completed"} = World.latest_run(context, thread)
+    context
+  end
+
+  step "the provider receives the handoffs oldest first, the whole-thread summary after the waiting one",
+       context do
+    prompt = prompt(context)
+    {merged, _} = :binary.match(prompt, "<merged_work>")
+    {history, _} = :binary.match(prompt, "<conversation_history>")
+    assert merged < history
+    assert prompt =~ "User: repeat fork work"
+    assert transcript(prompt) =~ "User: repeat one\n\nAssistant: repeat one"
+    assert String.ends_with?(prompt, @history_end <> "\n\nCarry on")
+    context
+  end
+
+  step "{string} is in the history it receives", %{args: [text]} = context do
+    assert transcript(prompt(context)) =~ text
+    context
+  end
+
+  step "the missed request reaches the provider once, in its place in the whole-thread summary",
+       context do
+    prompt = prompt(context)
+    assert [_, _] = String.split(prompt, "The missed request")
+    assert transcript(prompt) =~ ~r/Assistant: repeat two\n\nUser: The missed request\z/
+    context
+  end
+
+  step "the thread's first message is still in the history it receives", context do
+    assert String.starts_with?(transcript(prompt(context)), "User: repeat one")
+    context
+  end
+
   step "provider instance {string} is disabled", %{args: [instance]} = context do
     World.merge_settings(%{"providers" => %{instance => %{"enabled" => false}}})
     context

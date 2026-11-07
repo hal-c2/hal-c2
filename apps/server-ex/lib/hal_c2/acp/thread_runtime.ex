@@ -289,6 +289,9 @@ defmodule HalC2.Acp.ThreadRuntime do
          :ok <- check_signed_in(state, driver),
          {:ok, state} <- ensure_session(state, turn),
          {state, turn} = settle_carried(state, turn),
+         # A session the agent no longer had starts afresh with the whole thread.
+         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn),
+         state = %{state | turn: turn},
          {:ok, state} <- check_model(state, driver, turn.model),
          {:ok, state} <- select_model(state, turn.model),
          state = set_options(state, turn),
@@ -1177,7 +1180,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
           {:ok, result} -> {:ok, native, opened(state, result, turn)}
-          {:error, _} -> new_session(state, turn)
+          {:error, _} -> fresh_session(state, turn)
         end
 
       caps["loadSession"] == true ->
@@ -1187,7 +1190,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         case result do
           {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
-          {:error, _} -> new_session(state, turn)
+          {:error, _} -> fresh_session(state, turn)
         end
 
       true ->
@@ -1196,6 +1199,12 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp open_session(state, turn), do: new_session(state, turn)
+
+  # A new session in place of the recorded one the agent could not open.
+  defp fresh_session(state, turn) do
+    with {:ok, id, state} <- new_session(state, turn),
+         do: {:ok, id, Map.put(state, :fresh_start, true)}
+  end
 
   defp new_session(state, turn) do
     case Connection.call(

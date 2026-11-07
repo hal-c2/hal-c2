@@ -4671,17 +4671,18 @@ defmodule HalC2.Orchestration do
     handoff =
       HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
 
+    provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
+
     turn = %{
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
-      text:
-        HalC2.Orchestration.Handoff.prompt(
-          handoff.context,
-          HalC2.ComposerContext.for_provider(text, command["context"])
-        ),
+      text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      # What a new provider conversation gets when the one to resume is gone
+      # (`HalC2.Orchestration.Handoff.opened/2`).
+      fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),
       # A fork's first run continues the source's native thread from the fork point.
       fork: handoff.fork,
       cwd: cwd,

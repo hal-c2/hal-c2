@@ -4,6 +4,10 @@ defmodule HalC2.AcpModelSwitchPropTest do
   such a session is open, a model change, by a message or by setting the thread's
   model, is refused and leaves the thread's model alone, across session resets and
   runtime restarts. A session that offers switching takes every change.
+
+  A restart may also lose the agent's sessions. The next turn then runs in a new
+  session that is handed every earlier turn, and the new session switches models as
+  the agent's sessions do.
   """
 
   use ExUnit.Case, async: false
@@ -18,7 +22,7 @@ defmodule HalC2.AcpModelSwitchPropTest do
   @refused "The active ACP session does not expose a model-switch capability."
   @models ["acme/fast", "acme/smart"]
 
-  property "a session that cannot switch models refuses every model change",
+  property "a session that cannot switch models refuses every model change, and a lost one is handed the thread",
     numtests: HalC2.Prop.numtests(20),
     max_size: 12 do
     forall switchable <- boolean() do
@@ -47,14 +51,21 @@ defmodule HalC2.AcpModelSwitchPropTest do
   def initial_state, do: initial_state(true)
 
   def initial_state(switchable),
-    do: %{switchable: switchable, sends: 0, opened: false, model: "acme/fast"}
+    do: %{
+      switchable: switchable,
+      sends: 0,
+      turns: 0,
+      opened: false,
+      lost: false,
+      model: "acme/fast"
+    }
 
   def command(state) do
     frequency([
       {4, {:call, __MODULE__, :turn, [state.sends, oneof(@models)]}},
       {3, {:call, __MODULE__, :set_model, [oneof(@models)]}},
       {1, {:call, __MODULE__, :reset, []}},
-      {1, {:call, __MODULE__, :restart, []}}
+      {1, {:call, __MODULE__, :restart, [boolean()]}}
     ])
   end
 
@@ -64,21 +75,34 @@ defmodule HalC2.AcpModelSwitchPropTest do
   def next_state(state, _result, {:call, _, :turn, [_, model]}) do
     state = %{state | sends: state.sends + 1}
     # A message's model is its run's; the thread keeps its own.
-    if refused?(state, model), do: state, else: %{state | opened: true}
+    if refused?(state, model),
+      do: state,
+      else: %{state | opened: true, lost: false, turns: state.turns + 1}
   end
 
   def next_state(state, _result, {:call, _, :set_model, [model]}),
     do: if(refused?(state, model), do: state, else: %{state | model: model})
 
+  # Only a session the agent had can be lost.
+  def next_state(state, _result, {:call, _, :restart, [true]}),
+    do: %{state | lost: state.opened}
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :turn, [_, model]}, result) do
+    handed = if state.lost, do: " with #{state.turns} earlier turns", else: ""
+
     cond do
       refused?(state, model) -> result == {:error, @refused}
-      state.switchable -> result == {"completed", "model: " <> model}
-      true -> match?({"completed", _}, result)
+      state.switchable -> result == {"completed", "model: " <> model <> handed}
+      true -> handed?(result, handed)
     end
   end
+
+  # The model an agent that cannot switch reports is its own business.
+  defp handed?({"completed", "model: " <> said}, ""), do: not String.contains?(said, " with ")
+  defp handed?({"completed", "model: " <> said}, handed), do: String.ends_with?(said, handed)
+  defp handed?(_result, _handed), do: false
 
   def postcondition(state, {:call, _, :set_model, [model]}, result) do
     expected = if refused?(state, model), do: state.model, else: model
@@ -86,8 +110,8 @@ defmodule HalC2.AcpModelSwitchPropTest do
     result == {reply, expected}
   end
 
-  def postcondition(_state, {:call, _, cmd, []}, result) when cmd in [:reset, :restart],
-    do: result == :ok
+  def postcondition(_state, {:call, _, :reset, []}, result), do: result == :ok
+  def postcondition(_state, {:call, _, :restart, [_]}, result), do: result == :ok
 
   defp refused?(state, model), do: not state.switchable and state.opened and model != state.model
 
@@ -96,8 +120,11 @@ defmodule HalC2.AcpModelSwitchPropTest do
     :ok
   end
 
-  # A new runtime resumes the session.
-  def restart do
+  # A new runtime resumes the session, unless the agent has lost it (`lose`): the next
+  # agent process cannot open a session an earlier one made.
+  def restart(lose) do
+    if lose, do: File.write!(Path.join(Process.get(:home), "grok.lost"), "")
+
     case Registry.lookup(HalC2.Acp.Registry, @tid) do
       [{pid, _}] ->
         ref = Process.monitor(pid)
@@ -170,11 +197,13 @@ defmodule HalC2.AcpModelSwitchPropTest do
   # An agent that names no models opens sessions that cannot switch them.
   defp start_case(switchable) do
     home = HalC2.Prop.scratch_home("acp-model-switch")
+    Process.put(:home, home)
     work = Path.join(home, "work")
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
 
     control = if switchable, do: %{}, else: %{"models" => []}
+    control = Map.put(control, "loseSessions", true)
     File.write!(Path.join(home, "control.json"), JSON.encode!(%{"grok" => control}))
 
     Application.put_env(:hal_c2, :acp_commands, %{

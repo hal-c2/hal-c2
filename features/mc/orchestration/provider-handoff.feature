@@ -249,7 +249,7 @@ Feature: Changing model and provider mid-thread
 
   # Upstream #22902: a failed native resume put its whole-thread summary in front of an older
   # pending handoff, so under the budget the newest turn's result was dropped.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A failed resume keeps the latest turn when an older handoff is waiting
     Given "t1" has a handoff from an earlier run still waiting
     And the latest turn of "t1" finished with "Result 3"
@@ -258,7 +258,7 @@ Feature: Changing model and provider mid-thread
     And "Result 3" is in the history it receives
 
   # Upstream #22902
-  @backlog @mc
+  @mc
   Scenario: A failed resume does not resend a missed request after the whole-thread summary
     Given an earlier run of "t1" failed before its provider started a turn
     When the next run of "t1" cannot resume its provider conversation
