@@ -112,7 +112,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/scrolling-and-links.feature:Nothing is offered once every turn is loaded"),
     QStringLiteral("timeline/scrolling-and-links.feature:A running thread opens at its latest output*"),
     QStringLiteral("timeline/scrolling-and-links.feature:Switching threads shows only*"),
-    QStringLiteral("timeline/scrolling-and-links.feature:*lands on the real end of a thread with a tall new reply"),
+    QStringLiteral("timeline/scrolling-and-links.feature:*lands on the real end of a thread with a tall new reply*"),
     QStringLiteral("timeline/scrolling-and-links.feature:A bare web address in a message can be opened"),
     QStringLiteral("timeline/scrolling-and-links.feature:The user cites part of a reply*"),
     QStringLiteral("timeline/runs-and-queue.feature"),
