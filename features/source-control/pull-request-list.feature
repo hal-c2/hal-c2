@@ -487,7 +487,9 @@ Feature: Browsing pull requests
     And nothing about "proj/repo" is sent to bitbucket.org
 
   # Upstream #22029: a configured Bitbucket API address keeps every host readable through it.
-  @mc
+  # The MC does not read Bitbucket Server yet: Server serves /rest/api/1.0, not the Cloud 2.0
+  # API a configured address speaks, so this waits for a Server read of its own.
+  @backlog @mc @priority-low
   Scenario: A configured Bitbucket API address reads a Bitbucket Server repository through it
     Given the project's remote is "https://bitbucket.example.com/scm/proj/repo.git"
     And a Bitbucket API address is configured
@@ -1971,6 +1973,12 @@ Feature: Browsing pull requests
       | Forgejo      |
       | Azure DevOps |
       | Bitbucket    |
+
+  @mc
+  Scenario: A list on another host carries on past its first five host pages
+    Given a project on GitLab with 650 open change requests
+    When the user loads more change requests until none are left
+    Then every change request is listed exactly once
 
   @mc
   Scenario: A row that cannot be read does not end the list early

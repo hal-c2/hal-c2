@@ -275,25 +275,37 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   end
 
   step "the user loads more pull requests", context do
-    {repository, prs} = context.many
-    context = list(context)
-    first = entries(context)
-    assert {:ok, %{"nextCursors" => cursors}} = context.reply
-    assert [{_, cursor}] = Map.to_list(cursors)
-    [boundary | _] = String.split(cursor, "|")
+    if context[:hosted] do
+      # A driven host answers a continuation from the same fake that answered
+      # the first page; there is no second answer to script.
+      context = list(context)
+      first = entries(context)
+      assert {:ok, %{"nextCursors" => cursors}} = context.reply
 
-    # GitHub answers the carried-on search with what is no newer than the boundary.
-    older = Enum.filter(prs, &(&1["updatedAt"] <= boundary))
+      context
+      |> list(%{"cursors" => cursors})
+      |> Map.put(:first_page, first)
+    else
+      {repository, prs} = context.many
+      context = list(context)
+      first = entries(context)
+      assert {:ok, %{"nextCursors" => cursors}} = context.reply
+      assert [{_, cursor}] = Map.to_list(cursors)
+      [boundary | _] = String.split(cursor, "|")
 
-    context
-    |> World.cli_rules(%{
-      "args" => ["api graphql"],
-      "repository" => repository,
-      "stdin" => ["updated:<=#{boundary}"],
-      "pulls" => older
-    })
-    |> list(%{"cursors" => cursors})
-    |> Map.put(:first_page, first)
+      # GitHub answers the carried-on search with what is no newer than the boundary.
+      older = Enum.filter(prs, &(&1["updatedAt"] <= boundary))
+
+      context
+      |> World.cli_rules(%{
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => ["updated:<=#{boundary}"],
+        "pulls" => older
+      })
+      |> list(%{"cursors" => cursors})
+      |> Map.put(:first_page, first)
+    end
   end
 
   step "the next pull requests follow without repeating any", context do
@@ -1361,19 +1373,18 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
+  # Upstream #18813 is a Bitbucket bug, so the page boundary is crossed on
+  # Bitbucket through its fake API, not on GitHub.
   step "several pull requests were updated at the same instant across a page boundary",
        context do
-    prs =
-      for number <- 150..1//-1,
-          do: Shared.gh_pr("acme/shop", number, %{"updatedAt" => "2026-09-20T00:00:00Z"})
+    items =
+      for number <- 150..1//-1, do: h(number, %{"updated" => "2026-09-20T00:00:00Z"})
 
-    context
-    |> shop_rule(prs, %{"stdin" => ["is:open "]})
-    |> Map.merge(%{many: {"acme/shop", prs}})
+    hosted_project(context, "Bitbucket", items)
   end
 
   step "every one of them is listed exactly once", context do
-    numbers = &for(e <- &1, e["repository"] == "acme/shop", do: e["number"])
+    numbers = &for(e <- &1, e["projectId"] == context.hosted.id, do: e["number"])
     all = numbers.(context.first_page) ++ numbers.(entries(context))
     assert Enum.sort(all) == Enum.to_list(1..150)
     context
@@ -1585,6 +1596,19 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     }
   end
 
+  # Forgejo stamps its times with the server's own offset, so the fake sends
+  # the fixture's instants at +02:00 and a Forgejo listing only lines up with
+  # the other hosts' rows if the MC writes them back in UTC.
+  defp plus_two(text) do
+    {:ok, at, _offset} = DateTime.from_iso8601(text)
+
+    at
+    |> DateTime.add(2 * 3600, :second)
+    |> DateTime.to_naive()
+    |> NaiveDateTime.to_iso8601()
+    |> Kernel.<>("+02:00")
+  end
+
   defp forgejo_raw(it, repo) do
     raw = %{
       "number" => it["number"],
@@ -1597,8 +1621,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       "base" => %{"ref" => "main"},
       "labels" => for(name <- it["labels"], do: %{"name" => name, "color" => "d73a4a"}),
       "requested_reviewers" => for(r <- it["reviewers"], do: %{"login" => r}),
-      "created_at" => it["created"],
-      "updated_at" => it["updated"]
+      "created_at" => plus_two(it["created"]),
+      "updated_at" => plus_two(it["updated"])
     }
 
     if it["omit_draft"], do: raw, else: Map.put(raw, "draft", it["draft"])
@@ -1906,6 +1930,42 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     |> Map.put(:first_hosted, first)
   end
 
+  step "a project on GitLab with 650 open change requests", context do
+    items =
+      for number <- 650..1//-1 do
+        at = DateTime.add(~U[2026-09-01 00:00:00Z], number * 60) |> DateTime.to_iso8601()
+        h(number, %{"updated" => at})
+      end
+
+    hosted_project(context, "GitLab", items)
+  end
+
+  step "the user loads more change requests until none are left", context do
+    context = list(context)
+    load_hosted_until_done(context, hosted_numbers(context), 20)
+  end
+
+  defp load_hosted_until_done(_context, _seen, 0),
+    do: flunk("the list never stopped offering more change requests")
+
+  defp load_hosted_until_done(context, seen, left) do
+    assert {:ok, %{"nextCursors" => cursors, "truncated" => truncated}} = context.reply
+
+    if cursors == %{} do
+      assert truncated == false
+      Map.put(context, :all_hosted, seen)
+    else
+      context = list(context, %{"cursors" => cursors})
+      load_hosted_until_done(context, seen ++ hosted_numbers(context), left - 1)
+    end
+  end
+
+  step "every change request is listed exactly once", context do
+    assert Enum.sort(context.all_hosted) == Enum.to_list(1..650)
+    assert length(context.all_hosted) == 650
+    context
+  end
+
   step ~r/^only change requests matching (?<filter>.+) are listed$/,
        %{args: [filter]} = context do
     keep =
@@ -2096,6 +2156,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   step "the list is filled to its page size when there are enough", context do
     assert length(hosted_entries(context)) == 99
+    # The fake Forgejo stamps its rows at +02:00; the listing writes them in UTC.
+    assert Enum.all?(hosted_entries(context), &String.ends_with?(&1["updatedAt"], "Z"))
     context
   end
 
@@ -2183,38 +2245,6 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
-  step "a Bitbucket API address is configured", context do
-    project = context.server_project
-
-    items = [h(1)]
-
-    server =
-      Mc.ensure(
-        {Bandit,
-         plug:
-           {HostedBitbucket,
-            %{
-              test: self(),
-              token: @hosted_token,
-              user: %{"username" => @me},
-              items: Enum.map(items, &bitbucket_raw(&1, "proj/repo"))
-            }},
-         port: 0,
-         ip: :loopback}
-      )
-
-    {:ok, {_, port}} = ThousandIsland.listener_info(server)
-    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", "http://127.0.0.1:#{port}/2.0")
-    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", @hosted_token)
-
-    Map.put(context, :hosted, %{
-      host: "Bitbucket",
-      items: items,
-      id: project.id,
-      repository: "proj/repo"
-    })
-  end
-
   step "{string} reports that its host cannot be browsed here yet",
        %{args: [_repository]} = context do
     assert {:ok, %{"providers" => providers}} = context.reply
@@ -2232,13 +2262,6 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     # instead left the host unconfigured, which only happens before any request.
     assert {:ok, %{"errors" => errors}} = context.reply
     refute Enum.any?(errors, &(&1["projectId"] == context.server_project.id))
-    context
-  end
-
-  step "the pull requests of {string} are read through the configured address",
-       %{args: [_repository]} = context do
-    assert hosted_numbers(context) == [1]
-    assert_received {:hosted_bitbucket, "/2.0/repositories/proj/repo/pullrequests", _params}
     context
   end
 

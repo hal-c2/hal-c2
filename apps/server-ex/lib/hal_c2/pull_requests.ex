@@ -2,8 +2,9 @@ defmodule HalC2.PullRequests do
   @moduledoc """
   Pull requests for this MC's projects (`pullRequests.*`). A project's repository is
   its checkout's primary remote; GitHub repositories are read and changed through `gh`
-  (`HalC2.PullRequests.GitHub`). Projects on other hosts are counted in the listing, GitLab
-  ones previewed through `glab`, and otherwise answered with
+  (`HalC2.PullRequests.GitHub`). The listing also reads GitLab, Forgejo, Azure DevOps
+  and Bitbucket projects (`HalC2.PullRequests.Hosts`) and GitLab ones are previewed
+  through `glab`; other operations on those hosts are answered with
   `PullRequestUnavailableError` (`provider-unsupported`).
 
   A reference names a project and a repository. The project's own repository is
@@ -296,12 +297,15 @@ defmodule HalC2.PullRequests do
 
   # One driven host's repository: the host was asked for the state (and its own
   # text search where it has one); involvement and the row filters are applied
-  # here, and the same boundary cursor as GitHub's carries the list on.
+  # here, and the same boundary cursor as GitHub's carries the list on. The
+  # cursor's boundary goes into the host read itself, so a continuation starts
+  # where the last page ended instead of re-reading the newest pages.
   defp read_driven(project, {:ok, viewer}, input, cursor) do
     state = input["state"] || "open"
     limit = input["limit"] || @default_limit
+    before = cursor && cursor.boundary
 
-    case Hosts.list(project, %{state: state, query: input["query"]}) do
+    case Hosts.list(project, %{state: state, query: input["query"], before: before}) do
       {:ok, %{items: items, more: more}} ->
         kept =
           for item <- items,
@@ -324,14 +328,25 @@ defmodule HalC2.PullRequests do
 
         slice = Enum.take(after_seen, limit)
         truncated = more or length(after_seen) > limit
+
+        # A page emptied by the filters above still carries on from the oldest
+        # row the host read, when that moves the boundary; if it cannot move,
+        # the list stops claiming more rather than offering a dead end.
+        next =
+          cond do
+            truncated and slice != [] -> next_cursor(cursor, slice, length(slice))
+            truncated and advances?(cursor, items) -> next_cursor(cursor, items, 0)
+            true -> nil
+          end
+
         at = System.system_time(:millisecond)
 
         %{
           key: key(project),
           entries: for(item <- slice, do: entry(project, item, viewer, at)),
           errors: [],
-          truncated: truncated,
-          next: if(truncated and slice != [], do: next_cursor(cursor, slice, length(slice)))
+          truncated: truncated and next != nil,
+          next: next
         }
 
       {:error, _} = error ->
@@ -596,6 +611,23 @@ defmodule HalC2.PullRequests do
           {:halt, refuse("list", "The list could not be carried on from where it left off.")}
       end
     end)
+  end
+
+  # Whether a cursor built from `items` would move past `previous`: an older
+  # boundary, or the same one with a number at it that was not already sent.
+  defp advances?(nil, items), do: items != []
+
+  defp advances?(_previous, []), do: false
+
+  defp advances?(previous, items) do
+    boundary = items |> Enum.map(& &1["updatedAt"]) |> Enum.min()
+
+    boundary < previous.boundary or
+      (boundary == previous.boundary and
+         Enum.any?(
+           items,
+           &(&1["updatedAt"] == boundary and &1["number"] not in previous.seen)
+         ))
   end
 
   defp next_cursor(_previous, [], _count), do: nil

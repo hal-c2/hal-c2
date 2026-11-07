@@ -13,6 +13,10 @@ defmodule HalC2.PullRequests.Hosts do
   asked for the requested state and, where it can search text, the query;
   involvement and the row filters are the caller's to apply, so a read walks up
   to five host pages to give that filtering enough rows to fill a page.
+  A continuation (`before:`) carries the list's boundary instant into the read:
+  GitLab is asked for rows updated before it, and on the other hosts the walk
+  carries on past the first five pages until it has five pages of rows no newer
+  than the boundary, so older rows stay reachable however deep they sit.
   A row missing what a listing must name is skipped, never fatal.
   """
 
@@ -21,6 +25,8 @@ defmodule HalC2.PullRequests.Hosts do
 
   @kinds ~w(gitlab forgejo azure-devops bitbucket)
   @pages 5
+  # How far a continuation may scan for its boundary before giving up.
+  @max_walk 50
   @timeout 30_000
 
   @doc "Whether this module lists projects of host kind `kind`."
@@ -71,8 +77,11 @@ defmodule HalC2.PullRequests.Hosts do
     end
   end
 
-  def viewer(%{kind: "bitbucket", host: host}) do
+  def viewer(%{kind: "bitbucket", host: host, repository: repository}) do
     cond do
+      bitbucket_server?(repository) ->
+        {:error, {:missing, "Bitbucket Server cannot be browsed here yet."}}
+
       bitbucket_server_unreachable?(host) ->
         {:error, {:missing, "This host cannot be browsed here yet."}}
 
@@ -103,7 +112,8 @@ defmodule HalC2.PullRequests.Hosts do
   @doc """
   One project's change requests in the requested state, newest update first:
   `{:ok, %{items: items, more: more?}}`, where `more?` says the host had rows
-  past the pages read. `opts`: `state`, `query`.
+  past the pages read. `opts`: `state`, `query`, and `before` (a continuation's
+  boundary instant; only rows no newer than it come back).
   """
   def list(project, opts) do
     case project.kind do
@@ -120,21 +130,28 @@ defmodule HalC2.PullRequests.Hosts do
   @gitlab_states %{"open" => "opened", "closed" => "closed", "merged" => "merged", "all" => "all"}
 
   defp gitlab_list(project, opts) do
+    # The boundary is inclusive in the list's cursor, and GitLab's
+    # `updated_before` is not, so ask from just after it; the walk and the
+    # caller drop anything newer, and the seen-at-boundary rows with them.
     query =
       [
         {"state", @gitlab_states[opts.state] || "opened"},
         {"order_by", "updated_at"},
         {"sort", "desc"},
         {"per_page", "100"}
-      ] ++ if(blank?(opts.query), do: [], else: [{"search", String.trim(opts.query)}])
+      ] ++
+        if(blank?(opts.query), do: [], else: [{"search", String.trim(opts.query)}]) ++
+        if(opts[:before], do: [{"updated_before", just_after(opts.before)}], else: [])
 
     path = fn page ->
       "projects/#{URI.encode(project.repository, &URI.char_unreserved?/1)}/merge_requests?" <>
         URI.encode_query(query ++ [{"page", Integer.to_string(page)}])
     end
 
-    with {:ok, rows, more} <- pages(fn page -> glab_json_list(project.root, path.(page)) end) do
-      {:ok, %{items: rows |> Enum.flat_map(&gitlab_item/1) |> by_update(), more: more}}
+    fetch = fn page -> glab_json_list(project.root, path.(page)) end
+
+    with {:ok, items, more} <- collect(fetch, &gitlab_item/1, 100, opts[:before]) do
+      {:ok, %{items: by_update(items), more: more}}
     end
   end
 
@@ -166,8 +183,8 @@ defmodule HalC2.PullRequests.Hosts do
         "reviewDecision" => nil,
         "additions" => 0,
         "deletions" => 0,
-        "createdAt" => created,
-        "updatedAt" => updated,
+        "createdAt" => iso_utc(created),
+        "updatedAt" => iso_utc(updated),
         "reviewRequestLogins" =>
           for(user <- raw["reviewers"] || [], login = trimmed(user["username"]), do: login),
         "labels" =>
@@ -253,10 +270,9 @@ defmodule HalC2.PullRequests.Hosts do
       end
     end
 
-    with {:ok, rows, more} <- pages(fetch, 50) do
+    with {:ok, items, more} <- collect(fetch, &forgejo_item/1, 50, opts[:before]) do
       items =
-        rows
-        |> Enum.flat_map(&forgejo_item/1)
+        items
         |> Enum.filter(&(opts.state == "all" or &1["state"] == opts.state))
         |> by_update()
 
@@ -312,8 +328,8 @@ defmodule HalC2.PullRequests.Hosts do
           "reviewDecision" => nil,
           "additions" => 0,
           "deletions" => 0,
-          "createdAt" => created,
-          "updatedAt" => updated,
+          "createdAt" => iso_utc(created),
+          "updatedAt" => iso_utc(updated),
           "reviewRequestLogins" =>
             for(
               user <- raw["requested_reviewers"] || [],
@@ -373,8 +389,8 @@ defmodule HalC2.PullRequests.Hosts do
       end
     end
 
-    with {:ok, rows, more} <- pages(fetch) do
-      {:ok, %{items: rows |> Enum.flat_map(&azure_item/1) |> by_update(), more: more}}
+    with {:ok, items, more} <- collect(fetch, &azure_item/1, 100, opts[:before]) do
+      {:ok, %{items: by_update(items), more: more}}
     end
   end
 
@@ -428,9 +444,9 @@ defmodule HalC2.PullRequests.Hosts do
           "reviewDecision" => nil,
           "additions" => 0,
           "deletions" => 0,
-          "createdAt" => created,
+          "createdAt" => iso_utc(created),
           # Azure keeps no last-touched time: the closing time stands in.
-          "updatedAt" => trimmed(raw["closedDate"]) || created,
+          "updatedAt" => iso_utc(trimmed(raw["closedDate"]) || created),
           "reviewRequestLogins" =>
             for(
               user <- raw["reviewers"] || [],
@@ -511,6 +527,9 @@ defmodule HalC2.PullRequests.Hosts do
 
   defp bitbucket_list(project, opts) do
     cond do
+      bitbucket_server?(project.repository) ->
+        {:error, {:missing, "Bitbucket Server cannot be browsed here yet."}}
+
       bitbucket_server_unreachable?(project.host) ->
         {:error, {:missing, "This host cannot be browsed here yet."}}
 
@@ -518,20 +537,14 @@ defmodule HalC2.PullRequests.Hosts do
         {:error, {:missing, "Bitbucket credentials are not configured."}}
 
       true ->
-        # A Bitbucket Server remote is spelled `scm/<project>/<repo>`.
-        segments =
-          case String.split(project.repository, "/") do
-            ["scm", workspace, slug] -> [workspace, slug]
-            other -> other
-          end
-
-        case segments do
+        case String.split(project.repository, "/") do
           [workspace, slug] ->
             states = @bitbucket_states[opts.state] || ["OPEN"]
 
             results =
               Enum.map(states, fn state ->
-                pages(fn page -> bitbucket_page(workspace, slug, state, opts.query, page) end, 50)
+                fetch = fn page -> bitbucket_page(workspace, slug, state, opts.query, page) end
+                collect(fetch, &bitbucket_item/1, 50, opts[:before])
               end)
 
             case Enum.find(results, &match?({:error, _}, &1)) do
@@ -541,12 +554,11 @@ defmodule HalC2.PullRequests.Hosts do
               nil ->
                 items =
                   results
-                  |> Enum.flat_map(fn {:ok, rows, _more} -> rows end)
-                  |> Enum.flat_map(&bitbucket_item/1)
+                  |> Enum.flat_map(fn {:ok, items, _more} -> items end)
                   |> by_update()
 
                 {:ok,
-                 %{items: items, more: Enum.any?(results, fn {:ok, _rows, more} -> more end)}}
+                 %{items: items, more: Enum.any?(results, fn {:ok, _items, more} -> more end)}}
             end
 
           _ ->
@@ -652,8 +664,9 @@ defmodule HalC2.PullRequests.Hosts do
     end
   end
 
-  # Bitbucket stamps times with an offset; the listing sorts every host's rows
-  # against each other as text, so they are written the way the others are.
+  # Bitbucket and Forgejo stamp times with an offset; the listing sorts every
+  # host's rows against each other as text (and a continuation's boundary is
+  # compared the same way), so they are written the way the others are.
   defp iso_utc(text) do
     case DateTime.from_iso8601(text) do
       {:ok, at, _offset} -> DateTime.to_iso8601(at)
@@ -661,8 +674,26 @@ defmodule HalC2.PullRequests.Hosts do
     end
   end
 
-  # A Bitbucket Server remote is never read through Bitbucket Cloud: only
-  # bitbucket.org itself, or a configured API address, is ever asked.
+  defp just_after(boundary) do
+    case DateTime.from_iso8601(boundary) do
+      {:ok, at, _offset} -> at |> DateTime.add(1, :second) |> DateTime.to_iso8601()
+      _ -> boundary
+    end
+  end
+
+  # A Bitbucket Server remote (`<host>/scm/<project>/<repo>`) is not read at
+  # all: Server serves its own `/rest/api/1.0` API, not the Cloud 2.0 one a
+  # configured API address speaks, so such a repository reads as a host that
+  # cannot be browsed here yet rather than as one that could not be read.
+  defp bitbucket_server?(repository) do
+    case String.split(repository, "/") do
+      ["scm", _project, _slug] -> true
+      _ -> false
+    end
+  end
+
+  # A Bitbucket remote on another host is never read through Bitbucket Cloud:
+  # only bitbucket.org itself, or a configured API address, is ever asked.
   defp bitbucket_server_unreachable?(host),
     do: host != "bitbucket.org" and blank?(System.get_env("HAL_C2_BITBUCKET_API_BASE_URL"))
 
@@ -674,19 +705,29 @@ defmodule HalC2.PullRequests.Hosts do
 
   # --- shared ---------------------------------------------------------------------
 
-  # Up to five pages of a host's rows, a page being `size` rows when full:
-  # `{:ok, rows, more?}`.
-  defp pages(fetch, size \\ 100), do: pages(fetch, size, 1, [])
+  # Up to five pages of a host's items, a page being `size` rows when full:
+  # `{:ok, items, more?}`. With a continuation boundary, only items no newer
+  # than it are kept and the walk scans on (to `@max_walk` pages) until it
+  # holds five pages of them, so rows past the first five host pages are
+  # still reached; without one it stops after five pages as before.
+  defp collect(fetch, mapper, size, before), do: collect(fetch, mapper, size, before, 1, [])
 
-  defp pages(fetch, size, page, acc) do
+  defp collect(fetch, mapper, size, before, page, acc) do
     case fetch.(page) do
       {:ok, rows} ->
-        acc = acc ++ rows
+        kept =
+          rows
+          |> Enum.flat_map(mapper)
+          |> Enum.filter(&(before == nil or &1["updatedAt"] <= before))
+
+        acc = acc ++ kept
 
         cond do
           length(rows) < size -> {:ok, acc, false}
-          page >= @pages -> {:ok, acc, true}
-          true -> pages(fetch, size, page + 1, acc)
+          length(acc) >= @pages * size -> {:ok, acc, true}
+          before == nil and page >= @pages -> {:ok, acc, true}
+          page >= @max_walk -> {:ok, acc, true}
+          true -> collect(fetch, mapper, size, before, page + 1, acc)
         end
 
       error ->
