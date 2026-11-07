@@ -1246,7 +1246,7 @@ defmodule HalC2.Steps.Common do
           "name" => name,
           "version" => "1.0.0",
           "description" => "An ACP agent",
-          "distribution" => %{"npx" => %{"package" => "@acme/#{id}"}}
+          "distribution" => %{"npx" => %{"package" => "@acme/#{id}@1.0.0"}}
         },
         fields
       )
@@ -1274,8 +1274,41 @@ defmodule HalC2.Steps.Common do
   end
 
   step "the user searches the registry", context do
+    # A scenario that set up no registry of its own searches the fake one,
+    # which lists "acme" with everything the real registry publishes for it.
+    context =
+      if Map.has_key?(context, :acp) or Map.has_key?(context, :registry) do
+        context
+      else
+        ctx = HalC2.Test.AcpFixtures.serve_registry(context)
+
+        full = %{
+          "license" => "MIT",
+          "website" => "https://acme.test",
+          "repository" => "https://github.com/acme/acme"
+        }
+
+        beta =
+          ctx
+          |> HalC2.Test.AcpFixtures.acme_agent(id: "acme-beta")
+          |> Map.merge(full)
+          |> Map.put("distribution", %{"npx" => %{"package" => "@acme/beta@1.0.0"}})
+
+        HalC2.Test.AcpFixtures.publish(ctx, [
+          Map.merge(HalC2.Test.AcpFixtures.acme_agent(ctx), full),
+          beta
+        ])
+      end
+
     {reply, ctx} = World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
-    Map.put(ctx, :reply, reply)
+
+    listing =
+      case reply do
+        {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
+        _ -> []
+      end
+
+    ctx |> Map.put(:reply, reply) |> Map.put(:listing, listing)
   end
 
   # An ACP sign-in (`context.auth_instance`, `context.flow`), cancelled from the client

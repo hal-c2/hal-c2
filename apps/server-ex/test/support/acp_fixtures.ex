@@ -26,6 +26,7 @@ defmodule HalC2.Test.AcpFixtures do
     :codex_command,
     :claude_command,
     :acp_commands,
+    :acp_platform,
     :acp_registry_url,
     :text_codex_command,
     :text_claude_command,

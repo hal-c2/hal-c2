@@ -191,7 +191,6 @@ Feature: ACP registry agents
     Then the cached copy is used
 
   # Upstream #26248: every search downloaded the whole index again, up to 1 MB.
-  @backlog
   Scenario Outline: A search reuses a registry fetched in the last five minutes
     Given the MC <fetched>
     When the user searches the registry
@@ -205,7 +204,6 @@ Feature: ACP registry agents
       | fetched the registry a minute ago, but its clock has since gone back | fetched again       |
 
   # Upstream #26248: an install still picks up a new version at once.
-  @backlog
   Scenario: Adding a registry agent fetches the latest registry
     Given the MC fetched the registry a minute ago
     When the user adds the registry agent "acme"
@@ -620,14 +618,12 @@ Feature: ACP registry agents
     Then the readiness of "acme" is read from the cached copy
     And with no cached copy the check fails at once instead of fetching the registry
 
-  @backlog
   Scenario: A registry that cannot be reached falls back to the cached copy
     Given the MC holds a cached copy of the registry
     And the registry cannot be reached
     When the user searches the registry
     Then agents from the cached copy are listed
 
-  @backlog
   Scenario Outline: A registry answer that cannot be used is refused
     When the registry answers with <answer>
     Then the fetch fails with "<message>"
@@ -638,16 +634,18 @@ Feature: ACP registry agents
       | text that is not JSON       | ACP Registry returned invalid JSON.       |
       | JSON that is not a registry | ACP Registry returned an invalid index.   |
       | an index larger than 1 MB   | ACP Registry index exceeds 1048576 bytes. |
-      | nothing within 30 seconds   | Timed out fetching ACP Registry index.    |
 
-  @backlog
+    @backlog
+    Examples:
+      | answer                    | message                                |
+      | nothing within 30 seconds | Timed out fetching ACP Registry index. |
+
   Scenario: One bad registry entry does not hide the others
     Given the registry lists "acme" correctly and another agent with a malformed entry
     When the user searches the registry
     Then "acme" is listed
     And the malformed entry is left out
 
-  @backlog
   Scenario Outline: A registry entry that cannot be trusted is left out
     Given the registry lists an agent whose <part>
     When the user searches the registry
@@ -659,20 +657,17 @@ Feature: ACP registry agents
       | download address carries a user name or password   |
       | npx or uvx package does not pin an exact version   |
 
-  @backlog
   Scenario: A registry listing more than 512 agents is refused
     Given the registry lists more than 512 agents
     When the MC reads the registry
     Then the index is refused as invalid
 
-  @backlog
   Scenario: An agent whose package manager is missing is not offered in search
     Given the registry agent "acme" only runs through uvx
     And uv is not installed on the MC
     When the user searches the registry for "acme"
     Then "acme" is not offered
 
-  @backlog
   Scenario: An agent that runs through uvx needs uv on the MC
     Given the instance of "acme" is set to run through uvx
     And uv is not installed on the MC
@@ -693,7 +688,6 @@ Feature: ACP registry agents
       | uvx only         | automatic  | runs through uvx                                           |
       | a binary only    | npx        | is refused for having no npx distribution for this machine |
 
-  @backlog
   Scenario: Search results are ranked by how closely they match
     Given the registry lists agents matching "gem" by id, by the start of their name, by author and by description
     When the user searches the registry for "gem"
@@ -701,13 +695,11 @@ Feature: ACP registry agents
     And matches at the start of a name come before matches inside it, then authors, then descriptions
     And equal matches are ordered by name
 
-  @backlog
   Scenario: A search result says how its download is checked
     When the user searches the registry
     Then each agent says whether its download is checked against a published SHA-256 or trusted from the registry alone
     And each agent carries its version, authors, license, website and repository
 
-  @backlog
   Scenario: An agent without a published checksum can still be installed
     Given the registry lists no checksum for "acme"
     When the user installs "acme"
@@ -2173,7 +2165,6 @@ Feature: ACP registry agents
 
   # AcpRegistrySupport.ts: the corners of fetching the registry and installing from it.
 
-  @backlog
   Scenario Outline: A registry that answers badly says what went wrong
     Given the MC holds no cached copy of the registry
     When the registry <problem>
@@ -2183,10 +2174,13 @@ Feature: ACP registry agents
       | problem                                   | message                                                                                                       |
       | answers with an error status              | Could not fetch ACP Registry index from https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json. |
       | breaks off while its answer is being read | Could not read ACP Registry response body.                                                                    |
-      | stalls for 30 seconds while being read    | Timed out reading ACP Registry response body.                                                                 |
       | answers with bytes that are not UTF-8     | ACP Registry index is not valid UTF-8.                                                                        |
 
-  @backlog
+    @backlog
+    Examples:
+      | problem                                | message                                       |
+      | stalls for 30 seconds while being read | Timed out reading ACP Registry response body. |
+
   Scenario: Searches made at the same moment fetch the registry once
     Given the registry can be reached
     When two clients search the registry at the same moment
@@ -2199,7 +2193,6 @@ Feature: ACP registry agents
     When a thread starts a session with "acme"
     Then the registry is fetched before "acme" is started
 
-  @backlog
   Scenario Outline: A registry entry that could not be stored safely is left out
     Given the registry lists an agent whose <part>
     When the user searches the registry
@@ -2350,7 +2343,6 @@ Feature: ACP registry agents
     When a thread starts a session on that instance
     Then it fails with "ACP Registry provider requires a registry agent ID."
 
-  @backlog
   Scenario: Package agents still run on a machine the registry publishes no binaries for
     Given the MC runs on a machine that is neither macOS, Linux nor Windows on arm64 or x64
     When the user searches the registry

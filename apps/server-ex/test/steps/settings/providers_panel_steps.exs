@@ -353,7 +353,7 @@ defmodule HalC2.Steps.Settings.ProvidersPanel do
           }),
           agent.("gemini-mac", "Gemini Mac", "Gemini on another machine", binary.(elsewhere)),
           agent.("lite-gemini", "Lite Gemini", "A smaller agent", %{
-            "uvx" => %{"package" => "lite-gemini"}
+            "uvx" => %{"package" => "lite-gemini==1.2.3"}
           }),
           agent.("gemini-cli", "Gemini CLI", "Google's agent", binary.(here)),
           agent.("atlas", "Atlas", "Maps", binary.(here))

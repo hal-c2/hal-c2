@@ -22,10 +22,10 @@ defmodule HalC2.Acp.UrlAuth do
          %URI{scheme: scheme, host: host}
          when scheme in ["http", "https"] and host not in [nil, ""] <-
            URI.parse(url),
-         true <- byte_size(url) <= 2048 and String.trim(id) != "" and byte_size(id) <= 128,
+         true <- byte_size(url) <= 2048 and String.trim(id) != "",
          true <- Process.whereis(__MODULE__) != nil do
       action = %{
-        "elicitationId" => String.trim(id),
+        "elicitationId" => id |> String.trim() |> String.slice(0, 256),
         "url" => url,
         "message" => String.slice(params["message"] || "", 0, 1024)
       }

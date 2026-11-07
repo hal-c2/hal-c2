@@ -260,7 +260,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx =
       Acp.publish(ctx, [
         Acp.acme_agent(ctx),
-        agent(ctx, "npx-agent", "Npx Agent", npx("@acme/npx-agent")),
+        agent(ctx, "npx-agent", "Npx Agent", npx("@acme/npx-agent@1.0.0")),
         agent(ctx, "elsewhere", "Elsewhere", elsewhere())
       ])
 
@@ -445,8 +445,8 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   end
 
   step "the registry cannot be reached", context do
-    # `AcpFixtures.ready/1` points the MC at a closed loopback port.
-    assert Application.get_env(:hal_c2, :acp_registry_url) =~ "127.0.0.1:1/"
+    # A closed loopback port: nothing answers there.
+    Application.put_env(:hal_c2, :acp_registry_url, "http://127.0.0.1:1/registry.json")
     context
   end
 
@@ -1550,6 +1550,413 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     delegate = ~r/built-in subagents\. Delegate child work with `#{tool}`/
 
     if told == "told", do: assert(text =~ delegate), else: refute(text =~ delegate)
+    context
+  end
+
+  # --- the registry, fetched and read -------------------------------------------
+
+  defp fetches(ctx), do: Enum.count(Acp.registry_requests(ctx), &(&1 == "registry.json"))
+
+  # Publishes "acme", fetches the registry once, then ages that fetch.
+  defp seed_fetch(ctx, age_ms, fresh \\ true) do
+    ctx = Acp.publish(ctx)
+    {:ok, [_]} = HalC2.Acp.Catalog.index(true)
+    {_, agents, _} = :persistent_term.get({HalC2.Acp.Catalog, :index})
+    at = System.system_time(:millisecond) - age_ms
+    :persistent_term.put({HalC2.Acp.Catalog, :index}, {at, agents, fresh})
+    Map.put(ctx, :fetches_before, fetches(ctx))
+  end
+
+  step "the MC fetched the registry four minutes ago", context do
+    seed_fetch(context, 4 * 60_000)
+  end
+
+  step "the MC fetched the registry six minutes ago", context do
+    seed_fetch(context, 6 * 60_000)
+  end
+
+  step "the MC fetched the registry a minute ago", context do
+    seed_fetch(context, 60_000)
+  end
+
+  step "the MC could not reach the registry a minute ago and used its cached copy", context do
+    ctx = seed_fetch(context, 0)
+    Application.put_env(:hal_c2, :acp_registry_url, "http://127.0.0.1:1/registry.json")
+    # The forced fetch fails and the cached copy serves; that is on record now.
+    {:ok, [_]} = HalC2.Acp.Catalog.index(true)
+    {_, agents, fresh} = :persistent_term.get({HalC2.Acp.Catalog, :index})
+    assert fresh == false
+    at = System.system_time(:millisecond) - 60_000
+    :persistent_term.put({HalC2.Acp.Catalog, :index}, {at, agents, false})
+    Application.put_env(:hal_c2, :acp_registry_url, "#{ctx.acp.base}/registry.json")
+    Map.put(ctx, :fetches_before, fetches(ctx))
+  end
+
+  step "the MC fetched the registry a minute ago, but its clock has since gone back", context do
+    # The recorded fetch now lies in the future.
+    seed_fetch(context, -60_000)
+  end
+
+  step "the registry is not fetched again", context do
+    assert ids(context.reply) == ["acme"]
+    assert fetches(context) == context.fetches_before
+    context
+  end
+
+  step "the registry is fetched again", context do
+    assert ids(context.reply) == ["acme"]
+    assert fetches(context) == context.fetches_before + 1
+    context
+  end
+
+  step "the registry is fetched again before {string} is prepared", %{args: [id]} = context do
+    assert {:ok, %{"agentId" => ^id, "prepared" => true}} = context.reply
+    requests = Acp.registry_requests(context)
+    assert fetches(context) == context.fetches_before + 1
+
+    fetched_at =
+      requests
+      |> Enum.with_index()
+      |> Enum.filter(&(elem(&1, 0) == "registry.json"))
+      |> List.last()
+      |> elem(1)
+
+    downloaded_at = Enum.find_index(requests, &(&1 == "#{id}.tar.gz"))
+    assert fetched_at < downloaded_at
+    context
+  end
+
+  step "the MC holds a cached copy of the registry", context do
+    # Ten minutes old, so a search tries the registry before falling back.
+    seed_fetch(context, 10 * 60_000)
+  end
+
+  step "agents from the cached copy are listed", context do
+    assert ids(context.reply) == ["acme"]
+    context
+  end
+
+  defp serve_raw(ctx, body) do
+    ctx = Acp.serve_registry(ctx)
+    File.write!(Path.join(ctx.acp.served, "registry.json"), body)
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    File.rm(HalC2.Acp.Catalog.cache_path())
+    Map.put(ctx, :bad_body, body)
+  end
+
+  defp search_acme(ctx) do
+    ctx = ops(ctx)
+    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => "acme"}, "ops")
+    Map.put(ctx, :reply, reply)
+  end
+
+  step "the registry answers with text that is not JSON", context do
+    context |> serve_raw("this is not json") |> search_acme()
+  end
+
+  step "the registry answers with JSON that is not a registry", context do
+    context |> serve_raw(JSON.encode!(%{"hello" => "world"})) |> search_acme()
+  end
+
+  step "the registry answers with an index larger than 1 MB", context do
+    body = JSON.encode!(%{"version" => String.duplicate("x", 1_100_000), "agents" => []})
+    context |> serve_raw(body) |> search_acme()
+  end
+
+  step "the fetch fails with {string}", %{args: [message]} = context do
+    error = operation_error(context.reply)
+    assert error["reason"] == "registry_unavailable"
+    # The scenario names the production registry; the MC names the one it was told.
+    url = Application.get_env(:hal_c2, :acp_registry_url)
+
+    actual =
+      String.replace(
+        error["message"],
+        url,
+        "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
+      )
+
+    assert actual == message
+    context
+  end
+
+  step "a cached copy is used if the MC has one", context do
+    ctx = seed_fetch(context, 10 * 60_000)
+    File.write!(Path.join(ctx.acp.served, "registry.json"), ctx.bad_body)
+    ctx = search_acme(ctx)
+    assert ids(ctx.reply) == ["acme"]
+    ctx
+  end
+
+  step "the registry lists {string} correctly and another agent with a malformed entry",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, id: id), %{"id" => "broken"}])
+  end
+
+  step "the malformed entry is left out", context do
+    assert ids(context.reply) == ["acme"]
+    context
+  end
+
+  defp untrusted(ctx, dist) do
+    ctx = Acp.serve_registry(ctx)
+    Acp.publish(ctx, [agent(ctx, "acme", "Acme", dist)])
+  end
+
+  defp binary_at(url),
+    do: %{
+      "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => url, "cmd" => "./bin/acme"}}
+    }
+
+  step "the registry lists an agent whose download address is not HTTPS", context do
+    untrusted(context, binary_at("http://example.com/acme.tar.gz"))
+  end
+
+  step "the registry lists an agent whose download address carries a user name or password",
+       context do
+    untrusted(context, binary_at("https://user:secret@example.com/acme.tar.gz"))
+  end
+
+  step "the registry lists an agent whose npx or uvx package does not pin an exact version",
+       context do
+    untrusted(context, npx("@acme/acme"))
+  end
+
+  step "that agent is not offered", context do
+    assert ids(context.reply) == []
+    context
+  end
+
+  step "the registry lists more than 512 agents", context do
+    ctx = Acp.serve_registry(context)
+    base = Acp.acme_agent(ctx)
+    agents = for n <- 1..513, do: %{base | "id" => "agent-#{n}", "name" => "Agent #{n}"}
+    Acp.publish(ctx, agents)
+  end
+
+  step "the MC reads the registry", context do
+    search_acme(context)
+  end
+
+  step "the index is refused as invalid", context do
+    assert %{"message" => "ACP Registry returned an invalid index."} =
+             operation_error(context.reply)
+
+    context
+  end
+
+  step "the registry agent {string} only runs through uvx", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", %{"uvx" => %{"package" => "acme==2.0.0"}})])
+  end
+
+  step "uv is not installed on the MC", context do
+    empty = Path.join(context.mc.home, "empty-bin")
+    File.mkdir_p!(empty)
+    System.put_env("PATH", empty)
+    assert System.find_executable("uv") == nil
+    context
+  end
+
+  step "the instance of {string} is set to run through uvx", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", %{"uvx" => %{"package" => "acme==2.0.0"}})])
+
+    Acp.add_registry_instance(id, id, %{
+      "config" => %{"agentId" => id, "distribution" => "uvx"}
+    })
+
+    ctx
+  end
+
+  step "the MC prepares {string}", %{args: [id]} = context do
+    prepare(context, id)
+  end
+
+  step "the registry lists agents matching {string} by id, by the start of their name, by author and by description",
+       %{args: [_]} = context do
+    ctx = Acp.serve_registry(context)
+    dist = fn id -> npx("@acme/#{id}@1.0.0") end
+
+    agents = [
+      agent(ctx, "gem", "Gem", dist.("gem")),
+      agent(ctx, "gemcut", "Gemcut", dist.("gemcut")),
+      agent(ctx, "agemo", "Agemo", dist.("agemo")),
+      agent(ctx, "bgemo", "Bgemo", dist.("bgemo")),
+      ctx
+      |> agent("smith", "Smith", dist.("smith"))
+      |> Map.put("authors", ["Gemma"]),
+      ctx
+      |> agent("rock", "Rock", dist.("rock"))
+      |> Map.put("description", "A gem tool")
+    ]
+
+    Acp.publish(ctx, agents)
+  end
+
+  step "the exact id or name match comes first", context do
+    assert hd(ids(context.reply)) == "gem"
+    context
+  end
+
+  step "matches at the start of a name come before matches inside it, then authors, then descriptions",
+       context do
+    assert ids(context.reply) == ["gem", "gemcut", "agemo", "bgemo", "smith", "rock"]
+    context
+  end
+
+  step "equal matches are ordered by name", context do
+    found = ids(context.reply)
+    assert Enum.find_index(found, &(&1 == "agemo")) < Enum.find_index(found, &(&1 == "bgemo"))
+    context
+  end
+
+  step "each agent says whether its download is checked against a published SHA-256 or trusted from the registry alone",
+       context do
+    assert {:ok, %{"agents" => agents}} = context.reply
+    assert Enum.all?(agents, &(&1["integrity"] in ["sha256", "registry"]))
+    assert Enum.find(agents, &(&1["id"] == "acme"))["integrity"] == "sha256"
+    assert Enum.find(agents, &(&1["id"] == "acme-beta"))["integrity"] == "registry"
+    context
+  end
+
+  step "each agent carries its version, authors, license, website and repository", context do
+    assert {:ok, %{"agents" => agents}} = context.reply
+
+    for agent <- agents do
+      assert agent["version"] == "2.0.0"
+      assert agent["authors"] == ["Acme"]
+      assert agent["license"] == "MIT"
+      assert agent["website"] == "https://acme.test"
+      assert agent["repository"] == "https://github.com/acme/acme"
+    end
+
+    context
+  end
+
+  step "the registry lists no checksum for {string}", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, id: id, sha256: false)])
+  end
+
+  step "the user installs {string}", %{args: [id]} = context do
+    prepare(context, id)
+  end
+
+  step "{string} is installed", %{args: [id]} = context do
+    assert {:ok, %{"agentId" => ^id, "prepared" => true}} = context.reply
+    assert Path.wildcard(Path.join([tools(context, id), "**", "bin", id])) != []
+    context
+  end
+
+  step "the MC holds no cached copy of the registry", context do
+    ctx = Acp.ready(context)
+    :persistent_term.erase({HalC2.Acp.Catalog, :index})
+    File.rm(HalC2.Acp.Catalog.cache_path())
+    ctx
+  end
+
+  step "the registry answers with an error status", context do
+    # The served registry has no registry.json, so it answers 404.
+    context |> Acp.serve_registry() |> search_acme()
+  end
+
+  step "the registry breaks off while its answer is being read", context do
+    {:ok, listen} =
+      :gen_tcp.listen(0, [:binary, packet: :raw, active: false, ip: {127, 0, 0, 1}])
+
+    {:ok, port} = :inet.port(listen)
+    Application.put_env(:hal_c2, :acp_registry_url, "http://127.0.0.1:#{port}/registry.json")
+
+    server =
+      Task.async(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen, 10_000)
+        {:ok, _request} = :gen_tcp.recv(socket, 0, 10_000)
+        :gen_tcp.send(socket, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{\"agents\": [")
+        :gen_tcp.close(socket)
+      end)
+
+    ctx = search_acme(context)
+    Task.await(server, 10_000)
+    :gen_tcp.close(listen)
+    ctx
+  end
+
+  step "the registry answers with bytes that are not UTF-8", context do
+    context |> serve_raw(<<0xFF, 0xFE, 0x00, 0x7B>>) |> search_acme()
+  end
+
+  step "the registry can be reached", context do
+    Acp.publish(context)
+  end
+
+  step "two clients search the registry at the same moment", context do
+    searches =
+      [
+        Task.async(fn -> HalC2.Acp.Catalog.search(%{"query" => "acme"}) end),
+        Task.async(fn -> HalC2.Acp.Catalog.search(%{"query" => "acme"}) end)
+      ]
+      |> Enum.map(&Task.await(&1, 30_000))
+
+    Map.put(context, :searches, searches)
+  end
+
+  step "the registry is fetched once", context do
+    assert fetches(context) == 1
+    context
+  end
+
+  step "both searches are answered from that one fetch", context do
+    assert Enum.all?(context.searches, &match?({:ok, %{"agents" => [%{"id" => "acme"}]}}, &1))
+    context
+  end
+
+  step "the registry lists an agent whose name is blank", context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, name: " ")])
+  end
+
+  step "the registry lists an agent whose version is {string} or {string} or holds a path separator",
+       %{args: [_, _]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, version: "..")])
+  end
+
+  step "the registry lists an agent whose id holds upper-case letters, spaces or a path separator",
+       context do
+    ctx = Acp.serve_registry(context)
+    base = Acp.acme_agent(ctx)
+    Acp.publish(ctx, [%{base | "id" => "Acme/Bad Id"}])
+  end
+
+  step "the registry lists an agent whose npx package is written the way a uvx package pins versions",
+       context do
+    untrusted(context, npx("acme==1.0.0"))
+  end
+
+  step "the MC runs on a machine that is neither macOS, Linux nor Windows on arm64 or x64",
+       context do
+    ctx = Acp.serve_registry(context)
+
+    Acp.publish(ctx, [
+      Acp.acme_agent(ctx),
+      agent(ctx, "acme-npx", "Acme Npx", npx("@acme/npx@1.0.0")),
+      agent(ctx, "acme-uvx", "Acme Uvx", %{"uvx" => %{"package" => "acme==1.0.0"}})
+    ])
+
+    Application.put_env(:hal_c2, :acp_platform, nil)
+    ctx
+  end
+
+  step "agents that run through npx or uvx are offered", context do
+    assert "acme-npx" in ids(context.reply)
+    assert "acme-uvx" in ids(context.reply)
+    context
+  end
+
+  step "agents published only as binaries are left out", context do
+    refute "acme" in ids(context.reply)
     context
   end
 end
