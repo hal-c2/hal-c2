@@ -198,6 +198,8 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/acp/ant
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/acp/antigravity/session_files.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/acp/catalog.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/checkpoint.ex | cwd
+Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/checkpoint.ex | cwd
+Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/checkpoint.ex | cwd
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/desktop_update.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/environment_themes.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/git.ex | Elixir.Path

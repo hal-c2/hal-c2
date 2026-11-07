@@ -1548,6 +1548,8 @@ defmodule HalC2.Orchestration do
     }
 
   defp start_turn_now(thread_id, turn) do
+    turn = refresh_provider_thread(thread_id, turn)
+
     case restore_worktree(thread_id) do
       :ok ->
         :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
@@ -1596,6 +1598,41 @@ defmodule HalC2.Orchestration do
   catch
     :exit, {reason, _} when reason in [{:shutdown, :released}, :noproc] ->
       runtime(turn.ids.instance).start_turn(thread_id, turn)
+  end
+
+  # A turn resumes the provider conversation where it stands when the turn
+  # starts, not where it stood when its message was decided: a rewind in
+  # between (an earlier effect on this thread's lane, so it has settled by
+  # now) moved it, and resuming the decided native thread would put the
+  # rewound history back. The head is the exception: deciding the run
+  # consumed it (and cleared it on the provider thread), so a head that is
+  # only missing again is the decide's own doing, while one a settled rewind
+  # wrote since — or a native thread that changed under the turn — replaces
+  # the decided one. A native thread the decide itself supplied, carried
+  # from another instance sharing the provider's home on a foreign takeover
+  # (`native_carried`), is the other exception: the decide stored none on
+  # the taken-over provider thread, so the stored nil is its own doing too,
+  # and refreshing from it would open a fresh conversation.
+  defp refresh_provider_thread(thread_id, turn) do
+    with id when is_binary(id) <- Map.get(turn.ids, :provider_thread),
+         %{} = provider_thread <-
+           thread_id |> HalC2.Streams.state() |> StreamState.get("provider-thread") |> Map.get(id) do
+      head = get_in(provider_thread, ["nativeConversationHeadRef", "nativeId"])
+      decided_native = turn[:native_thread_id]
+
+      native =
+        if turn[:native_carried],
+          do: decided_native,
+          else: get_in(provider_thread, ["nativeThreadRef", "nativeId"])
+
+      turn = Map.put(turn, :native_thread_id, native)
+
+      if head != nil or native != decided_native,
+        do: Map.put(turn, :head, head),
+        else: turn
+    else
+      _ -> turn
+    end
   end
 
   # A worktree the storage sweep (or the user) removed comes back at the same path
@@ -5158,6 +5195,10 @@ defmodule HalC2.Orchestration do
       # confine a run (Claude's `--tools`) honour.
       read_only: command["readOnly"] == true,
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
+      # The decide supplied that native thread itself, carried from another
+      # instance on a foreign takeover, and stored none on the provider
+      # thread (`refresh_provider_thread/2`).
+      native_carried: foreign and carried_ref != nil,
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"]),
       # The last run the provider thread saw before this one, which a run the provider
       # never got the prompt of puts back (`HalC2.Claude.ThreadRuntime`).
