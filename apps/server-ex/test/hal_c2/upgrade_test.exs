@@ -77,6 +77,153 @@ defmodule HalC2.UpgradeTest do
     assert Upgrade.capability() == nil
   end
 
+  # A caller waits for the update however long it takes (each stage bounds itself), and
+  # still hears how it ended when the updater goes away under it.
+  test "a caller waiting on an update is told when the updater goes away", %{tmp_dir: dir} do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false])
+    {:ok, port} = :inet.port(listen)
+    System.put_env("RELEASE_ROOT", dir)
+    Application.put_env(:hal_c2, :upgrade_url, "http://127.0.0.1:#{port}/{version}.tar.gz")
+    Application.put_env(:hal_c2, :upgrade_download_idle_ms, 500)
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      Application.delete_env(:hal_c2, :upgrade_url)
+      Application.delete_env(:hal_c2, :upgrade_download_idle_ms)
+    end)
+
+    start_supervised!(Upgrade)
+    :ok = Upgrade.await_pruned()
+    me = self()
+    caller = Task.async(fn -> Upgrade.update(%{"targetVersion" => "9.9.9"}, me) end)
+    assert_receive {:hal_c2_server_update, _, %{"stage" => "downloading"}}
+
+    :ok = stop_supervised(Upgrade)
+
+    assert {:error, %{"reason" => "The update stopped: " <> _}} = Task.await(caller)
+    :gen_tcp.close(listen)
+  end
+
+  # The boot prune runs off the updater, so an update asked for while it runs must
+  # wait for it: otherwise the prune can remove the target's cached bundle (and its
+  # installed release) while `Source.fetch` is reading them.
+  test "an update asked for during the boot prune waits for it before fetching",
+       %{tmp_dir: dir} do
+    root = Path.join(dir, "release")
+    File.mkdir_p!(Path.join(root, "releases"))
+    release_fixture(root, "1.1.0")
+    release_fixture(root, "1.2.0")
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "16.0 1.2.0\n")
+
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false])
+    {:ok, port} = :inet.port(listen)
+    me = self()
+
+    # The prune stops where it asks which processes run, before it removes
+    # anything, until this test lets it go.
+    Application.put_env(:hal_c2, :upgrade_processes, fn ->
+      send(me, {:prune_blocked, self()})
+      receive(do: (:release_prune -> {:ok, []}))
+    end)
+
+    System.put_env("RELEASE_ROOT", root)
+    :persistent_term.put({Upgrade, :version}, "1.2.0")
+    Application.put_env(:hal_c2, :upgrade_url, "http://127.0.0.1:#{port}/{version}.tar.gz")
+    Application.put_env(:hal_c2, :upgrade_download_idle_ms, 200)
+
+    on_exit(fn ->
+      if pid = Process.whereis(HalC2.Upgrade.Prune), do: send(pid, :release_prune)
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+      Application.delete_env(:hal_c2, :upgrade_processes)
+      Application.delete_env(:hal_c2, :upgrade_url)
+      Application.delete_env(:hal_c2, :upgrade_download_idle_ms)
+    end)
+
+    start_supervised!(Upgrade)
+    assert_receive {:prune_blocked, prune_pid}
+
+    caller = Task.async(fn -> Upgrade.update(%{"targetVersion" => "1.1.0"}, me) end)
+    refute_receive {:hal_c2_server_update, _, %{"stage" => "downloading"}}, 200
+    assert File.dir?(Source.cache_dir("1.1.0"))
+
+    send(prune_pid, :release_prune)
+    assert_receive {:hal_c2_server_update, _, %{"stage" => "downloading"}}
+
+    # The prune, finished first, took the cached bundle it had every right to
+    # take; the update then looks for 1.1.0 at the URL, which never answers.
+    assert {:error, %{"reason" => reason}} = Task.await(caller)
+    assert reason =~ "1.1.0 is not available"
+    refute File.exists?(Path.join(Source.cache_dir("1.1.0"), "bundle.tar.gz"))
+    refute File.exists?(Path.join([root, "releases", "1.1.0"]))
+    :gen_tcp.close(listen)
+  end
+
+  # `mix hal_c2.upgrade --release` puts the operator's bundle in the cache itself, so it
+  # waits for the boot prune before that, or the prune takes the bundle it just put.
+  test "an update from a local bundle during the boot prune keeps the bundle",
+       %{tmp_dir: dir} do
+    root = Path.join(dir, "release")
+    File.mkdir_p!(Path.join(root, "releases"))
+    release_fixture(root, "1.2.0")
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "16.0 1.2.0\n")
+    archive = Path.join(dir, "1.3.0.tar.gz")
+    File.write!(archive, "not a bundle")
+    me = self()
+
+    Application.put_env(:hal_c2, :upgrade_processes, fn ->
+      send(me, {:prune_blocked, self()})
+      receive(do: (:release_prune -> {:ok, []}))
+    end)
+
+    System.put_env("RELEASE_ROOT", root)
+    :persistent_term.put({Upgrade, :version}, "1.2.0")
+
+    on_exit(fn ->
+      if pid = Process.whereis(HalC2.Upgrade.Prune), do: send(pid, :release_prune)
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+      Application.delete_env(:hal_c2, :upgrade_processes)
+    end)
+
+    start_supervised!(Upgrade)
+    assert_receive {:prune_blocked, prune_pid}
+    prune_ref = Process.monitor(prune_pid)
+
+    caller = Task.async(fn -> Upgrade.update_from(archive, "1.3.0") end)
+    refute_receive {:DOWN, ^prune_ref, _, _, _}, 200
+    refute File.exists?(Source.cache_dir("1.3.0"))
+
+    send(prune_pid, :release_prune)
+    assert_receive {:DOWN, ^prune_ref, _, _, _}
+    Task.await(caller)
+    assert File.dir?(Source.cache_dir("1.3.0"))
+  end
+
+  # Release `version` under `root`, with its cached bundle, every directory two
+  # hours old so the boot prune's grace does not keep it.
+  defp release_fixture(root, version) do
+    rel = Path.join([root, "releases", version])
+    File.mkdir_p!(rel)
+
+    HalC2.Upgrade.Appup.write_term!(
+      Path.join(rel, "hal_c2.rel"),
+      {:release, {~c"hal_c2", String.to_charlist(version)}, {:erts, ~c"16.0"},
+       [{:hal_c2, String.to_charlist(version)}]}
+    )
+
+    lib = Path.join([root, "lib", "hal_c2-#{version}"])
+    File.mkdir_p!(Path.join(lib, "ebin"))
+    erts = Path.join(root, "erts-16.0")
+    File.mkdir_p!(Path.join(erts, "bin"))
+    cache = Source.cache_dir(version)
+    File.mkdir_p!(cache)
+    File.write!(Path.join(cache, "bundle.tar.gz"), "")
+
+    for path <- [rel, lib, erts, cache],
+        do: File.touch!(path, System.os_time(:second) - 7200)
+  end
+
   test "a bundle arrives in pieces, is checked, and is offered to peers once", %{tmp_dir: dir} do
     archive = Path.join(dir, "b.tar.gz")
     File.write!(archive, :crypto.strong_rand_bytes(600_000))

@@ -38,6 +38,7 @@ defmodule HalC2.Upgrade do
 
   # `bin/hal-c2-service` starts the MC again when it exits with this status. The exit
   # itself is `:restart_exit` in the app env (`System.stop/1` unless a test swaps it).
+  @continue "continueRunningThreads"
   @restart_status 75
   @members_timeout :timer.minutes(5)
 
@@ -96,10 +97,14 @@ defmodule HalC2.Upgrade do
       else: hot_update(input, progress)
   end
 
+  # No deadline of its own: every stage of an update has one (a download that stops
+  # receiving, a peer that stops answering, a preflight), and a slow download that
+  # keeps receiving goes on as long as it needs.
   defp hot_update(input, progress \\ nil) do
-    GenServer.call(__MODULE__, {:update, input, progress}, :timer.minutes(15))
+    GenServer.call(__MODULE__, {:update, input, progress}, :infinity)
   catch
     :exit, {:noproc, _} -> failure("This MC cannot update itself.")
+    :exit, reason -> failure("The update stopped: #{inspect(reason)}")
   end
 
   @doc """
@@ -110,6 +115,9 @@ defmodule HalC2.Upgrade do
   """
   def update_from(path, version) do
     if File.regular?(path) do
+      # Before the bundle reaches the cache: the boot prune would take it, a version
+      # not yet installed being nothing it keeps.
+      :ok = await_pruned()
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
       input = %{"targetVersion" => version}
       members = update_members(Node.list(), input)
@@ -313,14 +321,28 @@ defmodule HalC2.Upgrade do
     # Before the services after this one: the agents, terminals and pulls they start
     # reach GitHub through gh too. It asks SSH off this process, so they do not wait.
     _ = HalC2.Git.use_gh_for_github()
+    # Before Recovery and its continuations start, which read it without a call.
+    :persistent_term.put({__MODULE__, :continue_threads}, pending_continue?())
     {:ok, nil, {:continue, :outcome}}
+  end
+
+  # Whether the update this boot comes from asked the turns it cut off to continue.
+  # The outcome file under the MC's own data directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp pending_continue? do
+    with {:ok, text} <- File.read(outcome_path()),
+         {:ok, %{"status" => "restarting"} = pending} <- JSON.decode(text) do
+      pending[@continue] == true
+    else
+      _ -> false
+    end
   end
 
   # A restart for an update ends here: the version that booted says how it went.
   @impl true
   def handle_continue(:outcome, state) do
     # A version installed while the service ran (`hal-c2 update`, answered no) runs now.
-    if System.get_env("HAL_C2_SERVICE") == "1", do: HalC2.Service.clear_restart_pending()
+    if System.get_env("HAL_C2_SERVICE") == "1", do: HalC2.Service.started(version())
 
     with {:ok, text} <- File.read(outcome_path()),
          {:ok, %{"status" => "restarting"} = pending} <- JSON.decode(text) do
@@ -335,6 +357,8 @@ defmodule HalC2.Upgrade do
               "reason" => "The MC started #{booted} instead of #{pending["targetVersion"]}."
             })
 
+      # `init/1` kept whether the turns the restart cut off continue this boot; the
+      # recorded outcome drops it.
       record(outcome)
       if root = release_root(), do: settle_start(root, booted)
     else
@@ -342,8 +366,54 @@ defmodule HalC2.Upgrade do
       _ -> :ok
     end
 
+    if root = release_root(), do: start_prune(root)
     {:noreply, state}
   end
+
+  # Every start from a release, however it was started (the service, an SSH host
+  # running the installed version directly, by hand), removes what no version uses.
+  # Off this server, so removing gigabytes of old versions holds up no update request;
+  # one at a time, under `HalC2.Upgrade.Prune`'s name, which `await_pruned/0` waits on.
+  # An update itself waits for it before it fetches (`run/2`): the prune's keep set
+  # knows nothing of the version an update is installing, so the two never overlap.
+  defp start_prune(root) do
+    {:ok, pid} = Task.start(fn -> receive(do: (:go -> prune(root))) end)
+
+    try do
+      Process.register(pid, HalC2.Upgrade.Prune)
+      send(pid, :go)
+    rescue
+      ArgumentError -> Process.exit(pid, :kill)
+    end
+  end
+
+  @doc "Returns once this boot has read its outcome and removed the versions nothing uses."
+  def await_pruned do
+    if Process.whereis(__MODULE__), do: :sys.get_state(__MODULE__)
+
+    with pid when is_pid(pid) <- Process.whereis(HalC2.Upgrade.Prune) do
+      ref = Process.monitor(pid)
+      receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+    end
+
+    :ok
+  end
+
+  defp prune(root) do
+    case HalC2.Upgrade.Prune.run(root, version()) do
+      {:ok, _removed} -> :ok
+      {:error, reason} -> Logger.info("old versions are kept: #{reason}")
+    end
+  rescue
+    error -> Logger.warning("removing old versions failed: #{Exception.message(error)}")
+  end
+
+  @doc """
+  Whether the update this MC restarted for asked for the turns it cut off to continue
+  (`continueRunningThreads`), whatever their projects' `continueThreadsAfterServerUpdate`.
+  Set as this server starts, before Recovery does.
+  """
+  def continue_threads?, do: :persistent_term.get({__MODULE__, :continue_threads}, false)
 
   # One update at a time: it runs off this process, and a request while it does is
   # refused rather than queued behind it.
@@ -370,7 +440,7 @@ defmodule HalC2.Upgrade do
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp run(%{"targetVersion" => target}, progress) do
+  defp run(%{"targetVersion" => target} = input, progress) do
     from = version()
     root = release_root()
     id = "hot-upgrade-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
@@ -379,20 +449,31 @@ defmodule HalC2.Upgrade do
       root == nil ->
         failure("This MC runs from a checkout; update it with `mix hal_c2.upgrade`.")
 
+      not exact?(target) ->
+        failure("#{inspect(target)} is not an exact version; name one such as 1.2.3.")
+
       target == from ->
         failure("This MC already runs #{target}.")
 
       true ->
+        # Before the fetch reads the target's cached bundle or installed release:
+        # the boot prune, still removing old versions off this server, may be
+        # about to take exactly those. It is bounded by its own removals.
+        :ok = await_pruned()
         notify(progress, "downloading")
 
         with {:ok, bundle} <- HalC2.Upgrade.Source.fetch(target, platform()) do
           notify(progress, "installing")
-          outcome = %{"id" => id, "fromVersion" => from, "targetVersion" => target}
+
+          outcome =
+            %{"id" => id, "fromVersion" => from, "targetVersion" => target}
+            |> Map.merge(Map.take(input, [@continue]))
+
           result = %{"targetVersion" => target, "method" => "hot-upgrade", "updateId" => id}
           plan = plan(bundle)
 
           case stage(plan, bundle, root, target) do
-            :ok -> activate(plan, root, from, target, outcome, result)
+            :ok -> activate(plan, {bundle, root}, from, target, outcome, result)
             {:error, reason} -> failure("Installing #{target} failed: #{reason}")
           end
         end
@@ -400,6 +481,9 @@ defmodule HalC2.Upgrade do
   end
 
   defp run(_input, _progress), do: failure("No target version was given.")
+
+  # A version names one release; "latest", a range or "1.2" would leave the MC to guess.
+  defp exact?(target), do: is_binary(target) and match?({:ok, _}, Version.parse(target))
 
   # The bundle's release beside the running one, under `root`.
   defp stage(plan, bundle, root, target) do
@@ -423,15 +507,15 @@ defmodule HalC2.Upgrade do
     end
   end
 
-  defp activate({:restart, reasons}, root, _from, target, outcome, result),
-    do: restart(root, target, outcome, result, Enum.join(reasons, "; "))
+  defp activate({:restart, reasons}, staged, _from, target, outcome, result),
+    do: restart(staged, target, outcome, result, Enum.join(reasons, "; "))
 
-  defp activate({:in_place, _how}, root, from, target, outcome, result) do
+  defp activate({:in_place, how}, {bundle, root} = staged, from, target, outcome, result) do
     spec = release_spec(root, from, target)
 
     case HalC2.Upgrade.Release.plan(spec) do
       {:restart, reasons} ->
-        restart(root, target, outcome, result, Enum.join(reasons, "; "))
+        restart(staged, target, outcome, result, Enum.join(reasons, "; "))
 
       {:ok, plan} ->
         config =
@@ -446,6 +530,9 @@ defmodule HalC2.Upgrade do
 
         case HalC2.Upgrade.Release.install(spec, plan, config) do
           {:ok, report} ->
+            with {:error, reason} <- if(how == :release, do: copy_bin(bundle, root), else: :ok),
+                 do: Logger.warning("#{target}'s launchers did not go in: #{reason}")
+
             moved(target, outcome, %{"status" => "committed"})
 
             Logger.info(
@@ -481,7 +568,7 @@ defmodule HalC2.Upgrade do
             )
 
             record(Map.merge(outcome, %{"status" => "rolled-back", "reason" => why}))
-            restart(root, target, outcome, result, why)
+            restart(staged, target, outcome, result, why)
         end
     end
   end
@@ -496,8 +583,13 @@ defmodule HalC2.Upgrade do
     __MODULE__.after_upgrade()
   end
 
-  defp restart(root, target, outcome, result, why) do
-    if System.get_env("HAL_C2_SERVICE") == "1" do
+  # The staged version is asked first whether it can run here (`HalC2.Upgrade.Preflight`);
+  # until it says yes nothing the next start reads has changed, so a refusal leaves
+  # the MC as it was. Its launchers go in only then.
+  defp restart({bundle, root}, target, outcome, result, why) do
+    with true <- System.get_env("HAL_C2_SERVICE") == "1" || :not_service,
+         :ok <- HalC2.Upgrade.Preflight.run(bundle, target),
+         {:launchers, :ok} <- {:launchers, copy_bin(bundle, root)} do
       File.cp!(start_data(root), previous_start(root))
       set_start_version(root, target)
       record(Map.put(outcome, "status", "restarting"))
@@ -512,9 +604,18 @@ defmodule HalC2.Upgrade do
 
       {:ok, result}
     else
-      failure(
-        "#{target} needs a restart (#{why}), and this MC was not started by bin/hal-c2-service, which would start it again."
-      )
+      :not_service ->
+        failure(
+          "#{target} needs a restart (#{why}), and this MC was not started by bin/hal-c2-service, which would start it again. " <>
+            "Remote updates that restart the MC need the background service: run `hal-c2-mc install` on the server machine."
+        )
+
+      {:launchers, {:error, reason}} ->
+        failure("Installing #{target}'s launchers failed: #{reason}")
+
+      {:error, reason} ->
+        Logger.warning("#{target} cannot run on this machine, so the MC stays on it: #{reason}")
+        failure("#{target} cannot run on this machine: #{reason}")
     end
   end
 
@@ -526,27 +627,22 @@ defmodule HalC2.Upgrade do
              {:error, "the bundle is not #{target}"},
          :ok <- copy_new(bundle, root, "lib"),
          :ok <- copy_new(bundle, root, "releases"),
-         :ok <- copy_new(bundle, root, "."),
-         :ok <- copy_bin(bundle, root) do
+         :ok <- copy_new(bundle, root, ".") do
       :ok
     end
   end
 
-  # Versioned directories never change once written; only missing ones are copied.
-  defp copy_new(bundle, root, "." = _dir) do
-    for erts <- Path.wildcard(Path.join(bundle, "erts-*")),
-        target = Path.join(root, Path.basename(erts)),
-        not File.exists?(target),
-        do: File.cp_r!(erts, target)
-
-    :ok
-  end
-
+  # Versioned directories never change once written; only missing ones are copied, each
+  # whole or not at all (`.partial` until it is), so an install cut off is redone.
   defp copy_new(bundle, root, dir) do
-    for entry <- File.ls!(Path.join(bundle, dir)),
-        source = Path.join([bundle, dir, entry]),
+    sources =
+      if dir == ".",
+        do: Path.wildcard(Path.join(bundle, "erts-*")),
+        else: for(entry <- File.ls!(Path.join(bundle, dir)), do: Path.join([bundle, dir, entry]))
+
+    for source <- sources,
         File.dir?(source),
-        target = Path.join([root, dir, entry]),
+        target = Path.join([root, dir, Path.basename(source)]) |> Path.expand(),
         not File.exists?(target) do
       staged = target <> ".partial"
       File.rm_rf!(staged)
@@ -559,9 +655,12 @@ defmodule HalC2.Upgrade do
     error -> {:error, Exception.message(error)}
   end
 
+  # The launchers of a bundle this MC checked, into its own release root.
+  # sobelow_skip ["Traversal.FileModule"]
   defp copy_bin(bundle, root) do
     for file <- Path.wildcard(Path.join([bundle, "bin", "*"])) do
       target = Path.join([root, "bin", Path.basename(file)])
+      File.mkdir_p!(Path.dirname(target))
       File.cp!(file, target <> ".new")
       File.rename!(target <> ".new", target)
     end
@@ -677,7 +776,12 @@ defmodule HalC2.Upgrade do
 
   # --- outcome -----------------------------------------------------------------------
 
+  # Only a restart still to happen carries `continueRunningThreads`: one that does not
+  # happen, or has, leaves no marks behind.
   defp record(outcome) do
+    outcome =
+      if outcome["status"] == "restarting", do: outcome, else: Map.delete(outcome, @continue)
+
     File.mkdir_p!(Path.dirname(outcome_path()))
     File.write!(outcome_path(), JSON.encode!(outcome))
 

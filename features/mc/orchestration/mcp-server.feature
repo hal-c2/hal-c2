@@ -313,11 +313,13 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent of "caller" asks for a device screenshot
     Then it fails saying no device is open in this thread and to open one first
 
+  # Upstream #26442: thread tools reach any thread of the MC, the caller's project being
+  # only where a listing starts (see "Thread tools take any thread in the environment").
   @mc
-  Scenario: Threads of other projects are invisible
+  Scenario: Threads of other projects can be read
     Given thread "other" belongs to project "elsewhere"
     When the agent of "caller" reads "other"
-    Then it fails with code "thread_not_found"
+    Then it receives thread "other"
 
   @mc
   Scenario Outline: Changing things needs a caller that is itself running
