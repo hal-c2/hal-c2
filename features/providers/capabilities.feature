@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/18309
+#   https://github.com/pingdotgg/t3code/pull/24899
 #   https://github.com/pingdotgg/t3code/pull/16750
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/orchestration.ex (steerable?, driver_for, follow-up queueing)
@@ -226,3 +227,28 @@ Feature: Provider capabilities
     When the user opens the composer for a thread working in "api"
     Then the dollar and slash menus offer "deploy"
     And Codex still shows its health problem
+
+  # Upstream #24899: every thread open sent every provider's skills for every folder; a
+  # folder's skills now come only when a composer asks for that folder.
+  @backlog @mc @shared
+  Scenario: A client is sent the skills of a folder only when it asks for that folder
+    Given Codex has scanned the skills of folders "api" and "web"
+    When the user opens the composer for a thread working in "api"
+    Then the client is sent the skills Codex found in "api"
+    And the client is not sent the skills of "web"
+
+  # Upstream #24899
+  @backlog @mc
+  Scenario: Two composers asking for one folder share its scan
+    Given a skill scan of folder "api" is still running
+    When another client asks for the skills of "api"
+    Then it receives the result of the running scan, not an empty list
+    And the scan finishes even if the client that started it disconnects
+
+  # Upstream #24899: a deleted worktree's scan never finished, so its composer retried every
+  # 10 seconds forever.
+  @backlog @shared @priority-low
+  Scenario: A composer stops asking for the skills of a folder that cannot be scanned
+    Given the folder of thread "t1" was deleted
+    When the user keeps the composer of "t1" open
+    Then the skills of the folder are asked for at most 3 times

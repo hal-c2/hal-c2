@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/15941
 #   apps/mobile/src/features/widgets/ (SubscriptionUsage and AgentActivity widgets)
 #   apps/mobile/modules/hal-c2-subscription-widget
 #   apps/mobile/app.config.ts (expo-widgets families, frequent updates, push updates)
@@ -25,6 +26,14 @@ Feature: Home screen and lock screen widgets
       | Codex    | Both    | session and weekly    |
       | Codex    | Session | session               |
       | Claude   | Weekly  | weekly                |
+
+  # Upstream #15941: widgets used the phone's palette even when the app used another appearance.
+  @backlog @mobile
+  Scenario: The usage widget follows the app's appearance
+    Given the phone is in light mode and the user set HAL-C2 to dark
+    When the usage widget is shown
+    Then it uses HAL-C2's dark palette
+    And it changes when the user changes HAL-C2's appearance
 
   @backlog @mobile
   Scenario Outline: The usage widget fits every widget size

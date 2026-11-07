@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24571
 #   https://github.com/pingdotgg/t3code/pull/21122
 #   https://github.com/pingdotgg/t3code/pull/20948
 #   https://github.com/pingdotgg/t3code/pull/15937 (dropped)
@@ -78,6 +79,15 @@ Feature: The MC's event store and projections
     Given the store's writer is busy
     When a thread is used for the first time
     Then it starts without waiting for the writer
+
+  # Upstream #24571: a brief lock on the database failed an otherwise healthy run.
+  @backlog @mc
+  Scenario: A provider event write retries after a brief database lock
+    Given a turn is running in the thread
+    And another writer holds the database lock past its timeout once
+    When the agent reports an event
+    Then the event is stored on a later try and the turn goes on
+    And a write that fails for any other reason fails at once
 
   # A write that waited a minute for a busy disk exited the runtime making it, and
   # the run was abandoned as one whose session had ended.

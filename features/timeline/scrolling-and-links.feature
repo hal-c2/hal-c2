@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19201
+#   https://github.com/pingdotgg/t3code/pull/16191
+#   https://github.com/pingdotgg/t3code/pull/17065
+#   https://github.com/pingdotgg/t3code/pull/24622
 #   https://github.com/pingdotgg/t3code/pull/19627
 #   https://github.com/pingdotgg/t3code/pull/18423
 #   https://github.com/pingdotgg/t3code/pull/19663
@@ -43,6 +47,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Timeline.qml (earlier turns load at the top, another thread opens at its end)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (load earlier activity control and its error)
 #   https://github.com/pingdotgg/t3code/pull/15059
+#   https://github.com/pingdotgg/t3code/pull/25371
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -72,6 +77,14 @@ Feature: Moving through a thread and following links
     When the user scrolls up to an earlier message
     Then the view stays on that message while the reply grows
     And the user is offered a way to scroll to the end
+
+  # Upstream #17065: scrolling over an inline HTML page moved the thread without the view noticing,
+  # so following snapped it back to the end.
+  @shared @backlog @priority-low
+  Scenario: Scrolling up over an inline HTML page stops the view from following
+    Given the agent is writing its reply below an inline HTML page
+    When the user scrolls up with the pointer over the page
+    Then the view stays where the user scrolled while the reply grows
 
   @shared @backlog-mobile @priority-high
   Scenario: The user returns to the end of the thread
@@ -106,6 +119,19 @@ Feature: Moving through a thread and following links
     When the user opens another thread
     Then the other thread shows its latest output
     And the composer is not resting
+
+  # Upstream #24622: a tall reply that arrived while the user was away left the switched thread,
+  # and "Scroll to end", hundreds of pixels short of the end.
+  @shared @backlog @priority-high
+  Scenario Outline: <action> lands on the real end of a thread with a tall new reply
+    Given "Fix checkout" got a long reply while the user was in another thread
+    When <action>
+    Then the end of the reply is in view, with no "Scroll to end" left to press
+
+    Examples:
+      | action                                               |
+      | the user switches to "Fix checkout"                  |
+      | the user presses "Scroll to end" in "Fix checkout"   |
 
   # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
   @shared @backlog-desktop @backlog-mobile @priority-high
@@ -263,6 +289,14 @@ Feature: Moving through a thread and following links
     When the user chooses it
     Then the fourth turn is shown
 
+  # Upstream #16191: the turn index lit turns far off screen from positions it had measured earlier.
+  @desktop @backlog @priority-low
+  Scenario: The turn index marks only the turns on screen
+    Given the thread has ten turns
+    And the third and fourth turns are on screen
+    Then the turn index marks the third and fourth turns and no other
+    And moving to the next turn shows the fifth
+
   @desktop @backlog
   Scenario: The turn index can be driven from the keyboard
     Given the thread has ten turns
@@ -400,6 +434,20 @@ Feature: Moving through a thread and following links
       | open it in the editor  | "src/cart.ts" opens in the user's editor |
       | copy its full path     | the absolute path is on the clipboard    |
 
+  # Upstream #19201: a Windows path the agent wrote with forward slashes was copied that way,
+  # which Windows file dialogs refuse.
+  @backlog @shared @mobile @priority-low
+  Scenario Outline: A copied file path uses the separators of the machine that holds the file
+    Given the thread's MC runs on <host>
+    And the agent's reply links to the file "<link>"
+    When the user copies its full path
+    Then "<copied>" is on the clipboard
+
+    Examples:
+      | host    | link                      | copied                    |
+      | Windows | C:/Users/ana/shop/cart.ts | C:\Users\ana\shop\cart.ts |
+      | Linux   | /home/ana/shop/cart.ts    | /home/ana/shop/cart.ts    |
+
   # Upstream #19627: home-relative file links match a Windows home folder in any case.
   @backlog @shared @priority-low
   Scenario: A home-relative file link resolves on Windows whatever the folder's case
@@ -426,6 +474,22 @@ Feature: Moving through a thread and following links
       | is unchanged               | the earlier reply is shown with the sentence highlighted                     |
       | has been edited            | the earlier reply is shown with "The quoted text has changed"                |
       | is no longer in the thread | the quote is still readable and "Could not open the cited response" is shown |
+
+  # Upstream #25371: a citation to a reply older than the loaded history loads history until it finds it.
+  @shared @backlog
+  Scenario Outline: Following a citation to a reply older than what is loaded
+    Given the user's message cites a sentence from a reply older than the loaded history
+    And <history>
+    When the user follows the citation
+    Then <result>
+
+    Examples:
+      | history                                        | result                                                              |
+      | the reply is a few pages back                  | older history loads until the reply is shown, highlighted           |
+      | the thread has no older history                | the cited response is shown as unavailable                          |
+      | loading older history fails                    | "Could not load the cited response" is shown                        |
+      | the reply is further back than 20 pages        | loading stops and the cited response is shown as unavailable        |
+      | the user follows another link while it loads   | loading stops and the citation does not take the user back          |
 
   # Upstream #15703: a quote in a sent message opens to what it quoted and what the user said.
   @shared @backlog

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/20054
+#   https://github.com/pingdotgg/t3code/pull/23135
+#   https://github.com/pingdotgg/t3code/pull/23814
 #   https://github.com/pingdotgg/t3code/pull/20299
 #   https://github.com/pingdotgg/t3code/pull/21417
 #   https://github.com/pingdotgg/t3code/pull/21474
@@ -12,6 +15,10 @@
 #   https://github.com/pingdotgg/t3code/pull/17761
 #   https://github.com/pingdotgg/t3code/pull/17764
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/22638
+#   https://github.com/pingdotgg/t3code/pull/25238
+#   https://github.com/pingdotgg/t3code/pull/25401
+#   https://github.com/pingdotgg/t3code/pull/25830
 #   docs/user/composer.md (Queued messages, Follow-up behavior)
 #   docs/user/updating.md (Continue threads after restarts)
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch, run.interrupt, queue.resume, queued-run.reorder, queued-run.cancel, queued-run.edit, queued-message.promote-to-steer, provider-session.detach, run.created, run.updated, run_interrupt_request, run_interrupt_result)
@@ -51,6 +58,13 @@ Feature: Runs, interruptions and the queue
     When the user interrupts the turn
     Then the turn stops
     And the timeline marks the run as interrupted
+
+  # Upstream #25830: a stopped run read as a failure.
+  @backlog @shared @priority-low
+  Scenario: A run the user or an agent stopped is not shown as a failure
+    Given the run was stopped by the user, a goal, a steer or the agent that delegated it
+    When the user looks at the timeline
+    Then "Run interrupted" is shown as a stop, not as an error
 
   @mc
   Scenario: A message sent while the agent works waits its turn
@@ -256,11 +270,29 @@ Feature: Runs, interruptions and the queue
       | the task "watch tests"             | Waiting on background task    |
       | the tasks "watch tests" and "lint" | Waiting on 2 background tasks |
 
+  # Upstream #20054: a long task description hid the links to the subagents' threads.
+  @backlog @desktop @priority-low
+  Scenario: A long background task description keeps its subagent links in reach
+    Given the turn has finished and left a subagent running with a long description
+    Then the notice shows the description below its title
+    And the link to the subagent's thread is still shown
+    And Stop stays beside the notice's title
+
   @backlog @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
     Then the thread shows no notice about background work
     And stopping the turn is the way to stop them
+
+  # Upstream #23814: a command the MC had finished still showed as running from the client's
+  # saved copy of the thread, and Stop did not clear it.
+  @backlog @shared
+  Scenario: Stop clears commands the MC already finished
+    Given the client's saved copy of "Fix checkout" shows "npm test" running
+    And the MC finished "npm test" long ago
+    When the user presses Stop in "Fix checkout"
+    Then "npm test" shows as finished, also after the app is reopened
+    And work that is still running stays shown as running
 
   @backlog @desktop @priority-high
   Scenario: Stopping background work can be asked again
@@ -614,6 +646,14 @@ Feature: Runs, interruptions and the queue
     Then the answer to "/usage-limits" is the notice shown
     And the composer no longer says there are other notices
 
+  # Upstream #25238: switching threads while a dismissed notice was still going away brought it back.
+  @backlog @desktop @priority-low
+  Scenario: A notice dismissed just before switching threads stays dismissed
+    Given the thread shows the error "Rate limited"
+    When the user dismisses the error and at once opens another thread
+    And the user comes back to the thread
+    Then the error is not shown
+
   # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
   # actions; errors, warnings and urgent notices now come first, activity behind them.
   @backlog @desktop
@@ -646,3 +686,117 @@ Feature: Runs, interruptions and the queue
     Given a thread's agent waits for the thread "Add search" to finish
     And the agent also runs a command
     Then the thread shows it is working
+
+  # Upstream #22638: automation prompts are long runbooks repeated on every run; they fold to one line.
+  @backlog @shared
+  Scenario Outline: A message an automation sent is folded to one line
+    Given <task> sent its prompt into the thread
+    When the user looks at the thread
+    Then the message is a one-line bubble reading "Automation" and <label>
+
+    Examples:
+      | task                                                         | label                       |
+      | the scheduled task "PR dispatcher"                           | "PR dispatcher"             |
+      | a scheduled task since deleted, with "Triage new issues" first | "Triage new issues"       |
+
+  # Upstream #22638: opening the fold shows the whole prompt and only then its actions.
+  @backlog @shared
+  Scenario: Opening an automation message shows its prompt and actions
+    Given the scheduled task "PR dispatcher" sent its prompt into the thread
+    When the user opens the folded message
+    Then the whole prompt is shown
+    And the user can open the automation, see when it ran, edit from here and copy the prompt
+    And opening it again folds it back to one line
+
+  # Upstream #22638: find reaches into folded automation messages.
+  @backlog @shared
+  Scenario: Finding text inside a folded automation message opens it
+    Given a folded automation message whose prompt mentions "label events"
+    When the user finds "label events" in the thread
+    Then the message opens with the match shown
+
+  # Upstream #23135: a few messages from other agents pushed the user's own last message off the
+  # screen; they fold like automation prompts.
+  @backlog @shared
+  Scenario Outline: A message another agent sent is folded to one line
+    Given <sender> sent "Review notes:" and more lines into the thread
+    When the user looks at the thread
+    Then the message is a one-line bubble reading <label> and "Review notes:"
+
+    Examples:
+      | sender                                      | label                  |
+      | the agent of the thread "Review the 2.4 notes" | "Review the 2.4 notes" |
+      | an agent whose thread is not known          | "Agent"                |
+
+  @backlog @shared
+  Scenario: Opening another agent's message shows it whole and leads to its thread
+    Given the agent of "Review the 2.4 notes" sent a message into the thread
+    When the user opens the folded message
+    Then the whole message is shown with its time, a copy action and "Open thread"
+    And "Open thread" opens "Review the 2.4 notes"
+
+  @backlog @shared @priority-low
+  Scenario: Finding text inside a folded agent message opens it
+    Given a folded message from another agent mentions "release blocker"
+    When the user finds "release blocker" in the thread
+    Then the message opens with the match shown
+
+  @backlog @shared @priority-low
+  Scenario: Messages HAL-C2 sends stay whole
+    Given a delegated task's result was sent into the thread by HAL-C2
+    Then the message is shown whole, not folded
+
+  # Upstream #22638: older messages carried the schedule as a text prefix.
+  @backlog @shared @priority-low
+  Scenario: An older automation message is shown without its trigger prefix
+    Given a message from before automations were marked starts "[Triggered by schedule task: PR dispatcher]"
+    When the user opens it
+    Then the prompt is shown without that prefix
+
+  # Upstream #25401: thread state stacked as cards over the composer, showing one and hiding the
+  # rest. The end of the timeline now reads past, now, next; the composer keeps what affects sending.
+  Rule: The end of the timeline says what is happening now and what comes next
+
+    @backlog @desktop
+    Scenario Outline: What a thread is doing shows at the end of its timeline
+      Given <state>
+      When the user looks at the thread
+      Then the end of the timeline shows it, with <actions>
+      And nothing stacks over the composer
+
+      Examples:
+        | state                                         | actions                              |
+        | a subagent needs the user's input             | Open approval or Open question       |
+        | a finished turn left "vp run dev" running     | Stop                                 |
+        | the thread is pursuing a goal                 | the goal's usage and its actions     |
+        | the thread's messages are still loading       | no actions                           |
+
+    @backlog @desktop
+    Scenario: Queued messages show as Up next after the thread's status
+      Given two messages are queued behind the running turn
+      When the user looks at the thread
+      Then the end of the timeline shows them under "Up next", after the thread's status
+      And each can be edited, sent now or steered, removed or moved
+
+    @backlog @desktop @priority-low
+    Scenario: The agent's task list is in the work log where it wrote it
+      Given the agent wrote a task list and has done 2 of its 5 steps
+      When the user looks at the work log
+      Then the update reads "Tasks 2/5" with the current step, and opens to every step
+
+    @backlog @desktop
+    Scenario Outline: What affects sending stays with the composer
+      Given <state>
+      Then the composer says so
+
+      Examples:
+        | state                                    |
+        | the environment is offline or reconnecting |
+        | the branch changed under the thread      |
+        | a usage limit was reached                |
+
+    @backlog @desktop @priority-low
+    Scenario: Scroll to end names what waits at the end
+      Given the end of the timeline is out of view
+      And the thread needs the user's input and has 2 queued messages
+      Then "Scroll to end" reads "Needs input · 2 queued"

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/19581
 #   https://github.com/pingdotgg/t3code/pull/18581
 #   https://github.com/pingdotgg/t3code/pull/16816
 #   https://github.com/pingdotgg/t3code/pull/14314
@@ -163,6 +164,14 @@ Feature: Models
     When the MC would refresh the manifest
     Then no download is made
     And the bundled or last cached manifest is used
+
+  # Upstream #19581: with update checks off, a Homebrew install still asked Homebrew's registry.
+  @backlog @priority-low
+  Scenario: A Homebrew-installed provider is not looked up with provider update checks off
+    Given the user turned off provider update checks
+    And a provider is installed through Homebrew
+    When the MC works out how that provider is installed and updated
+    Then Homebrew's registry is not asked about it
 
   @backlog
   Scenario: The manifest names a provider's default model

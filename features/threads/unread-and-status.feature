@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24610
+#   https://github.com/pingdotgg/t3code/pull/21500
 #   https://github.com/pingdotgg/t3code/pull/20996
 #   https://github.com/pingdotgg/t3code/pull/15607
 #   https://github.com/pingdotgg/t3code/pull/15430
@@ -24,6 +26,8 @@
 #   https://github.com/pingdotgg/t3code/pull/15114
 #   https://github.com/pingdotgg/t3code/pull/15029
 #   https://github.com/pingdotgg/t3code/pull/15034
+#   https://github.com/pingdotgg/t3code/pull/25368
+#   https://github.com/pingdotgg/t3code/pull/21394
 
 Feature: Unread and status in the thread list
   Each thread says whether it needs the user, is busy, or has finished work the user has
@@ -49,6 +53,36 @@ Feature: Unread and status in the thread list
       | woke early from a snooze               | Woke     |
       | finished work the user has not seen    | Done     |
 
+  # Upstream #21394: the phone's rows name the same states as the desktop's.
+  @backlog @mobile @priority-high
+  Scenario Outline: A phone's thread row names its state
+    Given "Build search" <state>
+    When the user looks at the thread list on a phone
+    Then the row for "Build search" reads "<word>"
+
+    Examples:
+      | state                               | word    |
+      | has an agent working                | Working |
+      | has a queued turn waiting to start  | Waiting |
+      | woke early from a snooze            | Woke    |
+
+  # Upstream #21394: Working counts from when the run started, Waiting from when the last
+  # one finished, and only the time changes, once a second.
+  @backlog @shared
+  Scenario: A busy row says how long it has been working
+    Given an agent started working in "Build search" 26 seconds ago
+    When the user looks at the thread list
+    Then the row for "Build search" reads "Working 26s"
+    And a second later it reads "Working 27s"
+
+  # Upstream #21394: a wake that passes while the thread is open is seen, so the row does not
+  # say Woke when the user goes back.
+  @backlog @desktop @mobile
+  Scenario: A thread open when its snooze ends does not say Woke afterwards
+    Given the user has opened "Build search", which is snoozed until 10:30
+    When it is 10:30 and the user goes back to the thread list
+    Then the row for "Build search" does not read "Woke"
+
   @tui
   Scenario Outline: The terminal thread list names the thread's state
     Given "Build search" <state>
@@ -70,6 +104,15 @@ Feature: Unread and status in the thread list
     Given "Build search" has an agent working and is waiting for an approval
     When the user looks at the thread list
     Then the row for "Build search" reads "Approval"
+
+  # Upstream #21500: a turn blocked only on another thread showed Working.
+  @backlog @shared @mobile @mc
+  Scenario: A turn waiting only on another thread reads Waiting
+    Given the agent of "Build search" is waiting on a task it delegated and doing nothing else
+    When the user looks at the thread list
+    Then the row for "Build search" reads "Waiting"
+    And it reads "Working" again once the task ends and the turn carries on
+    And an approval or a question still wins over Waiting
 
   # Upstream #15430: a question the agent asked without waiting for the answer showed Input while
   # it kept working; it shows Input once the run ends, and a secret request still shows Input at once.
@@ -187,6 +230,15 @@ Feature: Unread and status in the thread list
     Given "Build search" finished work the user has not seen
     When the user opens "Build search"
     Then the environment is told "Build search" was seen up to its latest work
+
+  # Upstream #25368: a visit to one thread delayed the next thread's visit by up to ten
+  # seconds, and leaving that thread sooner left it unread.
+  @backlog @desktop @mobile @priority-high
+  Scenario: Switching straight to another thread marks it seen at once
+    Given "Build search" and "Fix login" both finished work the user has not seen
+    When the user opens "Build search" and then switches to "Fix login" within a second
+    And the user leaves "Fix login" straight away
+    Then the environment is told both threads were seen up to their latest work
 
   @mc
   Scenario: A late visit from another device does not make a thread unread again
@@ -310,11 +362,12 @@ Feature: Unread and status in the thread list
     When the user is in another thread
     Then its row reads Done and unread, not Waiting
 
+  # Upstream #24610: a monitor waits only when the agent marks it as work it waits on.
   @backlog @shared
   Scenario: A left-over dev server does not read as waiting
     Given an agent ended its turn leaving a dev server running
     Then the status strip reads "Running: <command>" with a still dot
-    And only subagents and monitors read "Waiting on" with a pulse
+    And only subagents and work the agent waits on read "Waiting on" with a pulse
     And Stop is still offered
 
   @backlog @mc @priority-high

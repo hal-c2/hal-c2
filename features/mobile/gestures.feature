@@ -1,5 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23205
 #   https://github.com/pingdotgg/t3code/pull/17648
+#   https://github.com/pingdotgg/t3code/pull/21401
 #   apps/mobile/src/features/threads/thread-list-v2-items.tsx (swipe actions, long-press menu)
 #   apps/mobile/src/features/threads/threadListV2.ts (drag between sections)
 #   apps/mobile/src/state/thread-order.ts, apps/mobile/src/features/threads/threadOrder.ts (drop labels, arrangement held until confirmed)
@@ -57,6 +59,15 @@ Feature: Touch gestures on a phone
     Given the environment predates settling threads
     When the user swipes an active thread to reveal its actions
     Then the main action offered is "Archive"
+
+  # Upstream #21401: the row menu offers Archive on every environment, settling or not.
+  @backlog @mobile @priority-high
+  Scenario: Every thread's menu offers Archive
+    Given the environment can settle threads
+    When the user opens the menu of an active thread
+    Then "Archive" is offered
+    When the user chooses "Archive"
+    Then the thread is archived
 
   @backlog @mobile
   Scenario Outline: Snoozing by swipe offers preset times
@@ -322,6 +333,19 @@ Feature: Touch gestures on a phone
       | task                                              | action  |
       | a task waiting to be sent when the phone reconnects | Delete  |
       | a task that was written but not started           | Discard |
+
+  # Upstream #23205: drafts and unsent tasks had no swipe action.
+  @backlog @mobile @priority-low
+  Scenario Outline: Swiping a draft or an unsent task offers to remove it
+    Given the list holds <row>
+    When the user swipes it all the way across
+    Then the user is asked to confirm "<action>"
+    And once confirmed the row slides out of the list
+
+    Examples:
+      | row                                                 | action  |
+      | a task that was written but not started             | Discard |
+      | a task waiting to be sent when the phone reconnects | Delete  |
 
   @backlog @mobile
   Scenario: A custom snooze choice is never applied to a different thread
