@@ -382,9 +382,9 @@ defmodule HalC2.Subprocess.Durable do
     for dir <- dirs(), entry = read(dir), into: %{}, do: {entry.thread, entry}
   end
 
-  defp dirs do
-    case File.ls(root()) do
-      {:ok, names} -> Enum.map(names, &Path.join(root(), &1))
+  defp dirs(root \\ root()) do
+    case File.ls(root) do
+      {:ok, names} -> Enum.map(names, &Path.join(root, &1))
       {:error, _} -> []
     end
   end
@@ -476,11 +476,12 @@ defmodule HalC2.Subprocess.Durable do
   end
 
   @doc """
-  Stops every program here, as `stop/2` does: no MC is coming back to them (the
-  service was removed), and waiting out their watch would keep them working for minutes.
+  Stops every program under `root` (this MC's by default), as `stop/2` does: no MC
+  is coming back to them (the service was removed), and waiting out their watch would
+  keep them working for minutes.
   """
-  def stop_all do
-    Enum.each(dirs(), &stop/1)
+  def stop_all(root \\ root()) do
+    Enum.each(dirs(root), &stop/1)
   end
 
   @doc "Up to the last `bytes` the program of `dir` wrote to stderr, if it was kept."

@@ -894,9 +894,17 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   end
 
   # As `<mc> uninstall` does it, on a service manager that only records what it is told.
-  step "the user stops the MC without restarting it", context do
-    context = context |> stop_mc() |> service_manager()
-    assert {:ok, _} = HalC2.Service.command(["uninstall"])
+  step "the user stops the MC without restarting it", %{service_home: _} = context do
+    context = stop_mc(context)
+    assert {:ok, "Background service removed."} = HalC2.Service.command(["uninstall"])
+    refute HalC2.Service.status()["installed"]
+    context
+  end
+
+  step "the user removes the background service while none is installed", context do
+    context = service_manager(context)
+    refute HalC2.Service.status()["installed"]
+    assert {:ok, "Background service removed."} = HalC2.Service.command(["uninstall"])
     context
   end
 

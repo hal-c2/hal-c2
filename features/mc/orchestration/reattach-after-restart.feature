@@ -337,9 +337,16 @@ Feature: Reattaching to provider programs after a restart
         | acpRegistry |
 
     Scenario: Stopping the MC for good stops its programs
-      Given thread "t1" has a running turn on "codex"
+      Given the MC runs as a service
+      And thread "t1" has a running turn on "codex"
       When the user stops the MC without restarting it
       Then no program of "t1" is left running
+
+    Scenario: Removing a service that is not installed leaves a running MC's programs alone
+      Given thread "t1" has a running turn on "codex"
+      When the user removes the background service while none is installed
+      Then the provider process of "t1" is the one that was running
+      And the run of "t1" is still running
 
     Scenario Outline: What a provider wrote while the MC was down reaches the thread once, in order
       Given thread "t1" has a running turn on "<provider>"
