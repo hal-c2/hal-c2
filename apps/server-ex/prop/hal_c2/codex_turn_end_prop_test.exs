@@ -12,7 +12,9 @@ defmodule HalC2.CodexTurnEndPropTest do
   it again — an interrupted turn, or a dead stream, which fails it. After a
   completed or failed turn Codex itself reported, its subagents carry on in
   their own threads and their later reports land; a report for one that had
-  already ended changes nothing.
+  already ended changes nothing. A stream that dies after such a reported
+  end, with no turn active, fails the subagents that turn left running and
+  leaves the run as the turn ended it.
 
   The turn runs on the fake app-server in `test/support/fake_codex.py`, which
   leaves a turn saying "wait" open; the test then plays Codex's side itself.
@@ -156,7 +158,10 @@ defmodule HalC2.CodexTurnEndPropTest do
         )
 
       :reported ->
-        frequency([{1, {:call, __MODULE__, :observe, []}}] ++ reports)
+        frequency(
+          [{1, {:call, __MODULE__, :observe, []}}, {2, {:call, __MODULE__, :end_stream, []}}] ++
+            reports
+        )
 
       :ended ->
         {:call, __MODULE__, :observe, []}
@@ -170,6 +175,7 @@ defmodule HalC2.CodexTurnEndPropTest do
     do: state.phase != :ended and n in 1..length(state.subs) and Map.has_key?(@shown, reported)
 
   def precondition(state, {:call, _, :end_turn, [_kind]}), do: state.phase == :running
+  def precondition(state, {:call, _, :end_stream, []}), do: state.phase == :reported
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :spawn, _}),
@@ -200,6 +206,11 @@ defmodule HalC2.CodexTurnEndPropTest do
         %{state | phase: :ended, run: "failed", subs: settle(state, "failed")}
     end
   end
+
+  # The stream dies after Codex reported the turn's end: the run keeps how
+  # the turn ended, and subagents it left running fail with the stream.
+  def next_state(state, _result, {:call, _, :end_stream, []}),
+    do: %{state | phase: :ended, subs: settle(state, "failed")}
 
   def next_state(state, _result, _call), do: state
 
@@ -238,9 +249,7 @@ defmodule HalC2.CodexTurnEndPropTest do
 
   # The turn ends: as Codex reports it, or with its app-server dying mid-turn.
   def end_turn(:stream) do
-    {_, runtime} = runtime()
-    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
-    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    kill_app_server()
     await_until(fn -> observed().run != "running" end, "the run never ended")
     settle_runtime()
     observed()
@@ -259,6 +268,20 @@ defmodule HalC2.CodexTurnEndPropTest do
 
     notify("turn/completed", %{"turn" => turn})
     await_until(fn -> observed().run != "running" end, "the run never ended")
+    settle_runtime()
+    observed()
+  end
+
+  # The app-server dies after Codex reported the turn's end, while subagents
+  # that turn left running carry on in their own threads.
+  def end_stream do
+    kill_app_server()
+
+    await_until(
+      fn -> Enum.all?(observed().subs, &(&1 != "running")) end,
+      "the subagents never settled"
+    )
+
     settle_runtime()
     observed()
   end
@@ -289,6 +312,13 @@ defmodule HalC2.CodexTurnEndPropTest do
   defp notify(method, params) do
     {pid, runtime} = runtime()
     send(pid, {:json_rpc, runtime.conn, {:notification, method, params}})
+  end
+
+  # The fake app-server dies without ending anything, as a crashed Codex does.
+  defp kill_app_server do
+    {_, runtime} = runtime()
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
   end
 
   defp settle_runtime do

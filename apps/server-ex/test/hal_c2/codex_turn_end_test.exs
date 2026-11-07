@@ -83,7 +83,84 @@ defmodule HalC2.CodexTurnEndTest do
     end)
   end
 
+  # A subagent a reported turn left running carries on only while its
+  # app-server does: when the stream later ends with no turn active, nothing
+  # can report it again, so it fails then — and the run keeps how its turn
+  # was reported.
+  test "a stream that ends after its turn was reported fails subagents it left running",
+       %{context: context, run: run} do
+    {pid, _} = report_turn_end(context, "completed")
+    :ok = GenServer.call(pid, :settle)
+
+    assert [%{"status" => "running"}] =
+             context |> World.state(@thread) |> StreamState.list("subagent")
+
+    kill_app_server(context)
+
+    run_id = run["id"]
+
+    World.await_state(context, @thread, fn state ->
+      match?(
+        [%{"status" => "failed", "runId" => other}] when other == run_id,
+        StreamState.list(state, "subagent")
+      )
+    end)
+
+    World.await_runs(context, @thread, ["completed"])
+
+    # The thread takes its next message on a fresh app-server.
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["completed", "completed"])
+  end
+
+  # The same end by non-protocol output instead of an exit, again with no
+  # turn active: the subagent the reported turn left running fails.
+  test "non-protocol output after its turn was reported fails subagents it left running",
+       %{context: context, run: run} do
+    {pid, _} = report_turn_end(context, "failed")
+    :ok = GenServer.call(pid, :settle)
+
+    assert [%{"status" => "running"}] =
+             context |> World.state(@thread) |> StreamState.list("subagent")
+
+    {pid, runtime} = World.codex_runtime(context, @thread)
+    send(pid, {:json_rpc, runtime.conn, {:invalid, "this is not a protocol message"}})
+
+    run_id = run["id"]
+
+    World.await_state(context, @thread, fn state ->
+      match?(
+        [%{"status" => "failed", "runId" => other}] when other == run_id,
+        StreamState.list(state, "subagent")
+      )
+    end)
+
+    World.await_runs(context, @thread, ["failed"])
+
+    # The thread takes its next message on a fresh app-server.
+    context = World.post_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["failed", "completed"])
+  end
+
   # --- Codex's side --------------------------------------------------------------
+
+  # Codex reports its turn over; the run reads as it ended and the subagent
+  # it left running is still running. Returns what `codex_runtime` does.
+  defp report_turn_end(context, status) do
+    {pid, runtime} = World.codex_runtime(context, @thread)
+
+    turn =
+      %{"id" => runtime.turn.native_turn_id, "status" => status}
+      |> then(fn turn ->
+        if status == "failed",
+          do: Map.put(turn, "error", %{"message" => "the turn failed"}),
+          else: turn
+      end)
+
+    World.codex_notify(context, @thread, "turn/completed", %{"turn" => turn})
+    World.await_runs(context, @thread, [status])
+    {pid, runtime}
+  end
 
   defp spawn_subagent(context) do
     {_, runtime} = World.codex_runtime(context, @thread)

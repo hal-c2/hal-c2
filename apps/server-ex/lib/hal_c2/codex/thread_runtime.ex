@@ -730,11 +730,20 @@ defmodule HalC2.Codex.ThreadRuntime do
     state = %{state | conn: nil}
 
     # A stream the MC itself ends while shutting down is not the provider failing the
-    # turn: the run stays as it is for the next boot's recovery to settle.
+    # turn: the run stays as it is for the next boot's recovery to settle. With no
+    # turn active, subagents an earlier turn left running still end with the stream:
+    # the app-server that held their threads is gone, so nothing will report them.
     state =
-      if state.turn && not HalC2.Orchestration.Recovery.stopping?(),
-        do: end_turn(state, "failed", "Codex exited unexpectedly", :ended),
-        else: state
+      cond do
+        HalC2.Orchestration.Recovery.stopping?() ->
+          state
+
+        state.turn ->
+          end_turn(state, "failed", "Codex exited unexpectedly", :ended)
+
+        true ->
+          finish_subagents(state, "failed")
+      end
 
     # Its terminals went with it (and, when stopping, are left marked for the next boot).
     state =
@@ -761,10 +770,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     stop_conn(conn)
     state = %{state | conn: nil, native_thread_id: nil}
 
+    # As when the app-server exits, subagents an earlier turn left running end
+    # with the stream even when no turn is active.
     state =
       if state.turn,
         do: end_turn(state, "failed", "Codex sent output that is not a protocol message", :ended),
-        else: state
+        else: finish_subagents(state, "failed")
 
     {:noreply, end_background(state, "failed")}
   end
@@ -2236,21 +2247,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     # completed turn Codex itself reported leaves them carrying on in their
     # own threads, settled by Codex's own reports of them.
     state =
-      if status == "interrupted" or stream == :ended do
-        subagents =
-          for {thread, entry} <- Map.get(state, :subagents, %{}), into: %{} do
-            if entry.done do
-              {thread, entry}
-            else
-              sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, status, entry[:final])
-              {thread, %{entry | sub: sub, done: true}}
-            end
-          end
-
-        Map.put(state, :subagents, subagents)
-      else
-        state
-      end
+      if status == "interrupted" or stream == :ended,
+        do: finish_subagents(state, status),
+        else: state
 
     # A usage-limit stop whose reset Codex had not named learns it from a later
     # report (`notification("account/rateLimits/updated", ...)`).
@@ -2281,6 +2280,22 @@ defmodule HalC2.Codex.ThreadRuntime do
     state
     |> Map.merge(%{turn: nil, items: %{}, requests: %{}, interrupting: nil})
     |> Map.put(:last_turn_status, status)
+  end
+
+  # Ends every subagent still running, each in its own thread; ones that had
+  # already ended keep how they ended.
+  defp finish_subagents(state, status) do
+    subagents =
+      for {thread, entry} <- Map.get(state, :subagents, %{}), into: %{} do
+        if entry.done do
+          {thread, entry}
+        else
+          sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, status, entry[:final])
+          {thread, %{entry | sub: sub, done: true}}
+        end
+      end
+
+    Map.put(state, :subagents, subagents)
   end
 
   # Tool calls Codex marked persistent outlive a completed turn: they leave its
