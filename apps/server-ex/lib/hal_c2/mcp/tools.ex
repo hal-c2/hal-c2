@@ -102,7 +102,7 @@ defmodule HalC2.Mcp.Tools do
     do: HalC2.Orchestration.Delegation.task_status(caller.thread_id, id)
 
   def call("task_cancel", %{"taskId" => id}, caller),
-    do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id)
+    do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id, requested_by: "agent")
 
   # The browser tools are the credential's preview capability to give: a
   # credential minted while the user withheld agent browser access (or while

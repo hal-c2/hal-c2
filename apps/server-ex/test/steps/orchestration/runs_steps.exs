@@ -1414,6 +1414,37 @@ defmodule HalC2.Steps.Orchestration.Runs do
     agent_interrupt(context, %{"reason" => reason})
   end
 
+  # The run whose outcome is read is the delegated child's, cancelled by the
+  # agent of "t1" (whose own turn is the scenario's running turn).
+  step "an agent cancels its delegated task", context do
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, context.thread, "delegate_task", %{
+               "task" => "wait for it",
+               "mode" => "async"
+             })
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "subagent"), &(&1["id"] == task_id))
+      end)
+
+    task = Enum.find(HalC2.StreamState.list(state, "subagent"), &(&1["id"] == task_id))
+
+    context = put_in(context, [:threads, "delegated-child"], task["childThreadId"])
+
+    child =
+      World.await_state(context, "delegated-child", fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+      end)
+
+    run = Enum.find(HalC2.StreamState.list(child, "run"), &(&1["status"] == "running"))
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             World.mcp_tool(context, context.thread, "task_cancel", %{"taskId" => task_id})
+
+    context |> Map.put(:thread, "delegated-child") |> Map.put(:running, run["id"])
+  end
+
   step "the provider ends the run with no stop asked for", context do
     notify(context, "turn/completed", %{
       "turn" => %{"id" => native_turn(context), "status" => "interrupted"}

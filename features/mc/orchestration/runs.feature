@@ -570,6 +570,7 @@ Feature: Runs and turns
       | the user presses Stop                                   | Stopped by user                      |
       | an agent stops it through HAL-C2's tools                | Stopped by an agent                  |
       | an agent stops it through HAL-C2's tools with "wrong branch" | Stopped by an agent: wrong branch |
+      | an agent cancels its delegated task                          | Stopped by an agent                  |
       | the provider ends the run with no stop asked for        | Stopped by the provider              |
 
   @mc @priority-low
