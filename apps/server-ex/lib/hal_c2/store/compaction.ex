@@ -81,6 +81,21 @@ defmodule HalC2.Store.Compaction do
   end
 
   @doc """
+  How many events compacting every thread stream would remove now, read without
+  writing anything, as the doctor surveys a store before it repairs it.
+  """
+  @spec removable(String.t()) :: non_neg_integer
+  def removable(path) do
+    importing = HalC2.Import.PreviousInstall.unfinished(path)
+
+    for {id, _} <- Store.stream_ends(path, "thread"),
+        not MapSet.member?(importing, id),
+        {:delete, _} <- plan(path, id),
+        reduce: 0,
+        do: (n -> n + 1)
+  end
+
+  @doc """
   What compacting the stream `stream_id`, through `through`, would do: the ops
   `HalC2.Store.compact/2` applies, each rewrite ahead of the deletes it absorbs.
   """

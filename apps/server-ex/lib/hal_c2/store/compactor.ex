@@ -6,9 +6,9 @@ defmodule HalC2.Store.Compactor do
   writer is never held long. A store made before that waits for the doctor
   (`HalC2.Doctor`).
 
-  Options: `:after` and `:every` in ms (`nil` never runs), `:store`, and `:notify`, a
-  pid sent `{:compacted, report}` after each run and `{:reclaimed, free_bytes}` after
-  each step of giving space back.
+  Options: `:after` and `:every` in ms (`nil` never runs), `:store`, `:pages` and
+  `:gap` for each step of giving space back, and `:notify`, a pid sent
+  `{:compacted, report}` after each run and `{:reclaimed, free_bytes}` after each step.
   """
 
   use GenServer
@@ -34,6 +34,7 @@ defmodule HalC2.Store.Compactor do
       every:
         Keyword.get(opts, :every, Application.get_env(:hal_c2, :store_compact_every_ms, @every)),
       gap: Keyword.get(opts, :gap, @reclaim_gap),
+      pages: Keyword.get(opts, :pages, @pages),
       notify: Keyword.get(opts, :notify)
     }
 
@@ -56,7 +57,7 @@ defmodule HalC2.Store.Compactor do
   end
 
   def handle_info(:reclaim, state) do
-    {:ok, free} = Store.reclaim(state.store, @pages)
+    {:ok, free} = Store.reclaim(state.store, state.pages)
     tell(state, {:reclaimed, free})
     if free > 0, do: later(:reclaim, state.gap)
     {:noreply, state}
