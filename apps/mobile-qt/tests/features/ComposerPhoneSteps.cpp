@@ -688,6 +688,42 @@ const Steps phoneSteps([] {
     expect(world.state(S("turn")).toMap().value(S("outbox")).toList().isEmpty(), S("it waits below the history"));
   });
 
+  // The keyboard up: offscreen there is none to rise, and Android may
+  // instead resize the window for it (MobileShell follows both); the
+  // window shrunk to the room above the keyboard is that second shape.
+  step(S("the user starts typing a message"), [seedMessage, atMinute](World& world, const Captures&, const Table&) {
+    seedMessage(world, S("latest-1"), S("the latest word on it"), atMinute(1));
+    QQuickItem* input = world.item(S("input"));
+    world.waitFor([&] { return input->isEnabled(); }, S("the composer to take text"));
+    world.tap(input);
+    world.type(S("and one more thing"));
+    world.resize(412, 480);
+    world.sync();
+  });
+  step(S("the message being written stays visible above the keyboard"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* input = world.item(S("input"));
+    const QPointF topLeft = input->mapToItem(nullptr, QPointF(0, 0));
+    expect(input->isVisible() && topLeft.y() >= 0 && topLeft.y() + input->height() <= 480,
+           S("the composer sits at %1..%2 of 480").arg(topLeft.y()).arg(topLeft.y() + input->height()));
+    expect(input->property("text").toString() == QLatin1String("and one more thing"), S("the draft reads %1").arg(input->property("text").toString()));
+  });
+  step(S("the latest messages stay visible above the composer"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* composerItem = world.item(S("composer"));
+    const double composerTop = composerItem->mapToItem(nullptr, QPointF(0, 0)).y();
+    QQuickItem* latest = nullptr;
+    world.waitFor(
+        [&] {
+          latest = world.findWhere([](QQuickItem* item) {
+            return item->isVisible() && item->property("text").toString() == QLatin1String("the latest word on it");
+          });
+          return latest != nullptr;
+        },
+        S("the latest message"));
+    const QPointF where = latest->mapToItem(nullptr, QPointF(0, 0));
+    expect(where.y() + latest->height() <= composerTop + 1,
+           S("the latest message at %1..%2 is not above the composer at %3").arg(where.y()).arg(where.y() + latest->height()).arg(composerTop));
+  });
+
   step(S("the attachment uploads to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.waitFor(
         [&] {

@@ -72,7 +72,7 @@ Feature: Writing to an agent from a phone
     Given the phone is paired with "My MacBook"
     And the user is in the thread "Fix checkout"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The composer stays above the on-screen keyboard
     When the user starts typing a message
     Then the message being written stays visible above the keyboard
