@@ -400,7 +400,11 @@ defmodule HalC2.Claude.ThreadRuntime do
         case started(state) do
           :ok ->
             {state, opts} = take_wake(state, session)
-            Session.send_message(state.session, claude_content(turn), opts)
+            # Fresh for every prompt: Claude finishes one whose uuid its transcript
+            # already holds without running a turn for it (Upstream #16897).
+            uuid = HalC2.Environment.uuid4()
+            state = put_in(state.turn[:prompt], %{uuid: uuid, started: false})
+            Session.send_message(state.session, claude_content(turn), [uuid: uuid] ++ opts)
             {:reply, :ok, state}
 
           :ended ->
@@ -1358,6 +1362,32 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(%{"type" => type, "parent_tool_use_id" => parent} = message, state)
        when type in @sidechain and is_binary(parent),
        do: sidechain(message, parent, state)
+
+  # Claude says it started, or finished, the turn's prompt. One it finishes without
+  # starting gets no turn and no result (Upstream #16897), so the turn fails.
+  defp message(
+         %{"type" => "command_lifecycle", "command_uuid" => uuid, "state" => lifecycle},
+         %{turn: %{prompt: %{uuid: uuid} = prompt}} = state
+       ) do
+    case lifecycle do
+      "started" ->
+        put_in(state.turn.prompt, %{prompt | started: true})
+
+      "completed" when not prompt.started ->
+        end_turn(
+          state,
+          "failed",
+          "Claude acknowledged the message but never started a turn for it.",
+          # The process and the work it runs in the background are untouched.
+          keep_background: true
+        )
+
+      _ ->
+        state
+    end
+  end
+
+  defp message(%{"type" => "command_lifecycle"}, state), do: state
 
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     # `with_ids/1` recovers the latest turn's ids when this runtime has not
@@ -2538,13 +2568,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  defp end_turn(state, status, failure) do
+  defp end_turn(state, status, failure, opts \\ []) do
     state = flush(state)
 
     # Items and prompts still open when the turn ends are closed with it; background
-    # work goes on after a completed turn.
+    # work goes on after a completed turn, or one Claude never started (`:keep_background`).
     state =
-      if status == "completed",
+      if status == "completed" or opts[:keep_background],
         do: end_work(state, &(not &1.background), status),
         else: end_work(state, status)
 

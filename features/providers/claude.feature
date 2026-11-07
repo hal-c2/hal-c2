@@ -298,10 +298,15 @@ Feature: Claude
       | Haiku 4.5      | there is no context window option and it runs 200k       |
 
   @priority-low
-  Scenario: A context window saved on a Claude 5 thread is ignored
-    Given a thread on Opus 5.5 that saved a 200k context window
-    When the user sends a message
-    Then Claude runs Opus 5.5 with its 1M context window
+  Scenario Outline: A context window saved on a Claude 5 thread is ignored
+    Given a thread on Opus 5.5, picked as "<picked>", that saved a 200k context window
+    When the user sends it a message
+    Then Claude is started as "<started>" and the context meter is out of 1,000,000 tokens
+
+    Examples:
+      | picked          | started             |
+      | claude-opus-5-5 | claude-opus-5-5[1m] |
+      | opus            | opus[1m]            |
 
   Scenario Outline: A Claude turn runs with the model options the user picked
     Given the installed Claude can run every model in the manifest
@@ -826,7 +831,7 @@ Feature: Claude
   # closes, so the conversation it saved can be continued.
   @mc @priority-high
   Scenario: A stopped Claude turn is recorded before its session closes
-    Given the user stopped a running Claude turn
+    Given the user stopped a running Claude turn, leaving Claude its 10 seconds to stop
     When Claude records the interrupted turn within three seconds
     Then the session closes only after that record
     And the thread's next message continues the same conversation
@@ -1106,6 +1111,8 @@ Feature: Claude
     Then the item is titled with the tool's display name and server, with its icon
     And the raw name like "Mcp__server__tool" is not shown
 
+  # Only what the user picks (model and options) is refused. A restart for a change
+  # the user did not make, such as HAL-C2's MCP config, still ends the background work.
   @mc @priority-high
   Scenario: A model change that would kill background agents is refused
     Given Claude has a background agent or shell still running
@@ -1279,11 +1286,17 @@ Feature: Claude
     And it reads the messages it missed before the new one
 
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
-  @backlog @mc @plugin-claude @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A prompt Claude never starts a turn for fails instead of hanging
     Given Claude acknowledges a prompt without ever starting a turn for it
     Then the turn fails with "Claude acknowledged the message but never started a turn for it."
     And the next message the user sends starts a turn as usual
+
+  @mc @plugin-claude
+  Scenario: A prompt Claude never starts a turn for leaves its background work running
+    Given Claude has a background agent or shell still running
+    When the user sends a message Claude never starts a turn for
+    Then that message fails and the running background work is untouched
 
   # Upstream #16486: a background subagent keeps working after its parent's turn ended.
   @backlog @mc @shared @plugin-claude

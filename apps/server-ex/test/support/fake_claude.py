@@ -214,6 +214,11 @@ for line in sys.stdin:
     # A handoff's earlier conversation is history, not a directive.
     if "wait" in text.split("</conversation_history>")[-1]:
         continue
+    # "never start a turn": Claude finishes the prompt without running a turn for it, as
+    # it does one whose uuid its transcript already holds.
+    if "never start a turn" in text:
+        send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg.get("uuid"), "state": "completed"})
+        continue
     # "grow the conversation": with an autoCompactWindow in --settings the conversation
     # outgrows it and Claude compacts (compact_boundary) before it answers.
     if "grow the conversation" in text:
@@ -405,6 +410,9 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     ev = lambda e: send({"type": "stream_event", "session_id": session, "event": e})
+    # Claude Code says when it starts and finishes a prompt it was given a uuid for.
+    lifecycle = lambda state: msg.get("uuid") and send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": state})
+    lifecycle("started")
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "thinking", "thinking": "Let me look."}]}})
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}b", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": "Bash", "input": {"command": "ls"}}]}})
     send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "a.txt\n", "is_error": False}]}})
@@ -414,4 +422,7 @@ for line in sys.stdin:
         ev({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": d}})
     ev({"type": "content_block_stop", "index": 0})
     send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}c", "role": "assistant", "content": [{"type": "text", "text": "Hello from claude"}]}})
-    send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session})
+    # "report your usage": the result carries the turn's token usage.
+    usage = {"usage": {"input_tokens": 1000, "output_tokens": 50}} if "report your usage" in text else {}
+    send({"type": "result", "subtype": "success", "is_error": False, "result": "Hello from claude", "session_id": session, **usage})
+    lifecycle("completed")

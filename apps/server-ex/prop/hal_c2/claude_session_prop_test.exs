@@ -4,13 +4,15 @@ defmodule HalC2.ClaudeSessionPropTest do
   on the fake CLI in `test/support/fake_claude.py`: turns on one model or another,
   with fast mode on, off or unset, that say hello, leave a subagent and a command
   running in the background, put Claude's own session in plan mode (EnterPlanMode), or
-  ask which mode the session runs in; and the user stopping the thread between turns.
+  ask which mode the session runs in, or that Claude acknowledges without ever starting
+  a turn for; and the user stopping the thread between turns.
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
   other turn runs, on the same process when the selection is the same, so the work
   survives it. Stopping between turns ends the background work with its process. Plan
-  mode Claude entered itself lasts one turn: the next one runs in the thread's mode.
+  mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
+  prompt Claude acknowledges but never starts a turn for fails, and keeps the process.
   """
 
   use ExUnit.Case, async: false
@@ -27,7 +29,8 @@ defmodule HalC2.ClaudeSessionPropTest do
     hello: "hello",
     background: "survey in the background",
     enter_plan: "enter plan mode yourself",
-    which_mode: "which mode"
+    which_mode: "which mode",
+    never_start: "never start a turn"
   }
   @fake_claude Path.expand("../../test/support/fake_claude.py", __DIR__)
   @wait_ms 15_000
@@ -132,13 +135,20 @@ defmodule HalC2.ClaudeSessionPropTest do
     do: state.background and state.launch != {model, fast == true}
 
   def postcondition(state, {:call, _, :turn, [_n, model, fast, text]}, seen) do
-    if refused?(state, model, fast) do
-      seen.status == "failed" and seen.reused and seen.background
-    else
-      seen.status == "completed" and
-        seen.reused == (state.session and state.launch == {model, fast == true}) and
-        seen.background == (state.background or text == :background) and
-        (text != :which_mode or seen.reply == "mode bypassPermissions")
+    cond do
+      refused?(state, model, fast) ->
+        seen.status == "failed" and seen.reused and seen.background
+
+      text == :never_start ->
+        seen.status == "failed" and
+          seen.reused == (state.session and state.launch == {model, fast == true}) and
+          seen.background == state.background
+
+      true ->
+        seen.status == "completed" and
+          seen.reused == (state.session and state.launch == {model, fast == true}) and
+          seen.background == (state.background or text == :background) and
+          (text != :which_mode or seen.reply == "mode bypassPermissions")
     end
   end
 

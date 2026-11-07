@@ -350,20 +350,10 @@ defmodule HalC2.Steps.Providers.Claude do
     }
   ]
 
-  # `@listed` with its Claude 5 aliases (`opus`, `sonnet`) listed by their own ids: an
-  # alias keeps its profile's context window choice, a Claude 5 id has none.
-  defp listed_by_id do
-    for row <- @listed do
-      if row["value"] in ["opus", "sonnet"],
-        do: %{row | "value" => row["resolvedModel"]},
-        else: row
-    end
-  end
-
   step ~r/^the user opens the options for (?<name>(?:Opus|Sonnet|Haiku) [\d.]+)$/,
        %{args: [name]} = context do
     context = World.fake_providers(context, claude_version: "999.0.0")
-    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(listed_by_id() ++ @listed_older))
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed ++ @listed_older))
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_MODELS") end)
     :ok = HalC2.Claude.Provider.load()
     {providers, context} = World.provider_list(context)
@@ -388,34 +378,36 @@ defmodule HalC2.Steps.Providers.Claude do
   defp window_tokens("1M"), do: 1_000_000
   defp window_tokens("200k"), do: 200_000
 
-  step "a thread on Opus 5.5 that saved a 200k context window", context do
+  step "a thread on Opus 5.5, picked as {string}, that saved a 200k context window",
+       %{args: [picked]} = context do
     context = World.providers(context)
-    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(listed_by_id()))
+    System.put_env("FAKE_CLAUDE_MODELS", JSON.encode!(@listed))
     ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_MODELS") end)
     :ok = HalC2.Claude.Provider.load()
 
     selection = %{
       "instanceId" => "claudeAgent",
-      "model" => "claude-opus-5-5",
+      "model" => picked,
       "options" => [%{"id" => "contextWindow", "value" => "200k"}]
     }
 
-    Map.put(context, :pending_launch, %{
-      instance: "claudeAgent",
-      fields: %{"modelSelection" => selection}
-    })
+    Map.put(context, :saved_selection, selection)
   end
 
-  step "Claude runs Opus 5.5 with its 1M context window", context do
-    World.await_runs(context, World.current_thread(context), ["completed"])
+  step "the user sends it a message", context do
+    context
+    |> World.launch_on(@thread, "claudeAgent", "report your usage", %{
+      "modelSelection" => context.saved_selection
+    })
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step "Claude is started as {string} and the context meter is out of 1,000,000 tokens",
+       %{args: [started]} = context do
     # The first start is the CLI probe; the turn is the last.
     argv = List.last(World.claude_starts(context))
-    # The saved 200k is not applied: the model runs under its 1M suffix.
-    assert ["--model", "claude-opus-5-5[1m]"] in pairs(argv)
-
-    assert HalC2.Claude.Provider.launch("claude-opus-5-5", %{"contextWindow" => "200k"}).context_window ==
-             1_000_000
-
+    assert ["--model", started] in pairs(argv)
+    assert context_usage(context)["maxTokens"] == 1_000_000
     context
   end
 
@@ -452,8 +444,8 @@ defmodule HalC2.Steps.Providers.Claude do
              choices(listed_model(context, "opus"), "effort")
 
     assert descriptor(listed_model(context, "opus"), "fastMode")
-    # The CLI's `opus` alias keeps the manifest's context window choice.
-    assert descriptor(listed_model(context, "opus"), "contextWindow")
+    # The CLI's `opus` alias resolves to Opus 5.5, whose 1M window is fixed.
+    refute descriptor(listed_model(context, "opus"), "contextWindow")
     assert descriptor(listed_model(context, "claude-sonnet-4-6"), "contextWindow")
     context
   end
@@ -2786,6 +2778,38 @@ defmodule HalC2.Steps.Providers.Claude do
       Process.alive?(context.first_session)
   end
 
+  # The fake finishes "never start a turn" without a turn; "the turn fails with {string}"
+  # (codex_steps.exs) reads the thread "Work".
+  step "Claude acknowledges a prompt without ever starting a turn for it", context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on("Work", "claudeAgent", "never start a turn")
+  end
+
+  step "the user sends a message Claude never starts a turn for", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed"])
+    context
+  end
+
+  step "that message fails and the running background work is untouched", context do
+    [session] = StreamState.list(World.stream(context, @thread), "provider-session")
+    assert session["lastError"] =~ "never started a turn"
+    assert untouched?(context)
+    context
+  end
+
+  step "the next message the user sends starts a turn as usual", context do
+    context = World.post_message(context, "Work", "hello")
+    World.await_runs(context, "Work", ["failed", "completed"])
+    assert "Hello from claude" in World.replies(context, "Work")
+    context
+  end
+
   step "Claude has a background agent or shell still running", context do
     left_running(context)
   end
@@ -2915,15 +2939,20 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user stopped a running Claude turn", context do
+    World.put_app_env(:claude_interrupt_timeout_ms, 300)
+    stop_turn(context)
+  end
+
+  # The settle deadline is not under test: Claude records the turn well within it.
+  step "the user stopped a running Claude turn, leaving Claude its 10 seconds to stop",
+       context do
     stop_turn(context)
   end
 
   step "Claude has not ended the turn after 10 seconds", context do
-    # Claude never answers the stop; the runtime's settle deadline is reached at once.
+    # The settle deadline is shortened for the scenario; Claude never answers.
     assert [%{"status" => active}] = World.runs(context, @thread)
     assert active in ["running", "interrupted"]
-    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
-    send(runtime, {:settle_interrupt, :sys.get_state(runtime).turn.ids.run})
     context
   end
 
