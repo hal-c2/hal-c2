@@ -327,8 +327,37 @@ defmodule HalC2.Orchestration.Rollback do
         ]
       end)
 
+    forks =
+      for id <- reopened_forks(state, MapSet.new(plan.runs, & &1["id"]), patch),
+          do: Orchestration.upsert(state, "context-transfer", id, &reopen(&1, at))
+
     # An upsert that changes nothing is nil.
-    Enum.reject([provider_thread | stale ++ turns ++ runs], &is_nil/1)
+    Enum.reject([provider_thread | stale ++ turns ++ runs ++ forks], &is_nil/1)
+  end
+
+  @doc """
+  The native forks a rewind gives back: a fork transfer a rolled-back run consumed
+  natively, when the provider's rewind left it no conversation (`patch` clears
+  `nativeThreadRef`). Pending again, it has the next run fork the source at the same
+  point, so the fork keeps the history it was made with rather than starting empty.
+  """
+  @spec reopened_forks(StreamState.t(), MapSet.t(String.t()), map) :: [String.t()]
+  def reopened_forks(state, rolled_run_ids, patch) do
+    if Map.has_key?(patch, "nativeThreadRef") and patch["nativeThreadRef"] == nil do
+      for transfer <- StreamState.list(state, "context-transfer"),
+          transfer["type"] == "fork" and transfer["status"] == "consumed",
+          get_in(transfer, ["resolution", "strategy"]) == "native_fork",
+          MapSet.member?(rolled_run_ids, transfer["targetRunId"]),
+          do: transfer["id"]
+    else
+      []
+    end
+  end
+
+  defp reopen(transfer, at) do
+    transfer
+    |> Map.drop(["targetRunId", "consumedAt", "resolution"])
+    |> Map.merge(%{"status" => "pending", "updatedAt" => at})
   end
 
   defp check_isolated(%{restore: false}), do: :ok

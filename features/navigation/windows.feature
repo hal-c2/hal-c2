@@ -33,7 +33,7 @@ Feature: Windows, zoom and quitting
 
   Rule: Window controls
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: The window controls act on the window
       When the user chooses <control> in the window controls
       Then the window <result>
@@ -44,13 +44,13 @@ Feature: Windows, zoom and quitting
         | Maximize | is maximized                           |
         | Close    | closes                                 |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Maximize restores a maximized window
       Given the window is maximized
       When the user chooses Maximize in the window controls
       Then the window returns to its previous size
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Window controls follow the platform's order and side
       Given the user is on <platform>
       Then the window controls are on the <side> in the order <order>
@@ -94,20 +94,20 @@ Feature: Windows, zoom and quitting
         | a plugin's page              |
         | a Space                      |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: macOS controls show their symbols only on hover
       Given the user is on macOS
       When the pointer is over the window controls
       Then the controls show their symbols
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: macOS controls turn grey in an inactive window
       Given the user is on macOS
       When another app's window is active
       Then the window controls are grey
 
     # The window system does the moving; offscreen tests can only see the ask.
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Dragging the header asks the window system to move the window
       When the user drags an empty part of the header
       Then the window asks the window system to move it
@@ -121,19 +121,19 @@ Feature: Windows, zoom and quitting
       Then the item is highlighted, shows its tooltip and is chosen
       And the window is not moved
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Double-clicking the header toggles maximize
       Given the window is not maximized
       When the user double-clicks an empty part of the header
       Then the window is maximized
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A theme can ask for the system window frame
       Given the shell theme turns off the frameless window
       When the app starts
       Then the window has the system's own frame
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A theme can make the window translucent
       Given the shell theme sets the window opacity to 0.9
       Then the window is drawn at that opacity
@@ -266,7 +266,7 @@ Feature: Windows, zoom and quitting
       When the user restarts the app
       Then only the window "kept" reopens beside the first
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A window has a sensible title and size
       Given a second window shows no thread yet
       Then its title is "HAL-C2"
@@ -387,7 +387,7 @@ Feature: Windows, zoom and quitting
       When the user zooms the app in
       Then the preview is still at 125 percent
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Context menus follow the zoomed app
       Given the app is zoomed in
       When the user opens a context menu

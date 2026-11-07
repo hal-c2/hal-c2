@@ -502,6 +502,11 @@ for line in sys.stdin:
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
                 {"id": "color", "header": "Color", "question": text.split("ask: ", 1)[1] if "ask: " in text else "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
             continue
+        # "capped" stops the turn on a rate limit Codex names no reset for.
+        if "capped" in text:
+            send({"method": "error", "params": {**ctx, "willRetry": False, "error": {"message": "Rate limited.", "codexErrorInfo": "rateLimitExceeded"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "Rate limited."}}}})
+            continue
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
@@ -599,7 +604,9 @@ for line in sys.stdin:
         item_id = steer_item_id()
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
-        send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+        # While FAKE_CODEX_KEEP_TURN's file exists, the turn keeps working after a steer.
+        if not os.path.exists(os.environ.get("FAKE_CODEX_KEEP_TURN", "/nonexistent")):
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
         path = params.get("path") or rollout_find(params["threadId"])

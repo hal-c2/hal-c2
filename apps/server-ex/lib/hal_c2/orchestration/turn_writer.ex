@@ -329,10 +329,11 @@ defmodule HalC2.Orchestration.TurnWriter do
   Opens an approval prompt: a pending runtime request, the waiting approval item,
   and its node. `request_kind` is a `ProviderRequestKind` ("command", "file-change",
   "file-read", "permission"). Returns `{state, request_id}`; the runtime keeps what
-  it needs to answer the provider under that id.
+  it needs to answer the provider under that id. `fields` go on the approval item
+  as it is created, such as the provider's reason for asking.
   """
-  def open_request(state, native, request_kind, prompt, options \\ nil),
-    do: open(state, native, {:approval, request_kind, prompt, options})
+  def open_request(state, native, request_kind, prompt, options \\ nil, fields \\ %{}),
+    do: open(state, native, {:approval, request_kind, prompt, options, fields})
 
   @doc """
   Opens questions for the user (`OrchestrationV2UserInputQuestion`s): a pending
@@ -364,8 +365,8 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     {node_kind, request_kind, item_fields} =
       case what do
-        {:approval, kind, prompt, options} ->
-          fields = %{"requestId" => request_id, "requestKind" => kind}
+        {:approval, kind, prompt, options, extra} ->
+          fields = Map.merge(extra, %{"requestId" => request_id, "requestKind" => kind})
 
           fields =
             if(is_binary(prompt) and prompt != "",
@@ -688,7 +689,12 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # The changes that end the run.
   defp ended(stream, ids, status, failure, checkpoint, at) do
-    failure = queued_start_failure(stream, ids, status, failure)
+    failure =
+      stream
+      |> queued_start_failure(ids, status, failure)
+      |> kept_reset(stream, ids)
+      |> retry_hint(stream, status)
+
     done = %{"status" => status, "completedAt" => at}
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
@@ -712,8 +718,59 @@ defmodule HalC2.Orchestration.TurnWriter do
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
-    ] ++ held_queue(stream, status, failure)
+    ] ++ held_queue(stream, status, failure) ++ stopped_limit(stream, ids, status, failure)
   end
+
+  # A limit that ended a run the user (or a parent agent) had asked to stop is not resumed
+  # on its own: the stop leaves the choice to resume at the reset with the user.
+  defp stopped_limit(stream, ids, "failed", %{"class" => "usage_limit"} = failure) do
+    request = "turn-item:run:#{ids.run}:signal:interrupt-request"
+
+    if StreamState.get(stream, "turn-item")[request] != nil and failure["resetAt"] != nil,
+      do: [
+        Orchestration.upsert(
+          stream,
+          "thread",
+          ids.thread,
+          &Map.put(&1, "limitRecovery", %{
+            "runId" => ids.run,
+            "resetAt" => failure["resetAt"],
+            "autoResume" => false,
+            "snooze" => false
+          })
+        )
+      ],
+      else: []
+  end
+
+  defp stopped_limit(_stream, _ids, _status, _failure), do: []
+
+  # An automatic resume the provider rejects with a limit that names no reset leaves the
+  # reset time of the stop it continued, so the thread still says when the limit lifts.
+  # The resume's message names that stop, or, when the resume restarted a held queue, the
+  # run it started does.
+  defp kept_reset(%{"class" => "usage_limit", "resetAt" => nil} = failure, stream, ids) do
+    run = StreamState.get(stream, "run")[ids.run] || %{}
+    message = StreamState.get(stream, "message")[run["userMessageId"]] || %{}
+
+    continued =
+      StreamState.get(stream, "run")[
+        run["usageLimitContinuationOfRunId"] || message["usageLimitContinuationOfRunId"]
+      ]
+
+    reset =
+      continued &&
+        HalC2.Projection.ThreadError.latest_root_provider_failure(
+          continued,
+          StreamState.list(stream, "turn-item")
+        )
+
+    if reset && reset["class"] == "usage_limit" && reset["resetAt"],
+      do: Map.put(failure, "resetAt", reset["resetAt"]),
+      else: failure
+  end
+
+  defp kept_reset(failure, _stream, _ids), do: failure
 
   # A run that left the queue and failed before its provider turn began (the runtime's
   # `start_failure/2`): the timeline says the queued message's provider could not start.
@@ -734,13 +791,32 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp queued_start_failure(_stream, _ids, _status, failure), do: failure
 
-  # A run stopped by a usage limit leaves the queue as it is: the messages behind it
-  # would only hit the same limit, so they wait, in order, until the user resumes the
-  # queue (`queue.resume`), as they do after a restart.
-  defp held_queue(stream, "failed", %{"class" => "usage_limit"}) do
-    for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
-        run["queueHeld"] != true,
-        do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+  # A worktree that could not be made again says how to retry: by sending again, or,
+  # when the run holds messages queued behind it (`held_queue/3`), where a new message
+  # would only wait too, by resuming the queue.
+  defp retry_hint(%{"code" => "worktree_unavailable"} = failure, stream, "failed") do
+    hint =
+      if Enum.any?(StreamState.list(stream, "run"), &(&1["status"] == "queued")),
+        do: "Resume the queue to retry.",
+        else: "Send the message again to retry."
+
+    Map.update!(failure, "message", &"#{&1} #{hint}")
+  end
+
+  defp retry_hint(failure, _stream, _status), do: failure
+
+  # A run stopped by a usage limit, or by a worktree that could not be made again,
+  # leaves the queue as it is: the messages behind it would only fail the same way, so
+  # they wait, in order, until the user resumes the queue (`queue.resume`), as they do
+  # after a restart.
+  defp held_queue(stream, "failed", %{} = failure) do
+    if failure["class"] == "usage_limit" or failure["code"] == "worktree_unavailable" do
+      for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
+          run["queueHeld"] != true,
+          do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+    else
+      []
+    end
   end
 
   defp held_queue(_stream, _status, _failure), do: []
@@ -1002,6 +1078,7 @@ defmodule HalC2.Orchestration.TurnWriter do
             cond do
               failure["class"] == "usage_limit" -> "Usage limit reached"
               failure["code"] == "queued_start_failed" -> "Queued provider could not start"
+              failure["code"] == "worktree_unavailable" -> "Worktree could not be made"
               true -> "Provider error"
             end,
           "failure" => failure

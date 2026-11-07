@@ -223,6 +223,27 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- version ---
+
+  # OpenCode's `initialize` names no agentInfo version.
+  step "the opencode command prints no version", context do
+    FakeAcp.install(context, "opencode", Map.put(models(@connected), "version", nil),
+      enabled: true
+    )
+  end
+
+  step "OpenCode says it could not determine the version and that 1.14.19 or newer is required",
+       context do
+    opencode = FakeAcp.find(context.providers, "opencode")
+    assert opencode["status"] == "error"
+    assert opencode["models"] == []
+
+    assert opencode["message"] ==
+             "HAL-C2 could not determine the OpenCode version. OpenCode v1.14.19 or newer is required."
+
+    context
+  end
+
   # --- no upstream providers ---
 
   step "OpenCode has no upstream providers connected", context do
@@ -541,6 +562,139 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- the server password as a secret ------------------------------------------------
+
+  @marker "••••••"
+
+  defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
+
+  defp password_file,
+    do:
+      Path.join([
+        HalC2.Paths.data_dir(),
+        "secrets",
+        "server-password-#{Base.url_encode64("provider-opencode", padding: false)}.bin"
+      ])
+
+  # The settings watchers were last told, once they say what `done?` waits for.
+  defp told_settings(done?) do
+    receive do
+      {:hal_c2_settings, _, settings} ->
+        if done?.(settings), do: settings, else: told_settings(done?)
+    after
+      5_000 -> flunk("the settings watchers were not told")
+    end
+  end
+
+  step "the user saved a password for the external OpenCode server", context do
+    context = external(context, "secret", &inventory/1)
+    :ok = HalC2.Settings.watch(self())
+    context
+  end
+
+  step "a client reads the settings or is told they changed", context do
+    {%{"settings" => settings, "version" => version}, context} =
+      World.call!(context, "hal-c2.readSettings")
+
+    # Another setting saved as a client saves: the document it read, sent back.
+    {_, context} =
+      World.call!(context, "hal-c2.writeSettings", %{
+        "settings" => Map.put(settings, "confirmThreadDelete", false),
+        "version" => version
+      })
+
+    told = told_settings(&(&1["confirmThreadDelete"] == false))
+    Map.merge(context, %{read_settings: settings, told_settings: told})
+  end
+
+  step "the password is not in what it receives, only that one is stored", context do
+    for settings <- [context.read_settings, context.told_settings] do
+      assert get_in(settings, ["providers", "opencode", "serverPassword"]) == @marker
+      refute JSON.encode!(settings) =~ "secret"
+    end
+
+    context
+  end
+
+  step "the password is not written to the settings file", context do
+    refute File.read!(settings_file()) =~ "secret"
+    assert File.read!(password_file()) == "secret"
+    context
+  end
+
+  step "saving other settings keeps the stored password", context do
+    assert context.told_settings["confirmThreadDelete"] == false
+    assert File.read!(password_file()) == "secret"
+    # The server is still asked with it.
+    requests = length(HalC2.Test.FakeHttp.requests(context.server_log))
+
+    {{:ok, %{"providers" => providers}}, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "opencode",
+        "refreshModels" => true
+      })
+
+    assert FakeAcp.find(providers, "opencode")["status"] != "error"
+
+    assert [%{"authorization" => auth} | _] =
+             HalC2.Test.FakeHttp.requests(context.server_log) |> Enum.drop(requests)
+
+    assert auth == "Basic " <> Base.encode64("opencode:secret")
+    context
+  end
+
+  step "the settings file holds the OpenCode server password in plain text", context do
+    context = external(context, "secret", &inventory/1)
+    path = settings_file()
+
+    # As an older MC wrote it, while this one is stopped.
+    mc =
+      HalC2.Test.Mc.restart(context.mc, fn ->
+        File.rm(password_file())
+        settings = JSON.decode!(File.read!(path))
+
+        File.write!(
+          path,
+          JSON.encode!(put_in(settings, ["providers", "opencode", "serverPassword"], "secret"))
+        )
+      end)
+
+    %{context | mc: mc, clients: %{}}
+  end
+
+  step "the MC reads the settings", context do
+    assert get_in(HalC2.Settings.settings(), ["providers", "opencode", "serverPassword"]) ==
+             @marker
+
+    context
+  end
+
+  step "the password is kept in the secret store and removed from the settings file", context do
+    assert File.read!(password_file()) == "secret"
+    refute File.read!(settings_file()) =~ "secret"
+    context
+  end
+
+  step "OpenCode still reaches the external server with it", context do
+    requests = length(HalC2.Test.FakeHttp.requests(context.server_log))
+
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "opencode",
+        "refreshModels" => true
+      })
+
+    assert {:ok, %{"providers" => providers}} = reply
+    opencode = FakeAcp.find(providers, "opencode")
+    refute opencode["status"] == "error", inspect(opencode)
+
+    assert [%{"authorization" => auth} | _] =
+             HalC2.Test.FakeHttp.requests(context.server_log) |> Enum.drop(requests)
+
+    assert auth == "Basic " <> Base.encode64("opencode:secret")
+    context
+  end
+
   # --- OpenCode Go limits -------------------------------------------------------------
 
   step "OpenCode is signed in to OpenCode Go and runs locally", context do
@@ -712,12 +866,81 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "an OpenCode turn is running", context do
+    running(context)
+  end
+
+  defp running(context) do
     context =
       context |> World.fake_providers() |> World.launch_on(@thread, "opencode", "wait for me")
 
     World.await_running(context, @thread)
     # The shared follow-up step sends to `running.thread` outside the provider features.
     Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
+  end
+
+  # OpenCode on its Claude provider: the turn runs as any other, on an Anthropic model.
+  step "an OpenCode turn is running on OpenCode's Claude provider", context do
+    running(context)
+  end
+
+  # OpenCode 2 fails the prompt with the step's error, naming its kind in `data.errorName`.
+  step ~r/^OpenCode stops it for (?<reason>an exhausted quota|a rate limit)$/,
+       %{args: [reason]} = context do
+    {name, message} =
+      case reason do
+        "an exhausted quota" -> {"provider.quota", "Quota exceeded for this model."}
+        "a rate limit" -> {"provider.rate-limit", "Rate limit exceeded. Try again shortly."}
+      end
+
+    fail_waiting(context, %{
+      "code" => -32603,
+      "message" => message,
+      "data" => %{"service" => "session", "errorName" => name}
+    })
+  end
+
+  # A Claude plan limit reaches OpenCode as a provider error with Claude's own message.
+  step ~r/^OpenCode fails it with "(?<message>[^"]+)"$/, %{args: [message]} = context do
+    fail_waiting(context, %{
+      "code" => -32603,
+      "message" => message,
+      "data" => %{"service" => "session", "errorName" => "provider.unknown"}
+    })
+  end
+
+  step "the turn shows it hit a usage limit, not a provider error", context do
+    row = limited(context)
+    assert row["lastError"] =~ "exceeded"
+    Map.put(context, :limited, row)
+  end
+
+  step "no reset time is given", context do
+    assert context.limited["usageLimitResetAt"] == nil
+    context
+  end
+
+  step "the turn shows it hit a usage limit that resets at {word}", %{args: [at]} = context do
+    {:ok, reset, _} = DateTime.from_iso8601(at)
+    {:ok, shown, _} = DateTime.from_iso8601(limited(context)["usageLimitResetAt"])
+    assert DateTime.compare(shown, reset) == :eq
+    context
+  end
+
+  step "the turn shows it hit a usage limit with no reset time given", context do
+    assert limited(context)["usageLimitResetAt"] == nil
+    context
+  end
+
+  # Fails the running fake's waiting prompt with `error` (see fake_acp.py).
+  defp fail_waiting(context, error) do
+    trace = context.fakes.logs["acp"]
+    File.write!(trace <> ".stop", JSON.encode!(error))
+    {_, 0} = System.cmd("kill", ["-USR1", File.read!(trace <> ".waiting")])
+    context
+  end
+
+  defp limited(context) do
+    World.await_row(context.running.thread, &(&1["lastErrorClass"] == "usage_limit"))
   end
 
   # OpenCode ends (or fails) the turn's loop as the steer lands, and answers it in a
@@ -856,6 +1079,856 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # --- tool calls ------------------------------------------------------------------------
+
+  # A tool as OpenCode's ACP mode reports it: announced by name with no input, then
+  # running with its input, then done with `done`'s fields.
+  defp opencode_tool(id, kind, name, input, done, locations \\ []) do
+    [
+      %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => id,
+        "title" => name,
+        "kind" => kind,
+        "status" => "pending",
+        "rawInput" => %{},
+        "locations" => locations
+      },
+      %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => id,
+        "status" => "in_progress",
+        "rawInput" => input
+      },
+      Map.merge(%{"sessionUpdate" => "tool_call_update", "toolCallId" => id}, done)
+    ]
+  end
+
+  defp completed(output, metadata \\ %{}),
+    do: %{
+      "status" => "completed",
+      "content" => [%{"type" => "content", "content" => %{"type" => "text", "text" => output}}],
+      "rawOutput" => %{"output" => output, "metadata" => metadata}
+    }
+
+  # `later`: scripted turns of their own for messages sent afterwards, `%{match => updates}`.
+  defp run_tools(context, updates, later \\ %{}) do
+    turns =
+      for {match, updates} <- Map.put(later, "use the tools", updates),
+          do: %{
+            "match" => match,
+            "steps" => Enum.map(updates, &%{"update" => &1}) ++ [%{"text" => "Done."}]
+          }
+
+    context =
+      context
+      |> FakeAcp.install("opencode", %{"turns" => turns ++ FakeAcp.turns()}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("use the tools")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  defp tool_items(context, type) do
+    World.thread_id(context, @thread)
+    |> HalC2.Streams.state()
+    |> StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] == type))
+  end
+
+  # --- approval kinds ---
+
+  # What OpenCode asks before each kind of work: OpenCode 1 names the permission in
+  # the title, OpenCode 2 names the tool doing it and the paths it reaches.
+  @asks %{
+    "edit, write or patch a file" => [
+      %{"title" => "edit", "kind" => "edit", "locations" => [%{"path" => "src/app.ts"}]},
+      %{
+        "name" => "apply_patch",
+        "title" => "src/app.ts",
+        "kind" => "edit",
+        "locations" => [%{"path" => "src/app.ts"}]
+      }
+    ],
+    "read or search files" => [
+      %{
+        "name" => "read",
+        "title" => ".env",
+        "kind" => "read",
+        "rawInput" => %{"filePath" => ".env"},
+        "locations" => [%{"path" => ".env"}]
+      },
+      %{
+        "name" => "grep",
+        "title" => "TODO",
+        "kind" => "search",
+        "rawInput" => %{"pattern" => "TODO", "path" => "/srv/shared"},
+        "locations" => [%{"path" => "/srv/shared"}]
+      }
+    ],
+    "work outside the project folder" => [
+      %{
+        "title" => "external_directory",
+        "kind" => "other",
+        "rawInput" => %{"filepath" => "/srv/shared/notes.md", "parentDir" => "/srv/shared"}
+      },
+      %{
+        "name" => "read",
+        "title" => "/srv/shared/notes.md",
+        "kind" => "read",
+        "locations" => [%{"path" => "/srv/shared/notes.md"}]
+      }
+    ],
+    "do anything else" => [
+      %{"title" => "webfetch", "kind" => "other", "rawInput" => %{"url" => "https://x.dev"}},
+      %{"name" => "webfetch", "title" => "https://x.dev", "kind" => "fetch"},
+      %{"name" => "task", "title" => "Look around", "kind" => "think"}
+    ],
+    ~s(the "bash" permission without saying what for) => [
+      %{"name" => "bash", "title" => "bash", "kind" => "execute"}
+    ]
+  }
+
+  @kinds %{
+    "a file change" => "file-change",
+    "a file read" => "file-read",
+    "a command" => "command"
+  }
+
+  step ~r/^OpenCode asks for (?:permission to (?<action>.+)|(?<permission>the "bash" permission without saying what for))$/,
+       %{args: args} = context do
+    what = Enum.find(args, &(&1 not in [nil, ""]))
+    asks = Map.fetch!(@asks, what)
+
+    steps =
+      for {call, n} <- Enum.with_index(asks, 1),
+          do: %{"permission" => Map.put(call, "toolCallId", "ask-#{n}")}
+
+    context =
+      FakeAcp.configure(context, fn config ->
+        Map.update(
+          config,
+          "turns",
+          [],
+          &[%{"match" => "ask first", "steps" => steps ++ [%{"text" => "Done."}]} | &1]
+        )
+      end)
+
+    context
+    |> FakeAcp.send_message("ask first")
+    |> Map.put(:asks, length(asks))
+  end
+
+  # Each ask is answered in turn; the next comes once the last was.
+  defp approvals(context) do
+    approvals =
+      for _ <- 1..context.asks do
+        request = FakeAcp.await_request(context)
+        FakeAcp.respond(context, request["id"], %{"decision" => "accept"})
+
+        World.await_stream(World.thread_id(context, @thread), fn state ->
+          StreamState.get(state, "runtime-request")[request["id"]]["status"] != "pending"
+        end)
+
+        request
+      end
+
+    FakeAcp.await_run(context, "completed")
+    approvals
+  end
+
+  step ~r/^the user is asked to approve (?<kind>a file change|a file read|a command)$/,
+       %{args: [kind]} = context do
+    expected = Map.fetch!(@kinds, kind)
+    assert Enum.map(approvals(context), & &1["kind"]) == List.duplicate(expected, context.asks)
+    context
+  end
+
+  step "the approval's text is {string}", %{args: [text]} = context do
+    approvals(context)
+
+    assert [%{"prompt" => ^text, "requestKind" => "command"}] =
+             tool_items(context, "approval_request")
+
+    context
+  end
+
+  # --- compaction ---
+
+  # OpenCode 2 reports a compaction in the session's info (`opencode/compaction`).
+  defp compaction(status, extra \\ %{}),
+    do: %{
+      "update" => %{
+        "sessionUpdate" => "session_info_update",
+        "_meta" => %{
+          "opencode/compaction" => Map.merge(%{"status" => status, "messageId" => "msg_c"}, extra)
+        }
+      }
+    }
+
+  defp compacting(context, match, steps) do
+    context
+    |> FakeAcp.install("opencode", %{"turns" => [%{"match" => match, "steps" => steps}]},
+      enabled: true
+    )
+    |> FakeAcp.thread(@thread)
+  end
+
+  step ~r{^the user sends "/compact" by itself to an OpenCode thread$}, context do
+    context
+    |> compacting("/compact", [compaction("started"), compaction("completed")])
+    |> FakeAcp.send_message("/compact")
+  end
+
+  step "OpenCode summarizes its session", context do
+    FakeAcp.await_run(context, "completed")
+    # OpenCode runs a prompt of "/compact" alone as a compaction of the session.
+    assert [%{"params" => %{"prompt" => [%{"type" => "text", "text" => "/compact"}]}}] =
+             FakeAcp.received(context, "session/prompt")
+
+    context
+  end
+
+  @summary_failure "The model could not summarize the conversation"
+
+  step ~r{^the user sends "/compact" by itself and OpenCode cannot summarize the session$},
+       context do
+    context
+    |> compacting("/compact", [
+      compaction("started"),
+      compaction("failed", %{"error" => @summary_failure}),
+      %{"error" => %{"code" => -32603, "message" => @summary_failure}}
+    ])
+    |> FakeAcp.send_message("/compact")
+  end
+
+  step "the turn fails with OpenCode's reason", context do
+    state = FakeAcp.await_run(context, "failed")
+
+    assert Enum.any?(
+             StreamState.list(state, "provider-session"),
+             &(&1["lastError"] == @summary_failure)
+           )
+
+    refute Enum.any?(tool_items(context, "compaction"))
+    context
+  end
+
+  step "OpenCode compacts its session by itself during a turn", context do
+    twice = [compaction("started"), compaction("completed")]
+
+    context
+    |> compacting(
+      "long work",
+      [%{"text" => "Working."}] ++ twice ++ twice ++ [%{"text" => "Done."}]
+    )
+    |> FakeAcp.send_message("long work")
+  end
+
+  step "the work log shows \"Context compacted\" once for that turn", context do
+    FakeAcp.await_run(context, "completed")
+
+    assert [%{"title" => "Context compacted", "status" => "completed"}] =
+             tool_items(context, "compaction")
+
+    context
+  end
+
+  # --- binary path ---
+
+  # The scenario's `$HOME` is a folder with a space in its name, and the setting keeps the
+  # `~` the user typed.
+  step ~r/^OpenCode's binary path is set to "(?<path>~[^"]*)", a wrapper in a home folder with spaces in its name$/,
+       %{args: [path]} = context do
+    home = HalC2.Test.Mc.Host.path(context, "/home/sam smith")
+    File.mkdir_p!(home)
+    previous = System.get_env("HOME")
+    System.put_env("HOME", home)
+    ExUnit.Callbacks.on_exit(fn -> System.put_env("HOME", previous) end)
+
+    "~" <> rest = path
+
+    context =
+      FakeAcp.install(context, "opencode", models(@connected),
+        enabled: true,
+        path: home <> rest
+      )
+
+    FakeAcp.settings(&put_in(&1, ["providers", "opencode", "binaryPath"], path))
+    context
+  end
+
+  step "the MC checks OpenCode", context do
+    Map.put(context, :entry, FakeAcp.probe("opencode"))
+  end
+
+  step "OpenCode is ready, with its version and models", context do
+    assert %{"status" => "ready", "version" => "1.14.19", "models" => models} = context.entry
+    assert Enum.map(models, & &1["slug"]) == Enum.map(@connected, &elem(&1, 0))
+    context
+  end
+
+  step "its turns run that wrapper", context do
+    context = context |> FakeAcp.thread(@thread) |> FakeAcp.send_message("hello")
+    FakeAcp.await_run(context, "completed")
+    bin = FakeAcp.fake(context).bin
+
+    assert [_ | _] = starts = for(s <- FakeAcp.starts(context), "acp" in s["argv"], do: s)
+    assert Enum.all?(starts, &(&1["env"]["FAKE_BIN"] == bin))
+    context
+  end
+
+  # --- updates ---
+
+  # The latest OpenCode release, as if already read from the registry.
+  @latest "1.15.0"
+
+  defp latest(context) do
+    :persistent_term.put(
+      {HalC2.ProviderUpdates, "opencode"},
+      {@latest, System.monotonic_time(:millisecond)}
+    )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <- [
+            {HalC2.ProviderUpdates, "opencode"},
+            {HalC2.ProviderUpdates, "opencode", :state},
+            {HalC2.ProviderUpdates, "opencode", :offered}
+          ],
+          do: :persistent_term.erase(key)
+    end)
+
+    context
+  end
+
+  # A shell line that makes the fake report the latest version from now on.
+  defp upgrades(dir),
+    do:
+      ~s|python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["version"]="#{@latest}"; json.dump(c,open(p,"w"))' '#{Path.join(dir, "config.json")}'|
+
+  # OpenCode's own installer keeps it in `~/.opencode/bin`, and `opencode upgrade`
+  # updates it in place.
+  step "the opencode command on the MC is OpenCode's own install under the user's home",
+       context do
+    bin = Path.join(HalC2.Test.Mc.Host.home(context), ".opencode/bin/opencode")
+
+    context =
+      context
+      |> latest()
+      |> FakeAcp.install("opencode", models(@connected), enabled: true, path: bin)
+
+    %{dir: dir, script: script} = FakeAcp.fake(context)
+
+    File.write!(bin, """
+    #!/bin/sh
+    export FAKE_DIR='#{dir}' FAKE_BIN="$0"
+    if [ "$1" = upgrade ]; then
+      echo "$@" >> '#{Path.join(dir, "updates.log")}'
+      #{upgrades(dir)}
+      exit 0
+    fi
+    exec python3 -u '#{script}' "$@"
+    """)
+
+    context
+  end
+
+  # A global npm prefix: `bin/opencode` links into `lib/node_modules/opencode-ai`, and
+  # its npm logs what it was asked and installs the latest.
+  step "the opencode command on the MC was installed with npm", context do
+    prefix = HalC2.Test.Mc.Host.path(context, "/usr/local")
+    real = Path.join(prefix, "lib/node_modules/opencode-ai/bin/opencode")
+    link = Path.join(prefix, "bin/opencode")
+
+    context =
+      context
+      |> latest()
+      |> FakeAcp.install("opencode", models(@connected), enabled: true, path: real)
+
+    %{dir: dir} = FakeAcp.fake(context)
+    File.mkdir_p!(Path.dirname(link))
+    File.ln_s!(real, link)
+    FakeAcp.settings(&put_in(&1, ["providers", "opencode", "binaryPath"], link))
+    npm = Path.join(prefix, "bin/npm")
+
+    File.write!(npm, """
+    #!/bin/sh
+    echo "$@" >> '#{Path.join(prefix, "npm.log")}'
+    #{upgrades(dir)}
+    """)
+
+    File.chmod!(npm, 0o755)
+    Map.put(context, :npm_prefix, prefix)
+  end
+
+  step "the user updates OpenCode from HAL-C2", context do
+    {reply, context} =
+      World.call_keeping(context, "server.updateProvider", %{"provider" => "opencode"})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "OpenCode's own upgrade command is run", context do
+    assert File.read!(Path.join(FakeAcp.fake(context).dir, "updates.log")) == "upgrade\n"
+    updated(context)
+  end
+
+  step "the opencode-ai package is updated by npm", context do
+    prefix = context.npm_prefix
+
+    assert File.read!(Path.join(prefix, "npm.log")) ==
+             "install -g --prefix #{prefix} opencode-ai@latest\n"
+
+    updated(context)
+  end
+
+  # The update succeeded and OpenCode now reports the latest version.
+  defp updated(context) do
+    assert {:ok, %{"providers" => providers}} = context.reply
+    opencode = FakeAcp.find(providers, "opencode")
+    assert %{"version" => @latest, "updateState" => %{"status" => "succeeded"}} = opencode
+    assert opencode["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  # A thread's OpenCode is running, started at 1.14.19, when the CLI on disk is upgraded.
+  step "OpenCode was upgraded on disk to 1.15.0 while its running server still reports 1.14.19",
+       context do
+    context =
+      context
+      |> latest()
+      |> FakeAcp.install("opencode", models(@connected), enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("hello")
+
+    FakeAcp.await_run(context, "completed")
+    assert FakeAcp.probe("opencode")["version"] == "1.14.19"
+    assert [_] = serving(context)
+    FakeAcp.configure(context, &Map.put(&1, "version", @latest))
+  end
+
+  step "the user checks for provider updates", context do
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", %{
+        "instanceId" => "opencode",
+        "refreshModels" => true
+      })
+
+    assert {:ok, %{"providers" => providers}} = reply
+    Map.put(context, :providers, providers)
+  end
+
+  step "OpenCode is shown as 1.15.0 and up to date", context do
+    opencode = FakeAcp.find(context.providers, "opencode")
+    assert opencode["version"] == @latest
+    assert opencode["versionAdvisory"]["status"] == "current"
+    context
+  end
+
+  step "the running server is not restarted to find out", context do
+    context = FakeAcp.send_message(context, "again")
+    FakeAcp.await_runs(context, 2)
+    assert [_] = serving(context)
+    context
+  end
+
+  # The OpenCode processes that served the thread: those in the project, not the
+  # throwaway ones that read its version and models.
+  defp serving(context) do
+    root = World.project(context).root
+    for(start <- FakeAcp.starts(context), start["cwd"] == root, "acp" in start["argv"], do: start)
+  end
+
+  # --- subagents ---
+
+  step "an OpenCode session is started", context do
+    context =
+      context
+      |> FakeAcp.install("opencode", %{}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("hello")
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "its task permission is denied, through the config OpenCode is started with", context do
+    assert [%{"permission" => %{"task" => "deny"}}] = started_configs(context)
+    context
+  end
+
+  step "OpenCode is started with its own config", context do
+    assert started_configs(context) == [nil]
+    context
+  end
+
+  # The `OPENCODE_CONFIG_CONTENT` each OpenCode ACP process was started with.
+  defp started_configs(context) do
+    for(
+      %{"start" => %{"env" => env, "argv" => argv}} <- FakeAcp.log(context),
+      "acp" in argv,
+      do: env["OPENCODE_CONFIG_CONTENT"] && JSON.decode!(env["OPENCODE_CONFIG_CONTENT"])
+    )
+    |> Enum.uniq()
+  end
+
+  # --- to-do list ---
+
+  defp todos(entries) do
+    %{
+      "sessionUpdate" => "plan",
+      "entries" =>
+        for(
+          {text, status} <- entries,
+          do: %{"content" => text, "status" => status, "priority" => "medium"}
+        )
+    }
+  end
+
+  defp todo_lists(context) do
+    World.thread_id(context, @thread)
+    |> HalC2.Streams.state()
+    |> StreamState.list("plan")
+    |> Enum.filter(&(&1["kind"] == "todo_list"))
+  end
+
+  step "OpenCode updates its to-do list with one item in progress and one done", context do
+    done = [{"Write the test", "completed"}, {"Read the code", "completed"}]
+
+    run_tools(
+      context,
+      [todos([{"Write the test", "in_progress"}, {"Read the code", "completed"}])],
+      %{"finish the list" => [todos([{"Write the test", "pending"} | tl(done)]), todos(done)]}
+    )
+  end
+
+  # The thread's list, as clients title a `todo_list` item.
+  step "the thread shows a \"Todo list\" with one step running and one done", context do
+    assert [%{"steps" => steps}] = tool_items(context, "todo_list")
+
+    assert Enum.map(steps, &{&1["text"], &1["status"]}) ==
+             [{"Write the test", "running"}, {"Read the code", "completed"}]
+
+    assert [%{"status" => "active"}] = todo_lists(context)
+    context
+  end
+
+  step "the list is finished only once every item is done", context do
+    context = FakeAcp.send_message(context, "finish the list")
+    FakeAcp.await_runs(context, 2)
+    assert [first, second] = Enum.sort_by(todo_lists(context), & &1["createdAt"])
+    # The next turn's list replaces the unfinished one, and finishes once all is done.
+    assert first["status"] == "superseded" and second["status"] == "completed"
+    context
+  end
+
+  step "OpenCode runs a shell command", context do
+    run_tools(
+      context,
+      opencode_tool("bash-1", "execute", "bash", %{"command" => "ls src"}, %{
+        "title" => "List the sources",
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "app.ts\n"}}
+        ],
+        "rawOutput" => %{
+          "output" => "app.ts\n",
+          "metadata" => %{"exit" => 0, "output" => "app.ts\n", "description" => "List"}
+        }
+      })
+    )
+  end
+
+  step "OpenCode edits, writes or patches a file", context do
+    diff = %{"type" => "diff", "path" => "src/app.ts", "oldText" => "a", "newText" => "b"}
+
+    run_tools(
+      context,
+      opencode_tool(
+        "edit-1",
+        "edit",
+        "edit",
+        %{"filePath" => "src/app.ts", "oldString" => "a", "newString" => "b"},
+        %{"status" => "completed", "content" => [diff]},
+        [%{"path" => "src/app.ts"}]
+      )
+    )
+  end
+
+  step "OpenCode fetches a web page or searches the web", context do
+    run_tools(
+      context,
+      opencode_tool(
+        "fetch-1",
+        "fetch",
+        "webfetch",
+        %{"url" => "https://example.com/docs"},
+        completed("the docs")
+      ) ++
+        opencode_tool(
+          "web-1",
+          "other",
+          "websearch",
+          %{"query" => "opencode acp"},
+          completed("results")
+        )
+    )
+  end
+
+  step "OpenCode reads a file, searches files or asks the language server", context do
+    run_tools(
+      context,
+      opencode_tool(
+        "read-1",
+        "read",
+        "read",
+        %{"filePath" => "src/app.ts"},
+        completed("1: a"),
+        [%{"path" => "src/app.ts"}]
+      ) ++
+        opencode_tool("grep-1", "search", "grep", %{"pattern" => "TODO"}, completed("none")) ++
+        opencode_tool(
+          "lsp-1",
+          "other",
+          "lsp",
+          %{"operation" => "hover", "filePath" => "src/app.ts"},
+          completed("a: string"),
+          [%{"path" => "src/app.ts"}]
+        )
+    )
+  end
+
+  step "OpenCode uses any other tool", context do
+    run_tools(
+      context,
+      opencode_tool("skill-1", "other", "skill", %{"name" => "greet"}, completed("loaded"))
+    )
+  end
+
+  step "the thread shows a command with its output and exit code", context do
+    assert [command] = tool_items(context, "command_execution")
+
+    assert %{"input" => "ls src", "status" => "completed", "exitCode" => 0} = command
+    assert command["output"] =~ "app.ts"
+    context
+  end
+
+  step "the thread shows a file change with the file and its diff", context do
+    assert [%{"fileName" => "src/app.ts", "diffStr" => diff, "status" => "completed"}] =
+             tool_items(context, "file_change")
+
+    assert diff =~ "--- before\na\n+++ after\nb"
+    context
+  end
+
+  step "the thread shows a web search with what it looked for", context do
+    patterns = for item <- tool_items(context, "web_search"), do: item["patterns"]
+    assert patterns == [["https://example.com/docs"], ["opencode acp"]]
+    context
+  end
+
+  step "the thread shows a file search with what it looked for", context do
+    assert [read, grep, lsp] = tool_items(context, "file_search")
+    assert %{"pattern" => "src/app.ts", "results" => [%{"fileName" => "src/app.ts"}]} = read
+    assert grep["pattern"] == "TODO"
+    assert %{"results" => [%{"fileName" => "src/app.ts"}]} = lsp
+    assert tool_items(context, "dynamic_tool") == []
+    context
+  end
+
+  step "the thread shows a tool call with its input and output", context do
+    assert [%{"toolName" => "skill", "input" => %{"name" => "greet"}, "output" => "loaded"}] =
+             tool_items(context, "dynamic_tool")
+
+    context
+  end
+
+  step "OpenCode runs {string} and it exits with code {int}",
+       %{args: [command, code]} = context do
+    run_tools(
+      context,
+      opencode_tool("bash-1", "execute", "bash", %{"command" => command}, %{
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "1 test failed\n"}}
+        ],
+        "rawOutput" => %{
+          "output" => "1 test failed\n",
+          "metadata" => %{"exit" => code, "output" => "1 test failed\n"}
+        }
+      })
+    )
+    |> Map.put(:command, command)
+  end
+
+  step "the thread shows the command as failed with exit code {int}",
+       %{args: [code]} = context do
+    input = context.command
+
+    assert [%{"input" => ^input, "status" => "failed", "exitCode" => ^code}] =
+             tool_items(context, "command_execution")
+
+    context
+  end
+
+  step "an agent reading the thread is told the command failed", context do
+    {:ok, %{"items" => items}} =
+      World.mcp_tool(
+        context,
+        @thread,
+        "hal_c2_thread_read",
+        %{"threadId" => World.thread_id(context, @thread), "view" => "activity"},
+        "opencode"
+      )
+
+    assert [%{"status" => "failed"}] = Enum.filter(items, &(&1["type"] == "command_execution"))
+    context
+  end
+
+  # A tool of each kind as OpenCode 1 runs it, and the item type the thread shows it as.
+  @stopped_tools %{
+    "a command" =>
+      {"command_execution",
+       %{
+         "toolCallId" => "stop-1",
+         "title" => "bash",
+         "kind" => "execute",
+         "rawInput" => %{"command" => "npm test"},
+         "content" => [
+           %{"type" => "content", "content" => %{"type" => "text", "text" => "running 3 tests"}}
+         ]
+       }},
+    "a file edit" =>
+      {"file_change",
+       %{
+         "toolCallId" => "stop-1",
+         "title" => "edit",
+         "kind" => "edit",
+         "rawInput" => %{"filePath" => "src/app.ts"},
+         "locations" => [%{"path" => "src/app.ts"}]
+       }},
+    "a subagent task" =>
+      {"subagent",
+       %{
+         "toolCallId" => "stop-1",
+         "title" => "task",
+         "kind" => "other",
+         "rawInput" => %{
+           "description" => "Look around",
+           "prompt" => "find the bug",
+           "subagent_type" => "general"
+         }
+       }}
+  }
+
+  step ~r/^an OpenCode 1 turn is running (?<tool>a command|a file edit|a subagent task)$/,
+       %{args: [tool]} = context do
+    {type, call} = @stopped_tools[tool]
+    aborted = "Tool execution aborted"
+
+    turn = %{
+      "match" => "run the tool",
+      "steps" => [
+        %{
+          "update" =>
+            call
+            |> Map.delete("content")
+            |> Map.merge(%{"sessionUpdate" => "tool_call", "status" => "in_progress"})
+        },
+        %{
+          "update" =>
+            Map.merge(call, %{"sessionUpdate" => "tool_call_update", "status" => "in_progress"})
+        },
+        %{
+          "waitCancel" => true,
+          # OpenCode 1 rewrites the tool it stopped as an error.
+          "after" => [
+            %{
+              "sessionUpdate" => "tool_call_update",
+              "toolCallId" => call["toolCallId"],
+              "status" => "failed",
+              "content" => [
+                %{"type" => "content", "content" => %{"type" => "text", "text" => aborted}}
+              ],
+              "rawOutput" => %{"error" => aborted}
+            }
+          ]
+        }
+      ]
+    }
+
+    context =
+      context
+      |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+      |> FakeAcp.thread(@thread)
+      |> FakeAcp.send_message("run the tool")
+
+    # Running, with its output so far.
+    World.await_stream(World.thread_id(context, @thread), fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["type"] == type and (type != "command_execution" or &1["output"] != ""))
+      )
+    end)
+
+    Map.put(context, :stopped_tool, type)
+  end
+
+  step ~r/^(?:a command|a file edit|a subagent task) shows as interrupted, not failed$/,
+       context do
+    FakeAcp.await_run(context, "interrupted")
+    assert [%{"status" => "interrupted"}] = tool_items(context, context.stopped_tool)
+
+    for subagent <- subagents(context),
+        do: assert(subagent["status"] == "interrupted")
+
+    context
+  end
+
+  step "no error text is shown as its output or diff", context do
+    [item] = tool_items(context, context.stopped_tool)
+    shown = Enum.map(subagents(context), &JSON.encode!/1)
+    refute JSON.encode!([item | shown]) =~ "aborted"
+
+    if context.stopped_tool == "command_execution",
+      do: assert(item["output"] =~ "running 3 tests")
+
+    context
+  end
+
+  defp subagents(context) do
+    World.thread_id(context, @thread)
+    |> HalC2.Streams.state()
+    |> StreamState.list("subagent")
+  end
+
+  # OpenCode's ACP mode reports the abort as the prompt's `cancelled` end.
+  step "the user stops the turn and OpenCode reports it aborted", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    context
+  end
+
+  step "the turn is shown as interrupted", context do
+    World.await_runs(context, @thread, ["interrupted"])
+
+    refute Enum.any?(
+             StreamState.list(
+               HalC2.Streams.state(World.thread_id(context, @thread)),
+               "turn-item"
+             ),
+             &(&1["type"] == "error")
+           )
+
+    context
+  end
+
   # --- the server's owner ---------------------------------------------------------------
 
   # The thread's `opencode acp --port` process serves its HTTP API; the thread's runtime
@@ -957,6 +2030,213 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "an OpenCode thread with three turns", context do
+    three_turns(context)
+  end
+
+  # OpenCode compacted the session between the second turn and the third: a user
+  # message whose only part is the compaction, and the summary it answered with. Each
+  # version's compaction lacks fields a newer client requires (2.1 the part's `auto`,
+  # 2.2 its `overflow`), so the MC must read them as they come.
+  step ~r/^an OpenCode (?<version>2\.[12]) thread with three turns whose session OpenCode compacted$/,
+       %{args: [version]} = context do
+    context = three_turns(context)
+    {source, turns} = context.opencode
+
+    part =
+      if version == "2.1",
+        do: %{"type" => "compaction"},
+        else: %{"type" => "compaction", "auto" => true}
+
+    file = Path.join([context.fakes.dir, "opencode-sessions", "#{source}.json"])
+    messages = file |> File.read!() |> JSON.decode!()
+    {before, rest} = Enum.split_while(messages, &(&1["info"]["id"] != turns[3]))
+
+    compaction = [
+      %{
+        "info" => %{"id" => "msg_compaction", "role" => "user", "sessionID" => source},
+        "parts" => [part]
+      },
+      %{
+        "info" => %{
+          "id" => "msg_summary",
+          "role" => "assistant",
+          "sessionID" => source,
+          "summary" => true
+        },
+        "parts" => [%{"type" => "text", "text" => "The story so far."}]
+      }
+    ]
+
+    File.write!(file, JSON.encode!(before ++ compaction ++ rest))
+    context
+  end
+
+  # The session file of the thread's OpenCode session, rewritten by `fun`.
+  defp edit_session(context, fun) do
+    {source, turns} = context.opencode
+    file = Path.join([context.fakes.dir, "opencode-sessions", "#{source}.json"])
+
+    file
+    |> File.read!()
+    |> JSON.decode!()
+    |> fun.(turns)
+    |> JSON.encode!()
+    |> then(&File.write!(file, &1))
+
+    context
+  end
+
+  step "OpenCode no longer has the message to return to", context do
+    context
+    |> three_turns()
+    |> edit_session(fn messages, turns ->
+      Enum.reject(messages, &(&1["info"]["id"] == turns[2]))
+    end)
+  end
+
+  step "OpenCode's rewound session kept the wrong turns", context do
+    context
+    |> three_turns()
+    |> edit_session(fn [first | rest], _turns ->
+      [put_in(first, ["info", "lostOnFork"], true) | rest]
+    end)
+  end
+
+  step ~r/^the user reverts (?:an earlier turn|to that turn)$/, context do
+    World.rollback(context, @thread, 1, %{"restoreFiles" => false})
+  end
+
+  @refusals %{
+    "the thread cannot be rolled back while a turn is active" =>
+      "Interrupt the current turn before rewinding.",
+    "the OpenCode rewind boundary is no longer available" =>
+      "The OpenCode rewind boundary is no longer available.",
+    "OpenCode did not preserve the requested rewind boundary" =>
+      "OpenCode did not preserve the requested rewind boundary."
+  }
+
+  step ~r/^it is refused with a message that (?<says>.+)$/, %{args: [says]} = context do
+    # The MC names the provider thread it could not roll back ahead of OpenCode's reason.
+    assert {:error, message} = context.reply
+    assert String.ends_with?(message, Map.fetch!(@refusals, says))
+    context
+  end
+
+  step "an OpenCode thread that was reverted to its first turn", context do
+    context = context |> three_turns() |> World.rollback(@thread, 1, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  # The MC keeps the thread's history itself; OpenCode's session is read again when the
+  # thread's next turn opens it.
+  step "the MC restarts and reads the thread back from OpenCode", context do
+    context = %{context | mc: HalC2.Test.Mc.restart(context.mc), clients: %{}}
+    send_turn(context, @thread, "where are we")
+  end
+
+  step "the turns after the first are not shown again", context do
+    {source, turns} = context.opencode
+    shown = for run <- World.runs(context, @thread), run["status"] != "rolled_back", do: run
+
+    assert length(shown) == 2
+    {fork, kept} = native(context, @thread)
+    assert fork != source and kept[1] != turns[1]
+    assert %{"sessionId" => ^fork} = last_prompt(context)
+    assert {_, ["first", "where are we"]} = session(context, fork)
+    context
+  end
+
+  # --- session titles ---
+
+  step ~r/^the thread "(?<title>[^"]+)" (?:starts|runs) on OpenCode$/,
+       %{args: [title]} = context do
+    context
+    |> World.fake_providers()
+    |> World.run_turns(title, "opencode", ["hello"])
+    |> Map.put(:thread, title)
+  end
+
+  step "the thread is renamed {string} and the user sends a message",
+       %{args: [title]} = context do
+    context |> rename(%{"title" => title}) |> send_turn(context.thread, "and now")
+  end
+
+  defp rename(context, %{"title" => title}) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.metadata.update",
+        "commandId" => "cmd-rename-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "title" => title
+      })
+
+    context
+  end
+
+  defp session_title(context) do
+    {session, _} = native(context, context.thread)
+    File.read!(Path.join([context.fakes.dir, "opencode-sessions", "#{session}.title"]))
+  end
+
+  # The trace, in order: each title OpenCode's server was given and each prompt sent.
+  defp titles_and_prompts(context) do
+    for entry <- World.provider_log(context, "acp"),
+        item = title_or_prompt(entry),
+        do: item
+  end
+
+  defp title_or_prompt(%{"http" => %{"method" => "PATCH", "body" => %{"title" => title}}}),
+    do: {:title, title}
+
+  defp title_or_prompt(%{"in" => %{"method" => "session/prompt"}}), do: :prompt
+  defp title_or_prompt(_entry), do: nil
+
+  step ~r/^its OpenCode session is titled "(?<title>[^"]+)"$/, %{args: [title]} = context do
+    assert session_title(context) == title
+    context
+  end
+
+  # The fake writes a title of its own at a prompt to a session still untitled.
+  step "OpenCode does not write a title of its own", context do
+    assert [{:title, title}, :prompt] = titles_and_prompts(context)
+    assert session_title(context) == title
+    context
+  end
+
+  step ~r/^its OpenCode session is titled "(?<title>[^"]+)" before the message reaches OpenCode$/,
+       %{args: [title]} = context do
+    assert session_title(context) == title
+    assert [{:title, _first}, :prompt, {:title, ^title}, :prompt] = titles_and_prompts(context)
+    context
+  end
+
+  step "a turn under an unchanged name does not retitle the session", context do
+    before = titles_and_prompts(context)
+    context = send_turn(context, context.thread, "still here")
+    assert titles_and_prompts(context) == before ++ [:prompt]
+    context
+  end
+
+  step "a title that cannot be written does not fail the turn", context do
+    kept = session_title(context)
+
+    context =
+      context
+      |> rename(%{"title" => "an unwritable name"})
+      |> send_turn(context.thread, "go on")
+
+    assert List.last(World.runs(context, context.thread))["status"] == "completed"
+    assert session_title(context) == kept
+    context
+  end
+
+  step "the user forks from the second turn and sends a message", context do
+    # The fork's first message is what opens OpenCode's fork; the outcome sends it.
+    World.fork(context, World.current_thread(context), 2, "fork")
+  end
+
+  defp three_turns(context) do
     context =
       context
       |> World.fake_providers()

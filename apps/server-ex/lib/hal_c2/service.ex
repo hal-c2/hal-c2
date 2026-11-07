@@ -22,7 +22,8 @@ defmodule HalC2.Service do
   when it is only switched off, and refuses before changing anything when systemd
   cannot run user services at all. A version installed without restarting the
   service leaves a `restart-pending` marker in the state directory
-  (`mark_restart_pending/1`) until the service starts on it or `restart` runs.
+  (`mark_restart_pending/1`) until the service starts on it or a later version
+  (`started/1`), or `restart` runs.
 
   A release reaches it as `bin/hal-c2-service install|status|restart|uninstall`
   (`main/1`), a checkout as `mix hal_c2.service`.
@@ -224,6 +225,26 @@ defmodule HalC2.Service do
   def clear_restart_pending do
     File.rm(restart_pending_path())
     :ok
+  end
+
+  @doc """
+  The service started, running `running`: clears `restart-pending` when that is the
+  version it names or a later one. A service that started on an older version (the
+  install it names was rolled back, or another older version came up) still waits
+  for it.
+  """
+  # sobelow_skip ["Traversal.FileModule"]
+  def started(running) do
+    with {:ok, text} <- File.read(restart_pending_path()),
+         {:ok, wanted} <- Version.parse(String.trim(text)),
+         {:ok, running} <- Version.parse(running),
+         :lt <- Version.compare(running, wanted) do
+      :ok
+    else
+      # Nothing pending, or a marker no version can be compared with: what the service
+      # starts is what is installed, which is all the marker stood for.
+      _ -> clear_restart_pending()
+    end
   end
 
   defp restart_pending_path, do: Path.join(HalC2.Paths.state_dir(), ".restart-pending")

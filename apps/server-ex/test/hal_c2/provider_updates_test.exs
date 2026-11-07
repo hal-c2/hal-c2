@@ -48,6 +48,19 @@ defmodule HalC2.ProviderUpdatesTest do
     assert advisory["updateCommand"] == "npm install -g --prefix #{dir} @openai/codex@latest"
   end
 
+  test "OpenCode's own install upgrades itself, and an npm one updates opencode-ai",
+       %{tmp_dir: dir} do
+    own = install(dir, "home/.opencode/bin/opencode", "home/bin/opencode")
+
+    assert HalC2.ProviderUpdates.advisory("opencode", own, "1.14.19")["updateCommand"] ==
+             "#{own} upgrade"
+
+    npm = install(dir, "lib/node_modules/opencode-ai/bin/opencode", "bin/opencode")
+
+    assert HalC2.ProviderUpdates.advisory("opencode", npm, "1.14.19")["updateCommand"] ==
+             "npm install -g --prefix #{dir} opencode-ai@latest"
+  end
+
   test "an install nothing here owns is reported without an update", %{tmp_dir: dir} do
     path = install(dir, "opt/codex", "bin/codex")
 
