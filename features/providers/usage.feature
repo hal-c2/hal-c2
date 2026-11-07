@@ -87,13 +87,13 @@ Feature: Usage
     When the user opens Usage
     Then that model's cost is marked unpriced
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A bare model family name is marked unpriced rather than guessed
     Given a turn recorded only the model family name "opus"
     When the user opens Usage
     Then that model is marked unpriced rather than priced at one generation's rate
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A model's larger context variant is priced at its base rate
     Given a turn on a model recorded with a bracketed context-size suffix such as "[1m]"
     When the user opens Usage
@@ -196,8 +196,7 @@ Feature: Usage
     Then the usage counts all 12,000 tokens
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (tailRecords), usageScanCache.ts
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (tail)
-  @backlog @mc @priority-high
+  @mc
   Scenario: A transcript line the CLI is still writing is counted once it is complete
     Given a transcript whose last line has no line ending yet
     When the user opens Usage
@@ -206,8 +205,7 @@ Feature: Usage
     Then the line is counted once
 
   # Legacy: apps/server/src/usage/usageTranscriptReader.ts (guard hash, shrunk file)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (size and mtime resume)
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A transcript that did not just grow is read again from the start
     Given the user opened Usage and a transcript was read
     And the transcript was then <change>
@@ -221,8 +219,7 @@ Feature: Usage
       | replaced by a shorter file                              |
 
   # Legacy: apps/server/src/usage/usageScanCache.ts (decodeScanCache, cache version, corrupt rows)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@cache_version)
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A saved scan the MC cannot trust is discarded
     Given the MC saved its scan of the history before it restarted
     And the saved scan <damage>
@@ -258,8 +255,7 @@ Feature: Usage
     Then the other client still receives the totals
 
   # Legacy: apps/server/src/usage/UsageService.ts (RATES_REFRESH_FLOOR_MS, "refetches a rate table inside its TTL only when the client asks")
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage/pricing.ex (@refresh_floor_ms)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Refreshing again within a minute does not fetch prices again
     Given the user refreshed Usage and prices were fetched ten seconds ago
     When the user refreshes Usage again
@@ -275,8 +271,7 @@ Feature: Usage
     And a fetch that takes longer than 10 seconds is treated as failed
 
   # Legacy: apps/server/src/usage/UsageService.ts (collectDirs: MTIME_SLACK_MS)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (@mtime_slack_ms)
-  @backlog @mc @priority-high
+  @mc
   Scenario: Only transcripts touched near the window are read, and only records inside it count
     Given a Claude transcript last changed 30 hours before the window began, holding records from before and inside the window
     And another transcript last changed 40 hours before the window began
@@ -285,8 +280,7 @@ Feature: Usage
     And the second transcript is not opened
 
   # Legacy: apps/server/src/usage/UsageService.ts (codexEventOccurrences)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage.ex (codex_key)
-  @backlog @mc @priority-high
+  @mc
   Scenario: A moved copy of a Codex rollout counts once but equal events inside one rollout all count
     Given a Codex rollout was copied into another folder
     And one rollout has two token counts with identical time, model and totals
@@ -295,8 +289,7 @@ Feature: Usage
     And the two identical events inside a single rollout are both counted
 
   # Legacy: apps/server/src/usage/usageTranscripts.ts (Grok reads updates.jsonl only)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/usage/transcripts.ex
-  @backlog @mc @priority-high
+  @mc
   Scenario: Only Grok's session update log is read as usage
     Given a Grok session folder with "updates.jsonl" and other JSONL files
     When the user opens Usage

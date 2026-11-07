@@ -448,6 +448,9 @@ defmodule HalC2.Usage do
       {:ok, binary} ->
         case :erlang.binary_to_term(binary, [:safe]) do
           %{version: @cache_version, files: %{} = files, sources: %{} = sources} ->
+            # An entry that is not a parsed transcript is dropped, so that one
+            # transcript is read from the start while the rest stay cached.
+            files = for {path, entry} <- files, valid_entry?(path, entry), into: %{}, do: {path, entry}
             %{state | files: files, sources: sources, loaded: true}
 
           _ ->
@@ -460,6 +463,21 @@ defmodule HalC2.Usage do
   rescue
     _ -> %{state | loaded: true}
   end
+
+  defp valid_entry?(path, %{
+         size: size,
+         mtime_ms: mtime,
+         provider: provider,
+         records: records,
+         tail: tail,
+         position: position
+       })
+       when is_binary(path) and is_integer(size) and is_integer(mtime) and is_binary(provider) and
+              is_list(records) and is_list(tail) and
+              (is_nil(position) or is_tuple(position)),
+       do: true
+
+  defp valid_entry?(_path, _entry), do: false
 
   # Cleared only once the write lands, so a failed write is retried next scan.
   defp persist(%{dirty: false} = state), do: state
