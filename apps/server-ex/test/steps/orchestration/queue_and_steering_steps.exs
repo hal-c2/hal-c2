@@ -787,6 +787,241 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
+  step "{string} is still held", %{args: [text]} = context do
+    # What a run's end asks for; a held queue does not start.
+    :ok = HalC2.Orchestration.start_next(World.thread_id(context, context.thread))
+    assert %{"status" => "queued", "queueHeld" => true} = run_for(context, text)
+    context
+  end
+
+  step "{string} is held", %{args: [text]} = context do
+    assert %{"status" => "queued", "queueHeld" => true} = run_for(context, text)
+    context
+  end
+
+  step "another agent's message reaches {string} and its run ends",
+       %{args: [thread]} = context do
+    sent_and_ended(context, thread, "From another agent", %{
+      "createdBy" => "agent",
+      "creationSource" => "mcp"
+    })
+  end
+
+  step "the user sends {string} to {string} and its run ends",
+       %{args: [text, thread]} = context do
+    sent_and_ended(context, thread, text, %{})
+  end
+
+  step ~r/^(?<what>a steer the user sent|the prompt of a scheduled task the user created|the MC continuing the thread after a usage limit|the MC continuing the thread after it restarted) reaches "(?<thread>[^"]+)"$/,
+       %{args: [what, thread]} = context do
+    fields =
+      case what do
+        "a steer the user sent" ->
+          %{"deliveryIntent" => "steer"}
+
+        "the prompt of a scheduled task the user created" ->
+          %{"scheduledTaskId" => "task-1", "dispatchMode" => %{"type" => "queue_after_active"}}
+
+        # As `HalC2.Orchestration.LimitRecovery` and `HalC2.Orchestration.Recovery` send them.
+        "the MC continuing the thread after a usage limit" ->
+          %{"createdBy" => "user", "creationSource" => "server"}
+
+        "the MC continuing the thread after it restarted" ->
+          %{"createdBy" => "agent", "creationSource" => "server"}
+      end
+
+    sent_and_ended(context, thread, "Continue where you left off.", fields)
+  end
+
+  # --- a turn being stopped ----------------------------------------------------------
+
+  # The fake acknowledges the stop and goes on with the turn, past Codex's own
+  # deadline for it (`:codex_interrupt_deadline_ms`).
+  step "the user stopped the running turn of {string} and the provider is still stopping it",
+       %{args: [thread]} = context do
+    File.touch!(Path.join(context.mc.home, "ignore-interrupt"))
+    World.put_app_env(:codex_interrupt_deadline_ms, 600_000)
+
+    context =
+      queue_command(Map.put(context, :thread, thread), "run.interrupt", %{
+        "runId" => context.running
+      })
+
+    assert World.state(context, thread).entities["turn-item"][
+             "turn-item:run:#{context.running}:signal:interrupt-request"
+           ]
+
+    assert run(context, context.running)["status"] == "running"
+    context
+  end
+
+  step "no run starts for it until the user resumes the queue or sends a message", context do
+    [id | _] = context.queued
+
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][context.running]["status"] == "interrupted")
+    )
+
+    :ok = HalC2.Orchestration.start_next(World.thread_id(context, context.thread))
+
+    assert Enum.all?(
+             context.queued,
+             &match?(%{"status" => "queued", "queueHeld" => true}, run(context, &1))
+           )
+
+    assert [_running] = World.codex_requests(context, "turn/start")
+
+    # The ways out: the user sends a message, or resumes the queue.
+    context = World.dispatch_message(context, context.thread, "Back again")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+    context
+  end
+
+  step "the user tries to promote {string} to a steer", %{args: [text]} = context do
+    try_queue_command(context, %{
+      "type" => "queued-message.promote-to-steer",
+      "queuedRunId" => run_for(context, text)["id"],
+      "targetRunId" => context.running
+    })
+  end
+
+  step "the user tries to send {string} to {string} with restart",
+       %{args: [text, thread]} = context do
+    World.dispatch_message(context, thread, text, %{"deliveryIntent" => "restart"})
+  end
+
+  step "{string} is still queued and held", %{args: [text]} = context do
+    assert %{"status" => "queued", "queueHeld" => true} = run_for(context, text)
+    # Nothing went into the turn being stopped.
+    assert run(context, context.running)["status"] == "running"
+    refute "turn/steer" in World.codex_methods(context)
+    assert [_running] = World.codex_requests(context, "turn/start")
+    context
+  end
+
+  step "{string} is queued after {string} without steering the stopping turn",
+       %{args: [later, earlier]} = context do
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    assert %{"status" => "queued", "queuePosition" => 2} = later_run = run_for(context, later)
+    assert %{"status" => "queued", "queuePosition" => 1} = earlier_run = run_for(context, earlier)
+    # The user sending resumed the queue Stop held.
+    assert later_run["queueHeld"] != true and earlier_run["queueHeld"] != true
+    refute "turn/steer" in World.codex_methods(context)
+    context
+  end
+
+  step "{string} starts once the turn has stopped", %{args: [text]} = context do
+    {_pid, state} = World.codex_runtime(context, context.thread)
+
+    World.codex_notify(context, context.thread, "turn/completed", %{
+      "turn" => %{"id" => state.turn.native_turn_id, "status" => "interrupted"}
+    })
+
+    id = run_for(context, text)["id"]
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+    context
+  end
+
+  # --- a worktree that could not be made ---------------------------------------------
+
+  # The thread's first message waited for a worktree of its own (as a launch in a new
+  # worktree sends it), with "text" queued behind it, and making the worktree failed.
+  step "{string} has a held queued message {string} because its worktree could not be set up",
+       %{args: [thread, text]} = context do
+    context =
+      context
+      |> World.providers()
+      |> Map.put(:thread, thread)
+      |> World.numbered_run(thread, 1, "preparing", %{
+        "workspacePreparation" => %{"type" => "worktree"}
+      })
+
+    prepared = "run-1"
+    context = World.queue_message(context, thread, text)
+
+    context =
+      try_queue_command(context, %{
+        "type" => "prepared-run.fail",
+        "runId" => prepared,
+        "failure" => %{"class" => "provider_error", "message" => "git worktree add failed"}
+      })
+
+    assert {:ok, _} = context.reply, "prepared-run.fail failed: #{inspect(context.reply)}"
+    assert %{"status" => "queued", "queueHeld" => true} = run_for(context, text)
+    Map.delete(context, :reply)
+  end
+
+  step "{string} is still held until {string} has a worktree",
+       %{args: [text, thread]} = context do
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+
+    sent =
+      World.entities(context, thread, "run")
+      |> Enum.reject(&(&1["status"] == "queued"))
+      |> Enum.max_by(& &1["ordinal"])
+
+    World.await_state(context, thread, &(&1.entities["run"][sent["id"]]["status"] == "completed"))
+    :ok = HalC2.Orchestration.start_next(World.thread_id(context, thread))
+    assert %{"status" => "queued", "queueHeld" => true} = run_for(context, text)
+
+    # Once it has one, the user sending again resumes the queue.
+    worktree = Mc.tmp_dir(context.mc, "worktree")
+
+    context =
+      queue_command(context, "thread.metadata.update", %{"worktreePath" => worktree})
+
+    context = World.dispatch_message(context, thread, "Now in the worktree")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    id = run_for(context, text)["id"]
+    World.await_state(context, thread, &(&1.entities["run"][id]["status"] in @started))
+    context
+  end
+
+  # --- the user's message resumes a held queue ---------------------------------------
+
+  # Its turn stays running, so what comes after waits behind it.
+  step "the user sends {string} to {string} and its turn stays running",
+       %{args: [text, thread]} = context do
+    hold = Path.join(context.mc.home, "hold-turn")
+    File.touch!(hold)
+    context = World.dispatch_message(Map.put(context, :thread, thread), thread, text)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    id = message(context, text)["runId"]
+    World.await_state(context, thread, &(&1.entities["run"][id]["status"] == "running"))
+    File.rm!(hold)
+    Map.merge(context, %{running: id, sent: text})
+  end
+
+  step "a delegated task result queued behind {string} is not held", %{args: [_text]} = context do
+    context = delegated_result(context, context.thread, ["task-one"])
+    assert run(context, context.delegated_run)["queueHeld"] != true
+    context
+  end
+
+  step "{string} starts after the run for {string} ends", %{args: [text, sent]} = context do
+    id = run_for(context, text)["id"]
+    assert run(context, id)["status"] == "queued"
+    assert run_for(context, sent)["status"] == "running"
+    context = step_complete(context)
+
+    # The task result goes first, and its turn stays open until it is completed.
+    delegated = context.delegated_run
+
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][delegated]["status"] == "running")
+    )
+
+    assert run(context, id)["status"] == "queued"
+    context = step_complete(context)
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+    context
+  end
+
   # --- which provider can queue ------------------------------------------------------
 
   # Two provider plugins, one declaring everything but a queue; the thread runs on the
@@ -1420,6 +1655,36 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
     message["role"] == "assistant" and String.starts_with?(reply, "steered: " <> text) and
       reply =~ ~s("screenshot.png" is saved at) and String.ends_with?(reply, "(+1 image)")
+  end
+
+  # A message `fields` describe, sent to `thread`, whose run ends; its end asks for the
+  # next queued message, as the runtime does.
+  defp sent_and_ended(context, thread, text, fields) do
+    context = Map.put(context, :thread, thread)
+    message_id = "msg-ended-#{System.unique_integer([:positive])}"
+
+    context =
+      World.dispatch_message(context, thread, text, Map.put(fields, "messageId", message_id))
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    id = World.state(context, thread).entities["message"][message_id]["runId"]
+
+    World.await_state(
+      context,
+      thread,
+      &(&1.entities["run"][id]["status"] in ~w(completed failed interrupted))
+    )
+
+    :ok = HalC2.Orchestration.start_next(World.thread_id(context, thread))
+    context
+  end
+
+  defp step_complete(context) do
+    {_pid, state} = World.codex_runtime(context, context.thread)
+
+    World.codex_notify(context, context.thread, "turn/completed", %{
+      "turn" => %{"id" => state.turn.native_turn_id, "status" => "completed"}
+    })
   end
 
   defp quoted(texts), do: for([_, text] <- Regex.scan(~r/"([^"]+)"/, texts), do: text)

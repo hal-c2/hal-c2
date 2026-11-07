@@ -27,12 +27,12 @@ defmodule HalC2.Steps.Composer.QueueAndSteer do
     context
   end
 
-  # The running turn ends when the user stops it; the thread is idle, and the
-  # queued message starts.
+  # The running turn ends on its own; the thread is idle, and the queued message
+  # starts. (A Stop would hold the queue instead.)
   step "it starts once the thread is idle", context do
     title = World.current(context)
-    interrupt(context)
-    World.await_runs(context, title, ["interrupted", "completed"])
+    World.complete_codex_turn(context, title)
+    World.await_runs(context, title, ["completed", "completed"])
     assert List.last(World.runs(context, title))["userMessageId"] == context.last_message_id
     context
   end

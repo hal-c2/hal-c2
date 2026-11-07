@@ -724,6 +724,35 @@ defmodule HalC2.WorktreeSetupTest do
     assert {:ok, %{"retried" => false}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
   end
 
+  test "a retry goes ahead past a message held for the worktree", %{repo: repo} do
+    project(repo, [])
+    thread_id = launch("list the files", %{"baseRef" => "later"})
+    assert %{"worktreePath" => nil} = await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m2",
+        "text" => "and then the tests",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    held = fn ->
+      Enum.find(StreamState.list(current(thread_id), "run"), &(&1["userMessageId"] == "m2"))
+    end
+
+    assert %{"status" => "queued", "queueHeld" => true} = held.()
+
+    {_, 0} = System.cmd("git", ~w(branch later), cd: repo)
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert %{"worktreePath" => path} = await_phase(thread_id, "done")
+    assert File.dir?(path)
+    # Held until the user sends again: it was queued for a worktree that could not be made.
+    assert %{"status" => "queued", "queueHeld" => true} = held.()
+  end
+
   test "a retry after a follow-up is refused and leaves the worktree alone", %{repo: repo} do
     project(repo, [
       %{

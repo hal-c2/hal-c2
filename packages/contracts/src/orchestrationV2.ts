@@ -491,8 +491,13 @@ export const OrchestrationV2Run = Schema.Struct({
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
-  /** Restart recovery holds the queue until the user explicitly resumes it. */
+  /**
+   * A held queued run waits for the user: restart recovery, a usage limit, a Stop, or a
+   * worktree that could not be set up holds it until they resume the queue or send.
+   */
   queueHeld: Schema.optional(Schema.Boolean),
+  /** A run that set up the thread's worktree as it started. */
+  workspacePreparation: Schema.optional(Schema.Struct({ type: Schema.String })),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -2587,6 +2592,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+    /** A user's Stop holds the queue behind the run (the default); cleanup sends false. */
+    holdQueue: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),

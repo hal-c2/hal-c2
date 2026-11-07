@@ -289,7 +289,8 @@ Feature: Recovering from restarts and releasing idle sessions
       | claudeAgent |
       | opencode    |
 
-  # Nothing is left to interrupt, so the stop ends the run itself.
+  # Nothing is left to interrupt, so the stop ends the run itself. The stop holds the
+  # queue behind it, as any Stop does (queue-and-steering.feature).
   @mc
   Scenario: Stopping a turn whose runtime is gone ends it
     Given thread "t1" exists in "demo"
@@ -297,7 +298,7 @@ Feature: Recovering from restarts and releasing idle sessions
     And the runtime running the turn of "t1" stops without ending it
     When the user stops "t1"
     Then the run of "t1" is interrupted
-    And a run for "Next" starts
+    And "Next" is held
 
   @mc
   Scenario: Idle provider sessions are released after 30 minutes

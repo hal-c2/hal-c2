@@ -1337,7 +1337,11 @@ defmodule HalC2.OrchestrationTest do
     # The active turn ends while the cleanup is held, promoting the
     # timed-out run's prompt into a running turn of its own.
     assert {:ok, _} =
-             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+             Orchestration.dispatch(%{
+               "type" => "run.interrupt",
+               "threadId" => thread_id,
+               "holdQueue" => false
+             })
 
     await_statuses(thread_id, ["completed", "interrupted", "running"])
     send(cleanup, :cleanup_go)
@@ -1705,7 +1709,13 @@ defmodule HalC2.OrchestrationTest do
       # Queued messages join the transcript only when their run starts.
       refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["messageId"] == "m2"))
 
-      {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+      # The run ends without holding the queue, which a user's Stop holds (next test).
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "holdQueue" => false
+        })
 
       state = await_statuses(thread_id, ["interrupted", "completed", "completed"])
 
@@ -1713,6 +1723,57 @@ defmodule HalC2.OrchestrationTest do
                Enum.find(StreamState.list(state, "turn-item"), &(&1["messageId"] == "m2"))
 
       assert Enum.all?(runs(state), &(&1["queuePosition"] == nil))
+    end
+
+    test "a user's stop holds the queue until a message the user sends resumes it" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "then list the files")
+      _ = await_statuses(thread_id, ["running", "queued"])
+
+      {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      state = await_statuses(thread_id, ["interrupted", "queued"])
+      assert [_, %{"queueHeld" => true}] = runs(state)
+
+      # An agent's message leaves it held; the user's starts, and the queue after it.
+      {:ok, _} =
+        send_message(thread_id, "m3", "from the agent", %{
+          "createdBy" => "agent",
+          "creationSource" => "mcp",
+          "dispatchMode" => %{"type" => "start_immediately"}
+        })
+
+      state = await_statuses(thread_id, ["interrupted", "completed", "queued"])
+      assert %{"queueHeld" => true} = Enum.find(runs(state), &(&1["userMessageId"] == "m2"))
+
+      {:ok, _} =
+        send_message(thread_id, "m4", "from the user", %{
+          "dispatchMode" => %{"type" => "start_immediately"}
+        })
+
+      state = await_statuses(thread_id, ["interrupted", "completed", "completed", "completed"])
+      assert Enum.map(runs(state), & &1["userMessageId"]) |> Enum.take(-2) == ["m4", "m2"]
+    end
+
+    # A client still showing an ended run as active stops it (found by the property).
+    test "a stop for a run that already ended holds nothing" do
+      thread_id = launch("hello")
+      [first] = runs(await_statuses(thread_id, ["completed"]))
+      {:ok, _} = send_message(thread_id, "m2", "wait for it")
+      _ = await_statuses(thread_id, ["completed", "running"])
+      {:ok, _} = send_message(thread_id, "m3", "then list the files")
+      _ = await_statuses(thread_id, ["completed", "running", "queued"])
+
+      _ =
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => thread_id,
+          "runId" => first["id"]
+        })
+
+      assert [_, %{"status" => "running"}, queued] = runs(current(thread_id))
+      refute queued["queueHeld"]
     end
 
     test "archiving a thread cancels what it had queued" do

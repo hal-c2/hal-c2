@@ -331,7 +331,14 @@ defmodule HalC2.Space.PageAgent do
     for %{"id" => run_id, "status" => status} <- Enum.sort_by(runs, &(&1["status"] != "queued")),
         status == "queued" or status in @run_active do
       type = if status == "queued", do: "queued-run.cancel", else: "run.interrupt"
-      _ = Orchestration.dispatch(%{"type" => type, "threadId" => thread_id, "runId" => run_id})
+
+      _ =
+        Orchestration.dispatch(%{
+          "type" => type,
+          "threadId" => thread_id,
+          "runId" => run_id,
+          "holdQueue" => false
+        })
 
       # A run still only starting with nothing driving it never reaches `begin_turn`
       # (`HalC2.ScheduledTasks` has the same case), so nothing else would end it.

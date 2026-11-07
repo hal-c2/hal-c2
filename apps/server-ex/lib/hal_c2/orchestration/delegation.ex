@@ -242,7 +242,11 @@ defmodule HalC2.Orchestration.Delegation do
       hook(:cancelling, task_id)
 
       _ =
-        Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => task["childThreadId"]})
+        Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "threadId" => task["childThreadId"],
+          "holdQueue" => false
+        })
 
       {:ok, status(thread_id, task_id)}
     else
