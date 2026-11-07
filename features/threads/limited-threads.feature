@@ -142,7 +142,7 @@ Feature: Threads stopped by a usage limit
       | during a tool    |
 
   # Upstream #21114: a stopped usage-limit thread no longer auto-resumes, so resuming it is an explicit choice.
-  @shared @mc @backlog-desktop @backlog-mobile
+  @shared @mc @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A stopped limited thread can be set to resume at the reset again
     Given the user stopped "Port tests" after it stopped on a usage limit that resets at 14:00
     When the user chooses to resume at the reset
