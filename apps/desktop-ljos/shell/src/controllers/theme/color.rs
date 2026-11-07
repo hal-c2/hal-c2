@@ -235,12 +235,14 @@ pub const DARK_BELOW: f64 = 0.179;
 
 /// A whole palette grown from a canvas and an accent, over `defaults` (the
 /// status colours of the canvas's appearance, `dark` when it is a dark
-/// one): surfaces step away from the canvas, text is solved for contrast
-/// against it. `None` when either is not a colour.
+/// one), with `fixed`'s success colour: surfaces step away from the canvas,
+/// text is solved for contrast against it. `None` when either is not a
+/// colour.
 pub fn derive(
     canvas: &str,
     accent: &str,
     defaults: impl FnOnce(bool) -> Map<String, Json>,
+    fixed: impl FnOnce(bool) -> Map<String, Json>,
 ) -> Option<Map<String, Json>> {
     let canvas = Rgb::parse(&canonical_color(canvas)?)?;
     let accent = Rgb::parse(&canonical_color(accent)?)?;
@@ -291,6 +293,12 @@ pub fn derive(
     let action = from_oklch(action_tone);
 
     let mut colors = defaults(dark);
+    // The defaults' error, which the derivation keeps.
+    let error = colors
+        .get("error")
+        .and_then(Json::as_str)
+        .and_then(canonical_color)
+        .and_then(|hex| Rgb::parse(&hex));
     let mut set = |roles: &[&str], color: Rgb| {
         for role in roles {
             colors.insert((*role).to_owned(), Json::from(color.name()));
@@ -368,6 +376,49 @@ pub fn derive(
     set(&["sidebarRowHover"], surface(0.09, tint));
     set(&["sidebarRowActive"], surface(0.12, tint));
     set(&["sidebarRowSelected"], surface(0.14, tint));
+    // The roles the built-in palettes leave out, as the bricks draw them then.
+    set(&["projectForeground", "branchForeground"], text_muted);
+    set(&["popover"], overlay);
+    let (added, removed) = (Rgb::parse("#22c55e")?, Rgb::parse("#ef4444")?);
+    set(&["diffAdded"], added);
+    set(&["diffRemoved"], removed);
+    // A destructive button's fill: the error deepened until white text on it
+    // reads at 4.5:1, as the drawn roles derive it for a theme without one.
+    if let Some(error) = error {
+        let [r, g, b] = error.f();
+        let [r, g, b, _] =
+            crate::theme::deepened_under_white(ljos::prelude::Color::from_rgba_f(r, g, b, 1.0))
+                .to_rgba_f();
+        set(&["destructiveFill"], Rgb::from_f(r, g, b));
+    }
+    // The ink and surface roles, as the drawn roles derive them from the rest.
+    let mix = |a: Rgb, b: Rgb, t: f64| {
+        let (a, b) = (a.f(), b.f());
+        let at = |i: usize| a[i] + (b[i] - a[i]) * t;
+        Rgb::from_f(at(0), at(1), at(2))
+    };
+    set(&["ink"], text);
+    set(&["inkTertiary"], text_muted);
+    set(&["inkSecondary"], mix(text, text_muted, 0.5));
+    set(&["borderStrong"], mix(border, text, 0.12));
+    set(&["accentText"], accent);
+    set(&["diffAddedSurface"], mix(canvas, added, 0.14));
+    set(&["diffRemovedSurface"], mix(canvas, removed, 0.14));
+    let copy = |colors: &mut Map<String, Json>, role: &str, from: Option<Json>| match from {
+        Some(value) => colors.insert(role.to_owned(), value),
+        None => colors.remove(role),
+    };
+    let from = |colors: &Map<String, Json>, role: &str| colors.get(role).cloned();
+    let destructive = from(&colors, "errorForeground");
+    copy(&mut colors, "destructive", destructive);
+    let inset = from(&colors, "codeBackground");
+    copy(&mut colors, "inset", inset);
+    let input_surface = from(&colors, "surface");
+    copy(&mut colors, "inputSurface", input_surface);
+    colors.insert("sidebarActiveIndicator".into(), Json::from("#00000000"));
+    // Black at 32%, as CSS writes it.
+    colors.insert("scrim".into(), Json::from("#00000052"));
+    copy(&mut colors, "success", fixed(dark).remove("success"));
     Some(colors)
 }
 

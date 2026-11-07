@@ -28,6 +28,7 @@ use crate::json::Json;
 use crate::platform_window;
 
 mod roles;
+pub(crate) use roles::deepened_under_white;
 pub mod tokens;
 
 #[derive(Debug, QmlObject)]

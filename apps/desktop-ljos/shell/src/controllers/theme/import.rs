@@ -297,9 +297,13 @@ fn from_vs_code_theme(
         || canvas_hex.clone(),
         |accent| flattened(VsColor { a: 0.2, ..accent }, canvas),
     );
-    let mut palette = derive(&canvas_hex, &floor, |dark| {
-        object_of(data.defaults.get(if dark { "dark" } else { "light" }))
-    })
+    let half = |dark: bool| if dark { "dark" } else { "light" };
+    let mut palette = derive(
+        &canvas_hex,
+        &floor,
+        |dark| object_of(data.defaults.get(half(dark))),
+        |dark| object_of(data.fixed.get(half(dark))),
+    )
     .unwrap_or_default();
     let derived = |palette: &Map<String, Json>, role: &str| {
         string_of(palette.get(role).unwrap_or(&Json::Null)).to_owned()

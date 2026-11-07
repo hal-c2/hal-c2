@@ -115,7 +115,7 @@ fn mix(from: Color, to: Color, amount: f64) -> Color {
 
 /// `color` deepened until white text on it reads at 4.5:1 (WCAG AA): what a
 /// destructive button is filled with when no palette names destructiveFill.
-fn deepened_under_white(color: Color) -> Color {
+pub(crate) fn deepened_under_white(color: Color) -> Color {
     let channel = |c: f64| {
         if c <= 0.04045 {
             c / 12.92

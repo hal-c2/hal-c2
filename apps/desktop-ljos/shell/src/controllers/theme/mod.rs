@@ -548,9 +548,15 @@ impl ThemesObject {
 /// [`derive`] over the defaults of the canvas's appearance; {} when either
 /// is not a colour.
 pub fn derive_palette(canvas: &str, accent: &str) -> Map<String, Json> {
-    derive(canvas, accent, |dark| {
-        object_of(built_ins().defaults.get(if dark { DARK } else { LIGHT }))
-    })
+    let palette = |of: &'static Map<String, Json>| {
+        move |dark: bool| object_of(of.get(if dark { DARK } else { LIGHT }))
+    };
+    derive(
+        canvas,
+        accent,
+        palette(&built_ins().defaults),
+        palette(&built_ins().fixed),
+    )
     .unwrap_or_default()
 }
 

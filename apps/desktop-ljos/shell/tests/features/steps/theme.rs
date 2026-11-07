@@ -54,6 +54,17 @@ fn drawn_canvas(world: &World) -> Option<ljos::prelude::Color> {
     theme::drawn_color(world.engine(), "canvas")
 }
 
+/// The standard theme's canvas as main defines it: desktop-qt's built-in
+/// themes.json, which the shell builds in too.
+fn standard_canvas(dark: bool) -> String {
+    let themes: Value = serde_json::from_str(include_str!(
+        "../../../../../desktop-qt/src/native/themes.json"
+    ))
+    .unwrap_or_default();
+    let appearance = if dark { "dark" } else { "light" };
+    text(&themes["standard"][appearance]["canvas"])
+}
+
 fn canvas_name(color: Option<ljos::prelude::Color>) -> String {
     color.map_or_else(|| "(none)".to_owned(), |c| format!("{c:?}"))
 }
@@ -356,7 +367,7 @@ pub fn register(steps: &mut Steps) {
     steps.step("the app uses the standard theme", |world, _, _| {
         uses_theme(world, "hal-c2")?;
         let dark = themes(world, |t, _| t.appearance() == "dark")?;
-        let standard = theme::parse_css_color(if dark { "#0a0a0a" } else { "#fcfcfc" });
+        let standard = theme::parse_css_color(&standard_canvas(dark));
         expect!(drawn_canvas(world) == standard, "{}", describe(world));
         Ok(())
     });
