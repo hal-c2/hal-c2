@@ -373,9 +373,14 @@ defmodule HalC2.WorktreeSetup do
 
   # A delegated child's caller hears of this failure at once and may hand the task to
   # another agent, so its first message is not run later: the agent's stage ends here.
+  # Without a worktree, what was queued behind it waits for a retry.
   defp failed(state, thread_id, setup, message) do
     delegated = Orchestration.delegated?(thread_id)
-    Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
+    hold = setup.snapshot["worktreePath"] == nil
+
+    Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message),
+      hold_queue: hold
+    )
 
     update(state, thread_id, fn snapshot ->
       ended = finish(snapshot, "failed", message)
@@ -479,7 +484,10 @@ defmodule HalC2.WorktreeSetup do
       attempt(thread_id, fn -> remove_workspace(thread_id, setup, path) end)
     end
 
-    attempt(thread_id, fn -> Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled") end)
+    # The worktree is gone, so what was queued behind it is held.
+    attempt(thread_id, fn ->
+      Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled", nil, hold_queue: true)
+    end)
   end
 
   defp attempt(thread_id, fun) do
@@ -875,7 +883,7 @@ defmodule HalC2.WorktreeSetup do
   defp await_script({thread_id, sentinel, deadline}, status, set, opts) do
     script = %{start: sentinel <> "start", exit: ~r/^#{sentinel}(\d+)$/, deadline: deadline}
 
-    case collect({thread_id, "setup"}, script, false, "", [], set) do
+    case read_script({thread_id, "setup"}, script, set) do
       :not_started ->
         # Its shell goes too, or the script could still begin after this says it did not.
         terminal(:close, [%{"threadId" => thread_id, "terminalId" => "setup"}])
@@ -886,7 +894,10 @@ defmodule HalC2.WorktreeSetup do
           fail("The setup script did not start within #{seconds} seconds.")
         end
 
+      # Nothing is left to read in a shell whose script went well; a failed one stays open
+      # with its error.
       {0, tail} ->
+        terminal(:close, [%{"threadId" => thread_id, "terminalId" => "setup"}])
         status.("setup-script", "done", %{"detail" => "exited with 0", "tail" => tail})
 
       {nil, tail} ->
@@ -906,26 +917,37 @@ defmodule HalC2.WorktreeSetup do
   # Reads the terminal from the wrapper's first line to its last or the terminal's end,
   # which leaves no exit status, keeping the last lines as the stage's tail. Without that
   # first line by the deadline, nothing is running and nothing will end: `:not_started`.
+  # Until then the tail is what the shell's startup prints, the line it is still writing
+  # included, as it may be asking the user something in the setup terminal. `set` gets
+  # each change to the snapshot.
+  @doc false
+  def read_script(key, script, set), do: collect(key, script, false, "", [], set)
+
   defp collect(key, script, started, partial, tail, set) do
     wait = if started, do: :infinity, else: max(script.deadline - now_ms(), 0)
 
     receive do
       {:hal_c2_terminal, ^key, %{"type" => "output", "data" => data}} ->
-        {lines, partial} = script_lines(partial, data)
-        {started, lines} = from_start(started, lines, script.start)
-        {output, rest} = Enum.split_while(lines, &(not Regex.match?(script.exit, &1)))
-        next = tail(tail, output)
+        {lines, rest} = script_lines(partial, data)
+        was = if started, do: tail, else: shown(script, tail, partial)
 
-        case rest do
-          [last | _] ->
-            [_, code] = Regex.run(script.exit, last)
-            {String.to_integer(code), next}
+        case from_start(started, lines, script.start) do
+          {true, lines} when started ->
+            output(key, script, lines, rest, tail, set)
 
-          [] ->
-            if next != tail,
-              do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => next}))
+          # The script begins: what the startup printed leaves the tail.
+          {true, lines} ->
+            if was != [], do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => []}))
+            output(key, script, lines, rest, [], set)
 
-            collect(key, script, started, partial, next, set)
+          {false, startup} ->
+            next = tail(tail, startup)
+            shown = shown(script, next, rest)
+
+            if shown != was,
+              do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => shown}))
+
+            collect(key, script, false, rest, next, set)
         end
 
       {:hal_c2_terminal, ^key, %{"type" => type}} when type in ~w(exited closed) ->
@@ -938,12 +960,36 @@ defmodule HalC2.WorktreeSetup do
     end
   end
 
+  defp output(key, script, lines, partial, tail, set) do
+    {output, rest} = Enum.split_while(lines, &(not Regex.match?(script.exit, &1)))
+    next = tail(tail, output)
+
+    case rest do
+      [last | _] ->
+        [_, code] = Regex.run(script.exit, last)
+        {String.to_integer(code), next}
+
+      [] ->
+        if next != tail,
+          do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => next}))
+
+        collect(key, script, true, partial, next, set)
+    end
+  end
+
+  # The startup's lines and the one it is still writing, unless that is the start line
+  # arriving in pieces.
+  defp shown(script, tail, partial) do
+    line = plain(partial)
+    if String.starts_with?(script.start, line), do: tail, else: tail(tail, [line])
+  end
+
   defp from_start(true, lines, _start), do: {true, lines}
 
   defp from_start(false, lines, start) do
-    case Enum.drop_while(lines, &(&1 != start)) do
-      [] -> {false, []}
-      [_start | lines] -> {true, lines}
+    case Enum.split_while(lines, &(&1 != start)) do
+      {startup, []} -> {false, startup}
+      {_startup, [_start | lines]} -> {true, lines}
     end
   end
 

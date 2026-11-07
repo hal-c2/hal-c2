@@ -1329,10 +1329,284 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  # --- many worktrees of one repository at once ------------------------------------
+
+  step "the project starts worktrees from origin", context do
+    project = World.project(context)
+    World.git_remote(context, project.root)
+
+    World.put_settings(context, %{
+      "projectSettingsOverrides" => %{project.id => %{"newWorktreesStartFromOrigin" => true}}
+    })
+  end
+
+  # Every launch is accepted before any setup has gone far, so the checkouts, the base
+  # records and the renames of all of them overlap.
+  step "{int} threads are launched in new worktrees of the project at the same moment",
+       %{args: [count]} = context do
+    context = Shared.answering_writer(context)
+
+    {ids, context} =
+      Enum.map_reduce(1..count, context, fn n, context ->
+        context = launch(context, "fix the cart total #{n}")
+        {context.setup_thread, context}
+      end)
+
+    Map.put(context, :many_threads, ids)
+  end
+
+  step "each thread has its own worktree on its own branch", context do
+    root = World.project(context).root
+
+    threads =
+      for id <- context.many_threads,
+          do: await_thread(id, &(is_binary(&1["branch"]) and &1["branch"] =~ "claude-branch"))
+
+    paths = Enum.map(threads, & &1["worktreePath"])
+    branches = Enum.map(threads, & &1["branch"])
+    assert length(Enum.uniq(paths)) == length(threads)
+    assert length(Enum.uniq(branches)) == length(threads)
+
+    for %{"worktreePath" => path, "branch" => branch} <- threads do
+      assert path in World.worktrees(root)
+      assert World.git!(path, ~w(branch --show-current)) == branch
+    end
+
+    Map.put(context, :many_branches, branches)
+  end
+
+  # A new branch has no upstream of its own: one started from `origin/main` must not
+  # push to `main` (`HalC2.Vcs.create_worktree/2`).
+  step "each branch records the base it started from", context do
+    root = World.project(context).root
+
+    for branch <- context.many_branches do
+      assert World.git!(root, ["config", "--get", "branch.#{branch}.gh-merge-base"]) == "main"
+    end
+
+    context
+  end
+
+  step "each temporary branch is renamed from its thread's first message", context do
+    root = World.project(context).root
+    left = World.git!(root, ~w(branch --list hal-c2/*))
+    assert left == "", "temporary branches left: #{left}"
+    prompts = Shared.writer_prompts(context)
+
+    for n <- 1..length(context.many_threads),
+        do: assert(Enum.any?(prompts, &(&1 =~ "fix the cart total #{n}")))
+
+    context
+  end
+
+  # --- a locked git config ------------------------------------------------------------
+
+  step "another program holds the lock on the git config of {string}",
+       %{args: [title]} = context do
+    root = World.project(context, title).root
+
+    lock =
+      Path.join(
+        World.git!(root, ~w(rev-parse --path-format=absolute --git-common-dir)),
+        "config.lock"
+      )
+
+    File.write!(lock, "")
+    ExUnit.Callbacks.on_exit(fn -> File.rm(lock) end)
+    context |> Shared.answering_writer() |> Map.put(:config_lock, lock)
+  end
+
+  step "the thread starts in the new worktree", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    path = snapshot["worktreePath"]
+    assert File.dir?(path)
+    run = await_run(context.setup_thread, "completed")
+    assert run
+    Map.put(context, :worktree, %{path: path, branch: snapshot["branch"]})
+  end
+
+  step "the branch's base is taken from the default branch when it is needed", context do
+    root = World.project(context).root
+    thread = await_thread(context.setup_thread, &(&1["branch"] =~ "claude-branch"))
+    branch = thread["branch"]
+    assert World.git!(context.worktree.path, ~w(branch --show-current)) == branch
+    File.rm!(context.config_lock)
+
+    assert {_, 1} =
+             System.cmd("git", ["-C", root, "config", "--get", "branch.#{branch}.gh-merge-base"])
+
+    assert HalC2.Git.base_branch(root, branch) == "main"
+    context
+  end
+
+  # --- a thread whose worktree was deleted ------------------------------------------
+
+  # A real worktree of the project on its own branch, with a commit of its own, whose
+  # thread the user goes back to.
+  step "the thread {string} worked in its own worktree on {string}",
+       %{args: [title, branch]} = context do
+    worked_in_worktree(context, title, branch)
+  end
+
+  step ~r/^the worktree was deleted and "(?<branch>[^"]+)" (?<state>still exists|was deleted but "origin\/[^"]+" was fetched|was deleted too|was deleted too and the project checkout is detached)$/,
+       %{args: [branch, state]} = context do
+    %{path: path, root: root} = context.lost
+    assert branch == context.lost.branch
+
+    if state =~ ~r/origin|detached/ do
+      World.git_remote(context, root)
+      World.git!(path, ["push", "-q", "origin", branch])
+    end
+
+    File.rm_rf!(path)
+
+    if state != "still exists" do
+      World.git!(root, ~w(worktree prune))
+      World.git!(root, ["branch", "-D", branch])
+      # The origin copy goes with the remote-tracking branch unless it was fetched.
+      unless state =~ "origin",
+        do: World.git!(root, ["update-ref", "-d", "refs/remotes/origin/#{branch}"])
+    end
+
+    # The project's own checkout has moved on, so the start of the remade branch says
+    # which one it came from.
+    start =
+      case state do
+        "was deleted too" ->
+          World.git!(root, ~w(switch -q -c develop))
+          World.commit!(root, %{"develop.txt" => "develop\n"}, "develop")
+          World.git!(root, ~w(rev-parse HEAD))
+
+        "was deleted too and the project checkout is detached" ->
+          World.git!(root, ~w(switch -q --detach))
+          World.commit!(root, %{"detached.txt" => "detached\n"}, "detached")
+          World.git!(root, ~w(rev-parse origin/main))
+
+        _ ->
+          nil
+      end
+
+    put_in(context.lost[:start], start)
+  end
+
+  # Git still lists the worktree (its folder is gone), and the project's own checkout
+  # has its branch, so it cannot be made again until the user frees it.
+  step "the thread {string} lost its worktree and making it again fails",
+       %{args: [title]} = context do
+    context = worked_in_worktree(context, title, "feature/cart")
+
+    %{path: path, root: root, branch: branch} = context.lost
+    File.rm_rf!(path)
+    World.git!(root, ~w(worktree prune))
+    World.git!(root, ["switch", "-q", branch])
+    context
+  end
+
+  step "the user sends the next message in {string}", %{args: [title]} = context do
+    assert title == context.thread
+    send_next(context, "carry on")
+  end
+
+  step ~r/^the worktree is made again (?<from>.+)$/, %{args: [from]} = context do
+    World.await_latest_run(context, context.thread, "completed", 15_000)
+    %{path: path, branch: branch, root: root} = context.lost
+    assert File.dir?(path)
+    assert World.git!(path, ~w(branch --show-current)) == branch
+    assert %{"worktreePath" => ^path, "branch" => ^branch} = World.thread(context, context.thread)
+    head = World.git!(path, ~w(rev-parse HEAD))
+
+    cond do
+      from == ~s(on "#{branch}") ->
+        assert File.exists?(Path.join(path, "cart.txt"))
+
+      from =~ "origin/" ->
+        assert head == World.git!(root, ["rev-parse", "origin/#{branch}"])
+        assert File.exists?(Path.join(path, "cart.txt"))
+        assert World.git!(path, ~w(rev-parse --abbrev-ref @{upstream})) == "origin/#{branch}"
+
+      true ->
+        assert head == context.lost.start
+        refute File.exists?(Path.join(path, "cart.txt"))
+    end
+
+    context
+  end
+
+  step "the turn runs in it", context do
+    assert [%{"cwd" => cwd}] = World.codex_requests(context, "turn/start")
+    assert cwd == context.lost.path
+    context
+  end
+
+  step "the agent is not started", context do
+    World.await_latest_run(context, context.thread, "failed", 15_000)
+    assert World.codex_requests(context, "turn/start") == []
+    refute File.exists?(context.lost.path)
+    context
+  end
+
+  step "the thread says the worktree could not be made, naming the branch and the path, without raw git output",
+       context do
+    %{path: path, branch: branch} = context.lost
+    item = await_error_item(World.thread_id(context, context.thread))
+    message = item["failure"]["message"]
+    assert item["title"] == "Worktree could not be made"
+    assert message =~ ~s("#{branch}")
+    assert message =~ path
+    refute message =~ ~r/fatal|already|git worktree/i
+    context
+  end
+
+  step "the user can send again to retry", context do
+    %{path: path, root: root} = context.lost
+    World.git!(root, ~w(switch -q main))
+    context = send_next(context, "try again")
+    World.await_latest_run(context, context.thread, "completed", 15_000)
+    assert File.dir?(path)
+    assert [%{"cwd" => ^path}] = World.codex_requests(context, "turn/start")
+    context
+  end
+
   # --- helpers --------------------------------------------------------------------------------
 
   # A setup held in its checkout: a post-checkout hook keeps `git worktree add` open once
   # the files are on disk. `context.hook_pid` is the hook's.
+  # A real worktree of the project on its own branch, with a commit of its own, whose
+  # thread the user goes back to; `context.lost` names them.
+  defp worked_in_worktree(context, title, branch) do
+    root = World.project(context).root
+    context = World.providers(context)
+
+    context =
+      World.create_thread(context, title, nil, %{
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
+      })
+
+    Mc.ensure(
+      Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Vcs.Registry},
+        id: HalC2.Vcs.Registry
+      )
+    )
+
+    {:ok, %{"worktree" => %{"path" => path}}} =
+      HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => "main", "newRefName" => branch})
+
+    World.commit!(path, %{"cart.txt" => "cart\n"}, "cart totals")
+    context = World.patch_thread(context, title, %{"worktreePath" => path, "branch" => branch})
+    Map.merge(context, %{thread: title, lost: %{path: path, branch: branch, root: root}})
+  end
+
+  defp send_next(context, text) do
+    selection = World.thread(context, context.thread)["modelSelection"]
+
+    context
+    |> World.command(
+      World.message_command(context, context.thread, text, %{"modelSelection" => selection})
+    )
+    |> tap(&assert({:ok, _} = &1.reply, "message.dispatch failed: #{inspect(&1.reply)}"))
+  end
+
   defp hold_checkout(context) do
     root = World.project(context).root
     {reader, _pipe} = checkout_hook(context, root)

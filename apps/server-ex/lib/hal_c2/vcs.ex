@@ -778,7 +778,78 @@ defmodule HalC2.Vcs do
         true -> nil
       end
 
-    if base, do: Git.run(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+    # A branch made again from its own fetched copy is not its own base. The record is
+    # optional: without it the base is the default branch (`Git.base_branch/2`).
+    if base && base != branch,
+      do: write_config(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+  end
+
+  # Every worktree of a repository shares its one config file, which git locks while it
+  # writes it and refuses to write while another holds it. Writes from this MC take
+  # turns per repository; one that finds another program holding the lock tries again
+  # a few times.
+  @config_tries 5
+  defp write_config(cwd, args) do
+    in_turn(cwd, fn -> retry_locked(fn -> Git.ok(cwd, args, stop_children: cwd) end) end)
+  end
+
+  defp retry_locked(fun, tries \\ @config_tries) do
+    case fun.() do
+      {:error, {_status, err}} = error when tries > 1 ->
+        if err =~ "could not lock config file" do
+          Process.sleep(50 * (@config_tries - tries + 1))
+          retry_locked(fun, tries - 1)
+        else
+          error
+        end
+
+      result ->
+        result
+    end
+  end
+
+  # Runs `fun` while no other caller of this MC changes the repository `cwd` belongs to.
+  defp in_turn(cwd, fun) do
+    repo =
+      case Git.ok(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
+        {:ok, dir} -> String.trim(dir)
+        _ -> Path.expand(cwd)
+      end
+
+    :global.trans({{__MODULE__, repo}, self()}, fun, [node()])
+  end
+
+  @doc """
+  Makes the worktree of `branch` at `path` again after its folder was deleted: on
+  `branch` when it is still there, else on a new `branch` started from its fetched
+  `origin/<branch>` (which it then tracks), the checkout's current branch, the remote's
+  default branch, or the checkout's commit, the first there is.
+  """
+  def restore_worktree(cwd, branch, path) do
+    Git.run(cwd, ~w(worktree prune))
+
+    if branch?(cwd, branch) do
+      create_worktree(%{"cwd" => cwd, "refName" => branch, "path" => path})
+    else
+      start = restore_start(cwd, branch)
+      input = %{"cwd" => cwd, "refName" => start, "newRefName" => branch, "path" => path}
+
+      with {:ok, _} = created <- create_worktree(input) do
+        if start == "origin/#{branch}",
+          do: Git.run(cwd, ["branch", "--set-upstream-to=#{start}", branch])
+
+        created
+      end
+    end
+  end
+
+  defp restore_start(cwd, branch) do
+    cond do
+      ref?(cwd, "refs/remotes/origin/#{branch}") -> "origin/#{branch}"
+      current = Git.current_branch(cwd) -> current
+      default = default_branch(cwd) -> "origin/#{default}"
+      true -> "HEAD"
+    end
   end
 
   @doc """
@@ -789,19 +860,32 @@ defmodule HalC2.Vcs do
   def rename_branch(cwd, old, new, on_name \\ fn _name -> :ok end) do
     candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
 
-    case Enum.find(candidates, &branch_free?(cwd, &1)) do
-      nil ->
-        {:error, "Could not find an available branch name for '#{new}'."}
+    # Picking the free name and taking it is one turn, so two renames at once in one
+    # repository do not pick the same name.
+    in_turn(cwd, fn ->
+      case Enum.find(candidates, &branch_free?(cwd, &1)) do
+        nil ->
+          {:error, "Could not find an available branch name for '#{new}'."}
 
-      name ->
-        on_name.(name)
+        name ->
+          on_name.(name)
 
-        case Git.ok(cwd, ["branch", "-m", "--", old, name], stop_children: cwd) do
-          {:ok, _} -> {:ok, name}
-          {:error, {_status, err}} -> {:error, err}
-          {:error, reason} -> {:error, reason}
-        end
-    end
+          case Git.ok(cwd, ["branch", "-m", "--", old, name], stop_children: cwd) do
+            {:ok, _} ->
+              {:ok, name}
+
+            # Git moves the branch before its config section; a config another program
+            # holds locked leaves the branch renamed all the same, without its records.
+            {:error, {_status, err}} ->
+              if branch?(cwd, name) and not branch?(cwd, old),
+                do: {:ok, name},
+                else: {:error, err}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+      end
+    end)
   end
 
   defp branch_free?(cwd, name),

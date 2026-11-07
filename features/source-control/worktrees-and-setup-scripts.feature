@@ -106,12 +106,14 @@ Feature: Worktrees and setup scripts
 
   # Upstream #25700: worktrees share one Git config, and parallel launches lost the race for its
   # lock: branches without worktrees, renames that failed, lost base records and upstreams.
-  @backlog @mc @priority-high
+  # The MC gives a new branch no upstream (a branch started from origin/main must not push to main),
+  # so of upstream's records only the base is kept here.
+  @mc @priority-high
   Scenario: Threads launched in new worktrees of one repository at once all get their worktrees
     Given the project starts worktrees from origin
     When 12 threads are launched in new worktrees of the project at the same moment
     Then each thread has its own worktree on its own branch
-    And each branch records the base it started from and the upstream it tracks
+    And each branch records the base it started from
     And each temporary branch is renamed from its thread's first message
 
   @mc
@@ -477,7 +479,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #11773: writing the new branch's base into git's config is optional; a locked config
   # no longer fails a worktree git already made.
-  @mc @backlog
+  @mc
   Scenario: A locked git config does not fail a worktree git has made
     Given another program holds the lock on the git config of "shop"
     When the user sends the first message of a thread in a new worktree
@@ -783,11 +785,11 @@ Feature: Worktrees and setup scripts
   # Upstream #18359: a thread whose worktree was deleted could never start another turn.
   # Upstream #26758: a deleted thread branch is restored from its fetched copy before the project's
   # branch is used, and a detached project checkout no longer breaks the recovery.
-  @backlog @mc @shared @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: A thread whose worktree was deleted gets it back on its next message
     Given the thread "Fix checkout" worked in its own worktree on "feature/cart"
     And the worktree was deleted and <branch>
-    When the user sends the next message
+    When the user sends the next message in "Fix checkout"
     Then the worktree is made again <from>
     And the turn runs in it
 
@@ -798,10 +800,10 @@ Feature: Worktrees and setup scripts
       | "feature/cart" was deleted too                                      | with "feature/cart" started from the project's current branch                                          |
       | "feature/cart" was deleted too and the project checkout is detached | with "feature/cart" started from the project's remote default branch, or its commit when there is none |
 
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A worktree that cannot be made again stops before the agent starts
     Given the thread "Fix checkout" lost its worktree and making it again fails
-    When the user sends the next message
+    When the user sends the next message in "Fix checkout"
     Then the agent is not started
     And the thread says the worktree could not be made, naming the branch and the path, without raw git output
     And the user can send again to retry
