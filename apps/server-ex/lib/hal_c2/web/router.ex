@@ -211,8 +211,8 @@ defmodule HalC2.Web.Router do
          {:ok, expires_at} <- HalC2.Auth.renew(session) do
       json(conn, 200, %{"expiresAt" => iso(expires_at)})
     else
-      {:error, reason, dpop} -> json(conn, 401, auth_invalid(reason, dpop))
-      :error -> json(conn, 401, auth_invalid("invalid_credential", nil))
+      {:error, reason, dpop} -> auth_refused(conn, reason, dpop)
+      :error -> auth_refused(conn, "invalid_credential", nil)
     end
   end
 
@@ -538,7 +538,7 @@ defmodule HalC2.Web.Router do
          {:ok, ticket, expires_at} <- HalC2.Auth.issue_ticket(session, use) do
       json(conn, 200, %{"ticket" => ticket, "expiresAt" => iso(expires_at)})
     else
-      {:error, reason, dpop} -> json(conn, 401, auth_invalid(reason, dpop))
+      {:error, reason, dpop} -> auth_refused(conn, reason, dpop)
     end
   end
 
@@ -603,8 +603,20 @@ defmodule HalC2.Web.Router do
         end
 
       {:error, reason, dpop} ->
-        json(conn, 401, auth_invalid(reason, dpop))
+        auth_refused(conn, reason, dpop)
     end
+  end
+
+  # A refused DPoP request is challenged for DPoP, whatever the scheme's case
+  # (`HalC2.Auth.credential/1` lowercases it, RFC 9110 section 11.1).
+  defp auth_refused(conn, reason, dpop) do
+    conn =
+      case conn |> get_req_header("authorization") |> List.first() |> HalC2.Auth.credential() do
+        {"dpop", _} -> put_resp_header(conn, "www-authenticate", "DPoP")
+        _ -> conn
+      end
+
+    json(conn, 401, auth_invalid(reason, dpop))
   end
 
   defp auth_invalid(reason, dpop) do

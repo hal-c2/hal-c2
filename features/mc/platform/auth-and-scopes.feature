@@ -303,7 +303,7 @@ Feature: MC authentication and scopes
       | bEaReR |
 
   # Upstream #30337: a DPoP token sent as "dpop" matched neither scheme and was refused as no credential.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: The DPoP scheme is read in any letter case
     Given a client holds a DPoP-bound access token and a fresh proof from its key
     When it sends the token with the scheme "<scheme>"

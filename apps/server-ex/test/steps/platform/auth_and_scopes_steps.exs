@@ -2145,7 +2145,8 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  step "a DPoP client bought an RPC socket ticket", context do
+  # Pairs with a DPoP proof: `{key, access}` for a session bound to that key.
+  defp dpop_session!(context) do
     key = dpop_key()
     token = HalC2.Auth.create_pairing_token(context.mc.store)
 
@@ -2160,6 +2161,11 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     assert {200, _, %{"token_type" => "DPoP", "access_token" => access}} =
              Mc.request(context.mc, :post, "/oauth/token", form: form, headers: [{"dpop", proof}])
 
+    {key, access}
+  end
+
+  step "a DPoP client bought an RPC socket ticket", context do
+    {key, access} = dpop_session!(context)
     path = token_path() <> "/rpc"
     proof = dpop_proof(key, "POST", url(context, path), access)
     ticket = buy_ticket(context, path, dpop_headers(access, proof))
@@ -2209,7 +2215,7 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     context
   end
 
-  # --- schemes and locales (upstream #23782, #19616) ----------------------------------
+  # --- schemes and locales (upstream #23782, #19616, #30337) ---------------------------
 
   step ~r/^a local tool sends the MC's access token with the scheme "(?<scheme>[^"]+)"$/,
        %{args: [scheme]} = context do
@@ -2228,6 +2234,35 @@ defmodule HalC2.Steps.Platform.AuthAndScopes do
     for response <- context.responses,
         do: assert({200, _, %{"authenticated" => true}} = response)
 
+    context
+  end
+
+  step "a client holds a DPoP-bound access token and a fresh proof from its key", context do
+    {key, access} = dpop_session!(context)
+    Map.merge(context, %{key: key, access: access})
+  end
+
+  step ~r/^it sends the token with the scheme "(?<scheme>[^"]+)"$/,
+       %{args: [scheme]} = context do
+    # A proof names its method, URL and token, so the fresh one is made for this request.
+    proof = dpop_proof(context.key, "GET", url(context, "/api/auth/session"), context.access)
+
+    response =
+      Mc.request(context.mc, :get, "/api/auth/session",
+        headers: [{"authorization", "#{scheme} #{context.access}"}, {"dpop", proof}]
+      )
+
+    Map.merge(context, %{responses: [response], scheme: scheme})
+  end
+
+  step "a refused request is challenged for DPoP whatever the scheme's case", context do
+    # No proof, on a route that answers 401 (the session route answers 200 unauthenticated).
+    assert {401, headers, %{"reason" => "invalid_credential"}} =
+             Mc.request(context.mc, :post, token_path(),
+               headers: [{"authorization", "#{context.scheme} #{context.access}"}]
+             )
+
+    assert {"www-authenticate", "DPoP"} in headers
     context
   end
 
