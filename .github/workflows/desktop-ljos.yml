@@ -59,7 +59,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          sparse-checkout: apps/desktop-ljos
+          # The shell's code colouring is a path dependency there.
+          sparse-checkout: |
+            apps/desktop-ljos
+            native/syntax
           persist-credentials: false
 
       # The toolchain Ljós needs is pinned in apps/desktop-ljos/mise.toml.
