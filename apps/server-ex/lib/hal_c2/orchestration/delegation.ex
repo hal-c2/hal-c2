@@ -299,6 +299,7 @@ defmodule HalC2.Orchestration.Delegation do
     # A child that has not started its first run yet has not begun the task.
     with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
+         false <- continuing?(child, child_id),
          {status, run, ended_at} <- last_end(runs) do
       result = result_for(child_id, run, status)
       # Before the result starts the caller's turn, so a link its agent makes from the
@@ -443,9 +444,23 @@ defmodule HalC2.Orchestration.Delegation do
 
     cond do
       boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil}
-      runs == [] or not quiet?(child) -> nil
+      runs == [] or not quiet?(child) or continuing?(child, child_id) -> nil
       true -> last_end(runs)
     end
+  end
+
+  # A continuation a restart asked of the child (`Recovery.continue/0`) whose message is
+  # not in yet: the run the restart interrupted is not how the task ends. Once the message
+  # is in, its run is work `quiet?/1` sees. One that failed for good leaves the task to
+  # the periodic check (`IdleSessions`).
+  defp continuing?(child, child_id) do
+    messages = StreamState.get(child, "message")
+
+    Enum.any?(
+      HalC2.Orchestration.Effects.effects(child_id),
+      &(&1["type"] == "provider-runtime.continue" and &1["status"] in ~w(pending running) and
+          messages[get_in(&1, ["args", "command", "messageId"])] == nil)
+    )
   end
 
   # How a child's work ended: its latest run that was not rolled back, by the

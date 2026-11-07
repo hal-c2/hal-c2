@@ -640,11 +640,18 @@ Feature: Recovering from restarts and releasing idle sessions
     When 14:00 passes
     Then nothing is sent to "t1"
 
-  @backlog @mc @priority-high
+  # Upstream #15323: a child the restart interrupted reported that as its result before its
+  # continuation ran.
+  @mc @priority-high
   Scenario: A restart does not report a delegated child's interrupted result as final
-    Given "continue threads after restarts" is on
-    When the MC restarts mid-delegation
-    Then the child's interrupted result is held until its continuation settles
+    Given project "demo" continues threads after a server update
+    And thread "parent" has a running turn on "codex" in worktree "/work/p"
+    And the agent in "parent" delegates a task
+    And the continuation a restart asks of the subagent waits to be sent
+    When the MC restarts
+    Then the task is "running" however often it is checked while the continuation waits
+    When the continuation is sent
+    Then the task, its node and its turn item end "completed"
 
   # Upstream #15323: a restart continued a run the user had stopped and started the queue held behind it.
   @mc @priority-high

@@ -6,7 +6,8 @@ defmodule HalC2.DelegationPropTest do
   late, never, or again, and retried when a thread it reads fails), the checks for a quiet child (Grok's background work ending,
   the periodic check), and the MC restarting (`Delegation.reconcile/2` at boot), also
   when the restart interrupts the child's working run and nothing continues it
-  (`Recovery`).
+  (`Recovery`), or asks the child to continue and that continuation is later sent or
+  given up on.
 
   The child's runs are written to its stream as the turn writer leaves them, with no
   provider behind them; the caller has a turn running, so the result message a report
@@ -15,8 +16,9 @@ defmodule HalC2.DelegationPropTest do
 
   - the task, its node and its turn item agree on how it ended;
   - once settled the task never changes, and its result reaches the caller at most once;
-  - it is never settled while its child has a run active or queued, or a background
-    command of a run not rolled back still running (hal-c2/hal-c2#508);
+  - it is never settled while its child has a run active or queued, a background
+    command of a run not rolled back still running (hal-c2/hal-c2#508), or a restart's
+    continuation still to be sent (upstream #15323);
   - it ended as and when the child's last run not rolled back did, never when a report
     got through or the MC started, with the child's last answer in such a run;
   - a report, a check for a quiet child, or a restart settles it once the child is
@@ -76,8 +78,9 @@ defmodule HalC2.DelegationPropTest do
 
   # runs: the child's runs in ordinal order, %{id, status, ended_as}, `ended_as` how
   # the run ended before any rollback; held: runs whose end is yet to be reported;
-  # commands: background commands, %{id, run, open}.
-  def initial_state, do: %{runs: [], held: [], commands: []}
+  # commands: background commands, %{id, run, open}; continuing: the run a restart
+  # interrupted and asked the child to continue, while that continuation is unsent.
+  def initial_state, do: %{runs: [], held: [], commands: [], continuing: nil}
 
   def command(state) do
     running = for %{status: "running"} = run <- state.runs, do: run.id
@@ -94,7 +97,20 @@ defmodule HalC2.DelegationPropTest do
         {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}},
         {1, {:call, __MODULE__, :check, []}}
       ] ++
-        if(running == [], do: [], else: [{1, {:call, __MODULE__, :restart_unresumed, []}}]) ++
+        if(running == [],
+          do: [],
+          else: [
+            {1, {:call, __MODULE__, :restart_unresumed, []}},
+            {1, {:call, __MODULE__, :restart_continued, [hd(running)]}}
+          ]
+        ) ++
+        if(state.continuing == nil,
+          do: [],
+          else: [
+            {3, {:call, __MODULE__, :send_continuation, [state.continuing, next(state)]}},
+            {1, {:call, __MODULE__, :abandon_continuation, [state.continuing]}}
+          ]
+        ) ++
         if(working?(state),
           do: [],
           else: [
@@ -168,7 +184,10 @@ defmodule HalC2.DelegationPropTest do
 
   defp next(state), do: "run-#{length(state.runs) + 1}"
 
-  defp working?(state), do: Enum.any?(state.runs, &(&1.status in ~w(preparing running queued)))
+  defp working?(state),
+    do:
+      state.continuing != nil or
+        Enum.any?(state.runs, &(&1.status in ~w(preparing running queued)))
 
   def precondition(state, {:call, _, call, _}) when call in [:start, :start_preparing],
     do: not working?(state)
@@ -180,6 +199,14 @@ defmodule HalC2.DelegationPropTest do
     do:
       Enum.any?(state.runs, &(&1.id == run and &1.status == "running")) and
         not Enum.any?(state.commands, &(&1.id == id))
+
+  def precondition(state, {:call, _, :restart_continued, [id]}),
+    do:
+      state.continuing == nil and Enum.any?(state.runs, &(&1.id == id and &1.status == "running"))
+
+  def precondition(state, {:call, _, call, [id | _]})
+      when call in [:send_continuation, :abandon_continuation],
+      do: state.continuing == id
 
   def precondition(state, {:call, _, :end_background, [id, _]}),
     do: Enum.any?(state.commands, &(&1.id == id and &1.open))
@@ -253,15 +280,34 @@ defmodule HalC2.DelegationPropTest do
     %{state | runs: runs, commands: Enum.map(state.commands, &%{&1 | open: false})}
   end
 
+  def next_state(state, _result, {:call, _, :restart_continued, [id]}) do
+    state = next_state(state, nil, {:call, __MODULE__, :restart_unresumed, []})
+    %{state | continuing: id}
+  end
+
+  def next_state(state, _result, {:call, _, :send_continuation, [_, id]}),
+    do: %{
+      state
+      | continuing: nil,
+        runs: state.runs ++ [%{id: id, status: "running", ended_as: nil}]
+    }
+
+  def next_state(state, _result, {:call, _, :abandon_continuation, _}),
+    do: %{state | continuing: nil}
+
   defp update(state, id, fun),
     do: %{state | runs: Enum.map(state.runs, &if(&1.id == id, do: fun.(&1), else: &1))}
 
   # Every command returns the task before and after it, and the child's stream after.
-  def postcondition(_state, {:call, _, call, args}, {before, task, child}) do
-    agree?(task) and kept?(before, task) and never_owing?(before, task, child) and
+  def postcondition(state, {:call, _, call, args} = command, {before, task, child}) do
+    # A continuation still to be sent is work, however quiet the child's runs are.
+    continuing = next_state(state, nil, command).continuing != nil
+    quiet = not continuing and quiet?(child)
+
+    agree?(task) and kept?(before, task) and never_owing?(before, task, quiet) and
       as_ended?(before, task, child) and delivered_once?() and pending_has_wake?() and
       wakes_agree?() and
-      expected?(call, args, before, task, child)
+      expected?(call, args, before, task, child, quiet)
   end
 
   # A task that ended with its delivery still pending is waiting on a wake already
@@ -322,8 +368,8 @@ defmodule HalC2.DelegationPropTest do
   defp kept?(before, task), do: not settled?(before) or before == task
 
   # Settled only once the child is quiet: nothing running, queued, or owed.
-  defp never_owing?(before, task, child),
-    do: settled?(before) or not settled?(task) or quiet?(child)
+  defp never_owing?(before, task, quiet),
+    do: settled?(before) or not settled?(task) or quiet
 
   # As the child's last run not rolled back ended, with its last answer in such a
   # run, or what a run that left no answer says for itself.
@@ -356,17 +402,30 @@ defmodule HalC2.DelegationPropTest do
   # What checks for a quiet child settles an unsettled task once it is quiet; the rest
   # settles nothing. A background command ending on a provider that wakes itself is no
   # reason to check: its wake run, queued after, ends and reports.
-  defp expected?(call, args, before, task, child) do
+  defp expected?(call, args, before, task, child, quiet) do
     checks =
       case {call, args} do
-        {:finish, [_, _, :at_once, _]} -> true
-        {:end_background, [_, :quiet]} -> true
-        {call, _} -> call in [:report, :check, :prepare_end, :restart, :restart_unresumed]
+        {:finish, [_, _, :at_once, _]} ->
+          true
+
+        {:end_background, [_, :quiet]} ->
+          true
+
+        {call, _} ->
+          call in [
+            :report,
+            :check,
+            :prepare_end,
+            :restart,
+            :restart_unresumed,
+            :restart_continued,
+            :abandon_continuation
+          ]
       end
 
     cond do
       settled?(before) -> true
-      checks -> settled?(task) == (runs(child) != [] and quiet?(child))
+      checks -> settled?(task) == (runs(child) != [] and quiet)
       true -> not settled?(task)
     end
   end
@@ -634,6 +693,67 @@ defmodule HalC2.DelegationPropTest do
       HalC2.Orchestration.Recovery.continue()
     end)
   end
+
+  # Boot interrupts the child's working run and asks it to continue: the continuation's
+  # effect waits in the outbox (`Recovery.continue/0`), and the boot checks the caller's
+  # tasks then (`Delegation.reconcile(parent, false)`).
+  def restart_continued(id) do
+    observe(fn ->
+      commit(@parent, [{"run", "parent-run", %{"status" => "completed"}}])
+      HalC2.Prop.restart_service(HalC2.Streams)
+      interrupt = ended(id, "interrupted")
+
+      items =
+        for item <- StreamState.list(stream(@child), "turn-item"),
+            item["status"] == "running",
+            do: {"turn-item", item["id"], %{"status" => "interrupted"}}
+
+      commit(@child, [{"run", id, interrupt} | items])
+      put_continuation(id, "pending")
+      Delegation.reconcile(@parent, false)
+    end)
+  end
+
+  # The continuation is sent: its message and the run it starts are in, then its
+  # effect is done and gone, as the outbox leaves it.
+  def send_continuation(interrupted, id) do
+    observe(fn ->
+      message = "message:restart-continuation:#{interrupted}"
+
+      commit(@child, [
+        {"message", message,
+         %{"id" => message, "runId" => id, "role" => "user", "text" => "Continue"}},
+        {"run", id, run(id, "running")}
+      ])
+
+      :ok = HalC2.Store.delete_meta(continuation_key(interrupted))
+    end)
+  end
+
+  # Its tries run out: the effect is kept as failed and the periodic check settles.
+  def abandon_continuation(interrupted) do
+    observe(fn ->
+      put_continuation(interrupted, "failed")
+      Delegation.settle_if_quiet(@child)
+    end)
+  end
+
+  defp put_continuation(interrupted, status) do
+    record = %{
+      "id" => "effect-continue-#{interrupted}",
+      "threadId" => @child,
+      "type" => "provider-runtime.continue",
+      "lane" => "provider",
+      "status" => status,
+      "createdAt" => "2026-01-01T01:00:00.000Z",
+      "args" => %{"command" => %{"messageId" => "message:restart-continuation:#{interrupted}"}}
+    }
+
+    :ok = HalC2.Store.put_meta(continuation_key(interrupted), JSON.encode!(record))
+  end
+
+  defp continuation_key(interrupted),
+    do: "effect:#{@child}:effect-continue-#{interrupted}"
 
   defp observe(fun) do
     before = task()

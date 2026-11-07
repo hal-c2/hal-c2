@@ -447,6 +447,42 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The effect a restart enqueues to continue a thread waits in its lane until released.
+  step "the continuation a restart asks of the subagent waits to be sent", context do
+    child = World.thread_id(context, "subagent")
+    World.put_app_env(:effects_hook, {__MODULE__, :hold_continuation, [self(), child]})
+    context
+  end
+
+  # The checks that settle a quiet child's task: the boot's, after `continue/0`, and the
+  # periodic one.
+  step "the task is {string} however often it is checked while the continuation waits",
+       %{args: [status]} = context do
+    child = World.thread_id(context, "subagent")
+    assert_receive {:continuation_held, ^child, lane}, 5_000
+
+    assert HalC2.Orchestration.Delegation.reconcile(
+             World.thread_id(context, context.task_parent),
+             false
+           ) == 0
+
+    :ok = HalC2.Orchestration.Delegation.settle_if_quiet(child)
+
+    task =
+      HalC2.StreamState.get(World.state(context, context.task_parent), "subagent")[
+        context.task_id
+      ]
+
+    assert task["status"] == status
+    Map.put(context, :held_lane, lane)
+  end
+
+  step "the continuation is sent", context do
+    Application.delete_env(:hal_c2, :effects_hook)
+    send(context.held_lane, :release_continuation)
+    context
+  end
+
   # --- provider processes an MC that died left running ------------------------------------
 
   # A stand-in provider whose `sleep` is a command it left in the background; it holds
@@ -1980,6 +2016,22 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     assert Registry.lookup(HalC2.Claude.Registry, id) == []
     context
   end
+
+  @doc false
+  def hold_continuation(
+        test,
+        thread_id,
+        :execute,
+        %{"type" => "provider-runtime.continue", "threadId" => thread_id}
+      ) do
+    send(test, {:continuation_held, thread_id, self()})
+
+    receive do
+      :release_continuation -> :ok
+    end
+  end
+
+  def hold_continuation(_test, _thread_id, _stage, _record), do: :ok
 
   defp continue_setting(context, project, on?) do
     id = World.project(context, project).id
