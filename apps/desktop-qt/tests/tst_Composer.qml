@@ -449,6 +449,12 @@ Item {
             const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
             compare(sent.action, "composer.submit");
             compare(sent.payload.intent, "foreground");
+
+            // Editing a queued message saves it: no Steer or Queue cue while it lasts.
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { editingQueuedRunId: "run-2" })
+            });
+            compare(primary.followUp, "");
         }
 
         // Scenario: Page Up and Page Down from the composer scroll the conversation
