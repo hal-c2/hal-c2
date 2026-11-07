@@ -376,6 +376,28 @@ defmodule HalC2.TextGenerationTest do
     assert [%{"claudeConfigDir" => ^home}] = calls(log)
   end
 
+  test "Claude writes with the environment variables of the instance chosen for text generation",
+       %{repo: repo, log: log, tmp_dir: dir} do
+    install([:claude])
+    home = Path.join(dir, "claude-env")
+
+    settings!(%{
+      "textGenerationModelSelection" => %{
+        "instanceId" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      },
+      "providerInstances" => %{
+        "claudeAgent" => %{
+          "driver" => "claudeAgent",
+          "environment" => [%{"name" => "CLAUDE_CONFIG_DIR", "value" => home}]
+        }
+      }
+    })
+
+    assert {:ok, _} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    assert [%{"claudeConfigDir" => ^home}] = calls(log)
+  end
+
   test "OpenCode's text model must be written as provider/model", %{repo: repo} do
     install([])
     Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
