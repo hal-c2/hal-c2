@@ -143,13 +143,29 @@ Feature: Recovering from restarts and releasing idle sessions
 
   # Upstream #19291: a run that ended to wait on a monitor or subagent never woke after an update,
   # and its delegating parent took the interim message as the result.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A run that ended to wait on work the restart stopped is continued
     Given project "demo" continues threads after a server update
     And thread "t1" ended its turn to wait on <work>
     When the MC restarts
     Then "t1" receives one continuation turn
-    And a task delegated to "t1" reports "interrupted" until that continuation ends, not "completed"
+    And the continuation names <work> the restart ended
+
+    Examples:
+      | work                  |
+      | a monitor             |
+      | a subagent            |
+      | a background task     |
+
+  # Upstream #19291. A continuation keeps the task working until it ends (see "A restart does not
+  # report a delegated child's interrupted result as final"); with none, the
+  # interim message is not the task's result.
+  @mc @priority-high
+  Scenario Outline: A task whose child waited on work the restart stopped is not completed by it
+    Given thread "parent" has a running turn on "codex" in worktree "/work/p"
+    And a task delegated to "t1" ended its turn to wait on <work>
+    When the MC restarts
+    Then the task delegated to "t1" ends "interrupted", not "completed"
 
     Examples:
       | work                  |

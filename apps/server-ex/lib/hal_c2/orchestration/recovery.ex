@@ -13,12 +13,14 @@ defmodule HalC2.Orchestration.Recovery do
 
   Work a provider left running in the background after its turn (a subagent, a
   background command) died with the process too, and is ended the same way; a thread
-  that had finished its turn is then told which background commands the restart
-  ended (`continue/0`), where its project continues threads after a restart. A
+  that had finished its turn is then told what background work the restart ended
+  (`continue/0`), where its project continues threads after a restart. A
   task the thread delegated runs in its own thread and is left to settle when
   that ends (`Delegation.finished/3`); one whose child had already stopped without
   telling it settles now (`Delegation.reconcile/2`), and one whose child this boot
-  interrupted settles once `continue/0` has seen whether the child goes on.
+  interrupted settles once `continue/0` has seen whether the child goes on. A child
+  that ended its turn to wait on background work the restart ended did not finish
+  its task: one nothing continues reports it interrupted (`cut_off?/1`).
 
   Only threads whose sidebar row shows an active run or background work are opened.
 
@@ -36,6 +38,9 @@ defmodule HalC2.Orchestration.Recovery do
 
   @active_runs ~w(preparing queued starting running waiting)
   @active ~w(pending preparing queued starting running waiting active)
+  # Turn items of work a provider can leave running after its turn (`BackgroundWork`).
+  @background ~w(command_execution dynamic_tool subagent)
+  @cut_off "Cancelled because the server "
   # What a clean stop settled and would continue, for the next boot.
   @shut_down_key "recovery:shutdown"
 
@@ -145,8 +150,9 @@ defmodule HalC2.Orchestration.Recovery do
       :requeued ->
         %{"thread" => thread_id, "requeued" => true}
 
-      {:background, run, commands} ->
-        %{"thread" => thread_id, "background" => run, "commands" => commands}
+      # "commands" for what an MC before monitors and subagents were named wrote too.
+      {:background, run, work} ->
+        %{"thread" => thread_id, "background" => run, "commands" => work}
 
       nil ->
         %{"thread" => thread_id}
@@ -257,8 +263,8 @@ defmodule HalC2.Orchestration.Recovery do
   @doc """
   Settles one thread's interrupted turn: `{entities changed, what}`, where `what` is
   the run that was mid-turn on a provider thread that can resume, `:requeued` for a
-  run that goes back to the queue, `{:background, run, commands}` when the thread's
-  turn had finished and only the commands it left running in the background were
+  run that goes back to the queue, `{:background, run, work}` when the thread's
+  turn had finished and only the work it left running in the background was
   ended (`run` is that turn's), or nil.
   """
   def settle(thread_id, trigger \\ :restart) do
@@ -279,24 +285,56 @@ defmodule HalC2.Orchestration.Recovery do
     end)
   end
 
-  # The background commands of the thread's finished latest run that are still marked
-  # active: they ran in the provider process, which is gone.
+  # The background work of the thread's finished latest run that is still marked active
+  # (`ended_work/2`): it ran in the provider process, which is gone.
   defp ended_background(state) do
     with %{"status" => "completed"} = run <- latest_run(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]],
-         [_ | _] = commands <-
-           for(
-             %{"type" => "command_execution", "input" => input} = item <-
-               StreamState.list(state, "turn-item"),
-             item["status"] in @active and item["runId"] == run["id"] and is_binary(input),
-             do: input
-           ) do
-      {:background, run, commands}
+         [_ | _] = work <- ended_work(state, run) do
+      {:background, run, work}
     else
       _ -> nil
     end
   end
+
+  # What the run left running in the background, as the continuation names it: a
+  # command by its command line, other work as `%{"kind", "label"}`. Monitors that run
+  # for the life of the session (`persistent`) are not waited on, so not named.
+  defp ended_work(state, run) do
+    for %{"type" => type} = item <- StreamState.list(state, "turn-item"),
+        type in @background and item["status"] in @active and item["runId"] == run["id"],
+        not match?(%{"persistent" => true}, item["input"]),
+        do: work(item)
+  end
+
+  defp work(%{"type" => "command_execution", "input" => input}) when is_binary(input), do: input
+
+  defp work(item) do
+    kind =
+      case item do
+        %{"type" => "subagent"} -> "subagent"
+        %{"type" => "command_execution"} -> "command"
+        %{"toolName" => "Monitor"} -> "monitor"
+        _ -> "tool"
+      end
+
+    described = if is_map(item["input"]), do: item["input"]["description"]
+
+    label =
+      Enum.find_value([item["title"], described, item["prompt"], item["toolName"]], kind, fn
+        text when is_binary(text) -> if String.trim(text) != "", do: String.trim(text)
+        _ -> nil
+      end)
+
+    %{"kind" => kind, "label" => label}
+  end
+
+  @doc """
+  Whether the restart or shutdown that settled the thread ended `item` (`statusDetail`).
+  A finished run whose background work one ended did not get to finish what it waited on.
+  """
+  def cut_off?(item), do: match?(@cut_off <> _, item["statusDetail"])
 
   @doc """
   Whether the MC itself is stopping. A provider runtime that ends then leaves the
@@ -360,8 +398,8 @@ defmodule HalC2.Orchestration.Recovery do
             thread_id
           end
 
-        # A thread whose turn had finished hears which of its background commands the
-        # restart ended, so its agent can start them again rather than wait on them.
+        # A thread whose turn had finished hears what background work the restart
+        # ended, so its agent can start it again rather than wait on it.
         waiting =
           for {thread_id, run, commands} <- background, continue?(thread_id, run) do
             continuation(thread_id, run, background_text(commands))
@@ -435,16 +473,25 @@ defmodule HalC2.Orchestration.Recovery do
     )
   end
 
-  defp background_text([command]),
+  defp background_text([command]) when is_binary(command),
     do:
       "The server stopped, which ended the background command `#{command}`. " <>
         "Start it again if you still need it, then continue where you left off."
 
-  defp background_text(commands),
-    do:
+  defp background_text(work) do
+    if Enum.all?(work, &is_binary/1) do
       "The server stopped, which ended these background commands: " <>
-        Enum.map_join(commands, ", ", &"`#{&1}`") <>
+        Enum.map_join(work, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
+    else
+      "The server stopped, which ended the background work this thread was waiting on: " <>
+        Enum.map_join(work, ", ", &named/1) <>
+        ". Start again what you still need, then continue where you left off."
+    end
+  end
+
+  defp named(command) when is_binary(command), do: "the command `#{command}`"
+  defp named(%{"kind" => kind, "label" => label}), do: "the #{kind} \"#{label}\""
 
   # A message the user sent since takes precedence; a held one does not when it
   # was made before `run` (a run that passed a held queue was sent after it, and
@@ -529,7 +576,7 @@ defmodule HalC2.Orchestration.Recovery do
           do: own
 
     ended = if trigger == :shutdown, do: "shut down", else: "restarted"
-    detail = "Cancelled because the server #{ended} before the provider work completed."
+    detail = "#{@cut_off}#{ended} before the provider work completed."
 
     delegated =
       for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),

@@ -1477,6 +1477,80 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The fake Claude ends its turn with only that work running in the background; the
+  # provider process then dies with the MC.
+  step ~r/^thread "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
+       %{args: [thread, work]} = context do
+    context = context |> World.providers() |> World.named_thread(thread)
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+
+    context =
+      for {text, n} <- [{"Hi", 1}, {waiting_on(work), 2}], reduce: context do
+        context ->
+          context = World.dispatch_message(context, thread, text, claude)
+          assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+          World.await_run(context, thread, &(&1["ordinal"] == n and &1["status"] == "completed"))
+          context
+      end
+
+    run = World.await_run(context, thread, &(&1["ordinal"] == 2))
+
+    context
+    |> Map.put(:thread, thread)
+    |> leave_waiting()
+    |> Map.merge(%{settled_run: run, work: work})
+  end
+
+  # A Claude child of "parent"'s task, whose only turn ends that way.
+  step ~r/^a task delegated to "(?<thread>[^"]+)" ended its turn to wait on (?<work>a monitor|a subagent|a background task)$/,
+       %{args: [thread, work]} = context do
+    input = %{
+      "task" => waiting_on(work),
+      "mode" => "async",
+      "target" => %{"providerInstanceId" => "claudeAgent"}
+    }
+
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, "parent", "delegate_task", input, "codex")
+
+    state = World.await_state(context, "parent", &HalC2.StreamState.get(&1, "subagent")[task_id])
+    child = HalC2.StreamState.get(state, "subagent")[task_id]["childThreadId"]
+    context = put_in(context, [:threads, thread], child)
+    World.await_run(context, thread, &(&1["status"] == "completed"))
+
+    context
+    |> Map.merge(%{thread: thread, task_id: task_id, task_parent: "parent"})
+    |> leave_waiting()
+  end
+
+  step ~r/^the continuation names (?<work>a monitor|a subagent|a background task) the restart ended$/,
+       %{args: [work]} = context do
+    text = context.continuation_message["text"]
+
+    named = %{
+      "a monitor" => ~s(waiting on: the monitor "Watch the dev log".),
+      "a subagent" => ~s(waiting on: the subagent "Survey the repo".),
+      "a background task" => "ended the background command `npm run build`."
+    }
+
+    assert text =~ "The server stopped, which "
+    assert text =~ named[work]
+    context
+  end
+
+  step "the task delegated to {string} ends {string}, not {string}",
+       %{args: [_thread, status, _]} = context do
+    state =
+      World.await_state(
+        context,
+        context.task_parent,
+        &(HalC2.StreamState.get(&1, "subagent")[context.task_id]["status"] not in ~w(pending running))
+      )
+
+    assert %{"status" => ^status} = HalC2.StreamState.get(state, "subagent")[context.task_id]
+    context
+  end
+
   # --- native subagents ------------------------------------------------------------------
 
   # Claude's own subagent (its Agent tool), running in the background when the provider
@@ -1948,6 +2022,20 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     pid = runtime(context, thread)
     Process.monitor(pid)
     Map.put(context, :runtime, pid)
+  end
+
+  defp waiting_on("a monitor"), do: "start a monitor"
+  defp waiting_on("a subagent"), do: "only the subagent in the background"
+  defp waiting_on("a background task"), do: "only the command in the background"
+
+  # Kills the provider process of `context.thread` once its one background task shows.
+  defp leave_waiting(context) do
+    context = await_background(context)
+    pid = runtime(context, context.thread)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}
+    context
   end
 
   defp await_background(context) do
