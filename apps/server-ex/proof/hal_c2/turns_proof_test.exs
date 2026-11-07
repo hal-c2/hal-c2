@@ -107,7 +107,7 @@ defmodule HalC2.TurnsProofTest do
         "settles a plugin's thread and lists or unlists it: sidebar organization, no turn state",
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
-      "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.fail_prepared/5" => @preparing,
       "HalC2.Orchestration.retry_prepared/2" => @preparing,
       "HalC2.Orchestration.delegated?/1" => "reads a thread's lineage",
       "HalC2.Orchestration.cancel_queued/1" =>

@@ -688,7 +688,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # The changes that end the run.
   defp ended(stream, ids, status, failure, checkpoint, at) do
-    failure = queued_start_failure(stream, ids, status, failure)
+    failure = retry_hint(queued_start_failure(stream, ids, status, failure), stream, status)
     done = %{"status" => status, "completedAt" => at}
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
@@ -734,13 +734,32 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp queued_start_failure(_stream, _ids, _status, failure), do: failure
 
-  # A run stopped by a usage limit leaves the queue as it is: the messages behind it
-  # would only hit the same limit, so they wait, in order, until the user resumes the
-  # queue (`queue.resume`), as they do after a restart.
-  defp held_queue(stream, "failed", %{"class" => "usage_limit"}) do
-    for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
-        run["queueHeld"] != true,
-        do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+  # A worktree that could not be made again says how to retry: by sending again, or,
+  # when the run holds messages queued behind it (`held_queue/3`), where a new message
+  # would only wait too, by resuming the queue.
+  defp retry_hint(%{"code" => "worktree_unavailable"} = failure, stream, "failed") do
+    hint =
+      if Enum.any?(StreamState.list(stream, "run"), &(&1["status"] == "queued")),
+        do: "Resume the queue to retry.",
+        else: "Send the message again to retry."
+
+    Map.update!(failure, "message", &"#{&1} #{hint}")
+  end
+
+  defp retry_hint(failure, _stream, _status), do: failure
+
+  # A run stopped by a usage limit, or by a worktree that could not be made again,
+  # leaves the queue as it is: the messages behind it would only fail the same way, so
+  # they wait, in order, until the user resumes the queue (`queue.resume`), as they do
+  # after a restart.
+  defp held_queue(stream, "failed", %{} = failure) do
+    if failure["class"] == "usage_limit" or failure["code"] == "worktree_unavailable" do
+      for %{"status" => "queued"} = run <- StreamState.list(stream, "run"),
+          run["queueHeld"] != true,
+          do: Orchestration.upsert(stream, "run", run["id"], &Map.put(&1, "queueHeld", true))
+    else
+      []
+    end
   end
 
   defp held_queue(_stream, _status, _failure), do: []
@@ -1002,6 +1021,7 @@ defmodule HalC2.Orchestration.TurnWriter do
             cond do
               failure["class"] == "usage_limit" -> "Usage limit reached"
               failure["code"] == "queued_start_failed" -> "Queued provider could not start"
+              failure["code"] == "worktree_unavailable" -> "Worktree could not be made"
               true -> "Provider error"
             end,
           "failure" => failure

@@ -1424,9 +1424,16 @@ defmodule HalC2.Orchestration do
   end
 
   defp begin_turn_now(thread_id, turn) do
-    restore_worktree(thread_id)
-    :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
-    :ok = start_turn(thread_id, turn)
+    case restore_worktree(thread_id) do
+      :ok ->
+        :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+        :ok = start_turn(thread_id, turn)
+
+      # The agent must not start in a folder that is not there; the next message tries
+      # to make it again.
+      {:error, why} ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", why)
+    end
   catch
     kind, reason ->
       require Logger
@@ -1467,8 +1474,9 @@ defmodule HalC2.Orchestration do
       runtime(turn.ids.instance).start_turn(thread_id, turn)
   end
 
-  # A worktree the storage sweep removed comes back at the same path from the
-  # thread's branch before a turn runs in it.
+  # A worktree the storage sweep (or the user) removed comes back at the same path
+  # before a turn runs in it (`HalC2.Vcs.restore_worktree/3`). When it cannot, the turn
+  # does not start, and says so without git's own output.
   defp restore_worktree(thread_id) do
     with {"thread", %{"worktreePath" => path, "branch" => branch} = row}
          when is_binary(path) and is_binary(branch) <- HalC2.Shell.row(node(), thread_id),
@@ -1476,15 +1484,26 @@ defmodule HalC2.Orchestration do
          root when is_binary(root) <- project_root(row["projectId"]) do
       require Logger
       Logger.warning("recreating the missing worktree of #{thread_id} at #{path}")
-      _ = HalC2.Git.run(root, ~w(worktree prune))
 
-      with {:error, reason} <-
-             HalC2.Vcs.create_worktree(%{"cwd" => root, "refName" => branch, "path" => path}),
-           do:
-             Logger.warning("could not recreate the worktree of #{thread_id}: #{inspect(reason)}")
+      case HalC2.Vcs.restore_worktree(root, branch, path) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("could not recreate the worktree of #{thread_id}: #{inspect(reason)}")
+
+          {:error,
+           %{
+             "class" => "unknown",
+             "code" => "worktree_unavailable",
+             # How to retry is the turn's end's to say (`TurnWriter`): it may hold a queue.
+             "message" => "Could not make the worktree of \"#{branch}\" again at #{path}.",
+             "retryable" => true
+           }}
+      end
+    else
+      _ -> :ok
     end
-
-    :ok
   end
 
   @doc """
@@ -2061,9 +2080,11 @@ defmodule HalC2.Orchestration do
   @doc """
   Ends a run whose workspace could not be prepared (`failed` or `cancelled`). A
   failure (`OrchestrationV2ProviderFailure`) is shown on the preparation item and as
-  an error item, as `prepared-run.fail` does.
+  an error item, as `prepared-run.fail` does. With `hold_queue: true` (a worktree
+  that is not there) the messages queued behind it are held rather than run in the
+  project's own checkout; retrying the run lets them follow it again.
   """
-  def fail_prepared(thread_id, run_id, status, failure \\ nil) do
+  def fail_prepared(thread_id, run_id, status, failure \\ nil, opts \\ []) do
     result =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
         case StreamState.get(state, "run")[run_id] do
@@ -2110,7 +2131,16 @@ defmodule HalC2.Orchestration do
                 )
               end
 
-            {Enum.reject([ended, preparation(state, run_id, item), error], &is_nil/1), :ok}
+            held =
+              if opts[:hold_queue],
+                do:
+                  for(
+                    run <- queued_runs(state),
+                    do: upsert(state, "run", run["id"], &Map.put(&1, "queueHeld", true))
+                  ),
+                else: []
+
+            {Enum.reject([ended, preparation(state, run_id, item), error | held], &is_nil/1), :ok}
 
           _ ->
             {[], {:error, not_preparing(run_id)}}
@@ -2139,37 +2169,56 @@ defmodule HalC2.Orchestration do
 
   @doc """
   Puts a run whose workspace could not be prepared back to waiting for it
-  (`HalC2.WorktreeSetup.retry/1`). Only while it is the thread's one run: a later
-  message means the thread went on without it, in the worktree a retry works in. The
-  failure is resolved, so the error item it left goes.
+  (`HalC2.WorktreeSetup.retry/1`). Only while no other run of the thread ever started:
+  one that ran means the thread went on without it, in the worktree a retry works in.
+  The messages still queued behind it follow it again; ones the user took out of the
+  queue stay out. The failure is resolved, so the error item it left goes.
   """
   def retry_prepared(thread_id, run_id) do
     HalC2.Streams.transact(thread_id, :thread, fn state ->
-      case StreamState.get(state, "run") do
-        %{^run_id => %{"status" => "failed"} = run} = runs when map_size(runs) == 1 ->
-          waiting =
-            upsert(state, "run", run_id, fn _ ->
-              Map.merge(run, %{"status" => "preparing", "completedAt" => nil})
-            end)
+      runs = StreamState.get(state, "run")
+      {retried, others} = Map.pop(runs, run_id)
+      others = Map.values(others)
 
-          item =
-            preparation(state, run_id, %{
-              "status" => "running",
-              "title" => @preparing_workspace,
-              "output" => nil,
-              "exitCode" => nil,
-              "completedAt" => nil
-            })
-
-          error = "turn-item:workspace-preparation-failure:#{run_id}"
-          resolved = {"turn-item", error, Patch.delete()}
-
-          {Enum.reject([waiting, item, resolved], &is_nil/1), :ok}
+      case retried do
+        %{"status" => "failed"} = run ->
+          if Enum.all?(others, &never_started?/1),
+            do: retry_run(state, run, Enum.filter(others, &(&1["status"] == "queued"))),
+            else: {[], {:error, "Run #{run_id} cannot be retried."}}
 
         _ ->
           {[], {:error, "Run #{run_id} cannot be retried."}}
       end
     end)
+  end
+
+  # Still queued, or cancelled from the queue before it started.
+  defp never_started?(run),
+    do: run["status"] == "queued" or (run["status"] == "cancelled" and run["startedAt"] == nil)
+
+  defp retry_run(state, %{"id" => run_id} = run, queued) do
+    waiting =
+      upsert(state, "run", run_id, fn _ ->
+        Map.merge(run, %{"status" => "preparing", "completedAt" => nil})
+      end)
+
+    item =
+      preparation(state, run_id, %{
+        "status" => "running",
+        "title" => @preparing_workspace,
+        "output" => nil,
+        "exitCode" => nil,
+        "completedAt" => nil
+      })
+
+    error = "turn-item:workspace-preparation-failure:#{run_id}"
+    resolved = {"turn-item", error, Patch.delete()}
+
+    freed =
+      for queued <- queued,
+          do: upsert(state, "run", queued["id"], &Map.put(&1, "queueHeld", false))
+
+    {Enum.reject([waiting, item, resolved | freed], &is_nil/1), :ok}
   end
 
   defp not_preparing(run_id), do: "Run #{run_id} is not awaiting workspace preparation."
