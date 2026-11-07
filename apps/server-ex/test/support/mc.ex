@@ -3970,7 +3970,7 @@ defmodule HalC2.Test.Mc.World do
             "name" => name,
             "version" => "1.0.0",
             "description" => "",
-            "distribution" => %{"npx" => %{"package" => id}}
+            "distribution" => %{"npx" => %{"package" => "#{id}@1.0.0"}}
           }
         ]
       })

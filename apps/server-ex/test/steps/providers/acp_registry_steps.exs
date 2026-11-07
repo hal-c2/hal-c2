@@ -306,6 +306,9 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   step "an instance of {string} exists", %{args: [id]} = context do
     ctx = acme(context)
     assert id == "acme"
+    # Adding an instance in a client prepares its agent first.
+    ctx = prepare(ctx, id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
     ctx
   end
 
@@ -521,8 +524,16 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "the user sends a message on that instance", context do
     ctx = run_on_acme(context, "hello")
-    Acp.await_runs(thread(ctx), 1)
-    ctx
+    [run] = Acp.await_runs(thread(ctx), 1)
+
+    # A failed turn's refusal is left where "it fails with ..." reads it.
+    if run["status"] == "failed" do
+      session = HalC2.StreamState.list(Acp.stream(thread(ctx)), "provider-session")
+      message = session |> Enum.map(& &1["lastError"]) |> Enum.reject(&is_nil/1) |> List.last()
+      Map.put(ctx, :reply, {:error, message || "turn failed", %{}})
+    else
+      ctx
+    end
   end
 
   step "the local executable runs with the registry's arguments and environment", context do
@@ -1771,7 +1782,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   end
 
   step "the MC prepares {string}", %{args: [id]} = context do
-    prepare(context, id)
+    prepare_agent(context, id)
   end
 
   step "the registry lists agents matching {string} by id, by the start of their name, by author and by description",
@@ -1957,6 +1968,937 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
 
   step "agents published only as binaries are left out", context do
     refute "acme" in ids(context.reply)
+    context
+  end
+
+  # --- fake package managers ---------------------------------------------------
+
+  # Prepares `id` for its instance: through the prepare RPC, or through the
+  # command the instance's distribution preference picks.
+  defp prepare_agent(ctx, id) do
+    ctx = fake_managers(ctx)
+
+    case ctx[:dist_pref] do
+      pref when pref in ["binary", "npx", "uvx"] ->
+        reply =
+          case HalC2.Acp.Catalog.command(%{"agentId" => id, "distribution" => pref}) do
+            {:ok, [exe | _], _env} -> {:ok, %{"agentId" => id, "prepared" => true, "exe" => exe}}
+            {:error, detail} -> {:error, detail["message"], detail}
+          end
+
+        Map.put(ctx, :reply, reply)
+
+      _ ->
+        prepare(ctx, id)
+    end
+  end
+
+  # npm and uv on the MC's path, installing the fake agent like a real package
+  # would, under the prefix the MC names. Their behaviour is steered by the
+  # `npm-control.json` / `uv-control.json` beside them (`bin`, `commands`,
+  # `version`, `output`, `exit`); every call is logged next to them.
+  defp fake_managers(%{fake_managers: _} = ctx), do: ctx
+
+  defp fake_managers(ctx) do
+    if System.find_executable("npm") == nil and System.find_executable("uv") == nil do
+      # The scenario took the package managers away; keep them gone.
+      ctx
+    else
+      ctx = Acp.ready(ctx)
+      dir = Path.join(ctx.mc.home, "fake-bin")
+      File.mkdir_p!(dir)
+      Acp.wrapper(ctx, Path.join(dir, "agent-wrapper"), "acme")
+
+      for name <- ["npm-control.json", "uv-control.json"],
+          not File.exists?(Path.join(dir, name)),
+          do: File.write!(Path.join(dir, name), "{}")
+
+      File.write!(Path.join(dir, "npm"), npm_script())
+      File.write!(Path.join(dir, "uv"), uv_script())
+      File.chmod!(Path.join(dir, "npm"), 0o755)
+      File.chmod!(Path.join(dir, "uv"), 0o755)
+      System.put_env("PATH", dir <> ":" <> (System.get_env("PATH") || ""))
+      Map.put(ctx, :fake_managers, dir)
+    end
+  end
+
+  defp manager_control(ctx, file, fields) do
+    ctx = fake_managers(ctx)
+    path = Path.join(ctx.fake_managers, file)
+    merged = path |> File.read!() |> JSON.decode!() |> Map.merge(fields)
+    File.write!(path, JSON.encode!(merged))
+    ctx
+  end
+
+  defp manager_calls(ctx, name) do
+    case File.read(Path.join(ctx.fake_managers, name <> ".log")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      _ -> []
+    end
+  end
+
+  defp npm_script do
+    """
+    #!/usr/bin/env python3
+    import json, os, shutil, sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        ctl = json.load(open(os.path.join(here, "npm-control.json")))
+    except FileNotFoundError:
+        ctl = {}
+    with open(os.path.join(here, "npm.log"), "a") as log:
+        log.write(json.dumps({"args": sys.argv[1:], "prefix": os.environ.get("npm_config_prefix")}) + "\\n")
+    if ctl.get("output"):
+        print(ctl["output"])
+    if ctl.get("exit"):
+        sys.exit(ctl["exit"])
+    pkg = sys.argv[-1]
+    name, _, version = pkg.rpartition("@")
+    prefix = os.environ["npm_config_prefix"]
+    root = os.path.join(prefix, "lib", "node_modules", *name.split("/"))
+    os.makedirs(root, exist_ok=True)
+    os.makedirs(os.path.join(prefix, "bin"), exist_ok=True)
+    bins = ctl.get("bin", {name.split("/")[-1]: "index.js"})
+    json.dump({"name": name, "version": ctl.get("version", version), "bin": bins},
+              open(os.path.join(root, "package.json"), "w"))
+    names = [name.split("/")[-1]] if isinstance(bins, str) else list(bins)
+    for command in names:
+        dest = os.path.join(prefix, "bin", command)
+        shutil.copyfile(os.path.join(here, "agent-wrapper"), dest)
+        os.chmod(dest, 0o755)
+    """
+  end
+
+  defp uv_script do
+    """
+    #!/usr/bin/env python3
+    import json, os, shutil, sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        ctl = json.load(open(os.path.join(here, "uv-control.json")))
+    except FileNotFoundError:
+        ctl = {}
+    with open(os.path.join(here, "uv.log"), "a") as log:
+        log.write(json.dumps({"args": sys.argv[1:], "binDir": os.environ.get("UV_TOOL_BIN_DIR"),
+                                "toolDir": os.environ.get("UV_TOOL_DIR")}) + "\\n")
+    if ctl.get("output"):
+        print(ctl["output"])
+    if ctl.get("exit"):
+        sys.exit(ctl["exit"])
+    pkg = sys.argv[-1]
+    name = pkg.split("==")[0].rpartition("@")[0] or pkg.split("==")[0]
+    bin_dir = os.environ["UV_TOOL_BIN_DIR"]
+    os.makedirs(bin_dir, exist_ok=True)
+    for command in ctl.get("commands", [name]):
+        dest = os.path.join(bin_dir, command)
+        shutil.copyfile(os.path.join(here, "agent-wrapper"), dest)
+        os.chmod(dest, 0o755)
+    """
+  end
+
+  # --- archives -----------------------------------------------------------------
+
+  # A tar.gz built by the system tar from a tree `build.(dir)` lays out.
+  defp tar_bytes(ctx, build) do
+    src = Path.join(ctx.mc.home, "archive-src-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(src)
+    build.(src)
+    archive = src <> ".tar.gz"
+    {_, 0} = System.cmd("tar", ["-czf", archive, "-C", src, "."])
+    File.read!(archive)
+  end
+
+  defp publish_archive(ctx, id, bytes, fields \\ %{}) do
+    ctx = Acp.serve_registry(ctx)
+    Acp.publish(ctx, [Map.merge(Acp.acme_agent(ctx, id: id, archive: bytes), fields)])
+  end
+
+  defp with_cmd(ctx, id, cmd) do
+    base = Acp.acme_agent(ctx, id: id)
+    platform = HalC2.Acp.Catalog.platform()
+    target = base["distribution"]["binary"][platform]
+    dist = %{"binary" => %{platform => %{target | "cmd" => cmd}}}
+    Acp.publish(ctx, [%{base | "distribution" => dist}])
+  end
+
+  step "the registry entry or archive for {string} names a command path that leaves the install folder",
+       %{args: [id]} = context do
+    context |> Acp.serve_registry() |> with_cmd(id, "../bin/acme")
+  end
+
+  step "the registry entry or archive for {string} holds a file path that leaves the install folder",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    script = Acp.wrapper(ctx, Path.join([ctx.mc.home, "evil-src", id]), id)
+    archive = Path.join(ctx.mc.home, "evil.tar.gz")
+
+    :ok =
+      :erl_tar.create(
+        to_charlist(archive),
+        [
+          {~c"bin/#{id}", to_charlist(script)},
+          {~c"../evil.txt", "x"}
+        ],
+        [:compressed]
+      )
+
+    publish_archive(ctx, id, File.read!(archive))
+  end
+
+  step "the registry entry or archive for {string} does not hold the command the registry names",
+       %{args: [id]} = context do
+    bytes = tar_bytes(context, fn src -> File.write!(Path.join(src, "readme.txt"), "hi") end)
+    publish_archive(context, id, bytes)
+  end
+
+  step "the registry entry or archive for {string} links its command to a file outside the install folder",
+       %{args: [id]} = context do
+    bytes =
+      tar_bytes(context, fn src ->
+        File.mkdir_p!(Path.join(src, "bin"))
+        File.ln_s!("/bin/true", Path.join([src, "bin", id]))
+      end)
+
+    publish_archive(context, id, bytes)
+  end
+
+  step "the registry entry or archive for {string} names a command that is not an executable file",
+       %{args: [id]} = context do
+    bytes = tar_bytes(context, fn src -> File.mkdir_p!(Path.join([src, "bin", id])) end)
+    publish_archive(context, id, bytes)
+  end
+
+  step "adding {string} fails with {string}", %{args: [_id, message]} = context do
+    assert %{"message" => ^message} = operation_error(context.reply)
+
+    # An unsafe command path is refused before the archive is even fetched.
+    if message =~ "unsafe command path" do
+      refute Enum.any?(Acp.registry_requests(context), &String.ends_with?(&1, ".tar.gz"))
+    end
+
+    context
+  end
+
+  step "the archive downloaded for {string} holds a bundled tree of many thousands of files",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    script = Acp.wrapper(ctx, Path.join([ctx.mc.home, "tree-src", id]), id)
+    archive = Path.join(ctx.mc.home, "tree.tar.gz")
+
+    entries =
+      [{~c"bin/#{id}", to_charlist(script)}] ++
+        for n <- 1..3000, do: {~c"tree/f-#{n}.txt", "x"}
+
+    :ok = :erl_tar.create(to_charlist(archive), entries, [:compressed])
+    ctx = publish_archive(ctx, id, File.read!(archive))
+    prepare(ctx, id)
+  end
+
+  step "the registry publishes {string} as a download ending in {string}",
+       %{args: [id, ending]} = context do
+    ctx = Acp.serve_registry(context)
+    script = Acp.wrapper(ctx, Path.join([ctx.mc.home, "kind-src", id]), id)
+    served = Path.join(ctx.acp.served, "#{id}#{ending}")
+
+    case ending do
+      bin when bin in [".tar.gz", ".tgz"] ->
+        :ok =
+          :erl_tar.create(to_charlist(served), [{~c"bin/#{id}", to_charlist(script)}], [
+            :compressed
+          ])
+
+      bin when bin in [".tar.bz2", ".tbz2"] ->
+        src = Path.join(ctx.mc.home, "bz2-src-#{System.unique_integer([:positive])}")
+        File.mkdir_p!(Path.join(src, "bin"))
+        File.cp!(script, Path.join([src, "bin", id]))
+        {_, 0} = System.cmd("tar", ["-cjf", served, "-C", src, "."])
+        :ok
+
+      ".zip" ->
+        {:ok, _} = :zip.create(to_charlist(served), [{~c"bin/#{id}", File.read!(script)}])
+
+      ".bin" ->
+        File.cp!(script, served)
+    end
+
+    sha = :crypto.hash(:sha256, File.read!(served)) |> Base.encode16(case: :lower)
+    platform = HalC2.Acp.Catalog.platform()
+
+    dist = %{
+      "binary" => %{
+        platform => %{
+          "archive" => "#{ctx.acp.base}/#{id}#{ending}",
+          "cmd" => "./bin/#{id}",
+          "args" => ["--acp"],
+          "env" => %{"ACME_MODE" => "registry"},
+          "sha256" => sha
+        }
+      }
+    }
+
+    base = Acp.acme_agent(ctx, id: id)
+    Acp.publish(ctx, [%{base | "distribution" => dist}])
+  end
+
+  step "the download is unpacked as a gzip tar archive", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert Path.wildcard(Path.join([tools(context), "**", "bin", "acme"])) != []
+    context
+  end
+
+  step "the download is unpacked as a bzip2 tar archive", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert Path.wildcard(Path.join([tools(context), "**", "bin", "acme"])) != []
+    context
+  end
+
+  step "the download is unpacked as a zip archive", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert Path.wildcard(Path.join([tools(context), "**", "bin", "acme"])) != []
+    context
+  end
+
+  step "the download is kept as the agent's command and made runnable", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    [exe] = Path.wildcard(Path.join([tools(context), "**", "bin", "acme"]))
+    assert File.stat!(exe).mode |> Bitwise.band(0o111) != 0
+    assert File.read!(exe) =~ "fake_acme_agent.py"
+    context
+  end
+
+  step "the MC runs on Windows on ARM", context do
+    ctx = Acp.ready(context)
+    Application.put_env(:hal_c2, :acp_platform, "windows-aarch64")
+    ctx
+  end
+
+  defp publish_builds(ctx, id, platforms) do
+    ctx = Acp.serve_registry(ctx)
+    base = Acp.acme_agent(ctx, id: id)
+    target = base["distribution"]["binary"] |> Map.values() |> hd()
+    dist = %{"binary" => Map.new(platforms, &{&1, target})}
+    Acp.publish(ctx, [%{base | "distribution" => dist}])
+  end
+
+  step "the agent {string} publishes only a Windows x64 build", %{args: [id]} = context do
+    publish_builds(context, id, ["windows-x86_64"])
+  end
+
+  step "the agent {string} publishes Windows x64 and ARM64 builds", %{args: [id]} = context do
+    publish_builds(context, id, ["windows-x86_64", "windows-aarch64"])
+  end
+
+  defp assert_build_runs(context, platform) do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    exe = Path.join([tools(context), "2.0.0", platform, "bin", "acme"])
+    assert File.regular?(exe)
+    Acp.add_registry_instance("acme", "acme")
+    ctx = run_on_acme(context, "hello")
+    Acp.await_runs(thread(ctx), 1)
+    assert Acp.assistant_text(thread(ctx)) =~ "Hello from acme"
+    launch = Enum.find(Acp.launches(ctx, "acme"), &(&1["cwd"] == World.project(ctx).root))
+    assert launch["argv0"] == exe
+    ctx
+  end
+
+  step "the Windows x64 build is installed and runs", context do
+    assert_build_runs(context, "windows-x86_64")
+  end
+
+  step "the Windows ARM64 build is installed and runs", context do
+    assert_build_runs(context, "windows-aarch64")
+  end
+
+  step "both add the registry agent {string} at the same moment", %{args: [id]} = context do
+    ctx = Acp.publish(context)
+
+    results =
+      [
+        Task.async(fn -> HalC2.Acp.Catalog.prepare(%{"agentId" => id}) end),
+        Task.async(fn -> HalC2.Acp.Catalog.prepare(%{"agentId" => id}) end)
+      ]
+      |> Enum.map(&Task.await(&1, 60_000))
+
+    Map.put(ctx, :results, results)
+  end
+
+  step "{string} is downloaded and installed once", %{args: [id]} = context do
+    assert Enum.count(Acp.registry_requests(context), &(&1 == "#{id}.tar.gz")) == 1
+    assert File.regular?(installed(context))
+    context
+  end
+
+  step "the second client finds the finished install", context do
+    assert Enum.all?(context.results, &match?({:ok, %{"prepared" => true}}, &1))
+    context
+  end
+
+  step "the download of {string} 1.2.0 is answered with an error", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    ctx = Acp.publish(ctx, [Acp.acme_agent(ctx, id: id, version: "1.2.0")])
+    File.rm!(Path.join(ctx.acp.served, "#{id}.tar.gz"))
+    prepare(ctx, id)
+  end
+
+  step "the download of {string} 1.2.0 cannot be written to disk", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    ctx = Acp.publish(ctx, [Acp.acme_agent(ctx, id: id, version: "1.2.0")])
+    # Where the agent's tools folder would go sits a file instead.
+    File.mkdir_p!(Path.join(ctx.mc.home, "tools"))
+    File.write!(tools(ctx, id), "in the way")
+    prepare(ctx, id)
+  end
+
+  step "the binary of {string} was installed", %{args: [id]} = context do
+    ctx = context |> Acp.publish() |> prepare(id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
+    Acp.add_registry_instance(id, id)
+    ctx
+  end
+
+  step "its command was since replaced by a link to a file outside the install folder", context do
+    exe = installed(context)
+    File.rm!(exe)
+    File.ln_s!("/bin/true", exe)
+    context
+  end
+
+  step "a thread starts a session with {string}", %{args: [_]} = context do
+    ctx = run_on_acme(context, "hello")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the session fails with {string}", %{args: [message]} = context do
+    assert [%{"status" => "failed"}] = Acp.runs(thread(context))
+
+    session = HalC2.StreamState.list(Acp.stream(thread(context)), "provider-session")
+    assert Enum.any?(session, &((&1["lastError"] || "") =~ message))
+    context
+  end
+
+  step "{string} is not started", %{args: [id]} = context do
+    assert Acp.launches(context, id) == []
+    context
+  end
+
+  step "nothing is installed for {string}", %{args: [id]} = context do
+    ctx = Acp.ready(context)
+    refute File.dir?(tools(ctx, id))
+    ctx
+  end
+
+  step "the uninstall succeeds and nothing changes", context do
+    assert {:ok, %{"removed" => false}} = context.reply
+    context
+  end
+
+  step "a client prepared {string} and no instance of {string} was added",
+       %{args: [id, _]} = context do
+    ctx = context |> Acp.publish() |> prepare(id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
+    refute get_in(HalC2.Settings.settings(), ["providerInstances", id])
+    ctx
+  end
+
+  step "30 seconds pass and the MC is asked to uninstall {string}", %{args: [id]} = context do
+    # The client-side grace period is over: it asks the MC now.
+    {reply, ctx} =
+      World.call(
+        ops(context),
+        "server.uninstallAcpRegistryManagedBinary",
+        %{"agentId" => id},
+        "ops"
+      )
+
+    Map.put(ctx, :reply, reply)
+  end
+
+  step "the uninstall reports that nothing was removed", context do
+    assert {:ok, %{"removed" => false}} = context.reply
+    context
+  end
+
+  step "the downloaded files for {string} are kept", %{args: [_]} = context do
+    assert File.regular?(installed(context))
+    context
+  end
+
+  step "the MC is asked to uninstall an agent id that is not a valid registry id", context do
+    {reply, ctx} =
+      World.call(
+        ops(context),
+        "server.uninstallAcpRegistryManagedBinary",
+        %{"agentId" => "../bad id"},
+        "ops"
+      )
+
+    Map.put(ctx, :reply, reply)
+  end
+
+  step "the uninstall fails with {string}", %{args: [message]} = context do
+    assert %{"message" => ^message} = operation_error(context.reply)
+    context
+  end
+
+  # --- packages -----------------------------------------------------------------
+
+  step "the package is installed at its exact version under the MC's tools folder", context do
+    assert {:ok, %{"prepared" => true, "distribution" => "npx"}} = context.reply
+    [call] = manager_calls(context, "npm")
+    assert call["args"] == ["install", "--global", "@acme/agent@2.0.0"]
+    assert call["prefix"] == Path.join([tools(context), "2.0.0", "npm"])
+    assert File.regular?(Path.join([tools(context), "2.0.0", "npm", "bin", "agent"]))
+    context
+  end
+
+  step "the machine's own global packages are not changed", context do
+    # npm was told to install under the MC's prefix, never its own global one.
+    assert Enum.all?(
+             manager_calls(context, "npm"),
+             &String.starts_with?(&1["prefix"], tools(context))
+           )
+
+    context
+  end
+
+  step "the package of {string} is already installed at the registry's version",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", npx("@acme/agent@2.0.0"))])
+    ctx = ctx |> fake_managers() |> prepare_agent(id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
+    Map.put(ctx, :npm_before, length(manager_calls(ctx, "npm")))
+  end
+
+  step "the existing install is used and nothing is downloaded", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert length(manager_calls(context, "npm")) == context.npm_before
+    context
+  end
+
+  step "the registry publishes {string} as a binary and npx", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    base = Acp.acme_agent(ctx, id: id)
+    dist = Map.put(base["distribution"], "npx", %{"package" => "@acme/agent@2.0.0"})
+    Acp.publish(ctx, [%{base | "distribution" => dist}])
+  end
+
+  step "the registry publishes {string} as npx and uvx", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+
+    Acp.publish(ctx, [
+      agent(ctx, id, "Acme", %{
+        "npx" => %{"package" => "@acme/agent@2.0.0"},
+        "uvx" => %{"package" => "acme==2.0.0"}
+      })
+    ])
+  end
+
+  step "the registry publishes {string} as uvx only", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", %{"uvx" => %{"package" => "acme==2.0.0"}})])
+  end
+
+  step "the registry publishes {string} as a binary only", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [Acp.acme_agent(ctx, id: id)])
+  end
+
+  step "the instance prefers automatic", context do
+    Map.put(context, :dist_pref, "auto")
+  end
+
+  step "the instance prefers npx", context do
+    Map.put(context, :dist_pref, "npx")
+  end
+
+  step "{string} is installed from the binary", %{args: [_]} = context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert File.regular?(installed(context))
+    assert manager_calls(context, "npm") == []
+    context
+  end
+
+  step "{string} runs through npx", %{args: [id]} = context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert {:ok, [exe | _], _env} = HalC2.Acp.Catalog.command(%{"agentId" => id})
+    assert exe =~ "/npm/bin/"
+    context
+  end
+
+  step "{string} runs through uvx", %{args: [id]} = context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert {:ok, [exe | _], _env} = HalC2.Acp.Catalog.command(%{"agentId" => id})
+    assert exe =~ "/python/bin/"
+    context
+  end
+
+  step "{string} is refused for having no npx distribution for this machine",
+       %{args: [_]} = context do
+    assert %{"reason" => "unsupported_platform"} = operation_error(context.reply)
+    context
+  end
+
+  step "the registry agent {string} runs through npx as {string}",
+       %{args: [id, package]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", npx(package))])
+  end
+
+  step "npm exits with code 1 and prints {string} while the MC prepares {string}",
+       %{args: [output, id]} = context do
+    context
+    |> manager_control("npm-control.json", %{"exit" => 1, "output" => output})
+    |> prepare_agent(id)
+  end
+
+  step "npm cannot be started while the MC prepares {string}", %{args: [id]} = context do
+    ctx = fake_managers(context)
+    npm = Path.join(ctx.fake_managers, "npm")
+    File.write!(npm, "#!/nonexistent/interpreter\necho never\n")
+    File.chmod!(npm, 0o755)
+    prepare_agent(ctx, id)
+  end
+
+  step "npm installs the package but exposes no usable command while the MC prepares {string}",
+       %{args: [id]} = context do
+    context |> manager_control("npm-control.json", %{"bin" => %{}}) |> prepare_agent(id)
+  end
+
+  step "preparing {string} fails with {string}", %{args: [_id, message]} = context do
+    error = operation_error(context.reply)
+    # The scenario names npm's usual path; the MC names the one on its path.
+    npm = System.find_executable("npm")
+    assert String.replace(error["message"], npm, "/usr/bin/npm") == message
+    context
+  end
+
+  defp npm_bins(ctx, bins) do
+    ctx = Acp.serve_registry(ctx)
+    Acp.publish(ctx, [agent(ctx, "acme", "Acme", npx("@acme/acme-acp@1.2.0"))])
+    ctx = manager_control(ctx, "npm-control.json", %{"bin" => bins})
+    Map.put(ctx, :pkg_agent, "acme")
+  end
+
+  step "the npm package {string} of the registry agent {string} publishes one command {string}",
+       %{args: [_, _, command]} = context do
+    npm_bins(context, %{command => "index.js"})
+  end
+
+  step "the npm package {string} of the registry agent {string} publishes the commands {string} and {string}",
+       %{args: [_, _, first, second]} = context do
+    npm_bins(context, %{first => "#{first}.js", second => "#{second}.js"})
+  end
+
+  step "the npm package {string} of the registry agent {string} publishes two other names that both lead to the same file",
+       %{args: [_, _]} = context do
+    context
+    |> npm_bins(%{"beta" => "same.js", "alpha" => "same.js"})
+    |> Map.put(:expected_command, "alpha")
+  end
+
+  step "the npm package {string} of the registry agent {string} publishes two other names that lead to different files",
+       %{args: [_, _]} = context do
+    npm_bins(context, %{"beta" => "beta.js", "alpha" => "alpha.js"})
+  end
+
+  defp assert_command_runs(context, command) do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    Acp.add_registry_instance(context.pkg_agent, context.pkg_agent)
+    ctx = Acp.launch(context, "Pkg", context.pkg_agent, "hello")
+    ctx = Map.put(ctx, :thread, "Pkg")
+    Acp.await_runs(thread(ctx), 1)
+    assert Acp.assistant_text(thread(ctx)) =~ "Hello from acme"
+    launch = Enum.find(Acp.launches(ctx, "acme"), &(&1["cwd"] == World.project(ctx).root))
+    assert Path.basename(launch["argv0"]) == command
+    ctx
+  end
+
+  step "{string} is the command that runs the agent", %{args: [command]} = context do
+    assert_command_runs(context, command)
+  end
+
+  step "the first of them by name runs the agent", context do
+    assert_command_runs(context, context.expected_command)
+  end
+
+  step "preparing fails because no command can be told apart", context do
+    assert %{"message" => message} = operation_error(context.reply)
+
+    assert message ==
+             "ACP Registry installed @acme/acme-acp@1.2.0, but could not resolve its global command."
+
+    context
+  end
+
+  step "the uv tool {string} of the registry agent {string} exposes the command {string}",
+       %{args: [tool, id, command]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", %{"uvx" => %{"package" => "#{tool}==1.2.0"}})])
+    ctx = manager_control(ctx, "uv-control.json", %{"commands" => [command]})
+    # The fake agent logs under the name its wrapper was made for.
+    Map.merge(ctx, %{pkg_agent: id})
+  end
+
+  step "the package of {string} was installed at the registry's version",
+       %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", npx("@acme/agent@2.0.0"))])
+    ctx = ctx |> fake_managers() |> prepare_agent(id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
+    Map.put(ctx, :npm_before, length(manager_calls(ctx, "npm")))
+  end
+
+  step "its command was since deleted or its package replaced by another version", context do
+    [exe] = Path.wildcard(Path.join([tools(context), "**", "npm", "bin", "*"]))
+    File.rm!(exe)
+    context
+  end
+
+  step "the package is installed again at the registry's exact version", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    calls = manager_calls(context, "npm")
+    assert length(calls) == context.npm_before + 1
+    assert List.last(calls)["args"] == ["install", "--global", "@acme/agent@2.0.0"]
+    context
+  end
+
+  step "npm on the MC is set to install global packages into a folder the MC may not write",
+       context do
+    System.put_env("npm_config_prefix", "/usr/lib/node_modules")
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("npm_config_prefix") end)
+    context
+  end
+
+  step "the MC prepares the npx agent {string}", %{args: [id]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", npx("@acme/agent@2.0.0"))])
+    prepare_agent(ctx, id)
+  end
+
+  step "{string} is installed under the MC's tools folder all the same", %{args: [_]} = context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    [call] = manager_calls(context, "npm")
+    assert String.starts_with?(call["prefix"], tools(context))
+    assert File.regular?(Path.join([tools(context), "2.0.0", "npm", "bin", "agent"]))
+    context
+  end
+
+  defp rogue_command(ctx, name) do
+    dir = Path.join(ctx.mc.home, "rogue-bin")
+    File.mkdir_p!(dir)
+    marker = Path.join(ctx.mc.home, "rogue-ran")
+    path = Path.join(dir, name)
+    File.write!(path, "#!/bin/sh\ntouch #{marker}\nexit 1\n")
+    File.chmod!(path, 0o755)
+    System.put_env("PATH", dir <> ":" <> (System.get_env("PATH") || ""))
+    Map.merge(ctx, %{rogue: path, rogue_marker: marker})
+  end
+
+  step "a command named like the binary of {string} is on the MC's path",
+       %{args: [id]} = context do
+    context |> Acp.publish() |> rogue_command(id)
+  end
+
+  step "the registry's binary is downloaded and used", context do
+    assert {:ok, %{"prepared" => true}} = context.reply
+    assert File.regular?(installed(context))
+    assert {:ok, [exe | _], _env} = HalC2.Acp.Catalog.command(%{"agentId" => "acme"})
+    assert exe == installed(context)
+    refute File.exists?(context.rogue_marker)
+    context
+  end
+
+  step "only an executable override makes the MC run a local copy", context do
+    assert {:ok, [exe | _], _env} =
+             HalC2.Acp.Catalog.command(%{"agentId" => "acme", "commandPath" => context.rogue})
+
+    assert exe == context.rogue
+    context
+  end
+
+  step "the instance of {string} has the executable override {string}",
+       %{args: [id, override]} = context do
+    ctx = Acp.publish(context)
+
+    Acp.add_registry_instance(id, id, %{
+      "config" => %{"agentId" => id, "commandPath" => override}
+    })
+
+    Map.put(ctx, :auth_instance, id)
+  end
+
+  step "{string} is not on the instance's path", %{args: [name]} = context do
+    assert System.find_executable(name) == nil
+    context
+  end
+
+  step "{string} was installed as a binary and {string} through npx",
+       %{args: [binary_id, package_id]} = context do
+    ctx = Acp.serve_registry(context)
+
+    Acp.publish(ctx, [
+      Acp.acme_agent(ctx, id: binary_id),
+      agent(ctx, package_id, "Beta", npx("@acme/beta@1.0.0"))
+    ])
+
+    ctx = prepare_agent(ctx, binary_id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
+    ctx = prepare_agent(ctx, package_id)
+    assert {:ok, %{"prepared" => true}} = ctx.reply
+    ctx
+  end
+
+  step "the MC uninstalls both", context do
+    ctx =
+      Enum.reduce(["acme", "beta"], ops(context), fn id, ctx ->
+        {reply, ctx} =
+          World.call(ctx, "server.uninstallAcpRegistryManagedBinary", %{"agentId" => id}, "ops")
+
+        assert {:ok, _} = reply
+        ctx
+      end)
+
+    ctx
+  end
+
+  step "the downloaded files of {string} are removed", %{args: [id]} = context do
+    assert Path.wildcard(Path.join([tools(context, id), "**", "bin", id])) == []
+    context
+  end
+
+  step "the package of {string} is kept", %{args: [id]} = context do
+    assert Path.wildcard(Path.join([tools(context, id), "**", "npm", "bin", "*"])) != []
+    context
+  end
+
+  step "an instance of {string} exists and the MC holds no cached copy of the registry",
+       %{args: [id]} = context do
+    ctx = Acp.publish(context)
+    Acp.add_registry_instance(id, id)
+    refute File.exists?(HalC2.Acp.Catalog.cache_path())
+    ctx
+  end
+
+  step "the registry is fetched before {string} is started", %{args: [id]} = context do
+    assert Acp.assistant_text(thread(context)) =~ "Hello from acme"
+    requests = Acp.registry_requests(context)
+    fetched_at = Enum.find_index(requests, &(&1 == "registry.json"))
+    downloaded_at = Enum.find_index(requests, &(&1 == "#{id}.tar.gz"))
+    assert fetched_at != nil and downloaded_at != nil and fetched_at < downloaded_at
+    context
+  end
+
+  step "the registry agent {string} runs through npx and another {string} command is on the MC's path",
+       %{args: [id, _]} = context do
+    ctx = Acp.serve_registry(context)
+    Acp.publish(ctx, [agent(ctx, id, "Acme", npx("acme@2.0.0"))])
+    ctx = Acp.control(ctx, "acme", %{"logEnv" => ["PATH"]})
+    ctx = fake_managers(ctx)
+    ctx = rogue_command(ctx, "acme")
+    Acp.add_registry_instance(id, id)
+    ctx
+  end
+
+  step "the command the MC installed is the one that runs", context do
+    assert Acp.assistant_text(thread(context)) =~ "Hello from acme"
+    launch = Enum.find(Acp.launches(context, "acme"), &(&1["cwd"] == World.project(context).root))
+    assert launch["argv0"] =~ "/npm/bin/acme"
+    refute File.exists?(context.rogue_marker)
+    Map.put(context, :launch, launch)
+  end
+
+  step "the folder it was installed into comes first on the agent's path", context do
+    launch = context.launch
+    assert hd(String.split(launch["env"]["PATH"], ":")) == Path.dirname(launch["argv0"])
+    context
+  end
+
+  # --- URL sign-in outside a sign-in flow ----------------------------------------
+
+  defp ask_url(context, prompt, response_id) do
+    ctx = context |> acme() |> watch_providers() |> run_on_acme(prompt)
+    Acp.await_runs(thread(ctx), 1)
+    Map.put(ctx, :url_response, response_id)
+  end
+
+  step "{string} asks the user to open a sign-in address that is not http or https",
+       %{args: [_]} = context do
+    ask_url(context, "open bad url", "url-bad")
+  end
+
+  step "{string} asks the user to open a sign-in address with an empty request id",
+       %{args: [_]} = context do
+    ask_url(context, "open anonymous url", "url-anon")
+  end
+
+  step "the request is declined without being shown to the user", context do
+    # A later turn makes the agent read the decline before it answers again.
+    Acp.follow_up(context, context.thread, "hello again")
+    Acp.await_runs(thread(context), 2)
+
+    assert Enum.any?(
+             Acp.log(context, "acme"),
+             &(&1["id"] == context.url_response and &1["result"] == %{"action" => "decline"})
+           )
+
+    assert HalC2.Acp.UrlAuth.action("acme") == nil
+    context
+  end
+
+  step "ten minutes pass", context do
+    action = HalC2.Acp.UrlAuth.action("acme")
+    {:ok, created, _} = DateTime.from_iso8601(action["createdAt"])
+    {:ok, expires, _} = DateTime.from_iso8601(action["expiresAt"])
+    assert DateTime.diff(expires, created, :second) == 600
+    send(Process.whereis(HalC2.Acp.UrlAuth), {:expire, "acme", action["elicitationId"]})
+    Map.put(context, :expired_id, action["elicitationId"])
+  end
+
+  step "the request is declined and cleared on every client", context do
+    {entry, ctx} = await_acme(context, &(get_in(&1, ["auth", "action"]) == nil))
+    refute entry["auth"]["action"]
+    # A later turn makes the agent read the decline before it answers again.
+    Acp.follow_up(ctx, ctx.thread, "hello again")
+    Acp.await_runs(thread(ctx), 2)
+
+    assert Enum.any?(
+             Acp.log(ctx, "acme"),
+             &(&1["id"] == "url-one" and &1["result"] == %{"action" => "decline"})
+           )
+
+    ctx
+  end
+
+  step "accepting it afterwards is refused", context do
+    {reply, ctx} =
+      World.call!(context, "server.acceptAcpRegistryUrlAuth", %{
+        "instanceId" => "acme",
+        "elicitationId" => context.expired_id
+      })
+
+    assert reply == %{"accepted" => false}
+    ctx
+  end
+
+  step "{string} asks the user to open a sign-in address with a message longer than 1,024 characters",
+       %{args: [_]} = context do
+    ctx = context |> acme() |> watch_providers() |> run_on_acme("open long url")
+    Acp.await_runs(thread(ctx), 1)
+    {entry, ctx} = await_acme(ctx, &(get_in(&1, ["auth", "action"]) != nil))
+    Map.put(ctx, :url_action, entry["auth"]["action"])
+  end
+
+  step "the clients are offered the address with the first 1,024 characters of the message",
+       context do
+    assert context.url_action["url"] == "https://acme.test/long"
+    assert context.url_action["message"] == String.duplicate("m", 1024)
+    context
+  end
+
+  step "a request id longer than 256 characters is cut to 256", context do
+    assert context.url_action["elicitationId"] == String.duplicate("x", 256)
     context
   end
 end

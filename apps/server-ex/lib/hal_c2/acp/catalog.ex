@@ -867,6 +867,9 @@ defmodule HalC2.Acp.Catalog do
       :ok ->
         :ok
 
+      {:error, {_, :unsafe_symlink}} ->
+        archive_error("ACP Registry archive command resolves outside its installation directory.")
+
       {:error, reason} ->
         error("archive_invalid", "The archive could not be extracted: #{inspect(reason)}")
     end
@@ -896,12 +899,18 @@ defmodule HalC2.Acp.Catalog do
 
       {:ok, {out, {:status, code}}} ->
         text = out |> IO.iodata_to_binary() |> String.trim() |> String.slice(-1000, 1000)
-        text = if text == "", do: "", else: ": #{text}"
 
-        error(
-          "install_failed",
-          "ACP Registry install command '#{hd(cmd)}' exited with code #{code}#{text}"
-        )
+        # The spawner itself reports a command it could not exec this way.
+        if code == 125 and text =~ "execvp(): failed" do
+          error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
+        else
+          text = if text == "", do: "", else: ": #{text}"
+
+          error(
+            "install_failed",
+            "ACP Registry install command '#{hd(cmd)}' exited with code #{code}#{text}"
+          )
+        end
 
       {:ok, {_out, _other}} ->
         error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
