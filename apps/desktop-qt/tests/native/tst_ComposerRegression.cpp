@@ -60,6 +60,9 @@ struct Shell {
       for (const QJsonObject& message : messages.value(shape.value(QLatin1String("stream")).toString())) {
         rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
       }
+      for (const QJsonObject& session : sessions) {
+        rows.append(QJsonArray{QStringLiteral("provider-session"), session.value(QLatin1String("id")), session});
+      }
       mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
                {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), 0},
                {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
@@ -168,6 +171,8 @@ struct Shell {
   QString key = QStringLiteral("env-a:t1");
   int revision = 0;
   QHash<QString, QList<QJsonObject>> messages;
+  // The thread's provider sessions, as its stream sends them.
+  QList<QJsonObject> sessions;
   // While set, what the MC answers never reached it.
   bool losing = false;
 };
@@ -766,6 +771,39 @@ private slots:
     shell.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
     QTRY_COMPARE(draftOpen(), draftId);
     QTRY_VERIFY(shows(QStringLiteral("gpt-b"), QStringLiteral("plan")));
+  }
+
+  // Sessions are keyed per instance and a provider switch keeps the old
+  // one, so a thread that moved from a non-steering provider to Codex held
+  // both sessions and canSteerActive read them all: the old session alone
+  // forced Queue for good. Only the current instance's session matters.
+  void aSwitchedThreadsOldSessionDoesNotBlockSteering() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    const auto session = [](const QString& instance, bool steers) {
+      return QJsonObject{
+          {QStringLiteral("id"), QStringLiteral("provider-session:%1:t1").arg(instance)},
+          {QStringLiteral("providerInstanceId"), instance},
+          {QStringLiteral("status"), QStringLiteral("ready")},
+          {QStringLiteral("capabilities"),
+           QJsonObject{{QStringLiteral("turns"), QJsonObject{{QStringLiteral("supportsActiveSteering"), steers}}}}}};
+    };
+    shell.sessions = {session(QStringLiteral("antigravity"), false), session(QStringLiteral("codex"), true)};
+    const auto onInstance = [&](const QString& instance) {
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("modelSelection"),
+                 QJsonObject{{QStringLiteral("instanceId"), instance}, {QStringLiteral("model"), QStringLiteral("gpt-a")}});
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    };
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    onInstance(QStringLiteral("codex"));
+    QVERIFY(shell.open());
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("canSteer")).toBool(), true);
+
+    // On the non-steering instance the same two sessions refuse steering.
+    onInstance(QStringLiteral("antigravity"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("canSteer")).toBool(), false);
   }
 };
 

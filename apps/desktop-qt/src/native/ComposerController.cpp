@@ -3188,7 +3188,23 @@ bool ComposerController::running(const QString& target) const {
 
 bool ComposerController::canSteerActive() const {
   if (!m_timeline) return true;
+  // Sessions are keyed per instance and a provider switch keeps the old
+  // one, so only the session that would take the steer counts: the active
+  // run's instance, else the thread's current one. Neither known, every
+  // session counts, as before.
+  QString instance;
+  if (const auto thread = m_store->thread(m_thread)) {
+    if (thread->activeRunId) {
+      const QJsonObject run = m_timeline->entities(QStringLiteral("run")).value(*thread->activeRunId);
+      instance = run.value(QLatin1String("providerInstanceId")).toString();
+      if (instance.isEmpty()) {
+        instance = run.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString();
+      }
+    }
+    if (instance.isEmpty()) instance = thread->modelSelection.value(QLatin1String("instanceId")).toString();
+  }
   for (const QJsonObject& session : m_timeline->entities(QStringLiteral("provider-session"))) {
+    if (!instance.isEmpty() && session.value(QLatin1String("providerInstanceId")).toString() != instance) continue;
     const QJsonValue steers = session.value(QLatin1String("capabilities"))
                                   .toObject()
                                   .value(QLatin1String("turns"))
