@@ -742,6 +742,8 @@ bool ComposerController::interrupt() {
                                 {QStringLiteral("type"), QStringLiteral("run.interrupt")},
                                 {QStringLiteral("threadId"), thread->id},
                                 {QStringLiteral("runId"), *runId},
+                                // The user's Stop also stops what the thread delegated.
+                                {QStringLiteral("stopDelegated"), true},
                             },
                             [this](const QJsonValue&, const std::optional<QString>& error) {
                               if (error) {

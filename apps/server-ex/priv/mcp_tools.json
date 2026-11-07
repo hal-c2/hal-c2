@@ -380,7 +380,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Leave it inherited unless the user asks for a supervised subagent. A supervised subagent (approval-required, auto-accept-edits) waits for a person on each action that needs approval, and may wait with nobody watching. A narrower mode is not a read-only switch: put a limit such as not editing files in the task itself."
         },
         "interactionMode": {
           "anyOf": [
@@ -3862,7 +3863,7 @@
   },
   {
     "name": "task_status",
-    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working while the child has a run active or queued, waiting_for_children while no run is active but the child still owes background work (commands, tools, or tasks of its own), and result_available once the task has ended. A task ends only when its child is quiet, never on a turn that left work running. summary is the final task result, the child's last answer, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports whether the child thread still has queued or executing runs.",
+    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working while the child has a run active or queued, waiting_for_children while no run is active but the child still owes background work (commands, tools, or tasks of its own), and result_available once the task has ended. A task ends only when its child is quiet, never on a turn that left work running. summary is the final task result, the child's last answer, including provider errors on failure, and remains stable after publication. latestAnswer is the child's last answer when it differs from summary: one said so far while the task works, or in a later turn of the child after it ended. While the task works its result wakes this thread, and next says to end your turn; pendingRequest names the approval or question the child's run is stopped on until someone answers it. hasPendingChildRuns reports whether the child thread still has queued or executing runs.",
     "inputSchema": {
       "type": "object",
       "properties": {

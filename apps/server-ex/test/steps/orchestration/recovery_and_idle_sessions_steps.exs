@@ -817,7 +817,8 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
       World.dispatch(context, %{
         "type" => "run.interrupt",
         "commandId" => "command:stop-#{thread}",
-        "threadId" => World.thread_id(context, thread)
+        "threadId" => World.thread_id(context, thread),
+        "stopDelegated" => true
       })
 
     assert {:ok, _} = reply
