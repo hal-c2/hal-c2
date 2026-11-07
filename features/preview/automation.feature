@@ -410,6 +410,7 @@ Feature: Agents drive the preview browser
       Given an agent is recording the preview
       When the agent stops the recording
       Then the recording is attached to the thread
+      And the tool result gives the attachment's path
 
     # Upstream #23895: agent recordings were captured at 30 fps whatever the setting said.
     @backlog @mc @desktop
@@ -417,7 +418,6 @@ Feature: Agents drive the preview browser
       Given the user's default recording frame rate is 60 fps
       When an agent records the preview
       Then the recording is captured at up to 60 frames a second
-      And the tool result gives the attachment's path
 
     @mc
     Scenario Outline: A recording that cannot be brought to the MC fails clearly

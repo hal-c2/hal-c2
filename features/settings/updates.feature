@@ -858,8 +858,6 @@ Feature: Updating the server, the desktop app and providers
       Then the user sees a "warning" toast "Update Available: Codex v0.51.0" saying "Install the update now or review provider settings."
       And the toast "Update Available: Codex v0.51.0" offers "Update" and "Settings"
 
-      And the toast "Update Available: Codex v0.51.0" offers "Update" and "Settings"
-
     # Upstream #23233: the launch toast repeated the sidebar's update button, so it was removed;
     # the toast after "Update all" in Settings stays.
     # Replaces the scenario above, and the other launch toast scenarios here, once desktop carries it.
