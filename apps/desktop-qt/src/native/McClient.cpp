@@ -84,6 +84,13 @@ void McClient::open(const QUrl& origin, const QString& token, const QString& env
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("token"), token);
   url.setQuery(query);
+  // Another MC: what the last one said of itself is not this one's, and
+  // until it answers nothing names the one it left ("Connecting to …").
+  if (origin != m_origin) {
+    m_descriptor = {};
+    m_mc.clear();
+    m_environment.clear();
+  }
   m_origin = origin;
   m_url = url;
   m_token = token;

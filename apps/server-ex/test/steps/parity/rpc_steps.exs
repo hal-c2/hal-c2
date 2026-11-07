@@ -123,6 +123,16 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
+  step "the MC answers with a bounded page of a thread, newest user turns first, with a cursor",
+       context do
+    {:rpc, _, {:ok, result}} = context.answer
+    assert %{"rows" => rows, "offset" => offset, "cursor" => _, "overBudget" => false} = result
+    assert is_integer(offset)
+    thread = context.fixtures.thread
+    assert Enum.any?(rows, &match?(["thread", ^thread, %{}], &1))
+    context
+  end
+
   step "the MC answers with the keybindings after the change", context do
     {:rpc, _, {:ok, %{"rules" => rules}}} = context.answer
     assert Enum.any?(rules, &(&1["command"] == "terminal.toggle" and &1["key"] == "mod+shift+j"))
@@ -277,6 +287,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
         {%{"settings" => HalC2.Settings.settings(), "version" => f.settings_version}, context}
 
       "hal-c2.threadRows" ->
+        {%{"threadId" => f.thread}, context}
+
+      "hal-c2.threadHistory" ->
         {%{"threadId" => f.thread}, context}
 
       "hal-c2.upsertKeybinding" ->
@@ -584,6 +597,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
       "orchestration.getFullThreadDiff" ->
         {%{"threadId" => f.thread, "toTurnCount" => 0}, context}
+
+      "orchestration.getCommandOutput" ->
+        {%{"threadId" => f.thread, "itemId" => "turn-item:none"}, context}
 
       "orchestration.searchThreads" ->
         {%{"query" => "Work"}, context}

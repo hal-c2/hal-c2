@@ -109,17 +109,25 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     for (const QString& path : children) entries.append(entry(fake, path));
     mc.reply(rpc, QJsonObject{{QStringLiteral("entries"), entries}, {QStringLiteral("truncated"), false}});
   });
-  // By name; `kind` narrows to files or folders.
+  // By name, or by path for a query with a slash; `kind` narrows to files or folders.
   mc.onRpc(QStringLiteral("projects.searchEntries"), [&mc](const FakeMc::Rpc& rpc) {
     ++fakeFiles(mc).searches;
     const auto answer = [&mc, rpc] {
       FakeFiles& fake = fakeFiles(mc);
       const QString query = rpc.payload.value(QLatin1String("query")).toString();
       const QString kind = rpc.payload.value(QLatin1String("kind")).toString();
-      QSet<QString> matches;
+      // Ranked as workspace.ex ranks: names that start with the query, then
+      // names that hold it, then (for a query with a folder in it) paths that
+      // hold it; alphabetically within each.
+      QMap<std::pair<int, QString>, QString> matches;
       for (auto it = fake.files.cbegin(); it != fake.files.cend(); ++it) {
         for (const QString& path : withFolders(it.key())) {
-          if (path.section(QLatin1Char('/'), -1).contains(query, Qt::CaseInsensitive)) matches.insert(path);
+          const QString name = path.section(QLatin1Char('/'), -1);
+          const int rank = name.startsWith(query, Qt::CaseInsensitive) ? 0
+                           : name.contains(query, Qt::CaseInsensitive) ? 1
+                           : query.contains(QLatin1Char('/')) && path.contains(query, Qt::CaseInsensitive) ? 2
+                                                                                                       : -1;
+          if (rank >= 0) matches.insert({rank, path}, path);
         }
       }
       QJsonArray entries;

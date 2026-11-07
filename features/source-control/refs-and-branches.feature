@@ -1,10 +1,14 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27274
+#   https://github.com/pingdotgg/t3code/pull/24060
+#   https://github.com/pingdotgg/t3code/pull/23764
 #   https://github.com/pingdotgg/t3code/pull/23314
 #   https://github.com/pingdotgg/t3code/pull/14157
 #   https://github.com/pingdotgg/t3code/pull/22807
 #   https://github.com/pingdotgg/t3code/pull/22225
 #   https://github.com/pingdotgg/t3code/pull/20440
 #   https://github.com/pingdotgg/t3code/pull/19315
+#   https://github.com/pingdotgg/t3code/pull/23436
 #   packages/contracts/src/vcs.ts (VcsListRefsInput, VcsListRefsResult, VcsSwitchRefInput, VcsCreateRefInput)
 #   packages/contracts/src/rpc.ts (vcs.listRefs, vcs.switchRef, vcs.createRef)
 #   apps/server-ex/lib/hal_c2/vcs.ex (list_refs, switch_ref, create_ref)
@@ -47,6 +51,14 @@ Feature: Picking, switching and creating branches
     When the user opens the branch list
     Then "main" is marked current
     And the thread shows "main" with no ahead or behind counts or pull request left from "feature/tax"
+
+  # Upstream #23436: the mobile branch list marked the project folder's branch current for a worktree thread.
+  @backlog @mobile @priority-high
+  Scenario: A worktree thread's branch list marks the worktree's branch current
+    Given the project folder of "shop" is on "main"
+    And the thread works in its own worktree on "feature/tax"
+    When the user opens the branch list
+    Then "feature/tax" is marked current and "main" is not
 
   # Upstream #22807
   @backlog @mc
@@ -244,6 +256,15 @@ Feature: Picking, switching and creating branches
     When the user switches the thread to "main" from the phone
     Then the checkout is on "main"
 
+  # Upstream #23764: the phone called a main-checkout thread's own branch "checked out in another worktree".
+  @backlog @shared
+  Scenario: A thread in the project folder can pick its own folder's branch
+    Given a thread works in the project folder, which is on "main"
+    And "feature/old" is checked out in another worktree
+    When the user lists the thread's branches
+    Then "main" is shown as this thread's checkout and can be chosen
+    And "feature/old" is shown as checked out elsewhere and cannot be chosen
+
   @desktop @mobile @backlog-mobile
   Scenario: The thread's branch follows the checkout
     Given the agent checked out "feature/pay" in the thread's checkout
@@ -261,6 +282,18 @@ Feature: Picking, switching and creating branches
       | new branch       | new-branch     |
       | fix  the   cart  | fix-the-cart   |
       | Feature/Pay      | Feature/Pay    |
+
+  # Upstream #27274: accented letters were dropped from generated and typed branch names, which
+  # split words: "Añadir validación" became "a-adir-validaci-n".
+  @backlog @mc @priority-low
+  Scenario Outline: A branch name keeps accented letters as their plain letters
+    When a branch name is made from "<words>"
+    Then the branch is named "<branch>"
+
+    Examples:
+      | words                         | branch                        |
+      | fix/Añadir validación del café | fix/anadir-validacion-del-cafe |
+      | Größe prüfen                  | groe-prufen                   |
 
   @backlog @desktop @priority-low
   Scenario: Typing a name with spaces still finds the branch that has dashes
@@ -324,6 +357,15 @@ Feature: Picking, switching and creating branches
       | failure                                                  | title                                                |
       | git refuses to switch the folder                         | Failed to switch checkout                            |
       | the folder switched but the thread could not be updated  | Checkout switched, but the thread could not be updated |
+
+  # Upstream #24060: a restore still running in one thread showed "Restoring..." in the next and moved focus there when it ended.
+  @backlog @desktop
+  Scenario: Restoring one thread's branch does not hold up another thread
+    Given threads "A" and "B" each show the branch notice
+    And the user is restoring the branch of "A"
+    When the user switches to "B" before the restore finishes
+    Then "B" can restore its own branch
+    And focus stays where the user is when the restore of "A" finishes
 
   @backlog @desktop @priority-low
   Scenario: The branch notice can be dismissed

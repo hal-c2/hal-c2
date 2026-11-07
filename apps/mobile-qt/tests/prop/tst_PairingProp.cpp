@@ -1,8 +1,10 @@
 // The phone's pairing (src/Pairing) against a model of what the user did and
 // what the MCs answered: links typed, pasted again, and handed in from
 // outside, token exchanges answered, refused, held and dropped, a second
-// pairing started while one is in flight, adding and cancelling, forgetting,
-// and the app started again over what the device kept.
+// pairing started while one is in flight, adding and cancelling, another
+// environment paired beside the first and forgotten again, forgetting the
+// first while another is beside it, and the app started again over what the
+// device kept.
 
 #include "Prop.h"
 
@@ -23,6 +25,8 @@
 #include "PairableMc.h"
 #include "Pairing.h"
 #include "PluginController.h"
+#include "SavedEnvironmentsController.h"
+#include "SecretStore.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 
@@ -99,6 +103,8 @@ struct Model {
   // The paired MC and the session it sold, as the device keeps them.
   std::optional<int> paired;
   std::string session;
+  // The MCs paired beside it, and the sessions they sold.
+  std::map<int, std::string> beside;
   bool pairing = false;
   bool adding = false;
   // Whether the device's storage takes writes.
@@ -144,8 +150,13 @@ void answered(Model& m, int mc, bool paired) {
     m.said = Said::NotSaved;
     return;
   }
-  m.paired = mc;
-  m.session = sessionOf(mc, m.sold[mc]);
+  // Another environment goes beside the shell's own, which stays as it is.
+  if (m.paired && *m.paired != mc) {
+    m.beside[mc] = sessionOf(mc, m.sold[mc]);
+  } else {
+    m.paired = mc;
+    m.session = sessionOf(mc, m.sold[mc]);
+  }
   m.adding = false;
   m.link.reset();
   m.offered.reset();
@@ -236,6 +247,8 @@ public:
 
 struct Sut {
   Sut() : home(QDir::homePath() + QStringLiteral("/phone-XXXXXX")) {
+    // The credentials of the environments beside the first, kept across restarts as a phone's own storage keeps them.
+    SavedEnvironmentsController::setSecretStoreFactory([keys = keys](const QString&) { return std::make_unique<MemorySecretStore>(keys); });
     for (int i = 0; i < kMcs; ++i) mcs.push_back(std::make_unique<Mc>(i));
     // Once the MCs listen, so that none of them comes to answer there.
     dead = pairable::deadAddress();
@@ -308,13 +321,30 @@ struct Sut {
                              {QStringLiteral("environmentId"), QStringLiteral("env-") + QString::fromLatin1(kNames[*m.paired])}};
       RC_ASSERT(phone->kept() == kept);
       RC_ASSERT(phone->shell->client()->phase() != McClient::Phase::Closed);
+      // Nor does its connection name one it left ("Connecting to …").
+      const QString described = phone->shell->client()->descriptor().value(QStringLiteral("label")).toString();
+      RC_ASSERT(described.isEmpty() || described == QString::fromLatin1(kLabels[*m.paired]));
     } else {
       RC_ASSERT(!QFile::exists(phone->file));
       RC_ASSERT(phone->shell->client()->phase() == McClient::Phase::Closed);
     }
     for (int i = 0; i < kMcs; ++i) RC_ASSERT(mcs[i]->sold == m.sold[i]);
+    // Those beside it: listed, each with the session it sold, on a connection of its own.
+    auto* saved = phone->shell->shared<SavedEnvironmentsController>();
+    const QVariantList listed = phone->bridge->state()->value(QStringLiteral("savedEnvironments")).toMap().value(QStringLiteral("environments")).toList();
+    RC_ASSERT(listed.size() == qsizetype(m.beside.size()));
+    for (const auto& [mc, session] : m.beside) {
+      RC_ASSERT(!m.paired || *m.paired != mc);
+      const QString id = QStringLiteral("env-") + QString::fromLatin1(kNames[mc]);
+      RC_ASSERT(std::any_of(listed.begin(), listed.end(), [&](const QVariant& entry) {
+        return entry.toMap().value(QStringLiteral("id")) == id && entry.toMap().value(QStringLiteral("origin")) == mcs[mc]->origin();
+      }));
+      RC_ASSERT(saved->catalog()->connect(id).credential == QString::fromStdString(session));
+      RC_ASSERT(saved->client(id) != nullptr && saved->client(id)->phase() != McClient::Phase::Closed);
+    }
   }
 
+  std::shared_ptr<MemorySecretStore::Keys> keys = std::make_shared<MemorySecretStore::Keys>();
   QTemporaryDir home;
   QString dead;
   std::vector<std::unique_ptr<Mc>> mcs;
@@ -545,9 +575,27 @@ struct Cancel : Command {
   void show(std::ostream& os) const override { os << "Cancel"; }
 };
 
+// The user forgets the shell's own environment, or one by its id: one beside
+// it, or the shell's own again.
 struct Forget : Command {
+  // -1: no id, the shell's own.
+  int which = *rc::gen::inRange(-1, kMcs);
+  std::optional<int> mc = which < 0 ? std::nullopt : std::optional<int>(which);
   explicit Forget(const Model&) {}
+  // A record the device cannot write keeps one beside it on disk (#1096).
+  // RC_PRE captures its expression, which evaluates every operand of `||`.
+  void checkPreconditions(const Model& m) const override {
+    const bool kept = mc && m.beside.contains(*mc) && !m.writable;
+    RC_PRE(!kept);
+  }
   void apply(Model& m) const override {
+    if (mc && m.beside.contains(*mc)) {
+      m.beside.erase(*mc);
+      m.said = Said::Nothing;
+      return;
+    }
+    // An id the device does not have is nobody's.
+    if (mc && m.paired != mc) return;
     // The session stays on the device, and so the device stays paired, and
     // a pairing in flight goes on.
     if (m.paired && !m.writable) {
@@ -562,14 +610,25 @@ struct Forget : Command {
     m.link.reset();
     m.offered.reset();
     m.said = Said::Nothing;
+    // The one beside it takes its place.
+    if (!m.beside.empty()) {
+      m.paired = m.beside.begin()->first;
+      m.session = m.beside.begin()->second;
+      m.beside.erase(m.beside.begin());
+    }
   }
   void run(const Model& m, Sut& s) const override {
     Model next = m;
     apply(next);
-    s.phone->bridge->dispatch(QStringLiteral("pairing.forget"));
+    QVariantMap payload;
+    if (mc) payload.insert(QStringLiteral("id"), QStringLiteral("env-") + QString::fromLatin1(kNames[*mc]));
+    s.phone->bridge->dispatch(QStringLiteral("pairing.forget"), payload);
     s.check(next);
   }
-  void show(std::ostream& os) const override { os << "Forget"; }
+  void show(std::ostream& os) const override {
+    os << "Forget";
+    if (mc) os << "(" << kNames[*mc] << ")";
+  }
 };
 
 // The device's storage stops taking writes, or takes them again.

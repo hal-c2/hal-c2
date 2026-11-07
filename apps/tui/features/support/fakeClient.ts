@@ -254,6 +254,7 @@ export function fakeClient({
   revertCheckpoint = async () => {},
   getTurnDiff = async () => "",
   getFullThreadDiff = async () => "",
+  getCommandOutput = async () => ({ output: "", running: false }),
   listEntries = async () => [],
   readFile = async () => null,
   hostPlatform = "linux",
@@ -304,6 +305,7 @@ export function fakeClient({
   readonly revertCheckpoint?: TuiClient["revertCheckpoint"];
   readonly getTurnDiff?: TuiClient["getTurnDiff"];
   readonly getFullThreadDiff?: TuiClient["getFullThreadDiff"];
+  readonly getCommandOutput?: TuiClient["getCommandOutput"];
   readonly listEntries?: TuiClient["listEntries"];
   readonly readFile?: TuiClient["readFile"];
   readonly hostPlatform?: NodeJS.Platform;
@@ -548,6 +550,7 @@ export function fakeClient({
     loadOlderThreadTurns: () => true,
     getTurnDiff,
     getFullThreadDiff,
+    getCommandOutput,
     createProject,
     createThread,
     listEntries,

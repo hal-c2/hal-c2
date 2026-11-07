@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27848
+#   https://github.com/pingdotgg/t3code/pull/25222
 #   https://github.com/pingdotgg/t3code/pull/24554
 #   https://github.com/pingdotgg/t3code/pull/19616
 #   https://github.com/pingdotgg/t3code/pull/17370
@@ -35,6 +37,7 @@
 #   docs/internals/environment-auth.md
 #   docs/operations/development.md (Reusable dev credential)
 #   AGENTS.md (npx hal-c2 pair, HAL_C2_DEV_AUTH_TOKEN)
+#   https://github.com/pingdotgg/t3code/pull/23782
 
 Feature: MC authentication and scopes
   An MC issues its own sessions. Pairing hands out a session with a set of scopes, a
@@ -284,6 +287,32 @@ Feature: MC authentication and scopes
       | hal-c2.revokeClient       |
       | hal-c2.revokeOtherClients |
 
+  # Upstream #23782: a token sent as "bearer" or "bEaReR" was refused before it was checked.
+  @backlog @mc
+  Scenario Outline: The bearer scheme is read in any letter case
+    When a local tool sends the MC's access token with the scheme "<scheme>"
+    Then the MC says it is authenticated
+
+    Examples:
+      | scheme |
+      | Bearer |
+      | bearer |
+      | bEaReR |
+
+  # Upstream #23782: refusals say which part was wrong, without repeating the credential.
+  @backlog @mc @priority-low
+  Scenario Outline: A refused MCP request says what was wrong with its credential
+    When an agent calls the MCP server with <authorization>
+    Then it is refused as <reason>
+    And the refusal does not contain the credential
+
+    Examples:
+      | authorization                 | reason                      |
+      | no Authorization header       | a missing credential        |
+      | a Basic credential            | an unsupported scheme       |
+      | the scheme "Bearer", no token | an empty credential         |
+      | an expired token              | an unknown or expired token |
+
   @mc
   Scenario: Access requests without a bearer are refused as missing credentials
     When a client calls an access route without a bearer token
@@ -435,6 +464,14 @@ Feature: MC authentication and scopes
     When a page from another origin sends a request with that cookie
     Then the MC refuses the request as an invalid credential
 
+  # Upstream #27848: a valid bearer token wins over a blank session cookie (hosted web app).
+  # The MC keeps no browser session cookie, so there is no cookie to be blank.
+  @dropped @mc
+  Scenario: A blank session cookie does not hide a valid bearer token
+    Given a request carries an empty session cookie and a valid bearer token
+    When it reaches the MC
+    Then the MC authenticates it with the bearer token
+
   @mc
   Scenario: Listed pairing links never reveal their secret
     Given an administrator created a pairing link
@@ -499,6 +536,7 @@ Feature: MC authentication and scopes
     When a client exchanges it asking only for orchestration:read
     Then its session carries only orchestration:read
 
+  # Upstream #25222: a read-only pairing code refused for full MCP access stays usable for read-only access.
   @mc
   Scenario: A token exchange asking for more than its link grants leaves the link unused
     Given a pairing link with standard scopes
