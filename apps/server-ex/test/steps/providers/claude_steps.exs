@@ -4497,7 +4497,7 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  step "the user sends a follow-up", context do
+  step "the user sends a follow-up to that thread", context do
     World.post_message(context, @thread, "which mode")
   end
 
