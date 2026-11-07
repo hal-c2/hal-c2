@@ -320,7 +320,7 @@ Feature: Browsing pull requests
     Then its reviewers and labels are shown
     And the user can request a reviewer other than the author and apply a repository label
 
-  # Upstream #23034: reviewers on GitCafe are read and written through their own endpoints.
+  # Upstream #23034: a reviewer write is fenced on the pull request's version, so a concurrent change fails the toggle instead of being overwritten.
   @backlog @mc @priority-low
   Scenario: A GitCafe reviewer change made meanwhile elsewhere is not overwritten
     Given the user is requesting a reviewer on a GitCafe pull request

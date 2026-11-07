@@ -931,7 +931,7 @@ Feature: Device panel
       When its session ends while the user is looking at another thread
       Then "iPhone 17" no longer floats over "Fix checkout"
 
-    # Upstream #25714: a floating device stayed open after its session ended.
+    # Upstream #25714: closing the right panel floated a device whose session had already ended.
     @backlog @desktop @priority-low
     Scenario: Closing the right panel does not float a device whose session ended
       Given the right panel shows the "iPhone 17" tab and its session has ended
