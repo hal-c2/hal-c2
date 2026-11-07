@@ -109,7 +109,7 @@ Feature: Adding projects
       Given "/home/sam" holds the folders "shop" and "Shared" and the file "notes.txt"
       When the user types "/home/sam/sh" while adding a local folder
       Then the folders "Shared" and "shop" are offered
-      And "notes.txt" is not offered
+      And "notes.txt" is not listed
 
     # Upstream #31642: deleting the leading "/" or a drive letter stopped the text being a path,
     # the field was rebuilt and the caret jumped to the end.
@@ -137,7 +137,7 @@ Feature: Adding projects
         | /home/sam/s  | is not listed   |
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (resolveBrowseTarget)
-    @mc @backlog
+    @mc
     Scenario Outline: Browsing a path the MC cannot make sense of is refused
       Given the MC runs on Linux
       When a client browses "<partial path>" <context>
@@ -148,8 +148,9 @@ Feature: Adding projects
         | C:\code      | with no current project              | Windows-style workspace path 'C:\code' is not supported on 'linux'.             |
         | ./shop       | with no current project              | A current project is required to browse relative workspace path './shop'.       |
 
+    # The home folder also holds "code", the current project's folder; names sort by byte, capitals first.
     # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (resolveBrowseTarget, browse: "~" and explicit relative paths)
-    @mc @backlog
+    @mc
     Scenario Outline: Browsing starts from the home folder or the current project when asked to
       Given the MC's user is "sam" with the home folder "/home/sam"
       And "/home/sam" holds the folders "shop" and "Shared"
@@ -158,21 +159,21 @@ Feature: Adding projects
       Then the folders <listed> are offered
 
       Examples:
-        | partial path | listed                  |
-        | ~            | "Shared" and "shop"     |
-        | ~/sh         | "Shared" and "shop"     |
-        | ./sh         | "shop-api"              |
+        | partial path | listed                      |
+        | ~            | "Shared", "code" and "shop" |
+        | ~/sh         | "Shared" and "shop"         |
+        | ./sh         | "shop-api"                  |
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (browse: prefix match is case-insensitive, sorted by name)
-    @mc @backlog
+    @mc
     Scenario: Browsing matches the start of a name in any case and lists folders in name order
       Given "/home/sam" holds the folders "shop", "Shared" and "Sketches" and the file "sheet.txt"
       When a client browses "/home/sam/S"
       Then "Shared", "Sketches" and "shop" are offered in that order
-      And "sheet.txt" is not offered
+      And "sheet.txt" is not listed
 
     # Legacy: apps/server/src/workspace/WorkspaceEntries.ts (WorkspaceEntriesReadDirectoryError)
-    @mc @backlog
+    @mc
     Scenario: Browsing a folder that does not exist says which folder could not be read
       Given "/home/sam/nowhere" does not exist
       When a client browses "/home/sam/nowhere/"
@@ -799,7 +800,7 @@ Feature: Adding projects
       And the clone is reported as failed with the last lines git printed
 
     # Legacy: apps/server/src/sourceControl/SourceControlRepositoryService.ts (CLONE_TIMEOUT_MS)
-    @mc @backlog @priority-low
+    @mc @priority-low
     Scenario: A tracked clone has no deadline but a one-shot clone gives up after two minutes
       Given a clone is still transferring after two minutes
       Then a clone started in the background keeps running
