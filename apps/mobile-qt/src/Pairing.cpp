@@ -292,28 +292,31 @@ void Pairing::forget(const QString& id) {
   emit forgetting();
   // The session is gone, so the environment is forgotten whatever follows;
   // what the device had kept of its threads may still be on disk.
-  const bool emptied = !m_paired || m_shell->close();
+  const bool closed = m_paired.has_value();
+  const bool emptied = !closed || m_shell->close();
   m_paired.reset();
   m_adding = false;
   m_link.clear();
   m_offered.clear();
   m_error = emptied ? QString() : tr("The environment is forgotten, but what this device kept of its threads could not be deleted.");
   // One paired beside it takes its place, so the device stays paired while it has any.
-  promote();
+  // With none to, the rows closing emptied, those beside it too, are sent again.
+  auto* saved = m_shell->shared<SavedEnvironmentsController>();
+  if (!promote() && closed && saved) saved->reconnect();
   publish();
 }
 
-void Pairing::promote() {
+bool Pairing::promote() {
   auto* saved = m_shell->shared<SavedEnvironmentsController>();
   EnvironmentCatalog* catalog = saved ? saved->catalog() : nullptr;
-  if (m_paired || !catalog) return;
+  if (m_paired || !catalog) return false;
   for (const SavedEnvironment& environment : catalog->environments()) {
     const EnvironmentCatalog::Connection connection = catalog->connect(environment.id);
     if (!connection.blocked.isEmpty()) continue;
     const Environment next{environment.origin, connection.credential, environment.label, environment.id, environment.expiresAt};
     // Kept as the shell's own before it leaves the saved ones: there is
     // always one place on the device it is in.
-    if (!save(next)) return;
+    if (!save(next)) return false;
     saved->remove(environment.id);
     m_paired = next;
     m_saved = true;
@@ -321,8 +324,9 @@ void Pairing::promote() {
     m_shell->open(next.origin, next.token, next.environmentId);
     // Opening another MC emptied the shell's rows, the others' too: they are sent again.
     saved->reconnect();
-    return;
+    return true;
   }
+  return false;
 }
 
 void Pairing::remember(const QUrl& origin, const QString& token) {

@@ -73,7 +73,8 @@ std::optional<SavedEnvironment> EnvironmentCatalog::find(const QString& id) cons
 
 std::optional<QString> EnvironmentCatalog::save(const SavedEnvironment& environment, const QString& credential) {
   QString why;
-  // What the keyring had: one not saved leaves it as it was.
+  // What the keyring had: one not saved leaves it as it was. Nothing is also
+  // what a keyring that cannot be read gives.
   const std::optional<QString> previous = m_secrets->read(environment.id);
   if (!m_secrets->write(environment.id, credential, &why)) {
     return QStringLiteral("%1 could not be saved: %2").arg(environment.label.isEmpty() ? environment.id : environment.label, why);
@@ -85,7 +86,9 @@ std::optional<QString> EnvironmentCatalog::save(const SavedEnvironment& environm
     m_environments = before;
     if (previous) {
       m_secrets->write(environment.id, *previous, &why);
-    } else {
+    } else if (!find(environment.id)) {
+      // A credential no record names is not left behind; one a record names
+      // stays, since what it replaced could not be read.
       m_secrets->remove(environment.id);
     }
     return QStringLiteral("%1 could not be saved: the record of saved environments could not be written.")
