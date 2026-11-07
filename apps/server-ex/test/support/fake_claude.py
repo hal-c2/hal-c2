@@ -86,6 +86,10 @@ session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
+# FAKE_CLAUDE_ORPHANED names a background task the previous process left running. A
+# resumed process queues its first message behind a turn of its own that reports the
+# task stopped: its result has origin task-notification and echoes no message's uuid.
+orphaned = os.environ.get("FAKE_CLAUDE_ORPHANED") if "--resume" in sys.argv else None
 resume_at = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--resume-session-at=")), None)
 # A subagent's messages are in a transcript of their own: Claude Code cannot resume the
 # conversation at one and ends the process.
@@ -213,8 +217,33 @@ for line in sys.stdin:
     if os.environ.get("FAKE_CLAUDE_INPUT_LOG"):
         with open(os.environ["FAKE_CLAUDE_INPUT_LOG"], "a") as f:
             f.write(json.dumps(text) + "\n")
+    # Claude Code says when it starts and finishes a prompt it was given a uuid for.
+    lifecycle = lambda state: msg.get("uuid") and send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": state})
+    if orphaned:
+        lifecycle("queued")
+        send({"type": "system", "subtype": "task_notification", "session_id": session, "task_id": orphaned, "status": "stopped",
+              "summary": "Orphaned by a previous Claude Code process exit"})
+        send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}o", "role": "assistant", "content": [{"type": "text", "text": "The survey stopped"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "result": "The survey stopped",
+              "origin": {"kind": "task-notification"}, "session_id": session})
+        # Then Claude starts the prompt it queued, unless it never runs one for it.
+        if "never start a turn" not in text:
+            lifecycle("started")
+        orphaned = None
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
     record("user", text)
+    # "/compact": Claude summarises the conversation (compact_boundary) and answers with
+    # a result that echoes the message's uuid, as Claude Code 2.1.285 does.
+    if text == "/compact":
+        lifecycle("started")
+        send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
+              "compact_metadata": {"trigger": "manual", "pre_tokens": 27445, "post_tokens": 1192}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": "<local-command-stdout>Compacted </local-command-stdout>"}})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": "", "session_id": session,
+              **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
+        lifecycle("completed")
+        continue
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
         resets = int(text.rsplit(" ", 1)[1])
@@ -452,8 +481,6 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     ev = lambda e: send({"type": "stream_event", "session_id": session, "event": e})
-    # Claude Code says when it starts and finishes a prompt it was given a uuid for.
-    lifecycle = lambda state: msg.get("uuid") and send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": state})
     lifecycle("started")
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "thinking", "thinking": "Let me look."}]}})
     send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}b", "role": "assistant", "content": [{"type": "tool_use", "id": f"tool-{turn}", "name": "Bash", "input": {"command": "ls"}}]}})

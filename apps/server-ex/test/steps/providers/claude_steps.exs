@@ -1349,6 +1349,59 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # The fake's "in the background" turn leaves a background task running when its
+  # process goes; the process that resumes the session reports it stopped in a turn of
+  # its own before the next message (FAKE_CLAUDE_ORPHANED).
+  step "a resumed Claude thread whose previous process left a background task", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    release_claude(context)
+    World.put_os_env("FAKE_CLAUDE_ORPHANED", "task-agent-1")
+    context
+  end
+
+  step "the user compacts the thread", context do
+    context = World.post_message(context, @thread, "/compact")
+
+    World.await_value(context, @thread, fn state ->
+      runs = StreamState.list(state, "run")
+
+      length(runs) >= 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"])) and
+        Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "compaction"))
+    end)
+
+    context
+  end
+
+  step "the turn completes once, after the real compaction", context do
+    assert [_, %{"status" => "completed"} = compact] = World.runs(context, @thread)
+
+    assert [%{"beforeTokenCount" => 27_445, "afterTokenCount" => 1192} = compaction] =
+             compactions(context)
+
+    # The compaction is the /compact run's, which ended no earlier than it.
+    assert compaction["runId"] == compact["id"]
+    assert compact["completedAt"] >= compaction["completedAt"]
+    context
+  end
+
+  step "no made-up \"Compacted context\" row is shown", context do
+    titles = for item <- World.entities(context, @thread, "turn-item"), do: item["title"]
+    refute "Compacted context" in titles
+    assert Enum.count(titles, &(&1 == "Context compacted")) == 1
+    context
+  end
+
+  step "the thread does not stay busy afterwards", context do
+    assert Enum.all?(World.runs(context, @thread), &(&1["status"] == "completed"))
+    assert World.latest_run(context, @thread)["status"] == "completed"
+    context
+  end
+
   # --- routers ---------------------------------------------------------------------------
 
   @router_model "anthropic/claude-sonnet-router"

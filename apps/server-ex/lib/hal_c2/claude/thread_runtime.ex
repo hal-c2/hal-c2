@@ -486,7 +486,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_call({:steer, run_id, message}, _from, %{turn: %{ids: %{run: run_id}}} = state)
       when state.session != nil do
     content = claude_content(Map.put(message, :launch, state.turn.launch))
-    Session.send_message(state.session, content, priority: "now")
+    # Its uuid is one the turn's result may name (`other_turn?/2`).
+    uuid = HalC2.Environment.uuid4()
+    Session.send_message(state.session, content, priority: "now", uuid: uuid)
+
+    state =
+      if state.turn[:prompt],
+        do:
+          update_in(
+            state.turn.prompt,
+            &Map.update(&1, :steers, [uuid], fn ids -> [uuid | ids] end)
+          ),
+        else: state
+
     {:reply, :ok, %{state | steered: true}}
   end
 
@@ -1347,7 +1359,33 @@ defmodule HalC2.Claude.ThreadRuntime do
        when not state.interrupted,
        do: %{state | wake: nil}
 
+  # A result for a turn Claude ran by itself while the prompt waited (a resumed process
+  # reporting work the last one left, a peer's message) does not end the user's turn:
+  # it echoes other prompts' uuids, or comes after Claude queued the prompt and before
+  # it started it. What that turn said joins this one, as a wake's does in `take_wake/2`.
+  defp receive_message(%{"type" => "result"} = result, %{turn: %{prompt: %{} = prompt}} = state)
+       when not state.interrupted do
+    if other_turn?(result, prompt) do
+      Logger.info("claude result for a turn of its own: #{inspect(result["origin"])}")
+      state
+    else
+      message(result, state)
+    end
+  end
+
   defp receive_message(message, state), do: message(message, state)
+
+  # Claude Code names the prompts a turn answered (`user_message_uuids`, from 2.1.252);
+  # one that names none says when it queued and started the prompt instead.
+  defp other_turn?(result, prompt) do
+    case Enum.filter(
+           List.wrap(result["user_message_uuids"]) ++ List.wrap(result["user_message_uuid"]),
+           &is_binary/1
+         ) do
+      [] -> Map.get(prompt, :queued, false) and not prompt.started
+      echoed -> not Enum.any?([prompt.uuid | Map.get(prompt, :steers, [])], &(&1 in echoed))
+    end
+  end
 
   defp result?(message), do: match?(%{"type" => "result"}, message)
 
@@ -1445,6 +1483,9 @@ defmodule HalC2.Claude.ThreadRuntime do
          %{turn: %{prompt: %{uuid: uuid} = prompt}} = state
        ) do
     case lifecycle do
+      "queued" ->
+        put_in(state.turn.prompt, Map.put(prompt, :queued, true))
+
       "started" ->
         put_in(state.turn.prompt, %{prompt | started: true})
 

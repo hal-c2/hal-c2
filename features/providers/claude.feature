@@ -2001,7 +2001,7 @@ Feature: Claude
       | 2.1.279 | graceful    |
       | 2.1.280 | unknown     |
 
-  @backlog @mc @priority-high
+  @mc @plugin-claude @priority-high
   Scenario: A Claude-initiated result does not end a /compact turn early
     Given a resumed Claude thread whose previous process left a background task
     When the user compacts the thread
