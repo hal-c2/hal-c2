@@ -14,6 +14,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   # the new helper to the same program, and its answer comes back through the file.
 
   @wait "wait for me"
+  @approve "approve this"
 
   defp durable(context) do
     Application.put_env(:hal_c2, :durable_programs, true)
@@ -29,12 +30,22 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   # Each provider on its own fake; what differs is only how it is made this MC's.
   defp install(context, "pi") do
     wait = %{"match" => @wait, "steps" => [%{"waitAbort" => true}]}
-    FakeAcp.install_pi(context, %{}, enabled: true, turns: [wait | FakeAcp.pi_turns()])
+
+    ask = %{
+      "match" => @approve,
+      "steps" => [
+        %{"tool" => "bash", "args" => %{"command" => "ls"}, "output" => "a.txt"},
+        %{"text" => "Ran it."}
+      ]
+    }
+
+    FakeAcp.install_pi(context, %{}, enabled: true, turns: [wait, ask | FakeAcp.pi_turns()])
   end
 
   defp install(context, "muse") do
     wait = %{"match" => @wait, "steps" => [%{"waitInterrupt" => true}]}
-    FakeAcp.install_muse(context, %{}, enabled: true, turns: [wait])
+    ask = %{"match" => @approve, "steps" => [%{"shell" => "ls"}, %{"text" => "Ran it."}]}
+    FakeAcp.install_muse(context, %{}, enabled: true, turns: [wait, ask])
   end
 
   defp install(context, "antigravity") do
@@ -44,7 +55,24 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
         "antigravity",
         %{
           "googleAuth" => true,
-          "turns" => [%{"match" => @wait, "steps" => [%{"waitCancel" => true}]} | FakeAcp.turns()]
+          "turns" => [
+            %{"match" => @wait, "steps" => [%{"waitCancel" => true}]},
+            %{
+              "match" => @approve,
+              "steps" => [
+                %{
+                  "permission" => %{
+                    "toolCallId" => "cmd-1",
+                    "title" => "ls",
+                    "kind" => "execute",
+                    "rawInput" => %{"command" => "ls"}
+                  }
+                },
+                %{"text" => "Ran it."}
+              ]
+            }
+            | FakeAcp.turns()
+          ]
         },
         binary: "agy_acp_server.par",
         enabled: true
@@ -290,7 +318,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     context = context |> durable() |> World.fake_providers() |> install(provider)
 
     context =
-      World.launch_on(context, thread, instance(provider), "approve this", %{
+      World.launch_on(context, thread, instance(provider), @approve, %{
         "runtimeMode" => "approval-required"
       })
 

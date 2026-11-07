@@ -162,11 +162,6 @@ Feature: Reattaching to provider programs after a restart
         | grok        |
         | opencode    |
         | acpRegistry |
-
-      # Their fakes ask only when a scenario scripts it; the runtime path is the same.
-      @backlog @priority-high
-      Examples:
-        | provider    |
         | claudeAgent |
         | antigravity |
         | pi          |
