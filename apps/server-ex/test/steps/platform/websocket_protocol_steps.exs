@@ -555,6 +555,82 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
     World.put_client(context, client)
   end
 
+  step "clients hold several subscriptions open", context do
+    # Two threads of 2 MB each: what a socket kept of them would show in its memory.
+    big = String.duplicate("x", 100_000)
+    streams = for _ <- 1..2, do: stream_id()
+
+    offsets =
+      for stream <- streams do
+        {:ok, offset} = HalC2.Streams.commit(stream, :thread, [note("first")])
+        {:ok, _} = HalC2.Streams.commit(stream, :thread, for(_ <- 1..10, do: note(big)))
+        {:ok, _} = HalC2.Streams.commit(stream, :thread, for(_ <- 1..10, do: note(big)))
+        offset
+      end
+
+    # Each client also follows the shell, which is how the MC lists its socket.
+    before = shell_clients()
+    fresh = Mc.connect(context.mc) |> Mc.sub(9, %{"type" => "shell"})
+    behind = Mc.connect(context.mc) |> Mc.sub(9, %{"type" => "shell"})
+    {_, fresh} = Mc.await(fresh, &(&1["t"] == "shell"))
+    {_, behind} = Mc.await(behind, &(&1["t"] == "shell"))
+    sockets = shell_clients() -- before
+    assert length(sockets) == 2
+    held = for stream <- streams, do: held_bytes(stream_pid(stream))
+
+    Map.merge(context, %{
+      streams: streams,
+      offsets: offsets,
+      clients: [fresh, behind],
+      sockets: sockets,
+      held: held
+    })
+  end
+
+  step "each has been sent its snapshot, its replay and its history", context do
+    [fresh, behind] = context.clients
+    pairs = Enum.zip(context.streams, context.offsets) |> Enum.with_index(1)
+
+    # One takes each thread whole, the other replays it from its first offset;
+    # both then read its rows in one call.
+    fresh = Enum.reduce(pairs, fresh, fn {{s, _}, id}, c -> sub(c, id, s) end)
+    behind = Enum.reduce(pairs, behind, fn {{s, o}, id}, c -> sub(c, id, s, o) end)
+
+    clients =
+      for client <- [fresh, behind] do
+        {_, client} =
+          Mc.await_all(client, for({_, id} <- pairs, do: &(&1["t"] == "live" and &1["id"] == id)))
+
+        Enum.reduce(context.streams, client, fn stream, client ->
+          {{:ok, %{"rows" => rows}}, client} =
+            Mc.call(client, context.mc.environment, "hal-c2.threadRows", %{"threadId" => stream})
+
+          assert length(rows) == 21
+          client
+        end)
+      end
+
+    Map.put(context, :clients, clients)
+  end
+
+  step "the MC holds none of that delivered history while the subscriptions stay open",
+       context do
+    # The 4 MB went out over each socket; neither keeps more than one note's worth.
+    for socket <- context.sockets, do: assert(held_bytes(socket) < 100_000)
+
+    # A thread's stream holds its rows, as it did before anyone followed it, and
+    # nothing more for having sent them.
+    for {stream, before} <- Enum.zip(context.streams, context.held),
+        do: assert(held_bytes(stream_pid(stream)) <= before + 100_000)
+
+    # And the subscriptions stay open: each socket still answers.
+    for client <- context.clients do
+      {_, _} = Mc.await(WsClient.send_json(client, %{"t" => "ping"}), &(&1["t"] == "pong"))
+    end
+
+    context
+  end
+
   step "it subscribes to the same thread again on that socket", context do
     World.put_client(context, sub(World.client(context), 2, context.stream))
   end
@@ -1451,6 +1527,15 @@ defmodule HalC2.Steps.Platform.WebsocketProtocol do
       end
     end)
   end
+
+  # The bytes a process holds after a collection: its heap and the binaries it refers to.
+  defp held_bytes(pid) do
+    :erlang.garbage_collect(pid)
+    [memory: memory, binary: binaries] = Process.info(pid, [:memory, :binary])
+    memory + (binaries |> Enum.map(&elem(&1, 1)) |> Enum.sum())
+  end
+
+  defp stream_pid(stream), do: HalC2.Streams.ensure(stream)
 
   defp shell_clients,
     do: for({pid, :client} <- :ets.tab2list(HalC2.Shell.Subscribers), do: pid)

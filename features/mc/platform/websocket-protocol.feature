@@ -162,7 +162,7 @@ Feature: The protocol 3 WebSocket
     When 512 progress updates are waiting to be merged
     Then they are merged and sent at once, without waiting for the 50 milliseconds to pass
 
-  @backlog @mc
+  @mc
   Scenario: Long-lived subscriptions do not keep what they already delivered in memory
     Given clients hold several subscriptions open
     When each has been sent its snapshot, its replay and its history
