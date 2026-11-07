@@ -133,7 +133,8 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   # --- opening and closing ------------------------------------------------------------
 
   step "a client opens it in a thread", context do
-    rpc(context, "device.open", %{"threadId" => "t1", "deviceId" => "SIM-1", "platform" => "ios"})
+    {id, platform} = context[:target] || {"SIM-1", "ios"}
+    rpc(context, "device.open", %{"threadId" => "t1", "deviceId" => id, "platform" => platform})
   end
 
   step "the MC boots the simulator", context do
@@ -375,6 +376,14 @@ defmodule HalC2.Steps.Connections.DeviceHub do
         %{"type" => "launchApp"} ->
           {"adb shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1",
            "adb shell dumpsys window", detail["foregroundApp"] == %{"id" => "com.example.app"}}
+
+        %{"type" => "terminateApp", "deviceId" => "SIM-1"} ->
+          {"xcrun simctl terminate SIM-1 com.example.shop", "xcrun simctl ui SIM-1 appearance",
+           true}
+
+        %{"type" => "terminateApp"} ->
+          {"adb shell am force-stop com.example.shop", "adb shell dumpsys window",
+           detail["foregroundApp"] == %{"id" => "com.android.launcher"}}
       end
 
     ran = Enum.find_index(calls, &(&1 == command))
@@ -880,9 +889,12 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     assert {:ok, %{"devices" => devices}} = context.reply
     assert Enum.any?(devices, &(&1["id"] == "Pixel_9"))
 
+    # The MC puts the SDK's folders ahead of its own PATH; a Node launcher (vite-plus's
+    # on CI) may put its runtime ahead of both when it starts the hub.
     {:ok, 200, body} = hub_get("/fake/env")
     prefix = Path.join(sdk, "platform-tools") <> ":" <> Path.join(sdk, "emulator") <> ":"
-    assert String.starts_with?(JSON.decode!(body)["PATH"], prefix)
+    assert [_, rest] = String.split(JSON.decode!(body)["PATH"], prefix, parts: 2)
+    assert String.starts_with?(rest, System.get_env("PATH"))
     context
   end
 
@@ -1099,31 +1111,238 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   step ~r/^a client turns (?<toggle>VoiceOver|network access) on for a booted (?<platform>iOS|Android) device$/,
        %{args: [toggle, platform]} = context do
-    setting = if toggle == "VoiceOver", do: "voiceOver", else: "networkEnabled"
-    action(context, platform, %{"type" => "setToggle", "setting" => setting, "value" => true})
+    {setting, change} =
+      if toggle == "VoiceOver",
+        do: {"voiceOver", {ax("set voiceover on"), ax("status")}},
+        else: {"networkEnabled", {~r"^adb shell svc data enable$", adb_get("global wifi_on")}}
+
+    context
+    |> Map.put(:change, Tuple.append(change, &(&1["settings"][setting] == true)))
+    |> action(platform, %{"type" => "setToggle", "setting" => setting, "value" => true})
+  end
+
+  step ~r/^a client sets (?<setting>text size|reduce motion|increase contrast|Liquid Glass) on a booted (?<platform>iOS|Android) device to (?<value>.+)$/,
+       %{args: [setting, platform, value]} = context do
+    {input, command, read, fresh} =
+      case {setting, platform, value} do
+        {"text size", "iOS", "extra large"} ->
+          {%{"type" => "setTextSize", "value" => "extra-large"},
+           ~r"^xcrun simctl ui SIM-1 content_size accessibility-large$",
+           ~r"^xcrun simctl ui SIM-1 content_size$", {"textSize", "extra-large"}}
+
+        {"text size", "Android", "1.3"} ->
+          {%{"type" => "setTextSize", "value" => "extra-large"},
+           ~r"^adb shell settings put system font_scale 1.3$", adb_get("system font_scale"),
+           {"textSize", "extra-large"}}
+
+        {"reduce motion", "iOS", "on"} ->
+          {%{"type" => "setToggle", "setting" => "reduceMotion", "value" => true},
+           ax("set reduce-motion on"), ax("status"), {"reduceMotion", true}}
+
+        {"reduce motion", "Android", "on"} ->
+          {%{"type" => "setToggle", "setting" => "reduceMotion", "value" => true},
+           ~r"^adb shell settings put global window_animation_scale 0$",
+           adb_get("global animator_duration_scale"), {"reduceMotion", true}}
+
+        {"increase contrast", "iOS", "on"} ->
+          {%{"type" => "setToggle", "setting" => "increaseContrast", "value" => true},
+           ~r"^xcrun simctl ui SIM-1 increase_contrast enabled$",
+           ~r"^xcrun simctl ui SIM-1 increase_contrast$", {"increaseContrast", true}}
+
+        {"Liquid Glass", "iOS", "tinted"} ->
+          {%{"type" => "setLiquidGlass", "value" => "tinted"}, ax("set liquid-glass tinted"),
+           ax("status"), {"liquidGlass", "tinted"}}
+      end
+
+    {key, expected} = fresh
+
+    context
+    |> Map.put(:change, {command, read, &(&1["settings"][key] == expected)})
+    |> action(platform, input)
+  end
+
+  step ~r/^a client sets the (?<permission>camera|notifications|location) permission to (?<state>granted|revoked) on a booted (?<platform>iOS|Android) device$/,
+       %{args: [permission, state, platform]} = context do
+    decision = if state == "granted", do: "grant", else: "revoke"
+
+    command =
+      case {platform, permission} do
+        {"iOS", _} ->
+          ~r"^xcrun simctl privacy SIM-1 #{decision} #{permission} com.example.shop$"
+
+        {"Android", "notifications"} ->
+          ~r"^adb shell pm #{decision} com.example.shop android.permission.POST_NOTIFICATIONS$"
+
+        {"Android", "location"} ->
+          ~r"^adb shell pm #{decision} com.example.shop android.permission.ACCESS_COARSE_LOCATION$"
+      end
+
+    # A permission is not part of the detail; what counts is that it was read afterwards.
+    read =
+      if platform == "iOS",
+        do: ~r"^xcrun simctl ui SIM-1 appearance$",
+        else: ~r"^adb shell cmd uimode night$"
+
+    context
+    |> Map.put(:change, {command, read, fn _ -> true end})
+    |> action(platform, %{
+      "type" => "setPermission",
+      "appId" => "com.example.shop",
+      "permission" => permission,
+      "decision" => decision
+    })
   end
 
   step "the MC answers with the device's detail after the change", context do
-    assert {:ok, %{"deviceId" => id, "settings" => settings}} = context.reply
+    assert {:ok, %{"deviceId" => id} = detail} = context.reply
     assert id == context.action["deviceId"]
-    calls = context |> calls() |> String.split("\n", trim: true)
+    {command, read, fresh} = context.change
+    assert_read_after(context, command, read)
 
-    {command, read, fresh} =
-      case context.action do
-        %{"setting" => "voiceOver"} ->
-          {~r"^xcrun simctl spawn SIM-1 \S+/serve-sim-ax-settings set voiceover on$",
-           ~r"^xcrun simctl spawn SIM-1 \S+/serve-sim-ax-settings status$",
-           settings["voiceOver"] == true}
+    assert fresh.(detail),
+           "the detail does not reflect #{inspect(context.action)}: #{inspect(detail)}"
 
-        %{"setting" => "networkEnabled"} ->
-          {~r"^adb shell svc data enable$", ~r"^adb shell settings get global wifi_on$",
-           settings["networkEnabled"] == true}
-      end
+    context
+  end
 
-    ran = Enum.find_index(calls, &(&1 =~ command))
-    assert ran, "#{inspect(command)} never ran: #{inspect(calls)}"
-    assert Enum.any?(Enum.drop(calls, ran + 1), &(&1 =~ read)), "no read after the change"
-    assert fresh, "the detail does not reflect #{inspect(context.action)}: #{inspect(settings)}"
+  step ~r/^a client sets the location of a booted (?<platform>iOS|Android) device to "Reykjavik"$/,
+       %{args: [platform]} = context do
+    context =
+      action(context, platform, %{
+        "type" => "setLocation",
+        "latitude" => 64.1466,
+        "longitude" => -21.9426
+      })
+
+    Map.put(context, :replies, [context.reply])
+  end
+
+  step "a client clears the location of that device", context do
+    context =
+      rpc(context, "device.action", %{
+        "deviceId" => context.action["deviceId"],
+        "type" => "clearLocation"
+      })
+
+    Map.update!(context, :replies, &(&1 ++ [context.reply]))
+  end
+
+  step "the MC answers with the device's detail after each change", context do
+    id = context.action["deviceId"]
+    assert [{:ok, %{"deviceId" => ^id}}, {:ok, %{"deviceId" => ^id}}] = context.replies
+
+    case context.platform do
+      "ios" ->
+        read = ~r"^xcrun simctl ui SIM-1 appearance$"
+        assert_read_after(context, ~r"^xcrun simctl location SIM-1 set 64.1466,-21.9426$", read)
+        assert_read_after(context, ~r"^xcrun simctl location SIM-1 clear$", read)
+
+      "android" ->
+        # The emulator cannot clear a fix, so clearing only reads the device again.
+        read = ~r"^adb shell cmd uimode night$"
+        assert_read_after(context, ~r"^adb emu geo fix -21.9426 64.1466$", read)
+        calls = context |> calls() |> String.split("\n", trim: true)
+        assert Enum.count(calls, &(&1 =~ read)) == 2
+    end
+
+    context
+  end
+
+  step ~r/^a client stops "the shop app" on a booted (?<platform>iOS|Android) device$/,
+       %{args: [platform]} = context do
+    context = action(context, platform, %{"type" => "launchApp", "appId" => "com.example.shop"})
+    assert {:ok, _} = context.reply
+    action(context, platform, %{"type" => "terminateApp", "appId" => "com.example.shop"})
+  end
+
+  step ~r/^a client sends the push "Hello" to an app on a booted iOS simulator$/, context do
+    action(context, "iOS", %{
+      "type" => "sendPush",
+      "appId" => "com.example.app",
+      "payload" => "Hello"
+    })
+  end
+
+  step ~r/^the simulator receives a notification whose alert is "Hello"$/, context do
+    assert {:ok, _} = context.reply
+
+    assert_read_after(
+      context,
+      ~r"^xcrun simctl push SIM-1 com.example.app -$",
+      ~r"^xcrun simctl ui SIM-1 appearance$"
+    )
+
+    assert pushed(context) == %{"aps" => %{"alert" => "Hello"}}
+    context
+  end
+
+  step "a client that sends a full payload has that payload delivered as written", context do
+    payload = %{
+      "aps" => %{"alert" => %{"title" => "Sale", "body" => "Today only"}, "badge" => 3},
+      "orderId" => "42"
+    }
+
+    context =
+      rpc(context, "device.action", %{
+        "deviceId" => "SIM-1",
+        "type" => "sendPush",
+        "appId" => "com.example.app",
+        "payload" => payload
+      })
+
+    assert {:ok, _} = context.reply
+    assert pushed(context) == payload
+    context
+  end
+
+  step "a booted iOS device whose appearance command exits with an error and a message",
+       context do
+    context = booted(context, "iOS")
+    File.write!(Path.join(context.devices.bin, "fail-appearance"), "")
+    context
+  end
+
+  step "a client sets its appearance to dark", context do
+    action(context, "iOS", %{"type" => "setAppearance", "value" => "dark"})
+  end
+
+  step "the MC answers that the appearance change failed with the exit code", context do
+    assert {:error, message,
+            %{
+              "_tag" => "DeviceOperationError",
+              "operation" => "appearance",
+              "reason" => "command_failed",
+              "exitCode" => 3
+            }} = context.reply
+
+    assert message == "Device appearance failed: The device command failed (exit code 3)."
+    context
+  end
+
+  step "the answer does not repeat the command's own message", context do
+    {:error, message, _} = context.reply
+    refute message =~ "refused"
+    context
+  end
+
+  step "a booted device whose settings commands all fail", context do
+    context = booted(context, "Android")
+    File.write!(Path.join(context.devices.bin, "adb-fails"), "")
+    context
+  end
+
+  step "a client asks for its detail", context do
+    rpc(context, "device.detail", %{"deviceId" => "emulator-5580"})
+  end
+
+  step "the detail is returned with no settings and no foreground app", context do
+    assert {:ok, %{"deviceId" => "emulator-5580", "settings" => settings} = detail} =
+             context.reply
+
+    assert settings == %{}
+    assert detail["foregroundApp"] == nil
+    # Every read was tried and failed.
+    assert calls(context) =~ "adb shell dumpsys window\n"
     context
   end
 
@@ -1328,6 +1547,16 @@ defmodule HalC2.Steps.Connections.DeviceHub do
   step "the hub accepts the change", context do
     assert %{status: 200} = context.response
     assert %{"fps" => 15} = hub_json("/vendor/serve-emu/api/stream-settings")
+
+    # The proxied post reached the hub with the hub's own origin, not none: a proxy that
+    # dropped the header would pass the check. (The first post is the refused probe.)
+    origin = HalC2.Devices.hub_origin()
+
+    assert [%{"headers" => %{"origin" => "http://elsewhere.example"}}, proxied] =
+             hub_requests("/vendor/serve-emu/api/stream-settings")
+             |> Enum.filter(&(&1["method"] == "POST"))
+
+    assert proxied["headers"]["origin"] == origin
     context
   end
 
@@ -1445,6 +1674,193 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     context
   end
 
+  # --- boots that fail -----------------------------------------------------------------
+
+  step ~r/^a shut-down (?<platform>iOS|Android) device and (?<situation>the disk is full|the boot takes longer than three minutes|the simulator fails to launch)$/,
+       %{args: [platform, situation]} = context do
+    # The MC's three minutes are shortened; the hub never answers the boot.
+    if situation =~ "three minutes",
+      do: Application.put_env(:hal_c2, :device_boot_timeout, 200)
+
+    case platform do
+      "iOS" ->
+        error =
+          case situation do
+            "the disk is full" -> "Unable to boot device: Not enough disk space available"
+            "the boot takes longer than three minutes" -> "hang"
+            "the simulator fails to launch" -> "Unable to boot device: launchd failed to respond"
+          end
+
+        context
+        |> mac([Map.merge(@simulator, %{"booted" => false, "bootError" => error})])
+        |> Map.put(:target, {"SIM-1", "ios"})
+
+      "Android" ->
+        avd = if situation == "the disk is full", do: "Broken", else: "Hang"
+        avds(context, [avd])
+        Map.put(context, :target, {avd, "android"})
+    end
+  end
+
+  step "the device does not open in the thread", context do
+    {id, _} = context.target
+    assert {:error, _, %{"_tag" => "DeviceBootError", "deviceId" => ^id}} = context.reply
+    assert sessions("t1") == []
+    assert HalC2.Devices.state()["bootingDevices"] == []
+    context
+  end
+
+  step ~r/^the user is told (?<reason>the device ran out of disk space|the boot timed out|the device failed to launch)$/,
+       %{args: [told]} = context do
+    {reason, says} =
+      case told do
+        "the device ran out of disk space" -> {"disk_space", "not enough free disk space"}
+        "the boot timed out" -> {"timeout", "did not become ready in time"}
+        "the device failed to launch" -> {"launch_failed", "could not start"}
+      end
+
+    {id, _} = context.target
+    assert {:error, message, %{"reason" => ^reason}} = context.reply
+    assert message =~ "Device #{id} failed to boot: "
+    assert message =~ says
+    context
+  end
+
+  step "a device is booting for a thread", context do
+    avds(context, ["Hang"])
+    devices()
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, %{"type" => "devices", "mc" => Atom.to_string(node())})
+    {_, client} = Mc.await(client, &(&1["t"] == "devices"))
+    id = System.unique_integer([:positive])
+    input = %{"threadId" => "t1", "deviceId" => "Hang", "platform" => "android"}
+
+    paired =
+      Mc.rpc(World.client(context, "paired"), context.mc.environment, id, "device.open", input)
+
+    booting = &Enum.any?(&1["state"]["bootingDevices"], fn device -> device["id"] == "Hang" end)
+    {_, client} = Mc.await(client, &(&1["t"] == "devices" and booting.(&1)), 10_000)
+
+    context
+    |> World.put_client("watcher", client)
+    |> World.put_client("paired", paired)
+    |> Map.put(:open_id, id)
+  end
+
+  step "the user turns device support off", context do
+    write_settings(context, %{"enableDeviceSupport" => false})
+  end
+
+  step "the open fails saying device support was turned off while the device was opening",
+       context do
+    {frame, _} = Mc.await(World.client(context, "paired"), Mc.reply?(context.open_id), 15_000)
+
+    assert %{
+             "t" => "rpc.error",
+             "detail" => %{
+               "_tag" => "DeviceHostUnavailableError",
+               "reason" => "Device support was turned off while the device was opening."
+             }
+           } = frame
+
+    assert sessions("t1") == []
+    context
+  end
+
+  # --- hub restarts -------------------------------------------------------------------------
+
+  step "the device hub is running", context do
+    context = rpc(context, "device.list", %{})
+    assert {:ok, %{"hostStatus" => "ready"}} = context.reply
+    client = Mc.connect(context.mc)
+    client = Mc.sub(client, 1, %{"type" => "devices", "mc" => Atom.to_string(node())})
+    {_, client} = Mc.await(client, &(&1["t"] == "devices"))
+    World.put_client(context, "watcher", client)
+  end
+
+  step "the hub exits", context do
+    Map.put(context, :exit, hub_exit())
+  end
+
+  step "the MC restarts it after one second", context do
+    assert_restart(context, context.exit, 1_000, "1 second")
+  end
+
+  step "each further exit within a minute of starting doubles the wait, up to 30 seconds",
+       context do
+    context = assert_restart(context, hub_exit(), 2_000, "2 seconds")
+
+    # The rest of the waits, on a clock that never lets the hub run for a minute.
+    delays =
+      Enum.map_reduce(1..7, HalC2.Devices.HubRestarts.new(), fn n, restarts ->
+        HalC2.Devices.HubRestarts.exited(
+          HalC2.Devices.HubRestarts.started(restarts, n),
+          n + 59_999
+        )
+      end)
+      |> elem(0)
+
+    assert delays == [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]
+    context
+  end
+
+  step "a hub that ran for a minute restarts after the short wait again", context do
+    restarts = HalC2.Devices.HubRestarts.new()
+    {_, restarts} = HalC2.Devices.HubRestarts.exited(restarts, 0)
+
+    {_, restarts} =
+      HalC2.Devices.HubRestarts.exited(HalC2.Devices.HubRestarts.started(restarts, 0), 10)
+
+    restarts = HalC2.Devices.HubRestarts.started(restarts, 1_000)
+    assert {1_000, _} = HalC2.Devices.HubRestarts.exited(restarts, 61_000)
+    context
+  end
+
+  # --- the runtime directory ---------------------------------------------------------------
+
+  step "an MC on Linux started without XDG_RUNTIME_DIR", context do
+    Application.put_env(:hal_c2, :os_type, {:unix, :linux})
+    root = Mc.tmp_dir(context.mc, "run-user")
+    Application.put_env(:hal_c2, :runtime_dir_root, root)
+
+    context
+    |> put_env("XDG_RUNTIME_DIR", nil)
+    |> Map.put(:runtime_root, root)
+  end
+
+  step ~r{^"/run/user/<uid>" exists and is owned by that user$}, context do
+    {uid, 0} = System.cmd("id", ["-u"])
+    dir = Path.join(context.runtime_root, String.trim(uid))
+    File.mkdir_p!(dir)
+    Map.put(context, :runtime_dir, dir)
+  end
+
+  step "the hub looks for the emulator's token", context do
+    rpc(context, "device.list", %{})
+  end
+
+  step "it uses that directory", context do
+    assert {:ok, %{"hostStatus" => "ready"}} = context.reply
+    assert hub_json("/fake/env")["XDG_RUNTIME_DIR"] == context.runtime_dir
+    context
+  end
+
+  step "an explicit value is kept", context do
+    explicit = Mc.tmp_dir(context.mc, "runtime")
+
+    # A hub started again, now with the variable set.
+    context =
+      context
+      |> put_env("XDG_RUNTIME_DIR", explicit)
+      |> write_settings(%{"enableDeviceSupport" => false})
+      |> write_settings(%{"enableDeviceSupport" => true})
+      |> rpc("device.list", %{})
+
+    assert {:ok, %{"hostStatus" => "ready"}} = context.reply
+    assert hub_json("/fake/env")["XDG_RUNTIME_DIR"] == explicit
+    context
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   # Fake npm and the fake Android SDK; every variable is restored after the scenario.
@@ -1479,18 +1895,29 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
     script(Path.join([sdk, "platform-tools", "adb"]), """
     #!/bin/sh
-    # adb -s SERIAL ...: light mode at font scale 1.15; remembers the launched app
-    # and whether wifi is on.
+    # adb -s SERIAL ...: light mode at font scale 1.15 with wifi on; keeps the
+    # settings put since and the launched app. A file `adb-fails` fails every command.
     shift 2
     echo "adb $*" >> "#{log}"
+    [ -f "#{bin}/adb-fails" ] && { echo "error: device offline" >&2; exit 1; }
     case "$*" in
       "shell cmd uimode night") echo "Night mode: no" ;;
-      "shell settings get system font_scale") echo "1.15" ;;
-      "shell settings get global animator_duration_scale") echo "1.0" ;;
-      "shell settings get global wifi_on") cat "#{bin}/wifi" 2>/dev/null || echo 1 ;;
-      "shell svc wifi enable") echo 1 > "#{bin}/wifi" ;;
-      "shell svc wifi disable") echo 0 > "#{bin}/wifi" ;;
+      "shell settings put "*) echo "$6" > "#{bin}/adb-$4-$5" ;;
+      "shell settings get "*)
+        if [ -f "#{bin}/adb-$4-$5" ]; then cat "#{bin}/adb-$4-$5"
+        else
+          case "$5" in
+            font_scale) echo 1.15 ;;
+            animator_duration_scale) echo 1.0 ;;
+            wifi_on) echo 1 ;;
+            *) echo null ;;
+          esac
+        fi ;;
+      "shell svc wifi enable") echo 1 > "#{bin}/adb-global-wifi_on" ;;
+      "shell svc wifi disable") echo 0 > "#{bin}/adb-global-wifi_on" ;;
       "shell monkey -p "*) echo "$4" > "#{bin}/foreground" ;;
+      "shell am force-stop "*)
+        [ "$(cat "#{bin}/foreground" 2>/dev/null)" = "$4" ] && rm "#{bin}/foreground" ;;
       "shell dumpsys window")
         app=$(cat "#{bin}/foreground" 2>/dev/null || echo com.android.launcher)
         echo "  mCurrentFocus=Window{1a2b u0 $app/.MainActivity}" ;;
@@ -1516,6 +1943,8 @@ defmodule HalC2.Steps.Connections.DeviceHub do
         Application.delete_env(:hal_c2, :os_type)
         Application.delete_env(:hal_c2, :device_hub_answer_timeout)
         Application.delete_env(:hal_c2, :device_hub_upgrade_timeout)
+        Application.delete_env(:hal_c2, :device_boot_timeout)
+        Application.delete_env(:hal_c2, :runtime_dir_root)
       end)
     end)
   end
@@ -1529,6 +1958,11 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     #!/bin/sh
     echo "xcrun $*" >> "#{log}"
     [ "$1" = simctl ] || exit 0
+    # A file `fail-appearance` makes setting the appearance fail, saying why.
+    if [ "$2 $4" = "ui appearance" ] && [ -n "$5" ] && [ -f "#{bin}/fail-appearance" ]; then
+      echo "simctl: the simulator refused the appearance change" >&2
+      exit 3
+    fi
     case "$2" in
       ui)
         file="#{bin}/$3-$4"
@@ -1749,6 +2183,15 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     message
   end
 
+  # The Android SDK's emulator lists `names` as its AVDs.
+  defp avds(context, names) do
+    script(Path.join([context.devices.sdk, "emulator", "emulator"]), """
+    #!/bin/sh
+    [ "$1" = "-list-avds" ] && printf '%s\\n' #{Enum.join(names, " ")}
+    exit 0
+    """)
+  end
+
   defp android_platform(context) do
     assert {:ok, %{"hosts" => hosts}} = context.reply
     %{"platforms" => platforms} = Enum.find(hosts, &(&1["id"] == "local"))
@@ -1766,9 +2209,62 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     |> rpc("device.action", input)
   end
 
+  # The accessibility helper serve-sim bundles, run on SIM-1.
+  defp ax(args), do: ~r"^xcrun simctl spawn SIM-1 \S+/serve-sim-ax-settings #{args}$"
+
+  defp adb_get(key), do: ~r"^adb shell settings get #{key}$"
+
+  # `command` ran, then a read of the device after it.
+  defp assert_read_after(context, command, read) do
+    calls = context |> calls() |> String.split("\n", trim: true)
+    ran = Enum.find_index(calls, &(&1 =~ command))
+    assert ran, "#{inspect(command)} never ran: #{inspect(calls)}"
+
+    assert Enum.any?(Enum.drop(calls, ran + 1), &(&1 =~ read)),
+           "no read after #{inspect(command)}"
+  end
+
+  defp pushed(context),
+    do: context.devices.bin |> Path.join("push.json") |> File.read!() |> JSON.decode!()
+
   defp hub_json(path) do
     {:ok, 200, body} = hub_get(path)
     JSON.decode!(body)
+  end
+
+  # Makes the running hub exit; answers when it went and the origin it had.
+  defp hub_exit do
+    origin = HalC2.Devices.hub_origin()
+
+    {:ok, {{_, 200, _}, _, _}} =
+      :httpc.request(
+        :post,
+        {String.to_charlist(origin <> "/fake/exit"), [], ~c"text/plain", ""},
+        [timeout: 5_000],
+        []
+      )
+
+    {System.monotonic_time(:millisecond), origin}
+  end
+
+  # Clients see the hub stopped, saying when it restarts, and then a new hub ready no sooner.
+  defp assert_restart(context, {exited, origin}, wait, says) do
+    stopped = "The device hub stopped. Restarting it in #{says}."
+    watcher = World.client(context, "watcher")
+
+    {_, watcher} =
+      Mc.await(watcher, &(&1["t"] == "devices" and &1["state"]["hostStatusDetail"] == stopped))
+
+    {_, watcher} =
+      Mc.await(
+        watcher,
+        &(&1["t"] == "devices" and &1["state"]["hostStatus"] == "ready"),
+        wait + 15_000
+      )
+
+    assert System.monotonic_time(:millisecond) - exited >= wait
+    assert HalC2.Devices.hub_origin() not in [nil, origin]
+    World.put_client(context, "watcher", watcher)
   end
 
   defp hub_post(path, value) do

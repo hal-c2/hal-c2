@@ -1,6 +1,7 @@
 // A stand-in for expo-device-hub's CLI (`--port N --host H ...`): the device list,
 // boot and shutdown, and a screenshot, with Android emulators kept in memory.
-// Booting "Broken" fails for lack of disk space. Every answer echoes the request
+// Booting "Broken" fails for lack of disk space and booting "Hang" never answers; a
+// simulator's `bootError` is what its boot fails with ("hang" never answers). Every answer echoes the request
 // URL in `x-fake-hub-url`, so tests can see what reached the hub, and the stream
 // socket echoes what it gets.
 //
@@ -17,8 +18,9 @@
 //   GET  /fake/captures        serve-sim's capture per simulator: a number that grows
 //                              with each new capture; a shutdown releases it and ends
 //                              its streams
-//   GET  /fake/env             the PATH the hub runs with
+//   GET  /fake/env             the PATH and XDG_RUNTIME_DIR the hub runs with
 //   GET  /fake/sockets-closed  answers once no socket is open
+//   POST /fake/exit            the hub exits, as a crashed one would
 // A socket closes from the hub's side when it gets the text frame {"fake":"close"}.
 import * as Crypto from "node:crypto";
 import * as Http from "node:http";
@@ -76,7 +78,12 @@ const server = Http.createServer(async (request, response) => {
   if (url.pathname === "/readyz") return response.end("ok");
   if (url.pathname === "/fake/requests") return json(requests);
   if (url.pathname === "/fake/captures") return json(captures);
-  if (url.pathname === "/fake/env") return json({ PATH: process.env.PATH });
+  if (url.pathname === "/fake/env")
+    return json({ PATH: process.env.PATH, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? null });
+  if (url.pathname === "/fake/exit") {
+    response.end("bye");
+    return process.exit(0);
+  }
   if (url.pathname === "/fake/config") {
     fake = { ...fake, ...(await readBody(request)) };
     return json(fake);
@@ -143,6 +150,8 @@ const server = Http.createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname === "/api/devices/boot") {
     const body = await readBody(request);
     const simulator = body.platform === "ios" && simulators.find((device) => device.id === body.id);
+    if (simulator?.bootError === "hang" || body.name === "Hang") return;
+    if (simulator?.bootError) return json({ ok: false, error: simulator.bootError });
     if (simulator) {
       simulator.booted = true;
       return json({ ok: true, id: simulator.id });

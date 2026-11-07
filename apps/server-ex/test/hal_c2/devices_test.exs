@@ -132,6 +132,31 @@ defmodule HalC2.DevicesTest do
              })
   end
 
+  # Exile can mail the hub's exit status before its output ends; here the reader is held
+  # until the server has the status. It must not be lost to the job results, or stopping
+  # the hub at the end of its output crashes the server.
+  test "a hub whose exit status comes before its output ends is restarted" do
+    {:ok, %{"hostStatus" => "ready"}} = HalC2.Devices.configure(%{"enabled" => true})
+    %{proc: %{exit_ref: exit_ref}, reader: reader} = :sys.get_state(HalC2.Devices).hub_process
+    server = Process.whereis(HalC2.Devices)
+    down = Process.monitor(server)
+    :erlang.suspend_process(reader)
+    :erlang.trace(server, true, [:receive])
+
+    exit =
+      {String.to_charlist(HalC2.Devices.hub_origin() <> "/fake/exit"), [], ~c"text/plain", ""}
+
+    {:ok, {{_, 200, _}, _, _}} = :httpc.request(:post, exit, [timeout: 5_000], [])
+    assert_receive {:trace, ^server, :receive, {^exit_ref, {:ok, _}}}, 5_000
+    :erlang.trace(server, false, [:receive])
+    _ = HalC2.Devices.state()
+    :erlang.resume_process(reader)
+
+    next_state(&(&1["hostStatus"] == "failed"))
+    next_state(&(&1["hostStatus"] == "ready"))
+    refute_received {:DOWN, ^down, :process, _, _}
+  end
+
   test "SSH hosts are unavailable, with the reason" do
     {settings, version} = HalC2.Settings.get()
 

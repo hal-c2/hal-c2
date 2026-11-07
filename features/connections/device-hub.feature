@@ -154,7 +154,7 @@ Feature: Device hub on an MC
     And the thread lists no devices
     And the emulator is listed as not booted
 
-  @backlog @mc
+  @mc
   Scenario Outline: A device that cannot boot is not opened and the user is told why
     Given a shut-down <platform> device and <situation>
     When a client opens it in a thread
@@ -169,7 +169,7 @@ Feature: Device hub on an MC
       | Android  | the boot takes longer than three minutes | the boot timed out                 |
       | iOS      | the simulator fails to launch            | the device failed to launch        |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: Turning device support off while a device boots fails the open
     Given a device is booting for a thread
     When the user turns device support off
@@ -260,7 +260,7 @@ Feature: Device hub on an MC
       | an Android emulator        | tilts the emulator's accelerometer to that side     |
       | a physical Android phone   | locks the phone's rotation to that side             |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A plain push message arrives as a notification alert
     When a client sends the push "Hello" to an app on a booted iOS simulator
     Then the simulator receives a notification whose alert is "Hello"
@@ -273,20 +273,20 @@ Feature: Device hub on an MC
     When a client sets a colour filter on a booted iOS device
     Then the MC answers that the action requires a helper and to set up device support again
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A device command that fails is reported without its output
     Given a booted iOS device whose appearance command exits with an error and a message
     When a client sets its appearance to dark
     Then the MC answers that the appearance change failed with the exit code
     And the answer does not repeat the command's own message
 
-  @backlog @mc @priority-low
+  @mc
   Scenario: A setting the MC cannot read is left unknown instead of failing the read
     Given a booted device whose settings commands all fail
     When a client asks for its detail
     Then the detail is returned with no settings and no foreground app
 
-  @backlog @mc
+  @mc
   Scenario Outline: A client changes a device's appearance or accessibility setting
     When a client sets <setting> on a booted <platform> device to <value>
     Then the MC answers with the device's detail after the change
@@ -298,9 +298,9 @@ Feature: Device hub on an MC
       | reduce motion     | iOS      | on          |
       | reduce motion     | Android  | on          |
       | increase contrast | iOS      | on          |
-      | Liquid Glass      | iOS      | off         |
+      | Liquid Glass      | iOS      | tinted      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A client grants or revokes an app permission on a booted device
     When a client sets the <permission> permission to <state> on a booted <platform> device
     Then the MC answers with the device's detail after the change
@@ -311,7 +311,7 @@ Feature: Device hub on an MC
       | notifications | granted | Android  |
       | location      | revoked | Android  |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: A client sets a device's location and later clears it
     When a client sets the location of a booted <platform> device to "<place>"
     And a client clears the location of that device
@@ -322,7 +322,7 @@ Feature: Device hub on an MC
       | iOS      | Reykjavik    |
       | Android  | Reykjavik    |
 
-  @backlog @mc @priority-low
+  @mc
   Scenario Outline: A client stops an app that is running on a booted device
     When a client stops "the shop app" on a booted <platform> device
     Then the MC answers with the device's detail after the action
@@ -450,7 +450,7 @@ Feature: Device hub on an MC
     Then the response says it must not be stored or transformed
     And frames reach the client as the hub sends them
 
-  @backlog @mc
+  @mc
   Scenario: A device hub that exits is restarted, waiting longer after each quick exit
     Given the device hub is running
     When the hub exits
@@ -544,7 +544,7 @@ Feature: Device hub on an MC
     When an agent opens a device in the thread the user is watching
     Then the device opens as a side panel tab instead of floating
 
-  @backlog @mc
+  @mc
   Scenario: The device hub finds the runtime directory on Linux
     Given an MC on Linux started without XDG_RUNTIME_DIR
     And "/run/user/<uid>" exists and is owned by that user
