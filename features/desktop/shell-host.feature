@@ -56,7 +56,7 @@ Feature: The desktop app runs its own MC
 
   Rule: Starting the desktop app starts its MC and connects to it
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Starting the desktop app starts an MC with the desktop's HAL-C2 home
       Given the desktop app's HAL-C2 home is "/tmp/sandbox"
       When the user starts the desktop app
@@ -78,7 +78,7 @@ Feature: The desktop app runs its own MC
       And that link's token gives the app admin access to the MC
       And the user is not asked to pair
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The desktop's own client is given the MC and its access token
       When the user starts the desktop app
       Then the shell is told the desktop MC's address and the MC's own access token
@@ -90,14 +90,14 @@ Feature: The desktop app runs its own MC
       Then the app's pages come from a loopback address on this machine
       And any page of the app loads the app
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A configured MC release is the MC the desktop app runs
       Given "HAL_C2_MC_RELEASE" names an MC release
       When the user starts the desktop app
       Then that release is started
 
     # A release has no development profile; it would open the installed app's files.
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A development shell does not start an MC release without a home of its own
       Given "HAL_C2_MC_RELEASE" names an MC release
       When a developer starts the desktop app with --dev and no home directory
@@ -105,7 +105,7 @@ Feature: The desktop app runs its own MC
       And the desktop app says the release needs a home directory
 
     # The MC ignores such a home and would open the installed app's files instead.
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: An MC home the MC would not use stops the start
       Given "HAL_C2_MC_HOME" is <home>
       When the user starts the desktop app
@@ -118,7 +118,7 @@ Feature: The desktop app runs its own MC
         | a directory in ~/.t3  |
 
     # The MC ignores an old home as its home too.
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: An old home as the HAL-C2 home stops the start
       Given the desktop app's HAL-C2 home is <home>
       When the user starts the desktop app
@@ -130,30 +130,30 @@ Feature: The desktop app runs its own MC
         | ~/.t3     |
         | ~/.hal-c2 |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: In a checkout without a release the MC runs from source
       Given no MC release is configured or bundled
       When the user starts the desktop app from a checkout
       Then the MC runs from the checkout's source
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An MC run from source runs in the development environment
       Given "MIX_ENV" is "prod" where the desktop app starts
       When the desktop app starts its MC from a checkout
       Then that MC runs with "MIX_ENV" set to "dev"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An MC run from source keeps its access token in the development profile
       Given no HAL-C2 home is set for the desktop app
       When the desktop app starts its MC from a checkout
       Then the shell looks for the MC's access token in the "hal-c2-dev" data directory
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The MC's JavaScript sidecars run on the desktop app's Node
       When the user starts the desktop app
       Then the MC is told to run its JavaScript sidecars with the Node that runs the desktop host
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Without a configured port the MC takes the next free one
       Given another program listens on the MC's default port
       When the user starts the desktop app
@@ -167,7 +167,7 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the MC listens on its default port
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An MC already running on the desktop's files is used instead of starting another
       Given the background service runs an MC on the files the desktop app's MC would use
       When the user starts the desktop app
@@ -185,14 +185,14 @@ Feature: The desktop app runs its own MC
 
     # At login the app can start before the background service's MC has said where it
     # listens; the MC that gets the files first keeps them (mc-startup.feature).
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An MC that takes the desktop's files while the desktop's own MC starts is used instead
       Given the background service starts an MC on the files the desktop app's MC would use
       When the user starts the desktop app before that MC says where it listens
       Then the desktop app's own MC stops, refused the files
       And the shell is told the service MC's address and its own access token
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A running MC whose access token cannot be read stops the start
       Given the background service runs an MC on the files the desktop app's MC would use
       And that MC's access token cannot be read
@@ -218,7 +218,7 @@ Feature: The desktop app runs its own MC
       Then the app is paired with a fresh token for the same MC
       And the app lists the desktop's MC once
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Restarting the desktop app connects to the same environment again
       Given the user started the desktop app before
       When the user starts the desktop app again
@@ -226,20 +226,20 @@ Feature: The desktop app runs its own MC
 
   Rule: Attaching to a running MC with its pairing link
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Attaching to an MC with its pairing link
       Given an MC is running on this machine
       When the user starts the desktop app with that MC's pairing link
       Then the shell is told that MC's address and the session its pairing link opened
       And the desktop app starts no MC of its own
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An attached desktop's own client is given the token of an MC on this machine
       Given `mise run mc` runs an MC on this machine
       When the user starts the desktop app with that MC's pairing link
       Then the shell is told that MC's address and the MC's own access token
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An attached desktop's own client pairs with an MC it has no files for
       Given an MC is running whose runtime record this machine does not have
       When the user starts the desktop app with that MC's pairing link
@@ -253,7 +253,7 @@ Feature: The desktop app runs its own MC
       Then the shell is told that MC's address and the session its pairing link opened
       And the app opens without a pairing link, because the link could only be used once
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Attaching with a pairing link the MC refuses
       Given an MC is running on this machine
       When the user starts the desktop app with a pairing link that MC has spent or never issued
@@ -266,25 +266,25 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app with the address of a web app
       Then that address is loaded unchanged
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: An address that is not an MC is refused
       When the user starts the desktop app with the address of a web app
       Then the desktop app says that address is not a HAL-C2 MC
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Attaching to an MC that is not running
       When the user starts the desktop app with a pairing link for an MC that is not running
       Then the desktop app says it cannot reach the MC at that address
 
   Rule: Quitting the desktop app stops the MC it started
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Quitting the desktop app stops its MC
       Given the desktop app started its MC
       When the user quits the desktop app
       Then the MC stops
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Quitting an attached desktop app leaves the MC running
       Given the desktop app is attached to a running MC
       When the user quits the desktop app
@@ -326,7 +326,7 @@ Feature: The desktop app runs its own MC
       Then the desktop app says the app bundle is missing and how to build it
       And no MC is started
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The MC fails to start
       Given the MC exits before it answers
       When the user starts the desktop app
@@ -463,7 +463,7 @@ Feature: The desktop app runs its own MC
         | SIGINT  |
         | SIGTERM |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The MC's port the desktop app was told to use is taken
       Given "HAL_C2_MC_PORT" names a port another program listens on
       When the user starts the desktop app

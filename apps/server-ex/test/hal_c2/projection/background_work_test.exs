@@ -110,6 +110,35 @@ defmodule HalC2.Projection.BackgroundWorkTest do
            ]
   end
 
+  test "a many-line prompt or description is its first line that says anything" do
+    subagent = %{
+      "id" => "item-subagent",
+      "type" => "subagent",
+      "status" => "running",
+      "prompt" => "\n  Read the issue first.\n\nWhat to build:\n- the style\n"
+    }
+
+    assert BackgroundWork.derive(
+             latest_run: run("run-1", 1, "completed"),
+             provider_threads: [
+               %{
+                 "id" => "pt-1",
+                 "pendingBackgroundTasks" => [
+                   %{"taskId" => "native-task", "description" => "  \r\nwatch CI\r\nthen merge"}
+                 ]
+               }
+             ],
+             turn_items: [subagent]
+           ) == [
+             %{"taskId" => "native-task", "description" => "watch CI"},
+             %{
+               "taskId" => "item-subagent",
+               "description" => "Read the issue first.",
+               "taskType" => "subagent"
+             }
+           ]
+  end
+
   test "roster entries and turn items with the same native id are one task, roster first" do
     subagent =
       Map.merge(

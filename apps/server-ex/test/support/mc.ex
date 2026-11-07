@@ -679,11 +679,18 @@ defmodule HalC2.Test.Mc do
       {:ok, spec} = :application.get_all_key(:hal_c2)
 
       ExUnit.Callbacks.on_exit(fn ->
+        # A removal of old versions a boot started ends in this scenario's home.
+        with pid when is_pid(pid) <- Process.whereis(HalC2.Upgrade.Prune) do
+          ref = Process.monitor(pid)
+          receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+        end
+
         System.delete_env("RELEASE_ROOT")
         System.delete_env("HAL_C2_SERVICE")
         Application.delete_env(:hal_c2, :restart_exit)
         :persistent_term.erase({HalC2.Upgrade, :version})
         :persistent_term.erase({HalC2.Upgrade, :outcome})
+        :persistent_term.erase({HalC2.Upgrade, :continue_threads})
         :persistent_term.erase({__MODULE__, :release})
         :code.set_path(paths)
         restore_modules()
@@ -732,11 +739,13 @@ defmodule HalC2.Test.Mc do
   (`{module, beam}`, or `{module, beam, running beam}` for one with no beam file) in
   place of the code it runs. Those modules join the running release at the code
   that runs, and are loaded back when the scenario ends. `changes["sys.config"]` is
-  the release's configuration rather than a manifest entry.
+  the release's configuration rather than a manifest entry, and `changes["bin"]`
+  (`%{name => script}`) the bundle's launchers.
   """
   def bundle(mc, version, changes \\ %{}, modules \\ []) do
     dir = tmp_dir(mc, "bundle")
     {sys, changes} = Map.pop(changes, "sys.config", [])
+    {bin, changes} = Map.pop(changes, "bin", %{})
     {root, from} = {HalC2.Upgrade.release_root(), HalC2.Upgrade.version()}
 
     running =
@@ -779,13 +788,20 @@ defmodule HalC2.Test.Mc do
         HalC2.Upgrade.Source.file_name(version, HalC2.Upgrade.platform())
       )
 
+    for {name, script} <- bin do
+      file = Path.join([dir, "bin", name])
+      File.mkdir_p!(Path.dirname(file))
+      File.write!(file, script)
+      File.chmod!(file, 0o755)
+    end
+
     :ok =
       :erl_tar.create(
         String.to_charlist(path),
         [
           {~c"releases", String.to_charlist(Path.join(dir, "releases"))},
           {~c"lib", String.to_charlist(Path.join(dir, "lib"))}
-        ],
+        ] ++ if(bin == %{}, do: [], else: [{~c"bin", String.to_charlist(Path.join(dir, "bin"))}]),
         [:compressed]
       )
 
@@ -1961,6 +1977,7 @@ defmodule HalC2.Test.Mc.World do
       |> Map.put_new("FAKE_CODEX_LOG", Path.join(context.mc.home, "codex-requests.log"))
       |> Map.put_new("FAKE_CODEX_REJECT_STEER", Path.join(context.mc.home, "reject-steer"))
       |> Map.put_new("FAKE_CODEX_HOLD_STEER", Path.join(context.mc.home, "hold-steer"))
+      |> Map.put_new("FAKE_CODEX_KEEP_TURN", Path.join(context.mc.home, "keep-turn"))
       |> Map.put_new("FAKE_ACP_LOG", Path.join(context.mc.home, "acp-requests.log"))
       |> Map.put_new("FAKE_CLAUDE_LOG", Path.join(context.mc.home, "claude-prompts.log"))
       |> Map.put_new("FAKE_CODEX_GATE", Path.join(context.mc.home, "gate"))

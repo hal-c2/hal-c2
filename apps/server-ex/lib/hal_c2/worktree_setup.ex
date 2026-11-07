@@ -373,9 +373,14 @@ defmodule HalC2.WorktreeSetup do
 
   # A delegated child's caller hears of this failure at once and may hand the task to
   # another agent, so its first message is not run later: the agent's stage ends here.
+  # Without a worktree, what was queued behind it waits for a retry.
   defp failed(state, thread_id, setup, message) do
     delegated = Orchestration.delegated?(thread_id)
-    Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
+    hold = setup.snapshot["worktreePath"] == nil
+
+    Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message),
+      hold_queue: hold
+    )
 
     update(state, thread_id, fn snapshot ->
       ended = finish(snapshot, "failed", message)
@@ -479,7 +484,10 @@ defmodule HalC2.WorktreeSetup do
       attempt(thread_id, fn -> remove_workspace(thread_id, setup, path) end)
     end
 
-    attempt(thread_id, fn -> Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled") end)
+    # The worktree is gone, so what was queued behind it is held.
+    attempt(thread_id, fn ->
+      Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled", nil, hold_queue: true)
+    end)
   end
 
   defp attempt(thread_id, fun) do
@@ -531,22 +539,27 @@ defmodule HalC2.WorktreeSetup do
     status = fn id, status, extra -> set.(&set_stage(&1, id, status, extra)) end
     Orchestration.progress_prepared(thread_id, run_id, "worktree")
 
-    # Fetch first when asked and the remote has the base branch.
+    # Fetch first when asked, from the remote the base tracks, and start from what
+    # came: a remote that lacks the branch leaves its stale tracking ref unused.
     start_ref =
-      if strategy["startFromOrigin"] == true and origin?(root) do
-        status.("fetch", "running", %{})
-        _ = HalC2.Git.run(root, ["fetch", "origin", strategy["baseRef"]])
-        status.("fetch", "done", %{})
+      case strategy["startFromOrigin"] == true && fetch_source(root, strategy["baseRef"]) do
+        {remote, branch} ->
+          status.("fetch", "running", %{})
+          fetched = fetch(root, remote, branch)
+          status.("fetch", "done", %{})
+          ref = "#{remote}/#{branch}"
 
-        if match?(
-             {:ok, _},
-             HalC2.Git.ok(root, ["rev-parse", "--verify", "origin/#{strategy["baseRef"]}"])
-           ),
-           do: "origin/#{strategy["baseRef"]}",
-           else: strategy["baseRef"]
-      else
-        status.("fetch", "skipped", %{})
-        strategy["baseRef"]
+          if fetched == :ok and
+               match?(
+                 {:ok, _},
+                 HalC2.Git.ok(root, ["rev-parse", "--verify", "refs/remotes/#{ref}"])
+               ),
+             do: ref,
+             else: strategy["baseRef"]
+
+        _ ->
+          status.("fetch", "skipped", %{})
+          strategy["baseRef"]
       end
 
     status.("checkout", "running", %{})
@@ -673,6 +686,46 @@ defmodule HalC2.WorktreeSetup do
 
   defp origin?(root), do: match?({:ok, _}, HalC2.Git.ok(root, ~w(remote get-url origin)))
 
+  # The remote and branch `base` tracks, else origin's branch of its name; nil without either.
+  defp fetch_source(root, base) do
+    config = &HalC2.Git.ok(root, ["config", "--get", "branch.#{base}.#{&1}"])
+
+    with {:ok, remote} <- config.("remote"),
+         remote when remote not in ["", "."] <- String.trim(remote),
+         {:ok, merge} <- config.("merge") do
+      {remote, String.replace_prefix(String.trim(merge), "refs/heads/", "")}
+    else
+      _ -> if origin?(root), do: {"origin", base}
+    end
+  end
+
+  # A fetch that lost a ref's lock to another fetch (a background `git fetch` of the
+  # editor's, say) is tried once more; one that still cannot update the ref fails the
+  # setup, as starting from the old ref would quietly start from the wrong commit.
+  defp fetch(root, remote, branch, tries \\ 2) do
+    case HalC2.Git.ok(root, ["fetch", remote, branch]) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {_, err}} when is_binary(err) ->
+        cond do
+          not (err =~ "cannot lock ref") ->
+            :error
+
+          tries > 1 ->
+            fetch(root, remote, branch, tries - 1)
+
+          true ->
+            fail(
+              "Could not fetch \"#{branch}\" from \"#{remote}\": a local reference could not be updated. Another git command may be running; try again."
+            )
+        end
+
+      _ ->
+        :error
+    end
+  end
+
   # `hal-c2/<8 hex>`, or `hal-c2-<8 hex>` in a repository with a branch named `hal-c2`,
   # where git cannot put a branch under `hal-c2/`. Clients generate `hal-c2/<uuid>` too.
   @temporary ~r/^hal-c2[\/-](?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/
@@ -795,12 +848,13 @@ defmodule HalC2.WorktreeSetup do
     "( #{start}; eval '#{quoted}' ); printf '\\n#{sentinel}%s\\n' \"$?\""
   end
 
-  # What follows the script in its terminal: the user's shell, for whoever opens it.
+  # What follows the script in its terminal: the shell again, for whoever opens it.
   defp then_shell(shell) do
+    program = "'" <> String.replace(shell || "/bin/sh", "'", "'\\''") <> "'"
+
     case Path.basename(shell || "") do
-      "fish" -> "exec $SHELL"
-      "zsh" -> "exec $SHELL -o nopromptsp"
-      _ -> "exec ${SHELL:-/bin/sh}"
+      "zsh" -> "exec #{program} -o nopromptsp"
+      _ -> "exec #{program}"
     end
   end
 
@@ -833,7 +887,9 @@ defmodule HalC2.WorktreeSetup do
   # read by whatever its startup runs. A retry's script gets a shell of its own too.
   defp start_script(thread_id, root, path, script, set) do
     sentinel = "__hal_c2_setup_#{Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)}_"
-    shell = System.get_env("SHELL")
+    # Written for the shell that starts, which is not `SHELL` when that is not there or
+    # names its options too ("/usr/bin/fish --login").
+    shell = with [program | _] <- HalC2.Terminal.shell(), do: program
     command = wrap_script(script["command"], shell, sentinel) <> "\n" <> then_shell(shell)
     terminal = %{"threadId" => thread_id, "terminalId" => "setup"}
 
@@ -875,7 +931,7 @@ defmodule HalC2.WorktreeSetup do
   defp await_script({thread_id, sentinel, deadline}, status, set, opts) do
     script = %{start: sentinel <> "start", exit: ~r/^#{sentinel}(\d+)$/, deadline: deadline}
 
-    case collect({thread_id, "setup"}, script, false, "", [], set) do
+    case read_script({thread_id, "setup"}, script, set) do
       :not_started ->
         # Its shell goes too, or the script could still begin after this says it did not.
         terminal(:close, [%{"threadId" => thread_id, "terminalId" => "setup"}])
@@ -886,7 +942,10 @@ defmodule HalC2.WorktreeSetup do
           fail("The setup script did not start within #{seconds} seconds.")
         end
 
+      # Nothing is left to read in a shell whose script went well; a failed one stays open
+      # with its error.
       {0, tail} ->
+        terminal(:close, [%{"threadId" => thread_id, "terminalId" => "setup"}])
         status.("setup-script", "done", %{"detail" => "exited with 0", "tail" => tail})
 
       {nil, tail} ->
@@ -906,26 +965,37 @@ defmodule HalC2.WorktreeSetup do
   # Reads the terminal from the wrapper's first line to its last or the terminal's end,
   # which leaves no exit status, keeping the last lines as the stage's tail. Without that
   # first line by the deadline, nothing is running and nothing will end: `:not_started`.
+  # Until then the tail is what the shell's startup prints, the line it is still writing
+  # included, as it may be asking the user something in the setup terminal. `set` gets
+  # each change to the snapshot.
+  @doc false
+  def read_script(key, script, set), do: collect(key, script, false, "", [], set)
+
   defp collect(key, script, started, partial, tail, set) do
     wait = if started, do: :infinity, else: max(script.deadline - now_ms(), 0)
 
     receive do
       {:hal_c2_terminal, ^key, %{"type" => "output", "data" => data}} ->
-        {lines, partial} = script_lines(partial, data)
-        {started, lines} = from_start(started, lines, script.start)
-        {output, rest} = Enum.split_while(lines, &(not Regex.match?(script.exit, &1)))
-        next = tail(tail, output)
+        {lines, rest} = script_lines(partial, data)
+        was = if started, do: tail, else: shown(script, tail, partial)
 
-        case rest do
-          [last | _] ->
-            [_, code] = Regex.run(script.exit, last)
-            {String.to_integer(code), next}
+        case from_start(started, lines, script.start) do
+          {true, lines} when started ->
+            output(key, script, lines, rest, tail, set)
 
-          [] ->
-            if next != tail,
-              do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => next}))
+          # The script begins: what the startup printed leaves the tail.
+          {true, lines} ->
+            if was != [], do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => []}))
+            output(key, script, lines, rest, [], set)
 
-            collect(key, script, started, partial, next, set)
+          {false, startup} ->
+            next = tail(tail, startup)
+            shown = shown(script, next, rest)
+
+            if shown != was,
+              do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => shown}))
+
+            collect(key, script, false, rest, next, set)
         end
 
       {:hal_c2_terminal, ^key, %{"type" => type}} when type in ~w(exited closed) ->
@@ -938,12 +1008,36 @@ defmodule HalC2.WorktreeSetup do
     end
   end
 
+  defp output(key, script, lines, partial, tail, set) do
+    {output, rest} = Enum.split_while(lines, &(not Regex.match?(script.exit, &1)))
+    next = tail(tail, output)
+
+    case rest do
+      [last | _] ->
+        [_, code] = Regex.run(script.exit, last)
+        {String.to_integer(code), next}
+
+      [] ->
+        if next != tail,
+          do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => next}))
+
+        collect(key, script, true, partial, next, set)
+    end
+  end
+
+  # The startup's lines and the one it is still writing, unless that is the start line
+  # arriving in pieces.
+  defp shown(script, tail, partial) do
+    line = plain(partial)
+    if String.starts_with?(script.start, line), do: tail, else: tail(tail, [line])
+  end
+
   defp from_start(true, lines, _start), do: {true, lines}
 
   defp from_start(false, lines, start) do
-    case Enum.drop_while(lines, &(&1 != start)) do
-      [] -> {false, []}
-      [_start | lines] -> {true, lines}
+    case Enum.split_while(lines, &(&1 != start)) do
+      {startup, []} -> {false, startup}
+      {_startup, [_start | lines]} -> {true, lines}
     end
   end
 

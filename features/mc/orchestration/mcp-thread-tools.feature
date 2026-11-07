@@ -39,8 +39,10 @@
 #     thread.archive, thread.unarchive, thread.mark-unread
 #   apps/server/src/mcp/toolkits/thread, orchestrator, environment, attachment, project
 Feature: Agents working with threads through MCP tools
-  An agent reads, messages, creates and organizes threads of its own project as
-  the thread it runs in. Writes follow the access rules of the MCP server.
+  An agent reads, messages, creates and organizes threads as the thread it runs in.
+  It lists its own project unless it asks for all projects, and can read and
+  organize any thread of the MC; messaging stays inside its project. Writes follow
+  the access rules of the MCP server.
 
   Background:
     Given an MC with a project "demo"
@@ -67,7 +69,7 @@ Feature: Agents working with threads through MCP tools
       | with a limit of 1                      |
 
   # Upstream #25306: an empty status list returned no threads at all.
-  @mc @backlog
+  @mc
   Scenario: An empty status filter lists threads as if no status were asked for
     When the agent of "caller" lists threads with an empty list of statuses
     Then it receives "caller" and "t2" with a total of 2
@@ -80,7 +82,7 @@ Feature: Agents working with threads through MCP tools
     And the thread's recent runs, newest first
 
   # Upstream #18194: reading a thread names the thread that sent each agent message
-  @backlog @mc
+  @mc
   Scenario: Reading a thread says which thread sent a message
     Given the agent of "caller" sent "check the tests" to "t2"
     When another agent reads "t2"
@@ -106,7 +108,7 @@ Feature: Agents working with threads through MCP tools
     Then the pages read "a", "😀b" and "c"
 
   # Upstream #22901: limits above their maximum failed the read.
-  @backlog @mc
+  @mc
   Scenario Outline: Reading a thread with a limit over its maximum uses the maximum
     When the agent of "caller" reads "t2" with <argument> of <value>
     Then <result>
@@ -249,6 +251,8 @@ Feature: Agents working with threads through MCP tools
     Then a new thread is created by an agent through MCP with the caller's model and modes
     And its first turn starts with that message
 
+  # Needs a maintainer decision on how an agent outside any thread authenticates and what access it is
+  # approved for: hal-c2/hal-c2#1235 (this scenario and the next).
   # Upstream #22732: a launch from outside any thread ignored the model saved in settings and
   # always took the caller's full access.
   @backlog @mc @priority-high
@@ -369,7 +373,7 @@ Feature: Agents working with threads through MCP tools
 
   # Upstream #16654: an agent whose launch reply was lost could only launch again and make a
   # second thread; the launch tool takes a request key, and a retry returns the same thread.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Repeating a thread launch with the same request key returns the same thread
     Given the agent of "caller" launched a thread in "demo" with request key "k1" and message "Hello"
     When it repeats the launch with request key "k1"
@@ -526,20 +530,20 @@ Feature: Agents working with threads through MCP tools
 
   # Upstream #17454: thread list and read include the thread's visible pull request links, the
   # list list_thread_pull_requests returns, without dismissed stack members.
-  @backlog @mc
+  @mc
   Scenario: Listing or reading a thread shows every pull request linked to it
     Given "t2" is linked to pull request 42 in "demo" and pull request 7 in another repository
     When the agent of "caller" lists or reads "t2"
     Then the response names both pull requests with their host, repository, number and state
 
   # Upstream #16782: agents see snooze state, can filter on it, and are told how to link a thread.
-  @backlog @mc
+  @mc
   Scenario: Listing or reading a thread shows whether it is snoozed and until when
     Given thread "t2" is snoozed until tomorrow 09:00
     When the agent of "caller" lists or reads "t2"
     Then the response says "t2" is snoozed until tomorrow 09:00
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: Listing threads can be filtered by snooze
     Given thread "t2" is snoozed and thread "t3" in "demo" is not
     When the agent of "caller" lists threads with snoozed <filter>
@@ -551,12 +555,14 @@ Feature: Agents working with threads through MCP tools
       | false  | "t3" and not "t2"           |
 
   # Upstream #26442: going through the user's snoozed threads took one call per project.
-  @backlog @mc
+  # Upstream reads and organizes any thread of the server, so every listed id can be acted on.
+  @mc
   Scenario: An agent lists the threads of every project in one call
     Given thread "t2" in "shop" and thread "t3" in "demo" are snoozed
     When the agent of "caller" lists threads of all projects with snoozed true
     Then the list holds "t2" and "t3", each naming its project
     And the list names no single project
+    And the agent of "caller" can read and unsnooze each listed thread
 
   @backlog @mc
   Scenario: Agents are told how to link to a thread in their answers
@@ -672,14 +678,17 @@ Feature: Agents working with threads through MCP tools
     And each provider instance with its models, options and whether it can run a child task and why not
     And that batches hold at most 20 threads
 
+  # Upstream reads any thread of the server, attached or not (threadAccess.ts readThread).
   @mc
-  Scenario: A thread the user attached as context can be read from another project
-    Given the user attached thread "elsewhere" of another project to a message of "caller"
+  Scenario: A thread of another project can be read but not messaged
+    Given thread "elsewhere" of another project has a message
     When the agent of "caller" reads "elsewhere"
     Then it receives the thread's messages
-    But listing, sending to or interrupting "elsewhere" is still refused
+    But listing its own project, sending to or interrupting "elsewhere" is still refused
 
-  @mc
+  # Dropped: read reaches every thread of the MC (upstream #26442 and threadAccess.ts), so a
+  # context record, whoever wrote it, no longer decides what an agent can read.
+  @dropped @mc
   Scenario: A thread an agent attached does not widen what the agent can read
     Given a message written by an agent of "caller" carries a context record naming thread "elsewhere" of another project
     When the agent of "caller" reads "elsewhere"
